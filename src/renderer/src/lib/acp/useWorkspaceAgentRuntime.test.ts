@@ -58,14 +58,16 @@ import {
   resumeInterruptedWorkspaceSession
 } from './workspace-runtime-session-lifecycle-owner'
 
-const createEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
-  id: 'event-1',
-  timestamp: 1710000000000,
-  kind: 'message',
-  level: 'info',
-  sessionId: 'transport-session-1',
-  ...overrides
-})
+// Runtime boundary tests deliberately feed incomplete provider/IPC events through defensive guards.
+const createEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent =>
+  ({
+    id: 'event-1',
+    timestamp: 1710000000000,
+    kind: 'message',
+    level: 'info',
+    sessionId: 'transport-session-1',
+    ...overrides
+  }) as unknown as AcpRuntimeEvent
 
 const createSnapshot = (sessionIds: string[] = []): AcpStateSnapshot => ({
   status: 'connected',
@@ -500,6 +502,113 @@ describe('workspace agent runtime event processing', () => {
     expect(processedEventIds.has('artifact-event-1')).toBe(true)
   })
 
+  it('retries a transiently failed runtime event without requiring new runtime input', async () => {
+    vi.useFakeTimers()
+    try {
+      const event = createEvent({
+        id: 'artifact-event-1',
+        kind: 'artifact',
+        runId: 'run-1',
+        artifactClaimId: 'claim-1'
+      })
+      const applyEvent = vi
+        .fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>()
+        .mockRejectedValueOnce(new Error('move failed'))
+        .mockResolvedValueOnce(true)
+      const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
+
+      await processor.process([event])
+      expect(applyEvent).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(249)
+      expect(applyEvent).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(applyEvent).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retries a transiently failed text batch without requiring new runtime input', async () => {
+    vi.useFakeTimers()
+    try {
+      const events = createTextEvents(2)
+      const applyEventBatch = vi
+        .fn<(runtimeEvents: AcpRuntimeEvent[]) => Promise<boolean>>()
+        .mockRejectedValueOnce(new Error('batch apply failed'))
+        .mockResolvedValueOnce(true)
+      const processor = createWorkspaceRuntimeEventProcessor(async () => true, {
+        applyEventBatch
+      })
+
+      await processor.process(events)
+      expect(applyEventBatch).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(249)
+      expect(applyEventBatch).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(applyEventBatch).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('applies a scheduled retry before resolving an explicit session drain', async () => {
+    vi.useFakeTimers()
+    try {
+      const event = createEvent({
+        id: 'artifact-event-1',
+        kind: 'artifact',
+        runId: 'run-1',
+        artifactClaimId: 'claim-1'
+      })
+      const applyEvent = vi
+        .fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>()
+        .mockRejectedValueOnce(new Error('move failed'))
+        .mockResolvedValueOnce(true)
+      const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
+
+      await processor.process([event])
+      await processor.drain(event.sessionId)
+
+      expect(applyEvent).toHaveBeenCalledTimes(2)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('terminalizes a persistently failing event across later snapshots and drains', async () => {
+    vi.useFakeTimers()
+    try {
+      const event = createEvent({
+        id: 'artifact-event-1',
+        kind: 'artifact',
+        runId: 'run-1',
+        artifactClaimId: 'claim-1'
+      })
+      const applyEvent = vi
+        .fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>()
+        .mockRejectedValue(new Error('move failed'))
+      const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
+
+      await processor.process([event])
+      await vi.runAllTimersAsync()
+      await processor.process([event])
+      await processor.processIncremental([event])
+      await processor.drain()
+
+      expect(applyEvent).toHaveBeenCalledTimes(3)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('marks ignored runtime events as processed after the adapter handles them', async () => {
     const processedEventIds = new Set<string>()
     const event = createEvent({ id: 'tool-event-1', kind: 'tool' })
@@ -664,64 +773,97 @@ describe('workspace agent runtime event processing', () => {
   })
 
   it('retries an accepted event that fails after a newer snapshot evicts it', async () => {
-    const artifactEvent = createEvent({ id: 'artifact-event-1', kind: 'artifact' })
-    let rejectFirstAttempt!: (reason: Error) => void
-    const firstAttempt = new Promise<boolean>((_resolve, reject) => {
-      rejectFirstAttempt = reject
-    })
-    const retryStarted = createDeferred<void>()
-    const applyEvent = vi
-      .fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>()
-      .mockImplementationOnce(() => firstAttempt)
-      .mockImplementationOnce(async () => {
-        retryStarted.resolve()
-        return true
+    vi.useFakeTimers()
+    try {
+      const artifactEvent = createEvent({ id: 'artifact-event-1', kind: 'artifact' })
+      let rejectFirstAttempt!: (reason: Error) => void
+      const firstAttempt = new Promise<boolean>((_resolve, reject) => {
+        rejectFirstAttempt = reject
       })
-    const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
+      const applyEvent = vi
+        .fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>()
+        .mockImplementationOnce(() => firstAttempt)
+        .mockResolvedValueOnce(true)
+      const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
 
-    const firstDrain = processor.process([artifactEvent])
-    void processor.process([])
-    rejectFirstAttempt(new Error('move failed'))
-    await firstDrain
+      const firstDrain = processor.process([artifactEvent])
+      void processor.process([])
+      rejectFirstAttempt(new Error('move failed'))
+      await firstDrain
+      await vi.advanceTimersByTimeAsync(250)
 
-    void processor.process([])
-    const didRetry = await Promise.race([
-      retryStarted.promise.then(() => true),
-      new Promise<false>((resolve) => setTimeout(() => resolve(false), 0))
-    ])
-
-    expect(didRetry).toBe(true)
-    expect(applyEvent).toHaveBeenCalledTimes(2)
+      expect(applyEvent).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('releases an evicted event after its deferred retry also fails', async () => {
-    const artifactEvent = createEvent({ id: 'artifact-event-1', kind: 'artifact' })
-    let rejectFirstAttempt!: (reason: Error) => void
-    let rejectRetry!: (reason: Error) => void
-    const firstAttempt = new Promise<boolean>((_resolve, reject) => {
-      rejectFirstAttempt = reject
-    })
-    const retry = new Promise<boolean>((_resolve, reject) => {
-      rejectRetry = reject
-    })
-    const applyEvent = vi
-      .fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>()
-      .mockImplementationOnce(() => firstAttempt)
-      .mockImplementationOnce(() => retry)
-      .mockResolvedValue(true)
-    const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
+    vi.useFakeTimers()
+    try {
+      const artifactEvent = createEvent({ id: 'artifact-event-1', kind: 'artifact' })
+      let rejectFirstAttempt!: (reason: Error) => void
+      const firstAttempt = new Promise<boolean>((_resolve, reject) => {
+        rejectFirstAttempt = reject
+      })
+      const applyEvent = vi
+        .fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>()
+        .mockImplementationOnce(() => firstAttempt)
+        .mockRejectedValueOnce(new Error('move still failing'))
+        .mockResolvedValue(true)
+      const processor = createWorkspaceRuntimeEventProcessor(applyEvent)
 
-    const firstDrain = processor.process([artifactEvent])
-    void processor.process([])
-    rejectFirstAttempt(new Error('move failed'))
-    await vi.waitFor(() => expect(applyEvent).toHaveBeenCalledTimes(2))
-    rejectRetry(new Error('move still failing'))
-    await firstDrain
+      const firstDrain = processor.process([artifactEvent])
+      void processor.process([])
+      rejectFirstAttempt(new Error('move failed'))
+      await firstDrain
+      await vi.advanceTimersByTimeAsync(250)
 
-    await processor.process([])
-    await processor.drain()
+      await processor.process([])
+      await processor.drain()
 
-    expect(applyEvent).toHaveBeenCalledTimes(2)
+      expect(applyEvent).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('continues with later lane events after an evicted retry fails', async () => {
+    vi.useFakeTimers()
+    try {
+      const failedEvent = createEvent({
+        id: 'message-event-1',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: '字'.repeat(100)
+      })
+      const laterEvents = createTextEvents(2).map((event, index) => ({
+        ...event,
+        id: `message-event-${index + 2}`
+      }))
+      const applyEvent = vi
+        .fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>()
+        .mockRejectedValueOnce(new Error('move failed'))
+        .mockRejectedValueOnce(new Error('move still failing'))
+        .mockResolvedValue(true)
+      const processor = createWorkspaceRuntimeEventProcessor(applyEvent, {
+        presentation: createTimerPresentation()
+      })
+
+      await processor.process([failedEvent])
+      await processor.processIncremental(laterEvents)
+      await processor.process(laterEvents)
+      await vi.advanceTimersByTimeAsync(250)
+
+      expect(applyEvent.mock.calls.map(([event]) => event.id)).toEqual([
+        'message-event-1',
+        'message-event-1',
+        'message-event-2',
+        'message-event-3'
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('resolves a snapshot without waiting for an in-flight lane that is no longer visible', async () => {
@@ -9106,11 +9248,12 @@ describe('resendEditedWorkspaceMessage', () => {
     ).resolves.toBe(true)
     await flushRuntimeTasks()
 
-    expect(runtime.sendPrompt.mock.calls[0]?.[2]?.map((attachment) => attachment.id)).toEqual([
-      'edited-0',
-      'edited-1'
-    ])
-    expect(runtime.sendPrompt.mock.calls[0]?.[6]?.map((attachment) => attachment.id)).toEqual([
+    expect(
+      runtime.sendPrompt.mock.calls[0]?.[2]?.map((attachment: UploadedAttachment) => attachment.id)
+    ).toEqual(['edited-0', 'edited-1'])
+    expect(
+      runtime.sendPrompt.mock.calls[0]?.[6]?.map((attachment: UploadedAttachment) => attachment.id)
+    ).toEqual([
       'history-2',
       'history-3',
       'history-4',

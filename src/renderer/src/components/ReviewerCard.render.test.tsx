@@ -1024,6 +1024,7 @@ describe('ReviewerCard — fix limit reached hint', () => {
 
     expect(container.textContent).toContain('correction failed')
     expect(container.textContent).not.toContain('fix limit reached')
+    expect(container.textContent).not.toContain('self-corrects')
   })
 
   it('does NOT show "fix limit reached" for a normal (non-capped) flagged card', async () => {

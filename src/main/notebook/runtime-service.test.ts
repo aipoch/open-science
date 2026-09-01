@@ -17,6 +17,7 @@ import {
   resolveLoopScriptPaths
 } from './runtime-service'
 import { effectiveMirrorAsync, resetAutoMirrorCache } from './mirror-probe'
+import { getNotebookInputRoot } from './input-staging'
 import { NotebookRunRepository, getRuntimeRoot } from './repository'
 import { createRootNotebookLane } from './lane-identity'
 import {
@@ -1374,8 +1375,8 @@ describe('notebook runtime service', () => {
       notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
       dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
       fileEvidenceStorageRoot: root,
-      fileEvidenceRoot: join(root, 'notebook-file-evidence', 'default-project', 'session-1'),
-      fileEvidenceStoragePrefix: 'notebook-file-evidence/default-project/session-1',
+      fileEvidenceRoot: join(root, 'execution-file-evidence', 'default-project', 'session-1'),
+      fileEvidenceStoragePrefix: 'execution-file-evidence/default-project/session-1',
       runtimeRoot: join(root, 'runtime')
     })
     expect(captureCompletedRun).toHaveBeenCalledWith(
@@ -2855,7 +2856,11 @@ describe('notebook runtime service', () => {
     }
     const fileEvidence = {
       schemaVersion: 1 as const,
+      activityKind: 'notebook-run' as const,
       state: 'partial' as const,
+      evidenceId: 'execution-file-evidence-runtime-service',
+      checksum: 'a'.repeat(64),
+      storageKey: 'execution-file-evidence/runtime-service/evidence.json',
       scientificOutputCount: 1,
       initialViewState: 'complete' as const,
       managedRootsFinalState: 'partial' as const,
@@ -2871,16 +2876,18 @@ describe('notebook runtime service', () => {
       projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
-        execute: async (request): Promise<NotebookExecutionResult> => ({
-          status: 'completed',
-          stdout: '',
-          stderr: '',
-          traceback: '',
-          cwdAfter: request.cwd,
-          outputs: [],
-          workingFiles: [writtenFile],
-          fileEvidence
-        }),
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: [],
+            workingFiles: [writtenFile],
+            fileEvidence: { ...fileEvidence, activityId: request.runId }
+          }
+        },
         shutdown: async () => ({ reaped: true })
       })
     })
@@ -2892,11 +2899,12 @@ describe('notebook runtime service', () => {
     })
 
     expect(result.workingFiles).toMatchObject([{ relativePath: 'handoff/data.json' }])
-    expect(result.fileEvidence).toEqual(fileEvidence)
+    expect(result.fileEvidence).toMatchObject(fileEvidence)
+    expect(result.fileEvidence?.activityId).toEqual(expect.any(String))
 
     const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(state.runs[0].workingFiles).toMatchObject([{ relativePath: 'handoff/data.json' }])
-    expect(state.runs[0].fileEvidence).toEqual(fileEvidence)
+    expect(state.runs[0].fileEvidence).toEqual(result.fileEvidence)
   })
 
   describe('executeShell', () => {
@@ -2965,7 +2973,12 @@ describe('notebook runtime service', () => {
         command: 'opaque command',
         cwd: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
         handoffDir: join(root, 'notebooks', 'default-project', 'session-1', 'handoff'),
+        notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
+        inputRoot: getNotebookInputRoot(root, 'default-project', 'session-1'),
+        projectId: 'default-project',
+        protectedDirs: [join(root, 'claude')],
         runtimeRoot: getRuntimeRoot(root),
+        sessionId: 'session-1',
         timeoutMs: 321,
         signal: expect.any(AbortSignal)
       })
@@ -3012,10 +3025,13 @@ describe('notebook runtime service', () => {
         command: 'second'
       })
 
-      await vi.waitFor(() => {
-        expect(entered).toHaveLength(2)
-        expect(entered).toEqual(expect.arrayContaining(['first', 'second']))
-      })
+      await vi.waitFor(
+        () => {
+          expect(entered).toHaveLength(2)
+          expect(entered).toEqual(expect.arrayContaining(['first', 'second']))
+        },
+        { timeout: 5_000 }
+      )
       releases.get('second')?.()
       releases.get('first')?.()
 
@@ -6393,6 +6409,7 @@ describe('notebook runtime service', () => {
     it('resolves the effective mirror from the injected getPackageMirror + locale and forwards it as installPackages deps', async () => {
       const root = await createStorageRoot()
       const calls: Array<[InstallRequestForTest, Partial<InstallDepsForTest> | undefined]> = []
+      const processSandbox = { wrap: vi.fn() }
       const scriptedResult: InstallResultForTest = { ok: true, needsRestart: false, log: 'done' }
       const service = new NotebookRuntimeService({
         configRoot: root,
@@ -6414,6 +6431,7 @@ describe('notebook runtime service', () => {
         }),
         getPackageMirror: () => ({ pypiIndex: 'https://corp.example/simple' }),
         locale: 'zh-CN',
+        processSandbox,
         installPackagesImpl: async (request, deps) => {
           calls.push([request, deps])
           return scriptedResult
@@ -6448,6 +6466,7 @@ describe('notebook runtime service', () => {
       })
       expect(calls[0][1]?.condaChannel).toBeUndefined()
       expect(calls[0][1]?.cranMirror).toBeUndefined()
+      expect(calls[0][1]?.spawn).toBeTypeOf('function')
     })
 
     it('resolves the mirror before returning a package admission refusal', async () => {

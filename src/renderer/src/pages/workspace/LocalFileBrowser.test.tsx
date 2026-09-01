@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { LocalDirListing } from '../../../../shared/local-fs'
+import type { LocalDirListing, LocalRoots } from '../../../../shared/local-fs'
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
@@ -35,6 +35,7 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 
 const HOME = '/Users/roxi'
 const GRANTED = `${HOME}/data`
+const OTHER_GRANTED = `${HOME}/results`
 
 let container: HTMLElement
 let root: Root
@@ -45,6 +46,14 @@ const flush = async (): Promise<void> => {
     await Promise.resolve()
     await Promise.resolve()
   })
+}
+
+const deferred = <T,>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
 }
 
 beforeEach(() => {
@@ -140,6 +149,57 @@ describe('LocalFileBrowser requestedPath', () => {
     expect(listDir).toHaveBeenCalledWith(GRANTED)
     expect(listDir).not.toHaveBeenCalledWith(HOME)
     expect(addressInput()?.value).toBe(GRANTED)
+  })
+
+  it('does not let the bootstrap Home navigation replace a request received while roots load', async () => {
+    const roots = deferred<LocalRoots>()
+    window.api.localFs.getRoots = vi.fn().mockReturnValue(roots.promise)
+
+    act(() => root.render(<LocalFileBrowser />))
+    await flush()
+    act(() => root.render(<LocalFileBrowser requestedPath={{ path: GRANTED, nonce: 1 }} />))
+    await flush()
+    expect(addressInput()?.value).toBe(GRANTED)
+
+    await act(async () => {
+      roots.resolve({ home: HOME, machineName: 'Test Mac' })
+      await roots.promise
+    })
+    await flush()
+
+    expect(listDir).not.toHaveBeenCalledWith(HOME)
+    expect(addressInput()?.value).toBe(GRANTED)
+  })
+
+  it('does not let an older navigation response replace the latest requested path', async () => {
+    await act(async () => {
+      root.render(<LocalFileBrowser />)
+    })
+    await flush()
+
+    const older = deferred<LocalDirListing>()
+    const latest = deferred<LocalDirListing>()
+    listDir.mockImplementation((path: string) => {
+      if (path === GRANTED) return older.promise
+      if (path === OTHER_GRANTED) return latest.promise
+      return Promise.resolve({ entries: [], truncated: false, resolvedPath: path })
+    })
+
+    act(() => root.render(<LocalFileBrowser requestedPath={{ path: GRANTED, nonce: 1 }} />))
+    act(() => root.render(<LocalFileBrowser requestedPath={{ path: OTHER_GRANTED, nonce: 2 }} />))
+
+    await act(async () => {
+      latest.resolve({ entries: [], truncated: false, resolvedPath: OTHER_GRANTED })
+      await latest.promise
+    })
+    expect(addressInput()?.value).toBe(OTHER_GRANTED)
+
+    await act(async () => {
+      older.resolve({ entries: [], truncated: false, resolvedPath: GRANTED })
+      await older.promise
+    })
+
+    expect(addressInput()?.value).toBe(OTHER_GRANTED)
   })
 })
 

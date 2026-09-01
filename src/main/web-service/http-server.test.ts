@@ -15,6 +15,7 @@ vi.mock('electron', () => ({
 
 import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
+import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
 import {
   isWebRpcChannel,
   WEB_EVENT_STREAM_PROTOCOL_VERSION,
@@ -24,6 +25,7 @@ import {
 import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
 import { createLogger, flushLogs, initLogger } from '../logger'
+import { PermissionApprovalPresence } from '../permission-approval-presence'
 import {
   REMOTE_LOCAL_ONLY_RPC_CHANNELS,
   startWebHttpServer,
@@ -150,6 +152,41 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it('tracks only interactive internal Web event clients as approval-capable', async () => {
+    const permissionApprovalPresence = new PermissionApprovalPresence()
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      permissionApprovalPresence,
+      rpc: { channels: () => [], invoke: vi.fn() },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const interactive = new WebSocket(
+      `ws://127.0.0.1:${server.port}/events?token=test-token&client=web-ui`
+    )
+    await new Promise<void>((resolve) => interactive.once('open', resolve))
+    expect(permissionApprovalPresence.isAvailable()).toBe(true)
+
+    const liveness = new WebSocket(
+      `ws://127.0.0.1:${server.port}/events?token=test-token&client=probe&liveness=1`
+    )
+    await new Promise<void>((resolve) => liveness.once('open', resolve))
+    interactive.close()
+    await new Promise<void>((resolve) => interactive.once('close', () => resolve()))
+    await vi.waitFor(() => expect(permissionApprovalPresence.isAvailable()).toBe(false))
+
+    liveness.close()
+  })
+
   it('closes stale external event sockets before an application event can leak', async () => {
     let authorizationCurrent = true
     const server = await startTestWebHttpServer({
@@ -296,7 +333,9 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc: { channels: () => [], invoke: vi.fn() },
       tasks: {
-        subscribeProgress: (listener) => {
+        subscribeProgress: (
+          listener: (event: import('../../shared/task-api').TaskRunProgressEvent) => void
+        ) => {
           publishProgress = listener
           return () => {
             publishProgress = undefined
@@ -621,6 +660,38 @@ describe('startWebHttpServer', () => {
       'first result'
     )
     expect(first).toHaveBeenCalledOnce()
+  })
+
+  it('limits one idempotency principal without consuming another principal capacity', async () => {
+    const registry = new TaskIdempotencyRegistry(2, 8_192, Date.now, 1, 4_096)
+
+    await expect(
+      registry.run(
+        'principal-a:first',
+        'first fingerprint',
+        4_096,
+        async () => 'first',
+        'principal-a'
+      )
+    ).resolves.toBe('first')
+    await expect(
+      registry.run(
+        'principal-a:second',
+        'second fingerprint',
+        4_096,
+        async () => 'second',
+        'principal-a'
+      )
+    ).rejects.toThrow('Idempotency replay capacity is temporarily unavailable.')
+    await expect(
+      registry.run(
+        'principal-b:first',
+        'third fingerprint',
+        4_096,
+        async () => 'third',
+        'principal-b'
+      )
+    ).resolves.toBe('third')
   })
 
   it('serves static resources with browser security policies', async () => {
@@ -1180,6 +1251,7 @@ describe('startWebHttpServer', () => {
         level: 'info',
         sessionId: 'session-1',
         kind: 'message',
+        role: 'assistant',
         text: 'Hi'
       }
     ])
@@ -1204,6 +1276,7 @@ describe('startWebHttpServer', () => {
             level: 'info',
             sessionId: 'session-1',
             kind: 'message',
+            role: 'assistant',
             text: 'Hi'
           }
         },
@@ -1268,6 +1341,7 @@ describe('startWebHttpServer', () => {
         level: 'info',
         sessionId: 'session-1',
         kind: 'message',
+        role: 'assistant',
         text: 'Backlogged event'
       }
     ])
@@ -1293,6 +1367,7 @@ describe('startWebHttpServer', () => {
         level: 'info',
         sessionId: 'session-1',
         kind: 'message',
+        role: 'assistant',
         text: 'x'.repeat(17 * 1024 * 1024)
       }
     ])
@@ -1346,6 +1421,7 @@ describe('startWebHttpServer', () => {
         level: 'info',
         sessionId: 'desktop-session',
         kind: 'message',
+        role: 'assistant',
         text: 'Private desktop Session detail'
       }
     ])
@@ -1510,6 +1586,231 @@ describe('startWebHttpServer', () => {
     publicSocket.close()
   })
 
+  it('does not replay event frames that predate a remote principal authorization', async () => {
+    const authorizationFor = (request: IncomingMessage): ExternalWebAccessAuthorization =>
+      accessOnlyExternalAccess(String(request.headers['x-test-principal']))
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      tasks: {
+        subscribeProgress: () => () => undefined,
+        resolveActiveRun: (sessionId: string) =>
+          sessionId === 'task-session'
+            ? { runId: 'run-1', sessionId, projectId: 'project-1' }
+            : undefined
+      } as never,
+      externalAccess: {
+        authorizeHttp: async (request) => authorizationFor(request),
+        authorizeWebSocket: async (request) => authorizationFor(request)
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const bootstrapFor = async (
+      principalId: string
+    ): Promise<{ eventStream: { streamId: string; latestSequence: number } }> =>
+      (await (
+        await fetch(`${base}/api/bootstrap`, {
+          headers: { 'x-test-principal': principalId }
+        })
+      ).json()) as { eventStream: { streamId: string; latestSequence: number } }
+    const eventSocket = (
+      pathname: '/events' | '/api/v1/events',
+      principalId: string,
+      streamId: string,
+      after: number
+    ): WebSocket => {
+      const url = new URL(`${base.replace('http:', 'ws:')}${pathname}`)
+      url.searchParams.set(
+        'eventProtocol',
+        String(
+          pathname === '/events'
+            ? WEB_EVENT_STREAM_PROTOCOL_VERSION
+            : TASK_EVENT_STREAM_PROTOCOL_VERSION
+        )
+      )
+      url.searchParams.set('stream', streamId)
+      url.searchParams.set('after', String(after))
+      return new WebSocket(url, { headers: { 'x-test-principal': principalId } })
+    }
+    const nextMessage = (socket: WebSocket): Promise<Record<string, unknown>> =>
+      new Promise((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error(`Timed out waiting for event frame from ${socket.url}.`)),
+          500
+        )
+        socket.once('message', (data) => {
+          clearTimeout(timeout)
+          resolve(JSON.parse(data.toString()))
+        })
+      })
+
+    const firstPrincipal = await bootstrapFor('principal-before-event')
+    expect(firstPrincipal.eventStream.latestSequence).toBe(0)
+
+    applicationEvents.publish('acp:event', [
+      {
+        id: 'event-before-second-principal',
+        timestamp: 1,
+        level: 'info',
+        sessionId: 'task-session',
+        kind: 'message',
+        role: 'assistant',
+        text: 'Authorized-principal-only history'
+      }
+    ])
+
+    const firstInternalSocket = eventSocket(
+      '/events',
+      'principal-before-event',
+      firstPrincipal.eventStream.streamId,
+      0
+    )
+    await expect(nextMessage(firstInternalSocket)).resolves.toMatchObject({
+      kind: 'event',
+      sequence: 1,
+      channel: 'acp:event'
+    })
+    firstInternalSocket.close()
+
+    const secondPrincipal = await bootstrapFor('principal-after-event')
+    expect(secondPrincipal.eventStream.latestSequence).toBe(1)
+    const secondInternalSocket = eventSocket(
+      '/events',
+      'principal-after-event',
+      secondPrincipal.eventStream.streamId,
+      0
+    )
+    const secondInternalMessage = await nextMessage(secondInternalSocket)
+    secondInternalSocket.close()
+
+    const publicReadyUrl = new URL(`${base.replace('http:', 'ws:')}/api/v1/events`)
+    publicReadyUrl.searchParams.set('eventProtocol', String(TASK_EVENT_STREAM_PROTOCOL_VERSION))
+    const publicReadySocket = new WebSocket(publicReadyUrl, {
+      headers: { 'x-test-principal': 'principal-after-event' }
+    })
+    const publicReady = await nextMessage(publicReadySocket)
+    expect(publicReady).toMatchObject({
+      type: 'stream.ready',
+      data: { latestSequence: 1, streamId: expect.any(String) }
+    })
+    publicReadySocket.close()
+
+    const publicStreamId = (publicReady.data as { streamId: string }).streamId
+    const secondPublicSocket = eventSocket(
+      '/api/v1/events',
+      'principal-after-event',
+      publicStreamId,
+      0
+    )
+    const secondPublicMessage = await nextMessage(secondPublicSocket)
+    secondPublicSocket.close()
+
+    expect([secondInternalMessage, secondPublicMessage]).toMatchObject([
+      {
+        kind: 'resync-required',
+        reason: 'cursor-expired',
+        latestSequence: 1
+      },
+      {
+        type: 'stream.resync-required',
+        data: { reason: 'cursor-expired', latestSequence: 1 }
+      }
+    ])
+  })
+
+  it('invalidates remote replay floors for one principal or the current authorization generation', async () => {
+    const authorizationFor = (request: IncomingMessage): ExternalWebAccessAuthorization =>
+      accessOnlyExternalAccess(String(request.headers['x-test-principal']))
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      externalAccess: {
+        authorizeHttp: async (request) => authorizationFor(request),
+        authorizeWebSocket: async (request) => authorizationFor(request)
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const bootstrapFor = async (
+      principalId: string
+    ): Promise<{ eventStream: { streamId: string; latestSequence: number } }> =>
+      (await (
+        await fetch(`${base}/api/bootstrap`, {
+          headers: { 'x-test-principal': principalId }
+        })
+      ).json()) as { eventStream: { streamId: string; latestSequence: number } }
+    const resumeFor = (
+      principalId: string,
+      streamId: string,
+      after: number
+    ): Promise<Record<string, unknown>> => {
+      const url = new URL(`${base.replace('http:', 'ws:')}/events`)
+      url.searchParams.set('eventProtocol', String(WEB_EVENT_STREAM_PROTOCOL_VERSION))
+      url.searchParams.set('stream', streamId)
+      url.searchParams.set('after', String(after))
+      const socket = new WebSocket(url, { headers: { 'x-test-principal': principalId } })
+      return new Promise((resolve) =>
+        socket.once('message', (data) => {
+          socket.close()
+          resolve(JSON.parse(data.toString()))
+        })
+      )
+    }
+    const publishProject = (id: string): void =>
+      applicationEvents.publish('project:created', {
+        id,
+        name: id,
+        description: '',
+        isExample: false,
+        createdAt: 1,
+        updatedAt: 1
+      })
+
+    const firstPrincipal = await bootstrapFor('principal-one')
+    publishProject('project-1')
+    const secondPrincipal = await bootstrapFor('principal-two')
+    publishProject('project-2')
+
+    server.closeExternalConnections('principal-one')
+    await bootstrapFor('principal-one')
+
+    await expect(
+      resumeFor('principal-one', firstPrincipal.eventStream.streamId, 0)
+    ).resolves.toMatchObject({ kind: 'resync-required', reason: 'cursor-expired' })
+    await expect(
+      resumeFor('principal-two', secondPrincipal.eventStream.streamId, 1)
+    ).resolves.toMatchObject({ kind: 'event', sequence: 2 })
+
+    server.closeExternalConnections()
+    publishProject('project-3')
+    await bootstrapFor('principal-two')
+
+    await expect(
+      resumeFor('principal-two', secondPrincipal.eventStream.streamId, 1)
+    ).resolves.toMatchObject({ kind: 'resync-required', reason: 'cursor-expired' })
+  })
+
   it('replays owned public Task events from the requested sequence', async () => {
     const server = await startTestWebHttpServer({
       host: '127.0.0.1',
@@ -1568,6 +1869,7 @@ describe('startWebHttpServer', () => {
         level: 'info',
         sessionId: 'task-session',
         kind: 'message',
+        role: 'assistant',
         text: 'Task output'
       }
     ])
@@ -1599,6 +1901,7 @@ describe('startWebHttpServer', () => {
           level: 'info',
           sessionId: 'task-session',
           kind: 'message',
+          role: 'assistant',
           text: 'Task output'
         }
       },
@@ -3218,6 +3521,70 @@ describe('startWebHttpServer', () => {
 
     expect([first.status, second.status]).toEqual([201, 201])
     expect(createProject).toHaveBeenCalledTimes(2)
+  })
+
+  it('applies idempotency capacity to the authorized principal across rotated clients', async () => {
+    const createProject = vi
+      .fn()
+      .mockImplementation(async (request: { name: string }) => ({ id: request.name }))
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      tasks: {
+        runWithCallerContext,
+        subscribeProgress: vi.fn(() => vi.fn()),
+        listProjects: vi.fn(),
+        createProject,
+        updateProject: vi.fn(),
+        listSessions: vi.fn(),
+        getSession: vi.fn(),
+        startRun: vi.fn(),
+        getRun: vi.fn(),
+        cancelRun: vi.fn(),
+        listArtifacts: vi.fn(),
+        acquireArtifact: vi.fn(),
+        releaseArtifact: vi.fn()
+      },
+      externalAccess: {
+        authorizeHttp: vi.fn(async (request: IncomingMessage) =>
+          accessOnlyExternalAccess(String(request.headers['x-test-principal']))
+        ),
+        authorizeWebSocket: vi.fn().mockResolvedValue(undefined)
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const create = (principal: string, client: string, index: number): Promise<Response> =>
+      fetch(`http://127.0.0.1:${server.port}/api/v1/projects`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'idempotency-key': `create-project-${index}`,
+          'x-open-science-client': client,
+          'x-test-principal': principal
+        },
+        body: JSON.stringify({ name: `${principal}-${index}` })
+      })
+
+    for (let index = 0; index < 128; index += 1) {
+      expect((await create('principal-a', `rotated-${index}`, index)).status).toBe(201)
+    }
+    const limited = await create('principal-a', 'rotated-128', 128)
+    const otherPrincipal = await create('principal-b', 'client-1', 1)
+
+    expect(limited.status).toBe(503)
+    expect(await limited.json()).toMatchObject({ error: { code: 'idempotency_unavailable' } })
+    expect(otherPrincipal.status).toBe(201)
   })
 
   it('serves the versioned task API without exposing internal RPC channels', async () => {

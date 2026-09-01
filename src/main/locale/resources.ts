@@ -3,6 +3,7 @@ import {
   createNamespacedResource,
   NATIVE_NAMESPACE
 } from '../../shared/i18n/core'
+import { common as deCommon, native as deNative } from '../../shared/i18n/locales/de.json'
 import { common as esCommon, native as esNative } from '../../shared/i18n/locales/es.json'
 import { common as frCommon, native as frNative } from '../../shared/i18n/locales/fr.json'
 import { common as jaCommon, native as jaNative } from '../../shared/i18n/locales/ja.json'
@@ -19,6 +20,10 @@ import {
 } from '../../shared/i18n/locales/zh-Hant.json'
 
 export const nativeResources = {
+  de: createNamespacedResource({
+    [COMMON_NAMESPACE]: deCommon,
+    [NATIVE_NAMESPACE]: deNative
+  }),
   es: createNamespacedResource({
     [COMMON_NAMESPACE]: esCommon,
     [NATIVE_NAMESPACE]: esNative
@@ -54,6 +59,7 @@ export const nativeResources = {
 } as const
 
 export const nativeCatalogs = {
+  de: deNative,
   es: esNative,
   fr: frNative,
   ja: jaNative,

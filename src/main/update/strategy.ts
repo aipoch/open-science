@@ -83,6 +83,29 @@ export const createDurableInstallGate =
 export const canStartUpdateDownload = (status: UpdateStatus): boolean =>
   status.state === 'available' || (status.state === 'error' && Boolean(status.latest))
 
+// Restores the release offer after a cancelled transfer. Build a fresh object so download-only
+// fields are absent from the returned/broadcast payload rather than retained with stale values (or
+// retained explicitly as undefined). totalBytes belongs to the offer itself and remains useful before
+// a retry starts.
+export const toAvailableUpdateStatus = ({
+  current,
+  latest,
+  notes,
+  localizedNotes,
+  download,
+  totalBytes,
+  applyKind
+}: UpdateStatus): UpdateStatus => ({
+  state: 'available',
+  current,
+  ...(latest === undefined ? {} : { latest }),
+  ...(notes === undefined ? {} : { notes }),
+  ...(localizedNotes === undefined ? {} : { localizedNotes }),
+  ...(download === undefined ? {} : { download }),
+  ...(totalBytes === undefined ? {} : { totalBytes }),
+  ...(applyKind === undefined ? {} : { applyKind })
+})
+
 // The platform-agnostic update contract the IPC layer and scheduler drive. Two implementations exist:
 // ElectronUpdaterStrategy (win/linux, and signed stable macOS — in-place download/restart) and
 // UpdateService (dev/nightly macOS + any other fallback — manifest download + manual reinstall). Both

@@ -191,32 +191,32 @@ export const windowsDefaultEnvPrefixReserve = (): number =>
 // <root>/pkgs — the shared micromamba package cache (offline seed target; $MAMBA_ROOT_PREFIX/pkgs).
 export const pkgsCache = (root: string): string => join(root, 'pkgs')
 
-// conda env layout differs by OS: Unix puts interpreters under <prefix>/bin, Windows puts python.exe
-// at the prefix root and console tools under <prefix>\Scripts. These helpers branch on the CURRENT
-// platform (read at call time), so darwin/linux are unchanged and Windows resolves the real files.
-const isWindows = (): boolean => process.platform === 'win32'
-
 // The Python interpreter inside an env prefix (Unix: <prefix>/bin/python; Windows: <prefix>\python.exe).
-export const pythonBin = (prefix: string): string =>
-  isWindows() ? join(prefix, 'python.exe') : join(prefix, 'bin', 'python')
+export const pythonBin = (prefix: string, platform: NodeJS.Platform = process.platform): string =>
+  platform === 'win32' ? join(prefix, 'python.exe') : join(prefix, 'bin', 'python')
 
 // The pip CLI inside an env prefix (Unix: <prefix>/bin/pip; Windows: <prefix>\Scripts\pip.exe).
-export const pipBin = (prefix: string): string =>
-  isWindows() ? join(prefix, 'Scripts', 'pip.exe') : join(prefix, 'bin', 'pip')
+export const pipBin = (prefix: string, platform: NodeJS.Platform = process.platform): string =>
+  platform === 'win32' ? join(prefix, 'Scripts', 'pip.exe') : join(prefix, 'bin', 'pip')
 
 // The R interpreter inside an env prefix. Windows conda-forge r-base installs R under
 // <prefix>\Lib\R\bin; the .exe suffix and that layout are the Windows convention (verify on a real
 // Windows build — the runtime is macOS-baselined today).
-export const rBin = (prefix: string): string =>
-  isWindows() ? join(prefix, 'Lib', 'R', 'bin', 'R.exe') : join(prefix, 'bin', 'R')
+export const rBin = (prefix: string, platform: NodeJS.Platform = process.platform): string =>
+  platform === 'win32' ? join(prefix, 'Lib', 'R', 'bin', 'R.exe') : join(prefix, 'bin', 'R')
 
 // The Rscript CLI inside an env prefix (see rBin for the Windows-layout caveat).
-export const rScriptBin = (prefix: string): string =>
-  isWindows() ? join(prefix, 'Lib', 'R', 'bin', 'Rscript.exe') : join(prefix, 'bin', 'Rscript')
+export const rScriptBin = (prefix: string, platform: NodeJS.Platform = process.platform): string =>
+  platform === 'win32'
+    ? join(prefix, 'Lib', 'R', 'bin', 'Rscript.exe')
+    : join(prefix, 'bin', 'Rscript')
 
 // The env's own R package library (Unix: <prefix>/lib/R/library; Windows: <prefix>\Lib\R\library).
-export const rLibraryDir = (prefix: string): string =>
-  isWindows() ? join(prefix, 'Lib', 'R', 'library') : join(prefix, 'lib', 'R', 'library')
+export const rLibraryDir = (
+  prefix: string,
+  platform: NodeJS.Platform = process.platform
+): string =>
+  platform === 'win32' ? join(prefix, 'Lib', 'R', 'library') : join(prefix, 'lib', 'R', 'library')
 
 // Conda activation prepends more than <prefix>\bin on Windows. Native R links BLAS/LAPACK and other
 // runtime DLLs from Library\bin, so starting R.exe with the host PATH alone fails with 0xC0000135.
@@ -487,28 +487,48 @@ export const clearRepairRequired = (root: string, runtimeId: string): void => {
 
 // Python gate: marker present, version >= expected, and default-python interpreter on disk. This is
 // the first-run / app-usable gate that onboarding and the upgrade gate read (spec §4).
-export const pythonReady = (root: string, expectedVersion: number): boolean => {
+export const pythonReady = (
+  root: string,
+  expectedVersion: number,
+  platform: NodeJS.Platform = process.platform
+): boolean => {
   const marker = readReadyMarker(root)
   if (!marker || marker.defaultEnvVersion < expectedVersion) return false
-  return isFile(pythonBin(envPrefix(root, DEFAULT_PY_ENV)))
+  return isFile(pythonBin(envPrefix(root, DEFAULT_PY_ENV, platform), platform))
 }
 
 // R gate: current-version marker plus the default-r interpreter. It remains lazy because no marker
 // exists until R is explicitly provisioned, but unlike a bin-only check it cannot strand an old R
 // baseline after DEFAULT_ENV_VERSION changes.
-export const rMaterialized = (root: string): boolean => isFile(rBin(envPrefix(root, DEFAULT_R_ENV)))
+export const rMaterialized = (
+  root: string,
+  platform: NodeJS.Platform = process.platform
+): boolean => isFile(rBin(envPrefix(root, DEFAULT_R_ENV, platform), platform))
 
-export const rReady = (root: string, expectedVersion: number = DEFAULT_ENV_VERSION): boolean => {
+export const rReady = (
+  root: string,
+  expectedVersion: number = DEFAULT_ENV_VERSION,
+  platform: NodeJS.Platform = process.platform
+): boolean => {
   const marker = readRReadyMarker(root)
-  return Boolean(marker && marker.defaultEnvVersion >= expectedVersion && rMaterialized(root))
+  return Boolean(
+    marker && marker.defaultEnvVersion >= expectedVersion && rMaterialized(root, platform)
+  )
 }
 
 // True when a rebuild must clear stale state first: not python-ready for the expected version AND
 // something is already on disk (marker present, or either default env prefix exists). Empty root
 // (first run) → false → plain provision. (Faithful port of globalenv.rs::needs_rebuild; the
 // additive-vs-rebuild decision itself lives in the provisioner's startup gate, Task 6.)
-export const needsRepair = (root: string, expectedVersion: number): boolean => {
-  if (pythonReady(root, expectedVersion)) return false
+export const needsRepair = (
+  root: string,
+  expectedVersion: number,
+  platform: NodeJS.Platform = process.platform
+): boolean => {
+  if (pythonReady(root, expectedVersion, platform)) return false
   if (readReadyMarker(root) !== undefined) return true
-  return existsSync(envPrefix(root, DEFAULT_PY_ENV)) || existsSync(envPrefix(root, DEFAULT_R_ENV))
+  return (
+    existsSync(envPrefix(root, DEFAULT_PY_ENV, platform)) ||
+    existsSync(envPrefix(root, DEFAULT_R_ENV, platform))
+  )
 }

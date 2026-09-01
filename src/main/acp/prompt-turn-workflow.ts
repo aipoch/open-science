@@ -457,9 +457,12 @@ class AcpPromptTurnWorkflow {
               skillFinalized = true
             }
           },
-          routeNotification: (notification) => {
-            if (turn.mode.kind !== 'application') env.routeNotification(notification, sessionId)
-          },
+          // Application turns are app-authored prompts, but their provider output is still the
+          // Session's authoritative assistant turn. Route it through the normal event projection so
+          // the response, tools, stop metadata, and durable transcript all settle. Dropping these
+          // notifications left Reviewer Corrections with only the [Auditor] prompt persisted, so the
+          // fix loop could never observe the completed correction and refused its scoped re-review.
+          routeNotification: (notification) => env.routeNotification(notification, sessionId),
           reportBestEffortFailure: (stage, error) =>
             log.warn('provider prompt observation failed', {
               sessionId,

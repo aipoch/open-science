@@ -2269,6 +2269,7 @@ describe('TaskRunner', () => {
             kind: 'artifact',
             level: 'info',
             sessionId: 'session-artifact',
+            runId: 'artifact-run',
             artifactClaimId: 'artifact-claim',
             artifacts: []
           })
@@ -2380,7 +2381,9 @@ describe('TaskRunner', () => {
             kind: 'artifact',
             level: 'info',
             sessionId: 'session-artifact-gate',
-            artifactClaimId: 'claim-finalize'
+            runId: 'generated-id',
+            artifactClaimId: 'claim-finalize',
+            artifacts: []
           })
         }
       },
@@ -2516,6 +2519,7 @@ describe('TaskRunner', () => {
             kind: 'artifact',
             level: 'info',
             sessionId: 'session-partial',
+            runId: 'partial-run',
             artifactClaimId: 'claim-1',
             artifacts: []
           })
@@ -2525,6 +2529,7 @@ describe('TaskRunner', () => {
             kind: 'artifact',
             level: 'info',
             sessionId: 'session-partial',
+            runId: 'partial-run',
             artifactClaimId: 'claim-2',
             artifacts: []
           })
@@ -2953,6 +2958,7 @@ describe('TaskRunner', () => {
             kind: 'artifact',
             level: 'info',
             sessionId: 'session-failure-before-cancel',
+            runId: 'failure-run',
             artifactClaimId: 'claim-failure-before-cancel',
             artifacts: []
           })
@@ -3046,6 +3052,7 @@ describe('TaskRunner', () => {
             kind: 'artifact',
             level: 'info',
             sessionId: 'session-cancel-artifact',
+            runId: 'artifact-run',
             artifactClaimId: 'claim-cancel-artifact',
             artifacts: []
           })

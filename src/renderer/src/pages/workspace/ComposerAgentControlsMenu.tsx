@@ -83,6 +83,7 @@ type ComposerAgentControlsMenuProps = {
   readOnly?: boolean
   // Memory may be reconfigured again after context replacement while transcript replay is pending.
   memoryReadOnly?: boolean
+  memoryDisabledReason?: string
   // Auto-review is a durable preference and does not depend on the provider transcript state.
   autoReviewReadOnly?: boolean
   // Permission mode remains independently editable during a running prompt.
@@ -161,6 +162,7 @@ const ComposerAgentControlsMenu = ({
   memoryEnabled = true,
   readOnly = false,
   memoryReadOnly = readOnly,
+  memoryDisabledReason,
   autoReviewReadOnly = readOnly,
   permissionProfileReadOnly = readOnly,
   grantActionsReadOnly = readOnly,
@@ -195,8 +197,11 @@ const ComposerAgentControlsMenu = ({
   const fullAccessUnavailable = profileState?.fullAccessAvailable === false
   // Ask grants stay visible across profile switches so changing Auto/Full never appears to lose them.
   const hasGrants = (grants?.length ?? 0) > 0
-  // Anything other than the defaults (ask + auto-review off) gets a dot on the trigger.
-  const isNonDefault = profile !== DEFAULT_PERMISSION_PROFILE || autoReviewEnabled || !memoryEnabled
+  // A globally unavailable Memory capability is not a per-conversation customization.
+  const isNonDefault =
+    profile !== DEFAULT_PERMISSION_PROFILE ||
+    autoReviewEnabled ||
+    (!memoryEnabled && !memoryDisabledReason)
 
   useEffect(() => {
     if (openRequest === undefined || openRequest === previousOpenRequest.current) return
@@ -518,7 +523,8 @@ const ComposerAgentControlsMenu = ({
                 <span className="min-w-0 flex-1">
                   <span className="block text-[13px] font-medium leading-5">{t('Memory')}</span>
                   <span className="block text-[11px] leading-4 text-text-300">
-                    {t('Let the agent recall and save memory in this conversation.')}
+                    {memoryDisabledReason ??
+                      t('Let the agent recall and save memory in this conversation.')}
                   </span>
                 </span>
                 <Switch

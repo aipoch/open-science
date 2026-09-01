@@ -6,6 +6,18 @@ import { describe, expect, it } from 'vitest'
 const mainSource = readFileSync(resolve(__dirname, 'index.ts'), 'utf8')
 
 describe('main startup ordering', () => {
+  it('installs power-monitor listeners before loading startup shell modules', () => {
+    const electronReady = mainSource.indexOf('await app.whenReady()')
+    const installPowerMonitor = mainSource.indexOf('installPowerMonitorListeners()')
+    const loadStartupModules = mainSource.indexOf(
+      "startupDiagnostics?.phase('load-startup-shell-modules')"
+    )
+
+    expect(electronReady).toBeGreaterThan(-1)
+    expect(installPowerMonitor).toBeGreaterThan(electronReady)
+    expect(loadStartupModules).toBeGreaterThan(installPowerMonitor)
+  })
+
   it('registers the managed-preview protocol bridge before creating the first window', () => {
     const registerBridge = mainSource.indexOf(
       'const managedPreviewProtocolBridge = createManagedPreviewProtocolBridge(protocol)'
@@ -35,5 +47,10 @@ describe('main startup ordering', () => {
     expect(createFirstWindow).toBeGreaterThan(bindTranslator)
     expect(createCloseConfirm).toBeGreaterThan(bindTranslator)
     expect(closeConfirmTranslation).toBeGreaterThan(createCloseConfirm)
+  })
+
+  it('routes native close-preference writes through the settings commit owner', () => {
+    expect(mainSource).toContain('await commitClosePreference(preference)')
+    expect(mainSource).not.toContain('await settingsService.setClosePreference(preference)')
   })
 })

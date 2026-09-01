@@ -44,6 +44,12 @@ import {
 
 type WorkspaceSidebarProps = {
   projectName: string
+  otherProjects?: ReadonlyArray<{
+    id: string
+    name: string
+    description: string
+  }>
+  onOpenProject?: (projectId: string) => void
   starNudgeKey?: string
   sessions: ChatSession[]
   credentialPendingSessionIds?: ReadonlySet<string>
@@ -96,6 +102,9 @@ type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
   showSessionShortcuts?: boolean
   openSessionActionsId?: string | null
   onSessionActionsOpenChange?: (sessionId: string, open: boolean) => void
+  showAllProjects?: boolean
+  onShowAllProjectsChange?: (showAllProjects: boolean) => void
+  onProjectMenuOpenChange?: (open: boolean) => void
 }
 
 // Maps each session status to the left-side indicator dot using emitted theme colors.
@@ -119,6 +128,7 @@ const sessionStatusLabelKeys = {
 
 const ACTIVE_SESSION_GRACE_MS = 15 * 60_000
 const EMPTY_CREDENTIAL_SESSION_IDS = new Set<string>()
+const INITIAL_PROJECT_MENU_LIMIT = 5
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
@@ -231,6 +241,8 @@ const sessionMenuIconClassName = 'flex size-4 shrink-0 items-center justify-cent
 // Left navigation owns session selection, creation entry, and workspace settings.
 const WorkspaceSidebarView = ({
   projectName,
+  otherProjects = [],
+  onOpenProject,
   starNudgeKey,
   sessions,
   credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
@@ -267,7 +279,10 @@ const WorkspaceSidebarView = ({
   now,
   showSessionShortcuts = false,
   openSessionActionsId = null,
-  onSessionActionsOpenChange
+  onSessionActionsOpenChange,
+  showAllProjects = false,
+  onShowAllProjectsChange,
+  onProjectMenuOpenChange
 }: WorkspaceSidebarViewProps): React.JSX.Element => {
   const { t } = useTranslation()
   const sections = getSessionSections(sessions, now, credentialPendingSessionIds)
@@ -281,6 +296,10 @@ const WorkspaceSidebarView = ({
   const activeStarNudgeKey = (mobileMode ? isMobileOpen : sidebarToggle?.state !== 'collapsed')
     ? starNudgeKey
     : undefined
+  const visibleOtherProjects = showAllProjects
+    ? otherProjects
+    : otherProjects.slice(0, INITIAL_PROJECT_MENU_LIMIT)
+  const remainingProjectCount = Math.max(0, otherProjects.length - INITIAL_PROJECT_MENU_LIMIT)
 
   return (
     <aside
@@ -310,7 +329,7 @@ const WorkspaceSidebarView = ({
             >
               <ChevronLeft className="size-4" strokeWidth={2} aria-hidden="true" />
             </button>
-            <DropdownMenu>
+            <DropdownMenu onOpenChange={onProjectMenuOpenChange}>
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
@@ -331,10 +350,14 @@ const WorkspaceSidebarView = ({
               {/* Project action menu: mirrors the session row menu chrome below. */}
               <DropdownMenuContent
                 aria-label={t('Project actions')}
-                className={cn('min-w-[11rem]', mobileMode && 'z-[80]')}
+                className={cn(
+                  'max-h-[var(--radix-dropdown-menu-content-available-height)] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto',
+                  mobileMode && 'z-[80]'
+                )}
                 side="bottom"
                 align="start"
                 sideOffset={6}
+                collisionPadding={8}
               >
                 <DropdownMenuItem className="gap-2" onSelect={() => onOpenProjectSettings()}>
                   <span className={sessionMenuIconClassName}>
@@ -353,6 +376,57 @@ const WorkspaceSidebarView = ({
                   {t('Download artifacts…')}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
+                {visibleOtherProjects.map((project) => {
+                  const description = project.description.trim()
+
+                  return (
+                    <DropdownMenuItem
+                      key={project.id}
+                      data-project-id={project.id}
+                      className="items-start py-2"
+                      disabled={!onOpenProject}
+                      onSelect={() => onOpenProject?.(project.id)}
+                    >
+                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <span className="truncate font-medium" title={project.name}>
+                          {project.name}
+                        </span>
+                        {description ? (
+                          <span className="line-clamp-2 break-words text-xs leading-4 text-muted-foreground">
+                            {description}
+                          </span>
+                        ) : null}
+                      </span>
+                    </DropdownMenuItem>
+                  )
+                })}
+                {!showAllProjects && remainingProjectCount > 0 ? (
+                  <DropdownMenuItem
+                    asChild
+                    onSelect={(event) => {
+                      event.preventDefault()
+                      onShowAllProjectsChange?.(true)
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="min-h-0! w-fit! gap-1 rounded-sm! bg-transparent! px-2 py-1 text-[11px]! text-muted-foreground! hover:bg-transparent! focus:bg-transparent! focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[highlighted]:bg-transparent! data-[highlighted]:text-foreground!"
+                    >
+                      <ChevronDown
+                        className="size-3.5 shrink-0"
+                        strokeWidth={2}
+                        aria-hidden="true"
+                      />
+                      <span>
+                        {t('Show remaining {{count}} projects', {
+                          count: remainingProjectCount,
+                          defaultValue_one: 'Show remaining {{count}} project'
+                        })}
+                      </span>
+                    </button>
+                  </DropdownMenuItem>
+                ) : null}
+                {otherProjects.length > 0 ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuItem className="gap-2" onSelect={() => onNewProject()}>
                   <span className={sessionMenuIconClassName}>
                     <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
@@ -743,6 +817,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   const [now, setNow] = useState(Date.now)
   const [showSessionShortcuts, setShowSessionShortcuts] = useState(false)
   const [openSessionActionsId, setOpenSessionActionsId] = useState<string | null>(null)
+  const [showAllProjects, setShowAllProjects] = useState(false)
   const nextSectionRefreshAt = getNextSessionSectionRefreshAt(sessions, now)
   const isMac = window.api?.platform === 'darwin'
 
@@ -817,6 +892,11 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
         setOpenSessionActionsId((current) =>
           open ? sessionId : current === sessionId ? null : current
         )
+      }}
+      showAllProjects={showAllProjects}
+      onShowAllProjectsChange={setShowAllProjects}
+      onProjectMenuOpenChange={(open) => {
+        if (!open) setShowAllProjects(false)
       }}
     />
   )

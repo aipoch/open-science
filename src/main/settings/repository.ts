@@ -10,12 +10,18 @@ import type {
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
   claudeIsolatedProviderIdentity,
   isClaudeSubscriptionProvider,
-  isClaudeSubscriptionProviderId
+  isClaudeSubscriptionProviderId,
+  isCodexSubscriptionProvider
 } from '../../shared/settings'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { PackageMirror } from '../../shared/mirror'
+import {
+  normalizeNotebookNetworkSettings,
+  type NotebookNetworkSettings
+} from '../../shared/notebook-network'
 import {
   networkProxyValidationMessage,
   normalizeNetworkProxySettings,
@@ -78,8 +84,20 @@ class SettingsRepository {
       if (existingId && !settings.providers.some(({ id }) => id === existingId))
         throw new Error('Provider no longer exists.')
       const providers = [...settings.providers]
-      if (index >= 0) providers[index] = provider
-      else providers.push(provider)
+      if (index >= 0) {
+        const existing = providers[index]
+        // Full-provider saves can be based on a snapshot read before the runtime learned its Auto
+        // fallback. Keep that main-owned state across Auto-to-Auto replacement; explicit transport
+        // changes still clear it because either side of this guard is no longer Auto.
+        providers[index] =
+          isCodexSubscriptionProvider(existing.type) &&
+          isCodexSubscriptionProvider(provider.type) &&
+          (existing.codexTransport ?? 'auto') === 'auto' &&
+          (provider.codexTransport ?? 'auto') === 'auto' &&
+          existing.codexAutoUseHttps === true
+            ? { ...provider, codexAutoUseHttps: true }
+            : provider
+      } else providers.push(provider)
       return {
         ...settings,
         providers,
@@ -120,6 +138,73 @@ class SettingsRepository {
       return { ...settings, providers }
     })
 
+    return applied
+  }
+
+  async clearCodexIsolatedValidationIfExists(): Promise<boolean> {
+    let applied = false
+
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex(
+        (provider) => provider.id === CODEX_SUBSCRIPTION_PROVIDER_ID
+      )
+      const current = settings.providers[index]
+      if (current?.type !== 'codex-isolated' || current.codexAuthMode !== 'isolated') {
+        return settings
+      }
+
+      const provider = { ...current }
+      delete provider.lastValidatedAt
+      delete provider.lastValidationFailure
+      const providers = [...settings.providers]
+      providers[index] = provider
+      applied = true
+      return { ...settings, providers }
+    })
+
+    return applied
+  }
+
+  async updateCodexIsolatedValidationIfIdentityMatches(
+    expectedProvider: Pick<StoredProvider, 'id' | 'type' | 'codexAuthMode'>,
+    patch: Pick<StoredProvider, 'lastValidatedAt' | 'lastValidationFailure'>
+  ): Promise<boolean> {
+    let applied = false
+
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex((provider) => provider.id === expectedProvider.id)
+      const current = settings.providers[index]
+      if (
+        current?.type !== expectedProvider.type ||
+        current.codexAuthMode !== expectedProvider.codexAuthMode
+      ) {
+        return settings
+      }
+
+      const providers = [...settings.providers]
+      providers[index] = { ...current, ...patch }
+      applied = true
+      return { ...settings, providers }
+    })
+
+    return applied
+  }
+
+  async rememberCodexAutoHttpsFallback(): Promise<boolean> {
+    let applied = false
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex(
+        (provider) =>
+          isCodexSubscriptionProvider(provider.type) &&
+          (provider.codexTransport ?? 'auto') === 'auto' &&
+          provider.codexAutoUseHttps !== true
+      )
+      if (index < 0) return settings
+      const providers = [...settings.providers]
+      providers[index] = { ...providers[index], codexAutoUseHttps: true }
+      applied = true
+      return { ...settings, providers }
+    })
     return applied
   }
 
@@ -316,6 +401,11 @@ class SettingsRepository {
       delete next.networkProxy
       return next
     })
+  }
+
+  async setNotebookNetwork(value: NotebookNetworkSettings): Promise<StoredSettings> {
+    const notebookNetwork = normalizeNotebookNetworkSettings(value)
+    return this.mutate((settings) => ({ ...settings, notebookNetwork }))
   }
 
   async setAgentFramework(id: AgentFrameworkId): Promise<StoredSettings> {
@@ -669,6 +759,15 @@ class SettingsRepository {
     return this.mutateConnectors((connectors) => {
       connectors.customMcpServers = (connectors.customMcpServers ?? []).map((s) =>
         s.id === id ? { ...s, enabled } : s
+      )
+    })
+  }
+
+  async setCustomServersEnabled(ids: readonly string[], enabled: boolean): Promise<StoredSettings> {
+    const selected = new Set(ids)
+    return this.mutateConnectors((connectors) => {
+      connectors.customMcpServers = (connectors.customMcpServers ?? []).map((server) =>
+        selected.has(server.id) ? { ...server, enabled } : server
       )
     })
   }

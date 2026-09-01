@@ -111,7 +111,6 @@ type RuntimeSetupSliceOptions<Store extends RuntimeSetupHost> = {
     snapshot: SettingsSnapshot,
     runtimePatch?: Partial<EnvironmentReconcilePatch>
   ) => void
-  reconcileClaudeDetection: (result: ClaudeDetectResult, npmAvailable: boolean) => void
 }
 
 const createInitialRuntimeInstallState = (): RuntimeInstallState => ({
@@ -308,8 +307,7 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
   set,
   get,
   getCommands,
-  reconcileSnapshot,
-  reconcileClaudeDetection
+  reconcileSnapshot
 }: RuntimeSetupSliceOptions<Store>): RuntimeSetupSlice => ({
   ...createInitialRuntimeSetupState(),
 
@@ -388,8 +386,9 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
         commands.isNpmAvailable()
       ])
 
-      // Core retains the stable Claude projection; a not-found result intentionally leaves it intact.
-      reconcileClaudeDetection(result, npmAvailable)
+      // The result is informational. Reconcile from Main's revisioned current snapshot so a slow
+      // probe cannot replace a newer install/uninstall or another window's write.
+      reconcileSnapshot(await commands.getSettings(), { npmAvailable })
       await get().refreshPreflight()
       return result
     } finally {

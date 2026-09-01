@@ -305,7 +305,7 @@ describe('PR Gate workflow', () => {
     expect(manifest.laneOrder).toContain('i18n')
   })
 
-  it('shards only full macOS Module tests and merges coverage into the stable unit bundle', () => {
+  it('shards full portable tests on Ubuntu and merges coverage into the stable unit bundle', () => {
     const unit = workflow.jobs.unit
     const shards = workflow.jobs.unit_shard
     const checkout = unit.steps?.find(({ name }) => name === 'Checkout')
@@ -313,6 +313,10 @@ describe('PR Gate workflow', () => {
     const download = unit.steps?.find(({ name }) => name === 'Download full-suite blob reports')
     const merge = unit.steps?.find(({ name }) => name === 'Merge full-suite reports and coverage')
     const coverageUpload = unit.steps?.find(({ name }) => name === 'Upload Module coverage report')
+    const install = unit.steps?.find(({ name }) => name === 'Install dependencies')
+    const installMerge = unit.steps?.find(
+      ({ name }) => name === 'Install report merge dependencies'
+    )
     const shardRun = shards.steps?.find(({ name }) => name === 'Test complete suite shard')
     const shardUpload = shards.steps?.find(({ name }) => name === 'Upload full-suite blob report')
 
@@ -349,13 +353,13 @@ describe('PR Gate workflow', () => {
     expect(unit.if).toContain('always()')
     expect(unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
     expect(shards).toMatchObject({
-      env: { VITEST_DEFER_COVERAGE_THRESHOLDS: '1' },
-      name: 'Full Module tests (macOS, shard ${{ matrix.shard }}/2)',
+      env: { VITEST_DEFER_COVERAGE_THRESHOLDS: '1', VITEST_PORTABLE_CI: '1' },
+      name: 'Full portable tests (Ubuntu, shard ${{ matrix.shard }}/3)',
       needs: 'preflight',
-      'runs-on': 'macos-14',
+      'runs-on': 'ubuntu-latest',
       strategy: {
         'fail-fast': false,
-        matrix: { shard: [1, 2] }
+        matrix: { shard: [1, 2, 3] }
       }
     })
     expect(shards.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'full'")
@@ -364,12 +368,20 @@ describe('PR Gate workflow', () => {
     )
     expect(shardRun).toMatchObject({
       'continue-on-error': true,
-      run: 'npx vitest run --coverage --coverage.reporter=text-summary --shard=${{ matrix.shard }}/2 --reporter=blob --outputFile=vitest-reports/blob-${{ matrix.shard }}.json'
+      run: [
+        'npx vitest run',
+        '--coverage',
+        '--coverage.reporter=text-summary',
+        '--testTimeout=30000',
+        '--shard=${{ matrix.shard }}/3',
+        '--reporter=blob',
+        '--outputFile=vitest-reports/blob-${{ matrix.shard }}.json'
+      ].join(' ')
     })
     expect(shardUpload).toMatchObject({
       if: '${{ always() }}',
       with: {
-        name: 'unit-macos-blob-${{ matrix.shard }}',
+        name: 'unit-portable-blob-${{ matrix.shard }}',
         path: 'vitest-reports/',
         'retention-days': 1,
         'if-no-files-found': 'error'
@@ -387,10 +399,18 @@ describe('PR Gate workflow', () => {
     })
     expect(related?.run).not.toMatch(/(?:^|\s)--changed(?:\s|$)/)
     expect(related?.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'selective'")
+    expect(install).toMatchObject({
+      if: "${{ needs.unit_shard.result == 'skipped' }}",
+      run: 'node scripts/ci/npm-ci.mjs'
+    })
+    expect(installMerge).toMatchObject({
+      if: "${{ needs.unit_shard.result != 'skipped' }}",
+      run: 'node scripts/ci/npm-ci.mjs --ignore-scripts --prefer-offline --no-audit --fund=false'
+    })
     expect(download).toMatchObject({
       if: "${{ needs.unit_shard.result != 'skipped' }}",
       with: {
-        pattern: 'unit-macos-blob-*',
+        pattern: 'unit-portable-blob-*',
         path: 'vitest-reports',
         'merge-multiple': true
       }
@@ -416,12 +436,17 @@ describe('PR Gate workflow', () => {
   })
 
   it('shares dependency installation and Electron builds inside platform bundles', () => {
-    for (const bundle of ['static', 'unit', 'unit_shard', 'windows_core', 'macos_e2e']) {
+    for (const bundle of ['static', 'unit_shard', 'windows_core', 'macos_e2e']) {
       expect(
         workflow.jobs[bundle].steps?.filter(({ run }) => run === 'node scripts/ci/npm-ci.mjs'),
         `${bundle} must install dependencies exactly once`
       ).toHaveLength(1)
     }
+    expect(
+      workflow.jobs.unit.steps?.filter(({ name }) =>
+        ['Install dependencies', 'Install report merge dependencies'].includes(name ?? '')
+      )
+    ).toHaveLength(2)
     expect(
       workflow.jobs.windows_e2e.steps?.filter(({ name }) => name === 'Install dependencies')
     ).toEqual([
@@ -445,8 +470,8 @@ describe('PR Gate workflow', () => {
     expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
     expect(windowsRuns).toEqual(
       expect.arrayContaining([
-        'npm run test:e2e:journey -- --workers=2 --fail-on-flaky-tests',
-        'npm run test:e2e:workspace -- --workers=2 --fail-on-flaky-tests',
+        'npm run test:e2e:journey -- --workers=2 --fully-parallel --fail-on-flaky-tests',
+        'npm run test:e2e:workspace -- --workers=2 --fully-parallel --fail-on-flaky-tests',
         'npm run test:e2e:accessibility -- --fail-on-flaky-tests'
       ])
     )
@@ -454,6 +479,22 @@ describe('PR Gate workflow', () => {
 
   it('budgets the complete Windows E2E path beyond dependency and build setup', () => {
     expect(workflow.jobs.windows_e2e['timeout-minutes']).toBe(25)
+  })
+
+  it('rebuilds the Windows sandbox host before the native lifecycle smoke', () => {
+    const steps = workflow.jobs.windows_core.steps ?? []
+    const rustTest = steps.find(({ name }) => name === 'Test Windows sandbox native source')
+    const build = steps.find(({ name }) => name === 'Build Windows sandbox native host')
+    const smoke = steps.find(
+      ({ name }) => name === 'Test Windows AppContainer ownership and removal lifecycle'
+    )
+
+    expect(rustTest?.run).toBe(
+      'cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml'
+    )
+    expect(build?.run).toBe('node packages/notebook-network-sandbox/vendor/windows/build.mjs x64')
+    expect(steps.indexOf(rustTest!)).toBeLessThan(steps.indexOf(build!))
+    expect(steps.indexOf(build!)).toBeLessThan(steps.indexOf(smoke!))
   })
 
   it('runs Windows accessibility only for a legacy selected lane', () => {
@@ -504,6 +545,34 @@ describe('PR Gate workflow', () => {
 
     expect(macosStep?.run).toBe('npm run test:e2e:accessibility:signal')
     expect(windowsStep?.run).toBe('npm run test:e2e:accessibility -- --fail-on-flaky-tests')
+  })
+
+  it('retains focused real-Darwin coverage in full plans without another macOS job', () => {
+    const native = workflow.jobs.macos_e2e.steps?.find(({ id }) => id === 'unit_macos_native')
+    const enforce = workflow.jobs.macos_e2e.steps?.find(
+      ({ name }) => name === 'Enforce selected macOS checks'
+    )
+
+    expect(native).toMatchObject({
+      'continue-on-error': true,
+      if: "${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' }}"
+    })
+    for (const testFile of [
+      'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
+      'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts',
+      'src/main/net/network-info.test.ts',
+      'src/main/notebook/kernel-executor.test.ts',
+      'src/main/notebook/managed-runtime-guard.test.ts'
+    ]) {
+      expect(native?.run).toContain(testFile)
+    }
+    expect(native?.run).toContain(
+      "-t 'executes the repl loop through the production network sandbox'"
+    )
+    expect(enforce?.env).toMatchObject({
+      UNIT_MACOS_NATIVE_OUTCOME: '${{ steps.unit_macos_native.outcome }}'
+    })
+    expect(enforce?.run).toContain('check unit_macos_native "$UNIT_MACOS_NATIVE_OUTCOME"')
   })
 
   it('collects independent bundle failures before failing the shared runner', () => {
@@ -564,9 +633,29 @@ describe('PR Gate workflow', () => {
       run: 'npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests'
     })
 
+    expect(workflow.jobs.linux_runtime).toMatchObject({
+      'runs-on': 'ubuntu-latest',
+      'timeout-minutes': 10
+    })
+    expect(workflow.jobs.linux_runtime.if).toBe(
+      "${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') }}"
+    )
+    const linuxDependencies = workflow.jobs.linux_runtime.steps?.find(
+      ({ name }) => name === 'Install Linux sandbox dependency'
+    )
+    expect(linuxDependencies?.run).toContain('apparmor-profiles')
+    expect(linuxDependencies?.run).toContain('bwrap-userns-restrict')
+    expect(linuxDependencies?.run).toContain('bwrap --unshare-all')
+    expect(linuxDependencies?.run).not.toContain('apparmor_restrict_unprivileged_userns=0')
+    expect(
+      workflow.jobs.linux_runtime.steps?.find(
+        ({ name }) => name === 'Test real Linux filesystem and network isolation'
+      )?.run
+    ).toContain('filesystem-enforcement.integration.test.ts')
+
     expect(workflow.jobs.windows_core).toMatchObject({
       'runs-on': 'windows-latest',
-      'timeout-minutes': 12
+      'timeout-minutes': 15
     })
     const runtime = workflow.jobs.windows_core.steps?.find(
       ({ name }) => name === 'Test Windows-specific behavior'

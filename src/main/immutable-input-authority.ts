@@ -1,17 +1,22 @@
-import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { realpath, stat } from 'node:fs/promises'
-import { isAbsolute, resolve, sep } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { constants, createReadStream } from 'node:fs'
+import { chmod, copyFile, mkdir, realpath, rename, rm, stat } from 'node:fs/promises'
+import { isAbsolute, join, resolve, sep } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
 
 import type { NotebookRunInputFile } from '../shared/notebook'
+import { getNotebookInputRoot } from './notebook/input-staging'
 
 type ResolveImmutableInputVersionRequest = {
   projectId: string
   sourceKind: NotebookRunInputFile['sourceKind']
   inputFileVersionId: string
   expectedSourceFileId?: string
+}
+
+type StageImmutableInputVersionRequest = ResolveImmutableInputVersionRequest & {
+  targetSessionId: string
 }
 
 type ImmutableInputAuthorityOptions = {
@@ -45,6 +50,7 @@ const matchesVersionIdentity = (
 
 class ImmutableInputAuthority {
   private readonly verifiedContent = new Map<string, VerifiedContent>()
+  private readonly staging = new Map<string, Promise<string>>()
 
   constructor(private readonly options: ImmutableInputAuthorityOptions) {}
 
@@ -108,29 +114,111 @@ class ImmutableInputAuthority {
       throw new Error('Notebook input content escapes managed storage.')
     }
 
-    const file = await stat(resolvedPath)
+    await this.verifyContent(resolvedPath, input)
+    return resolvedPath
+  }
+
+  async stageVersion(request: StageImmutableInputVersionRequest): Promise<string> {
+    const input = await this.loadVersion(request)
+    if (!input) {
+      const label = request.sourceKind === 'upload-version' ? 'Upload' : 'Artifact'
+      throw new Error(
+        `${label} Version is unavailable in this Project: ${request.inputFileVersionId}`
+      )
+    }
+    return this.stageContent(input, request.targetSessionId)
+  }
+
+  async stageContent(input: NotebookRunInputFile, targetSessionId: string): Promise<string> {
+    const inputRoot = getNotebookInputRoot(
+      this.options.storageRoot,
+      input.sourceProjectId,
+      targetSessionId
+    )
+    const versionKey = createHash('sha256')
+      .update(`${input.sourceKind}\0${input.inputFileVersionId}`)
+      .digest('hex')
+    const targetDirectory = join(inputRoot, input.sourceKind, versionKey)
+    const target = join(targetDirectory, 'content')
+    const active = this.staging.get(target)
+    if (active) return active
+
+    const operation = this.stageContentExclusive(input, inputRoot, versionKey)
+    this.staging.set(target, operation)
+    return operation.finally(() => {
+      if (this.staging.get(target) === operation) this.staging.delete(target)
+    })
+  }
+
+  private async stageContentExclusive(
+    input: NotebookRunInputFile,
+    inputRoot: string,
+    versionKey: string
+  ): Promise<string> {
+    const source = await this.resolveContent(input)
+    await mkdir(inputRoot, { recursive: true })
+    const resolvedRoot = await realpath(inputRoot)
+    const kindDirectory = join(resolvedRoot, input.sourceKind)
+    await mkdir(kindDirectory, { recursive: true })
+    const resolvedKindDirectory = await realpath(kindDirectory)
+    this.assertInside(resolvedRoot, resolvedKindDirectory)
+    const targetDirectory = join(resolvedKindDirectory, versionKey)
+    await mkdir(targetDirectory, { recursive: true })
+    const resolvedTargetDirectory = await realpath(targetDirectory)
+    this.assertInside(resolvedKindDirectory, resolvedTargetDirectory)
+    const target = join(resolvedTargetDirectory, 'content')
+    try {
+      await this.verifyContent(target, input)
+      return target
+    } catch {
+      // A missing or corrupt derived copy is safe to replace from the verified Version authority.
+    }
+
+    const temporary = join(resolvedTargetDirectory, `.content-${randomUUID()}.tmp`)
+    try {
+      await copyFile(source, temporary, constants.COPYFILE_EXCL)
+      await this.verifyContent(temporary, input)
+      if (process.platform !== 'win32') await chmod(temporary, 0o444)
+      await rm(target, { force: true })
+      await rename(temporary, target)
+      this.verifiedContent.delete(target)
+      await this.verifyContent(target, input)
+      return target
+    } finally {
+      await rm(temporary, { force: true }).catch(() => undefined)
+    }
+  }
+
+  private assertInside(parent: string, child: string): void {
+    const relativePath = child.slice(parent.length)
+    if (child === parent || !relativePath.startsWith(sep)) {
+      throw new Error('Notebook input staging path escapes its Session root.')
+    }
+  }
+
+  private async verifyContent(path: string, input: NotebookRunInputFile): Promise<void> {
+    const file = await stat(path)
     if (!file.isFile() || file.size !== input.sizeBytes) {
       throw new Error(
         'Notebook input content is missing or no longer matches its immutable metadata.'
       )
     }
     const fingerprint = fileFingerprint(file)
-    const cached = this.verifiedContent.get(input.storageKey)
+    const cached = this.verifiedContent.get(path)
     if (cached?.fingerprint === fingerprint && cached.checksum === input.checksum) {
-      return resolvedPath
+      return
     }
 
     const hash = createHash('sha256')
-    for await (const chunk of createReadStream(resolvedPath)) hash.update(chunk)
+    for await (const chunk of createReadStream(path)) hash.update(chunk)
     if (hash.digest('hex') !== input.checksum) {
       throw new Error('Notebook input content checksum does not match its immutable metadata.')
     }
-    const afterRead = await stat(resolvedPath)
+    const afterRead = await stat(path)
     if (fileFingerprint(afterRead) !== fingerprint) {
       throw new Error('Notebook input content changed while its checksum was being validated.')
     }
-    this.verifiedContent.set(input.storageKey, { fingerprint, checksum: input.checksum })
-    return resolvedPath
+    this.verifiedContent.set(path, { fingerprint, checksum: input.checksum })
   }
 
   private async loadVersion(
@@ -205,5 +293,6 @@ export { ImmutableInputAuthority }
 export type {
   ImmutableInputAuthorityOptions,
   ImmutableInputVersionValidation,
-  ResolveImmutableInputVersionRequest
+  ResolveImmutableInputVersionRequest,
+  StageImmutableInputVersionRequest
 }

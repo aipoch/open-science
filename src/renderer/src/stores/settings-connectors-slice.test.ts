@@ -7,7 +7,8 @@ import type {
   ConnectorDetailView,
   ConnectorView,
   ConnectorsSnapshot,
-  CustomServerView
+  CustomServerView,
+  DeviceCredentialView
 } from '../../../shared/settings'
 import {
   createInitialSettingsConnectorsState,
@@ -58,8 +59,30 @@ const detail: ConnectorDetailView = {
   tools: []
 }
 
+const deviceCredential = (id: string, displayName = id): DeviceCredentialView => ({
+  id,
+  displayName,
+  kind: 'token',
+  status: 'stored',
+  needsSecret: false,
+  consumerCount: 0,
+  consumerNames: [],
+  createdAt: 1,
+  updatedAt: 1
+})
+
 const createCommands = (): ConnectorCommands => ({
   listConnectors: vi.fn(async () => snapshot()),
+  listDeviceCredentials: vi.fn(async () => ({ credentials: [] })),
+  createDeviceCredential: vi.fn(async () => ({
+    credentials: [deviceCredential('created')],
+    createdCredential: deviceCredential('created')
+  })),
+  updateDeviceCredential: vi.fn(async () => ({ credentials: [] })),
+  removeDeviceCredential: vi.fn(async () => ({ credentials: [] })),
+  authenticateDeviceCredential: vi.fn(async () => ({ credentials: [] })),
+  cancelDeviceCredentialAuthentication: vi.fn(async () => undefined),
+  disconnectDeviceCredential: vi.fn(async () => ({ credentials: [] })),
   setConnectorEnabled: vi.fn(async () => snapshot()),
   setConnectorAutoAllow: vi.fn(async () => snapshot()),
   setToolPermission: vi.fn(async () => detail),
@@ -100,6 +123,31 @@ describe('settings Connectors slice', () => {
 
   beforeEach(() => {
     ;({ store, commands } = createHarness(createCommands()))
+  })
+
+  it('loads and replaces the device credential projection after mutations', async () => {
+    const credential = deviceCredential('credential-1', 'Lab token')
+    vi.mocked(commands.listDeviceCredentials).mockResolvedValue({ credentials: [credential] })
+    const concurrentCredential = deviceCredential('credential-2', 'New token')
+    const newCredential = deviceCredential('credential-3', 'New token')
+    vi.mocked(commands.createDeviceCredential).mockResolvedValue({
+      credentials: [credential, concurrentCredential, newCredential],
+      createdCredential: newCredential
+    })
+
+    await store.getState().loadDeviceCredentials()
+    expect(store.getState().deviceCredentials).toEqual([credential])
+
+    const created = await store
+      .getState()
+      .createDeviceCredential({ displayName: 'New token', kind: 'token', secret: 'secret' })
+    expect(commands.createDeviceCredential).toHaveBeenCalledWith({
+      displayName: 'New token',
+      kind: 'token',
+      secret: 'secret'
+    })
+    expect(store.getState().deviceCredentials).toContainEqual(newCredential)
+    expect(created).toEqual(newCredential)
   })
 
   it('loads the authoritative Connector, custom-server, and NCBI projection', async () => {
@@ -563,6 +611,59 @@ describe('settings Connectors slice', () => {
     expect(store.getState().customServers).toEqual([])
   })
 
+  it('refreshes loaded credential consumers after custom-server mutations', async () => {
+    const credential = {
+      id: 'credential-1',
+      displayName: 'Lab token',
+      kind: 'token' as const,
+      status: 'stored' as const,
+      needsSecret: false,
+      consumerCount: 0,
+      consumerNames: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const created = server('created')
+    vi.mocked(commands.addCustomServer).mockResolvedValue(snapshot([], [created]))
+    vi.mocked(commands.updateCustomServer).mockResolvedValue(snapshot([], [created]))
+    vi.mocked(commands.removeCustomServer).mockResolvedValue(snapshot())
+    vi.mocked(commands.listDeviceCredentials)
+      .mockResolvedValueOnce({
+        credentials: [{ ...credential, consumerCount: 1, consumerNames: ['created'] }]
+      })
+      .mockResolvedValueOnce({
+        credentials: [{ ...credential, consumerCount: 1, consumerNames: ['Renamed'] }]
+      })
+      .mockResolvedValueOnce({ credentials: [credential] })
+    store.setState({ deviceCredentials: [credential], deviceCredentialsLoaded: true })
+
+    await store.getState().addCustomServer({
+      name: 'created',
+      displayName: 'Created',
+      transport: 'stdio',
+      command: 'npx'
+    })
+    expect(store.getState().deviceCredentials[0]).toMatchObject({
+      consumerCount: 1,
+      consumerNames: ['created']
+    })
+
+    await store.getState().updateCustomServer({
+      id: 'created',
+      displayName: 'Renamed',
+      transport: 'stdio',
+      command: 'npx'
+    })
+    expect(store.getState().deviceCredentials[0]?.consumerNames).toEqual(['Renamed'])
+
+    await store.getState().removeCustomServer('created')
+    expect(store.getState().deviceCredentials[0]).toMatchObject({
+      consumerCount: 0,
+      consumerNames: []
+    })
+    expect(commands.listDeviceCredentials).toHaveBeenCalledTimes(3)
+  })
+
   it('reconciles successful custom-server authentication', async () => {
     const authenticated = {
       ...server('oauth'),
@@ -588,11 +689,54 @@ describe('settings Connectors slice', () => {
     const failure = new Error('authorization denied')
     vi.mocked(commands.authenticateCustomServer).mockRejectedValue(failure)
     vi.mocked(commands.listConnectors).mockResolvedValue(snapshot([], [unauthenticated]))
+    vi.mocked(commands.listDeviceCredentials).mockResolvedValue({
+      credentials: [
+        {
+          id: 'shared-oauth',
+          displayName: 'Shared OAuth',
+          kind: 'oauth',
+          status: 'disconnected',
+          needsSecret: false,
+          consumerCount: 1,
+          consumerNames: ['OAuth MCP'],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ]
+    })
+    store.setState({ deviceCredentialsLoaded: true })
 
     await expect(store.getState().authenticateCustomServer({ id: 'oauth' })).rejects.toBe(failure)
 
     expect(commands.listConnectors).toHaveBeenCalledOnce()
+    expect(commands.listDeviceCredentials).toHaveBeenCalledOnce()
+    expect(store.getState().deviceCredentials[0]?.status).toBe('disconnected')
     expect(store.getState().customServers).toEqual([unauthenticated])
+  })
+
+  it('refreshes shared credential state after disconnecting a custom Connector', async () => {
+    vi.mocked(commands.disconnectCustomServer).mockResolvedValue(snapshot())
+    vi.mocked(commands.listDeviceCredentials).mockResolvedValue({
+      credentials: [
+        {
+          id: 'shared-oauth',
+          displayName: 'Shared OAuth',
+          kind: 'oauth',
+          status: 'disconnected',
+          needsSecret: false,
+          consumerCount: 1,
+          consumerNames: ['OAuth MCP'],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ]
+    })
+    store.setState({ deviceCredentialsLoaded: true })
+
+    await store.getState().disconnectCustomServer({ id: 'oauth' })
+
+    expect(commands.listDeviceCredentials).toHaveBeenCalledOnce()
+    expect(store.getState().deviceCredentials[0]?.status).toBe('disconnected')
   })
 
   it('keeps the authentication error when the fallback refresh also fails', async () => {

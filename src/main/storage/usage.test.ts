@@ -58,12 +58,27 @@ describe('computeStorageUsage', () => {
     expect(usage.totalBytes).toBe(125)
   })
 
+  it('includes legacy Notebook evidence in the Execution evidence category', async () => {
+    await writeSized(join(dataRoot, 'execution-file-evidence', 'project-1', 'current.bin'), 125)
+    await writeSized(join(dataRoot, 'notebook-file-evidence', 'project-1', 'legacy.bin'), 75)
+
+    const usage = await computeStorageUsage(dataRoot)
+
+    expect(usage.categories.find((category) => category.key === 'execution-file-evidence')).toEqual(
+      {
+        key: 'execution-file-evidence',
+        bytes: 200
+      }
+    )
+    expect(usage.totalBytes).toBe(200)
+  })
+
   it('sums per-category bytes and gives runtime a sorted children breakdown', async () => {
     await writeSized(join(dataRoot, 'artifacts', 'a.bin'), 100)
     await writeSized(join(dataRoot, 'delegation', 'project-1', 'frame.bin'), 75)
     await writeSized(join(dataRoot, 'uploads', 'b.bin'), 50)
     await writeSized(join(dataRoot, 'workspaces', 'session-1', 'repo', 'data.bin'), 25)
-    await writeSized(join(dataRoot, 'notebook-file-evidence', 'project-1', 'generation.bin'), 125)
+    await writeSized(join(dataRoot, 'execution-file-evidence', 'project-1', 'generation.bin'), 125)
     await writeSized(join(dataRoot, 'runtime', 'python', 'p.bin'), 200)
     await writeSized(join(dataRoot, 'runtime', 'r', 'r.bin'), 300)
     // notebooks/ left absent.
@@ -84,10 +99,33 @@ describe('computeStorageUsage', () => {
         ]
       },
       { key: 'notebooks', bytes: 0 },
-      { key: 'notebook-file-evidence', bytes: 125 },
-      { key: 'workspaces', bytes: 25 }
+      { key: 'execution-file-evidence', bytes: 125 },
+      {
+        key: 'workspaces',
+        bytes: 25,
+        children: [{ name: 'session-1', bytes: 25 }]
+      }
     ])
     expect(usage.totalBytes).toBe(875)
+  })
+
+  it('lists retained Session workspace directories by size, including empty ones', async () => {
+    await writeSized(join(dataRoot, 'workspaces', 'smaller', 'data.bin'), 10)
+    await writeSized(join(dataRoot, 'workspaces', 'larger', 'data.bin'), 20)
+    await mkdir(join(dataRoot, 'workspaces', 'empty'), { recursive: true })
+
+    const usage = await computeStorageUsage(dataRoot)
+    const workspaces = usage.categories.find((category) => category.key === 'workspaces')
+
+    expect(workspaces).toEqual({
+      key: 'workspaces',
+      bytes: 30,
+      children: [
+        { name: 'larger', bytes: 20 },
+        { name: 'smaller', bytes: 10 },
+        { name: 'empty', bytes: 0 }
+      ]
+    })
   })
 
   it('accounts for every relocatable data directory', () => {
@@ -206,7 +244,7 @@ describe('computeStorageUsage', () => {
       { key: 'uploads', bytes: 0 },
       { key: 'runtime', bytes: 0, children: [] },
       { key: 'notebooks', bytes: 0 },
-      { key: 'notebook-file-evidence', bytes: 0 },
+      { key: 'execution-file-evidence', bytes: 0 },
       { key: 'workspaces', bytes: 0 }
     ])
     expect(usage.totalBytes).toBe(0)

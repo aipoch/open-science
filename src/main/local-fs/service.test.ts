@@ -276,6 +276,7 @@ describe('LocalFsService granted roots', () => {
   let outside = ''
   let store: GrantedLocalRoot[] = []
   let grantService: LocalFsService
+  let beforeGrantedRootsChange: ReturnType<typeof vi.fn<() => Promise<void>>>
   // In-memory row-level store matching the SQLite repository's contract. Plain closures, not
   // vi.fn: the afterEach restoreAllMocks (for the app.getPath spy) must not reset the stub's
   // implementations between tests.
@@ -305,8 +306,9 @@ describe('LocalFsService granted roots', () => {
     outside = await realpath(await mkdtemp(join(tmpdir(), 'local-fs-outside-')))
     await mkdir(join(home, 'Documents'))
     store = []
+    beforeGrantedRootsChange = vi.fn(async () => undefined)
     vi.spyOn(app, 'getPath').mockImplementation((name: string) => (name === 'home' ? home : '/tmp'))
-    grantService = new LocalFsService(storeStub)
+    grantService = new LocalFsService(storeStub, beforeGrantedRootsChange)
   })
 
   afterEach(async () => {
@@ -326,6 +328,17 @@ describe('LocalFsService granted roots', () => {
     })
     expect(updated[0].id).toMatch(/^[0-9a-f-]{36}$/)
     await expect(grantService.listGrantedRoots()).resolves.toEqual(updated)
+    expect(beforeGrantedRootsChange).toHaveBeenCalledOnce()
+  })
+
+  it('does not persist a grant when stopping active kernels fails', async () => {
+    beforeGrantedRootsChange.mockRejectedValueOnce(new Error('shutdown failed'))
+
+    await expect(
+      grantService.grantRoot({ path: join(home, 'Documents'), access: 'ro' })
+    ).rejects.toThrow('shutdown failed')
+
+    expect(store).toEqual([])
   })
 
   it('grants a folder inside home even when home itself sits behind a symlink', async () => {

@@ -42,6 +42,7 @@ const isBrowserSignInProvider = (type: ProviderFormValue['type']): boolean =>
 // Converts a form value into the upsert request the main process expects.
 const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
   type: value.type,
+  codexTransport: value.codexTransport,
   name: value.name,
   baseUrl: value.baseUrl,
   model: value.model,

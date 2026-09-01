@@ -355,6 +355,75 @@ describe('settings repository', () => {
     })
   })
 
+  it('sanitizes the main-only Codex Auto HTTPS preference', () => {
+    const valid = sanitizeSettings({
+      providers: [
+        {
+          id: 'builtin-codex-subscription',
+          type: 'codex-isolated',
+          name: 'Codex subscription',
+          codexAutoUseHttps: true
+        }
+      ]
+    })
+    expect(valid.providers[0].codexAutoUseHttps).toBe(true)
+
+    const invalid = sanitizeSettings({
+      providers: [
+        {
+          id: 'builtin-codex-subscription',
+          type: 'codex-isolated',
+          name: 'Codex subscription',
+          codexAutoUseHttps: 'true'
+        }
+      ]
+    })
+    expect(invalid.providers[0].codexAutoUseHttps).toBeUndefined()
+  })
+
+  it('atomically remembers HTTPS only while the preference remains Auto', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.upsertProvider({
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      codexTransport: 'auto',
+      name: 'Codex subscription'
+    })
+
+    await expect(repository.rememberCodexAutoHttpsFallback()).resolves.toBe(true)
+    expect((await repository.getSettings()).providers[0].codexAutoUseHttps).toBe(true)
+    await expect(repository.rememberCodexAutoHttpsFallback()).resolves.toBe(false)
+
+    const stored = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({
+      ...stored,
+      codexTransport: 'https',
+      codexAutoUseHttps: undefined
+    })
+    await expect(repository.rememberCodexAutoHttpsFallback()).resolves.toBe(false)
+    expect((await repository.getSettings()).providers[0].codexAutoUseHttps).toBeUndefined()
+  })
+
+  it('preserves learned Auto HTTPS when a stale full-provider update lands afterward', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.upsertProvider({
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      codexTransport: 'auto',
+      name: 'Codex subscription'
+    })
+    const staleProvider = (await repository.getSettings()).providers[0]
+
+    await repository.rememberCodexAutoHttpsFallback()
+    await repository.upsertProvider({ ...staleProvider, lastValidatedAt: 123 })
+
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      codexTransport: 'auto',
+      codexAutoUseHttps: true,
+      lastValidatedAt: 123
+    })
+  })
+
   it('returns empty settings when nothing is stored yet', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
@@ -521,7 +590,7 @@ describe('settings repository', () => {
     const repository = new SettingsRepository(root)
 
     expect(sanitizeSettings({}).localePreference).toBeUndefined()
-    expect(sanitizeSettings({ localePreference: 'de' }).localePreference).toBeUndefined()
+    expect(sanitizeSettings({ localePreference: 'de' }).localePreference).toBe('de')
     expect(sanitizeSettings({ localePreference: 'es' }).localePreference).toBe('es')
     expect(sanitizeSettings({ localePreference: 'ko' }).localePreference).toBe('ko')
     expect(sanitizeSettings({ localePreference: 'pt' }).localePreference).toBe('pt-BR')
@@ -529,6 +598,8 @@ describe('settings repository', () => {
     expect(sanitizeSettings({ localePreference: 'pt-PT' }).localePreference).toBeUndefined()
     expect(sanitizeSettings({ localePreference: 'system' }).localePreference).toBe('system')
 
+    await repository.setLocalePreference('de')
+    expect((await new SettingsRepository(root).getSettings()).localePreference).toBe('de')
     await repository.setLocalePreference('pt-BR')
     expect((await new SettingsRepository(root).getSettings()).localePreference).toBe('pt-BR')
     await repository.setLocalePreference('es')
@@ -1000,6 +1071,27 @@ describe('settings repository', () => {
 
     const reloaded = await new SettingsRepository(root).getSettings()
     expect(reloaded.onboardingCompletedAt).toBe(1234)
+  })
+
+  it('preserves compute bookmarks across a reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setComputeBookmarks('ssh:cluster', ['/scratch/project', '/data/results'])
+    expect(JSON.parse(await readFile(join(root, 'settings.json'), 'utf8'))).toMatchObject({
+      computeBookmarks: { 'ssh:cluster': ['/scratch/project', '/data/results'] }
+    })
+
+    const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.computeBookmarks).toEqual({
+      'ssh:cluster': ['/scratch/project', '/data/results']
+    })
+
+    await new SettingsRepository(root).setNotificationsEnabled(false)
+    await expect(new SettingsRepository(root).getSettings()).resolves.toMatchObject({
+      computeBookmarks: { 'ssh:cluster': ['/scratch/project', '/data/results'] },
+      notificationsEnabled: false
+    })
   })
 
   it('stamps pathsNormalizedAt once, is idempotent, and survives a reload', async () => {

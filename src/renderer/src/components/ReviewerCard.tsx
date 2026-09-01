@@ -429,7 +429,7 @@ export const ReviewerCard = ({
           ))}
 
           {/* Self-correct footer note — shown only for warn/fail (flagged) expansions. */}
-          {hasWarnOrFail && (
+          {hasWarnOrFail && !isCapReached && !isCorrectionFailed && (
             <p className="mt-1 text-[11px] italic text-text-400">
               {t('The agent reads these findings and self-corrects in its next message.')}
             </p>

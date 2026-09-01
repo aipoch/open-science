@@ -288,6 +288,8 @@ export type ApprovedSpecialistIdentity = {
 }
 
 export class CompletionHandoffLifecycle {
+  private readonly retryLifecycles = new Map<string, Promise<DurableCompletionHandoff>>()
+
   constructor(
     private readonly repository: CompletionHandoffRepository,
     private readonly runtime: CompletionHandoffRuntime,
@@ -444,7 +446,21 @@ export class CompletionHandoffLifecycle {
   // Retrying never asks the user to approve the same committed binding again. It resumes at the
   // earliest safe stage recorded by the failed attempt: reconfigure after ownership was released,
   // otherwise the approved continuation start.
-  async retry(context: TrustedToolCompletionContext): Promise<DurableCompletionHandoff> {
+  retry(context: TrustedToolCompletionContext): Promise<DurableCompletionHandoff> {
+    const key = completionHandoffKey(context)
+    const existing = this.retryLifecycles.get(key)
+    if (existing) return existing
+
+    const retry = this.retryOnce(context).finally(() => {
+      if (this.retryLifecycles.get(key) === retry) this.retryLifecycles.delete(key)
+    })
+    this.retryLifecycles.set(key, retry)
+    return retry
+  }
+
+  private async retryOnce(
+    context: TrustedToolCompletionContext
+  ): Promise<DurableCompletionHandoff> {
     const handoff = await this.require(context)
     if (handoff.stage !== 'failed' || !handoff.retryFrom) return handoff
     const resumed = await this.repository.update(context, (current) => {

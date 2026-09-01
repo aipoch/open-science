@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import type {
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
-  AcpRuntimeEvent
+  AcpRuntimeEventInput
 } from '../../shared/acp'
 import { normalizePermissionProfile } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
@@ -24,7 +24,7 @@ import type {
 
 const log = createLogger('acp')
 
-type CreationEvent = Omit<AcpRuntimeEvent, 'id' | 'timestamp'>
+type CreationEvent = AcpRuntimeEventInput
 
 type AcpProviderSessionCreatorDependencies = Readonly<{
   defaultCwd: string

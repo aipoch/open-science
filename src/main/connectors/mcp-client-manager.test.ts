@@ -310,6 +310,236 @@ describe('McpClientManager', () => {
     }
   })
 
+  it('invalidates sibling clients after shared OAuth state changes', async () => {
+    const providers = new Map<string, PersistentOAuthClientProvider>()
+    const clients = new Map<string, { close: ReturnType<typeof vi.fn> }>()
+    const manager = new McpClientManager({
+      saveOAuthState: vi.fn(async () => undefined),
+      createClient: async (server, provider) => {
+        providers.set(server.id, provider!)
+        const client = {
+          listTools: vi.fn(async () => ({ tools: [] })),
+          close: vi.fn(async () => undefined)
+        }
+        clients.set(server.id, client)
+        return client as unknown as Client
+      }
+    })
+    const shared = (id: string): CustomMcpServerConfig => ({
+      id,
+      name: id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: { credentialId: 'shared-oauth' }
+    })
+
+    await manager.listTools(shared('first'))
+    await manager.listTools(shared('second'))
+    await providers.get('first')!.saveTokens({ access_token: 'updated', token_type: 'Bearer' })
+
+    expect(clients.get('second')?.close).toHaveBeenCalledOnce()
+    expect(clients.get('first')?.close).not.toHaveBeenCalled()
+    await manager.closeAll()
+  })
+
+  it('drops a stale sibling OAuth state write queued behind a shared credential update', async () => {
+    let releaseOwnerWrite!: () => void
+    let markOwnerWriteStarted!: () => void
+    const ownerWriteStarted = new Promise<void>((resolve) => {
+      markOwnerWriteStarted = resolve
+    })
+    const pendingOwnerWrite = new Promise<void>((resolve) => {
+      releaseOwnerWrite = resolve
+    })
+    const providers = new Map<string, PersistentOAuthClientProvider>()
+    const clients = new Map<string, { close: ReturnType<typeof vi.fn> }>()
+    const saveOAuthState = vi.fn(async (serverId: string) => {
+      if (serverId !== 'first') return
+      markOwnerWriteStarted()
+      await pendingOwnerWrite
+    })
+    const manager = new McpClientManager({
+      saveOAuthState,
+      createClient: async (server, provider) => {
+        providers.set(server.id, provider!)
+        const client = {
+          listTools: vi.fn(async () => ({ tools: [] })),
+          close: vi.fn(async () => undefined)
+        }
+        clients.set(server.id, client)
+        return client as unknown as Client
+      }
+    })
+    const shared = (id: string): CustomMcpServerConfig => ({
+      id,
+      name: id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: { credentialId: 'shared-oauth' }
+    })
+
+    await manager.listTools(shared('first'))
+    await manager.listTools(shared('second'))
+    const ownerSaving = providers
+      .get('first')!
+      .saveTokens({ access_token: 'newer', token_type: 'Bearer' })
+    await ownerWriteStarted
+    const siblingSaving = providers
+      .get('second')!
+      .saveTokens({ access_token: 'stale', token_type: 'Bearer' })
+    await Promise.resolve()
+
+    expect(saveOAuthState).toHaveBeenCalledOnce()
+    releaseOwnerWrite()
+    await Promise.all([ownerSaving, siblingSaving])
+
+    expect(saveOAuthState).toHaveBeenCalledOnce()
+    expect(saveOAuthState).toHaveBeenCalledWith(
+      'first',
+      expect.objectContaining({ tokens: { access_token: 'newer', token_type: 'Bearer' } })
+    )
+    expect(clients.get('second')?.close).toHaveBeenCalledOnce()
+    await manager.closeAll()
+  })
+
+  it('invalidates a pending sibling before its shared OAuth provider is created', async () => {
+    let finishFirstStartup!: (redirectUrl: string) => void
+    const firstStartup = new Promise<string>((resolve) => {
+      finishFirstStartup = resolve
+    })
+    const ensureStarted = vi
+      .spyOn(OAuthCallbackServer.prototype, 'ensureStarted')
+      .mockReturnValueOnce(firstStartup)
+      .mockResolvedValue('http://127.0.0.1:4567/oauth/callback')
+    const providers = new Map<string, PersistentOAuthClientProvider>()
+    const createClient = vi.fn(async (server: CustomMcpServerConfig, provider?: unknown) => {
+      providers.set(server.id, provider as PersistentOAuthClientProvider)
+      return {
+        listTools: vi.fn(async () => ({ tools: [] })),
+        close: vi.fn(async () => undefined)
+      } as unknown as Client
+    })
+    const manager = new McpClientManager({
+      saveOAuthState: vi.fn(async () => undefined),
+      createClient
+    })
+    const shared = (id: string): CustomMcpServerConfig => ({
+      id,
+      name: id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: { credentialId: 'shared-oauth' }
+    })
+
+    const firstPending = manager.listTools(shared('first'))
+    await vi.waitFor(() => expect(ensureStarted).toHaveBeenCalledOnce())
+    await manager.listTools(shared('second'))
+    await providers.get('second')!.saveTokens({ access_token: 'updated', token_type: 'Bearer' })
+    finishFirstStartup('http://127.0.0.1:4567/oauth/callback')
+
+    await expect(firstPending).rejects.toThrow()
+    expect(createClient).toHaveBeenCalledOnce()
+    expect(createClient).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'second' }),
+      expect.anything(),
+      expect.any(AbortSignal)
+    )
+    await manager.closeAll()
+  })
+
+  it('keeps shared credential ownership while interactive authentication closes stale resources', async () => {
+    let finishInteractiveStartup!: (redirectUrl: string) => void
+    const interactiveStartup = new Promise<string>((resolve) => {
+      finishInteractiveStartup = resolve
+    })
+    const ensureStarted = vi
+      .spyOn(OAuthCallbackServer.prototype, 'ensureStarted')
+      .mockReturnValueOnce(interactiveStartup)
+      .mockResolvedValue('http://127.0.0.1:4567/oauth/callback')
+    let siblingProvider: PersistentOAuthClientProvider | undefined
+    const manager = new McpClientManager({
+      saveOAuthState: vi.fn(async () => undefined),
+      createClient: async (server, provider) => {
+        if (server.id === 'sibling') siblingProvider = provider
+        return {
+          listTools: vi.fn(async () => ({ tools: [] })),
+          close: vi.fn(async () => undefined)
+        } as unknown as Client
+      }
+    })
+    const shared = (id: string): CustomMcpServerConfig => ({
+      id,
+      name: id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: { credentialId: 'shared-oauth' }
+    })
+
+    const authenticating = manager.authenticate(shared('interactive'))
+    await vi.waitFor(() => expect(ensureStarted).toHaveBeenCalledOnce())
+    await manager.listTools(shared('sibling'))
+    await siblingProvider!.saveTokens({ access_token: 'newer', token_type: 'Bearer' })
+    finishInteractiveStartup('http://127.0.0.1:4567/oauth/callback')
+
+    await expect(authenticating).rejects.toThrow('connection was superseded')
+    await manager.closeAll()
+  })
+
+  it('waits for an in-flight OAuth state write and skips sibling invalidation after close', async () => {
+    let releaseWrite!: () => void
+    let markWriteStarted!: () => void
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve
+    })
+    const pendingWrite = new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    const providers = new Map<string, PersistentOAuthClientProvider>()
+    const clients = new Map<string, { close: ReturnType<typeof vi.fn> }>()
+    const manager = new McpClientManager({
+      saveOAuthState: vi.fn(async () => {
+        markWriteStarted()
+        await pendingWrite
+      }),
+      createClient: async (server, provider) => {
+        providers.set(server.id, provider!)
+        const client = {
+          listTools: vi.fn(async () => ({ tools: [] })),
+          close: vi.fn(async () => undefined)
+        }
+        clients.set(server.id, client)
+        return client as unknown as Client
+      }
+    })
+    const shared = (id: string): CustomMcpServerConfig => ({
+      id,
+      name: id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: { credentialId: 'shared-oauth' }
+    })
+
+    await manager.listTools(shared('first'))
+    await manager.listTools(shared('second'))
+    const saving = providers
+      .get('first')!
+      .saveTokens({ access_token: 'stale', token_type: 'Bearer' })
+    await writeStarted
+
+    let closeSettled = false
+    const closing = manager.close('first').then(() => {
+      closeSettled = true
+    })
+    await Promise.resolve()
+    expect(closeSettled).toBe(false)
+    releaseWrite()
+    await Promise.all([saving, closing])
+
+    expect(clients.get('first')?.close).toHaveBeenCalledOnce()
+    expect(clients.get('second')?.close).not.toHaveBeenCalled()
+    await manager.closeAll()
+  })
+
   it.each([
     { callbackError: 'access_denied', expected: 'OAuth authorization failed: access_denied' },
     { callbackError: undefined, expected: 'OAuth callback did not include an authorization code' }

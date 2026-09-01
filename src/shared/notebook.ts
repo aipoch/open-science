@@ -6,6 +6,7 @@ import {
   type RuntimeCodec
 } from './application-command-contract'
 import type { ArtifactFile } from './artifacts'
+import type { ExecutionFileEvidenceSummary } from './execution-file-evidence'
 import type { NotebookRuntimeBindings } from './notebook-runtime'
 import type { OptionalProjectIdScope, ProjectIdScope } from './project-scope'
 
@@ -21,6 +22,18 @@ export type NotebookRunSource = 'agent' | 'user'
 
 // Exact app-local dispatch methods corresponding to the three approval-gated Notebook MCP tools.
 export type NotebookExecutionRpcMethod = 'execute' | 'executeControl' | 'executeShell'
+
+export type RequestNotebookNetworkAccessRequest = NotebookSessionRequest & {
+  hostname: string
+  reason: string
+  runtime?: 'python' | 'r' | 'repl' | 'bash'
+  command?: string
+}
+
+export type RequestNotebookNetworkAccessResult = Readonly<{
+  hostname: string
+  status: 'alreadyAllowed' | 'allowedOnce' | 'alwaysAllowed' | 'denied' | 'blocked' | 'unavailable'
+}>
 
 // Distinguishes regular notebook cells from terminal submissions in the same history.
 export type NotebookRunInputKind = 'cell' | 'terminal'
@@ -369,63 +382,6 @@ export type NotebookWorkingFile = {
   change?: 'created' | 'modified'
 }
 
-export type NotebookFileEvidenceCoverage = 'complete' | 'partial' | 'unavailable'
-
-export type NotebookFileEvidenceReason =
-  | 'file-reads-not-observed'
-  | 'initial-file-generations-not-captured'
-  | 'external-paths-not-observed'
-  | 'remote-outputs-not-observed'
-  | 'transient-files-not-captured'
-  | 'delayed-writes-not-observed'
-  | 'writer-not-isolated'
-  | 'watcher-unavailable'
-  | 'observation-not-started'
-  | 'observer-conflict'
-  | 'observer-limit-exceeded'
-  | 'observer-failed'
-  | 'generation-budget-exceeded'
-  | 'generation-freeze-failed'
-  | 'evidence-persistence-failed'
-  | 'run-identity-missing'
-
-export type NotebookScientificOutputStorageShape = 'single-file' | 'file-set' | 'directory-tree'
-
-export type NotebookScientificOutputRisk =
-  | 'format-validity-not-verified'
-  | 'multi-file-consistency-not-verified'
-  | 'database-state-not-verified'
-  | 'runtime-dependent-serialization'
-
-export type NotebookScientificOutput = {
-  outputId: string
-  storageShape: NotebookScientificOutputStorageShape
-  formatHint?: string
-  classificationAuthority: 'path-heuristic'
-  // Portable relation paths from the same evidence sidecar. Members may include deleted paths when
-  // a run replaced a partition or companion file while producing the logical output.
-  members: string[]
-  riskCodes: NotebookScientificOutputRisk[]
-}
-
-export type NotebookRunFileEvidence = {
-  schemaVersion: 1
-  state: 'complete' | 'partial' | 'unavailable'
-  evidenceId?: string
-  checksum?: string
-  storageKey?: string
-  relationCount?: number
-  generationCount?: number
-  scientificOutputCount: number
-  initialViewState: NotebookFileEvidenceCoverage
-  managedRootsFinalState: NotebookFileEvidenceCoverage
-  scientificOutputAnalysis: NotebookFileEvidenceCoverage
-  fileReads: NotebookFileEvidenceCoverage
-  externalPaths: NotebookFileEvidenceCoverage
-  writerAttribution: NotebookFileEvidenceCoverage
-  reasonCodes: NotebookFileEvidenceReason[]
-}
-
 // Captures the interpreter metadata persisted alongside run history.
 // 'idle' is the resting state between runs; 'running' is written around a live cell/control run;
 // 'restarting' covers the window of a restart() in progress; 'terminated' marks a proc dropped for
@@ -509,7 +465,7 @@ export type NotebookRunRecord = {
   workingFiles: NotebookWorkingFile[]
   // Immutable file-generation evidence is stored in a checksummed per-run sidecar. Optional keeps
   // historical run.json documents readable without fabricating capture coverage.
-  fileEvidence?: NotebookRunFileEvidence
+  fileEvidence?: ExecutionFileEvidenceSummary
   // New native runs persist the exact registered input Versions. Optional keeps legacy run.json
   // documents readable; repository normalization supplies an empty array for old records.
   inputFiles?: NotebookRunInputFile[]

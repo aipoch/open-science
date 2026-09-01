@@ -132,6 +132,29 @@ describe('sanitizeCustomMcpServer', () => {
     })
   })
 
+  it('keeps a device-global OAuth reference without copying OAuth config onto the Connector', () => {
+    expect(
+      sanitizeCustomMcpServer({
+        id: 'srv-shared-oauth',
+        name: 'shared-oauth',
+        displayName: 'Shared OAuth',
+        transport: 'streamable_http',
+        url: 'https://example.com/mcp',
+        headers: { Authorization: 'must-be-dropped' },
+        oauthRef: 'credential:credential-id',
+        enabled: false
+      })
+    ).toEqual({
+      id: 'srv-shared-oauth',
+      name: 'shared-oauth',
+      displayName: 'Shared OAuth',
+      transport: 'streamable_http',
+      url: 'https://example.com/mcp',
+      oauthRef: 'credential:credential-id',
+      enabled: false
+    })
+  })
+
   it('drops a remote server missing a url', () => {
     expect(
       sanitizeCustomMcpServer({

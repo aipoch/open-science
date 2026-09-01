@@ -19,7 +19,7 @@ import {
   type AgentTurnProvenanceContext,
   type PendingElicitationRequest
 } from '../../shared/elicitation'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 type ElicitationRoute = {
   sessionId: string

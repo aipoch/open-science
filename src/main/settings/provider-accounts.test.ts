@@ -292,6 +292,190 @@ describe('ProviderAccountsModule', () => {
     expect((await repository.getSettings()).providers).toEqual([])
   })
 
+  it('serializes isolated Codex logout with a concurrent authentication-mode edit', async () => {
+    const userCodexDir = join(dir, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), JSON.stringify({ tokens: { access: 'user' } }))
+    await module.upsertProvider({ type: 'codex-isolated' })
+
+    const logoutCancellation = deferred<void>()
+    const editCancellation = deferred<void>()
+    const editEntered = deferred<void>()
+    vi.mocked(codexAuth.cancelLogin)
+      .mockImplementationOnce(() => logoutCancellation.promise)
+      .mockImplementationOnce(() => {
+        editEntered.resolve()
+        return editCancellation.promise
+      })
+
+    const logout = module.logoutIsolatedCodex()
+    await vi.waitFor(() => expect(codexAuth.cancelLogin).toHaveBeenCalledOnce())
+    const originalGetSettings = repository.getSettings.bind(repository)
+    const editRead = deferred<StoredSettings>()
+    const getSettings = vi.spyOn(repository, 'getSettings').mockImplementation(async () => {
+      const settings = await originalGetSettings()
+      editRead.resolve(settings)
+      return settings
+    })
+    const edit = module.upsertProvider({
+      id: 'builtin-codex-subscription',
+      type: 'codex-shared',
+      requireExisting: true,
+      reimportCodexAuthentication: true
+    })
+
+    const editEnteredDuringLogout = await Promise.race([
+      editRead.promise.then(() => true),
+      new Promise<false>((resolve) => setImmediate(() => resolve(false)))
+    ])
+    if (editEnteredDuringLogout) {
+      editCancellation.resolve()
+      await edit
+      logoutCancellation.resolve()
+    } else {
+      logoutCancellation.resolve()
+      await editEntered.promise
+      editCancellation.resolve()
+    }
+    await Promise.all([logout, edit])
+    getSettings.mockRestore()
+
+    expect(editEnteredDuringLogout).toBe(false)
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      id: 'builtin-codex-subscription',
+      codexAuthMode: 'imported'
+    })
+    await expect(
+      readFile(join(codexSubscriptionStorageDir(dir), 'auth.json'), 'utf8')
+    ).resolves.toContain('user')
+  })
+
+  it('does not restore isolated Codex validation after a concurrent logout', async () => {
+    await module.upsertProvider({ type: 'codex-isolated' })
+    const staleSettings = await repository.getSettings()
+    const staleRead = deferred<StoredSettings>()
+    vi.spyOn(repository, 'getSettings').mockImplementationOnce(() => staleRead.promise)
+
+    const login = module.loginIsolatedCodex()
+    await vi.waitFor(() => expect(codexAuth.loginIsolated).toHaveBeenCalledOnce())
+    await module.logoutIsolatedCodex()
+    staleRead.resolve(staleSettings)
+
+    await expect(login).resolves.toMatchObject({ ok: true, applied: false })
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.codexAuthMode).toBe('isolated')
+    expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.lastValidationFailure).toBeUndefined()
+  })
+
+  it('does not restore isolated Codex mode after a concurrent shared-mode edit', async () => {
+    const userCodexDir = join(dir, 'user-codex')
+    await mkdir(userCodexDir, { recursive: true })
+    await writeFile(join(userCodexDir, 'auth.json'), JSON.stringify({ tokens: { access: 'user' } }))
+    await module.upsertProvider({ type: 'codex-isolated' })
+    const staleSettings = await repository.getSettings()
+    const staleRead = deferred<StoredSettings>()
+    vi.spyOn(repository, 'getSettings').mockImplementationOnce(() => staleRead.promise)
+
+    const login = module.loginIsolatedCodex()
+    await vi.waitFor(() => expect(codexAuth.loginIsolated).toHaveBeenCalledOnce())
+    await module.upsertProvider({
+      id: 'builtin-codex-subscription',
+      type: 'codex-shared',
+      requireExisting: true,
+      reimportCodexAuthentication: true
+    })
+    staleRead.resolve(staleSettings)
+
+    await expect(login).resolves.toMatchObject({ ok: true, applied: false })
+    expect((await repository.getSettings()).providers[0]).toMatchObject({
+      id: 'builtin-codex-subscription',
+      codexAuthMode: 'imported'
+    })
+  })
+
+  it('persists and projects the Codex subscription transport preference', async () => {
+    await module.upsertProvider({ type: 'codex-isolated', codexTransport: 'https' })
+
+    let stored = (await repository.getSettings()).providers[0]
+    expect(stored.codexTransport).toBe('https')
+    expect(module.toProviderView(stored).codexTransport).toBe('https')
+
+    await module.upsertProvider({
+      id: stored.id,
+      type: 'codex-isolated',
+      codexTransport: 'websocket',
+      requireExisting: true
+    })
+    stored = (await repository.getSettings()).providers[0]
+    expect(stored.codexTransport).toBe('websocket')
+  })
+
+  it.each([
+    ['auto', 'https'],
+    ['auto', 'websocket'],
+    ['https', 'auto'],
+    ['websocket', 'auto']
+  ] as const)(
+    'clears learned transport state when the preference changes from %s to %s',
+    async (initialTransport, nextTransport) => {
+      await module.upsertProvider({
+        type: 'codex-isolated',
+        codexTransport: initialTransport
+      })
+      const initial = (await repository.getSettings()).providers[0]
+      await repository.upsertProvider({
+        ...initial,
+        codexAutoUseHttps: true
+      })
+
+      await module.upsertProvider({
+        id: 'builtin-codex-subscription',
+        type: 'codex-isolated',
+        codexTransport: nextTransport,
+        requireExisting: true
+      })
+
+      expect((await repository.getSettings()).providers[0].codexAutoUseHttps).toBeUndefined()
+    }
+  )
+
+  it('does not retain learned transport state while a manual preference is resaved', async () => {
+    await module.upsertProvider({ type: 'codex-isolated', codexTransport: 'https' })
+    const manual = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({
+      ...manual,
+      codexAutoUseHttps: true
+    })
+
+    await module.upsertProvider({
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      codexTransport: 'https',
+      requireExisting: true
+    })
+
+    expect((await repository.getSettings()).providers[0].codexAutoUseHttps).toBeUndefined()
+  })
+
+  it('preserves learned HTTPS while an Auto preference is resaved', async () => {
+    await module.upsertProvider({ type: 'codex-isolated', codexTransport: 'auto' })
+    const stored = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({
+      ...stored,
+      codexAutoUseHttps: true
+    })
+
+    await module.upsertProvider({
+      id: stored.id,
+      type: 'codex-isolated',
+      codexTransport: 'auto',
+      requireExisting: true
+    })
+
+    expect((await repository.getSettings()).providers[0].codexAutoUseHttps).toBe(true)
+  })
+
   it.each([
     {
       sourceType: 'claude-isolated',

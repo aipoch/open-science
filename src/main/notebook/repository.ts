@@ -8,9 +8,9 @@ import type {
   NotebookRunHistorySummary,
   NotebookRunCursor,
   NotebookRunRecord,
-  NotebookRunFileEvidence,
   NotebookWorkingFile
 } from '../../shared/notebook'
+import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import { NOTEBOOK_RUN_FILE, NOTEBOOKS_DIR } from '../../shared/notebook'
 import type { NotebookRuntimeBindings } from '../../shared/notebook-runtime'
 import { createLogger } from '../logger'
@@ -26,10 +26,11 @@ import {
   notebookLaneScope,
   type NotebookLaneIdentity
 } from './lane-identity'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
+import { ensureNotebookInputRoot } from './input-staging'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
-const NOTEBOOK_FILE_EVIDENCE_DIR = 'notebook-file-evidence'
+const EXECUTION_FILE_EVIDENCE_DIR = 'execution-file-evidence'
 const MAX_DOCUMENT_CACHE_ENTRIES = 8
 const MAX_DOCUMENT_CACHE_BYTES = 32 * 1024 * 1024
 const MAX_DOCUMENT_READ_ATTEMPTS = 2
@@ -106,59 +107,8 @@ const isMissingFileError = (error: unknown): boolean =>
 const persistedScopeValue = (value: unknown): string =>
   value === undefined || value === null ? '<missing>' : (JSON.stringify(value) ?? String(value))
 
-const FILE_EVIDENCE_STATES = new Set(['complete', 'partial', 'unavailable'])
-const FILE_EVIDENCE_COVERAGE = new Set(['complete', 'partial', 'unavailable'])
-const FILE_EVIDENCE_REASONS = new Set([
-  'file-reads-not-observed',
-  'initial-file-generations-not-captured',
-  'external-paths-not-observed',
-  'remote-outputs-not-observed',
-  'transient-files-not-captured',
-  'delayed-writes-not-observed',
-  'writer-not-isolated',
-  'watcher-unavailable',
-  'observation-not-started',
-  'observer-conflict',
-  'observer-limit-exceeded',
-  'observer-failed',
-  'generation-budget-exceeded',
-  'generation-freeze-failed',
-  'evidence-persistence-failed',
-  'run-identity-missing'
-])
-
-const isOptionalNonNegativeInteger = (value: unknown): boolean =>
-  value === undefined || (Number.isSafeInteger(value) && Number(value) >= 0)
 const isOptionalSha256 = (value: unknown): boolean =>
   value === undefined || (typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value))
-const isOptionalPortableStorageKey = (value: unknown): boolean =>
-  value === undefined ||
-  (typeof value === 'string' &&
-    value.length > 0 &&
-    !isAbsolute(value) &&
-    !value.includes('\\') &&
-    value.split('/').every((segment) => segment.length > 0 && segment !== '.' && segment !== '..'))
-
-const notebookFileEvidenceCandidate = (value: unknown): value is NotebookRunFileEvidence =>
-  isRecord(value) &&
-  value.schemaVersion === 1 &&
-  FILE_EVIDENCE_STATES.has(String(value.state)) &&
-  FILE_EVIDENCE_COVERAGE.has(String(value.initialViewState)) &&
-  FILE_EVIDENCE_COVERAGE.has(String(value.managedRootsFinalState)) &&
-  FILE_EVIDENCE_COVERAGE.has(String(value.scientificOutputAnalysis)) &&
-  FILE_EVIDENCE_COVERAGE.has(String(value.fileReads)) &&
-  FILE_EVIDENCE_COVERAGE.has(String(value.externalPaths)) &&
-  FILE_EVIDENCE_COVERAGE.has(String(value.writerAttribution)) &&
-  Array.isArray(value.reasonCodes) &&
-  value.reasonCodes.every((reason) => FILE_EVIDENCE_REASONS.has(String(reason))) &&
-  (value.evidenceId === undefined ||
-    (typeof value.evidenceId === 'string' && value.evidenceId.length > 0)) &&
-  isOptionalSha256(value.checksum) &&
-  isOptionalPortableStorageKey(value.storageKey) &&
-  isOptionalNonNegativeInteger(value.relationCount) &&
-  isOptionalNonNegativeInteger(value.generationCount) &&
-  Number.isSafeInteger(value.scientificOutputCount) &&
-  Number(value.scientificOutputCount) >= 0
 
 class UnsupportedNotebookDocumentVersionError extends DurableJsonRecoveryBarrierError {
   constructor() {
@@ -211,7 +161,13 @@ const notebookRunCandidate = (value: unknown): boolean => {
   ) {
     return false
   }
-  if (value.fileEvidence !== undefined && !notebookFileEvidenceCandidate(value.fileEvidence)) {
+  if (
+    value.fileEvidence !== undefined &&
+    !parseOwnedExecutionFileEvidenceSummary(value.fileEvidence, {
+      activityId: String(value.runId),
+      activityKind: 'notebook-run'
+    })
+  ) {
     return false
   }
   if (
@@ -345,7 +301,7 @@ const getNotebookFileEvidenceLocation = (
   if (scope.projectId !== projectId || scope.sessionId !== sessionId) {
     throw new Error('Notebook lane does not match file-evidence scope.')
   }
-  const segments = [NOTEBOOK_FILE_EVIDENCE_DIR, safeProjectId, safeSessionId]
+  const segments = [EXECUTION_FILE_EVIDENCE_DIR, safeProjectId, safeSessionId]
   if (scope.kind === 'frame') {
     segments.push('frames', assertSafeNotebookPathSegment(scope.agentFrameId))
   }
@@ -391,18 +347,26 @@ const normalizeWorkingFiles = (
 
 // Fills optional run fields so old or partial records always have the current shape. Legacy
 // records predate kernelKind and were always python/r, so default (never overwrite) to 'python'.
-const normalizeRun = (sessionRoot: string, run: NotebookRunRecord): NotebookRunRecord => ({
-  ...run,
-  kernelKind: run.kernelKind ?? 'python',
-  text: run.text ?? emptyText(),
-  outputs: run.outputs ?? [],
-  artifacts: run.artifacts ?? [],
-  workingFiles: normalizeWorkingFiles(sessionRoot, run.runId, run.workingFiles),
-  ...(run.fileEvidence
-    ? { fileEvidence: { ...run.fileEvidence, reasonCodes: [...run.fileEvidence.reasonCodes] } }
-    : {}),
-  inputFiles: (run.inputFiles ?? []).map((input) => ({ ...input }))
-})
+const normalizeRun = (sessionRoot: string, run: NotebookRunRecord): NotebookRunRecord => {
+  const fileEvidence = run.fileEvidence
+    ? parseOwnedExecutionFileEvidenceSummary(run.fileEvidence, {
+        activityId: run.runId,
+        activityKind: 'notebook-run'
+      })
+    : undefined
+  return {
+    ...run,
+    kernelKind: run.kernelKind ?? 'python',
+    text: run.text ?? emptyText(),
+    outputs: run.outputs ?? [],
+    artifacts: run.artifacts ?? [],
+    workingFiles: normalizeWorkingFiles(sessionRoot, run.runId, run.workingFiles),
+    ...(fileEvidence
+      ? { fileEvidence: { ...fileEvidence, reasonCodes: [...fileEvidence.reasonCodes] } }
+      : {}),
+    inputFiles: (run.inputFiles ?? []).map((input) => ({ ...input }))
+  }
+}
 
 const kernelInstanceIdentityKey = (instance: NotebookKernelInstanceIdentity): string =>
   instance.kind === 'repl' ? 'repl' : `${instance.kind}:${instance.environment}`
@@ -538,7 +502,7 @@ class NotebookRunRepository {
       // Decode $DATA sentinels against the current data root before recomputing session roots,
       // so a relocated data root and the decoded working-file paths agree.
       const decoded = decodeRunDocumentDataPaths(read.value, this.storageRoot)
-
+      await ensureNotebookInputRoot(this.storageRoot, projectId, sessionId)
       return normalizeDocument(this.storageRoot, request, decoded)
     }
 
@@ -1069,6 +1033,9 @@ class NotebookRunRepository {
     // python/r via disk; 'outputs' collects results kernels want to surface back out.
     await mkdir(join(directory, 'handoff'), { recursive: true })
     await mkdir(join(directory, 'outputs'), { recursive: true })
+    // The sandbox receives this stable sibling as read-only at process launch. Main may then stage
+    // exact, verified Versions into it without exposing the authoritative Upload/Artifact stores.
+    await ensureNotebookInputRoot(this.storageRoot, document.projectId, document.sessionId)
 
     // Encode only the serialized copy: `directory` above must stay derived from the absolute in-memory
     // `document.notebookSessionRoot`, never from the $DATA-sentinel-encoded copy, so run.json stores

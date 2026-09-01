@@ -102,8 +102,13 @@ describe('resolveInitialLocale', () => {
     expect(resolveInitialLocale()).toBe('ru')
   })
 
+  it('detects German regional tags from the device', () => {
+    stubLanguages(['de-AT', 'en'])
+    expect(resolveInitialLocale()).toBe('de')
+  })
+
   it('falls back to English when the device language is unsupported', () => {
-    stubLanguages(['de-DE', 'vi-VN'])
+    stubLanguages(['it-IT', 'vi-VN'])
     expect(resolveInitialLocale()).toBe('en')
   })
 
@@ -150,6 +155,8 @@ describe('applyHtmlLang', () => {
     expect(document.documentElement.lang).toBe('fr')
     applyHtmlLang('pt-BR')
     expect(document.documentElement.lang).toBe('pt-BR')
+    applyHtmlLang('de')
+    expect(document.documentElement.lang).toBe('de')
     applyHtmlLang('es')
     expect(document.documentElement.lang).toBe('es')
   })

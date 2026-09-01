@@ -96,12 +96,18 @@ const sessionWithRunningChild = (): ChatSession => {
 const specialist = (id: string, name: string): SpecialistListItem =>
   ({ kind: 'custom', id, name, enabled: true }) as SpecialistListItem
 
-const deferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+const deferred = <T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason: unknown) => void
+} => {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise
+    reject = rejectPromise
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 type Options = Parameters<typeof useWorkspaceSessionController>[0]
@@ -204,6 +210,35 @@ describe('workspace session controller', () => {
     })
   })
 
+  it('keeps the latest Edit-session intent when an older lazy load finishes last', async () => {
+    const first = session({ id: 'session-a', contentLoaded: false })
+    const second = session({ id: 'session-b', title: 'Second title', contentLoaded: false })
+    const firstLoad = deferred<PersistedChatSession | undefined>()
+    const secondLoad = deferred<PersistedChatSession | undefined>()
+    const loadOne = vi.fn(({ sessionId }: { sessionId: string }) =>
+      sessionId === first.id ? firstLoad.promise : secondLoad.promise
+    )
+    window.api = { sessions: { loadOne } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [first, second], selectedSessionId: first.id })
+    const hook = renderController({ activeSession: first })
+    mounted.push(hook)
+
+    act(() => {
+      hook.result.current.actions.openEdit(first)
+      hook.result.current.actions.openEdit(second)
+    })
+    await act(async () => {
+      secondLoad.resolve({ ...second, revision: 1, messages: [] })
+      await secondLoad.promise
+    })
+    await act(async () => {
+      firstLoad.resolve({ ...first, revision: 1, messages: [] })
+      await firstLoad.promise
+    })
+
+    expect(hook.result.current.view.dialogs.edit?.session.id).toBe(second.id)
+  })
+
   it('submits title and description through the dedicated edit command and applies its authority', async () => {
     const active = session({ revision: 2, description: 'Before' })
     const edited: PersistedChatSession = {
@@ -244,6 +279,76 @@ describe('workspace session controller', () => {
       revision: 3
     })
     expect(hook.result.current.view.dialogs.edit).toBeNull()
+  })
+
+  it('does not close a newly opened Edit dialog when the previous save succeeds', async () => {
+    const first = session({ id: 'session-a', title: 'First' })
+    const second = session({ id: 'session-b', title: 'Second' })
+    const firstSave = deferred<PersistedChatSession>()
+    window.api = {
+      sessions: { editDetails: vi.fn().mockReturnValue(firstSave.promise) }
+    } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [first, second], selectedSessionId: first.id })
+    const hook = renderController({ activeSession: first })
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.openEdit(first))
+    act(() => hook.result.current.actions.confirmEdit({ preventDefault: vi.fn() } as never))
+    act(() => hook.result.current.actions.openEdit(second))
+
+    await act(async () => {
+      firstSave.resolve({ ...first, revision: 2 })
+      await firstSave.promise
+    })
+
+    expect(hook.result.current.view.dialogs.edit).toMatchObject({
+      session: { id: second.id },
+      titleDraft: second.title,
+      isSaving: false
+    })
+  })
+
+  it('does not clear a new Edit save state when the previous save fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const first = session({ id: 'session-a', title: 'First' })
+    const second = session({ id: 'session-b', title: 'Second' })
+    const firstSave = deferred<PersistedChatSession>()
+    const secondSave = deferred<PersistedChatSession>()
+    window.api = {
+      sessions: {
+        editDetails: vi
+          .fn()
+          .mockReturnValueOnce(firstSave.promise)
+          .mockReturnValueOnce(secondSave.promise)
+      }
+    } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [first, second], selectedSessionId: first.id })
+    const hook = renderController({ activeSession: first })
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.openEdit(first))
+    act(() => hook.result.current.actions.confirmEdit({ preventDefault: vi.fn() } as never))
+    act(() => hook.result.current.actions.openEdit(second))
+    act(() => hook.result.current.actions.confirmEdit({ preventDefault: vi.fn() } as never))
+
+    try {
+      await act(async () => {
+        firstSave.reject(new Error('first save failed'))
+        await firstSave.promise.catch(() => undefined)
+      })
+
+      expect(hook.result.current.view.dialogs.edit).toMatchObject({
+        session: { id: second.id },
+        isSaving: true
+      })
+    } finally {
+      await act(async () => {
+        secondSave.resolve({ ...second, revision: 2 })
+        await secondSave.promise
+        await Promise.resolve()
+      })
+      warn.mockRestore()
+    }
   })
 
   it('renames a Session title inline through the session-details mutation', async () => {
@@ -418,6 +523,28 @@ describe('workspace session controller', () => {
     expect(hook.result.current.view.dialogs.exportConversation).toBeNull()
   })
 
+  it('does not open conversation export after its lazy-load intent is closed', async () => {
+    const summary = session({ contentLoaded: false, activeMessageCount: 1 })
+    const load = deferred<PersistedChatSession | undefined>()
+    window.api = {
+      sessions: { loadOne: vi.fn().mockReturnValue(load.promise) }
+    } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [summary], selectedSessionId: summary.id })
+    const hook = renderController({ activeSession: summary })
+    mounted.push(hook)
+
+    act(() => {
+      hook.result.current.actions.openExportConversation(summary)
+      hook.result.current.actions.closeExportConversation()
+    })
+    await act(async () => {
+      load.resolve({ ...summary, revision: 1, messages: [] })
+      await load.promise
+    })
+
+    expect(hook.result.current.view.dialogs.exportConversation).toBeNull()
+  })
+
   it('localizes an unopened Session export load failure', async () => {
     const summary = session({ contentLoaded: false })
     window.api = {
@@ -514,6 +641,24 @@ describe('workspace session controller', () => {
 
     expect(order).toEqual(['archive', 'undo', 'clear'])
     expect(hook.result.current.lifecycle.canArchive(active)).toBe(true)
+  })
+
+  it('does not archive while context compaction owns the Session', () => {
+    const active = session()
+    const updateSessionArchive = vi.fn()
+    useSessionStore.setState({
+      sessions: [active],
+      selectedSessionId: active.id,
+      updateSessionArchive
+    })
+    useSessionStore.getState().beginCompaction(active.id)
+    const compacting = useSessionStore.getState().sessions[0]
+    const hook = renderController({ activeSession: compacting })
+    mounted.push(hook)
+
+    expect(hook.result.current.lifecycle.canArchive(compacting)).toBe(false)
+    act(() => hook.result.current.actions.archive(compacting))
+    expect(updateSessionArchive).not.toHaveBeenCalled()
   })
 
   it('does not archive an idle Session while a current child Attempt is running on any branch', () => {

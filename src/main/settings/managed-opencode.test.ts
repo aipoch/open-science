@@ -1,12 +1,57 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import {
+  chmod,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { nonRegularMarkerPaths, markerReplacementsOnRead } = vi.hoisted(() => ({
+  nonRegularMarkerPaths: new Set<string>(),
+  markerReplacementsOnRead: new Map<string, string>()
+}))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    lstat: async (path: string) =>
+      nonRegularMarkerPaths.has(String(path))
+        ? ({ isFile: () => false } as Awaited<ReturnType<typeof actual.lstat>>)
+        : actual.lstat(path),
+    readFile: async (...args: Parameters<typeof actual.readFile>) => {
+      const path = String(args[0])
+      const replacement = markerReplacementsOnRead.get(path)
+      if (replacement !== undefined) {
+        markerReplacementsOnRead.delete(path)
+        const replacementPath = `${path}.replacement`
+        await actual.writeFile(replacementPath, replacement, { flag: 'wx' })
+        await actual.rm(path)
+        await actual.rename(replacementPath, path)
+      }
+      return actual.readFile(...args)
+    }
+  }
+})
+
+afterEach(() => {
+  nonRegularMarkerPaths.clear()
+  markerReplacementsOnRead.clear()
+})
 
 import {
   classifyVerifyResult,
@@ -131,8 +176,11 @@ describe('installManagedOpencode', () => {
 
   // A downloaded package that extracts cleanly but cannot run on this CPU (e.g. SIGILL on a non-AVX2
   // x64 host) must fail the install, not persist a broken path.
-  it('fails cleanly and removes the binary when the smoke check reports it cannot run', async () => {
+  it('preserves the existing runtime when the replacement fails its smoke check', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const existingPath = join(managedOpencodeDir(root), 'opencode')
+    await mkdir(managedOpencodeDir(root), { recursive: true })
+    await writeFile(existingPath, 'WORKING-OPENCODE')
     const tgz = buildTgz([
       { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho opencode\n') }
     ])
@@ -165,12 +213,130 @@ describe('installManagedOpencode', () => {
     // Actionable error mentioning the failed probe and the likely AVX2 cause.
     expect(outcome.result.error).toMatch(/failed to run/)
     expect(outcome.result.error).toMatch(/AVX2/)
-    // The unusable binary is not left on disk.
-    await expect(readFile(join(managedOpencodeDir(root), 'opencode'))).rejects.toThrow()
+    expect(await readFile(existingPath, 'utf8')).toBe('WORKING-OPENCODE')
+  })
+
+  it('rejects a symlinked runtime root without modifying its target', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const externalRoot = join(root, 'external-opencode')
+    const externalMarker = join(externalRoot, '.open-science-managed-runtime')
+    const managedRoot = dirname(managedOpencodeDir(root))
+    await mkdir(externalRoot, { recursive: true })
+    await writeFile(externalMarker, 'EXTERNAL-DATA')
+    await symlink(externalRoot, managedRoot, process.platform === 'win32' ? 'junction' : 'dir')
+    const tgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho replacement\n') }
+    ])
+
+    const outcome = await installManagedOpencode({
+      installId: 'reject-symlinked-root',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson: async (url) =>
+        url.endsWith('/opencode-ai')
+          ? { 'dist-tags': { latest: '1.18.3' } }
+          : { dist: { tarball: 'https://reg/opencode.tgz', integrity: sha512(tgz) } },
+      fetchTarball: async () => ({ stream: Readable.from(tgz), totalBytes: tgz.length }),
+      verifyBinary: () => ({ ok: true }),
+      tmpDir: root
+    })
+
+    expect(await readFile(externalMarker, 'utf8')).toBe('EXTERNAL-DATA')
+    expect(outcome.result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/symbolic link/i)
+    })
+  })
+
+  it('rejects a hard-linked ownership marker without modifying its external inode', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const externalMarker = join(root, 'external-opencode-marker')
+    const managedRoot = dirname(managedOpencodeDir(root))
+    await mkdir(managedOpencodeDir(root), { recursive: true })
+    await writeFile(externalMarker, 'EXTERNAL-DATA')
+    await link(externalMarker, join(managedRoot, '.open-science-managed-runtime'))
+    const tgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho replacement\n') }
+    ])
+
+    const outcome = await installManagedOpencode({
+      installId: 'reject-hard-linked-marker',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson: async (url) =>
+        url.endsWith('/opencode-ai')
+          ? { 'dist-tags': { latest: '1.18.3' } }
+          : { dist: { tarball: 'https://reg/opencode.tgz', integrity: sha512(tgz) } },
+      fetchTarball: async () => ({ stream: Readable.from(tgz), totalBytes: tgz.length }),
+      verifyBinary: () => ({ ok: true }),
+      tmpDir: root
+    })
+
+    expect(await readFile(externalMarker, 'utf8')).toBe('EXTERNAL-DATA')
+    expect(outcome.result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/hard link/i)
+    })
+  })
+
+  it('restores the existing runtime when publication fails', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const existingPath = join(managedOpencodeDir(root), 'opencode')
+    const managedRoot = dirname(managedOpencodeDir(root))
+    await mkdir(managedOpencodeDir(root), { recursive: true })
+    await writeFile(existingPath, 'WORKING-OPENCODE')
+    const tgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho replacement\n') }
+    ])
+    const renamePath = vi.fn(async (...args: Parameters<typeof rename>) => {
+      const [source, destination] = args
+      if (String(source).includes('.staging-') && String(destination) === managedRoot) {
+        throw new Error('swap failed')
+      }
+      await rename(source, destination)
+    })
+
+    const outcome = await installManagedOpencode({
+      installId: 'restore-existing',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson: async (url) =>
+        url.endsWith('/opencode-ai')
+          ? { 'dist-tags': { latest: '1.18.3' } }
+          : { dist: { tarball: 'https://reg/opencode.tgz', integrity: sha512(tgz) } },
+      fetchTarball: async () => ({ stream: Readable.from(tgz), totalBytes: tgz.length }),
+      verifyBinary: () => ({ ok: true }),
+      tmpDir: root,
+      renamePath
+    })
+
+    expect(outcome.result).toMatchObject({ ok: false, error: 'swap failed' })
+    expect(await readFile(existingPath, 'utf8')).toBe('WORKING-OPENCODE')
+    expect((await readdir(root)).filter((name) => name.includes('.backup-'))).toEqual([])
   })
 
   it('succeeds when the smoke check confirms the binary runs', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const finalPath = join(managedOpencodeDir(root), 'opencode')
+    const interruptedStaging = join(
+      root,
+      'opencode-managed.staging-12345678-1234-1234-1234-123456789abc'
+    )
+    const interruptedPayload = join(interruptedStaging, 'partial-download')
+    await mkdir(managedOpencodeDir(root), { recursive: true })
+    await writeFile(finalPath, 'WORKING-OPENCODE')
+    await mkdir(interruptedStaging, { recursive: true })
+    await writeFile(
+      join(interruptedStaging, '.open-science-managed-runtime'),
+      'open-science:opencode:v1\n'
+    )
+    await writeFile(interruptedPayload, 'partial')
     const tgz = buildTgz([
       { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho opencode\n') }
     ])
@@ -185,7 +351,19 @@ describe('installManagedOpencode', () => {
       totalBytes?: number
     }> => ({ stream: Readable.from(tgz), totalBytes: tgz.length })
 
-    let verifiedPath: string | undefined
+    let verifiedContent: string | undefined
+    let finalContentDuringVerification: string | undefined
+    let stagingOwner: string | undefined
+    const renamePath = async (...args: Parameters<typeof rename>): Promise<void> => {
+      const [source] = args
+      if (String(source).includes('.staging-')) {
+        stagingOwner = await readFile(
+          join(dirname(String(source)), '.open-science-managed-runtime'),
+          'utf8'
+        )
+      }
+      await rename(...args)
+    }
     const outcome = await installManagedOpencode({
       installId: 'i4',
       onEvent: () => undefined,
@@ -195,16 +373,44 @@ describe('installManagedOpencode', () => {
       fetchJson,
       fetchTarball,
       verifyBinary: (binPath) => {
-        verifiedPath = binPath
+        verifiedContent = readFileSync(binPath, 'utf8')
+        finalContentDuringVerification = readFileSync(finalPath, 'utf8')
         return { ok: true }
       },
-      tmpDir: root
+      tmpDir: root,
+      renamePath
     })
 
     expect(outcome.result.ok).toBe(true)
-    expect(outcome.resolvedPath).toBe(join(managedOpencodeDir(root), 'opencode'))
-    // The verifier is handed the installed binary path.
-    expect(verifiedPath).toBe(join(managedOpencodeDir(root), 'opencode'))
+    expect(stagingOwner).toBe('open-science:opencode:v1\n')
+    await expect(readFile(interruptedPayload)).rejects.toThrow()
+    expect(outcome.resolvedPath).toBe(finalPath)
+    expect(verifiedContent).toContain('echo opencode')
+    expect(finalContentDuringVerification).toBe('WORKING-OPENCODE')
+  })
+
+  it('returns a structured failure when the staging directory cannot be created', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const blockedDataRoot = join(root, 'blocked-data-root')
+    const logs: string[] = []
+    await writeFile(blockedDataRoot, 'not a directory')
+
+    const outcome = await installManagedOpencode({
+      installId: 'staging-setup-failure',
+      onEvent: (event) => {
+        if (event.kind === 'log') logs.push(event.chunk)
+      },
+      dataRoot: blockedDataRoot,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson: async () => {
+        throw new Error('registry should not be reached')
+      },
+      fetchTarball: async () => ({ stream: Readable.from([]) })
+    })
+
+    expect(outcome.result).toMatchObject({ ok: false, error: expect.stringContaining('ENOTDIR') })
+    expect(logs.some((chunk) => /ENOTDIR/.test(chunk))).toBe(true)
   })
 
   // A non-AVX2 x64 host: the standard build dies with SIGILL, so the installer retries the -baseline
@@ -694,6 +900,79 @@ describe('isManagedOpencodePath / uninstallManagedOpencode', () => {
 
     await expect(readFile(bin)).rejects.toThrow()
     await expect(readFile(join(root, 'opencode-managed', 'bin', 'opencode'))).rejects.toThrow()
+  })
+
+  it('removes only owned staging and backup siblings', async () => {
+    const uuid = '12345678-1234-1234-1234-123456789abc'
+    const unownedUuid = 'abcdefab-cdef-abcd-efab-cdefabcdefab'
+    const stagingMarker = join(root, `opencode-managed.staging-${uuid}`, 'marker')
+    const backupMarker = join(root, `opencode-managed.backup-${uuid}`, 'marker')
+    const unownedMarker = join(root, `opencode-managed.backup-${unownedUuid}`, 'marker')
+    const lookalikeMarker = join(root, 'opencode-managed.backup-manual', 'marker')
+    for (const marker of [stagingMarker, backupMarker, unownedMarker, lookalikeMarker]) {
+      await mkdir(dirname(marker), { recursive: true })
+      await writeFile(marker, 'present')
+    }
+    for (const ownedRoot of [dirname(stagingMarker), dirname(backupMarker)]) {
+      await writeFile(
+        join(ownedRoot, '.open-science-managed-runtime'),
+        'open-science:opencode:v1\n'
+      )
+    }
+
+    await uninstallManagedOpencode(root)
+
+    await expect(readFile(stagingMarker)).rejects.toThrow()
+    await expect(readFile(backupMarker)).rejects.toThrow()
+    await expect(readFile(unownedMarker, 'utf8')).resolves.toBe('present')
+    await expect(readFile(lookalikeMarker, 'utf8')).resolves.toBe('present')
+  })
+
+  it('preserves an orphan whose ownership marker is a symbolic link', async () => {
+    const uuid = '12345678-1234-1234-1234-123456789abc'
+    const orphanRoot = join(root, `opencode-managed.backup-${uuid}`)
+    const orphanPayload = join(orphanRoot, 'user-data')
+    const ownerMarker = join(orphanRoot, '.open-science-managed-runtime')
+    await mkdir(orphanRoot, { recursive: true })
+    await writeFile(orphanPayload, 'present')
+    await writeFile(ownerMarker, 'open-science:opencode:v1\n')
+    // Windows CI cannot create file symlinks without extra privileges. Model the no-follow lstat
+    // result at the filesystem boundary while retaining real directory and read/remove behavior.
+    nonRegularMarkerPaths.add(ownerMarker)
+
+    await uninstallManagedOpencode(root)
+
+    await expect(readFile(orphanPayload, 'utf8')).resolves.toBe('present')
+  })
+
+  it('preserves an orphan whose ownership marker has multiple hard links', async () => {
+    const uuid = '12345678-1234-1234-1234-123456789abc'
+    const orphanRoot = join(root, `opencode-managed.backup-${uuid}`)
+    const orphanPayload = join(orphanRoot, 'user-data')
+    const externalMarker = join(root, 'external-owner-marker')
+    await mkdir(orphanRoot, { recursive: true })
+    await writeFile(orphanPayload, 'present')
+    await writeFile(externalMarker, 'open-science:opencode:v1\n')
+    await link(externalMarker, join(orphanRoot, '.open-science-managed-runtime'))
+
+    await uninstallManagedOpencode(root)
+
+    await expect(readFile(orphanPayload, 'utf8')).resolves.toBe('present')
+  })
+
+  it('preserves an orphan when its ownership marker changes after metadata validation', async () => {
+    const uuid = '12345678-1234-1234-1234-123456789abc'
+    const orphanRoot = join(root, `opencode-managed.backup-${uuid}`)
+    const orphanPayload = join(orphanRoot, 'user-data')
+    const ownerMarker = join(orphanRoot, '.open-science-managed-runtime')
+    await mkdir(orphanRoot, { recursive: true })
+    await writeFile(orphanPayload, 'present')
+    await writeFile(ownerMarker, 'unowned\n')
+    markerReplacementsOnRead.set(ownerMarker, 'open-science:opencode:v1\n')
+
+    await uninstallManagedOpencode(root)
+
+    await expect(readFile(orphanPayload, 'utf8')).resolves.toBe('present')
   })
 
   it('is a no-op (never rejects) when nothing is installed', async () => {

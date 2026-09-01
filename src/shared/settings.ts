@@ -12,6 +12,7 @@ import type {
 } from './reasoning-effort'
 import type { PackageMirror } from './mirror'
 import type { NetworkProxySettings } from './network-proxy'
+import type { NotebookNetworkSettings } from './notebook-network'
 import type { CloseActionPreference } from './window-controls'
 
 // Settings file schema version; bumped when the on-disk shape changes. v2 adds official-vendor
@@ -36,6 +37,7 @@ export type ProviderType =
 // which setup choice produced it so editing an imported profile does not masquerade as an isolated
 // sign-in and accidentally discard its imported loopback route.
 export type CodexSubscriptionAuthMode = 'imported' | 'isolated'
+export type CodexSubscriptionTransport = 'auto' | 'https' | 'websocket'
 
 // Stored Codex subscriptions share one runtime type, while renderer surfaces still need the setup
 // choice. Legacy codex-shared views have no discriminator, so their type remains the fallback.
@@ -210,16 +212,21 @@ export const isProviderUsableByFramework = (
 // The endpoint to actually use for a (provider, framework) pair. When both sides support OpenAI
 // /v1/chat/completions it wins (per product decision); otherwise the shared Anthropic endpoint; else
 // undefined when the pair is incompatible.
-export const preferredEndpoint = (
+export const preferredEndpoint = <const FrameworkEndpoints extends readonly ChatApiEndpoint[]>(
   endpoints: readonly ChatApiEndpoint[],
-  frameworkEndpoints: readonly ChatApiEndpoint[]
-): ChatApiEndpoint | undefined => {
-  const shared = endpoints.filter((endpoint) => frameworkEndpoints.includes(endpoint))
+  frameworkEndpoints: FrameworkEndpoints
+): FrameworkEndpoints[number] | undefined => {
+  const shared: FrameworkEndpoints[number][] = frameworkEndpoints.filter((endpoint) =>
+    endpoints.includes(endpoint)
+  )
 
   if (shared.length === 0) return undefined
 
-  if (shared.includes('responses')) return 'responses'
-  return shared.includes('openai') ? 'openai' : 'anthropic'
+  return (
+    shared.find((endpoint) => endpoint === 'responses') ??
+    shared.find((endpoint) => endpoint === 'openai') ??
+    shared.find((endpoint) => endpoint === 'anthropic')
+  )
 }
 
 // Detected claude executable metadata, persisted so later spawns skip re-detection.
@@ -286,6 +293,7 @@ export type ProviderView = {
   id: string
   type: ProviderType
   codexAuthMode?: CodexSubscriptionAuthMode
+  codexTransport?: CodexSubscriptionTransport
   name: string
   // Which chat APIs this provider's endpoint speaks; drives per-framework availability. Absent ⇒
   // treat as ['anthropic'] (every legacy provider).
@@ -479,6 +487,9 @@ export type AgentFrameworkView = {
 
 // Full renderer snapshot of settings state.
 export type SettingsSnapshot = {
+  // Volatile Main-authority projection order. It is not persisted; older peers may omit it.
+  // Renderer stores use it to reject an RPC response that arrives after a newer settings event.
+  revision?: number
   claude: ClaudeInfo
   // Detected opencode executable, for the framework-aware detection card.
   opencode: OpencodeInfo
@@ -509,6 +520,8 @@ export type SettingsSnapshot = {
   packageMirror?: PackageMirror
   // Application-wide proxy preference. Older documents without this field resolve to System.
   networkProxy?: NetworkProxySettings
+  // Global Notebook REPL/Bash egress policy. Historical settings resolve to the safe defaults.
+  notebookNetwork?: NotebookNetworkSettings
   // The user's reasoning-effort preference for agent requests. 'default' leaves the agent's own
   // default untouched; concrete levels apply to subsequent requests when the agent supports them.
   reasoningEffort: ReasoningEffort
@@ -545,6 +558,12 @@ export type ProjectFilesFilterPreference = {
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
 export type SetNetworkProxyRequest = NetworkProxySettings
+
+export type SetNotebookNetworkRequest = NotebookNetworkSettings & {
+  // The renderer's allowed-domain baseline. The owner applies the draft's add/remove delta to the
+  // latest stored policy so a concurrent conversation approval cannot be overwritten by a stale form.
+  baseAllowedDomains?: readonly string[]
+}
 
 export type SetPackageMirrorRequest = PackageMirror
 
@@ -625,6 +644,7 @@ export type Preflight = {
 // typed a new one; leaving it undefined on edit keeps the previously stored key.
 export type ProviderDraft = {
   type: ProviderType
+  codexTransport?: CodexSubscriptionTransport
   name?: string
   baseUrl?: string
   model?: string
@@ -967,12 +987,52 @@ export type EnvironmentCheckId =
 
 export type EnvironmentCheckStatus = 'passed' | 'warning' | 'failed'
 
+export type EnvironmentCheckPresentation =
+  | {
+      kind: 'system-supported'
+      platform: string
+      architecture: string
+    }
+  | {
+      kind: 'system-baseline-supported'
+      platform: string
+      architecture: string
+    }
+  | {
+      kind: 'system-detected-runtime'
+      platform: string
+      architecture: string
+      runtime: string
+    }
+  | {
+      kind: 'system-no-installer'
+      platform: string
+      architecture: string
+    }
+  | { kind: 'storage-writable' }
+  | { kind: 'storage-unwritable' }
+  | { kind: 'secure-storage-available' }
+  | { kind: 'secure-storage-unavailable' }
+  | {
+      kind: 'install-network-runtime-present'
+      runtime: string
+    }
+  | {
+      kind: 'install-network-registry-available'
+      registry: ManagedClaudeRegistry
+      latencyMs: number
+    }
+  | { kind: 'install-network-unreachable' }
+
 export type EnvironmentCheckItem = {
   id: EnvironmentCheckId
   label: string
   status: EnvironmentCheckStatus
   summary: string
   detail?: string
+  // Stable renderer-owned copy projection. The English strings above remain as a compatibility
+  // fallback and for technical diagnostics that must be shown verbatim.
+  presentation?: EnvironmentCheckPresentation
 }
 
 export type EnvironmentCheckResult = {
@@ -1359,13 +1419,16 @@ export type CustomServerView = {
   availability?: 'unavailable' | 'unauthenticated' | 'credential_unavailable'
   // Background discovery is transient and does not make the Connector unavailable by itself.
   checking?: boolean
-  // Display-only config summary. Environment names are safe to show; values stay write-only.
+  // Display-only config summary. Environment/header names are safe to show; values stay write-only.
   command?: string
   args?: string[]
   url?: string
   hasHeaders?: boolean
+  headerNames?: string[]
   hasEnv?: boolean
   environmentNames?: string[]
+  // Opaque device credential reference used to preselect a shared OAuth credential in Configure.
+  oauthCredentialId?: string
   oauth?: {
     clientMetadataUrl?: string
     authorizationServerUrl?: string
@@ -1375,6 +1438,7 @@ export type CustomServerView = {
     hasTokens: boolean
     // Optional for compatibility with snapshots from an older main process during development.
     hasClientSecret?: boolean
+    sharedCredential?: boolean
   }
 }
 
@@ -1398,6 +1462,58 @@ export type ValidateOpenAlexCredentialRequest = { apiKey: string }
 export type OpenAlexCredentialValidation =
   { valid: true } | { valid: false; reason: 'invalid-format' | 'rejected' | 'unavailable' }
 
+export type DeviceCredentialKind = 'api_key' | 'token' | 'oauth'
+export type DeviceOAuthTransport = Extract<CustomServerTransport, 'streamable_http' | 'sse'>
+export type DeviceOAuthRegistration = {
+  clientMetadataUrl?: string
+  authorizationServerUrl?: string
+  scopes?: string[]
+  clientId?: string
+  redirectUri?: string
+}
+
+export type DeviceCredentialView = {
+  id: string
+  displayName: string
+  kind: DeviceCredentialKind
+  status: 'stored' | 'connected' | 'disconnected'
+  needsSecret: boolean
+  resourceUri?: string
+  transport?: DeviceOAuthTransport
+  oauth?: DeviceOAuthRegistration
+  hasClientSecret?: boolean
+  consumerCount: number
+  consumerNames: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+export type DeviceCredentialsSnapshot = { credentials: DeviceCredentialView[] }
+export type CreateDeviceCredentialResult = DeviceCredentialsSnapshot & {
+  createdCredential: DeviceCredentialView
+}
+
+export type CreateDeviceCredentialRequest =
+  | { displayName: string; kind: 'api_key' | 'token'; secret: string }
+  | {
+      displayName: string
+      kind: 'oauth'
+      resourceUri: string
+      transport: DeviceOAuthTransport
+      oauth: DeviceOAuthRegistration & {
+        clientSecret?: string
+      }
+    }
+
+export type UpdateDeviceCredentialRequest = {
+  id: string
+  displayName?: string
+  secret?: string
+}
+
+export type RemoveDeviceCredentialRequest = { id: string }
+export type DeviceCredentialAuthenticationRequest = { id: string }
+
 // Add a custom MCP server. stdio requires `command`; the remote transports require `url`.
 export type AddCustomServerRequest = {
   // Optional immutable local ID. Omission lets main infer one from `name` and fall back to a UUID.
@@ -1408,17 +1524,16 @@ export type AddCustomServerRequest = {
   transport: CustomServerTransport
   command?: string
   args?: string[]
-  env?: Record<string, string>
+  envCredentialIds?: Record<string, string>
   url?: string
-  headers?: Record<string, string>
-  oauth?: {
-    clientMetadataUrl?: string
-    authorizationServerUrl?: string
-    scopes?: string[]
-    clientId?: string
-    redirectUri?: string
-    clientSecret?: string
-  } | null
+  headerCredentialIds?: Record<string, string>
+  oauthCredentialId?: string
+  // Non-secret registration requirements checked against a selected shared OAuth credential.
+  // They are validation input only and are not persisted on the Connector.
+  oauthRequirements?: DeviceOAuthRegistration
+  // Request-only marker from an imported template. Main validates the selected shared credential;
+  // the marker is never persisted on the Connector.
+  requiresOAuthClientSecret?: boolean
 }
 export type SetCustomServerEnabledRequest = { id: string; enabled: boolean }
 export type RemoveCustomServerRequest = { id: string }
@@ -1505,8 +1620,12 @@ export type UpdateCustomServerRequest = {
   command?: string
   args?: string[]
   env?: Record<string, string>
+  envCredentialIds?: Record<string, string>
   url?: string
   headers?: Record<string, string>
+  headerCredentialIds?: Record<string, string>
+  // Omitted retains the current shared OAuth binding; a value selects or replaces it.
+  oauthCredentialId?: string
   oauth?: {
     clientMetadataUrl?: string
     authorizationServerUrl?: string

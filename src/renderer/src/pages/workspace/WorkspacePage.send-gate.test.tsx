@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
 
 import { useNavigationStore } from '@/stores/navigation-store'
+import { createInitialMemoryState, useMemoryStore } from '@/stores/memory-store'
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
@@ -176,6 +177,7 @@ describe('WorkspacePage send gate while compacting', () => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useProjectStore.setState({ projects: [] })
     useReviewStore.setState(createInitialReviewState())
+    useMemoryStore.setState(createInitialMemoryState())
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-1' })
     useSessionStore.setState({
       ...createInitialSessionState(),
@@ -210,7 +212,13 @@ describe('WorkspacePage send gate while compacting', () => {
         onFixLoopEnd: vi.fn(() => vi.fn()),
         abortFixLoop: vi.fn(() => Promise.resolve())
       },
-      compute: { enabledHostsSet: vi.fn(() => Promise.resolve()) }
+      compute: { enabledHostsSet: vi.fn(() => Promise.resolve()) },
+      memory: {
+        snapshot: vi.fn(() =>
+          Promise.resolve({ revision: 1, enabled: true, categories: [], projects: [] })
+        ),
+        onChanged: vi.fn(() => vi.fn())
+      }
     } as never
 
     container = document.createElement('div')
@@ -260,6 +268,43 @@ describe('WorkspacePage send gate while compacting', () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     expect(conversationProps.conversation.availability.submit).toBe(true)
+  })
+
+  it('defaults Memory off and explains the global gate when Memory is off in Settings', async () => {
+    vi.mocked(window.api.memory.snapshot).mockResolvedValue({
+      revision: 1,
+      enabled: false,
+      categories: [],
+      projects: []
+    })
+
+    await renderPage()
+
+    expect(conversationProps.agentControls).toMatchObject({
+      canChangeMemory: false,
+      memoryEnabled: false,
+      memoryDisabledReason:
+        'Memory is off in Settings. Turn it on to use Memory in this conversation.'
+    })
+
+    conversationProps.agentControls.toggleMemory?.(true)
+    expect(runtime.setMemoryEnabled).not.toHaveBeenCalled()
+
+    await act(async () => useSessionStore.getState().clearSelection())
+    expect(conversationProps.agentControls).toMatchObject({
+      canChangeMemory: false,
+      memoryEnabled: false
+    })
+
+    runtime.sendMessage.mockResolvedValueOnce({ sessionId: 'new-session', messageId: 'message-1' })
+    await act(async () => conversationProps.composer.actions.changeDoc(textDoc('start safely')))
+    await act(async () => {
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+      await Promise.resolve()
+    })
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ memoryEnabled: false, text: 'start safely' })
+    )
   })
 
   it.each(['running', 'waiting-permission'] as const)(

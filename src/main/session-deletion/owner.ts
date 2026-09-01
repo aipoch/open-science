@@ -1,9 +1,9 @@
-import type { AcpStateSnapshot } from '../../shared/acp'
+import type { AcpRuntimeState } from '../../shared/acp'
 import type { DeleteSessionRequest, SessionDeletionResult } from '../../shared/session-persistence'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 
 type SessionDeletionRuntime = {
-  deleteSession(request: { sessionId: string }): Promise<AcpStateSnapshot>
+  deleteSession(request: { sessionId: string }): Promise<AcpRuntimeState>
   liveSessionProjectId(sessionId: string): string | undefined
 }
 
@@ -72,7 +72,7 @@ class SessionDeletionOwner {
       return { status: 'failed', reason: 'runtime', runtimeDetached: false }
     }
 
-    let snapshot: AcpStateSnapshot
+    let snapshot: AcpRuntimeState
     try {
       snapshot = await this.runtime.deleteSession({ sessionId: request.sessionId })
     } catch (error) {

@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto'
-import { createReadStream, createWriteStream } from 'node:fs'
-import { chmod, mkdir, rm } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { constants, createReadStream, createWriteStream, type Dirent, type Stats } from 'node:fs'
+import { chmod, lstat, mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { arch as osArch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -112,12 +112,111 @@ const managedClaudeDir = (dataRoot: string): string => join(dataRoot, 'claude-co
 const isManagedClaudePath = (resolvedPath: string, dataRoot: string): boolean =>
   resolve(dirname(resolvedPath)) === resolve(managedClaudeDir(dataRoot))
 
-// Removes the app-managed Claude install tree (the `claude-code` dir holding `bin/<binName>`).
+const ORPHANED_CLAUDE_RUNTIME_PATTERN =
+  /^claude-code\.(?:staging|backup)-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
+const STAGED_CLAUDE_RUNTIME_PATTERN =
+  /^claude-code\.staging-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
+const RUNTIME_OWNER_MARKER = '.open-science-managed-runtime'
+const CLAUDE_RUNTIME_OWNER = 'open-science:claude-code:v1\n'
+const NO_FOLLOW_OPEN_FLAG = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0
+
+const readClaudeRuntimeOwnerMarker = async (
+  markerPath: string,
+  pathStats: Stats
+): Promise<string> => {
+  const marker = await open(markerPath, constants.O_RDONLY | NO_FOLLOW_OPEN_FLAG)
+  try {
+    const markerStats = await marker.stat()
+    if (markerStats.dev !== pathStats.dev || markerStats.ino !== pathStats.ino) {
+      throw new Error(`Refusing to use a changed ownership marker: ${markerPath}`)
+    }
+    if (!markerStats.isFile()) {
+      throw new Error(`Refusing to use a non-file ownership marker: ${markerPath}`)
+    }
+    if (markerStats.nlink > 1) {
+      throw new Error(`Refusing to use an ownership marker with multiple hard links: ${markerPath}`)
+    }
+    return await marker.readFile('utf8')
+  } finally {
+    await marker.close()
+  }
+}
+
+const ensureClaudeRuntimeOwnerMarker = async (root: string): Promise<void> => {
+  const markerPath = join(root, RUNTIME_OWNER_MARKER)
+  const markerStats = await lstat(markerPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  })
+
+  if (!markerStats) {
+    try {
+      await writeFile(markerPath, CLAUDE_RUNTIME_OWNER, { flag: 'wx' })
+      return
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        return ensureClaudeRuntimeOwnerMarker(root)
+      }
+      throw error
+    }
+  }
+
+  if (markerStats.isSymbolicLink()) {
+    throw new Error(`Refusing to use a symbolic-link ownership marker: ${markerPath}`)
+  }
+  if (!markerStats.isFile()) {
+    throw new Error(`Refusing to use a non-file ownership marker: ${markerPath}`)
+  }
+  if (markerStats.nlink > 1) {
+    throw new Error(`Refusing to use an ownership marker with multiple hard links: ${markerPath}`)
+  }
+  if ((await readClaudeRuntimeOwnerMarker(markerPath, markerStats)) !== CLAUDE_RUNTIME_OWNER) {
+    throw new Error(`Refusing to replace an unrecognized ownership marker: ${markerPath}`)
+  }
+}
+
+const isOwnedClaudeRuntime = async (root: string): Promise<boolean> => {
+  const markerPath = join(root, RUNTIME_OWNER_MARKER)
+  const markerStats = await lstat(markerPath).catch(() => undefined)
+  if (!markerStats?.isFile() || markerStats.nlink > 1) return false
+  return (
+    (await readClaudeRuntimeOwnerMarker(markerPath, markerStats).catch(() => undefined)) ===
+    CLAUDE_RUNTIME_OWNER
+  )
+}
+
+const findOwnedClaudeRuntimeSiblings = async (
+  dataRoot: string,
+  pattern: RegExp
+): Promise<string[]> => {
+  const root = dirname(managedClaudeDir(dataRoot))
+  const siblings = await readdir(dirname(root), { withFileTypes: true }).catch(() => [] as Dirent[])
+  const candidates = siblings
+    .filter((entry) => entry.isDirectory() && pattern.test(entry.name))
+    .map((entry) => join(dirname(root), entry.name))
+  return (
+    await Promise.all(
+      candidates.map(async (path) => ((await isOwnedClaudeRuntime(path)) ? path : undefined))
+    )
+  ).filter((path): path is string => path !== undefined)
+}
+
+const removeOwnedClaudeRuntimeSiblings = async (
+  dataRoot: string,
+  pattern: RegExp
+): Promise<void> => {
+  const owned = await findOwnedClaudeRuntimeSiblings(dataRoot, pattern)
+  await Promise.all(
+    owned.map((path) => rm(path, { recursive: true, force: true }).catch(() => undefined))
+  )
+}
+
+// Removes the app-managed Claude install tree and exact installer-owned staging/backup siblings.
 // Resolves (never rejects); a missing dir is a no-op so callers can uninstall idempotently.
 const uninstallManagedClaude = async (dataRoot: string): Promise<void> => {
-  await rm(dirname(managedClaudeDir(dataRoot)), { recursive: true, force: true }).catch(
-    () => undefined
-  )
+  const root = dirname(managedClaudeDir(dataRoot))
+  await removeOwnedClaudeRuntimeSiblings(dataRoot, ORPHANED_CLAUDE_RUNTIME_PATTERN)
+  await rm(root, { recursive: true, force: true }).catch(() => undefined)
 }
 
 // ---- Registry metadata -----------------------------------------------------------------------------
@@ -407,6 +506,8 @@ export type InstallManagedClaudeOptions = {
   platform?: ManagedPlatform
   fetchJson?: FetchJson
   fetchTarball?: FetchTarball
+  verifyBinary: (binPath: string) => Promise<string | undefined>
+  renamePath?: typeof rename
   tmpDir?: string
 }
 
@@ -430,6 +531,57 @@ const describeManagedInstallError = (error: unknown): string => {
   return message
 }
 
+const replaceManagedClaudeRoot = async (
+  stagedRoot: string,
+  root: string,
+  renamePath: typeof rename
+): Promise<void> => {
+  const backup = `${root}.backup-${randomUUID()}`
+  let backedUp = false
+
+  const rejectSymbolicLink = async (path: string, label: string): Promise<void> => {
+    const stats = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined
+      throw error
+    })
+    if (stats?.isSymbolicLink()) {
+      throw new Error(`Refusing to replace ${label} because it is a symbolic link: ${path}`)
+    }
+  }
+
+  await rejectSymbolicLink(root, 'the managed Claude runtime root')
+  await ensureClaudeRuntimeOwnerMarker(root).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  })
+
+  try {
+    await renamePath(root, backup)
+    backedUp = true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+
+  try {
+    await renamePath(stagedRoot, root)
+  } catch (swapError) {
+    if (backedUp) {
+      try {
+        await renamePath(backup, root)
+      } catch (restoreError) {
+        const swapMessage = swapError instanceof Error ? swapError.message : String(swapError)
+        const restoreMessage =
+          restoreError instanceof Error ? restoreError.message : String(restoreError)
+        throw new Error(
+          `Claude runtime swap failed: ${swapMessage}. The previous runtime remains at ${backup} because restore failed: ${restoreMessage}.`
+        )
+      }
+    }
+    throw swapError
+  }
+
+  if (backedUp) await rm(backup, { recursive: true, force: true }).catch(() => undefined)
+}
+
 // Downloads + installs the managed Claude binary, trying each registry in order. Streams progress via
 // `onEvent` and resolves (never rejects) with a structured outcome the service can persist.
 const installManagedClaude = async ({
@@ -441,77 +593,116 @@ const installManagedClaude = async ({
   platform = getManagedPlatform(),
   fetchJson = defaultFetchJson,
   fetchTarball = defaultFetchTarball,
+  verifyBinary,
+  renamePath = rename,
   tmpDir
 }: InstallManagedClaudeOptions): Promise<ManagedInstallOutcome> => {
-  const destPath = join(managedClaudeDir(dataRoot), platform.binName)
-  const scratch = tmpDir ?? managedClaudeDir(dataRoot)
+  const root = dirname(managedClaudeDir(dataRoot))
+  const destPath = join(root, 'bin', platform.binName)
+  const scratch = `${root}.staging-${randomUUID()}`
+  const stagedRoot = join(scratch, 'runtime')
+  const stagedPath = join(stagedRoot, 'bin', platform.binName)
+  const downloadDir = tmpDir ?? scratch
   let lastError = 'no registries configured'
 
-  for (const registry of registries) {
-    const tgzPath = join(scratch, `claude-download-${Date.now()}.tgz`)
-
-    try {
-      onEvent({ kind: 'progress', installId, phase: 'resolving' })
-      onEvent({
-        kind: 'log',
-        installId,
-        stream: 'system',
-        chunk: `Resolving Claude from ${registry} …\n`
-      })
-      const resolution = await resolveNativePackage({ registry, platform, version, fetchJson })
-
-      await downloadAndVerify({
-        url: resolution.tarball,
-        integrity: resolution.integrity,
-        destPath: tgzPath,
-        installId,
-        onEvent,
-        fetchTarball
-      })
-
-      onEvent({ kind: 'progress', installId, phase: 'extracting' })
-      const found = await extractFileFromTgz({
-        tgzPath,
-        entryName: `package/${platform.binName}`,
-        destPath
-      })
-
-      if (!found) throw new Error(`Native package did not contain ${platform.binName}`)
-      if (process.platform !== 'win32') await chmod(destPath, 0o755)
-
-      onEvent({
-        kind: 'log',
-        installId,
-        stream: 'system',
-        chunk: `Installed Claude ${resolution.version}.\n`
-      })
-
-      return {
-        result: { installId, ok: true },
-        resolvedPath: destPath,
-        version: resolution.version
-      }
-    } catch (error) {
-      lastError = describeManagedInstallError(error)
-      onEvent({
-        kind: 'log',
-        installId,
-        stream: 'system',
-        chunk: `${registry} failed: ${lastError}\n`
-      })
-    } finally {
-      await rm(tgzPath, { force: true }).catch(() => undefined)
-    }
+  await removeOwnedClaudeRuntimeSiblings(dataRoot, STAGED_CLAUDE_RUNTIME_PATTERN)
+  try {
+    await mkdir(scratch, { recursive: true })
+    await ensureClaudeRuntimeOwnerMarker(scratch)
+  } catch (error) {
+    lastError = describeManagedInstallError(error)
+    onEvent({
+      kind: 'log',
+      installId,
+      stream: 'system',
+      chunk: `Failed to prepare the Claude staging directory: ${lastError}\n`
+    })
+    await rm(scratch, { recursive: true, force: true }).catch(() => undefined)
+    return { result: { installId, ok: false, error: lastError } }
   }
+  try {
+    for (const registry of registries) {
+      const tgzPath = join(downloadDir, `claude-download-${randomUUID()}.tgz`)
+      let reachedPublication = false
 
-  onEvent({
-    kind: 'log',
-    installId,
-    stream: 'system',
-    chunk: `Automatic setup stopped. Correct the error above and install again. If an installation was interrupted, remove the incomplete runtime at ${destPath} before retrying.\n`
-  })
+      try {
+        await rm(stagedRoot, { recursive: true, force: true })
+        onEvent({ kind: 'progress', installId, phase: 'resolving' })
+        onEvent({
+          kind: 'log',
+          installId,
+          stream: 'system',
+          chunk: `Resolving Claude from ${registry} …\n`
+        })
+        const resolution = await resolveNativePackage({ registry, platform, version, fetchJson })
 
-  return { result: { installId, ok: false, error: lastError } }
+        await downloadAndVerify({
+          url: resolution.tarball,
+          integrity: resolution.integrity,
+          destPath: tgzPath,
+          installId,
+          onEvent,
+          fetchTarball
+        })
+
+        onEvent({ kind: 'progress', installId, phase: 'extracting' })
+        const found = await extractFileFromTgz({
+          tgzPath,
+          entryName: `package/${platform.binName}`,
+          destPath: stagedPath
+        })
+
+        if (!found) throw new Error(`Native package did not contain ${platform.binName}`)
+        if (process.platform !== 'win32') await chmod(stagedPath, 0o755)
+        const installedVersion = await verifyBinary(stagedPath)
+        if (!installedVersion) {
+          throw new Error(
+            'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
+          )
+        }
+        await ensureClaudeRuntimeOwnerMarker(stagedRoot)
+
+        reachedPublication = true
+        await replaceManagedClaudeRoot(stagedRoot, root, renamePath)
+
+        onEvent({
+          kind: 'log',
+          installId,
+          stream: 'system',
+          chunk: `Installed Claude ${resolution.version}.\n`
+        })
+
+        return {
+          result: { installId, ok: true },
+          resolvedPath: destPath,
+          version: resolution.version
+        }
+      } catch (error) {
+        lastError = describeManagedInstallError(error)
+        onEvent({
+          kind: 'log',
+          installId,
+          stream: 'system',
+          chunk: `${registry} failed: ${lastError}\n`
+        })
+        if (reachedPublication) return { result: { installId, ok: false, error: lastError } }
+      } finally {
+        await rm(tgzPath, { force: true }).catch(() => undefined)
+      }
+    }
+
+    onEvent({
+      kind: 'log',
+      installId,
+      stream: 'system',
+      chunk:
+        'Automatic setup stopped. Correct the error above and install again. No candidate runtime was published.\n'
+    })
+
+    return { result: { installId, ok: false, error: lastError } }
+  } finally {
+    await rm(scratch, { recursive: true, force: true }).catch(() => undefined)
+  }
 }
 
 // ---- Default Electron transport (Session-proxy-aware) ---------------------------------------------

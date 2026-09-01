@@ -485,10 +485,12 @@ export const LocalFileBrowser = ({
   // A request already pending when the browser mounts replaces the initial Home landing instead
   // of racing it.
   const initialRequestedPathRef = useRef(requestedPath)
+  const navigationRequestRef = useRef(0)
 
   // Clear the reported count when this container goes away, so the header stops showing a stale one.
   useEffect(
     () => () => {
+      navigationRequestRef.current += 1
       onEntryCountChangeRef.current?.(undefined)
     },
     []
@@ -497,9 +499,11 @@ export const LocalFileBrowser = ({
   // Loads one directory into the listing. Navigation is a single axis (parent arrow, address bar,
   // Go-to, entry double-click), so there is no history stack to maintain.
   const navigate = useCallback(async (target: string): Promise<void> => {
+    const request = ++navigationRequestRef.current
     setState({ kind: 'loading' })
     try {
       const listing = await window.api.localFs.listDir(target)
+      if (request !== navigationRequestRef.current) return
       setState({
         kind: 'ok',
         entries: listing.entries,
@@ -511,6 +515,7 @@ export const LocalFileBrowser = ({
       setAddressInput(listing.resolvedPath)
       onEntryCountChangeRef.current?.(listing.entries.length)
     } catch (err) {
+      if (request !== navigationRequestRef.current) return
       setState({
         kind: 'error',
         problem: describeLocalListingError((err as Error).message ?? '', target)
@@ -523,6 +528,7 @@ export const LocalFileBrowser = ({
   // before the browser mounted (its nonce is marked handled so the effect below doesn't
   // re-navigate).
   useEffect(() => {
+    const navigationIntent = navigationRequestRef.current
     void (async () => {
       const [fetchedRoots, fetchedDrives, fetchedBookmarks] = await Promise.all([
         window.api.localFs.getRoots(),
@@ -533,6 +539,7 @@ export const LocalFileBrowser = ({
       setRoots(fetchedRoots)
       setDrives(fetchedDrives)
       setBookmarks(fetchedBookmarks)
+      if (navigationIntent !== navigationRequestRef.current) return
       const pendingRequest = initialRequestedPathRef.current
       await navigate(pendingRequest?.path ?? fetchedRoots.home)
     })()

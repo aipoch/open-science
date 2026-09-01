@@ -18,6 +18,7 @@ export type AcpSettingsCapabilities = Pick<
   | 'getConnectors'
   | 'listSpecialistSkillCatalog'
   | 'provisionedConnectorSkillNames'
+  | 'rememberCodexAutoHttpsFallback'
 > &
   Partial<Pick<SettingsService, 'resolveAdmittedSubagentBackend'>>
 
@@ -30,6 +31,8 @@ export type ConnectorApplicationSettingsCapabilities = Pick<
   SettingsService,
   | 'getConnectors'
   | 'saveCustomServerOAuthState'
+  | 'resolveDeviceOAuthCredential'
+  | 'setDeviceCredentialAuthenticator'
   | 'setCustomServerRuntimeProjectionProvider'
   | 'setCustomServerAuthenticator'
   | 'previewSkillArchive'

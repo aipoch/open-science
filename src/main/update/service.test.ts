@@ -884,8 +884,19 @@ describe('UpdateService.download', () => {
     vi.mocked(log.info).mockClear()
     const downloading = service.download()
     await fetched
+    await vi.waitFor(() => {
+      expect(service.getStatus()).toMatchObject({
+        state: 'downloading',
+        downloadedBytes: 3,
+        totalBytes: 100
+      })
+    })
     const cancelled = await service.cancel()
     expect(cancelled.state).toBe('available')
+    expect(cancelled).not.toHaveProperty('progress')
+    expect(cancelled).not.toHaveProperty('downloadedBytes')
+    expect(cancelled).not.toHaveProperty('downloadProgress')
+    expect(cancelled.totalBytes).toBe(100)
 
     const final = await downloading
     expect(final.state).toBe('available')
@@ -1228,6 +1239,7 @@ describe('UpdateService.apply', () => {
   const downloadedService = async (
     target: string,
     overrides: {
+      fetchImpl?: typeof fetch
       openPath?: () => Promise<string>
       fileExists?: (path: string) => boolean
       log?: Logger
@@ -1275,6 +1287,73 @@ describe('UpdateService.apply', () => {
 
     expect(openPath).toHaveBeenCalledWith(target)
     expect(status.state).toBe('ready')
+  })
+
+  it('admits only one installer open while apply is in flight', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'open-once-'))
+    const target = join(dir, 'installer.dmg')
+    let resolveOpen!: (error: string) => void
+    const openPath = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveOpen = resolve
+        })
+    )
+    const service = await downloadedService(target, { openPath })
+
+    const first = service.apply()
+    const second = service.apply()
+
+    expect(openPath).toHaveBeenCalledTimes(1)
+    resolveOpen('')
+    await expect(Promise.all([first, second])).resolves.toMatchObject([
+      { state: 'ready' },
+      { state: 'ready' }
+    ])
+    expect(openPath).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let an older apply overwrite a newer manifest check', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'apply-refresh-'))
+    const target = join(dir, 'installer.dmg')
+    const body = Buffer.from('installer-bytes')
+    let manifestChecks = 0
+    const fetchImpl = ((input: unknown) => {
+      if (!String(input).endsWith('version.json')) {
+        return Promise.resolve(installerResponse(body))
+      }
+      manifestChecks += 1
+      return Promise.resolve(
+        jsonResponse({
+          version: manifestChecks === 1 ? '0.3.0' : '0.4.0',
+          releaseDate: '',
+          notes: '',
+          downloads: {
+            'mac-arm64': {
+              url: 'https://statics.aipoch.com/releases/0.3.0/installer.dmg',
+              size: body.byteLength,
+              sha256: createHash('sha256').update(body).digest('hex')
+            }
+          }
+        } satisfies UpdateManifest)
+      )
+    }) as unknown as typeof fetch
+    let resolveOpen!: (error: string) => void
+    const openPath = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveOpen = resolve
+        })
+    )
+    const service = await downloadedService(target, { fetchImpl, openPath })
+
+    const applying = service.apply()
+    await expect(service.check()).resolves.toMatchObject({ state: 'available', latest: '0.4.0' })
+    resolveOpen('No application is associated with this file')
+    await applying
+
+    expect(service.getStatus()).toMatchObject({ state: 'available', latest: '0.4.0' })
+    expect(service.getStatus().error).toBeUndefined()
   })
 
   it('records a completed installer apply without its local path', async () => {

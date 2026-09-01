@@ -129,7 +129,7 @@ const createHarness = (
   )
   const workflows = createAcpHandlerWorkflows(
     {
-      getSnapshot: () => snapshot,
+      getState: () => snapshot,
       hasLiveSession,
       captureSessionBackend,
       resumeSession,

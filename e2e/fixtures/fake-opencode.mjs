@@ -16,6 +16,8 @@ const NOTEBOOK_LIFECYCLE_PROMPT = 'Verify the notebook lifecycle.'
 const PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT = 'Profile the notebook lifecycle.'
 const ARTIFACT_PROVENANCE_PROMPT = 'Create a provenance artifact.'
 const DELEGATION_TERMINAL_PROMPT = 'Run the production delegation terminal journey.'
+const DELEGATION_ARTIFACT_VERSION_INPUT_PROMPT =
+  'Run the production Artifact Version input delegation journey.'
 const DELEGATION_BOUNDED_COLLECT_PROMPT = 'Run the production bounded collect journey.'
 const DELEGATION_BOUNDED_RECOLLECT_PROMPT = 'Collect the running Subagent in Turn B.'
 const DELEGATION_PERMISSION_PROMPT = 'Run the production delegated permission journey.'
@@ -50,6 +52,9 @@ const SUBAGENT_MODEL_INHERITED_PROMPT = 'Run the inherited Subagent model journe
 const SUBAGENT_MODEL_HOLDER_PROMPT = 'Create the global Active model holder.'
 const DELEGATED_TERMINAL_TASK = 'Complete the certified delegated terminal fixture.'
 const DELEGATED_TERMINAL_NAME = 'Certified delegated terminal'
+const DELEGATED_ARTIFACT_VERSION_INPUT_TASK = 'Read the delegated immutable Artifact Version input.'
+const DELEGATED_ARTIFACT_VERSION_INPUT_NAME = 'Artifact Version input child'
+const DELEGATED_ARTIFACT_VERSION_PRODUCER_NAME = 'Artifact Version producer child'
 const DELEGATED_MODEL_CONTINUATION_NAME = 'Model continuation child'
 const DELEGATED_INHERITED_SPECIALIST_NAME = 'Inherited specialist terminal'
 const DELEGATED_BOUNDED_SLOW_TASK = 'Complete the bounded fixture after a delay.'
@@ -390,11 +395,18 @@ const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
 
 const createProvenanceArtifact = async (sessionId) => {
   const producerRunId = await withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    const before = toolResult(
+      'notebook_state',
+      await client.callTool({ name: 'notebook_state', arguments: {} })
+    )
+    const existingRunIds = new Set(
+      before.recentRuns?.map((candidate) => candidate.runId).filter(Boolean) ?? []
+    )
     const execution = toolResult(
       'bash_execute',
       await client.callTool({
         name: 'bash_execute',
-        arguments: { command: 'node -e "console.log(\'artifact-provenance-e2e\')"' }
+        arguments: { command: "printf 'artifact-provenance-e2e\\n'" }
       })
     )
     const state = toolResult(
@@ -407,10 +419,12 @@ const createProvenanceArtifact = async (sessionId) => {
         (candidate) =>
           candidate.kernelKind === 'bash' &&
           candidate.status === 'completed' &&
-          candidate.outputPreview?.includes('artifact-provenance-e2e')
+          !existingRunIds.has(candidate.runId)
       )
     if (!execution.stdout?.includes('artifact-provenance-e2e') || !run?.runId) {
-      throw new Error('The Notebook did not persist the Bash producer run.')
+      throw new Error(
+        `The Notebook did not persist the Bash producer run: ${JSON.stringify({ execution, recentRuns: state.recentRuns })}`
+      )
     }
     return run.runId
   })
@@ -433,6 +447,45 @@ const createProvenanceArtifact = async (sessionId) => {
     throw new Error('The artifact Version did not retain its Notebook producer run.')
   }
   return `Artifact provenance verified for session ${sessionId}, artifact ${stored.artifact.artifact_id}, version ${stored.artifact.version_id}.`
+}
+
+const runArtifactVersionInputDelegation = async (sessionId) => {
+  const produced = controlResultValue(
+    await runProductionDelegationRequest(
+      sessionId,
+      {
+        task: DELEGATED_STRUCTURED_OUTPUT_TASK,
+        name: DELEGATED_ARTIFACT_VERSION_PRODUCER_NAME,
+        outputSchema: {
+          type: 'object',
+          required: ['count'],
+          properties: { count: { type: 'number' } },
+          additionalProperties: false
+        }
+      },
+      true
+    )
+  )
+  const producer = produced.children?.[0]
+  const versionId = producer?.artifactsCreated?.[0]?.versionId
+  if (producer?.status !== 'completed' || !versionId) {
+    throw new Error(
+      `The producer child returned no immutable versionId: ${JSON.stringify(produced)}`
+    )
+  }
+  const delegated = await runProductionDelegationRequest(
+    sessionId,
+    {
+      task: DELEGATED_ARTIFACT_VERSION_INPUT_TASK,
+      name: DELEGATED_ARTIFACT_VERSION_INPUT_NAME,
+      inputs: [versionId]
+    },
+    true
+  )
+  if (delegated.status !== 'completed') {
+    throw new Error(`Artifact Version input delegation failed: ${JSON.stringify(delegated)}`)
+  }
+  return 'Artifact Version input delegation completed.'
 }
 
 if (process.argv.includes('--version')) {
@@ -485,6 +538,25 @@ if (process.argv.includes('--version')) {
         )
         await waitForSessionCancellation(context.params.sessionId)
         return { stopReason: 'cancelled' }
+      }
+
+      if (prompt.includes(DELEGATED_ARTIFACT_VERSION_INPUT_TASK)) {
+        const route = sessionRoutes.get(context.params.sessionId)
+        if (!route?.cwd) throw new Error('The delegated working directory is unavailable.')
+        const inputPath = join(route.cwd, 'inputs', '01-provenance-evidence.txt')
+        const content = await readFile(inputPath, 'utf8')
+        if (content !== 'artifact provenance e2e') {
+          throw new Error(`Delegated Artifact Version input mismatch: ${JSON.stringify(content)}`)
+        }
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${nextMessageId++}`,
+            content: { type: 'text', text: 'Delegated immutable Artifact Version input verified.' }
+          }
+        })
+        return { stopReason: 'end_turn' }
       }
 
       if (prompt.includes(DELEGATION_STOP_PROMPT)) {
@@ -781,6 +853,8 @@ if (process.argv.includes('--version')) {
             throw new Error(`Production delegation failed: ${JSON.stringify(delegated)}`)
           }
           reply = 'Production delegation reached a terminal result.'
+        } else if (prompt.includes(DELEGATION_ARTIFACT_VERSION_INPUT_PROMPT)) {
+          reply = await runArtifactVersionInputDelegation(context.params.sessionId)
         } else if (prompt.includes(DELEGATION_BOUNDED_COLLECT_PROMPT)) {
           const dispatched = controlResultValue(
             await executeControlCode(

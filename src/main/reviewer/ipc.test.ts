@@ -774,6 +774,110 @@ describe('reviewer IPC handlers', () => {
       // Settle the original review promise so the mock's pending state is released.
       await expect(promise).resolves.toEqual({ started: true })
     })
+
+    it('serializes fix loops that target the same Main session', async () => {
+      type CapturedRun = {
+        onStarted?: () => void
+        onFixLoopStart?: () => void | Promise<void>
+        onFixLoopEnd?: () => void
+        fixLoopAbortSignal?: AbortSignal
+      }
+      const captured: CapturedRun[] = []
+      const finishRuns: Array<() => void> = []
+      runReview.mockImplementation((options?: CapturedRun) => {
+        if (options) captured.push(options)
+        options?.onStarted?.()
+        return new Promise<void>((resolve) => finishRuns.push(resolve))
+      })
+      const owner = createReviewerCommandOwner({ acpRuntime })
+
+      await owner.run({
+        ...createRequest(),
+        sessionId: 'reviewer-a',
+        turnMessageId: 'turn-a',
+        mainSessionId: 'main-session'
+      })
+      await owner.run({
+        ...createRequest(),
+        sessionId: 'reviewer-b',
+        turnMessageId: 'turn-b',
+        mainSessionId: 'main-session'
+      })
+      expect(captured).toHaveLength(2)
+
+      await captured[0].onFixLoopStart?.()
+      const secondStart = Promise.resolve(captured[1].onFixLoopStart?.())
+      await Promise.resolve()
+      expect(
+        broadcastToRenderers.mock.calls.filter(
+          ([channel]) => channel === REVIEWER_IPC.FIX_LOOP_START
+        )
+      ).toHaveLength(1)
+
+      captured[0].onFixLoopEnd?.()
+      await secondStart
+      expect(
+        broadcastToRenderers.mock.calls.filter(
+          ([channel]) => channel === REVIEWER_IPC.FIX_LOOP_START
+        )
+      ).toHaveLength(2)
+
+      owner.abortFixLoop({ projectId: 'project-1', appSessionId: 'main-session' })
+      expect(captured[1].fixLoopAbortSignal?.aborted).toBe(true)
+      captured[1].onFixLoopEnd?.()
+      for (const finish of finishRuns) finish()
+    })
+
+    it('aborts queued fix loops before they can start after the active loop ends', async () => {
+      type CapturedRun = {
+        onStarted?: () => void
+        onFixLoopStart?: () => void | Promise<void>
+        onFixLoopEnd?: () => void
+        fixLoopAbortSignal?: AbortSignal
+      }
+      const captured: CapturedRun[] = []
+      const finishRuns: Array<() => void> = []
+      runReview.mockImplementation((options?: CapturedRun) => {
+        if (options) captured.push(options)
+        options?.onStarted?.()
+        return new Promise<void>((resolve) => finishRuns.push(resolve))
+      })
+      const owner = createReviewerCommandOwner({ acpRuntime })
+
+      await owner.run({
+        ...createRequest(),
+        sessionId: 'reviewer-a',
+        turnMessageId: 'turn-a',
+        mainSessionId: 'main-session'
+      })
+      await owner.run({
+        ...createRequest(),
+        sessionId: 'reviewer-b',
+        turnMessageId: 'turn-b',
+        mainSessionId: 'main-session'
+      })
+      await captured[0].onFixLoopStart?.()
+      const secondStart = Promise.resolve(captured[1].onFixLoopStart?.())
+      await Promise.resolve()
+
+      owner.abortFixLoop({ projectId: 'project-1', appSessionId: 'main-session' })
+      expect(captured[0].fixLoopAbortSignal?.aborted).toBe(true)
+      expect(captured[1].fixLoopAbortSignal?.aborted).toBe(true)
+
+      captured[0].onFixLoopEnd?.()
+      await secondStart
+      captured[1].onFixLoopEnd?.()
+      expect(
+        broadcastToRenderers.mock.calls.filter(
+          ([channel]) => channel === REVIEWER_IPC.FIX_LOOP_START
+        )
+      ).toHaveLength(1)
+      expect(
+        broadcastToRenderers.mock.calls.filter(([channel]) => channel === REVIEWER_IPC.FIX_LOOP_END)
+      ).toHaveLength(1)
+
+      for (const finish of finishRuns) finish()
+    })
   })
 
   describe('Task review-chain cancellation', () => {

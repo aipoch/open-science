@@ -6,6 +6,7 @@ import type { Prisma } from '@prisma/client'
 import type {
   AppGeneratedArtifactProducer,
   ArtifactConnectorArgumentValue,
+  ArtifactComputeExecutionEvidence,
   ArtifactProducerUnavailableReason,
   ArtifactVersionEvidence,
   CreateArtifactVersionRequest
@@ -118,6 +119,7 @@ type ArtifactVersionProducerCapture =
       environmentCapture: NotebookRunEnvironmentCapture
       environmentManifest?: NotebookEnvironmentManifest
       environmentManifestChecksum?: string
+      computeExecutions: ArtifactComputeExecutionEvidence[]
     }
   | {
       state: 'available'
@@ -145,6 +147,13 @@ type ArtifactProvenanceProducerCaptureOptions = {
   notebookRepository: Pick<NotebookRunRepository, 'readSessionDocuments'>
   storageRoot: string
   createId: () => string
+  computeJobReader?: {
+    findByProducer(
+      projectId: string,
+      sessionId: string,
+      producerRunId: string
+    ): Promise<ArtifactComputeExecutionEvidence[]>
+  }
 }
 type PrepareVersionPersistenceInput = {
   request: CreateArtifactVersionRequest
@@ -364,6 +373,12 @@ class ArtifactProvenanceProducerCapture {
     await this.validateInputReferences(request.projectId, inputFiles)
     const executionJson = canonicalJson(executionSnapshot as unknown as CanonicalJson)
     const environment = resolveRunEnvironmentCapture(producerRun)
+    const computeExecutions =
+      (await this.options.computeJobReader?.findByProducer(
+        request.projectId,
+        request.notebookSessionId,
+        producerRunId
+      )) ?? []
 
     return {
       state: 'available',
@@ -381,6 +396,7 @@ class ArtifactProvenanceProducerCapture {
       executionChecksum: sha256(executionJson),
       inputFiles,
       environmentCapture: environment.capture,
+      computeExecutions: computeExecutions.slice(0, 100),
       ...(environment.manifest && environment.checksum
         ? {
             environmentManifest: environment.manifest,
@@ -451,6 +467,9 @@ class ArtifactProvenanceProducerCapture {
                 arguments_checksum: producer.argumentsChecksum
               }
             }
+        : {}),
+      ...(notebookProducer && producer.computeExecutions.length > 0
+        ? { compute_executions: producer.computeExecutions }
         : {}),
       filename: request.filename,
       inputs: producerInputs.map((input, ordinal) => inputEvidence(input, ordinal)),

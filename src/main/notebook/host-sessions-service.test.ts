@@ -344,7 +344,8 @@ describe('HostSessionsService', () => {
               timestamp: 200,
               kind: 'raw',
               level: 'warning',
-              status: 'SECRET_PROVIDER_VALUE'
+              status: 'SECRET_PROVIDER_VALUE',
+              raw: { status: 'SECRET_PROVIDER_VALUE' }
             }
           ],
           pendingPermissions: []

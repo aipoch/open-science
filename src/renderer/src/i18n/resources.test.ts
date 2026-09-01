@@ -17,6 +17,7 @@ import { I18nextProvider, Trans } from 'react-i18next'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import de from '../../../shared/i18n/locales/de.json'
 import es from '../../../shared/i18n/locales/es.json'
 import fr from '../../../shared/i18n/locales/fr.json'
 import ja from '../../../shared/i18n/locales/ja.json'
@@ -40,6 +41,7 @@ type Catalog = Record<string, string>
 type TranslatedLocale = Exclude<(typeof LOCALES)[number], 'en'>
 
 const commonCatalogs = {
+  de: de.common,
   es: es.common,
   fr: fr.common,
   ja: ja.common,
@@ -51,6 +53,7 @@ const commonCatalogs = {
 } as const
 
 const sourceCatalogs = {
+  de: { ...de.common, ...de.renderer },
   es: { ...es.common, ...es.renderer },
   fr: { ...fr.common, ...fr.renderer },
   ja: { ...ja.common, ...ja.renderer },
@@ -62,6 +65,7 @@ const sourceCatalogs = {
 } as const satisfies Record<TranslatedLocale, Catalog>
 
 const rendererCatalogs = {
+  de: de.renderer,
   es: es.renderer,
   fr: fr.renderer,
   ja: ja.renderer,
@@ -156,6 +160,7 @@ const CONTEXT_SUFFIXES = new Set([
   'window'
 ])
 const REQUIRED_PLURAL_CATEGORIES = {
+  de: ['one', 'other'],
   es: ['one', 'many', 'other'],
   fr: ['one', 'many', 'other'],
   ja: ['other'],
@@ -256,6 +261,13 @@ describe('runtime catalog fallback', () => {
       existsSync(join(__dirname, '..', '..', '..', 'shared', 'i18n', 'locales', 'ru.json'))
     ).toBe(true)
     expect('ru' in resources).toBe(true)
+  })
+
+  it('ships and registers the German catalog', () => {
+    expect(
+      existsSync(join(__dirname, '..', '..', '..', 'shared', 'i18n', 'locales', 'de.json'))
+    ).toBe(true)
+    expect('de' in resources).toBe(true)
   })
 
   it.each([
@@ -523,6 +535,12 @@ describe.each(TRANSLATED)('%s native catalog', (locale) => {
         specialist: 'spécialiste',
         connector: 'connecteur'
       },
+      de: {
+        subagent: 'unteragent',
+        skill: 'fähigkeit',
+        specialist: 'spezialist',
+        connector: 'konnektor'
+      },
       ja: {
         subagent: 'サブエージェント',
         skill: 'スキル',
@@ -572,6 +590,15 @@ describe.each(TRANSLATED)('%s native catalog', (locale) => {
 
 describe('process catalog boundaries', () => {
   it.each([
+    {
+      locale: 'de' as const,
+      expected: {
+        Subagent: 'Unteragent',
+        Skill: 'Fähigkeit',
+        Specialist: 'Spezialist',
+        Connector: 'Konnektor'
+      }
+    },
     {
       locale: 'fr' as const,
       expected: {
@@ -944,7 +971,854 @@ describe('mandatory product glossary', () => {
     expect(offenders).toEqual([])
   })
 
+  it('keeps German safety actions and technical identifiers semantically exact', () => {
+    expect({
+      minimizeToTray: de.common['Minimize to tray'],
+      keepWaiting: de.native['Keep waiting'],
+      quitAnyway: de.native['Quit anyway'],
+      moveInProgress: de.native['Move in progress'],
+      model: de.renderer['grok-4.6 · 500K'],
+      archive: de.renderer.Archive_verb,
+      block: de.renderer.Block,
+      clear: de.renderer.Clear,
+      closeProvenance: de.renderer['Close Provenance'],
+      copy: de.renderer.Copy,
+      deny: de.renderer['Deny'],
+      detachConnector: de.renderer['Detach connector'],
+      dropReferences: de.renderer['Drop reference files'],
+      editSpecialist: de.renderer['Edit specialist'],
+      installSpecialist: de.renderer['Install Specialist'],
+      open: de.renderer.Open,
+      openPlan: de.renderer['Open plan, step {{completed}} of {{steps}}'],
+      searchSkills: de.renderer['Search skills'],
+      stopWork: de.renderer['Stop running work'],
+      switch: de.renderer.Switch,
+      testConnection: de.renderer['Test connection'],
+      turns: de.renderer['Turns'],
+      calls: de.renderer['Calls'],
+      turnCall: de.renderer['Turn {{turn}} · Call {{call}}'],
+      updateSpecialist: de.renderer['Update Specialist'],
+      view: de.renderer.View,
+      oneFile: de.renderer['{{count}} files_one'],
+      otherFiles: de.renderer['{{count}} files_other'],
+      oneMoreFile: de.renderer['+{{count}} more_files_one'],
+      otherMoreFiles: de.renderer['+{{count}} more_files_other'],
+      oneEditedTurn:
+        de.renderer[
+          'Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._one'
+        ],
+      sessionNotebook: de.renderer['Session notebook'],
+      drivenAgent:
+        de.renderer[
+          'Pick the agent Open Science drives, then install it. Only this agent needs to be installed to continue.'
+        ]
+    }).toEqual({
+      minimizeToTray: 'In den Infobereich minimieren',
+      keepWaiting: 'Weiter warten',
+      quitAnyway: 'Trotzdem beenden',
+      moveInProgress: 'Datenverschiebung läuft',
+      model: 'grok-4.6 · 500K',
+      archive: 'Archivieren',
+      block: 'Blockieren',
+      clear: 'Löschen',
+      closeProvenance: 'Provenienz schließen',
+      copy: 'Kopieren',
+      deny: 'Ablehnen',
+      detachConnector: 'Konnektorzuordnung aufheben',
+      dropReferences: 'Referenzdateien hier ablegen',
+      editSpecialist: 'Spezialist bearbeiten',
+      installSpecialist: 'Spezialist installieren',
+      open: 'Öffnen',
+      openPlan: 'Plan öffnen, Schritt {{completed}} von {{steps}}',
+      searchSkills: 'Fähigkeiten suchen',
+      stopWork: 'Laufende Arbeit beenden',
+      switch: 'Wechseln',
+      testConnection: 'Verbindung testen',
+      turns: 'Interaktionen',
+      calls: 'Aufrufe',
+      turnCall: 'Interaktion {{turn}} · Aufruf {{call}}',
+      updateSpecialist: 'Spezialist aktualisieren',
+      view: 'Anzeigen',
+      oneFile: '{{count}} Datei',
+      otherFiles: '{{count}} Dateien',
+      oneMoreFile: '+{{count}} weitere Datei',
+      otherMoreFiles: '+{{count}} weitere Dateien',
+      oneEditedTurn:
+        'Durch das Senden dieses bearbeiteten Prompts wird ab hier ein neuer Branch erstellt. Die folgende {{count}} Interaktion bleibt über die Versionssteuerung der Nachricht verfügbar.',
+      sessionNotebook: 'Sitzungs-Notebook',
+      drivenAgent:
+        'Wählen Sie den Agenten aus, den Open Science steuert, und installieren Sie ihn. Nur dieser Agent muss installiert sein, um fortzufahren.'
+    })
+  })
+
+  it('uses established German developer terminology instead of literal dictionary translations', () => {
+    expect({
+      business: de.renderer.Business,
+      community: de.renderer.Community,
+      compute: de.renderer.Compute,
+      checks: de.renderer.Checks,
+      capabilities: de.renderer.Capabilities,
+      manual: de.renderer.Manual,
+      manualLower: de.renderer.manual,
+      remote: de.renderer.Remote,
+      proxy: de.renderer.Proxy,
+      nodeVersion: de.renderer['Node v'],
+      nodeScript: de.renderer['node — script file'],
+      nodePackage: de.renderer['npx — Node package'],
+      bioconductor: de.renderer.Bioconductor,
+      scratch: de.renderer.Scratch,
+      scratchRoot: de.renderer['Scratch root'],
+      scratchRootPath: de.renderer['Scratch root path'],
+      mainOnly: de.renderer['Main only'],
+      tool: de.renderer.Tool,
+      tools: de.renderer.Tools,
+      review: de.renderer.Review,
+      reviewer: de.renderer.Reviewer,
+      githubIssue: de.renderer['Open GitHub issue']
+    }).toEqual({
+      business: 'Business',
+      community: 'Community',
+      compute: 'Rechenressourcen',
+      checks: 'Prüfungen',
+      capabilities: 'Funktionen',
+      manual: 'Manuell',
+      manualLower: 'manuell',
+      remote: 'Remote',
+      proxy: 'Proxy',
+      nodeVersion: 'Node v',
+      nodeScript: 'Node – Skriptdatei',
+      nodePackage: 'npx – Node-Paket',
+      bioconductor: 'Bioconductor',
+      scratch: 'Scratch',
+      scratchRoot: 'Scratch-Verzeichnis',
+      scratchRootPath: 'Pfad zum Scratch-Verzeichnis',
+      mainOnly: 'Nur Hauptagent',
+      tool: 'Tool',
+      tools: 'Tools',
+      review: 'Review',
+      reviewer: 'Reviewer',
+      githubIssue: 'GitHub-Issue öffnen'
+    })
+  })
+
+  it('uses a formal, neutral German product voice', () => {
+    expect({
+      xaiSignInError: de.renderer['Could not sign in to xAI.'],
+      claudeSignInError: de.renderer['Could not sign in to Claude.'],
+      claudeSignOutError: de.renderer['Could not sign out of Claude.'],
+      waitingForResponse: de.renderer['Waiting for a response…'],
+      awaitingYourAnswer: de.renderer['Awaiting your answer…'],
+      waitingForYourAnswer: de.renderer['Waiting for your answer'],
+      waitingForApproval: de.renderer['waiting for your approval'],
+      waitingOnYou: de.renderer['{{count}} waiting on you_one'],
+      uploads: de.renderer['Your uploads'],
+      you: de.renderer.you
+    }).toEqual({
+      xaiSignInError: 'Die Anmeldung bei xAI ist fehlgeschlagen.',
+      claudeSignInError: 'Die Anmeldung bei Claude ist fehlgeschlagen.',
+      claudeSignOutError: 'Die Abmeldung von Claude ist fehlgeschlagen.',
+      waitingForResponse: 'Warten auf eine Antwort…',
+      awaitingYourAnswer: 'Warten auf Ihre Antwort…',
+      waitingForYourAnswer: 'Warten auf Ihre Antwort',
+      waitingForApproval: 'Warten auf Ihre Freigabe',
+      waitingOnYou: '{{count}} wartet auf Sie',
+      uploads: 'Ihre Uploads',
+      you: 'Sie'
+    })
+  })
+
+  it('uses concise infinitive labels for representative German interface actions', () => {
+    expect({
+      addSshHost: de.renderer['Add SSH host'],
+      trustBrowserFor180Days: de.renderer['Trust this browser for 180 days'],
+      askEveryTime: de.renderer['Ask every time'],
+      askForApproval: de.renderer['Ask for approval'],
+      attachSkill: de.renderer['Attach skill'],
+      browseFiles: de.renderer['Browse files'],
+      checkAgain: de.renderer['Check again'],
+      checkAll: de.renderer['Check all'],
+      chooseZip: de.renderer['Choose ZIP'],
+      closeFileBrowser: de.renderer['Close file browser'],
+      closeSubagentPreview: de.renderer['Close Subagents preview'],
+      connectModel: de.renderer['Connect a model'],
+      continueSetup: de.renderer['Continue setup'],
+      downloadProjectArtifacts: de.common['Download project artifacts'],
+      downloadSessionArtifacts: de.renderer['Download session artifacts'],
+      openSettings: de.renderer['Open Settings'],
+      openXaiVerification: de.renderer['Open xAI verification'],
+      revokeAllPermissions: de.renderer['Revoke all {{scope}}{{family}} permissions'],
+      uploadSkillFile: de.renderer['Upload a SKILL.md or text file'],
+      browseMarketplace: de.renderer['Browse Marketplace'],
+      continueInstallation: de.renderer['Continue installation'],
+      resume: de.renderer.Resume,
+      validate: de.renderer.Validate,
+      importAction: de.renderer.Import,
+      exportAction: de.renderer.Export,
+      uncheckAll: de.renderer['Uncheck all']
+    }).toEqual({
+      addSshHost: 'SSH-Host hinzufügen',
+      trustBrowserFor180Days: 'Diesem Browser 180 Tage vertrauen',
+      askEveryTime: 'Jedes Mal nachfragen',
+      askForApproval: 'Freigabe anfordern',
+      attachSkill: 'Fähigkeit anhängen',
+      browseFiles: 'Dateien durchsuchen',
+      checkAgain: 'Erneut prüfen',
+      checkAll: 'Alle auswählen',
+      chooseZip: 'ZIP-Datei auswählen',
+      closeFileBrowser: 'Dateibrowser schließen',
+      closeSubagentPreview: 'Unteragentenvorschau schließen',
+      connectModel: 'Modell verbinden',
+      continueSetup: 'Einrichtung fortsetzen',
+      downloadProjectArtifacts: 'Projektartefakte herunterladen',
+      downloadSessionArtifacts: 'Sitzungsartefakte herunterladen',
+      openSettings: 'Einstellungen öffnen',
+      openXaiVerification: 'xAI-Verifizierung öffnen',
+      revokeAllPermissions: 'Alle {{scope}}{{family}}-Berechtigungen widerrufen',
+      uploadSkillFile: 'SKILL.md- oder Textdatei hochladen',
+      browseMarketplace: 'Marktplatz durchsuchen',
+      continueInstallation: 'Installation fortsetzen',
+      resume: 'Fortsetzen',
+      validate: 'Prüfen',
+      importAction: 'Importieren',
+      exportAction: 'Exportieren',
+      uncheckAll: 'Auswahl aufheben'
+    })
+  })
+
+  it('uses reviewed German wording for Notebook variables and source previews', () => {
+    expect({
+      inspectVariables: de.renderer['Inspect variables'],
+      liveNamespace: de.renderer['No live namespace'],
+      sizeAndShape: de.renderer['Size / Shape'],
+      variableOne: de.renderer['Variables: {{count}}_one'],
+      variableOther: de.renderer['Variables: {{count}}_other'],
+      questionsOne: de.renderer['{{count}} questions_one'],
+      questionsOther: de.renderer['{{count}} questions_other'],
+      openSource: de.renderer['Open source in browser'],
+      sourcePreview: de.renderer['Source preview: {{title}}'],
+      httpsOnly: de.renderer['Only HTTPS sources can be previewed']
+    }).toEqual({
+      inspectVariables: 'Variablen untersuchen',
+      liveNamespace: 'Kein aktiver Namespace',
+      sizeAndShape: 'Größe / Dimensionen',
+      variableOne: '{{count}} Variable',
+      variableOther: '{{count}} Variablen',
+      questionsOne: '{{count}} Frage',
+      questionsOther: '{{count}} Fragen',
+      openSource: 'Quelle im Browser öffnen',
+      sourcePreview: 'Quellenvorschau: {{title}}',
+      httpsOnly: 'Vorschau nur für HTTPS-Quellen verfügbar'
+    })
+  })
+
+  it('uses directory wording for German file-browser Home actions', () => {
+    expect({
+      home: de.renderer.Home,
+      goHome: de.renderer['Go to home'],
+      goHomeFolder: de.renderer['Go to home folder'],
+      grantWarning: de.renderer["Your home folder itself can't be granted — pick a subfolder."],
+      jumpHome: de.renderer['Jump to Home, a drive, or a pinned folder']
+    }).toEqual({
+      home: 'Benutzerordner',
+      goHome: 'Zum Benutzerordner',
+      goHomeFolder: 'Zum Benutzerordner',
+      grantWarning:
+        'Der Benutzerordner selbst kann nicht freigegeben werden – wählen Sie einen Unterordner.',
+      jumpHome:
+        'Wechseln Sie zum Benutzerordner, zu einem Laufwerk oder zu einem angehefteten Ordner'
+    })
+  })
+
+  it('uses Side-Chat consistently in German', () => {
+    expect({
+      add: de.renderer['Add to Side chat'],
+      resize: de.renderer['Resize Side chat panel'],
+      retryRestore: de.renderer['Retry Side chat restore'],
+      sendFollowUp: de.renderer['Send Side chat follow up'],
+      title: de.renderer['Side chat'],
+      followUp: de.renderer['Side chat follow up']
+    }).toEqual({
+      add: 'Zum Side-Chat hinzufügen',
+      resize: 'Größe des Side-Chat-Bereichs ändern',
+      retryRestore: 'Side-Chat-Wiederherstellung erneut versuchen',
+      sendFollowUp: 'Folgenachricht im Side-Chat senden',
+      title: 'Side-Chat',
+      followUp: 'Folgenachricht im Side-Chat'
+    })
+  })
+
+  it('uses native German wording for device-wide Connector credentials', () => {
+    expect({
+      credentialFor: de.renderer['Credential for {{name}}'],
+      connectorCredentials: de.renderer['Connector credentials'],
+      deviceWide:
+        de.renderer[
+          'Device-wide credentials that can be shared by the Custom Connectors you choose.'
+        ],
+      accessToken: de.renderer['Access token'],
+      resourceUrl: de.renderer['Resource URL'],
+      scopes: de.renderer.Scopes,
+      noOAuthMatch:
+        de.renderer[
+          "No OAuth credential matches this Connector's resource URL, transport, and registration."
+        ],
+      sharedOAuth:
+        de.renderer['OAuth credentials can be shared by Connectors with the same resource URL.'],
+      storedOnly:
+        de.renderer['Stored on this device and shared only with the Connectors you select.'],
+      bearer:
+        de.renderer['Access tokens use Bearer authentication only for an Authorization header.'],
+      removeFirst: de.renderer['Remove this credential from its Connectors first.'],
+      saved: de.renderer['Credential saved.'],
+      connected: de.renderer['Credential connected.'],
+      disconnected: de.renderer['Credential disconnected.'],
+      saveAndSignIn: de.renderer['Save and sign in'],
+      headerAction: de.renderer['Header credential action'],
+      keepHeaders: de.renderer['Keep saved headers']
+    }).toEqual({
+      credentialFor: 'Anmeldeinformation für {{name}}',
+      connectorCredentials: 'Konnektor-Anmeldeinformationen',
+      deviceWide:
+        'Geräteweit verfügbare Anmeldeinformationen, die Sie für ausgewählte benutzerdefinierte Konnektoren freigeben können.',
+      accessToken: 'Zugriffstoken',
+      resourceUrl: 'Ressourcen-URL',
+      scopes: 'Scopes',
+      noOAuthMatch:
+        'Keine OAuth-Anmeldeinformation stimmt mit Ressourcen-URL, Transportprotokoll und Registrierung dieses Konnektors überein.',
+      sharedOAuth:
+        'OAuth-Anmeldeinformationen können von Konnektoren mit derselben Ressourcen-URL gemeinsam genutzt werden.',
+      storedOnly:
+        'Wird auf diesem Gerät gespeichert und nur für die von Ihnen ausgewählten Konnektoren freigegeben.',
+      bearer:
+        'Zugriffstoken werden ausschließlich per Bearer-Authentifizierung im Authorization-Header übermittelt.',
+      removeFirst: 'Entfernen Sie diese Anmeldeinformation zuerst aus den zugehörigen Konnektoren.',
+      saved: 'Anmeldeinformation gespeichert.',
+      connected: 'Anmeldeinformation verbunden.',
+      disconnected: 'Verbindung zur Anmeldeinformation getrennt.',
+      saveAndSignIn: 'Speichern und anmelden',
+      headerAction: 'Aktion für Header-Anmeldeinformationen',
+      keepHeaders: 'Gespeicherte Header beibehalten'
+    })
+  })
+
+  it('uses natural German project-overflow and disabled-Memory copy', () => {
+    expect({
+      projectOne: de.renderer['Show remaining {{count}} projects_one'],
+      projectOther: de.renderer['Show remaining {{count}} projects_other'],
+      memoryOff:
+        de.renderer['Memory is off in Settings. Turn it on to use Memory in this conversation.']
+    }).toEqual({
+      projectOne: '{{count}} weiteres Projekt anzeigen',
+      projectOther: '{{count}} weitere Projekte anzeigen',
+      memoryOff:
+        'Erinnerungen sind in den Einstellungen deaktiviert. Aktivieren Sie sie, um Erinnerungen in dieser Konversation zu verwenden.'
+    })
+  })
+
+  it('does not ship known literal German mistranslations', () => {
+    const literalMistranslations =
+      /Schecks|Stellvertreter|Kratz(?:en|wurzel)|Bioleiter|Hauptgericht|Fernbedienung|Sparen|Versöhnt|Knoten v|GitHub-(?:Problem|Ausgabe)|Problemvorausfüllung|Rezension|Rezensent/iu
+    const offenders = Object.entries(de.renderer)
+      .filter(([, value]) => literalMistranslations.test(value))
+      .map(([key, value]) => `${key}: ${value}`)
+    const translatedToolTerms = Object.entries(de.renderer)
+      .filter(([key, value]) => /\btools?\b/iu.test(key) && /Werkzeug/iu.test(value))
+      .map(([key, value]) => `${key}: ${value}`)
+
+    expect(offenders).toEqual([])
+    expect(translatedToolTerms).toEqual([])
+  })
+
+  it('keeps German API-key terminology and protected product names intact', () => {
+    const apiKeyOffenders = Object.entries(de.renderer)
+      .filter(([key, value]) => /API keys?/iu.test(key) && !value.includes('API-Schlüssel'))
+      .map(([key, value]) => `${key}: ${value}`)
+    const protectedNames = ['Conda']
+    const protectedNameOffenders = Object.entries(de.renderer).flatMap(([key, value]) =>
+      protectedNames
+        .filter((name) => key.includes(name) && !value.includes(name))
+        .map((name) => `${key}: ${name}`)
+    )
+
+    expect(apiKeyOffenders).toEqual([])
+    expect(protectedNameOffenders).toEqual([])
+  })
+
+  it('keeps OAuth Client identifiers and secrets as technical terms in German', () => {
+    const clientIdOffenders = Object.entries(de.renderer)
+      .filter(([key, value]) => /client ID/iu.test(key) && !value.includes('Client-ID'))
+      .map(([key, value]) => `${key}: ${value}`)
+    const clientSecretOffenders = Object.entries(de.renderer)
+      .filter(([key, value]) => /client secret/iu.test(key) && !value.includes('Client-Geheimnis'))
+      .map(([key, value]) => `${key}: ${value}`)
+
+    expect(clientIdOffenders).toEqual([])
+    expect(clientSecretOffenders).toEqual([])
+    expect(de.renderer['Leave blank for public clients.']).toBe(
+      'Für öffentliche Clients leer lassen.'
+    )
+  })
+
+  it('uses the German domain glossary consistently for turns and host probes', () => {
+    const turnOffenders = Object.entries(de.renderer)
+      .filter(
+        ([key, value]) =>
+          /\bturns?\b/iu.test(key) &&
+          !/turn(?: it)? (?:off|on)/iu.test(key) &&
+          key !== 'T{{turn}}' &&
+          (!/Interaktion(?:en)?/u.test(value) ||
+            /\b(?:Durchgang|Durchgänge|Runde|Zug|Wende)|dreh/iu.test(value))
+      )
+      .map(([key, value]) => `${key}: ${value}`)
+    const probeOffenders = Object.entries(de.renderer)
+      .filter(
+        ([key, value]) =>
+          /probe/iu.test(key) && /\b(?:Sonde|untersucht|nachgefragt)\b/iu.test(value)
+      )
+      .map(([key, value]) => `${key}: ${value}`)
+
+    expect(turnOffenders).toEqual([])
+    expect(probeOffenders).toEqual([])
+  })
+
+  it('uses Compute-Host consistently for German compute-host copy', () => {
+    const offenders = Object.entries(de.renderer)
+      .filter(
+        ([key, value]) =>
+          /Compute Host/iu.test(key) &&
+          (!value.includes('Compute-Host') || /\b(?:Compute Host|Rechenhost)\b/u.test(value))
+      )
+      .map(([key, value]) => `${key}: ${value}`)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses Konversation consistently for German conversation copy', () => {
+    const offenders = Object.entries(de.renderer)
+      .filter(
+        ([key, value]) =>
+          /conversations?/iu.test(key) &&
+          (!/Konversation/iu.test(value) ||
+            /\b(?:Gespräch|Unterhaltung)(?:e|en|s)?\b/iu.test(value))
+      )
+      .map(([key, value]) => `${key}: ${value}`)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses Branch consistently for German message-branch copy', () => {
+    const offenders = Object.entries(de.renderer)
+      .filter(
+        ([key, value]) =>
+          /\bbranches?\b/iu.test(key) &&
+          (!/Branch/iu.test(value) || /\b(?:Zweig|Abzweigung)(?:e|en|s)?\b/iu.test(value))
+      )
+      .map(([key, value]) => `${key}: ${value}`)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses Freigabe consistently for German approval copy', () => {
+    const offenders = Object.entries(de.renderer)
+      .filter(([key, value]) => /approv/iu.test(key) && /Genehmig/iu.test(value))
+      .map(([key, value]) => `${key}: ${value}`)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('uses grammatical separable verbs in German approval copy', () => {
+    const malformed = Object.entries(de.renderer)
+      .filter(([, value]) =>
+        /(?:freigeben Sie|Freigeben Sie|freigegeben automatisch|Freigabesumfang)/u.test(value)
+      )
+      .map(([key, value]) => `${key}: ${value}`)
+
+    expect(malformed).toEqual([])
+  })
+
+  it('keeps German Review, Reasoning, and execution nouns consistent', () => {
+    expect({
+      autoReview: de.renderer['Auto-review'],
+      requestReview: de.renderer['Request review'],
+      reviewOverwrite: de.renderer['Review overwrite'],
+      reRunningReview: de.renderer['Re-running…'],
+      savedReview:
+        de.renderer[
+          'The active source session could not be loaded, so its saved review cannot be verified as current.'
+        ],
+      legacyReview: de.renderer['Assessment details unavailable for this legacy review'],
+      changedAfterReview:
+        de.renderer[
+          'This turn changed after the review ran (e.g. an artifact was edited). The result below may be out of date — re-run the review to refresh it.'
+        ],
+      reviewRequestTooltip:
+        de.renderer[
+          'Add attachment, save as skill, view context window, view plan, or request review'
+        ],
+      sessionReviewer: de.renderer['Session Reviewer'],
+      subagentReasoning: de.renderer['Subagent model Reasoning effort'],
+      visionReasoning: de.renderer['Vision model Reasoning effort'],
+      terminalRun:
+        de.renderer[
+          'One bar per terminal run; hover or focus to preview, then select to keep details visible.'
+        ],
+      loadedRuns:
+        de.renderer['Loaded {{loaded}} of {{total}} runs. Scroll up to load earlier history.'],
+      producerRun: de.renderer['The Environment changed while the producer run was executing.'],
+      runMark: de.renderer['{{state}} Run Mark'],
+      tokenCoverage:
+        de.renderer[
+          'Token totals are available for {{reported}} of {{count}} runs in this period._other'
+        ]
+    }).toEqual({
+      autoReview: 'Auto-Review',
+      requestReview: 'Review anfordern',
+      reviewOverwrite: 'Überschreiben prüfen',
+      reRunningReview: 'Review wird erneut ausgeführt…',
+      savedReview:
+        'Die aktive Quellsitzung konnte nicht geladen werden. Daher kann nicht geprüft werden, ob das gespeicherte Review noch aktuell ist.',
+      legacyReview: 'Bewertungsdetails für dieses frühere Review nicht verfügbar',
+      changedAfterReview:
+        'Diese Interaktion wurde nach dem Review geändert, etwa weil ein Artefakt bearbeitet wurde. Das folgende Ergebnis ist möglicherweise veraltet; führen Sie das Review erneut aus, um es zu aktualisieren.',
+      reviewRequestTooltip:
+        'Anhang hinzufügen, als Fähigkeit speichern, Kontextfenster anzeigen, Plan anzeigen oder Review anfordern',
+      sessionReviewer: 'Sitzungs-Reviewer',
+      subagentReasoning: 'Reasoning-Aufwand des Unteragentenmodells',
+      visionReasoning: 'Reasoning-Aufwand des Vision-Modells',
+      terminalRun:
+        'Ein Balken pro Terminalausführung. Zeigen Sie mit der Maus darauf oder fokussieren Sie ihn für eine Vorschau; wählen Sie ihn aus, um die Details sichtbar zu halten.',
+      loadedRuns:
+        'Ausführungen: {{loaded}} von {{total}} geladen. Scrollen Sie nach oben, um den früheren Verlauf zu laden.',
+      producerRun: 'Die Umgebung wurde geändert, während die erzeugende Ausführung lief.',
+      runMark: '{{state}} Ausführungsmarkierung',
+      tokenCoverage:
+        'Token-Gesamtwerte sind für {{reported}} von {{count}} Ausführungen in diesem Zeitraum verfügbar.'
+    })
+
+    const wrongReviewGender = Object.entries(de.renderer)
+      .filter(([, value]) =>
+        /(?:zur|nach der|nach dieser|während der|die|eine) Review\b/u.test(value)
+      )
+      .map(([key, value]) => `${key}: ${value}`)
+
+    expect(wrongReviewGender).toEqual([])
+    expect(de.renderer['Remembered permissions']).toBe('Gespeicherte Berechtigungen')
+    expect(
+      de.renderer[
+        'Matching actions can run without another approval for every session in this project.'
+      ]
+    ).toBe(
+      'Entsprechende Aktionen können in jeder Sitzung dieses Projekts ohne weitere Freigabe ausgeführt werden.'
+    )
+  })
+
+  it('keeps German plural activity fragments number-neutral or correctly inflected', () => {
+    expect({
+      importedFailures: de.renderer['Imported {{count}}; {{failureCount}} failed. {{error}}_other'],
+      running: de.renderer['{{count}} running_other'],
+      runningSubagents: de.renderer['{{count}} subagents, {{running}} running_other'],
+      allowedThisSessionOne: de.renderer['{{count}} allowed this session_one'],
+      allowedThisSessionOther: de.renderer['{{count}} allowed this session_other'],
+      remoteOne: de.renderer['REMOTE · {{count}}_one'],
+      remoteOther: de.renderer['REMOTE · {{count}}_other'],
+      revokedConflicts:
+        de.renderer[
+          'Revoked {{count}} permissions; {{conflictCount}} changed before it could be revoked_other'
+        ]
+    }).toEqual({
+      importedFailures: '{{count}} importiert · Fehlgeschlagen: {{failureCount}} · {{error}}',
+      running: '{{count}} aktiv',
+      runningSubagents: '{{count}} Unteragenten, davon {{running}} aktiv',
+      allowedThisSessionOne: 'In dieser Sitzung zugelassen: {{count}}',
+      allowedThisSessionOther: 'In dieser Sitzung zugelassen: {{count}}',
+      remoteOne: 'REMOTE · {{count}}',
+      remoteOther: 'REMOTE · {{count}}',
+      revokedConflicts:
+        '{{count}} Berechtigungen widerrufen · Vor dem Widerruf anderweitig geändert: {{conflictCount}}'
+    })
+  })
+
+  it('uses reviewed German wording for memory limits and remote-job recovery', () => {
+    expect({
+      oneCategoryUsed: de.renderer['{{count}} of {{limit}} categories used_one'],
+      otherCategoriesUsed: de.renderer['{{count}} of {{limit}} categories used_other'],
+      cancelling: de.renderer.Cancelling,
+      cancelFailed: de.renderer['Unable to cancel remote job.'],
+      integrityWarning: de.renderer['Saved remote job data needs attention'],
+      integrityDetail:
+        de.renderer[
+          'This job remains visible, but automatic result analysis is paused because its saved state is incompatible.'
+        ],
+      loadFailed: de.renderer['Unable to load remote jobs.'],
+      harvestPending: de.renderer['Harvest pending. Open Science will retry automatically.'],
+      harvestFailed: de.renderer['Harvest failed. Remote files were left untouched.'],
+      queued: de.renderer['Waiting in queue'],
+      submitting: de.renderer.Submitting,
+      recoveryWarning: de.renderer['Remote job recovery needs attention'],
+      recoveryDetail:
+        de.renderer[
+          'Open Science could not check saved remote jobs. Retry to restore pending result analysis.'
+        ],
+      completed: de.renderer['Remote job completed'],
+      analysisStarted: de.renderer['Analysis started automatically']
+    }).toEqual({
+      oneCategoryUsed: 'Verwendete Kategorien: {{count}} von {{limit}}',
+      otherCategoriesUsed: 'Verwendete Kategorien: {{count}} von {{limit}}',
+      cancelling: 'Wird abgebrochen',
+      cancelFailed: 'Der Remote-Job konnte nicht abgebrochen werden.',
+      integrityWarning: 'Gespeicherte Remote-Job-Daten müssen geprüft werden',
+      integrityDetail:
+        'Dieser Job bleibt sichtbar, aber die automatische Ergebnisanalyse ist angehalten, da sich sein gespeicherter Zustand nicht verarbeiten lässt.',
+      loadFailed: 'Remote-Jobs konnten nicht geladen werden.',
+      harvestPending:
+        'Der Ergebnisabruf steht noch aus. Open Science versucht es automatisch erneut.',
+      harvestFailed:
+        'Der Ergebnisabruf ist fehlgeschlagen. Die Remote-Dateien wurden nicht verändert.',
+      queued: 'In der Warteschlange',
+      submitting: 'Wird übermittelt',
+      recoveryWarning: 'Problem bei der Wiederherstellung von Remote-Jobs',
+      recoveryDetail:
+        'Open Science konnte die gespeicherten Remote-Jobs nicht prüfen. Versuchen Sie es erneut, um die ausstehende Ergebnisanalyse fortzusetzen.',
+      completed: 'Remote-Job abgeschlossen',
+      analysisStarted: 'Analyse automatisch gestartet'
+    })
+  })
+
+  it('uses unambiguous German pronouns in credential and storage warnings', () => {
+    expect({
+      file: de.renderer[
+        'This file may contain credentials or secrets. Open it only if you trust its contents.'
+      ],
+      folder:
+        de.renderer[
+          'This folder may contain credentials or secrets. Open it only if you trust its contents.'
+        ],
+      dataFolder:
+        de.renderer[
+          "Your data folder <path>{{path}}</path> can't be found. It may have been deleted, or it's on a drive that isn't connected."
+        ],
+      researchData:
+        de.renderer[
+          'Your research data is in a hidden folder. Moving it into a visible OpenScience folder makes it easy to find and back up — your settings and history stay where they are.'
+        ],
+      credentials:
+        de.renderer[
+          'The saved credential cannot be used on this device. Replace it and test again.'
+        ],
+      remoteCommand:
+        de.renderer[
+          'Remote commands run as your account on the host and are not sandboxed. Approve only if you trust this command.'
+        ],
+      rejectedCredentials:
+        de.renderer['The saved username or password was rejected. Update it before trying again.']
+    }).toEqual({
+      file: 'Diese Datei kann Anmeldedaten oder Geheimnisse enthalten. Öffnen Sie sie nur, wenn Sie ihrem Inhalt vertrauen.',
+      folder:
+        'Dieser Ordner kann Anmeldedaten oder Geheimnisse enthalten. Öffnen Sie ihn nur, wenn Sie seinem Inhalt vertrauen.',
+      dataFolder:
+        'Ihr Datenordner <path>{{path}}</path> wurde nicht gefunden. Möglicherweise wurde er gelöscht oder befindet sich auf einem nicht verbundenen Laufwerk.',
+      researchData:
+        'Ihre Forschungsdaten befinden sich in einem versteckten Ordner. Wenn Sie sie in einen sichtbaren OpenScience-Ordner verschieben, lassen sie sich leichter finden und sichern. Ihre Einstellungen und Ihr Verlauf bleiben am bisherigen Speicherort.',
+      credentials:
+        'Die gespeicherten Anmeldedaten können auf diesem Gerät nicht verwendet werden. Ersetzen Sie sie und testen Sie die Verbindung erneut.',
+      remoteCommand:
+        'Remote-Befehle werden unter Ihrem Konto auf dem Host ausgeführt und unterliegen keiner Sandbox. Geben Sie diesen Befehl nur frei, wenn Sie ihm vertrauen.',
+      rejectedCredentials:
+        'Der gespeicherte Benutzername oder das Passwort wurde abgelehnt. Aktualisieren Sie die Anmeldedaten, bevor Sie es erneut versuchen.'
+    })
+  })
+
+  it('keeps high-risk German storage, exit, credential, and theme actions unambiguous', () => {
+    expect({
+      about: de.renderer.About,
+      alwaysLight: de.renderer['Always light'],
+      credential: de.renderer.Credential,
+      custom: de.renderer.Custom,
+      duplicate: de.renderer.Duplicate,
+      engineering: de.renderer.Engineering,
+      environment: de.renderer.Environment,
+      flask: de.renderer.Flask,
+      guide: de.renderer.Guide,
+      host: de.renderer.Host,
+      interruptAndMove: de.renderer['Interrupt and move'],
+      keepClientSecret: de.renderer['Keep saved client secret'],
+      light: de.renderer.Light,
+      minimizeOrQuit: de.renderer['Minimize or quit?'],
+      pin: de.renderer.Pin,
+      pinProject: de.renderer['Pin project'],
+      port: de.renderer.Port,
+      providerConnection: de.renderer['Could not test the provider connection.'],
+      resendOnBranch: de.renderer['Resend on a new branch?'],
+      runtimeSwitch:
+        de.renderer[
+          "Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first."
+        ],
+      stick: de.renderer.Stick,
+      storage: de.renderer.Storage,
+      unpinProject: de.renderer['Unpin project'],
+      volumes: de.renderer.Volumes
+    }).toEqual({
+      about: 'Über',
+      alwaysLight: 'Immer hell',
+      credential: 'Anmeldeinformation',
+      custom: 'Benutzerdefiniert',
+      duplicate: 'Duplizieren',
+      engineering: 'Ingenieurwesen',
+      environment: 'Umgebung',
+      flask: 'Erlenmeyerkolben',
+      guide: 'Begleiter',
+      host: 'Host',
+      interruptAndMove: 'Unterbrechen und verschieben',
+      keepClientSecret: 'Gespeichertes Client-Geheimnis beibehalten',
+      light: 'Hell',
+      minimizeOrQuit: 'Minimieren oder beenden?',
+      pin: 'Anheften',
+      pinProject: 'Projekt anheften',
+      port: 'Port',
+      providerConnection: 'Die Verbindung zum Anbieter konnte nicht getestet werden.',
+      resendOnBranch: 'In einem neuen Branch erneut senden?',
+      runtimeSwitch:
+        'Wählen Sie das Coding-Agent-Backend für Ihre Sitzungen aus. Wählen Sie zum Wechseln eine Karte aus. Dabei wird eine neue Agentensitzung gestartet und das Transkript offener Konversationen im neuen Backend wiedergegeben. Die aktive Laufzeit kann nicht deinstalliert werden; wechseln Sie zuerst zur anderen Laufzeit.',
+      stick: 'Stäbchen',
+      storage: 'Speicher',
+      unpinProject: 'Projekt nicht mehr anheften',
+      volumes: 'Datenträger'
+    })
+
+    expect(
+      de.renderer[
+        "Open Science will restart and use this folder as-is — <em>its contents are not merged with your current data</em>, and anything it's missing will show as unavailable. <em>Your current data folder is left untouched, so you can switch back.</em>"
+      ]
+    ).toContain('<em>sein Inhalt wird nicht mit Ihren aktuellen Daten zusammengeführt</em>')
+    expect(
+      de.renderer["Finishing up and restarting. This can take a moment — please don't quit."]
+    ).toContain('bitte beenden Sie die App nicht')
+  })
+
+  it('uses the mandatory German Connector and interpreter terminology throughout prose', () => {
+    const connectorOffenders = Object.entries(de.renderer)
+      .filter(
+        ([key, value]) => /connectors?/iu.test(key) && /(anschl(?:uss|üsse)|stecker)/iu.test(value)
+      )
+      .map(([key, value]) => `${key}: ${value}`)
+    const interpreterOffenders = Object.entries(de.renderer)
+      .filter(([key, value]) => /interpreters?/iu.test(key) && /dolmetscher/iu.test(value))
+      .map(([key, value]) => `${key}: ${value}`)
+    const specialistOffenders = Object.entries(de.renderer)
+      .filter(([key, value]) => /specialists?/iu.test(key) && /\bfach/iu.test(value))
+      .map(([key, value]) => `${key}: ${value}`)
+
+    expect(connectorOffenders).toEqual([])
+    expect(interpreterOffenders).toEqual([])
+    expect(specialistOffenders).toEqual([])
+  })
+
+  it('does not leave protected English emphasis copy in the German catalog', () => {
+    const value =
+      de.renderer[
+        "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again."
+      ]
+
+    expect(value).toBe(
+      'Konversationen, die noch an <name>{{name}}</name> gebunden sind, werden <em>nicht verfügbar</em> und <em>nicht</em> automatisch auf den Hauptagenten umgestellt. Für jede betroffene Konversation wählen Sie ausdrücklich einen neuen Spezialisten oder den Hauptagenten aus, bevor sie erneut senden kann.'
+    )
+  })
+
+  it('preserves model-style technical identifiers in German copy', () => {
+    const modelIdentifier = /\b[a-z][a-z0-9]*-\d+(?:\.\d+)+\b/giu
+    const offenders = Object.entries(de.renderer).flatMap(([key, value]) => {
+      const identifiers = key.match(modelIdentifier) ?? []
+      return identifiers.filter((identifier) => !value.includes(identifier)).map(() => key)
+    })
+
+    expect(offenders).toEqual([])
+  })
+
+  it('does not hyphenate German counted nouns after the count placeholder', () => {
+    const offenders = Object.entries(de.renderer)
+      .filter(([, value]) => value.includes('{{count}}-'))
+      .map(([key]) => key)
+
+    expect(offenders).toEqual([])
+  })
+
+  it('keeps the German README complete, structurally valid, and aligned with the glossary', () => {
+    const readmePath = join(__dirname, '..', '..', '..', '..', 'docs', 'de', 'README.md')
+    const readme = readFileSync(readmePath, 'utf8')
+    const malformedTableRows: string[] = []
+    let expectedColumns: number | undefined
+
+    for (const [index, line] of readme.split('\n').entries()) {
+      if (!line.startsWith('|')) {
+        expectedColumns = undefined
+        continue
+      }
+      const columns = line.split('|').length
+      expectedColumns ??= columns
+      if (columns !== expectedColumns) malformedTableRows.push(`${index + 1}: ${line}`)
+    }
+
+    expect(malformedTableRows).toEqual([])
+    expect(readme).not.toMatch(/Fertigkeit|Anschl(?:uss|üsse)/u)
+    expect(readme).not.toMatch(/\b(?:Skill|Connector|Subagent|Shell)\b|Active-Agent-Framework/u)
+    expect(readme).not.toMatch(/\bAnrufe\b|Turnusbezogene/u)
+    expect(readme).not.toMatch(/Ã|Â|â€|�/u)
+    expect(readme).toContain('MiniMax')
+    expect(readme).toContain('StepFun')
+    expect(readme).toContain('Xiaomi MIMO')
+    expect(readme).toContain('SenseNova')
+    expect(readme).toContain('Volcengine Ark')
+    expect(readme).toContain('Bailian (Alibaba Cloud)')
+    expect(readme).toContain(
+      'abgeschlossene Prompts als dauerhafte, auswählbare Nachrichten-Branches bearbeiten, ohne den ursprünglichen Verlauf zu löschen'
+    )
+    expect(readme).toContain(
+      'Wenn macOS oder Windows vor einem nicht identifizierten Entwickler oder einem unbekannten Herausgeber warnt'
+    )
+    expect(readme).toContain(
+      'Nach Abschluss eines Jobs startet die App automatisch eine Analyseinteraktion; eine eigene Polling-Schleife ist nicht erforderlich.'
+    )
+    expect(readme).toContain('Schätzungen pro Kategorie')
+    expect(readme).toContain('projektbezogene Frame-Lesezugriffe')
+    expect(readme).toContain('verfeinerte Zeilen in der Sitzungssidebar')
+    expect(readme).toContain('interaktionsbezogenem Lesezugriff')
+    expect(readme).toContain('Sitzungsnummern in der globalen Suche')
+    expect(readme).toContain('Tastaturkürzel für eine neue Konversation')
+    expect(readme).toContain('Schlüssel- oder Passwortauthentifizierung')
+    const rootPackage = JSON.parse(
+      readFileSync(join(__dirname, '..', '..', '..', '..', 'package.json'), 'utf8')
+    ) as { version: string }
+    // The banner assertion tracks the repo version instead of a hardcoded bump target.
+    expect(readme).toContain(`Open Science v${rootPackage.version} veröffentlicht`)
+    expect(readme).toContain('CodeBuddy')
+    expect(readme).toContain('Text-, Bild- und PDF-Anmerkungen')
+    expect(readme).toContain('persistente Agentenerinnerungen')
+    expect(readme).toContain('Vorschlägen für Variablennamen des laufenden Kernels')
+    expect(readme).toContain('provenienzbewusste Workflows für Abbildungen')
+    expect(readme).toContain('abgeschirmte Quellenvorschauen')
+    expect(readme).toContain('Live-Variablenansicht')
+    expect(readme).toContain('Schließen anderer Tabs')
+    expect(readme).toContain('OpenCode Go und OpenCode Zen')
+    expect(readme).toContain('automatisch erzeugte und bearbeitbare Sitzungsdetails')
+    expect(readme).toContain('Rückgängigmachen und Wiederholen von Entwurfsänderungen')
+    expect(readme).toContain('Nutzungsdetails pro Modellaufruf')
+    expect(readme).toContain('Import und Export standardmäßiger MCP-Client-Konfigurationen')
+  })
+
   const chosenGenericTerms = {
+    de: {
+      Agent: 'Agent',
+      Skills: 'Fähigkeiten',
+      Specialist: 'Spezialist',
+      Specialists: 'Spezialisten',
+      Marketplace: 'Marktplatz',
+      Connector: 'Konnektor',
+      Main: 'Hauptagent',
+      Shell: 'Befehlszeile',
+      'Token usage': 'Token-Nutzung',
+      'Claude setup token': 'Claude-Einrichtungstoken',
+      'Token: {{masked}}': 'Token: {{masked}}'
+    },
     es: {
       Agent: 'Agente',
       'Agent framework': 'Framework de agentes',
@@ -1092,6 +1966,7 @@ describe('mandatory product glossary', () => {
 
   const compoundGlossaryPatterns = {
     mainModel: {
+      de: /hauptmodell/iu,
       es: /modelo principal/iu,
       fr: /modèle principal/iu,
       'zh-Hans': /主模型/u,
@@ -1102,6 +1977,7 @@ describe('mandatory product glossary', () => {
       ru: /основн\p{L}*\s+модел/iu
     },
     mainAgent: {
+      de: /hauptagent/iu,
       es: /agente principal/iu,
       fr: /agent principal/iu,
       'zh-Hans': /主智能体/u,
@@ -1112,6 +1988,7 @@ describe('mandatory product glossary', () => {
       ru: /главн\p{L}*\s+агент/iu
     },
     subagent: {
+      de: /unteragent/iu,
       es: /subagentes?/iu,
       fr: /sous-agents?/iu,
       'zh-Hans': /子智能体/u,
@@ -1204,6 +2081,7 @@ describe('mandatory product glossary', () => {
     expect(
       Object.fromEntries(TRANSLATED.map((locale) => [locale, catalog(locale)['provider default']]))
     ).toEqual({
+      de: 'Anbietereinstellung',
       es: 'por defecto del proveedor',
       fr: 'réglage du fournisseur',
       ja: 'プロバイダー設定を使用',
@@ -1429,6 +2307,7 @@ describe('mandatory product glossary', () => {
 
   it.each(TRANSLATED)('%s uses the chosen Shell spelling in every Shell label', (locale) => {
     const expected = {
+      de: /befehlszeile/iu,
       es: /líneas? de comandos/iu,
       fr: /\btermin(?:al|aux)\b/i,
       'zh-Hans': /命令行/,
@@ -1482,11 +2361,11 @@ describe('mandatory product glossary', () => {
     /\bKEY=VALUE\b/g,
     /<code>[^<]*<\/code>/gi
   ]
-  const additionalRequiredIdentifiers = {
+  const additionalRequiredIdentifiers: Record<string, string[]> = {
     'The ZIP contains app metadata, the specialist.json you fill in, and a README.txt guide. Skills placed in the skills folder are discovered automatically.':
       ['skills/']
-  } satisfies Record<string, string[]>
-  const spanishRequiredIdentifiers = {
+  }
+  const spanishRequiredIdentifiers: Record<string, string[]> = {
     'Leave empty for 22 or Port from ~/.ssh/config.': ['Port'],
     'Leave empty to use User from ~/.ssh/config.': ['User'],
     'Password authentication requires a User and Port and never uses keys or ssh-agent.': [
@@ -1499,7 +2378,7 @@ describe('mandatory product glossary', () => {
     'Star {{app}} on GitHub, {{count}} stars': ['Star'],
     "It's free and open source. Star it on GitHub to help others find it, and come build in public with us on Discord and X. Thanks for being here.":
       ['Star']
-  } satisfies Record<string, string[]>
+  }
   const exactTechnicalIdentifiers = (text: string): string[] =>
     exactTechnicalIdentifierPatterns
       .flatMap((identifier) => text.match(identifier) ?? [])
@@ -1565,6 +2444,12 @@ describe('mandatory product glossary', () => {
   })
 
   const localizedFeatureTerms = {
+    de: {
+      agent: /agent/iu,
+      skill: /fähigkeit/iu,
+      untranslatedAgent: /\bsubagents?\b/i,
+      untranslatedSkill: /\bskills?\b/i
+    },
     es: {
       agent: /agentes?/iu,
       skill: /habilidad(?:es)?/iu,
@@ -1670,6 +2555,7 @@ describe('mandatory product glossary', () => {
     /^Token:/
   ]
   const localizedTokenTerms = {
+    de: { credential: 'token', model: 'token' },
     es: { credential: 'token', model: 'token' },
     fr: { credential: 'jeton', model: 'jeton' },
     'zh-Hans': { credential: '令牌', model: '词元' },
@@ -1691,7 +2577,7 @@ describe('mandatory product glossary', () => {
         ? expected.credential
         : expected.model
       return !prose.toLocaleLowerCase(locale).includes(term.toLocaleLowerCase(locale)) ||
-        (locale !== 'pt-BR' && locale !== 'es' && /\btokens?\b/i.test(prose))
+        (locale !== 'de' && locale !== 'pt-BR' && locale !== 'es' && /\btokens?\b/i.test(prose))
         ? [`${key}: ${term}`]
         : []
     })
@@ -2403,7 +3289,7 @@ describe('Russian catalog quality', () => {
     expect(catalog('ru').Approve).toBe('Утвердить')
     expect(
       catalog('ru')[
-        'Choose "Always trust this browser" to skip approval on future visits to the same remote address.'
+        'Choose "Trust this browser for 180 days" to skip approval on future visits to the same remote address.'
       ]
     ).toContain('разрешение на доступ')
   })
@@ -2544,16 +3430,16 @@ describe('Korean safety copy', () => {
       '손상된 대화 {{count}}개를 별도 위치로 옮겼습니다. 상태를 확인할 수 없어 프로젝트 보관 기능은 계속 사용할 수 없습니다. 그래도 프로젝트를 영구 삭제할 수는 있습니다.'
     ],
     [
-      'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
-      '이 작업을 실행하면 복구 중에 로드하지 못한 대화를 포함하여 “{{name}}”과 저장된 모든 대화가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+      'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. Retained managed Session workspaces remain available in Settings → Storage. This action cannot be undone.',
+      '이 작업을 실행하면 복구 중에 로드하지 못한 대화를 포함하여 “{{name}}”과 저장된 모든 대화가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 보존된 관리형 세션 워크스페이스는 설정 → 저장 공간에서 계속 사용할 수 있습니다. 이 작업은 실행 취소할 수 없습니다.'
     ],
     [
-      'This will permanently delete "{{name}}" and its {{count}} sessions. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone._other',
-      '이 작업을 실행하면 “{{name}}”과 세션 {{count}}개가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+      'This will permanently delete "{{name}}" and its {{count}} sessions. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. Retained managed Session workspaces remain available in Settings → Storage. This action cannot be undone._other',
+      '이 작업을 실행하면 “{{name}}”과 세션 {{count}}개가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 보존된 관리형 세션 워크스페이스는 설정 → 저장 공간에서 계속 사용할 수 있습니다. 이 작업은 실행 취소할 수 없습니다.'
     ],
     [
-      'This will permanently delete "{{name}}". Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
-      '이 작업을 실행하면 “{{name}}”이 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+      'This will permanently delete "{{name}}". Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. Retained managed Session workspaces remain available in Settings → Storage. This action cannot be undone.',
+      '이 작업을 실행하면 “{{name}}”이 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 보존된 관리형 세션 워크스페이스는 설정 → 저장 공간에서 계속 사용할 수 있습니다. 이 작업은 실행 취소할 수 없습니다.'
     ],
     [
       'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',
@@ -2916,10 +3802,6 @@ describe('Korean binding terminology', () => {
     ['Move to OpenScience', 'OpenScience로 이동'],
     ['Official install.ps1', '공식 install.ps1'],
     [
-      'One <code>Name: Value</code> per line (not JSON).',
-      '줄마다 <code>Name: Value</code> 하나씩 입력하세요(JSON 형식 아님).'
-    ],
-    [
       'Used by host.mcp("{{name}}", …), Specialists, and the generated MCP skill.',
       'host.mcp("{{name}}", …), 스페셜리스트 및 생성된 MCP 스킬에서 사용됩니다.'
     ],
@@ -3024,7 +3906,7 @@ describe('Brazilian Portuguese safety copy', () => {
   })
 
   it.each([
-    ['Notebook evidence', 'Evidências do Notebook'],
+    ['Execution evidence', 'Evidências de execução'],
     ['Could not inspect variables.', 'Não foi possível inspecionar as variáveis.'],
     ['Filter variables', 'Filtrar variáveis'],
     ['Filter variables...', 'Filtrar variáveis...'],
@@ -3713,17 +4595,22 @@ describe('Brazilian Portuguese safety copy', () => {
   it('uses Brazilian gerunds for in-progress status copy', () => {
     const inProgressSource =
       /^(?:Adding|Applying|Archiving|Awaiting|Beginning|Building|Cancelling|Changing|Checking|Cleaning|Compacting|Connecting|Copying|Creating|Decoding|Deleting|Detecting|Disabling|Discarding|Downloading|Enabling|Estimating|Exporting|Extracting|Fetching|Finding|Finishing|Generating|Importing|Installing|Interacting|Listing|Loading|Matching|Moving|Opening|Pairing|Parsing|Preparing|Probing|Reading|Re-running|Reconfiguring|Reconnecting|Refreshing|Reloading|Removing|Rendering|Resolving|Restarting|Restoring|Resuming|Retrying|Reviewing|Running|Saving|Scanning|Searching|Selecting|Sending|Setting up|Signing in|Starting|Stopping|Submitting|Summarizing|Switching|Testing|Thinking|Uninstalling|Updating|Uploading|Validating|Verifying|Waiting|Working)\b/u
+    const isInProgressStatus = (source: string): boolean =>
+      inProgressSource.test(source) && !source.endsWith('?')
     const nonBrazilianProgressive =
       /^(?:(?:está|estão)\s+a\s+|a\s+)?(?:abrir|adicionar|aguardar|alterar|analisar|antever|apagar|assinar|ativar|cancelar|carregar|começar|compactar|configurar|copiar|criar|decodificar|desativar|desfrutar|desinstalar|detectar|eliminar|encontrar|enviar|executar|exportar|extrair|instalar|ler|ligar|limpar|mudar|mover|parar|pensar|preparar|processar|procurar|renderizar|resolver|restaurar|retomar|rever|salvar|sincronizar|sondar|testar|trabalhar|transferir|verificar)\b/iu
     const offenders = Object.entries(catalog('pt-BR'))
-      .filter(([key]) => inProgressSource.test(englishOf(key)))
+      .filter(([key]) => isInProgressStatus(englishOf(key)))
       .filter(([, value]) => nonBrazilianProgressive.test(value))
       .map(([key]) => key)
 
     expect(offenders).toEqual([])
-    expect(inProgressSource.test('Loading…')).toBe(true)
-    expect(inProgressSource.test('Uploading {{name}}')).toBe(true)
-    expect(inProgressSource.test('This helps you start a local session.')).toBe(false)
+    expect(isInProgressStatus('Loading…')).toBe(true)
+    expect(isInProgressStatus('Uploading {{name}}')).toBe(true)
+    expect(isInProgressStatus('Changing Notebook file access will stop kernels. Continue?')).toBe(
+      false
+    )
+    expect(isInProgressStatus('This helps you start a local session.')).toBe(false)
     expect(nonBrazilianProgressive.test('Está a carregar…')).toBe(true)
     expect(nonBrazilianProgressive.test('Adicionar máquina…')).toBe(true)
     expect(nonBrazilianProgressive.test('Começando a configurar o ambiente…')).toBe(false)

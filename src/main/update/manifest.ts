@@ -9,6 +9,7 @@ const LOCALIZED_NOTE_LOCALES = new Set([
   'fr',
   'pt-BR',
   'ru',
+  'de',
   'es'
 ])
 const DOWNLOAD_KEYS = new Set([

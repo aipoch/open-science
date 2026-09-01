@@ -6,31 +6,14 @@ import type {
   HostArtifactCatalogItem,
   HostArtifactsResult
 } from '../../shared/project-files'
-import { createUploadVersionReference } from '../../shared/uploads'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
+import type { ImmutableInputAuthority } from '../immutable-input-authority'
 
 type HostArtifactCatalog = {
   readHostArtifactCatalog(request: {
     projectId: string
     versionId?: string
   }): Promise<HostArtifactCatalogItem[]>
-}
-
-type HostArtifactPathResolvers = {
-  artifact: {
-    resolveVersionContent(request: {
-      projectId: string
-      appSessionId: string
-      artifactId: string
-      versionId: string
-    }): Promise<{ path: string }>
-  }
-  upload: {
-    resolveManagedUploadPath(
-      request: { path: string },
-      scope: { projectId: string; sessionId: string }
-    ): Promise<string>
-  }
 }
 
 type HostArtifactReadContext = { projectId: string; sessionId: string }
@@ -223,7 +206,7 @@ const matchesContentType = (actual: string | undefined, requested: string): bool
 class HostArtifactsService {
   constructor(
     private readonly catalog: HostArtifactCatalog,
-    private readonly resolvers: HostArtifactPathResolvers
+    private readonly inputAuthority: Pick<ImmutableInputAuthority, 'stageVersion'>
   ) {}
 
   async list(options: unknown, context: HostArtifactReadContext): Promise<HostArtifactsResult> {
@@ -304,30 +287,17 @@ class HostArtifactsService {
     if (!item)
       throw new Error(`Artifact Version not found in the current Project: ${versionIdValue}`)
 
-    const resolved =
-      item.source === 'artifact'
-        ? await this.resolvers.artifact.resolveVersionContent({
-            projectId: context.projectId,
-            appSessionId: item.sessionId,
-            artifactId: item.sourceFileId,
-            versionId: item.versionId
-          })
-        : {
-            path: await this.resolvers.upload.resolveManagedUploadPath(
-              {
-                path: createUploadVersionReference(item.versionId, {
-                  projectId: context.projectId,
-                  sessionId: item.sessionId
-                })
-              },
-              { projectId: context.projectId, sessionId: item.sessionId }
-            )
-          }
-    if (!isAbsolute(resolved.path))
-      throw new Error('Managed Artifact resolver returned a relative path.')
-    return resolved.path
+    const path = await this.inputAuthority.stageVersion({
+      projectId: context.projectId,
+      targetSessionId: context.sessionId,
+      sourceKind: item.source === 'artifact' ? 'artifact-version' : 'upload-version',
+      inputFileVersionId: item.versionId,
+      expectedSourceFileId: item.sourceFileId
+    })
+    if (!isAbsolute(path)) throw new Error('Notebook input stager returned a relative path.')
+    return path
   }
 }
 
 export { HostArtifactsService }
-export type { HostArtifactCatalog, HostArtifactPathResolvers, HostArtifactReadContext }
+export type { HostArtifactCatalog, HostArtifactReadContext }

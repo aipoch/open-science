@@ -350,19 +350,69 @@ describe('WorkspaceMessageScroller Reviewer Correction lifecycle', () => {
     )
     expect(responded).toContain('Corrections requested')
     expect(responded).toContain('Handed off to the Agent · response started')
-    expect(responded).not.toContain('data-active="true"')
+    expect(responded).toContain('data-active="true"')
     expect(responded).not.toContain('Agent is addressing the feedback')
     expect(responded).not.toContain(correction.content)
   })
 
-  it('keeps a reloaded historical correction settled', async () => {
+  it('marks a reloaded historical correction without a durable response as failed', async () => {
     const html = await renderScroller(
       createSession({ status: 'idle', activeRun: undefined, messages: [correction] })
     )
     expect(html).toContain('Corrections requested')
-    expect(html).toContain('Handed off to the Agent · response started')
+    expect(html).toContain('Response failed.')
+    expect(html).toContain('reviewer-correction-failed-icon')
     expect(html).not.toContain('animate-spin')
     expect(html).not.toContain(correction.content)
+  })
+
+  it('marks a correction with a durable Agent response as completed', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        activeRun: undefined,
+        messages: [
+          correction,
+          createMessage({
+            id: 'correction-response',
+            role: 'agent',
+            content: 'Correction complete.',
+            responseToMessageId: correction.id,
+            createdAt: correction.createdAt + 1,
+            updatedAt: correction.updatedAt + 1
+          })
+        ]
+      })
+    )
+    expect(html).toContain('Corrections requested')
+    expect(html).toContain('Response completed.')
+    expect(html).toContain('reviewer-correction-settled-icon')
+    expect(html).not.toContain('animate-spin')
+  })
+
+  it('marks an inactive correction with a dangling streaming response as failed', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        activeRun: undefined,
+        messages: [
+          correction,
+          createMessage({
+            id: 'dangling-correction-response',
+            role: 'agent',
+            content: 'Partial correction.',
+            status: 'streaming',
+            responseToMessageId: correction.id,
+            createdAt: correction.createdAt + 1,
+            updatedAt: correction.updatedAt + 1
+          })
+        ]
+      })
+    )
+    expect(html).toContain('Corrections requested')
+    expect(html).toContain('Response failed.')
+    expect(html).toContain('reviewer-correction-failed-icon')
+    expect(html).not.toContain('animate-spin')
   })
 
   it('keeps a reloaded Compute completion as a system event', async () => {

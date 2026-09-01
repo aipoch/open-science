@@ -28,14 +28,21 @@ const LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')
 // Minimal one-shot client over the loop's JSON-lines stdio protocol, reusing the shared framing and
 // parsing helpers so the test exercises the real wire format.
 const startLoop = (
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  inheritedRpcToken?: string
 ): {
   child: ChildProcessWithoutNullStreams
   send: (code: string) => Promise<KernelLoopResponse>
 } => {
-  const child = spawn(process.execPath, [LOOP], {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...env }
+  const child: ChildProcessWithoutNullStreams = spawn(process.execPath, [LOOP], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ...env },
+    ...(inheritedRpcToken === undefined ? {} : { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] })
   })
+  if (inheritedRpcToken !== undefined) {
+    const tokenPipe = child.stdio[3]
+    if (!tokenPipe || !('end' in tokenPipe)) throw new Error('RPC token pipe was not created')
+    tokenPipe.end(inheritedRpcToken)
+  }
   const rl = createInterface({ input: child.stdout })
   const waiters = new Map<string, (v: KernelLoopResponse) => void>()
   rl.on('line', (line) => {
@@ -205,6 +212,54 @@ describe('repl_loop local RPC transport', () => {
       child.kill()
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('routes the reserved Windows RPC endpoint through the authenticated command gateway', async () => {
+    let received:
+      | {
+          authorization?: string
+          path?: string
+          proxyAuthorization?: string
+        }
+      | undefined
+    const proxy = createServer((request, response) => {
+      received = {
+        authorization: request.headers.authorization,
+        path: request.url,
+        proxyAuthorization: request.headers['proxy-authorization']
+      }
+      response.writeHead(200, { 'content-type': 'application/json' }).end(
+        JSON.stringify({
+          result: {
+            kind: 'operation',
+            id: 'host.delegate',
+            availability: { status: 'available' }
+          }
+        })
+      )
+    })
+    await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve))
+    const address = proxy.address() as { port: number }
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: 'http://open-science-notebook-rpc.invalid/',
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token',
+      HTTP_PROXY: `http://command:secret@127.0.0.1:${address.port}`
+    })
+
+    try {
+      const result = await send("return await host.help('delegate')")
+      expect(result.error).toBeNull()
+      expect(received).toEqual({
+        authorization: 'Bearer test-token',
+        path: 'http://open-science-notebook-rpc.invalid/',
+        proxyAuthorization: `Basic ${Buffer.from('command:secret').toString('base64')}`
+      })
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        proxy.close((error) => (error ? reject(error) : resolve()))
       )
     }
   }, 60_000)
@@ -2521,6 +2576,28 @@ describe('repl_loop local RPC transport', () => {
 })
 
 gate('repl_loop.js', () => {
+  it('consumes the RPC token from fd 3 without leaving it in the environment', async () => {
+    const token = 'fd-only-rpc-token'
+    const { child, send } = startLoop({ OPEN_SCIENCE_MCP_RPC_TOKEN_FD: '3' }, token)
+    try {
+      const response = await send(
+        `const fs = require('node:fs'); ` +
+          `return { ` +
+          `envTokenPresent: Object.hasOwn(process.env, 'OPEN_SCIENCE_MCP_RPC_TOKEN'), ` +
+          `envFdPresent: Object.hasOwn(process.env, 'OPEN_SCIENCE_MCP_RPC_TOKEN_FD'), ` +
+          `procContainsToken: process.platform === 'linux' && fs.readFileSync('/proc/self/environ').includes(${JSON.stringify(token)}) }`
+      )
+      expect(response.error).toBeNull()
+      expect(JSON.parse(response.result ?? '{}')).toEqual({
+        envTokenPresent: false,
+        envFdPresent: false,
+        procContainsToken: false
+      })
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
   it('captures console.log, keeps a persistent context, and survives a thrown error', async () => {
     const { child, send } = startLoop({})
     try {
@@ -3169,10 +3246,14 @@ gate('repl_loop.js host.mcp', () => {
   })
 
   it('runs top-level await host.mcp and returns the stub result', async () => {
-    const { child, send } = startLoop({
-      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
-      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok'
-    })
+    const token = 'tok'
+    const { child, send } = startLoop(
+      {
+        OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+        OPEN_SCIENCE_MCP_RPC_TOKEN_FD: '3'
+      },
+      token
+    )
     try {
       const r = await send("return await host.mcp('chemistry', 'm', { cids: [1] })")
       expect(r.error).toBeNull()

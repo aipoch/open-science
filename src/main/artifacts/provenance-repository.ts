@@ -24,6 +24,7 @@ import {
   MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS,
   type ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
+import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import { ArtifactRepository } from './repository'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { defaultArtifactDurability, type ArtifactDurability } from './durability'
@@ -190,7 +191,56 @@ class ArtifactProvenanceRepository {
       inputAuthority,
       notebookRepository: this.notebookRepository,
       storageRoot: options.storageRoot,
-      createId: this.createId
+      createId: this.createId,
+      computeJobReader: {
+        findByProducer: async (projectId, sessionId, producerRunId) => {
+          const client = await options.getClient()
+          const jobs = await client.computeJob.findMany({
+            where: { projectId, sessionId, producerRunId },
+            select: {
+              id: true,
+              providerId: true,
+              shape: true,
+              status: true,
+              fileEvidence: true,
+              createdAt: true
+            },
+            orderBy: { createdAt: 'asc' },
+            take: 100
+          })
+          return jobs.map((job) => {
+            let fileEvidence
+            try {
+              fileEvidence = job.fileEvidence
+                ? parseOwnedExecutionFileEvidenceSummary(JSON.parse(job.fileEvidence), {
+                    activityId: job.id,
+                    activityKind: 'compute-job',
+                    parentActivityId: producerRunId,
+                    storageKey: `execution-file-evidence/${projectId}/${sessionId}/activity-${job.id}/evidence.json`
+                  })
+                : undefined
+            } catch {
+              fileEvidence = undefined
+            }
+            return {
+              activity_id: job.id,
+              provider_id: job.providerId,
+              shape: job.shape,
+              status: job.status as import('../../shared/compute').ComputeJobStatus,
+              file_evidence: {
+                state: fileEvidence?.state ?? 'unavailable',
+                ...(fileEvidence?.evidenceId ? { evidence_id: fileEvidence.evidenceId } : {}),
+                ...(fileEvidence?.checksum ? { checksum: fileEvidence.checksum } : {}),
+                ...(fileEvidence?.storageKey ? { storage_key: fileEvidence.storageKey } : {}),
+                ...(fileEvidence?.generationCount !== undefined
+                  ? { generation_count: fileEvidence.generationCount }
+                  : {}),
+                reason_codes: fileEvidence?.reasonCodes ?? ['evidence-persistence-failed']
+              }
+            }
+          })
+        }
+      }
     })
     this.messageFinalizer = new ArtifactProvenanceMessageFinalizer({
       getClient: options.getClient,
@@ -253,67 +303,75 @@ class ArtifactProvenanceRepository {
       artifactRunId: request.artifactRunId
     }
 
-    return this.compatibilityRepository.withPendingFileTransaction(
-      {
-        projectId: request.projectId,
-        sessionId: request.artifactStorageSessionId,
-        runId: request.artifactRunId,
-        filename: request.filename,
-        mimeType: request.contentType,
-        kind,
-        source: { kind: 'inline', content, encoding: 'utf8' }
-      },
-      {
-        reserveFile: (fileBytes) =>
-          this.writeBudgetOwner.reserve({
-            ...reservationScope,
-            writeOperationId,
-            filename: request.filename,
-            fileBytes
-          }),
-        releaseFileReservation: (reservationId) =>
-          this.writeBudgetOwner.release({ ...reservationScope, reservationId })
-      },
-      async (_pendingFile, _sourceFileObservation, bindVersionRouting, fileDigest, reservation) => {
-        if (!reservation) throw new Error('App-owned Artifact write reservation was not created.')
-        const contentChecksum = fileDigest.checksum
-        const writeRequestChecksum = sha256(
-          canonicalJson({
-            contentChecksum,
-            contentType: request.contentType ?? null,
-            filename: request.filename,
-            producerRunId: null,
-            sourceKind: 'inline',
-            sourceFileObservation: null
-          })
-        )
+    return this.versionWriter.withSessionWrite(versionRequest, (writeVersion) =>
+      this.compatibilityRepository.withPendingFileTransaction(
+        {
+          projectId: request.projectId,
+          sessionId: request.artifactStorageSessionId,
+          runId: request.artifactRunId,
+          filename: request.filename,
+          mimeType: request.contentType,
+          kind,
+          source: { kind: 'inline', content, encoding: 'utf8' }
+        },
+        {
+          reserveFile: (fileBytes) =>
+            this.writeBudgetOwner.reserve({
+              ...reservationScope,
+              writeOperationId,
+              filename: request.filename,
+              fileBytes
+            }),
+          releaseFileReservation: (reservationId) =>
+            this.writeBudgetOwner.release({ ...reservationScope, reservationId })
+        },
+        async (
+          _pendingFile,
+          _sourceFileObservation,
+          bindVersionRouting,
+          fileDigest,
+          reservation
+        ) => {
+          if (!reservation) throw new Error('App-owned Artifact write reservation was not created.')
+          const contentChecksum = fileDigest.checksum
+          const writeRequestChecksum = sha256(
+            canonicalJson({
+              contentChecksum,
+              contentType: request.contentType ?? null,
+              filename: request.filename,
+              producerRunId: null,
+              sourceKind: 'inline',
+              sourceFileObservation: null
+            })
+          )
 
-        return this.versionWriter.writeVersion(
-          {
-            ...versionRequest,
-            writeOperationId,
-            writeRequestChecksum,
-            sourceKind: 'inline',
-            resourceReservationId: reservation.id,
-            resourceSizeBytes: fileDigest.sizeBytes,
-            resourceChecksum: fileDigest.checksum
-          },
-          async (version) =>
-            bindVersionRouting(
-              {
-                artifactId: version.artifactId,
-                versionId: version.id,
-                versionNumber: version.versionNumber,
-                artifactRunId: version.artifactRunId,
-                checksum: version.checksum,
-                mimeType: version.contentType ?? undefined
-              },
-              resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
-            ),
-          undefined,
-          producer
-        )
-      }
+          return writeVersion(
+            {
+              ...versionRequest,
+              writeOperationId,
+              writeRequestChecksum,
+              sourceKind: 'inline',
+              resourceReservationId: reservation.id,
+              resourceSizeBytes: fileDigest.sizeBytes,
+              resourceChecksum: fileDigest.checksum
+            },
+            async (version) =>
+              bindVersionRouting(
+                {
+                  artifactId: version.artifactId,
+                  versionId: version.id,
+                  versionNumber: version.versionNumber,
+                  artifactRunId: version.artifactRunId,
+                  checksum: version.checksum,
+                  mimeType: version.contentType ?? undefined
+                },
+                resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
+              ),
+            undefined,
+            producer
+          )
+        }
+      )
     )
   }
 

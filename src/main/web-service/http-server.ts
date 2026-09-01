@@ -25,6 +25,7 @@ import {
 import { createApplicationCommandClient } from '../application-command-client'
 import type { ApplicationCommandComposition } from '../application-command-composition'
 import type { ApplicationEventSource } from '../application-events'
+import type { PermissionApprovalPresence } from '../permission-approval-presence'
 import { createLogger, diagnosticErrorFields, runWithDiagnosticCorrelation } from '../logger'
 import {
   WEB_RPC_CAPABILITIES,
@@ -64,6 +65,8 @@ const MAX_WEBSOCKET_BUFFERED_BYTES = 16 * 1024 * 1024 + 64 * 1024
 const TASK_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000
 const MAX_TASK_IDEMPOTENCY_ENTRIES = 1_024
 const MAX_TASK_IDEMPOTENCY_BYTES = 64 * 1024 * 1024
+const MAX_TASK_IDEMPOTENCY_ENTRIES_PER_PRINCIPAL = 128
+const MAX_TASK_IDEMPOTENCY_BYTES_PER_PRINCIPAL = 8 * 1024 * 1024
 const MIN_TASK_IDEMPOTENCY_ENTRY_BYTES = 16 * 1024
 const MAX_IDEMPOTENCY_KEY_LENGTH = 255
 const MAX_CACHED_TASK_ERROR_MESSAGE_LENGTH = 4_096
@@ -114,6 +117,7 @@ type WebServerOptions = {
   staticRoot: string
   applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb'>
   applicationEvents: ApplicationEventSource
+  permissionApprovalPresence?: PermissionApprovalPresence
   eventHeartbeatIntervalMs?: number
   requestBodyBudgets?: RequestBodyBudgets
   webClientRetention?: Readonly<{
@@ -444,7 +448,8 @@ export type ExternalWebAccess = {
 
 export type RunningWebServer = {
   port: number
-  closeExternalConnections: (sessionId?: string) => void
+  // Invalidates retained replay access before closing the matching remotely authorized sockets.
+  closeExternalConnections: (principalId?: string) => void
   close: () => Promise<void>
 }
 
@@ -637,6 +642,7 @@ class IdempotencyUnavailableError extends Error {
 }
 
 type TaskIdempotencyEntry = {
+  ownerScope: string
   fingerprint: string
   expiresAt: number
   reservedBytes: number
@@ -645,19 +651,23 @@ type TaskIdempotencyEntry = {
 
 export class TaskIdempotencyRegistry {
   private readonly entries = new Map<string, TaskIdempotencyEntry>()
+  private readonly usageByOwner = new Map<string, { entries: number; reservedBytes: number }>()
   private reservedBytes = 0
 
   constructor(
     private readonly maxEntries = MAX_TASK_IDEMPOTENCY_ENTRIES,
     private readonly maxBytes = MAX_TASK_IDEMPOTENCY_BYTES,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly maxEntriesPerOwner = MAX_TASK_IDEMPOTENCY_ENTRIES_PER_PRINCIPAL,
+    private readonly maxBytesPerOwner = MAX_TASK_IDEMPOTENCY_BYTES_PER_PRINCIPAL
   ) {}
 
   async run<Result>(
     scope: string,
     fingerprint: string,
     reservedBytes: number,
-    operation: () => Promise<Result>
+    operation: () => Promise<Result>,
+    ownerScope = 'default'
   ): Promise<Result> {
     const now = this.now()
     for (const [key, entry] of this.entries) {
@@ -670,9 +680,12 @@ export class TaskIdempotencyRegistry {
       return existing.result as Promise<Result>
     }
 
+    const ownerUsage = this.usageByOwner.get(ownerScope) ?? { entries: 0, reservedBytes: 0 }
     if (
       this.entries.size >= this.maxEntries ||
-      reservedBytes > this.maxBytes - this.reservedBytes
+      reservedBytes > this.maxBytes - this.reservedBytes ||
+      ownerUsage.entries >= this.maxEntriesPerOwner ||
+      reservedBytes > this.maxBytesPerOwner - ownerUsage.reservedBytes
     ) {
       throw new IdempotencyUnavailableError()
     }
@@ -689,23 +702,39 @@ export class TaskIdempotencyRegistry {
         throw new Error(INTERNAL_SERVER_ERROR_MESSAGE)
       })
     this.entries.set(scope, {
+      ownerScope,
       fingerprint,
       expiresAt: now + TASK_IDEMPOTENCY_TTL_MS,
       reservedBytes,
       result
     })
     this.reservedBytes += reservedBytes
+    this.usageByOwner.set(ownerScope, {
+      entries: ownerUsage.entries + 1,
+      reservedBytes: ownerUsage.reservedBytes + reservedBytes
+    })
     return result
   }
 
   clear(): void {
     this.entries.clear()
+    this.usageByOwner.clear()
     this.reservedBytes = 0
   }
 
   private delete(key: string, entry: TaskIdempotencyEntry): void {
     if (!this.entries.delete(key)) return
     this.reservedBytes -= entry.reservedBytes
+    const ownerUsage = this.usageByOwner.get(entry.ownerScope)
+    if (!ownerUsage) return
+    if (ownerUsage.entries === 1) {
+      this.usageByOwner.delete(entry.ownerScope)
+      return
+    }
+    this.usageByOwner.set(entry.ownerScope, {
+      entries: ownerUsage.entries - 1,
+      reservedBytes: ownerUsage.reservedBytes - entry.reservedBytes
+    })
   }
 }
 
@@ -726,6 +755,7 @@ const runIdempotentTask = <Result>(
   request: IncomingMessage,
   url: URL,
   callerContext: CallerContext,
+  ownerScope: string,
   body: unknown,
   operation: () => Promise<Result>
 ): Promise<Result> => {
@@ -746,7 +776,7 @@ const runIdempotentTask = <Result>(
     MIN_TASK_IDEMPOTENCY_ENTRY_BYTES,
     Buffer.byteLength(serializedBody) * 2 + MIN_TASK_IDEMPOTENCY_ENTRY_BYTES
   )
-  return registry.run(scope, fingerprint, reservedBytes, operation)
+  return registry.run(scope, fingerprint, reservedBytes, operation, ownerScope)
 }
 
 const assertExternalAuthorizationCurrent = (
@@ -888,6 +918,7 @@ const handleTaskApiRequest = async (
   url: URL,
   tasks: NonNullable<WebServerOptions['tasks']>,
   callerContext: CallerContext,
+  idempotencyOwnerScope: string,
   requestBodyClientId: string,
   requestBodyBudgetRegistry: RequestBodyBudgetRegistry,
   idempotencyRegistry: TaskIdempotencyRegistry,
@@ -914,6 +945,7 @@ const handleTaskApiRequest = async (
             request,
             url,
             callerContext,
+            idempotencyOwnerScope,
             body,
             () => tasks.createProject(body)
           )
@@ -955,6 +987,7 @@ const handleTaskApiRequest = async (
             request,
             url,
             callerContext,
+            idempotencyOwnerScope,
             body,
             () => tasks.startRun(body)
           )
@@ -1098,6 +1131,30 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   const awaitingPong = new WeakSet<WebSocket>()
   const internalEventStream = new InternalWebEventStream()
   const publicTaskEventStream = new PublicTaskEventStream()
+  // A current remote authorization grants replay only from the first sequence that principal saw.
+  // Local Web clients keep the process-wide cursor so remote lifecycle changes never reload them.
+  const remoteReplayFloors = new Map<
+    string,
+    Readonly<{
+      internalAfter: number
+      publicTaskAfter: number
+    }>
+  >()
+  const replayFloorFor = (
+    principalId: string
+  ): Readonly<{
+    internalAfter: number
+    publicTaskAfter: number
+  }> => {
+    const existing = remoteReplayFloors.get(principalId)
+    if (existing) return existing
+    const created = {
+      internalAfter: internalEventStream.cursor().latestSequence,
+      publicTaskAfter: publicTaskEventStream.cursor().latestSequence
+    }
+    remoteReplayFloors.set(principalId, created)
+    return created
+  }
   const commandClient = createApplicationCommandClient()
   const taskIdempotencyRegistry = new TaskIdempotencyRegistry()
   const requestBodyBudgetRegistry = new RequestBodyBudgetRegistry(
@@ -1153,6 +1210,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         response.end('Unauthorized')
         return
       }
+      if (externalAuthorization) replayFloorFor(externalAuthorization.principalId)
       let clientNonce: string
       try {
         clientNonce = requestClientNonce(request)
@@ -1239,6 +1297,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                 }
               : {})
           }),
+          clientPrincipalId,
           requestBodyClientId,
           requestBodyBudgetRegistry,
           taskIdempotencyRegistry,
@@ -1454,6 +1513,9 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       socket.close(1008, 'Remote access expired')
       return
     }
+    const replayFloor = externalAuthorization
+      ? replayFloorFor(externalAuthorization.principalId)
+      : undefined
     const clientId =
       externalAuthorization === undefined
         ? clientNonce
@@ -1471,12 +1533,14 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
       throw error
     }
+    let releaseApprovalPresence: (() => void) | undefined
     socket.on('close', () => {
       sockets.delete(socket)
       externalSockets.delete(socket)
       publicEventSockets.delete(socket)
       internalEventSockets.delete(socket)
       livenessSockets.delete(socket)
+      releaseApprovalPresence?.()
       lease.release()
     })
     socket.on('pong', () => awaitingPong.delete(socket))
@@ -1495,10 +1559,13 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         const messages =
           streamId === null && afterValue === null
             ? [publicTaskEventStream.ready()]
-            : publicTaskEventStream.resume({
-                streamId: streamId ?? '',
-                after: afterValue === null ? Number.NaN : Number(afterValue)
-              })
+            : publicTaskEventStream.resume(
+                {
+                  streamId: streamId ?? '',
+                  after: afterValue === null ? Number.NaN : Number(afterValue)
+                },
+                replayFloor?.publicTaskAfter
+              )
         for (const message of messages) {
           if (!sendCurrentWebSocketMessage(socket, message)) break
         }
@@ -1517,9 +1584,15 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         const streamId = url.searchParams.get('stream') ?? ''
         const afterValue = url.searchParams.get('after')
         const after = afterValue === null ? Number.NaN : Number(afterValue)
-        for (const message of internalEventStream.resume({ streamId, after })) {
+        for (const message of internalEventStream.resume(
+          { streamId, after },
+          replayFloor?.internalAfter
+        )) {
           if (!sendCurrentWebSocketMessage(socket, message)) break
         }
+      }
+      if (url.searchParams.get('liveness') !== '1') {
+        releaseApprovalPresence = options.permissionApprovalPresence?.acquire()
       }
     }
     if (socket.readyState === WebSocket.OPEN) sockets.add(socket)
@@ -1602,6 +1675,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   return {
     port,
     closeExternalConnections: (principalId) => {
+      if (principalId === undefined) remoteReplayFloors.clear()
+      else remoteReplayFloors.delete(principalId)
       for (const [socket, authorization] of externalSockets) {
         if (principalId === undefined || authorization.principalId === principalId) {
           socket.close(1008, 'Remote access revoked')
@@ -1610,6 +1685,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     },
     close: async () => {
       taskIdempotencyRegistry.clear()
+      remoteReplayFloors.clear()
       clearInterval(eventHeartbeatInterval)
       removeBroadcastSink()
       removeTaskProgressSink?.()

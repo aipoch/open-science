@@ -78,10 +78,38 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
     path: result.summaryMarkdownPath,
     contentType: 'text/markdown'
   })
-  const recoveryStorage = result.summary.phases.recovery?.storage
-  expect(recoveryStorage?.sessionFileCount.last).toBeGreaterThan(0)
+  const summary = result.summary
+  expect(summary.sampleCount, 'the profile must contain resource samples').toBeGreaterThan(0)
+  expect(
+    summary.incompleteSampleCount / summary.sampleCount,
+    'no more than 10% of resource samples may be incomplete'
+  ).toBeLessThanOrEqual(0.1)
+  const idle = summary.phases.idle
+  const recovery = summary.phases.recovery
+  if (!idle || !recovery) throw new Error('The profile must contain idle and recovery phases.')
+  expect(idle.includedSampleCount, 'idle must contain a complete resource sample').toBeGreaterThan(
+    0
+  )
+  expect(
+    recovery.includedSampleCount,
+    'recovery must contain a complete resource sample'
+  ).toBeGreaterThan(0)
+  expect(
+    recovery.processCount.last,
+    'recovery must not retain more processes than the stable idle phase'
+  ).toBeLessThanOrEqual(idle.processCount.last)
+  const recoveryStorage = recovery.storage
+  expect(recoveryStorage?.temporaryFileCount.last, 'recovery must leave no temporary files').toBe(0)
+  expect(recoveryStorage?.temporaryBytes.last, 'recovery must leave no temporary bytes').toBe(0)
+  expect(
+    recoveryStorage?.sessionFileCount.last,
+    'the journey must persist exactly one Session'
+  ).toBe(1)
+  expect(
+    recoveryStorage?.notebookRunFileCount.last,
+    'the journey must reuse exactly one persisted Notebook run file'
+  ).toBe(1)
   expect(recoveryStorage?.sessionBytes.last).toBeGreaterThan(0)
-  expect(recoveryStorage?.notebookRunFileCount.last).toBeGreaterThan(0)
   expect(recoveryStorage?.notebookRunBytes.last).toBeGreaterThan(0)
   console.log(`Runtime performance summary: ${result.summaryMarkdownPath}`)
 })

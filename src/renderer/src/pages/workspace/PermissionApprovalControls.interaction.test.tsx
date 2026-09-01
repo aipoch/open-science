@@ -24,6 +24,28 @@ const baseRequest: AcpPermissionRequest = {
   ]
 }
 
+const networkApprovalRequest: AcpPermissionRequest = {
+  requestId: 'network-1',
+  sessionId: 'session-1',
+  toolCallId: 'app-approval:network-1',
+  title: 'Connect to data.example.org?',
+  appOwned: true,
+  providerToolName: 'Open Science',
+  rawInput: {
+    notebookNetworkApproval: { hostname: 'data.example.org', port: 443, runtime: 'python' }
+  },
+  options: [
+    { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
+    {
+      optionId: 'always-allow',
+      name: 'Global',
+      kind: 'allow_always',
+      scope: 'global'
+    },
+    { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+  ]
+}
+
 let container: HTMLDivElement
 let root: Root
 
@@ -39,6 +61,49 @@ afterEach(() => {
 })
 
 describe('PermissionApprovalControls interactions', () => {
+  it('routes persistent network access through the standard Global approval scope', () => {
+    const onRespond = vi.fn()
+    act(() => {
+      root.render(
+        <PermissionApprovalControls requests={[networkApprovalRequest]} onRespond={onRespond} />
+      )
+    })
+
+    const details = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Details')
+    )
+    expect(details).toBeDefined()
+    act(() => details?.click())
+    expect(container.textContent).toContain(
+      'Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Allowed domains.'
+    )
+
+    expect(container.querySelector('[data-testid="extra-option"]')).toBeNull()
+    act(() =>
+      (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
+    )
+    const global = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+    ).find((item) => item.textContent?.includes('Global'))
+    expect(global).toBeDefined()
+    act(() => global?.click())
+    expect(container.querySelector('[data-testid="allow-primary"]')?.textContent).toBe(
+      'Allow globally'
+    )
+    act(() =>
+      (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).click()
+    )
+    expect(onRespond).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Allow data.example.org globally?')
+    expect(document.body.textContent).toContain('Settings → Network → Allowed domains')
+    act(() =>
+      document.body
+        .querySelector<HTMLButtonElement>('[data-testid="permission-scope-confirm"]')
+        ?.click()
+    )
+    expect(onRespond).toHaveBeenCalledWith('network-1', 'always-allow')
+  })
+
   it('renders broad Korean permission scopes as natural complete titles', async () => {
     await act(async () => i18next.changeLanguage('ko'))
     try {

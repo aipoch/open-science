@@ -386,6 +386,30 @@ test('persists Brazilian Portuguese into the built main-process native quit dial
     })
 })
 
+test('persists German into the built main-process native quit dialog', async ({ app }) => {
+  let page = await app.completeOnboarding()
+
+  await page
+    .locator('button')
+    .filter({ has: page.locator('svg.lucide-languages') })
+    .click()
+  await page.getByRole('menuitem', { name: 'Deutsch', exact: true }).click()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'de')
+
+  const expectedDialog = {
+    buttons: ['Abbrechen', 'Beenden'],
+    detail: 'Die Arbeit läuft noch und wird beim Beenden unterbrochen.',
+    includesRendererCatalog: false,
+    message: 'Open Science beenden?'
+  }
+
+  await expect.poll(() => app.capturePersistedLocaleNativeQuitDialog()).toEqual(expectedDialog)
+
+  page = await app.restart()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'de')
+  await expect.poll(() => app.capturePersistedLocaleNativeQuitDialog()).toEqual(expectedDialog)
+})
+
 const localizedSettingsCases = [
   {
     language: 'Simplified Chinese',
@@ -530,6 +554,24 @@ const localizedSettingsCases = [
     reasoningEffort: 'Esfuerzo de razonamiento',
     defaultEffort: 'Predeterminado',
     closeSettings: 'Cerrar configuración'
+  },
+  {
+    language: 'German',
+    pickerLabel: 'Deutsch',
+    locale: 'de',
+    projects: 'Projekte',
+    modelSettings: 'Modelleinstellungen',
+    settings: 'Einstellungen',
+    openNavigation: 'Einstellungsnavigation öffnen',
+    general: 'Allgemein',
+    appearance: 'Darstellung',
+    interfaceLanguage: 'Sprache der Benutzeroberfläche',
+    mainModel: 'Hauptmodell',
+    scenarioModels: 'Szenariomodelle',
+    expandSubagent: 'Unteragent-Einstellungen erweitern',
+    reasoningEffort: 'Reasoning-Aufwand',
+    defaultEffort: 'Standard',
+    closeSettings: 'Einstellungen schließen'
   }
 ] as const
 

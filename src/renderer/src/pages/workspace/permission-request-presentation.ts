@@ -25,6 +25,13 @@ type PermissionPresentation = {
 
 type RequestInput = Record<string, unknown>
 
+type NotebookNetworkApproval = Readonly<{
+  hostname: string
+  port?: number
+  runtime?: NotebookRuntime
+  reason?: string
+}>
+
 const getRequestInput = (request: AcpPermissionRequest): RequestInput | undefined => {
   const raw = request.rawInput
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
@@ -148,6 +155,42 @@ const notebookControlPresentation = (tool: string): PermissionPresentation => {
 
 const providerToolName = (request: AcpPermissionRequest): string | undefined =>
   request.providerToolName?.trim() || undefined
+
+const getNotebookNetworkApproval = (
+  request: AcpPermissionRequest
+): NotebookNetworkApproval | undefined => {
+  if (request.appOwned !== true) return undefined
+  const approval = getRequestInput(request)?.notebookNetworkApproval
+  if (!approval || typeof approval !== 'object' || Array.isArray(approval)) return undefined
+  const payload = approval as Record<string, unknown>
+  if (typeof payload.hostname !== 'string' || !payload.hostname) return undefined
+  if (
+    payload.port !== undefined &&
+    (typeof payload.port !== 'number' ||
+      !Number.isInteger(payload.port) ||
+      payload.port < 1 ||
+      payload.port > 65_535)
+  ) {
+    return undefined
+  }
+  const runtime =
+    payload.runtime === 'python' || payload.runtime === 'r' || payload.runtime === 'bash'
+      ? payload.runtime
+      : payload.runtime === 'repl'
+        ? 'js'
+        : undefined
+  return {
+    hostname: payload.hostname,
+    ...(payload.port === undefined ? {} : { port: payload.port }),
+    ...(runtime ? { runtime } : {}),
+    ...(typeof payload.reason === 'string' && payload.reason.trim()
+      ? { reason: payload.reason.trim() }
+      : {})
+  }
+}
+
+const isNotebookNetworkApprovalRequest = (request: AcpPermissionRequest): boolean =>
+  getNotebookNetworkApproval(request) !== undefined
 
 // MCP origin is broker-classified. Do not infer it from provider titles here: dotted and sanitized
 // spellings are ambiguous without the configured-server context available to the broker.
@@ -320,6 +363,18 @@ const isNetworkTool = (request: AcpPermissionRequest): boolean => {
 }
 
 const describePermissionRequest = (request: AcpPermissionRequest): PermissionPresentation => {
+  const networkApproval = getNotebookNetworkApproval(request)
+  if (networkApproval) {
+    return {
+      actionTitle: `Connect to ${networkApproval.hostname}?`,
+      actionTitleKey: 'Connect to {{domain}}?',
+      actionTitleValues: { domain: networkApproval.hostname },
+      categoryLabel: 'Network access',
+      description: 'Notebook code wants to connect to an external domain.',
+      hideToolIdentity: true,
+      ...(networkApproval.runtime ? { notebookRuntime: networkApproval.runtime } : {})
+    }
+  }
   const deletePresentation = specialistDeletePresentation(request)
   if (deletePresentation) return deletePresentation
   const specialistPresentation = specialistHandoffPresentation(request)
@@ -432,10 +487,12 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
 
 export {
   describePermissionRequest,
+  getNotebookNetworkApproval,
   isArtifactWriteRequest,
   isLiteratureReadRequest,
   isMcpPermissionRequest,
+  isNotebookNetworkApprovalRequest,
   isSpecialistDeleteRequest,
   isSpecialistSwitchRequest
 }
-export type { NotebookRuntime, PermissionPresentation }
+export type { NotebookNetworkApproval, NotebookRuntime, PermissionPresentation }

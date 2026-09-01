@@ -7,6 +7,7 @@ const valid = {
   releaseDate: '2026-07-13',
   notes: 'n',
   localizedNotes: {
+    de: 'Versionshinweise',
     'zh-Hans': '更新说明',
     ja: '更新内容',
     'pt-BR': 'Notas da versão',
@@ -20,6 +21,7 @@ describe('parseManifest', () => {
     expect(parseManifest(valid)).toMatchObject({
       version: '0.3.0',
       localizedNotes: {
+        de: 'Versionshinweise',
         'zh-Hans': '更新说明',
         ja: '更新内容',
         'pt-BR': 'Notas da versão',
@@ -40,8 +42,8 @@ describe('parseManifest', () => {
   })
   it('throws on unsupported or malformed localized release notes', () => {
     expect(() =>
-      parseManifest({ version: '1.0.0', downloads: {}, localizedNotes: { de: 'Neu' } })
-    ).toThrow(/de/)
+      parseManifest({ version: '1.0.0', downloads: {}, localizedNotes: { it: 'Novità' } })
+    ).toThrow(/it/)
     expect(() =>
       parseManifest({ version: '1.0.0', downloads: {}, localizedNotes: { fr: '' } })
     ).toThrow(/fr/)

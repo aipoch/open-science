@@ -8,6 +8,7 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
+import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 import { SessionMessageLink } from './SessionMessageLink'
 
@@ -17,6 +18,15 @@ describe('SessionMessageLink', () => {
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      isLoaded: true,
+      notebookNetwork: {
+        allowedDomains: ['example.com'],
+        disabledOpenScienceDomainGroups: [],
+        disabledOpenScienceDomains: []
+      }
+    })
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -30,7 +40,18 @@ describe('SessionMessageLink', () => {
     container.remove()
   })
 
-  it('uses one lazy, no-referrer favicon source per hostname and falls back on failure', async () => {
+  it('loads a remote favicon only for an approved domain and keeps a local fallback otherwise', async () => {
+    await act(async () => {
+      root.render(
+        <SessionMessageLink href="https://tracking.example/pixel?visitor=123">
+          Unapproved source
+        </SessionMessageLink>
+      )
+    })
+
+    expect(container.querySelector('[data-session-link-favicon-fallback]')).not.toBeNull()
+    expect(container.querySelector('[data-session-link-favicon] img')).toBeNull()
+
     await act(async () => {
       root.render(
         <SessionMessageLink href="https://pubmed.ncbi.nlm.nih.gov/123?view=full">
@@ -97,7 +118,53 @@ describe('SessionMessageLink', () => {
     expect(open).toHaveBeenCalledWith('http://example.com/paper', '_blank', 'noreferrer')
   })
 
-  it('previews any HTTPS Agent link on hover and opens it directly in the source panel', async () => {
+  it('keeps an unapproved HTTPS source local until external navigation is confirmed', async () => {
+    vi.useFakeTimers()
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+
+    await act(async () => {
+      root.render(
+        <SessionMessageLink href="https://tracking.example/paper">
+          Unapproved source
+        </SessionMessageLink>
+      )
+    })
+
+    const sourceLink = container.querySelector<HTMLAnchorElement>('[data-source-preview-link]')
+    fireEvent.pointerEnter(sourceLink!)
+    await act(async () => vi.advanceTimersByTimeAsync(350))
+
+    const hoverCard = document.body.querySelector<HTMLElement>('[data-source-preview-hover-card]')
+    expect(hoverCard?.textContent).toContain('tracking.example')
+    expect(hoverCard?.textContent).toContain('https://tracking.example/paper')
+    expect(document.body.querySelector('[data-session-link-favicon] img')).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+
+    await act(async () => {
+      hoverCard?.querySelector<HTMLAnchorElement>('[data-source-preview-hover-url]')?.click()
+      await vi.runAllTimersAsync()
+    })
+
+    const dialog = document.body.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label="Open external link?"]'
+    )
+    expect(dialog).not.toBeNull()
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      panelState: 'collapsed',
+      items: []
+    })
+
+    const openLink = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Open link'
+    )
+    await act(async () => {
+      openLink?.click()
+    })
+
+    expect(open).toHaveBeenCalledWith('https://tracking.example/paper', '_blank', 'noreferrer')
+  })
+
+  it('shows local source details on hover and opens an approved source in the preview panel', async () => {
     vi.useFakeTimers()
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
 
@@ -123,6 +190,7 @@ describe('SessionMessageLink', () => {
     await act(async () => vi.runAllTimersAsync())
 
     const hoverCard = document.body.querySelector<HTMLElement>('[data-source-preview-hover-card]')
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
     expect(hoverCard?.textContent).toContain('Genome study')
     expect(hoverCard?.textContent).toContain('example.com')
     expect(hoverCard?.textContent).toContain('https://example.com/paper#results')

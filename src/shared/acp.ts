@@ -503,12 +503,11 @@ export const sanitizeAcpContextWindowSample = (
   }
 }
 
-export type AcpRuntimeEvent = {
+type AcpRuntimeEventBase = {
   id: string
   timestamp: number
-  kind: AcpRuntimeEventKind
   level: AcpRuntimeEventLevel
-  // Correlates transient restored-permission lifecycle events without extending durable Session data.
+  // Correlates transient permission lifecycle events without extending durable Session data.
   permissionRequestId?: string
   // Present only on a usage_update-derived event; the runtime records it per session and does not push
   // the event into the visible conversation.
@@ -542,10 +541,10 @@ export type AcpRuntimeEvent = {
   messageId?: string
   role?: 'assistant' | 'user'
   attribution?: MessageAttribution
-  text?: string
-  image?: AcpMessageImage
   title?: string
   status?: string
+  text?: string
+  image?: AcpMessageImage
   toolCallId?: string
   // App-owned authorization outcome. It stays separate from provider tool status so a rejected or
   // otherwise closed permission request cannot be presented as an execution failure.
@@ -568,14 +567,60 @@ export type AcpRuntimeEvent = {
   // user turn. App-owned continuations retain it after the renderer's ordinary active run has settled.
   runId?: string
   promptMessageId?: string
-  artifactSessionId?: string
-  artifactClaimId?: string
-  artifacts?: ArtifactFile[]
   // Mid-turn injected user messages persist composer uploads/parts without opening a new run.
   uploads?: PersistedUploadedAttachment[]
   parts?: MessagePart[]
+  // Diagnostic and protocol-compatibility payload. It is transient runtime data, not a durable
+  // Session format; producers must bound or sanitize it before publication.
   raw?: unknown
 }
+
+type AcpNonArtifactRuntimeFields = {
+  artifactSessionId?: never
+  artifactClaimId?: never
+  artifacts?: never
+}
+
+type AcpRuntimeEventPayloadMap = {
+  system: AcpNonArtifactRuntimeFields
+  message: AcpNonArtifactRuntimeFields & {
+    role: 'assistant' | 'user'
+    text: string
+  }
+  thought: AcpNonArtifactRuntimeFields & {
+    text: string
+  }
+  tool: AcpNonArtifactRuntimeFields
+  plan: AcpNonArtifactRuntimeFields
+  permission: AcpNonArtifactRuntimeFields & {
+    permissionRequestId: string
+  }
+  artifact: {
+    sessionId: string
+    runId: string
+    artifactSessionId?: string
+    artifactClaimId: string
+    artifacts: ArtifactFile[]
+  }
+  compaction: AcpNonArtifactRuntimeFields
+  error: AcpNonArtifactRuntimeFields
+  stop: AcpNonArtifactRuntimeFields
+  raw: AcpNonArtifactRuntimeFields & {
+    raw: unknown
+  }
+}
+
+export type AcpRuntimeEvent = {
+  [Kind in AcpRuntimeEventKind]: AcpRuntimeEventBase & {
+    kind: Kind
+  } & AcpRuntimeEventPayloadMap[Kind]
+}[AcpRuntimeEventKind]
+
+export type AcpRuntimeEventInput = AcpRuntimeEvent extends infer Event
+  ? Event extends AcpRuntimeEvent
+    ? Omit<Event, 'id' | 'timestamp' | 'level'> & Partial<Pick<Event, 'id' | 'timestamp' | 'level'>>
+    : never
+  : never
 
 // Durable app-owned identity for one live Agent Runtime Segment. Provider Session and prompt ids are
 // deliberately excluded from the nested event below so consumers have exactly one routing owner.
@@ -588,12 +633,16 @@ export type AcpAgentRuntimeScope = Readonly<{
   promptMessageId: string
 }>
 
-export type AcpAgentRuntimeEvent = Readonly<
-  Omit<AcpRuntimeEvent, 'sessionId' | 'promptMessageId'> & {
-    sessionId?: never
-    promptMessageId?: never
-  }
->
+export type AcpAgentRuntimeEvent = AcpRuntimeEvent extends infer Event
+  ? Event extends AcpRuntimeEvent
+    ? Readonly<
+        Omit<Event, 'sessionId' | 'promptMessageId'> & {
+          sessionId?: never
+          promptMessageId?: never
+        }
+      >
+    : never
+  : never
 
 export type AcpAgentRuntimeUpdate = Readonly<{
   scope: AcpAgentRuntimeScope
@@ -645,6 +694,9 @@ export type AcpPermissionRequest = {
   sessionId: string
   toolCallId: string
   title: string
+  // Main-process provenance for application-owned approvals. Provider payloads are rebuilt by the
+  // permission broker and cannot set this projection. It is transient and never persisted.
+  appOwned?: true
   // Renderer lifecycle hint only. Main sets this after the request authority reaches Session
   // storage; restored authority is still reloaded and validated independently before use.
   durable?: true
@@ -682,7 +734,7 @@ export type AcpPermissionGrant = {
   scope: AcpPermissionGrantScope
 }
 
-export type AcpStateSnapshot = {
+export type AcpRuntimeState = {
   // Main-owned construction order lets the renderer reject delayed older IPC snapshots. It is
   // transient runtime state and is not persisted with Session data.
   revision?: number
@@ -697,7 +749,6 @@ export type AcpStateSnapshot = {
   // before dispatch even though their final turn remains visible while it drains.
   sessionResumeRequiredIds?: string[]
   error?: string
-  events: AcpRuntimeEvent[]
   pendingPermissions: AcpPermissionRequest[]
   // Optional for rolling renderer/main reload compatibility; current runtimes always publish it.
   pendingElicitations?: PendingElicitationRequest[]
@@ -719,6 +770,33 @@ export type AcpStateSnapshot = {
   // interaction lock and also contains framework compaction control turns.
   agentPromptInFlightSessionIds?: string[]
   promptInFlightSessionIds: string[]
+}
+
+// Retained event history is an explicit synchronization payload. Routine state publications and
+// command responses use AcpRuntimeState so large tool payloads stay on the incremental event path.
+export type AcpStateSnapshot = AcpRuntimeState & {
+  events: AcpRuntimeEvent[]
+}
+
+// A new renderer accepts the historical full-snapshot state event during rolling development, while
+// current Main processes publish state without the retained event window.
+export type AcpStateUpdate = AcpRuntimeState & {
+  events?: AcpRuntimeEvent[]
+}
+
+export type AcpStateCommandResponse = {
+  revision: number
+  result: Omit<AcpRuntimeState, 'revision'>
+}
+
+export const toAcpStateCommandResponse = (state: AcpStateUpdate): AcpStateCommandResponse => {
+  if (state.revision === undefined) {
+    throw new Error('ACP command state is missing its Main-owned revision.')
+  }
+  const result = { ...state }
+  delete result.events
+  delete result.revision
+  return { revision: state.revision, result }
 }
 
 export type AcpConnectRequest = {

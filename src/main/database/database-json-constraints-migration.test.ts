@@ -162,10 +162,11 @@ describe('database JSON constraints migration', () => {
           '0020_compute_job_analysis_state',
           '0021_compute_job_analysis_constraints',
           '0022_memory_global_content_unique',
-          '0023_compute_job_operation'
+          '0023_compute_job_operation',
+          '0024_compute_job_file_evidence'
         ],
         from: '0007_notification_attention_metadata',
-        to: '0023_compute_job_operation'
+        to: '0024_compute_job_file_evidence'
       })
       await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).rejects.toMatchObject({
         code: 'ENOENT'
@@ -201,9 +202,12 @@ describe('database JSON constraints migration', () => {
       ).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(
         access(`${databasePath}.before-0022_memory_global_content_unique.backup`)
-      ).resolves.toBeUndefined()
+      ).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(
         access(`${databasePath}.before-0023_compute_job_operation.backup`)
+      ).resolves.toBeUndefined()
+      await expect(
+        access(`${databasePath}.before-0024_compute_job_file_evidence.backup`)
       ).resolves.toBeUndefined()
 
       await expect(

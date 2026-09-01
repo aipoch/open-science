@@ -12,6 +12,8 @@ import { test } from './fixtures/electron-app'
 const ROOT_PROMPT = 'Coordinate the release-gate delegates.'
 const CHILD_COUNT = 24
 const TERMINAL_PROMPT = 'Run the production delegation terminal journey.'
+const ARTIFACT_VERSION_INPUT_PROMPT =
+  'Run the production Artifact Version input delegation journey.'
 const BOUNDED_COLLECT_PROMPT = 'Run the production bounded collect journey.'
 const BOUNDED_RECOLLECT_PROMPT = 'Collect the running Subagent in Turn B.'
 const PERMISSION_PROMPT = 'Run the production delegated permission journey.'
@@ -30,6 +32,7 @@ const RELIABLE_FAIRNESS_PROMPT = 'Start the reliable messaging fairness journey.
 const RELIABLE_FAIRNESS_USER_PROMPT = 'Run the concurrent real user prompt.'
 const STRUCTURED_OUTPUT_CHILD = 'Create certified structured evidence.'
 const TERMINAL_CHILD = 'Certified delegated terminal'
+const ARTIFACT_VERSION_INPUT_CHILD = 'Artifact Version input child'
 const INHERITED_SPECIALIST_CHILD = 'Inherited specialist terminal'
 const PERMISSION_CHILD = 'Request the delegated fixture permission.'
 const USER_QUESTION_CHILD = 'Delegated scope researcher'
@@ -247,6 +250,57 @@ const seedDelegatedWork = async (page: Page, projectId: string): Promise<void> =
     { childCount: CHILD_COUNT, projectId, rootPrompt: ROOT_PROMPT }
   )
 }
+
+test('resolves a bare Artifact version_id into a delegated read-only input', async ({ app }) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page, 'Artifact Version input delegation gate')
+
+  await sendPrompt(
+    page,
+    ARTIFACT_VERSION_INPUT_PROMPT,
+    'Artifact Version input delegation completed.',
+    120_000
+  )
+  await expectDurableChildStatus(page, ARTIFACT_VERSION_INPUT_CHILD, 'completed')
+
+  const evidence = await page.evaluate(
+    async ({ childName }) => {
+      const sessions = (await window.api.sessions.loadAll()).sessions
+      for (const session of sessions) {
+        const frame = session.conversationGraph?.frames.find(
+          (candidate) => candidate.delegateName === childName
+        )
+        const attempt = session.runtimeContext?.delegatedWork?.records
+          .find((record) => record.agentFrameId === frame?.id)
+          ?.attempts.at(-1)
+        if (!frame || !attempt) continue
+        const terminal = session.conversationGraph?.messages.find(
+          (message) => message.id === attempt.terminalMessageId
+        )
+        return {
+          status: attempt.status,
+          error: attempt.error,
+          terminalText: terminal?.content,
+          artifactVersions: (session.artifacts ?? [])
+            .filter((artifact) => artifact.name === 'provenance-evidence.txt')
+            .map((artifact) => artifact.versionId)
+        }
+      }
+      return undefined
+    },
+    { childName: ARTIFACT_VERSION_INPUT_CHILD }
+  )
+
+  expect(evidence).toMatchObject({
+    status: 'completed',
+    error: undefined,
+    terminalText: 'Delegated immutable Artifact Version input verified.'
+  })
+  expect(evidence?.artifactVersions).toHaveLength(1)
+  expect(evidence?.artifactVersions[0]).toMatch(/^[0-9a-f-]{36}$/)
+})
 
 test('projects real production-composed delegation, permission, and Stop lifecycle', async ({
   app

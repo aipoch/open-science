@@ -7,7 +7,6 @@ import type {
   NotebookCell,
   NotebookLanguage,
   NotebookOutput,
-  NotebookRunFileEvidence,
   NotebookRunRecord,
   NotebookRunProvenanceContext,
   NotebookRunSource,
@@ -15,6 +14,7 @@ import type {
   NotebookWorkingFile,
   RunNotebookCellRequest
 } from '../../shared/notebook'
+import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { Logger } from '../logger'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
@@ -48,6 +48,7 @@ import {
 } from './dependency-analysis'
 import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
 import { getNotebookFileEvidenceLocation } from './repository'
+import { getNotebookInputRoot } from './input-staging'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
@@ -167,6 +168,10 @@ class NotebookExecutionOwner {
 
   constructor(private readonly options: NotebookExecutionOwnerOptions) {
     this.shellProcess = options.shellProcess ?? new NotebookShellProcessAdapter(options.platform)
+  }
+
+  private inputRoot(session: NotebookSessionAggregate): string {
+    return getNotebookInputRoot(this.options.storageRoot, session.projectId, session.sessionId)
   }
 
   private fileEvidenceLocation(session: NotebookSessionAggregate): {
@@ -319,6 +324,7 @@ class NotebookExecutionOwner {
               language: cell.language,
               environment,
               notebookSessionRoot: session.notebookSessionRoot,
+              inputRoot: this.inputRoot(session),
               dataRoot: session.dataRoot,
               ...this.fileEvidenceLocation(session),
               runtimeRoot: session.runtimeRoot,
@@ -329,6 +335,8 @@ class NotebookExecutionOwner {
               timeoutMs: request.timeoutMs,
               signal,
               resolvedInterpreter,
+              sessionId: session.sessionId,
+              projectId: session.projectId,
               inputRunLeaseId: request.inputRunLeaseId
             })
             .catch((error: unknown) => {
@@ -502,7 +510,8 @@ class NotebookExecutionOwner {
       source: request.code,
       surface: 'repl',
       runtimeRoot: session.runtimeRoot,
-      cwd: session.cwd
+      cwd: session.cwd,
+      platform: this.options.platform
     })
     const replWasTerminated =
       !blockedMutation &&
@@ -553,6 +562,7 @@ class NotebookExecutionOwner {
                   kind: 'repl',
                   cwd: session.cwd,
                   notebookSessionRoot: session.notebookSessionRoot,
+                  inputRoot: this.inputRoot(session),
                   dataRoot: session.dataRoot,
                   ...this.fileEvidenceLocation(session),
                   runtimeRoot: session.runtimeRoot,
@@ -637,12 +647,13 @@ class NotebookExecutionOwner {
           signal
         })
         let workingFiles: NotebookWorkingFile[] = []
-        let fileEvidence: NotebookRunFileEvidence | undefined
+        let fileEvidence: ExecutionFileEvidenceSummary | undefined
         const blockedMutation = detectManagedRuntimeMutation({
           source: request.command,
           surface: this.options.platform === 'win32' ? 'powershell' : 'bash',
           runtimeRoot: session.runtimeRoot,
-          cwd: session.cwd
+          cwd: session.cwd,
+          platform: this.options.platform
         })
         let shellResult: NotebookShellResult | undefined
         try {
@@ -657,6 +668,11 @@ class NotebookExecutionOwner {
                 cwd: session.cwd,
                 handoffDir: join(session.notebookSessionRoot, 'handoff'),
                 runtimeRoot: session.runtimeRoot,
+                notebookSessionRoot: session.notebookSessionRoot,
+                inputRoot: this.inputRoot(session),
+                protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
+                sessionId: session.sessionId,
+                projectId: session.projectId,
                 timeoutMs: request.timeoutMs,
                 signal
               }))

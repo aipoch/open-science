@@ -78,6 +78,7 @@ import type {
   DurableDelegatedWork
 } from '../delegation/durable-delegated-work'
 import {
+  DELEGATION_INPUT_UNAVAILABLE_MESSAGE,
   assertDelegateInputShape,
   assertDelegateRequestShape
 } from '../delegation/delegated-work-admission'
@@ -100,7 +101,7 @@ import {
   type MemoryAgentContext
 } from '../../shared/memory'
 import type { MemoryService } from '../memory/service'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 const log = createLogger('notebook:local-rpc')
 const MAX_COMPLETED_COMPUTE_SUBMISSIONS_PER_SESSION = 100
@@ -1004,9 +1005,7 @@ class NotebookLocalRpcServer {
       if (pending) return pending
       const lookup = (async () => {
         if (!this.delegationInputCatalog) {
-          throw new Error(
-            'delegation inputs must be immutable Upload or Artifact Version identities'
-          )
+          throw new Error(DELEGATION_INPUT_UNAVAILABLE_MESSAGE)
         }
         const candidates = await this.delegationInputCatalog.readHostArtifactCatalog({
           projectId: caller.session.projectId,
@@ -1019,9 +1018,7 @@ class NotebookLocalRpcServer {
           item.projectId !== caller.session.projectId ||
           item.sessionId !== caller.session.sessionId
         ) {
-          throw new Error(
-            'delegation inputs must be immutable Upload or Artifact Version identities'
-          )
+          throw new Error(DELEGATION_INPUT_UNAVAILABLE_MESSAGE)
         }
         return item.source === 'upload'
           ? createUploadVersionReference(item.versionId, {
@@ -1743,6 +1740,12 @@ class NotebookLocalRpcServer {
                   controlInvocationId: sessionBinding.activeControlInvocation?.toolInvocationId
                 }
               : {}),
+            ...(method === 'computeCall'
+              ? {
+                  // Bound by beginControlInvocation; an agent-controlled body value is overwritten.
+                  producerRunId: sessionBinding.activeControlInvocation?.toolInvocationId
+                }
+              : {}),
             ...(method === 'agentsCall' || method === 'skillsCall'
               ? {
                   session_id: sessionBinding.sessionId,
@@ -2287,7 +2290,11 @@ class NotebookLocalRpcServer {
       const op = typeof params.op === 'string' ? params.op : ''
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
       const projectId = typeof params.projectId === 'string' ? params.projectId : ''
-      const context = { sessionId, projectId }
+      const producerRunId =
+        typeof params.producerRunId === 'string' && params.producerRunId
+          ? params.producerRunId
+          : undefined
+      const context = { sessionId, projectId, producerRunId }
       if (op === 'call_command') {
         const providerId = typeof params.provider_id === 'string' ? params.provider_id : ''
         const cmd = typeof params.cmd === 'string' ? params.cmd : ''

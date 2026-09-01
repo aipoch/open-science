@@ -7,13 +7,19 @@ import type {
   ClaudeInstallEvent,
   ClaudeInstallResult,
   ConnectorDetailView,
+  CreateDeviceCredentialRequest,
+  CreateDeviceCredentialResult,
+  DeviceCredentialsSnapshot,
+  DeviceCredentialAuthenticationRequest,
   ConnectorTemplateExportPreview,
   ConnectorTemplatePreview,
   ConnectorsSnapshot,
   AddCustomServerRequest,
   RemoveCustomServerRequest,
+  RemoveDeviceCredentialRequest,
   SetCustomServerEnabledRequest,
   UpdateCustomServerRequest,
+  UpdateDeviceCredentialRequest,
   AgentHomeSkillView,
   CreateSkillRequest,
   DeleteSkillRequest,
@@ -36,6 +42,7 @@ import type {
   OpenAlexCredentialValidation,
   SetPackageMirrorRequest,
   SetNetworkProxyRequest,
+  SetNotebookNetworkRequest,
   SetSkillEnabledRequest,
   SetSkillsEnabledRequest,
   SetToolPermissionRequest,
@@ -71,6 +78,7 @@ import { createLogger, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
+import type { NotebookNetworkSettings, NotebookNetworkStatus } from '../../shared/notebook-network'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
@@ -97,7 +105,11 @@ import { buildSettingsSnapshot } from './settings-view'
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
 import { SkillCatalogModule, type SkillCatalogEntry } from './skill-catalog'
 import { ConnectorSettingsModule, type CustomServerSecurityChangeGuard } from './connector-settings'
-import type { CustomServerRuntimeProjectionProvider } from './connector-settings'
+import type {
+  CustomServerRuntimeProjectionProvider,
+  DeviceCredentialConsumerMutation
+} from './connector-settings'
+import { DeviceCredentialStore, type ResolvedOAuthDeviceCredential } from './device-credentials'
 import { ProviderAccountsModule } from './provider-accounts'
 import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-manager'
 import {
@@ -118,6 +130,8 @@ import type { SystemProxyEnvironment } from './system-proxy'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 import { NetworkProxySettingsOwner } from './network-proxy-settings-owner'
+import { NotebookNetworkSettingsOwner } from './notebook-network-settings-owner'
+import { PackageMirrorSettingsOwner } from './package-mirror-settings-owner'
 
 // Outcome of uninstalling a managed runtime. `activeBackendAffected` is true only when the removed
 // runtime backed the active framework, so the IPC layer reconnects the agent for that case alone —
@@ -173,6 +187,14 @@ export type SettingsServiceOptions = {
   // Projects a persisted proxy preference into the live Electron Session and future child process
   // environment. Tests omit it to keep SettingsService free of host-global side effects.
   applyNetworkProxy?: (settings: NetworkProxySettings) => Promise<void>
+  // Applies a committed Notebook egress policy to live kernels without requiring a restart.
+  applyNotebookNetwork?: (settings: NotebookNetworkSettings) => Promise<void>
+  validatePackageMirror?: (settings: SetPackageMirrorRequest) => Promise<void>
+  applyPackageMirror?: (settings: PackageMirror) => Promise<void>
+  beforePackageMirrorCaBundleChange?: () => Promise<void>
+  getNotebookNetworkStatus?: () => Promise<NotebookNetworkStatus>
+  installNotebookNetwork?: () => Promise<{ cancelled: boolean }>
+  removeNotebookNetwork?: () => Promise<{ cancelled: boolean }>
   // Encrypted-token controller for claude-isolated; default-constructed against this.storageRoot
   // when omitted. Storage is delegated to the host's SettingsRepository + encrypt/tryDecryptKey
   // pipeline, mirroring how CodexAuthController delegates to openCodexAuthSession.
@@ -197,11 +219,19 @@ class SettingsService {
   private readonly scenarioModels: ScenarioModelOwner
   private readonly storageRoot: string
   private readonly networkProxy: NetworkProxySettingsOwner
+  private readonly notebookNetwork: NotebookNetworkSettingsOwner
+  private readonly packageMirror: PackageMirrorSettingsOwner
+  private readonly getNotebookNetworkStatusImpl: () => Promise<NotebookNetworkStatus>
+  private readonly installNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
+  private readonly removeNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
   private readonly userClaudeDir: string
   private readonly log: Logger
   private customServerAuthenticator?: (serverId: string) => Promise<void>
   private customServerAuthenticationCanceller?: (serverId: string) => Promise<void>
   private customServerDisconnector?: (serverId: string) => Promise<void>
+  private deviceCredentialAuthenticator?: (credentialId: string) => Promise<void>
+  private deviceCredentialAuthenticationCanceller?: (credentialId: string) => Promise<void>
+  private deviceCredentialDisconnector?: (credentialId: string) => Promise<void>
   private skillDeletionGuard?: (skillId: string) => Promise<void>
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
@@ -210,10 +240,37 @@ class SettingsService {
       repository: this.repository,
       apply: options.applyNetworkProxy ?? (async () => undefined)
     })
+    this.notebookNetwork = new NotebookNetworkSettingsOwner({
+      repository: this.repository,
+      apply: options.applyNotebookNetwork ?? (async () => undefined)
+    })
+    this.packageMirror = new PackageMirrorSettingsOwner({
+      repository: this.repository,
+      validate: options.validatePackageMirror ?? (async () => undefined),
+      apply: options.applyPackageMirror ?? (async () => undefined),
+      beforeCaBundleChange: options.beforePackageMirrorCaBundleChange
+    })
+    this.getNotebookNetworkStatusImpl =
+      options.getNotebookNetworkStatus ??
+      (async () => ({ kind: 'error', reason: 'runtimeFailure' }))
+    this.installNotebookNetworkImpl =
+      options.installNotebookNetwork ??
+      (async () => {
+        throw new Error('Notebook network sandbox installation is unavailable.')
+      })
+    this.removeNotebookNetworkImpl =
+      options.removeNotebookNetwork ??
+      (async () => {
+        throw new Error('Notebook network sandbox removal is unavailable.')
+      })
     this.log = options.log ?? createLogger('settings')
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
-    this.connectors = new ConnectorSettingsModule(this.repository, options.openAlexFetch)
+    this.connectors = new ConnectorSettingsModule(
+      this.repository,
+      options.openAlexFetch,
+      new DeviceCredentialStore(this.storageRoot)
+    )
     this.userClaudeDir = options.userClaudeDir ?? getUserClaudeConfigDir()
     const userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
     this.skills = new SkillCatalogModule({
@@ -363,11 +420,37 @@ class SettingsService {
   }
 
   async setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror> {
-    return this.notebookRuntimeSettings.setPackageMirror(request)
+    return this.packageMirror.set(request)
   }
 
   setNetworkProxy(request: SetNetworkProxyRequest): Promise<NetworkProxySettings> {
     return this.networkProxy.set(request)
+  }
+
+  async setNotebookNetwork(request: SetNotebookNetworkRequest): Promise<NotebookNetworkSettings> {
+    return this.notebookNetwork.set(request)
+  }
+
+  getNotebookNetwork(): Promise<NotebookNetworkSettings> {
+    return this.notebookNetwork.get()
+  }
+
+  allowNotebookNetworkDomain(hostname: string): Promise<NotebookNetworkSettings> {
+    return this.notebookNetwork.allowDomain(hostname)
+  }
+
+  getNotebookNetworkStatus(): Promise<NotebookNetworkStatus> {
+    return this.getNotebookNetworkStatusImpl()
+  }
+
+  async installNotebookNetwork(): Promise<NotebookNetworkStatus> {
+    await this.installNotebookNetworkImpl()
+    return this.getNotebookNetworkStatusImpl()
+  }
+
+  async removeNotebookNetwork(): Promise<NotebookNetworkStatus> {
+    await this.removeNotebookNetworkImpl()
+    return this.getNotebookNetworkStatusImpl()
   }
 
   private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {
@@ -837,6 +920,10 @@ class SettingsService {
     return this.getSettingsView()
   }
 
+  async rememberCodexAutoHttpsFallback(): Promise<boolean> {
+    return this.repository.rememberCodexAutoHttpsFallback()
+  }
+
   async deleteProvider(id: string): Promise<SettingsSnapshot> {
     await this.providers.deleteProvider(id)
     return this.getSettingsView()
@@ -928,6 +1015,75 @@ class SettingsService {
   // Lists every bundled connector with enabled / auto-allow state, plus shared NCBI credential state.
   async listConnectors(): Promise<ConnectorsSnapshot> {
     return this.connectors.listConnectors()
+  }
+
+  async listDeviceCredentials(): Promise<DeviceCredentialsSnapshot> {
+    return this.connectors.listDeviceCredentials()
+  }
+
+  async deviceCredentialConsumerIds(id: string): Promise<string[]> {
+    return this.connectors.deviceCredentialConsumerIds(id)
+  }
+
+  async deviceCredentialIdForServer(serverId: string): Promise<string | undefined> {
+    return this.connectors.deviceCredentialIdForServer(serverId)
+  }
+
+  async createDeviceCredential(
+    request: CreateDeviceCredentialRequest
+  ): Promise<CreateDeviceCredentialResult> {
+    return this.connectors.createDeviceCredential(request)
+  }
+
+  async updateDeviceCredential(
+    request: UpdateDeviceCredentialRequest,
+    withConsumersBlocked?: DeviceCredentialConsumerMutation
+  ): Promise<DeviceCredentialsSnapshot> {
+    return this.connectors.updateDeviceCredential(request, withConsumersBlocked)
+  }
+
+  async removeDeviceCredential(
+    request: RemoveDeviceCredentialRequest
+  ): Promise<DeviceCredentialsSnapshot> {
+    return this.connectors.removeDeviceCredential(request)
+  }
+
+  async resolveDeviceOAuthCredential(
+    id: string
+  ): Promise<ResolvedOAuthDeviceCredential | undefined> {
+    return this.connectors.resolveDeviceOAuthCredential(id)
+  }
+
+  setDeviceCredentialAuthenticator(
+    authenticate: (credentialId: string) => Promise<void>,
+    cancel: (credentialId: string) => Promise<void>,
+    disconnect: (credentialId: string) => Promise<void>
+  ): void {
+    this.deviceCredentialAuthenticator = authenticate
+    this.deviceCredentialAuthenticationCanceller = cancel
+    this.deviceCredentialDisconnector = disconnect
+  }
+
+  async authenticateDeviceCredential(
+    request: DeviceCredentialAuthenticationRequest
+  ): Promise<DeviceCredentialsSnapshot> {
+    if (!this.deviceCredentialAuthenticator) throw new Error('Device OAuth is unavailable')
+    await this.deviceCredentialAuthenticator(request.id)
+    return this.connectors.listDeviceCredentials()
+  }
+
+  async cancelDeviceCredentialAuthentication(
+    request: DeviceCredentialAuthenticationRequest
+  ): Promise<void> {
+    await this.deviceCredentialAuthenticationCanceller?.(request.id)
+  }
+
+  async disconnectDeviceCredential(
+    request: DeviceCredentialAuthenticationRequest,
+    withConsumersBlocked?: DeviceCredentialConsumerMutation
+  ): Promise<DeviceCredentialsSnapshot> {
+    await this.deviceCredentialDisconnector?.(request.id)
+    return this.connectors.disconnectDeviceCredential(request.id, withConsumersBlocked)
   }
 
   async previewCustomServerTemplateExport(id: string): Promise<ConnectorTemplateExportPreview> {
@@ -1052,12 +1208,23 @@ class SettingsService {
     await this.customServerAuthenticationCanceller?.(serverId)
   }
 
-  async disconnectCustomServer(serverId: string): Promise<ConnectorsSnapshot> {
-    if (!this.customServerDisconnector) {
-      throw new Error('Custom MCP OAuth disconnect is not available yet')
+  async disconnectCustomServer(
+    serverId: string,
+    withConsumersBlocked?: DeviceCredentialConsumerMutation
+  ): Promise<ConnectorsSnapshot> {
+    const credentialId = await this.connectors.deviceCredentialIdForServer(serverId)
+    if (credentialId) {
+      if (!this.deviceCredentialDisconnector) {
+        throw new Error('Device OAuth disconnect is not available yet')
+      }
+      await this.deviceCredentialDisconnector(credentialId)
+    } else {
+      if (!this.customServerDisconnector) {
+        throw new Error('Custom MCP OAuth disconnect is not available yet')
+      }
+      await this.customServerDisconnector(serverId)
     }
-    await this.customServerDisconnector(serverId)
-    return this.connectors.disconnectCustomServer(serverId)
+    return this.connectors.disconnectCustomServer(serverId, withConsumersBlocked)
   }
 
   // Reports whether npm is on PATH so the installer UI can default to/enable the npm source.

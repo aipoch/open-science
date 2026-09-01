@@ -37,6 +37,7 @@ type SettingsApi = {
   onInstallLog: ReturnType<typeof vi.fn>
   setAgentFramework: ReturnType<typeof vi.fn>
   setReasoningEffort: ReturnType<typeof vi.fn>
+  setReviewerModel: ReturnType<typeof vi.fn>
   setSessionDetailsModel: ReturnType<typeof vi.fn>
   setNotificationsEnabled: ReturnType<typeof vi.fn>
   setConversationSkillImportEnabled: ReturnType<typeof vi.fn>
@@ -191,6 +192,11 @@ beforeEach(() => {
       .fn()
       .mockImplementation((request: { effort: string }) =>
         Promise.resolve({ ...snapshot([]), reasoningEffort: request.effort })
+      ),
+    setReviewerModel: vi
+      .fn()
+      .mockImplementation((request: { configuration: SettingsSnapshot['reviewerModel'] }) =>
+        Promise.resolve({ ...snapshot([]), reviewerModel: request.configuration })
       ),
     setSessionDetailsModel: vi
       .fn()
@@ -502,6 +508,36 @@ describe('settings store: detectClaude refreshes npm', () => {
 
     expect(api.isNpmAvailable).toHaveBeenCalledTimes(1)
     expect(useSettingsStore.getState().npmAvailable).toBe(true)
+  })
+
+  it('does not let an older probe result replace a newer committed runtime snapshot', async () => {
+    let resolveDetect: (value: { found: true; path: string; version: string }) => void = () =>
+      undefined
+    api.detectClaude.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveDetect = resolve
+        })
+    )
+    api.getSettings.mockResolvedValue({
+      ...snapshot([]),
+      revision: 2,
+      claude: { resolvedPath: '/bin/claude-new', version: '2.0.0' }
+    })
+
+    const pending = useSettingsStore.getState().detectClaude()
+    useSettingsStore.getState().acceptCommittedSnapshot({
+      ...snapshot([]),
+      revision: 2,
+      claude: { resolvedPath: '/bin/claude-new', version: '2.0.0' }
+    })
+    resolveDetect({ found: true, path: '/bin/claude-old', version: '1.0.0' })
+    await pending
+
+    expect(useSettingsStore.getState().claude).toEqual({
+      resolvedPath: '/bin/claude-new',
+      version: '2.0.0'
+    })
   })
 })
 
@@ -2079,6 +2115,110 @@ describe('settings store: setNotificationsEnabled', () => {
 })
 
 describe('settings store: acceptCommittedSnapshot vs in-flight optimistic preference', () => {
+  it('keeps a newer event as rollback baseline across queued same-field writes', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let resolveOlder: (value: SettingsSnapshot) => void = () => undefined
+    api.setReasoningEffort
+      .mockImplementationOnce(
+        () =>
+          new Promise<SettingsSnapshot>((resolve) => {
+            resolveOlder = resolve
+          })
+      )
+      .mockRejectedValueOnce(new Error('newer write failed'))
+
+    const older = useSettingsStore.getState().setReasoningEffort('high')
+    const newer = useSettingsStore.getState().setReasoningEffort('max')
+    useSettingsStore.getState().acceptCommittedSnapshot({
+      ...snapshot([]),
+      revision: 2,
+      reasoningEffort: 'low'
+    })
+
+    resolveOlder({ ...snapshot([]), revision: 1, reasoningEffort: 'high' })
+    await Promise.all([older, newer])
+
+    expect(useSettingsStore.getState().reasoningEffort).toBe('low')
+    expect(useSettingsStore.getState().settingsSnapshotRevision).toBe(2)
+  })
+
+  it('rejects an older preference response that arrives after a newer committed event', async () => {
+    let resolveNotifications: (value: SettingsSnapshot) => void = () => undefined
+    api.setNotificationsEnabled.mockImplementation(
+      () =>
+        new Promise<SettingsSnapshot>((resolve) => {
+          resolveNotifications = resolve
+        })
+    )
+
+    const pending = useSettingsStore.getState().setNotificationsEnabled(false)
+    useSettingsStore.getState().acceptCommittedSnapshot({
+      ...snapshot([]),
+      revision: 2,
+      notificationsEnabled: true,
+      appIconVariant: 'dark'
+    })
+
+    resolveNotifications({
+      ...snapshot([]),
+      revision: 1,
+      notificationsEnabled: false,
+      appIconVariant: 'light'
+    })
+    await pending
+
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(true)
+    expect(useSettingsStore.getState().appIconVariant).toBe('dark')
+    expect(useSettingsStore.getState().settingsSnapshotRevision).toBe(2)
+  })
+
+  it('rejects an older non-optimistic response that arrives after a newer committed event', async () => {
+    let resolveReviewer: (value: SettingsSnapshot) => void = () => undefined
+    api.setReviewerModel.mockImplementation(
+      () =>
+        new Promise<SettingsSnapshot>((resolve) => {
+          resolveReviewer = resolve
+        })
+    )
+
+    const pending = useSettingsStore.getState().setReviewerModel({
+      mode: 'fixed',
+      providerId: 'provider-old',
+      model: 'model-old',
+      reasoningEffort: 'high'
+    })
+    useSettingsStore.getState().acceptCommittedSnapshot({
+      ...snapshot([]),
+      revision: 2,
+      reviewerModel: {
+        mode: 'fixed',
+        providerId: 'provider-new',
+        model: 'model-new',
+        reasoningEffort: 'high'
+      }
+    })
+
+    resolveReviewer({
+      ...snapshot([]),
+      revision: 1,
+      reviewerModel: {
+        mode: 'fixed',
+        providerId: 'provider-old',
+        model: 'model-old',
+        reasoningEffort: 'high'
+      }
+    })
+    await pending
+
+    expect(useSettingsStore.getState().reviewerModel).toEqual({
+      mode: 'fixed',
+      providerId: 'provider-new',
+      model: 'model-new',
+      reasoningEffort: 'high'
+    })
+    expect(useSettingsStore.getState().settingsSnapshotRevision).toBe(2)
+  })
+
   it('does not let a foreign committed snapshot clobber an in-flight optimistic preference', async () => {
     let resolveNotifications: (value: SettingsSnapshot) => void = () => undefined
     api.setNotificationsEnabled.mockImplementation(
@@ -2112,7 +2252,7 @@ describe('settings store: acceptCommittedSnapshot vs in-flight optimistic prefer
     expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
   })
 
-  it('rolls back a failed optimistic preference to the last confirmed value after a foreign snapshot', async () => {
+  it('rolls back a failed optimistic preference to the committed value received while pending', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     let rejectNotifications: (reason?: unknown) => void = () => undefined
     api.setNotificationsEnabled.mockImplementation(
@@ -2134,7 +2274,7 @@ describe('settings store: acceptCommittedSnapshot vs in-flight optimistic prefer
     rejectNotifications(new Error('ipc down'))
     await pending
 
-    expect(useSettingsStore.getState().notificationsEnabled).toBe(true)
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
     expect(useSettingsStore.getState().appIconVariant).toBe('dark')
     expect(useSettingsStore.getState().settingsWriteError).toBe(
       'Could not save notification preference. Try again.'

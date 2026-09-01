@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
 
 import type { ComputeJob } from '../../shared/compute'
+import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
+import { createLogger, errorLogFields } from '../logger'
+import { decodeDataPath } from '../storage/data-path'
 import {
   classifyConnectionFailure,
   ComputeConnectionError,
@@ -14,6 +17,11 @@ import type { ComputeHostRepository } from './repository'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
 import { classifyComputeJobExit, probeRemoteLaunch } from './remote-launch-recovery'
+import {
+  cleanupComputeJobFileEvidence,
+  publishComputeJobFileEvidence,
+  settleComputeJobFileEvidence
+} from '../notebook/working-file-observer'
 
 // Maximum number of bytes for the per-job dispatch SSH command (enough for base64 of large scripts).
 const DISPATCH_MAX_OUTPUT_BYTES = 4 * 1024
@@ -21,6 +29,7 @@ const DISPATCH_MAX_OUTPUT_BYTES = 4 * 1024
 // Timeout for the dispatch SSH connection (mkdir + write files + launch). Generous to accommodate
 // slow cluster file systems; the job itself runs detached so the connection can close after.
 const DISPATCH_TIMEOUT_MS = 120_000
+const log = createLogger('compute')
 
 // Remote handle stored in the DB once the job is launched.
 export type RemoteHandle = {
@@ -84,7 +93,15 @@ export { quoteRemotePath } from './remote-path-security'
 // One entry in the stored input manifest. Created by ComputeService (validation/resolution)
 // and consumed by the dispatcher (staging).
 export type StagedInputEntry =
-  | { kind: 'upload'; localPath: string; dstFilename: string; label: string }
+  | {
+      kind: 'upload'
+      localPath: string
+      dstFilename: string
+      label: string
+      generationId?: string
+      checksum?: string
+      sizeBytes?: number
+    }
   | { kind: 'symlink'; remotePath: string; dstFilename: string; label: string }
 
 // Performs the remote staging for all entries: scp upload for 'upload' entries,
@@ -128,6 +145,7 @@ export type DispatcherDeps = {
   // Tracks this dispatch as in-flight so the poller won't mistake a job that is still staging
   // inputs for a restart-orphaned one. Defaults to the process-wide shared tracker.
   dispatchTracker?: DispatchTracker
+  storageRoot?: string
 }
 
 // Dispatches one job to its remote host asynchronously (not awaited by submit_job RPC).
@@ -150,7 +168,69 @@ export async function dispatchJob(jobId: string, deps: DispatcherDeps): Promise<
       await lifecycle.dispatchError(jobId, { errorCode: error.code, stderrTail: error.message })
     }
   } finally {
+    await finalizeDispatchErrorEvidence(jobId, deps)
     tracker.end(jobId)
+  }
+}
+
+const finalizeDispatchErrorEvidence = async (
+  jobId: string,
+  deps: DispatcherDeps
+): Promise<void> => {
+  if (!deps.storageRoot) return
+  const job = await deps.jobRepository.get(jobId).catch(() => null)
+  if (!job || job.status !== 'error') return
+  if (hasImmutableExecutionFileEvidenceReference(job.file_evidence)) return
+  const remoteInputPaths: string[] = []
+  if (job.input_manifest) {
+    try {
+      const entries = JSON.parse(job.input_manifest) as Array<{
+        kind?: string
+        remotePath?: string
+      }>
+      for (const entry of entries) {
+        if (entry.kind === 'symlink' && entry.remotePath) remoteInputPaths.push(entry.remotePath)
+      }
+    } catch {
+      // New manifests are validated; malformed historical rows remain evidence-unknown.
+    }
+  }
+  try {
+    const fileEvidence = await publishComputeJobFileEvidence({
+      storageRoot: deps.storageRoot,
+      projectId: job.project_id,
+      sessionId: job.session_id,
+      jobId,
+      producerRunId: job.producer_run_id,
+      outputs: [],
+      remoteInputPaths,
+      reasonCodes: ['harvest-incomplete', 'remote-output-not-harvested']
+    })
+    await deps.jobRepository.update(jobId, { fileEvidence })
+    await settleComputeJobFileEvidence({
+      storageRoot: deps.storageRoot,
+      projectId: job.project_id,
+      sessionId: job.session_id,
+      jobId,
+      producerRunId: job.producer_run_id,
+      fileEvidence
+    }).catch((error) =>
+      log.warn('Compute Job file-evidence receipt remains for startup recovery.', {
+        jobId,
+        ...errorLogFields(error)
+      })
+    )
+  } catch {
+    const persisted = await deps.jobRepository.get(jobId).catch(() => null)
+    if (persisted && !hasImmutableExecutionFileEvidenceReference(persisted.file_evidence)) {
+      await cleanupComputeJobFileEvidence({
+        storageRoot: deps.storageRoot,
+        projectId: job.project_id,
+        sessionId: job.session_id,
+        jobId,
+        preservePublished: true
+      }).catch(() => undefined)
+    }
   }
 }
 
@@ -190,7 +270,11 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
   if (job.input_manifest) {
     let entries: StagedInputEntry[]
     try {
-      entries = JSON.parse(job.input_manifest) as StagedInputEntry[]
+      entries = (JSON.parse(job.input_manifest) as StagedInputEntry[]).map((entry) =>
+        entry.kind === 'upload'
+          ? { ...entry, localPath: decodeDataPath(entry.localPath, deps.storageRoot)! }
+          : entry
+      )
     } catch {
       await lifecycle.dispatchError(jobId, {
         errorCode: 'dispatch_failed',

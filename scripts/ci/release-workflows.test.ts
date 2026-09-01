@@ -48,28 +48,45 @@ describe('release and scheduled workflow topology', () => {
   it('batches latest-main Windows coverage hourly across three serial shards', () => {
     const windows = workflow('windows-full-test.yml')
     const schedule = windows.on?.schedule as Array<{ cron: string }>
+    const dispatch = windows.on?.workflow_dispatch as {
+      inputs?: { mode?: { default?: string; options?: string[] } }
+    }
     const plan = windows.jobs.plan
     const job = windows.jobs.windows_full_test
+    const sandbox = windows.jobs.notebook_sandbox
     const test = step(job, 'Test complete suite shard')
+    const sandboxSmoke = step(sandbox, 'Test AppContainer ownership and removal lifecycle')
 
     expect(job.strategy?.matrix?.shard).toEqual([1, 2, 3])
     expect(test.run).toContain('--shard=${{ matrix.shard }}/3')
     expect(test.run).toContain('--maxWorkers=1')
     expect(windows.on).not.toHaveProperty('push')
     expect(schedule).toEqual([{ cron: '47 * * * *' }])
-    expect(windows.on).toHaveProperty('workflow_dispatch')
+    expect(dispatch.inputs?.mode).toMatchObject({
+      default: 'full',
+      options: ['full', 'notebook-sandbox']
+    })
     expect(windows.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(plan).toMatchObject({
       'runs-on': 'ubuntu-latest',
       outputs: { should_test: '${{ steps.decide.outputs.should_test }}' }
     })
     expect(step(plan, 'Check for untested main changes').run).toContain(
-      'actions/workflows/windows-full-test.yml/runs?branch=main&status=success&per_page=1'
+      'actions/workflows/windows-full-test.yml/runs?branch=main&event=schedule&status=success&per_page=1'
     )
     expect(job).toMatchObject({
       needs: 'plan',
-      if: "needs.plan.outputs.should_test == 'true'"
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}"
     })
+    expect(sandbox).toMatchObject({
+      needs: 'plan',
+      if: "needs.plan.outputs.should_test == 'true'",
+      'runs-on': 'windows-latest',
+      'timeout-minutes': 20
+    })
+    expect(sandboxSmoke.run).toContain('vendor/windows-src/ci/smoke.ps1')
+    expect(sandboxSmoke.run).toContain('vendor/windows/x64/notebook-appcontainer-host.exe')
+    expect(sandboxSmoke.run).toContain('-Mode Full')
   })
 
   it('runs a separate daily Windows resource soak with a focused manual smoke path', () => {

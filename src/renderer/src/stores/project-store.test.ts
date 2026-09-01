@@ -107,6 +107,97 @@ describe('project store', () => {
     expect(useProjectStore.getState().projects[0]).toEqual(created)
   })
 
+  it('resolves an empty create result untouched and leaves the cache alone', async () => {
+    setProjectsApi({ create: vi.fn().mockResolvedValue(undefined) })
+
+    const result = await useProjectStore.getState().createProject({ name: 'New' })
+
+    expect(result).toBeUndefined()
+    expect(useProjectStore.getState().projects).toEqual([])
+  })
+
+  it('resolves an empty update result untouched and leaves the cache alone', async () => {
+    const original = createProject({ id: 'kept', name: 'Kept', updatedAt: 1 })
+    setProjectsApi({ update: vi.fn().mockResolvedValue(undefined) })
+    useProjectStore.setState({ projects: [original], isLoaded: true })
+
+    const result = await useProjectStore
+      .getState()
+      .updateProject({ id: 'kept', expectedUpdatedAt: 1, name: 'Command' })
+
+    expect(result).toBeUndefined()
+    expect(useProjectStore.getState().projects).toEqual([original])
+  })
+
+  it('does not let a late update result replace a newer lifecycle projection', async () => {
+    const original = createProject({ name: 'Original', updatedAt: 1 })
+    const command = createDeferred<Project>()
+    setProjectsApi({ update: vi.fn().mockReturnValue(command.promise) })
+    useProjectStore.setState({ projects: [original], isLoaded: true })
+
+    const update = useProjectStore
+      .getState()
+      .updateProject({ id: original.id, expectedUpdatedAt: 1, name: 'Command' })
+    const lifecycle = createProject({ name: 'Lifecycle', updatedAt: 3 })
+    useProjectStore.getState().upsertProject(lifecycle)
+    command.resolve(createProject({ name: 'Command', updatedAt: 2 }))
+
+    await update
+
+    expect(useProjectStore.getState().projects).toEqual([lifecycle])
+  })
+
+  it('lets the later-started update win when both commands begin from the same projection', async () => {
+    const original = createProject({ name: 'Original', updatedAt: 1 })
+    const first = createDeferred<Project>()
+    const second = createDeferred<Project>()
+    setProjectsApi({
+      update: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    })
+    useProjectStore.setState({ projects: [original], isLoaded: true })
+
+    const firstUpdate = useProjectStore
+      .getState()
+      .updateProject({ id: original.id, expectedUpdatedAt: 1, name: 'First' })
+    const secondUpdate = useProjectStore
+      .getState()
+      .updateProject({ id: original.id, expectedUpdatedAt: 1, name: 'Second' })
+    first.resolve(createProject({ name: 'First', updatedAt: 2 }))
+    await firstUpdate
+    second.resolve(createProject({ name: 'Second', updatedAt: 3 }))
+    await secondUpdate
+
+    expect(useProjectStore.getState().projects).toEqual([
+      createProject({ name: 'Second', updatedAt: 3 })
+    ])
+  })
+
+  it('projects an older committed update when a later-started update fails', async () => {
+    const original = createProject({ name: 'Original', updatedAt: 1 })
+    const first = createDeferred<Project>()
+    setProjectsApi({
+      update: vi
+        .fn()
+        .mockReturnValueOnce(first.promise)
+        .mockRejectedValueOnce(new Error('newer update failed'))
+    })
+    useProjectStore.setState({ projects: [original], isLoaded: true })
+
+    const firstUpdate = useProjectStore
+      .getState()
+      .updateProject({ id: original.id, expectedUpdatedAt: 1, name: 'Committed' })
+    await expect(
+      useProjectStore
+        .getState()
+        .updateProject({ id: original.id, expectedUpdatedAt: 1, name: 'Failed' })
+    ).rejects.toThrow('newer update failed')
+    const committed = createProject({ name: 'Committed', updatedAt: 2 })
+    first.resolve(committed)
+    await firstUpdate
+
+    expect(useProjectStore.getState().projects).toEqual([committed])
+  })
+
   it('returns cleanup-pending while dropping a committed Project deletion from the cache', async () => {
     useProjectStore.setState({
       projects: [createProject({ id: 'keep' }), createProject({ id: 'drop' })],

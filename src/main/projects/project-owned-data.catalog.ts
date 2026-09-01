@@ -25,7 +25,8 @@ type ProjectDeletionPath =
   | 'compute-job-project-delete'
   | 'delegated-runtime-quiescence'
   | 'notification-session-invalidation'
-  | 'notebook-file-evidence-tail'
+  | 'notebook-input-cache-tail'
+  | 'execution-file-evidence-tail'
   | 'project-deletion-intent-protocol'
   | 'project-file-projection-delete'
   | 'project-metadata-soft-delete'
@@ -33,6 +34,7 @@ type ProjectDeletionPath =
   | 'project-session-json-delete'
   | 'provenance-tail'
   | 'review-tail'
+  | 'side-chat-profile-tail'
 
 type ForeignKeyCascadePolicy = Readonly<{
   kind: 'foreign-key-cascade'
@@ -451,6 +453,17 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
+    id: 'managed-session-workspaces',
+    medium: 'filesystem',
+    resources: ['workspaces/<workspaceId>/'],
+    policy: {
+      kind: 'retained-history',
+      effect: 'retain',
+      retention: 'Retained until the user removes the workspace files.',
+      reason: 'Session and Project deletion preserve ordinary workspace files for user recovery.'
+    }
+  },
+  {
     id: 'artifact-bytes',
     medium: 'filesystem',
     resources: ['artifacts/<projectId>/'],
@@ -484,6 +497,18 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       path: 'delegated-runtime-quiescence',
       operation: 'ProductionFrameWorkspace.deleteProject',
       note: 'The delegated owner removes both live work and dormant Project workspace directories.'
+    }
+  },
+  {
+    id: 'side-chat-runtime-profiles',
+    medium: 'filesystem',
+    resources: ['runtime-support/side-chat/<sideChatId>/'],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'side-chat-profile-tail',
+      operation: 'SideChatRuntimeOwner.completeProjectDeletion',
+      note: 'The durable Project deletion tail removes restricted backend profiles for hydrated Side Chats before releasing its deletion intent.'
     }
   },
   {
@@ -560,13 +585,25 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
-    id: 'notebook-file-evidence',
+    id: 'notebook-input-cache',
     medium: 'filesystem',
-    resources: ['notebook-file-evidence/<projectId>/'],
+    resources: ['notebook-inputs/<projectId>/'],
     policy: {
       kind: 'coordinator-cleanup',
       effect: 'hard-delete',
-      path: 'notebook-file-evidence-tail',
+      path: 'notebook-input-cache-tail',
+      operation: 'NotebookRuntimeService.deleteProjectInputs',
+      note: 'The durable Project deletion intent removes derived, read-only Notebook input copies after runtime quiescence.'
+    }
+  },
+  {
+    id: 'execution-file-evidence',
+    medium: 'filesystem',
+    resources: ['execution-file-evidence/<projectId>/', 'notebook-file-evidence/<projectId>/'],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'execution-file-evidence-tail',
       operation: 'NotebookRuntimeService.deleteProjectFileEvidence',
       note: 'The durable Project deletion intent retries removal of frozen Notebook file generations after runtime quiescence.'
     }

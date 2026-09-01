@@ -48,7 +48,12 @@ const richInfo: StorageInfo = {
       },
       { key: 'uploads', bytes: 0 },
       { key: 'notebooks', bytes: 0 },
-      { key: 'notebook-file-evidence', bytes: 8_300_000 }
+      { key: 'execution-file-evidence', bytes: 8_300_000 },
+      {
+        key: 'workspaces',
+        bytes: 17,
+        children: [{ name: 'workspace-id', bytes: 17 }]
+      }
     ],
     totalBytes: 3_731_000_125
   },
@@ -80,6 +85,7 @@ const openEditor = async (): Promise<void> => {
 }
 
 beforeEach(() => {
+  vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Open Science Electron')
   useSettingsStore.setState(createInitialSettingsState())
   useStorageInfoStore.setState({
     status: null,
@@ -94,6 +100,10 @@ beforeEach(() => {
   root = createRoot(container)
 
   ;(window as unknown as { api: unknown }).api = {
+    platform: 'darwin',
+    localFs: {
+      openPath: vi.fn().mockResolvedValue('')
+    },
     storage: {
       getStatus: vi.fn().mockResolvedValue({
         dataRoot: '/home/u/.open-science',
@@ -137,9 +147,56 @@ afterEach(() => {
   container.remove()
   document.body.innerHTML = ''
   delete (window as unknown as { api?: unknown }).api
+  vi.restoreAllMocks()
 })
 
 describe('StoragePanel', () => {
+  it('opens an individual retained Session workspace from its usage row', async () => {
+    useStorageInfoStore.setState({
+      status: richInfo,
+      info: richInfo,
+      scannedAt: Date.now(),
+      isLoading: false,
+      isRefreshing: false,
+      loadError: undefined
+    })
+
+    await act(async () => root.render(<StoragePanel />))
+    clickButton((button) => button.textContent?.includes('Session workspaces') ?? false)
+
+    const workspaceRow = Array.from(container.querySelectorAll<HTMLElement>('div')).find(
+      (element) => element.textContent?.includes('workspace-id')
+    )
+    const open = workspaceRow?.querySelector<HTMLButtonElement>('button[aria-label="Open folder"]')
+
+    expect(open).toBeDefined()
+    await act(async () => {
+      open?.click()
+      await Promise.resolve()
+    })
+    expect(window.api.localFs.openPath).toHaveBeenCalledWith(
+      '/home/u/.open-science/workspaces/workspace-id'
+    )
+  })
+
+  it('does not offer the host folder action from a Web client', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0')
+    useStorageInfoStore.setState({
+      status: richInfo,
+      info: richInfo,
+      scannedAt: Date.now(),
+      isLoading: false,
+      isRefreshing: false,
+      loadError: undefined
+    })
+
+    await act(async () => root.render(<StoragePanel />))
+    clickButton((button) => button.textContent?.includes('Session workspaces') ?? false)
+
+    expect(container.querySelector('button[aria-label="Open folder"]')).toBeNull()
+    expect(window.api.localFs.openPath).not.toHaveBeenCalled()
+  })
+
   it('shows the data location while the usage scan is still running', async () => {
     let finishScan!: (info: StorageInfo) => void
     vi.mocked(window.api.storage.getInfo).mockImplementationOnce(
@@ -666,7 +723,7 @@ describe('StoragePanel', () => {
     expect(container.textContent).toContain('Compute cache')
     expect(container.textContent).toContain('Runtime')
     expect(container.textContent).toMatch(/3\.7 GB/)
-    expect(container.textContent).toContain('Notebook evidence')
+    expect(container.textContent).toContain('Execution evidence')
     expect(container.textContent).toMatch(/8\.3 MB/)
     expect(container.textContent).toContain('Total')
     expect(container.textContent).toContain('Available on disk')
@@ -674,7 +731,7 @@ describe('StoragePanel', () => {
     expect(container.querySelector('.bg-storage-artifacts')).not.toBeNull()
     expect(container.querySelector('.bg-storage-compute')).not.toBeNull()
     expect(container.querySelector('.bg-storage-runtime')).not.toBeNull()
-    expect(container.querySelector('.bg-storage-notebook-evidence')).not.toBeNull()
+    expect(container.querySelector('.bg-storage-execution-evidence')).not.toBeNull()
     expect(container.querySelector('.bg-sky-500')).toBeNull()
     expect(container.querySelector('.bg-violet-500')).toBeNull()
 
@@ -749,7 +806,7 @@ describe('StoragePanel', () => {
     // acting, not just the raw parent they picked.
     expect(container.textContent).toContain('Data will be stored in')
     expect(container.textContent).toContain('/mnt/data/OpenScience')
-    // Migration excludes runtime but includes the independently stored Notebook evidence.
+    // Migration excludes runtime but includes the independently stored execution evidence.
     expect(container.textContent).toContain('Your existing data (~31.0 MB) will be moved')
     expect(container.textContent).not.toContain('Your existing data (~3.7 GB)')
     expect(container.textContent).toContain(

@@ -12,12 +12,15 @@ import {
   MessageScrollerViewport
 } from './message-scroller'
 
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
 let container: HTMLDivElement | undefined
 let root: Root | undefined
 
 afterEach(() => {
   if (root) act(() => root?.unmount())
   container?.remove()
+  vi.unstubAllGlobals()
   root = undefined
   container = undefined
 })
@@ -97,5 +100,94 @@ describe('MessageScrollerItem', () => {
 
     await act(async () => button?.click())
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' })
+  })
+
+  it('releases bottom following for a small scrollbar drag before animated content grows', async () => {
+    const resizeCallbacks = new Map<Element, ResizeObserverCallback>()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        private readonly callback: ResizeObserverCallback
+
+        constructor(callback: ResizeObserverCallback) {
+          this.callback = callback
+        }
+
+        observe(target: Element): void {
+          resizeCallbacks.set(target, this.callback)
+        }
+
+        disconnect(): void {
+          /* no-op */
+        }
+      }
+    )
+
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(
+        <MessageScrollerProvider autoScroll>
+          <MessageScroller>
+            <MessageScrollerViewport>
+              <MessageScrollerContent>
+                <MessageScrollerItem messageId="animated-tool-details">
+                  Tool details
+                </MessageScrollerItem>
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+          </MessageScroller>
+        </MessageScrollerProvider>
+      )
+    })
+
+    const viewport = container.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')
+    const content = container.querySelector<HTMLElement>('[data-slot="message-scroller-content"]')
+    const item = container.querySelector<HTMLElement>('[data-message-id="animated-tool-details"]')
+    expect(viewport).not.toBeNull()
+    expect(content).not.toBeNull()
+    expect(item).not.toBeNull()
+
+    let contentHeight = 200
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, get: () => contentHeight },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+      getBoundingClientRect: {
+        configurable: true,
+        value: () => ({ top: 0, bottom: 100, height: 100 })
+      },
+      scrollTo: {
+        configurable: true,
+        value: ({ top }: ScrollToOptions) => {
+          if (typeof top === 'number' && viewport) viewport.scrollTop = top
+        }
+      }
+    })
+    Object.defineProperty(item, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        top: -(viewport?.scrollTop ?? 0),
+        bottom: contentHeight - (viewport?.scrollTop ?? 0),
+        height: contentHeight
+      })
+    })
+
+    // Establish bottom-follow mode, then mimic a small scrollbar-thumb drag. Unlike a wheel event,
+    // a scrollbar drag emits only `scroll`, so the scroller must notice the upward movement itself.
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+    if (viewport) viewport.scrollTop = 96
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+
+    // A tool expansion height tween keeps producing content resize frames after the reader moves.
+    contentHeight = 240
+    await act(async () => {
+      resizeCallbacks.get(content!)?.([], {} as ResizeObserver)
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+    })
+
+    expect(viewport?.scrollTop).toBe(96)
   })
 })

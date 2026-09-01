@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import type {
   AcpPermissionResponse,
+  AcpRuntimeState,
   AcpRuntimeEvent,
-  AcpStateSnapshot
+  AcpStateSnapshot,
+  AcpStateUpdate
 } from '../../../../shared/acp'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -18,7 +20,7 @@ import {
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 type AcpRuntimeApi = ReturnType<typeof useAcpRuntime>
-type OnStateListener = (snapshot: AcpStateSnapshot) => void
+type OnStateListener = (snapshot: AcpStateUpdate) => void
 type OnEventListener = (events: readonly AcpRuntimeEvent[]) => void
 
 // Minimal renderHook so we can exercise the real hook without pulling in @testing-library/react,
@@ -210,7 +212,7 @@ describe('useAcpRuntime snapshot action failures', () => {
     acpApi.connect.mockRejectedValueOnce(new Error('connect failed'))
     const { result } = await mountRuntime()
 
-    let returned: AcpStateSnapshot | undefined = createSnapshot()
+    let returned: AcpRuntimeState | undefined = createSnapshot()
     await act(async () => {
       returned = await result.current.connect('/workspace/project')
     })
@@ -589,6 +591,40 @@ describe('useAcpRuntime state subscription', () => {
     expect(result.current.state.events).toEqual([])
   })
 
+  it('uses the initial snapshot as the event barrier after a newer state-only update', async () => {
+    const initial = createDeferred<AcpStateSnapshot>()
+    acpApi.getState.mockReturnValueOnce(initial.promise)
+    const { result } = await mountRuntime()
+    const delivered: AcpRuntimeEvent[] = []
+    result.current.subscribeRuntimeEvents?.((events) => delivered.push(...events))
+    const pendingEvent: AcpRuntimeEvent = {
+      id: 'runtime-1:event-before-initial-snapshot',
+      timestamp: 2,
+      kind: 'message',
+      level: 'info',
+      role: 'assistant',
+      sessionId: 'session-1',
+      text: 'queued until the initial event window arrives'
+    }
+
+    act(() => {
+      capturedStateListener?.({
+        ...createSnapshot({ revision: 2, status: 'connected' }),
+        events: undefined
+      })
+      capturedEventListener?.([pendingEvent])
+    })
+    await act(async () => {
+      initial.resolve(createSnapshot({ revision: 1, status: 'idle', events: [] }))
+      await initial.promise
+    })
+
+    expect(delivered).toEqual([pendingEvent])
+    expect(result.current.currentRuntimeEvents()).toEqual([pendingEvent])
+    expect(result.current.state.status).toBe('connected')
+    expect(result.current.state.revision).toBe(2)
+  })
+
   it('subscribes on mount, applies pushed snapshots, and unsubscribes on unmount', async () => {
     const { result, unmount } = await mountRuntime()
 
@@ -613,10 +649,36 @@ describe('useAcpRuntime state subscription', () => {
     expect(removeStateListener).toHaveBeenCalledTimes(1)
   })
 
+  it('clears omitted optional fields from an authoritative state-only update', async () => {
+    const { result } = await mountRuntime()
+
+    act(() => {
+      capturedStateListener?.(
+        createSnapshot({
+          revision: 1,
+          sessionId: 'session-1',
+          sessionIds: ['session-1'],
+          error: 'connection failed'
+        })
+      )
+      capturedStateListener?.({
+        ...createSnapshot({ revision: 2, status: 'idle' }),
+        events: undefined
+      })
+    })
+
+    expect(result.current.state.sessionId).toBeUndefined()
+    expect(result.current.state.error).toBeUndefined()
+    expect(result.current.state.events).toEqual([])
+    expect(result.current.state.revision).toBe(2)
+  })
+
   it('does not let an older initial snapshot overwrite a newer pushed lifecycle event', async () => {
     const initial = createDeferred<AcpStateSnapshot>()
     acpApi.getState.mockReturnValueOnce(initial.promise)
     const { result } = await mountRuntime()
+    const delivered: AcpRuntimeEvent[] = []
+    result.current.subscribeRuntimeEvents?.((events) => delivered.push(...events))
     const terminal = createSnapshot({
       revision: 2,
       events: [
@@ -655,6 +717,7 @@ describe('useAcpRuntime state subscription', () => {
     })
 
     expect(result.current.state).toEqual(terminal)
+    expect(delivered).toEqual(terminal.events)
   })
 
   it('reconciles a snapshot already accepted by another renderer ingress', async () => {
@@ -681,7 +744,7 @@ describe('useAcpRuntime pending lifecycle', () => {
 
     expect(result.current.isConnecting).toBe(false)
 
-    let inFlight: Promise<AcpStateSnapshot | undefined> | undefined
+    let inFlight: Promise<AcpRuntimeState | undefined> | undefined
     await act(async () => {
       inFlight = result.current.connect('/workspace/project')
     })
@@ -696,5 +759,55 @@ describe('useAcpRuntime pending lifecycle', () => {
 
     expect(result.current.isConnecting).toBe(false)
     expect(result.current.state.cwd).toBe('/connected')
+  })
+
+  it('keeps the connecting flag raised until all overlapping actions settle', async () => {
+    const first = createDeferred<{ sessionId: string }>()
+    const second = createDeferred<{ sessionId: string }>()
+    acpApi.createSession.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const { result } = await mountRuntime()
+
+    let firstAction!: Promise<{ sessionId: string }>
+    let secondAction!: Promise<{ sessionId: string }>
+    act(() => {
+      firstAction = result.current.createSession('/first')
+      secondAction = result.current.createSession('/second')
+    })
+    await act(async () => {
+      first.resolve({ sessionId: 'first' })
+      await firstAction
+    })
+
+    expect(result.current.isConnecting).toBe(true)
+
+    await act(async () => {
+      second.resolve({ sessionId: 'second' })
+      await secondAction
+    })
+    expect(result.current.isConnecting).toBe(false)
+  })
+
+  it('does not surface an older action failure after a newer action succeeds', async () => {
+    const older = createDeferred<{ sessionId: string }>()
+    const latest = createDeferred<{ sessionId: string }>()
+    acpApi.createSession.mockReturnValueOnce(older.promise).mockReturnValueOnce(latest.promise)
+    const { result } = await mountRuntime()
+
+    let olderAction!: Promise<{ sessionId: string }>
+    let latestAction!: Promise<{ sessionId: string }>
+    act(() => {
+      olderAction = result.current.createSession('/older')
+      latestAction = result.current.createSession('/latest')
+    })
+    await act(async () => {
+      latest.resolve({ sessionId: 'latest' })
+      await latestAction
+    })
+    await act(async () => {
+      older.reject(new Error('older failed'))
+      await olderAction.catch(() => undefined)
+    })
+
+    expect(result.current.actionError).toBeNull()
   })
 })

@@ -343,6 +343,7 @@ describe('Settings backend ownership architecture', () => {
       'addCustomServer',
       'clearCodeBuddyInfo',
       'clearCodexInfo',
+      'clearCodexIsolatedValidationIfExists',
       'clearComputeGrants',
       'clearGrantedLocalRoots',
       'clearOpencodeInfo',
@@ -354,6 +355,7 @@ describe('Settings backend ownership architecture', () => {
       'markLegacyDataMovePromptDismissed',
       'markOnboardingComplete',
       'markPathsNormalized',
+      'rememberCodexAutoHttpsFallback',
       'removeCustomServer',
       'setActiveProvider',
       'setAgentFramework',
@@ -367,6 +369,7 @@ describe('Settings backend ownership architecture', () => {
       'setConnectorDisabled',
       'setConversationSkillImportEnabled',
       'setCustomServerEnabled',
+      'setCustomServersEnabled',
       'setDataRoot',
       'setDefaultPermissionProfile',
       'setGitHubToken',
@@ -374,6 +377,7 @@ describe('Settings backend ownership architecture', () => {
       'setManualInterpreters',
       'setNcbiCredentials',
       'setNetworkProxy',
+      'setNotebookNetwork',
       'setNotificationsEnabled',
       'setOpenAlexCredential',
       'setOpencodeInfo',
@@ -394,6 +398,7 @@ describe('Settings backend ownership architecture', () => {
       'updateClaudeIsolatedCredentialsIfExists',
       'updateClaudeIsolatedValidationIfKeyMatches',
       'updateClaudeSharedValidationIfUnchanged',
+      'updateCodexIsolatedValidationIfIdentityMatches',
       'updateCustomServer',
       'updateCustomServerOAuthState',
       'updateProviderModelCatalogIfTargetMatches',
@@ -469,30 +474,30 @@ describe('Settings backend ownership architecture', () => {
   it('locks the SettingsService application interface', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
-        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel authenticateCustomServer buildCustomServerTemplateExport
-        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
-        codexSkillDescriptorsForIds createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
-        detectOpencode disconnectCustomServer dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
-        getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getManualInterpreters getNotificationsEnabled getPackageMirror
+        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential buildCustomServerTemplateExport
+        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
+        codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
+        detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
+        getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getManualInterpreters getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
         getPreflight getRuntimeEnablement getRuntimeSelection getSettingsView getShowNotificationContent getSkillDetail
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
-        importSkillZipBatch installClaude installCodeBuddy installCodex installOpencode isEncryptionAvailable
-        isNpmAvailable listAgentHomeSkills listConnectors listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
+        importSkillZipBatch installClaude installCodeBuddy installCodex installNotebookNetwork installOpencode isEncryptionAvailable
+        isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
         loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
         markPathsNormalized migrateAgentHomeSkillIdentities previewAgentHomeSkill previewCustomServerTemplateExport
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
-        provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog removeCustomServer removeGitHubToken
+        provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog rememberCodexAutoHttpsFallback removeCustomServer removeDeviceCredential removeGitHubToken removeNotebookNetwork
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort
-        resolveAdmittedSubagentBackend resolveAgentBackend resolveExplicitAgentBackend resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken
+        resolveAdmittedSubagentBackend resolveAgentBackend resolveDeviceOAuthCredential resolveExplicitAgentBackend resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken
         scanRepoSkills setActiveProvider setAgentFramework setAppIconVariant setClosePreference
         setComputeBookmarks setConnectorAutoAllow setConnectorEnabled
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
-        setDataRoot setDefaultPermissionProfile setEnvironmentEnabled setInstallAuthorized
-        setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotificationsEnabled
+        setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized
+        setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookNetwork setNotificationsEnabled
         setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setRuntimeSelection setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodeBuddy uninstallCodex
-        uninstallOpencode updateCustomServer updateSkill upsertProvider validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
+        uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
         .trim()
         .split(/\s+/)
@@ -509,6 +514,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/connector-settings.ts',
       'src/main/settings/network-proxy-settings-owner.ts',
+      'src/main/settings/notebook-network-settings-owner.ts',
       'src/main/settings/notebook-runtime-settings.ts',
       'src/main/settings/preferences.ts',
       'src/main/settings/provider-accounts.ts',
@@ -679,6 +685,7 @@ describe('Settings backend ownership architecture', () => {
       'localePreference',
       'networkProxy',
       'notebookManualInterpreters',
+      'notebookNetwork',
       'notebookRuntimeEnablement',
       'notebookRuntimes',
       'notificationsEnabled',
@@ -702,6 +709,8 @@ describe('Settings backend ownership architecture', () => {
       'apiEndpoints',
       'baseUrl',
       'codexAuthMode',
+      'codexAutoUseHttps',
+      'codexTransport',
       'contextWindow',
       'disconnectedAt',
       'expiresAt',
@@ -817,6 +826,7 @@ describe('Settings backend ownership architecture', () => {
     expect(manifest.modules.settings_service_facade.ownerPaths).toEqual([
       'src/main/settings/service.ts',
       'src/main/settings/network-proxy-settings-owner.ts',
+      'src/main/settings/settings-snapshot-commit-owner.ts',
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/subagent-model-owner.ts',
       'src/main/settings/vision-model-owner.ts'

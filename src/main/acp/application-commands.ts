@@ -15,8 +15,11 @@ import type {
   AcpSaveAsSkillRequest,
   AcpRevokePermissionGrantRequest,
   AcpSetPermissionProfileRequest,
-  AcpStateSnapshot
+  AcpStateCommandResponse,
+  AcpStateSnapshot,
+  AcpStateUpdate
 } from '../../shared/acp'
+import { toAcpStateCommandResponse } from '../../shared/acp'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
@@ -40,9 +43,9 @@ const acpCommands = Object.freeze({
   connect: defineApplicationCommand<
     'acp:connect',
     readonly [request: AcpConnectRequest],
-    AcpStateSnapshot
+    AcpStateCommandResponse
   >('acp:connect'),
-  disconnect: defineApplicationCommand<'acp:disconnect', readonly [], AcpStateSnapshot>(
+  disconnect: defineApplicationCommand<'acp:disconnect', readonly [], AcpStateCommandResponse>(
     'acp:disconnect'
   ),
   createSession: defineApplicationCommand<
@@ -58,7 +61,7 @@ const acpCommands = Object.freeze({
   continueInterruptedTurn: defineApplicationCommand<
     'acp:continue-interrupted-turn',
     readonly [request: AcpContinueInterruptedTurnRequest],
-    AcpStateSnapshot
+    AcpStateCommandResponse
   >('acp:continue-interrupted-turn'),
   resetSessionContext: defineApplicationCommand<
     'acp:reset-session-context',
@@ -68,12 +71,12 @@ const acpCommands = Object.freeze({
   compactSession: defineApplicationCommand<
     'acp:compact-session',
     readonly [request: AcpCompactSessionRequest],
-    AcpStateSnapshot
+    AcpStateCommandResponse
   >('acp:compact-session'),
   sendPrompt: defineApplicationCommand<
     'acp:send-prompt',
     readonly [request: AcpPromptRequest],
-    AcpStateSnapshot
+    AcpStateCommandResponse
   >('acp:send-prompt'),
   steerFollowUp: defineApplicationCommand<
     'acp:steer-follow-up',
@@ -83,37 +86,37 @@ const acpCommands = Object.freeze({
   saveAsSkill: defineApplicationCommand<
     'acp:save-as-skill',
     readonly [request: AcpSaveAsSkillRequest],
-    AcpStateSnapshot
+    AcpStateCommandResponse
   >('acp:save-as-skill'),
   cancel: defineApplicationCommand<
     'acp:cancel',
     readonly [request: AcpCancelPromptRequest],
-    AcpStateSnapshot
+    AcpStateCommandResponse
   >('acp:cancel'),
   deleteSession: defineApplicationCommand<
     'acp:delete-session',
     readonly [request: AcpDeleteSessionRequest],
-    AcpStateSnapshot
+    AcpStateCommandResponse
   >('acp:delete-session'),
   respondPermission: defineApplicationCommand<
     'acp:respond-permission',
     readonly [response: AcpPermissionResponse],
-    AcpStateSnapshot
+    AcpStateCommandResponse
   >('acp:respond-permission'),
   respondElicitation: defineApplicationCommand<
     'acp:respond-elicitation',
     readonly [response: ElicitationResponse],
-    AcpStateSnapshot
+    AcpStateCommandResponse
   >('acp:respond-elicitation'),
   setPermissionProfile: defineApplicationCommand<
     'acp:set-permission-profile',
     readonly [request: AcpSetPermissionProfileRequest],
-    AcpStateSnapshot
+    AcpStateCommandResponse
   >('acp:set-permission-profile'),
   revokePermissionGrant: defineApplicationCommand<
     'acp:revoke-permission-grant',
     readonly [request: AcpRevokePermissionGrantRequest],
-    AcpStateSnapshot
+    AcpStateCommandResponse
   >('acp:revoke-permission-grant'),
   getPlanProjection: defineApplicationCommand<
     'acp:get-plan-projection',
@@ -152,6 +155,7 @@ const acpApplicationCommands = defineApplicationCommandGroup('acp', [
 type AcpApplicationCommandRuntime = Pick<
   AcpRuntimeCoordinator,
   | 'getSnapshot'
+  | 'getState'
   | 'connect'
   | 'disconnect'
   | 'resetSessionContext'
@@ -195,6 +199,9 @@ const withResponseAdmission = <Result>(
     ? archiveAvailability.withSessionAvailableById(sessionId, operation)
     : operation()
 
+const stateCommand = async (operation: Promise<AcpStateUpdate>): Promise<AcpStateCommandResponse> =>
+  toAcpStateCommandResponse(await operation)
+
 const registerAcpCommands = (
   registrar: ApplicationCommandRegistrar,
   dependencies: AcpApplicationCommandDependencies
@@ -203,8 +210,8 @@ const registerAcpCommands = (
   try {
     scope.registerGroup(acpApplicationCommands, {
       'acp:get-state': () => dependencies.runtime.getSnapshot(),
-      'acp:connect': (invocation) => dependencies.runtime.connect(invocation.args[0]),
-      'acp:disconnect': () => dependencies.runtime.disconnect(),
+      'acp:connect': (invocation) => stateCommand(dependencies.runtime.connect(invocation.args[0])),
+      'acp:disconnect': () => stateCommand(dependencies.runtime.disconnect()),
       'acp:create-session': (invocation) =>
         dependencies.workflows.createSession(invocation.args[0]),
       'acp:resume-session': (invocation) =>
@@ -213,7 +220,7 @@ const registerAcpCommands = (
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can continue an interrupted turn.')
         }
-        return dependencies.workflows.continueInterruptedTurn(invocation.args[0])
+        return stateCommand(dependencies.workflows.continueInterruptedTurn(invocation.args[0]))
       },
       'acp:reset-session-context': (invocation) =>
         dependencies.archiveAvailability
@@ -226,12 +233,14 @@ const registerAcpCommands = (
             )
           : dependencies.runtime.resetSessionContext(invocation.args[0]),
       'acp:compact-session': (invocation) =>
-        dependencies.archiveAvailability
-          ? dependencies.archiveAvailability.withSessionAvailableById(
-              invocation.args[0].sessionId,
-              () => dependencies.runtime.compactSession(invocation.args[0])
-            )
-          : dependencies.runtime.compactSession(invocation.args[0]),
+        stateCommand(
+          dependencies.archiveAvailability
+            ? dependencies.archiveAvailability.withSessionAvailableById(
+                invocation.args[0].sessionId,
+                () => dependencies.runtime.compactSession(invocation.args[0])
+              )
+            : dependencies.runtime.compactSession(invocation.args[0])
+        ),
       'acp:send-prompt': (invocation) => {
         if (
           invocation.args[0].planContinuation &&
@@ -239,22 +248,26 @@ const registerAcpCommands = (
         ) {
           throw new Error('Only a current human caller can continue a Session Plan.')
         }
-        return dependencies.workflows.sendPrompt({
-          ...invocation.args[0],
-          turnIntent: invocation.args[0].turnIntent === 'plan-first' ? 'plan-first' : undefined,
-          continuation: undefined,
-          suppressUserMessage: undefined
-        })
+        return stateCommand(
+          dependencies.workflows.sendPrompt({
+            ...invocation.args[0],
+            turnIntent: invocation.args[0].turnIntent === 'plan-first' ? 'plan-first' : undefined,
+            continuation: undefined,
+            suppressUserMessage: undefined
+          })
+        )
       },
       'acp:steer-follow-up': (invocation) => dependencies.runtime.steerFollowUp(invocation.args[0]),
       'acp:save-as-skill': (invocation) => {
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can save a Session as a Skill.')
         }
-        return dependencies.workflows.saveAsSkill(invocation.args[0])
+        return stateCommand(dependencies.workflows.saveAsSkill(invocation.args[0]))
       },
-      'acp:cancel': (invocation) => dependencies.runtime.cancelPrompt(invocation.args[0]),
-      'acp:delete-session': (invocation) => dependencies.runtime.deleteSession(invocation.args[0]),
+      'acp:cancel': (invocation) =>
+        stateCommand(dependencies.runtime.cancelPrompt(invocation.args[0])),
+      'acp:delete-session': (invocation) =>
+        stateCommand(dependencies.runtime.deleteSession(invocation.args[0])),
       'acp:respond-permission': (invocation) => {
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can respond to permission requests.')
@@ -263,8 +276,10 @@ const registerAcpCommands = (
         const sessionId = dependencies.archiveAvailability
           ? resolvePermissionResponseSessionId(dependencies.runtime.getSnapshot(), response)
           : undefined
-        return withResponseAdmission(dependencies.archiveAvailability, sessionId, () =>
-          dependencies.runtime.respondToPermission(response)
+        return stateCommand(
+          withResponseAdmission(dependencies.archiveAvailability, sessionId, () =>
+            dependencies.runtime.respondToPermission(response)
+          )
         )
       },
       'acp:respond-elicitation': (invocation) => {
@@ -275,28 +290,38 @@ const registerAcpCommands = (
         const sessionId = dependencies.archiveAvailability
           ? resolveElicitationResponseSessionId(dependencies.runtime.getSnapshot(), response)
           : undefined
-        return withResponseAdmission(dependencies.archiveAvailability, sessionId, () => {
-          if (response.delegatedQuestion) {
-            if (!dependencies.respondDelegatedQuestion) {
-              throw new Error('Delegated question response owner is unavailable.')
+        return stateCommand(
+          withResponseAdmission(dependencies.archiveAvailability, sessionId, () => {
+            if (response.delegatedQuestion) {
+              if (!dependencies.respondDelegatedQuestion) {
+                throw new Error('Delegated question response owner is unavailable.')
+              }
+              return dependencies
+                .respondDelegatedQuestion({
+                  ...response.delegatedQuestion,
+                  requestId: response.requestId
+                })
+                .then(() => dependencies.runtime.getState())
             }
-            return dependencies
-              .respondDelegatedQuestion({
-                ...response.delegatedQuestion,
-                requestId: response.requestId
-              })
-              .then(() => dependencies.runtime.getSnapshot())
-          }
-          return dependencies.runtime.respondToElicitation(response)
-        })
+            return dependencies.runtime.respondToElicitation(response)
+          })
+        )
       },
       'acp:set-permission-profile': (invocation) =>
-        withResponseAdmission(dependencies.archiveAvailability, invocation.args[0].sessionId, () =>
-          dependencies.runtime.setPermissionProfile(invocation.args[0])
+        stateCommand(
+          withResponseAdmission(
+            dependencies.archiveAvailability,
+            invocation.args[0].sessionId,
+            () => dependencies.runtime.setPermissionProfile(invocation.args[0])
+          )
         ),
       'acp:revoke-permission-grant': (invocation) =>
-        withResponseAdmission(dependencies.archiveAvailability, invocation.args[0].sessionId, () =>
-          dependencies.runtime.revokePermissionGrant(invocation.args[0])
+        stateCommand(
+          withResponseAdmission(
+            dependencies.archiveAvailability,
+            invocation.args[0].sessionId,
+            () => dependencies.runtime.revokePermissionGrant(invocation.args[0])
+          )
         ),
       'acp:get-plan-projection': (invocation) => {
         if (!canAccessSessionPlan(invocation.callerContext)) {

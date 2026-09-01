@@ -29,7 +29,7 @@ export type SettingsPanelId =
 
 export type ModelView = { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; providerId: string }
 
-export type NetworkView = { kind: 'list' | 'mirror' | 'proxy' }
+export type NetworkView = { kind: 'list' | 'mirror' | 'proxy' | 'domains' }
 
 // A Settings history entry contains only the active panel's state. This sum type prevents unrelated
 // panel views from forming impossible combinations or leaking into every navigation transition.

@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { findPythonCommand, isPython3Version, resolvePythonCommand } from './python-command'
+import {
+  findPythonCommand,
+  isPython3Version,
+  resolvePythonCommand,
+  validateNotebookHelperExports
+} from './python-command'
 
 describe('resolvePythonCommand', () => {
   it('accepts Python 3 versions and rejects Python 2', () => {
@@ -137,5 +142,28 @@ describe('resolvePythonCommand', () => {
 
     expect(win).toEqual({ command: 'py', baseArgs: ['-3'] })
     expect(nix).toEqual({ command: 'python3', baseArgs: [] })
+  })
+})
+
+describe('validateNotebookHelperExports', () => {
+  it('validates UTF-8 helper source when the interpreter defaults stdin to a legacy encoding', async () => {
+    const python = await resolvePythonCommand()
+
+    await expect(
+      validateNotebookHelperExports(
+        'utf8-helper',
+        'def public_value():\n    return "a — b"\n',
+        ['public_value'],
+        {
+          python: { ...python, baseArgs: [...python.baseArgs, '-X', 'utf8=0'] },
+          env: {
+            LC_ALL: 'C',
+            PATH: process.env.PATH,
+            SystemRoot: process.env.SystemRoot,
+            WINDIR: process.env.WINDIR
+          }
+        }
+      )
+    ).resolves.toBeUndefined()
   })
 })

@@ -327,6 +327,32 @@ describe('ComposerAgentControlsMenu', () => {
     expect(selectEvents.at(-1)?.prevented).toBe(true)
   })
 
+  it('shows why Memory is unavailable when the global setting is off', () => {
+    const onMemoryChange = vi.fn()
+    const reason = 'Memory is off in Settings. Turn it on to use Memory in this conversation.'
+
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          memoryEnabled={false}
+          memoryReadOnly
+          memoryDisabledReason={reason}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onMemoryChange={onMemoryChange}
+        />
+      )
+    })
+
+    const memoryRow = findButton(`Memory${reason}`)
+    expect(memoryRow.disabled).toBe(true)
+    expect(container.querySelector('[data-testid="controls-nondefault-dot"]')).toBeNull()
+    act(() => memoryRow.click())
+    expect(onMemoryChange).not.toHaveBeenCalled()
+  })
+
   it('opens permission choices inside the same menu on mobile and can return', () => {
     mediaState.mobile = true
 

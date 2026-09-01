@@ -18,17 +18,44 @@ describe('electron-builder native image processing', () => {
     expect(config.asarUnpack).toContain('node_modules/sharp/**')
     expect(config.asarUnpack).toContain('node_modules/@img/**')
   })
+
+  it('ships the Notebook network sandbox helpers for every supported platform', () => {
+    const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+      files?: string[]
+      win?: { extraResources?: Array<{ from: string; to: string }> }
+      mac?: { extraResources?: Array<{ from: string; to: string }> }
+      linux?: { extraResources?: Array<{ from: string; to: string }> }
+    }
+
+    expect(config.files).toContain('!node_modules/@aipoch/notebook-network-sandbox{,/**/*}')
+    expect(config.win?.extraResources).toContainEqual({
+      from: 'packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe',
+      to: 'notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe'
+    })
+    expect(config.mac?.extraResources).toHaveLength(1)
+    expect(config.linux?.extraResources).toHaveLength(1)
+  })
 })
 
 describe('electron-builder Windows targets', () => {
-  it('ships both the NSIS installer and the portable zip', () => {
-    const config = readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')
-    const windowsConfig = config.match(/^win:\n([\s\S]*?)(?=^[^\s#])/m)?.[1]
+  it('ships only the uninstallable NSIS package for durable AppContainer resources', () => {
+    const rawConfig = readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')
+    const config = load(rawConfig) as {
+      nsis?: { oneClick?: boolean; perMachine?: boolean; allowElevation?: boolean }
+    }
+    const windowsConfig = rawConfig.match(/^win:\n([\s\S]*?)(?=^[^\s#])/m)?.[1]
 
     expect(windowsConfig).toBeDefined()
-    // Both formats, mirroring mac (dmg + zip): the installer plus a portable, no-install build.
     expect(windowsConfig).toMatch(/^\s+- nsis\s*$/m)
-    expect(windowsConfig).toMatch(/^\s+- zip\s*$/m)
+    expect(windowsConfig).not.toMatch(/^\s+- zip\s*$/m)
+    expect(config.nsis).toMatchObject({
+      oneClick: false,
+      perMachine: false,
+      allowElevation: false
+    })
+    expect(readFileSync(join(process.cwd(), 'build', 'installer.nsh'), 'utf8')).toContain(
+      'StrCpy $isForceCurrentInstall "1"'
+    )
   })
 
   it('ships and invokes the owned managed-runtime cache cleanup on uninstall', () => {
@@ -71,6 +98,32 @@ describe('electron-builder Windows targets', () => {
     expect(cleanup).toContain('Remove-Item -LiteralPath $candidate')
   })
 
+  it('ships and enforces owned Notebook AppContainer cleanup on uninstall', () => {
+    const config = readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')
+    const include = readFileSync(join(process.cwd(), 'build', 'installer.nsh'), 'utf8')
+    const cleanup = readFileSync(
+      join(process.cwd(), 'build', 'windows-notebook-sandbox-uninstall.ps1'),
+      'utf8'
+    )
+
+    expect(config).toContain('from: build/windows-notebook-sandbox-uninstall.ps1')
+    expect(include).toContain('windows-notebook-sandbox-uninstall.ps1')
+    expect(include).toContain('${ifNot} ${isUpdated}')
+    expect(include).toContain('notebookSandboxCleanupComplete')
+    expect(include).toContain('The uninstall was stopped so the cleanup can be retried.')
+    expect(cleanup).toContain('-ArgumentList @($Command, $installationId, $ownershipRoot)')
+    expect(cleanup).toContain('& $HostPath $Command $installationId $ownershipRoot')
+    expect(cleanup).toContain('& $HostPath prepare-remove $installationId $ownershipRoot')
+    expect(cleanup).toContain('& $HostPath finish-remove $installationId $ownershipRoot')
+    expect(cleanup).toContain('Test-CurrentUserIsAdministrator')
+    expect(cleanup).toContain('Stop-SandboxHostProcesses')
+    expect(cleanup).toContain('notebook-sandbox\\$installationId')
+    expect(cleanup).toContain("$installationId = '0f3cd2a44c3d4e4e9f1e2a5b'")
+    expect(cleanup.indexOf('$ownershipRoot =')).toBeLessThan(cleanup.indexOf('$HostPath ='))
+    expect(cleanup).toContain('-Verb RunAs')
+    expect(include).toContain('taskkill /F /IM "notebook-appcontainer-host.exe"')
+  })
+
   it('does not claim a Windows publisher while packages remain unsigned', () => {
     const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
       win?: { publisherName?: string; verifyUpdateCodeSignature?: boolean }
@@ -95,6 +148,14 @@ describe('electron-builder Linux desktop identity', () => {
 
     expect(config.linux?.syncDesktopName).toBe(true)
     expect(desktopBaseName).toBe(executableName)
+  })
+
+  it('declares bubblewrap as a deb runtime dependency', () => {
+    const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+      deb?: { depends?: string[] }
+    }
+
+    expect(config.deb?.depends).toContain('bubblewrap')
   })
 })
 

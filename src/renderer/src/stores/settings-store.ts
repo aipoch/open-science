@@ -20,6 +20,10 @@ import {
   DEFAULT_NETWORK_PROXY_SETTINGS,
   type NetworkProxySettings
 } from '../../../shared/network-proxy'
+import {
+  DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+  type NotebookNetworkSettings
+} from '../../../shared/notebook-network'
 import type { CloseActionPreference } from '../../../shared/window-controls'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -98,6 +102,7 @@ type SettingsStoreData = RuntimeSetupState &
     // Latest failed Settings write, shown by the dialog until dismissed or another write starts.
     settingsWriteError: string | undefined
     settingsLoadGeneration: number
+    settingsSnapshotRevision: number
     claude: ClaudeInfo
     activeProviderId: string | undefined
     claudeSubscriptionProviderId: ClaudeSubscriptionProviderId | undefined
@@ -122,6 +127,7 @@ type SettingsStoreData = RuntimeSetupState &
     // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
     packageMirror?: PackageMirror
     networkProxy: NetworkProxySettings
+    notebookNetwork: NotebookNetworkSettings
     // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
     reasoningEffort: ReasoningEffort
     reviewerModel: ReviewerModelConfiguration
@@ -174,6 +180,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   loadError: undefined,
   settingsWriteError: undefined,
   settingsLoadGeneration: 0,
+  settingsSnapshotRevision: 0,
   claude: {},
   activeProviderId: undefined,
   claudeSubscriptionProviderId: undefined,
@@ -192,6 +199,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   encryptionAvailable: false,
   packageMirror: undefined,
   networkProxy: DEFAULT_NETWORK_PROXY_SETTINGS,
+  notebookNetwork: DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   reviewerModel: { mode: 'inherit' },
   reviewerModelPending: false,
@@ -220,6 +228,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   onboardingCompletedAt: snapshot.onboardingCompletedAt,
   packageMirror: isMirrorConfigured(snapshot.packageMirror) ? snapshot.packageMirror : undefined,
   networkProxy: snapshot.networkProxy ?? DEFAULT_NETWORK_PROXY_SETTINGS,
+  notebookNetwork: snapshot.notebookNetwork ?? DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
   reasoningEffort: snapshot.reasoningEffort,
   reviewerModel: snapshot.reviewerModel ?? { mode: 'inherit' },
   sessionDetailsModel: snapshot.sessionDetailsModel ?? DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
@@ -246,6 +255,24 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   codexManaged: snapshot.codexManaged ?? false,
   codebuddyManaged: snapshot.codebuddyManaged ?? false
 })
+
+const canApplySnapshot = (state: SettingsStoreData, snapshot: SettingsSnapshot): boolean =>
+  snapshot.revision === undefined
+    ? state.settingsSnapshotRevision === 0
+    : snapshot.revision >= state.settingsSnapshotRevision
+
+const mergeSnapshot = (
+  state: SettingsStoreData,
+  snapshot: SettingsSnapshot,
+  extra: Partial<SettingsStoreData> = {}
+): Partial<SettingsStoreData> =>
+  canApplySnapshot(state, snapshot)
+    ? {
+        ...applySnapshot(snapshot),
+        ...(snapshot.revision === undefined ? {} : { settingsSnapshotRevision: snapshot.revision }),
+        ...extra
+      }
+    : extra
 
 // Stable fallback reference so the selector returns the same array identity across renders
 // (a fresh literal would make useSettingsStore re-render every tick and loop).
@@ -330,18 +357,12 @@ const createSettingsStoreState = (
     // Resolve browser globals only when an action runs; node-based renderer tests import this store.
     getCommands: () => window.api.settings,
     reconcileSnapshot: (snapshot, runtimePatch = {}) =>
-      set({ ...applySnapshot(snapshot), ...runtimePatch }),
-    reconcileClaudeDetection: (result, npmAvailable) =>
-      set(
-        result.found && result.path
-          ? { npmAvailable, claude: { resolvedPath: result.path, version: result.version } }
-          : { npmAvailable }
-      )
+      set((state) => mergeSnapshot(state, snapshot, runtimePatch))
   }),
   ...createProviderAuthSlice({
     get,
     getCommands: () => window.api.settings,
-    reconcileSnapshot: (snapshot) => set(applySnapshot(snapshot)),
+    reconcileSnapshot: (snapshot) => set((state) => mergeSnapshot(state, snapshot)),
     refreshPreflight: () => get().refreshPreflight(),
     refreshFrameworkStatus: async (id) => {
       if (id === 'opencode') {
@@ -361,7 +382,17 @@ const createSettingsStoreState = (
     getState: get,
     setState: (patch) => set(patch),
     getCommands: () => window.api.settings,
-    reconcileSnapshot: (snapshot) => set(applySnapshot(snapshot)),
+    reconcileSnapshot: (snapshot) => {
+      if (!canApplySnapshot(get(), snapshot)) return false
+      set((state) =>
+        omitInFlightOptimisticPreferences(
+          mergeSnapshot(state, snapshot),
+          writeCoordinator.hasPending,
+          writeCoordinator.acceptCommitted
+        )
+      )
+      return true
+    },
     writeCoordinator
   }),
   ...createSettingsNavigationSlice({
@@ -418,11 +449,12 @@ const createSettingsStoreState = (
 
         // The persisted Settings authority is enough for an existing user to enter Home. Capability
         // probes continue in this same deduplicated pass; first-run onboarding still waits in App.
-        set({
-          ...applySnapshot(snapshot),
-          ...(shouldInitializeRuntime ? { isLoaded: true } : {}),
-          loadError: undefined
-        })
+        set((state) =>
+          mergeSnapshot(state, snapshot, {
+            ...(shouldInitializeRuntime ? { isLoaded: true } : {}),
+            loadError: undefined
+          })
+        )
 
         const [[encryptionResult], runtimeResults] = await Promise.all([
           encryptionAvailability,
@@ -486,9 +518,14 @@ const createSettingsStoreState = (
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),
   acceptCommittedSnapshot: (snapshot) =>
-    set(() =>
-      omitInFlightOptimisticPreferences(applySnapshot(snapshot), writeCoordinator.hasPending)
-    )
+    set((state) => {
+      if (!canApplySnapshot(state, snapshot)) return {}
+      return omitInFlightOptimisticPreferences(
+        mergeSnapshot(state, snapshot),
+        writeCoordinator.hasPending,
+        writeCoordinator.acceptCommitted
+      )
+    })
 })
 
 export const useSettingsStore = create<SettingsStore>((set, get) =>

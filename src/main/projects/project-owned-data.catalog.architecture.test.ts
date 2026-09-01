@@ -224,16 +224,19 @@ describe('Project-owned data catalog architecture', () => {
       'compute-job-remote-workdirs',
       'compute-session-cache',
       'project-session-json',
+      'managed-session-workspaces',
       'artifact-bytes',
       'upload-bytes',
       'delegated-frame-workspaces',
+      'side-chat-runtime-profiles',
       'acp-runtime-state',
       'reviewer-runtime-state',
       'side-chat-runtime-state',
       'notebook-kernel-runtime-state',
       'compute-runtime-state',
       'notebook-project-workspace',
-      'notebook-file-evidence'
+      'notebook-input-cache',
+      'execution-file-evidence'
     ])
     expect(
       [
@@ -246,7 +249,8 @@ describe('Project-owned data catalog architecture', () => {
     ).toEqual([
       'compute-job-project-delete',
       'delegated-runtime-quiescence',
-      'notebook-file-evidence-tail',
+      'execution-file-evidence-tail',
+      'notebook-input-cache-tail',
       'notification-session-invalidation',
       'project-deletion-intent-protocol',
       'project-file-projection-delete',
@@ -254,8 +258,28 @@ describe('Project-owned data catalog architecture', () => {
       'project-runtime-quiescence',
       'project-session-json-delete',
       'provenance-tail',
-      'review-tail'
+      'review-tail',
+      'side-chat-profile-tail'
     ])
+  })
+
+  it('catalogs current and legacy execution evidence roots as Project-owned data', () => {
+    expect(
+      PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'execution-file-evidence')?.resources
+    ).toEqual(['execution-file-evidence/<projectId>/', 'notebook-file-evidence/<projectId>/'])
+  })
+
+  it('catalogs retained managed Session workspaces as Project-owned data', () => {
+    expect(
+      PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'managed-session-workspaces')
+    ).toMatchObject({
+      medium: 'filesystem',
+      resources: ['workspaces/<workspaceId>/'],
+      policy: {
+        kind: 'retained-history',
+        effect: 'retain'
+      }
+    })
   })
 
   it('checks declared Prisma cascades and Restrict boundaries through generated DMMF', () => {
@@ -384,6 +408,10 @@ describe('Project-owned data catalog architecture', () => {
     expectCall(
       objectMethod(constructor.file, lifecycle, 'finalizeProjectDeletion'),
       'notebookService.deleteProjectFileEvidence'
+    )
+    expectCall(
+      objectMethod(constructor.file, lifecycle, 'finalizeProjectDeletion'),
+      'notebookService.deleteProjectInputs'
     )
   })
 
@@ -624,6 +652,40 @@ describe('Project-owned data catalog architecture', () => {
     )
     const workspaceDelete = nestedMethod(workspace, 'deleteProject')
     expectCallsInOrder(workspaceDelete, ['makeTreeRemovable', 'rm'])
+  })
+
+  it('catalogs persistent Side Chat profiles and wires their Project deletion tail', () => {
+    expect(
+      PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'side-chat-runtime-profiles')
+    ).toMatchObject({
+      medium: 'filesystem',
+      resources: ['runtime-support/side-chat/<sideChatId>/'],
+      policy: {
+        kind: 'coordinator-cleanup',
+        effect: 'hard-delete',
+        path: 'side-chat-profile-tail',
+        operation: 'SideChatRuntimeOwner.completeProjectDeletion'
+      }
+    })
+
+    const constructor = newExpression('src/main/ipc.ts', 'ProjectDeletionCoordinator')
+    if (!isNewExpression(constructor.node)) throw new Error('Expected constructor expression.')
+    const lifecycle = constructor.node.arguments?.[5]
+    if (!lifecycle || !isObjectLiteralExpression(lifecycle)) {
+      throw new Error('Project deletion lifecycle wiring is not an object literal.')
+    }
+    expectCall(
+      objectMethod(constructor.file, lifecycle, 'finalizeProjectDeletion'),
+      'owner.completeProjectDeletion'
+    )
+    expectCall(
+      classMethod(
+        'src/main/side-chat/runtime-owner.ts',
+        'SideChatRuntimeOwner',
+        'completeProjectDeletion'
+      ),
+      'rm'
+    )
   })
 
   it('proves provenance cleanup owns Restrict-ordered rows and managed bytes', () => {

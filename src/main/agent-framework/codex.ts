@@ -31,6 +31,7 @@ import { isProductionDelegatedWorkFramework } from '../delegation/production-rea
 import { isCodexSubscriptionProvider } from '../../shared/settings'
 import { CODEX_VERSION } from '../settings/managed-codex'
 import { clearSystemProxyEnvironment } from '../settings/system-proxy'
+import { registerOwnedPosixProcessGroup } from '../process-tree'
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
 
 const CODEX_PROVIDER_ID = 'open-science'
@@ -68,9 +69,12 @@ const CODEX_MODE_IDS = {
 // and preview Codex implementations off in every profile so native children cannot bypass that Host
 // contract. This must live in CODEX_CONFIG (rather than only custom model metadata), because trusted
 // bundled models intentionally do not receive an app-authored model catalog.
-const CODEX_DELEGATION_FEATURES = Object.freeze({
+const CODEX_DISABLED_NATIVE_FEATURES = Object.freeze({
   multi_agent: false,
-  multi_agent_v2: false
+  multi_agent_v2: false,
+  // Disabling unified_exec alone falls back to shell_command. shell_tool disables both generations
+  // so execution stays on the app-owned Notebook bash_execute MCP tool.
+  shell_tool: false
 })
 
 const CODEX_ENV_KEYS = [
@@ -170,7 +174,7 @@ const buildCodexConfig = (provider: {
 
   return {
     ...buildCodexModelOptions(provider),
-    features: CODEX_DELEGATION_FEATURES,
+    features: CODEX_DISABLED_NATIVE_FEATURES,
     ...(contextWindow
       ? {
           model_context_window: contextWindow,
@@ -404,12 +408,20 @@ export const createCodexFramework = ({
         : input.executablePath
     const args = isJavaScript ? [input.executablePath, ...input.args] : input.args
 
-    return spawnProcess(command, args, {
+    const child = spawnProcess(command, args, {
       env: buildSpawnEnvironment(input, sourceEnv),
       stdio: 'pipe',
+      // Keep a terminal/dev-runner SIGINT aimed at the Electron application's foreground process
+      // group from killing Codex before the app's awaited ACP teardown can mark and reap it. Piped
+      // stdio remains referenced (we never unref the child), and the resource owner still performs
+      // explicit cross-platform tree teardown. Node's detached process-group behavior is POSIX-only;
+      // creating an independent Windows console/process group here would change packaged startup.
+      detached: platform !== 'win32',
       windowsHide: true,
       shell: needsShell
     })
+    if (platform !== 'win32') registerOwnedPosixProcessGroup(child)
+    return child
   },
 
   prepareModelConfig(provider, ctx: ModelConfigContext): AgentModelConfig {
@@ -426,7 +438,7 @@ export const createCodexFramework = ({
       })
       const codexConfig = {
         ...modelOptions,
-        features: CODEX_DELEGATION_FEATURES,
+        features: CODEX_DISABLED_NATIVE_FEATURES,
         ...(persistentSystemPrompt ? { developer_instructions: persistentSystemPrompt } : {})
       }
       const codexConfigJson =

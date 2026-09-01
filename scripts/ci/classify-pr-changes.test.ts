@@ -140,11 +140,32 @@ describe('pull request change classification', () => {
       'policy',
       'static',
       'unit',
+      'linux_runtime',
       'windows_core',
       'macos_e2e',
       'windows_e2e'
     ])
     expect(plan.reasonChains).toContain('src/new-runtime/capability.ts -> unknown -> full')
+  })
+
+  it('selects cross-platform build and runtime lanes for the Notebook network sandbox', () => {
+    const path = 'packages/notebook-network-sandbox/src/config.ts'
+    const plan = classifyChanges([{ path, status: 'modified' }])
+
+    expect(plan.mode).toBe('selective')
+    expect(plan.roots).toContain('notebook_network_sandbox')
+    expect(plan.lanes).toEqual(
+      expect.arrayContaining([
+        'typecheck_node',
+        'unit_macos',
+        'linux_runtime',
+        'windows_runtime',
+        'windows_path',
+        'build'
+      ])
+    )
+    expect(plan.bundles).toContain('linux_runtime')
+    expect(plan.reasonChains).toContain(`${path} -> notebook_network_sandbox`)
   })
 
   it('fails closed when a selected lane has no execution bundle', () => {
@@ -334,7 +355,9 @@ describe('pull request change classification', () => {
     ['restricted runtime profile', 'src/main/acp/restricted-runtime-profile.ts'],
     ['CodeBuddy framework', 'src/main/agent-framework/codebuddy.ts'],
     ['CodeBuddy detect', 'src/main/settings/codebuddy-detect.ts'],
-    ['managed CodeBuddy', 'src/main/settings/managed-codebuddy.ts']
+    ['managed CodeBuddy', 'src/main/settings/managed-codebuddy.ts'],
+    ['immutable notebook inputs', 'src/main/immutable-input-authority.ts'],
+    ['notebook package process sandbox', 'src/main/notebook/package-process-sandbox.ts']
   ])('adds native Windows lanes for %s changes', (_category, path) => {
     const plan = classifyChanges([{ path, status: 'modified' }])
 
@@ -360,6 +383,7 @@ describe('pull request change classification', () => {
     ['French locale catalog', 'src/shared/i18n/locales/fr.json'],
     ['Brazilian Portuguese locale catalog', 'src/shared/i18n/locales/pt-BR.json'],
     ['Spanish locale catalog', 'src/shared/i18n/locales/es.json'],
+    ['German locale catalog', 'src/shared/i18n/locales/de.json'],
     ['shared contract', 'src/shared/acp.ts'],
     ['main runtime', 'src/main/notebook/runtime-service.ts']
   ])('selects the i18n catalog lane for a scanned %s change', (_label, path) => {
@@ -369,17 +393,19 @@ describe('pull request change classification', () => {
     expect(plan.bundles).toContain('static')
   })
 
-  it.each(['es', 'fr', 'ja', 'ko', 'pt-BR', 'ru', 'zh-Hans', 'zh-Hant'])(
-    'runs the build and functional Electron journey for a shared %s catalog change',
-    (locale) => {
-      const plan = classifyChanges([
-        { path: `src/shared/i18n/locales/${locale}.json`, status: 'modified' }
-      ])
+  it.each(
+    readdirSync(resolve('src/shared/i18n/locales'))
+      .filter((name) => name.endsWith('.json'))
+      .map((name) => name.replace(/\.json$/u, ''))
+      .sort()
+  )('runs the build and functional Electron journey for a shared %s catalog change', (locale) => {
+    const plan = classifyChanges([
+      { path: `src/shared/i18n/locales/${locale}.json`, status: 'modified' }
+    ])
 
-      expect(plan.lanes).toEqual(expect.arrayContaining(['i18n', 'build', 'e2e_functional_macos']))
-      expect(plan.bundles).toEqual(expect.arrayContaining(['static', 'macos_e2e']))
-    }
-  )
+    expect(plan.lanes).toEqual(expect.arrayContaining(['i18n', 'build', 'e2e_functional_macos']))
+    expect(plan.bundles).toEqual(expect.arrayContaining(['static', 'macos_e2e']))
+  })
 
   it.each([
     ['documentation', 'README.md'],

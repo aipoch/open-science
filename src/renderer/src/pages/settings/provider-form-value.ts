@@ -5,6 +5,7 @@ import {
   preferredEndpoint,
   type AgentFrameworkId,
   type ChatApiEndpoint,
+  type CodexSubscriptionTransport,
   type ProviderDraft,
   type ProviderType
 } from '../../../../shared/settings'
@@ -24,6 +25,7 @@ import type {
 // component (satisfying react-refresh) while the wizard and settings page share this shape/factory.
 export type ProviderFormValue = {
   type: ProviderType
+  codexTransport: CodexSubscriptionTransport
   name: string
   baseUrl: string
   model: string
@@ -56,6 +58,7 @@ export const createEmptyProviderFormValue = (
   overrides: Partial<ProviderFormValue> = {}
 ): ProviderFormValue => ({
   type: 'custom',
+  codexTransport: 'auto',
   name: '',
   baseUrl: '',
   model: '',

@@ -13,14 +13,22 @@ import { codexFramework } from './codex'
 import { opencodeFramework } from './opencode'
 
 describe('claudeCodeFramework', () => {
-  it('disables every Claude-native delegation path without removing ordinary built-in tools', () => {
+  it('disables native delegation and Bash while keeping the ordinary built-in preset', () => {
     const setup = claudeCodeFramework.buildSessionSetup({ systemPromptAppends: [] })
 
     expect(setup.meta).toMatchObject({
       claudeCode: {
         options: {
           tools: { type: 'preset', preset: 'claude_code' },
-          disallowedTools: ['Agent', 'Task', 'Workflow', 'SendMessage', 'TeamCreate', 'TeamDelete'],
+          disallowedTools: [
+            'Agent',
+            'Task',
+            'Workflow',
+            'SendMessage',
+            'TeamCreate',
+            'TeamDelete',
+            'Bash'
+          ],
           managedSettings: {
             disableAgentView: true,
             disableWorkflows: true,
@@ -65,7 +73,8 @@ describe('claudeCodeFramework', () => {
       'Workflow',
       'SendMessage',
       'TeamCreate',
-      'TeamDelete'
+      'TeamDelete',
+      'Bash'
     ])
     expect(options.managedSettings).toMatchObject({
       disableAgentView: true,

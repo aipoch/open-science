@@ -13,6 +13,7 @@ describe('formatDateTime', () => {
     const korean = formatDateTime(INSTANT, 'ko')
     const french = formatDateTime(INSTANT, 'fr')
     const portuguese = formatDateTime(INSTANT, 'pt-BR')
+    const german = formatDateTime(INSTANT, 'de')
     const spanish = formatDateTime(INSTANT, 'es')
 
     // The point of the module: the same instant reads as a month name in English and as 月/日 in
@@ -28,6 +29,8 @@ describe('formatDateTime', () => {
     expect(french).not.toMatch(/Aug/u)
     expect(portuguese).toMatch(/ago\.?/iu)
     expect(portuguese).not.toMatch(/Aug/u)
+    expect(german).toMatch(/Aug/u)
+    expect(german).toMatch(/\d{2}\./u)
     expect(spanish).toMatch(/ago\.?/iu)
     expect(spanish).not.toMatch(/Aug/u)
   })
@@ -82,6 +85,7 @@ describe('formatRelativeTime', () => {
     expect(formatRelativeTime(INSTANT, 'zh-Hans', INSTANT)).toMatch(/刚刚|现在/u)
     expect(formatRelativeTime(INSTANT, 'fr', INSTANT)).toMatch(/maintenant|à l'instant/u)
     expect(formatRelativeTime(INSTANT, 'pt-BR', INSTANT)).toMatch(/agora/u)
+    expect(formatRelativeTime(INSTANT, 'de', INSTANT)).toMatch(/jetzt/u)
     expect(formatRelativeTime(INSTANT, 'es', INSTANT)).toMatch(/ahora/u)
   })
 
@@ -91,6 +95,7 @@ describe('formatRelativeTime', () => {
     expect(formatRelativeTime(INSTANT - 3 * 60_000, 'zh-Hans', INSTANT)).toMatch(/3\s*分钟前/u)
     expect(formatRelativeTime(INSTANT - 3 * 60_000, 'fr', INSTANT)).toMatch(/il y a 3 min/u)
     expect(formatRelativeTime(INSTANT - 3 * 60_000, 'pt-BR', INSTANT)).toMatch(/há 3 min/u)
+    expect(formatRelativeTime(INSTANT - 3 * 60_000, 'de', INSTANT)).toMatch(/vor 3 Min/u)
     expect(formatRelativeTime(INSTANT - 3 * 60_000, 'es', INSTANT)).toMatch(/hace 3 min/u)
     // 5 rather than 2 days: CLDR gives Japanese a dedicated word ("一昨日") for two days ago.
     expect(formatRelativeTime(INSTANT - 5 * 24 * 3_600_000, 'ja', INSTANT)).toMatch(/5\s*日前/u)

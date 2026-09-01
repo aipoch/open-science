@@ -176,6 +176,14 @@ class ProviderAccountsModule {
     if (isCodexSubscriptionProvider(request.type)) {
       provider.apiEndpoints = ['responses']
       provider.codexAuthMode = request.type === 'codex-shared' ? 'imported' : 'isolated'
+      provider.codexTransport = request.codexTransport ?? existing?.codexTransport ?? 'auto'
+      if (
+        provider.codexTransport === 'auto' &&
+        (existing?.codexTransport ?? 'auto') === 'auto' &&
+        existing?.codexAutoUseHttps !== undefined
+      ) {
+        provider.codexAutoUseHttps = existing.codexAutoUseHttps
+      }
       credentialsChanged =
         existing !== undefined &&
         (existing.codexAuthMode !== provider.codexAuthMode || reimportCodexAuthentication)
@@ -312,7 +320,7 @@ class ProviderAccountsModule {
   }
 
   async logoutIsolatedCodex(): Promise<ValidateProviderResult> {
-    return this.auth.logoutIsolatedCodex()
+    return this.auth.serializeAccountMutation(() => this.auth.logoutIsolatedCodex())
   }
 
   async loginIsolatedClaude(token: string): Promise<ValidateProviderResult> {
@@ -574,6 +582,7 @@ class ProviderAccountsModule {
     return (
       left.type === right.type &&
       left.codexAuthMode === right.codexAuthMode &&
+      left.codexTransport === right.codexTransport &&
       left.baseUrl === right.baseUrl &&
       left.openaiBaseUrl === right.openaiBaseUrl &&
       left.model === right.model &&

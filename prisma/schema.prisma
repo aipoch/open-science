@@ -618,6 +618,10 @@ model ComputeJob {
   environment            String?
   resourceRequest        String?
   inputManifest          String?
+  // Trusted Notebook Run that submitted this Job. NULL for historical/non-Notebook Jobs.
+  producerRunId          String?
+  // Validated execution-file-evidence summary JSON. Full relations remain in the sidecar.
+  fileEvidence           String?
   outputManifest         String?
   harvestConfig          String?
   timeoutSeconds         Int?
@@ -641,9 +645,9 @@ model ComputeJob {
   // notificationConsumedAt: set by wait_for_notification when the notification is consumed.
   notificationConsumedAt DateTime?
   // Durable automatic-analysis delivery state. NULL preserves historical pending/consumed rows.
-  analysisState           String?
-  analysisMessageId       String?
-  analysisUpdatedAt       DateTime?
+  analysisState          String?
+  analysisMessageId      String?
+  analysisUpdatedAt      DateTime?
   createdAt              DateTime  @default(now())
   submittedAt            DateTime?
   startedAt              DateTime?

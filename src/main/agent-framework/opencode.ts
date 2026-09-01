@@ -121,7 +121,9 @@ const OPENCODE_PERMISSION_RULES: Record<string, 'ask' | 'allow' | 'deny'> = {
   list: 'allow',
   lsp: 'allow',
   edit: 'ask',
-  bash: 'ask',
+  // Shell execution stays on the app-owned Notebook tool, which retains its separate MCP identity
+  // and continues through the wildcard ask rule below.
+  bash: 'deny',
   // OpenCode's Task tool creates provider-owned subagent Sessions outside the app-owned delegated
   // work graph. Deny it at the highest-precedence config layer: asking is insufficient because an
   // approval would still create an invisible child that bypasses Attempt authority and lifecycle.
@@ -555,8 +557,9 @@ export const createOpencodeFramework = ({
   ): PermissionProfileApplication {
     // opencode advertises `build`/`plan` modes, not Claude's `default`/`bypassPermissions`, so no mode
     // is set here — the app owns permission decisions instead. prepareModelConfig configures opencode
-    // to delegate every edit/bash/webfetch prompt to the client (see buildOpencodeConfig), so the broker
-    // enforces ask/auto/full app-side. That's why Full access is offered even without a native bypass.
+    // to delegate every edit/webfetch prompt to the client (see buildOpencodeConfig), while native bash
+    // is disabled in favor of Notebook bash_execute. The broker enforces ask/auto/full app-side for the
+    // remaining side effects. That's why Full access is offered even without a native bypass.
     return resolvePermissionProfileApplication(profile, modes, { brokerEnforcesFullAccess: true })
   }
 })

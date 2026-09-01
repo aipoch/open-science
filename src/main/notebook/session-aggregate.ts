@@ -11,13 +11,13 @@ import type {
   NotebookLiveEnvironmentOverlay,
   NotebookNamespaceVariable,
   NotebookOutput,
-  NotebookRunFileEvidence,
   NotebookRunEnvironmentCapture,
   NotebookRunSource,
   NotebookRunStatus,
   NotebookWorkingFile,
   NotebookWriteLock
 } from '../../shared/notebook'
+import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
 import type { TrustedControlInvocationIdentity } from '../../shared/agents-contract'
 import type { TransientViewImage } from './host-view-image-service'
@@ -51,6 +51,7 @@ export type NotebookSessionExecutionRequest = {
   helperModules?: readonly NotebookHelperModuleInjection[]
   cwd: string
   notebookSessionRoot: string
+  inputRoot?: string
   dataRoot: string
   fileEvidenceStorageRoot?: string
   fileEvidenceRoot?: string
@@ -83,7 +84,7 @@ export type NotebookSessionExecutionResult = {
   outputs: NotebookOutput[]
   truncated?: boolean
   workingFiles?: NotebookWorkingFile[]
-  fileEvidence?: NotebookRunFileEvidence
+  fileEvidence?: ExecutionFileEvidenceSummary
   environmentOverlay?: NotebookLiveEnvironmentOverlay
   environmentCapture?: NotebookRunEnvironmentCapture
   environmentManifest?: NotebookEnvironmentManifest
@@ -228,7 +229,9 @@ export class NotebookSessionAggregate<
   private cwdValue: string
   private readonly cells = new Map<string, NotebookCell>()
   private activeWriteValue: NotebookWriteLock | undefined
+  private readonly activeRunIds = new Set<string>()
   private activeRunIdValue: string | undefined
+  private cwdOwnerRunId: string | undefined
   private executionCountValue: number
   private executorValue: NotebookSessionExecutor<Request, Result>
   private executorGenerationValue: NotebookSessionExecutorGeneration
@@ -363,7 +366,9 @@ export class NotebookSessionAggregate<
 
   markCellRunning(cellId: string, runId: string, executionCount: number): void {
     const cell = this.requireCell(cellId)
+    this.activeRunIds.add(runId)
     this.activeRunIdValue = runId
+    this.cwdOwnerRunId = runId
     cell.status = 'running'
     cell.executionCount = executionCount
     cell.latestRunId = runId
@@ -375,13 +380,19 @@ export class NotebookSessionAggregate<
     cwdAfter: string
   ): void {
     const cell = this.requireCell(cellId)
-    this.cwdValue = cwdAfter
-    this.activeRunIdValue = undefined
+    const runId = cell.latestRunId
+    if (runId) {
+      this.activeRunIds.delete(runId)
+      if (this.cwdOwnerRunId === runId) this.cwdValue = cwdAfter
+      if (this.activeRunIdValue === runId) {
+        this.activeRunIdValue = Array.from(this.activeRunIds).at(-1)
+      }
+    }
     cell.status = status
   }
 
   hasActiveRun(): boolean {
-    return this.activeRunIdValue !== undefined
+    return this.activeRunIds.size > 0
   }
 
   enqueueExecution<T>(

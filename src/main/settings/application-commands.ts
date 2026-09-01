@@ -18,6 +18,7 @@ import type {
   SetShowNotificationContentRequest,
   SetPackageMirrorRequest,
   SetNetworkProxyRequest,
+  SetNotebookNetworkRequest,
   SetProjectFilesFilterRequest,
   SetReviewerModelRequest,
   SetSessionDetailsModelRequest,
@@ -33,6 +34,7 @@ import {
 } from '../application-command-router'
 import type { CallerContext } from '../caller-context'
 import type { SettingsService } from './service'
+import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 import {
   readAppIconVariant,
   readClosePreference,
@@ -60,6 +62,7 @@ type CoreSettingsCommandStore = Pick<
   | 'detectOpencode'
   | 'getConnectorDetail'
   | 'getPackageMirror'
+  | 'getNotebookNetworkStatus'
   | 'getGitHubTokenStatus'
   | 'getPreflight'
   | 'getSettingsView'
@@ -68,6 +71,8 @@ type CoreSettingsCommandStore = Pick<
   | 'installCodeBuddy'
   | 'installCodex'
   | 'installOpencode'
+  | 'installNotebookNetwork'
+  | 'removeNotebookNetwork'
   | 'isEncryptionAvailable'
   | 'isNpmAvailable'
   | 'listConnectors'
@@ -86,6 +91,7 @@ type CoreSettingsCommandStore = Pick<
   | 'setShowNotificationContent'
   | 'setPackageMirror'
   | 'setNetworkProxy'
+  | 'setNotebookNetwork'
   | 'setProjectFilesFilter'
   | 'setReviewerModel'
   | 'setSessionDetailsModel'
@@ -156,6 +162,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [],
     StoreResult<'getPackageMirror'>
   >('settings:get-package-mirror'),
+  getNotebookNetworkStatus: defineApplicationCommand<
+    'settings:get-notebook-network-status',
+    readonly [],
+    StoreResult<'getNotebookNetworkStatus'>
+  >('settings:get-notebook-network-status'),
   getPreflight: defineApplicationCommand<
     'settings:get-preflight',
     readonly [],
@@ -191,6 +202,16 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: InstallOpencodeRequest],
     StoreResult<'installOpencode'>
   >('settings:install-opencode'),
+  installNotebookNetwork: defineApplicationCommand<
+    'settings:install-notebook-network',
+    readonly [],
+    StoreResult<'installNotebookNetwork'>
+  >('settings:install-notebook-network'),
+  removeNotebookNetwork: defineApplicationCommand<
+    'settings:remove-notebook-network',
+    readonly [],
+    StoreResult<'removeNotebookNetwork'>
+  >('settings:remove-notebook-network'),
   isEncryptionAvailable: defineApplicationCommand<
     'settings:encryption-available',
     readonly [],
@@ -289,6 +310,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetNetworkProxyRequest],
     StoreResult<'setNetworkProxy'>
   >('settings:set-network-proxy'),
+  setNotebookNetwork: defineApplicationCommand<
+    'settings:set-notebook-network',
+    readonly [request: SetNotebookNetworkRequest],
+    StoreResult<'setNotebookNetwork'>
+  >('settings:set-notebook-network'),
   setProjectFilesFilter: defineApplicationCommand<
     'settings:set-project-files-filter',
     readonly [request: SetProjectFilesFilterRequest],
@@ -333,6 +359,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.getConnectorDetail,
   settingsCoreApplicationCommands.getGitHubTokenStatus,
   settingsCoreApplicationCommands.getPackageMirror,
+  settingsCoreApplicationCommands.getNotebookNetworkStatus,
   settingsCoreApplicationCommands.getPreflight,
   settingsCoreApplicationCommands.getSettings,
   settingsCoreApplicationCommands.getSkillDetail,
@@ -340,6 +367,8 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.installCodeBuddy,
   settingsCoreApplicationCommands.installCodex,
   settingsCoreApplicationCommands.installOpencode,
+  settingsCoreApplicationCommands.installNotebookNetwork,
+  settingsCoreApplicationCommands.removeNotebookNetwork,
   settingsCoreApplicationCommands.isEncryptionAvailable,
   settingsCoreApplicationCommands.isNpmAvailable,
   settingsCoreApplicationCommands.listAppIcons,
@@ -360,6 +389,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.setShowNotificationContent,
   settingsCoreApplicationCommands.setPackageMirror,
   settingsCoreApplicationCommands.setNetworkProxy,
+  settingsCoreApplicationCommands.setNotebookNetwork,
   settingsCoreApplicationCommands.setProjectFilesFilter,
   settingsCoreApplicationCommands.setReviewerModel,
   settingsCoreApplicationCommands.setSessionDetailsModel,
@@ -371,6 +401,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
 type CoreSettingsApplicationCommandDependencies = Readonly<{
   service: CoreSettingsCommandStore
   appearance: Pick<AppearanceSettingsWorkflows, 'setAppIconVariant'>
+  snapshotCommits: SettingsSnapshotCommitOwner
   emitInstallEvent: (event: ClaudeInstallEvent) => void
   listAppIconPreviews?: () => AppIconPreview[]
 }>
@@ -401,11 +432,16 @@ const registerCoreSettingsApplicationCommands = (
         requireLocalCaller(callerContext, 'settings:cancel-isolated-claude-login')
         return dependencies.service.cancelClaudeIsolatedLogin()
       },
-      'settings:check-environment': () => dependencies.service.checkEnvironment(),
-      'settings:detect-claude': () => dependencies.service.detectClaude(),
-      'settings:detect-codebuddy': () => dependencies.service.detectCodeBuddy(),
-      'settings:detect-codex': () => dependencies.service.detectCodex(),
-      'settings:detect-opencode': () => dependencies.service.detectOpencode(),
+      'settings:check-environment': () =>
+        dependencies.snapshotCommits.projectAfter(dependencies.service.checkEnvironment()),
+      'settings:detect-claude': () =>
+        dependencies.snapshotCommits.projectAfter(dependencies.service.detectClaude()),
+      'settings:detect-codebuddy': () =>
+        dependencies.snapshotCommits.currentSnapshotAfter(dependencies.service.detectCodeBuddy()),
+      'settings:detect-codex': () =>
+        dependencies.snapshotCommits.currentSnapshotAfter(dependencies.service.detectCodex()),
+      'settings:detect-opencode': () =>
+        dependencies.snapshotCommits.currentSnapshotAfter(dependencies.service.detectOpencode()),
       'settings:get-connector-detail': ({ args }) =>
         dependencies.service.getConnectorDetail(args[0]),
       'settings:get-github-token-status': ({ callerContext }) => {
@@ -413,38 +449,60 @@ const registerCoreSettingsApplicationCommands = (
         return dependencies.service.getGitHubTokenStatus()
       },
       'settings:get-package-mirror': () => dependencies.service.getPackageMirror(),
+      'settings:get-notebook-network-status': () => dependencies.service.getNotebookNetworkStatus(),
       'settings:get-preflight': () => dependencies.service.getPreflight(),
-      'settings:get-settings': () => dependencies.service.getSettingsView(),
+      'settings:get-settings': () => dependencies.snapshotCommits.readCurrentSnapshot(),
       'settings:get-skill-detail': ({ args }) => dependencies.service.getSkillDetail(args[0]),
       'settings:install-claude': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:install-claude')
-        return dependencies.service.installClaude(args[0], dependencies.emitInstallEvent)
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.service.installClaude(args[0], dependencies.emitInstallEvent)
+        )
       },
       'settings:install-codebuddy': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:install-codebuddy')
-        return dependencies.service.installCodeBuddy(args[0], dependencies.emitInstallEvent)
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.service.installCodeBuddy(args[0], dependencies.emitInstallEvent)
+        )
       },
       'settings:install-codex': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:install-codex')
-        return dependencies.service.installCodex(args[0], dependencies.emitInstallEvent)
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.service.installCodex(args[0], dependencies.emitInstallEvent)
+        )
       },
       'settings:install-opencode': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:install-opencode')
-        return dependencies.service.installOpencode(args[0], dependencies.emitInstallEvent)
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.service.installOpencode(args[0], dependencies.emitInstallEvent)
+        )
+      },
+      'settings:install-notebook-network': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:install-notebook-network')
+        return dependencies.service.installNotebookNetwork()
+      },
+      'settings:remove-notebook-network': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:remove-notebook-network')
+        return dependencies.service.removeNotebookNetwork()
       },
       'settings:encryption-available': () => dependencies.service.isEncryptionAvailable(),
       'settings:npm-available': () => dependencies.service.isNpmAvailable(),
       'settings:list-app-icons': () => dependencies.listAppIconPreviews?.() ?? [],
       'settings:list-connectors': () => dependencies.service.listConnectors(),
       'settings:list-skills': () => dependencies.service.listSkills(),
-      'settings:mark-onboarding-complete': () => dependencies.service.markOnboardingComplete(),
+      'settings:mark-onboarding-complete': () =>
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.markOnboardingComplete()
+        ),
       'settings:preview-agent-home-skill': ({ args }) =>
         dependencies.service.previewAgentHomeSkill(args[0]),
       'settings:preview-github-skill': ({ args }) =>
         dependencies.service.previewGitHubSkill(args[0]),
       'settings:preview-skill-zip': ({ args }) => dependencies.service.previewSkillZip(args[0]),
       'settings:refresh-provider-models': ({ args }) =>
-        dependencies.service.refreshProviderModels(args[0]),
+        dependencies.snapshotCommits.projectAfter(
+          dependencies.service.refreshProviderModels(args[0])
+        ),
       'settings:scan-repo-skills': ({ args }) => dependencies.service.scanRepoSkills(args[0]),
       'settings:save-github-token': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:save-github-token')
@@ -456,47 +514,76 @@ const registerCoreSettingsApplicationCommands = (
       },
       'settings:set-app-icon-variant': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-app-icon-variant')
-        return dependencies.appearance.setAppIconVariant(readAppIconVariant(args[0]))
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.appearance.setAppIconVariant(readAppIconVariant(args[0]))
+        )
       },
       'settings:set-close-preference': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-close-preference')
-        return dependencies.service.setClosePreference(readClosePreference(args[0]))
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.setClosePreference(readClosePreference(args[0]))
+        )
       },
       'settings:set-default-permission-profile': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-default-permission-profile')
-        return dependencies.service.setDefaultPermissionProfile(
-          readDefaultPermissionProfile(args[0])
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.setDefaultPermissionProfile(readDefaultPermissionProfile(args[0]))
         )
       },
       'settings:set-notifications-enabled': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-notifications-enabled')
-        return dependencies.service.setNotificationsEnabled(readNotificationsEnabled(args[0]))
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.setNotificationsEnabled(readNotificationsEnabled(args[0]))
+        )
       },
       'settings:set-show-notification-content': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-show-notification-content')
-        return dependencies.service.setShowNotificationContent(readShowNotificationContent(args[0]))
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.setShowNotificationContent(readShowNotificationContent(args[0]))
+        )
       },
       'settings:set-package-mirror': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-package-mirror')
-        return dependencies.service.setPackageMirror(args[0])
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.service.setPackageMirror(args[0])
+        )
       },
       'settings:set-network-proxy': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-network-proxy')
-        return dependencies.service.setNetworkProxy(args[0])
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.service.setNetworkProxy(args[0])
+        )
+      },
+      'settings:set-notebook-network': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-notebook-network')
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.service.setNotebookNetwork(args[0])
+        )
       },
       'settings:set-project-files-filter': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-project-files-filter')
-        return dependencies.service.setProjectFilesFilter(readProjectFilesFilter(args[0]))
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.setProjectFilesFilter(readProjectFilesFilter(args[0]))
+        )
       },
       'settings:set-reviewer-model': ({ args }) =>
-        dependencies.service.setReviewerModel(readReviewerModel(args[0])),
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.setReviewerModel(readReviewerModel(args[0]))
+        ),
       'settings:set-session-details-model': ({ args }) =>
-        dependencies.service.setSessionDetailsModel(readSessionDetailsModel(args[0])),
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.setSessionDetailsModel(readSessionDetailsModel(args[0]))
+        ),
       'settings:set-subagent-model': ({ args }) =>
-        dependencies.service.setSubagentModel(readSubagentModel(args[0])),
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.setSubagentModel(readSubagentModel(args[0]))
+        ),
       'settings:set-vision-model': ({ args }) =>
-        dependencies.service.setVisionModel(readVisionModel(args[0])),
-      'settings:validate-provider': ({ args }) => dependencies.service.validateProvider(args[0])
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.setVisionModel(readVisionModel(args[0]))
+        ),
+      'settings:validate-provider': ({ args }) =>
+        dependencies.snapshotCommits.projectAfter(dependencies.service.validateProvider(args[0]))
     })
     return scope.complete()
   } catch (error) {

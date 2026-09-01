@@ -5,7 +5,14 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  main: {},
+  main: {
+    build: {
+      // This workspace package is TypeScript source, not a separately built runtime dependency.
+      // Bundle it into the Electron main process so development and packaged builds never ask
+      // Electron's CommonJS loader to resolve the package directly.
+      externalizeDeps: { exclude: ['@aipoch/notebook-network-sandbox'] }
+    }
+  },
   preload: {
     build: {
       rollupOptions: {

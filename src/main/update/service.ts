@@ -16,7 +16,7 @@ import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnosti
 import type { Logger } from '../logger'
 import { downloadInstaller } from './downloader'
 import { fetchManifest } from './manifest'
-import { canStartUpdateDownload, type UpdateStrategy } from './strategy'
+import { canStartUpdateDownload, toAvailableUpdateStatus, type UpdateStrategy } from './strategy'
 import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
@@ -88,6 +88,9 @@ export class UpdateService implements UpdateStrategy {
   // In-flight check() promise. Overlapping check()/download() await this instead of returning a
   // snapshot taken while the startup scheduler still owns the manifest fetch.
   private checkLifecycle?: Promise<UpdateStatus>
+  // Coalesces concurrent apply requests from multiple windows and keeps the admitted status identity
+  // available until the operating-system open request settles.
+  private applyLifecycle?: Promise<UpdateStatus>
   private readonly fetchImpl?: typeof fetch
   private readonly platform: NodeJS.Platform
   private readonly arch: string
@@ -399,7 +402,7 @@ export class UpdateService implements UpdateStrategy {
     this.downloadAbort = undefined
     this.downloadOperation?.cancel({ reason: 'user' })
     if (this.status.state === 'downloading') {
-      this.setStatus({ ...this.status, state: 'available', progress: undefined })
+      this.setStatus(toAvailableUpdateStatus(this.status))
     }
     return this.status
   }
@@ -407,26 +410,42 @@ export class UpdateService implements UpdateStrategy {
   // Opens the downloaded installer. A missing file drops back to 'available' for re-download. When
   // the file still exists but the OS cannot open it, keep the ready artifact and surface the reason so
   // the user can retry without another transfer. With no artifact, open the public download page.
-  async apply(): Promise<UpdateStatus> {
+  apply(): Promise<UpdateStatus> {
+    if (this.applyLifecycle) return this.applyLifecycle
+
+    const admittedStatus = this.status
+    const lifecycle = this.applyAdmitted(admittedStatus)
+    this.applyLifecycle = lifecycle
+    const clearLifecycle = (): void => {
+      if (this.applyLifecycle === lifecycle) this.applyLifecycle = undefined
+    }
+    void lifecycle.then(clearLifecycle, clearLifecycle)
+    return lifecycle
+  }
+
+  private async applyAdmitted(admittedStatus: UpdateStatus): Promise<UpdateStatus> {
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-apply',
       fields: { strategy: 'manifest' }
     })
     try {
-      const { localPath, download } = this.status
+      const { localPath, download } = admittedStatus
       if (localPath) {
         operation.phase('verify-installer')
         if (this.fileExists(localPath)) {
           operation.phase('open-installer')
           const error = await this.openPath(localPath)
           if (!error) {
-            if (this.status.error) this.setStatus({ ...this.status, error: undefined })
+            if (this.status === admittedStatus && admittedStatus.error) {
+              this.setStatus({ ...admittedStatus, error: undefined })
+            }
             operation.complete({ result: 'installer-opened' })
             return this.status
           }
           operation.fail(new Error('Installer open failed'), { reason: 'open-failed' })
+          if (this.status !== admittedStatus) return this.status
           this.setStatus({
-            ...this.status,
+            ...admittedStatus,
             state: 'ready',
             error: this.translate('Could not open the update installer: {{error}}', { error })
           })
@@ -440,7 +459,7 @@ export class UpdateService implements UpdateStrategy {
 
       if (download) {
         this.setStatus({
-          ...this.status,
+          ...admittedStatus,
           state: 'available',
           localPath: undefined,
           progress: undefined,

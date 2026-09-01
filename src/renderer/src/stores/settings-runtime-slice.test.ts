@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import type {
   AgentFrameworkId,
-  ClaudeDetectResult,
   ClaudeInfo,
   ClaudeInstallEvent,
   ClaudeInstallResult,
@@ -54,7 +53,7 @@ type EnvironmentReconcilePatch = Partial<
   Pick<RuntimeSetupSlice, 'environmentCheck' | 'preflight' | 'npmAvailable'>
 >
 
-const snapshot = (): SettingsSnapshot => ({
+const snapshot = (patch: Partial<SettingsSnapshot> = {}): SettingsSnapshot => ({
   claude: {},
   activeProviderId: undefined,
   providers: [],
@@ -70,7 +69,8 @@ const snapshot = (): SettingsSnapshot => ({
   reasoningEffort: 'default',
   notificationsEnabled: true,
   conversationSkillImportEnabled: true,
-  appIconVariant: 'light'
+  appIconVariant: 'light',
+  ...patch
 })
 
 const preflight = (): Preflight => ({
@@ -136,22 +136,18 @@ const createHarness = (): {
   reconcileSnapshot: Mock<
     (snapshot: SettingsSnapshot, runtimePatch?: EnvironmentReconcilePatch) => void
   >
-  reconcileClaudeDetection: Mock<(result: ClaudeDetectResult, npmAvailable: boolean) => void>
   store: StoreApi<TestStore>
 } => {
   const commands = createCommands()
   const reconcileSnapshot = vi.fn(
     (nextSnapshot: SettingsSnapshot, runtimePatch: EnvironmentReconcilePatch = {}) => {
-      store.setState({ agentFrameworkId: nextSnapshot.agentFrameworkId, ...runtimePatch })
+      store.setState({
+        agentFrameworkId: nextSnapshot.agentFrameworkId,
+        claude: nextSnapshot.claude,
+        ...runtimePatch
+      })
     }
   )
-  const reconcileClaudeDetection = vi.fn((result: ClaudeDetectResult, npmAvailable: boolean) => {
-    store.setState(
-      result.found && result.path
-        ? { npmAvailable, claude: { resolvedPath: result.path, version: result.version } }
-        : { npmAvailable }
-    )
-  })
 
   const store = createStore<TestStore>((set, get) => ({
     agentFrameworkId: 'claude-code',
@@ -160,12 +156,11 @@ const createHarness = (): {
       set,
       get,
       getCommands: () => commands as RuntimeCommands,
-      reconcileSnapshot,
-      reconcileClaudeDetection
+      reconcileSnapshot
     })
   }))
 
-  return { commands, reconcileSnapshot, reconcileClaudeDetection, store }
+  return { commands, reconcileSnapshot, store }
 }
 
 describe('runtime setup slice: install lifecycle', () => {
@@ -418,14 +413,12 @@ describe('runtime setup slice: install lifecycle', () => {
 describe('runtime setup slice: discovery lifecycle', () => {
   let commands: RuntimeCommandMocks
   let reconcileSnapshot: ReturnType<typeof createHarness>['reconcileSnapshot']
-  let reconcileClaudeDetection: ReturnType<typeof createHarness>['reconcileClaudeDetection']
   let store: StoreApi<TestStore>
 
   beforeEach(() => {
     const harness = createHarness()
     commands = harness.commands
     reconcileSnapshot = harness.reconcileSnapshot
-    reconcileClaudeDetection = harness.reconcileClaudeDetection
     store = harness.store
   })
 
@@ -587,11 +580,14 @@ describe('runtime setup slice: discovery lifecycle', () => {
   })
 
   it('reconciles Claude and npm, refreshes preflight, and keeps the old Claude on not-found', async () => {
+    commands.getSettings.mockResolvedValueOnce(
+      snapshot({ claude: { resolvedPath: '/bin/claude', version: '1.0.0' } })
+    )
     await store.getState().detectClaude()
 
-    expect(reconcileClaudeDetection).toHaveBeenCalledWith(
-      { found: true, path: '/bin/claude', version: '1.0.0' },
-      true
+    expect(reconcileSnapshot).toHaveBeenCalledWith(
+      snapshot({ claude: { resolvedPath: '/bin/claude', version: '1.0.0' } }),
+      { npmAvailable: true }
     )
     expect(store.getState()).toMatchObject({
       claude: { resolvedPath: '/bin/claude', version: '1.0.0' },
@@ -602,6 +598,9 @@ describe('runtime setup slice: discovery lifecycle', () => {
 
     commands.detectClaude.mockResolvedValueOnce({ found: false })
     commands.isNpmAvailable.mockResolvedValueOnce(false)
+    commands.getSettings.mockResolvedValueOnce(
+      snapshot({ claude: { resolvedPath: '/bin/claude', version: '1.0.0' } })
+    )
     await store.getState().detectClaude()
 
     expect(store.getState()).toMatchObject({
@@ -613,6 +612,9 @@ describe('runtime setup slice: discovery lifecycle', () => {
 
   it('propagates Claude preflight failure after applying detection and clears the flag', async () => {
     const failure = new Error('preflight unavailable')
+    commands.getSettings.mockResolvedValueOnce(
+      snapshot({ claude: { resolvedPath: '/bin/claude', version: '1.0.0' } })
+    )
     commands.getPreflight.mockRejectedValue(failure)
 
     await expect(store.getState().detectClaude()).rejects.toBe(failure)

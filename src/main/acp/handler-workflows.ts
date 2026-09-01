@@ -8,7 +8,7 @@ import type {
   AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpSaveAsSkillRequest,
-  AcpStateSnapshot
+  AcpRuntimeState
 } from '../../shared/acp'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import type { TaskNotificationService } from '../notifications/task-notifications'
@@ -40,7 +40,7 @@ const SAFE_RESUME_ERROR_KINDS = new Set([
 ])
 const SAFE_RESUME_SERVICES = new Set(['session', 'provider', 'mcp', 'transport'])
 type AcpHandlerWorkflowRuntime = {
-  getSnapshot(): AcpStateSnapshot
+  getState(): AcpRuntimeState
   hasLiveSession(projectId: string, sessionId: string): boolean
   captureSessionBackend(sessionId: string): AcpBackendGenerationView | undefined
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
@@ -70,9 +70,9 @@ type SessionArchiveAvailability = {
 type AcpHandlerWorkflows = {
   createSession(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
-  continueInterruptedTurn(request: AcpContinueInterruptedTurnRequest): Promise<AcpStateSnapshot>
-  saveAsSkill(request: AcpSaveAsSkillRequest): Promise<AcpStateSnapshot>
-  sendPrompt(request: AcpPromptRequest): Promise<AcpStateSnapshot>
+  continueInterruptedTurn(request: AcpContinueInterruptedTurnRequest): Promise<AcpRuntimeState>
+  saveAsSkill(request: AcpSaveAsSkillRequest): Promise<AcpRuntimeState>
+  sendPrompt(request: AcpPromptRequest): Promise<AcpRuntimeState>
 }
 
 type InterruptedTurnSessionSource = {
@@ -318,11 +318,11 @@ const createAcpHandlerWorkflows = (
     }
   },
 
-  async continueInterruptedTurn(request): Promise<AcpStateSnapshot> {
+  async continueInterruptedTurn(request): Promise<AcpRuntimeState> {
     if (!interruptedTurnSessions) {
       throw new Error('Interrupted turn continuation is not available.')
     }
-    const run = (): Promise<AcpStateSnapshot> =>
+    const run = (): Promise<AcpRuntimeState> =>
       continueInterruptedTurn(
         {
           runtime,
@@ -345,8 +345,8 @@ const createAcpHandlerWorkflows = (
       : run()
   },
 
-  async saveAsSkill(request): Promise<AcpStateSnapshot> {
-    const save = async (): Promise<AcpStateSnapshot> => {
+  async saveAsSkill(request): Promise<AcpRuntimeState> {
+    const save = async (): Promise<AcpRuntimeState> => {
       if (!interruptedTurnSessions) throw new Error('Save as skill is not available.')
       const prepared = prepareSaveAsSkillContinuation(
         runtime,
@@ -373,14 +373,14 @@ const createAcpHandlerWorkflows = (
         if (tracked) taskNotifications?.untrackPrompt(prepared.session.id, tracked)
         throw error
       }
-      return runtime.getSnapshot()
+      return runtime.getState()
     }
     return archiveAvailability
       ? archiveAvailability.withSessionAvailable(request.projectId, request.sessionId, save)
       : save()
   },
 
-  async sendPrompt(request): Promise<AcpStateSnapshot> {
+  async sendPrompt(request): Promise<AcpRuntimeState> {
     // Track before invoking so the terminal event can name this prompt. A rejected admission rolls
     // back only its own token, preserving any older in-flight prompt tracked for the same Session.
     const tracked = taskNotifications?.trackPrompt(request)
@@ -390,7 +390,7 @@ const createAcpHandlerWorkflows = (
       if (tracked) taskNotifications?.untrackPrompt(request.sessionId, tracked)
       throw error
     }
-    return runtime.getSnapshot()
+    return runtime.getState()
   }
 })
 

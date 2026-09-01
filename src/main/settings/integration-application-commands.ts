@@ -12,6 +12,7 @@ import { canSatisfyHumanApproval, type CallerContext } from '../caller-context'
 import type { ApprovalBroker } from '../connectors/approval-broker'
 import type { SkillImportApprovalBroker } from '../skills/conversation-import'
 import { readConversationSkillImportEnabled } from './transport-validation'
+import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 import type { ConnectorSettingsWorkflows } from './workflows/connectors'
 import type { SkillSettingsWorkflows } from './workflows/skills'
 
@@ -30,6 +31,13 @@ type SkillIntegrationWorkflows = Pick<
 
 type ConnectorIntegrationWorkflows = Pick<
   ConnectorSettingsWorkflows,
+  | 'listDeviceCredentials'
+  | 'createDeviceCredential'
+  | 'updateDeviceCredential'
+  | 'removeDeviceCredential'
+  | 'authenticateDeviceCredential'
+  | 'cancelDeviceCredentialAuthentication'
+  | 'disconnectDeviceCredential'
   | 'setConnectorEnabled'
   | 'setConnectorAutoAllow'
   | 'setToolPermission'
@@ -65,6 +73,41 @@ const requireLocalCaller = (context: CallerContext, channel: string): void => {
 }
 
 const settingsIntegrationApplicationCommands = Object.freeze({
+  listDeviceCredentials: defineApplicationCommand<
+    'settings:list-device-credentials',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'listDeviceCredentials'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'listDeviceCredentials'>
+  >('settings:list-device-credentials'),
+  createDeviceCredential: defineApplicationCommand<
+    'settings:create-device-credential',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'createDeviceCredential'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'createDeviceCredential'>
+  >('settings:create-device-credential'),
+  updateDeviceCredential: defineApplicationCommand<
+    'settings:update-device-credential',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'updateDeviceCredential'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'updateDeviceCredential'>
+  >('settings:update-device-credential'),
+  removeDeviceCredential: defineApplicationCommand<
+    'settings:remove-device-credential',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'removeDeviceCredential'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'removeDeviceCredential'>
+  >('settings:remove-device-credential'),
+  authenticateDeviceCredential: defineApplicationCommand<
+    'settings:authenticate-device-credential',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'authenticateDeviceCredential'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'authenticateDeviceCredential'>
+  >('settings:authenticate-device-credential'),
+  cancelDeviceCredentialAuthentication: defineApplicationCommand<
+    'settings:cancel-device-credential-authentication',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'cancelDeviceCredentialAuthentication'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'cancelDeviceCredentialAuthentication'>
+  >('settings:cancel-device-credential-authentication'),
+  disconnectDeviceCredential: defineApplicationCommand<
+    'settings:disconnect-device-credential',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'disconnectDeviceCredential'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'disconnectDeviceCredential'>
+  >('settings:disconnect-device-credential'),
   setConversationSkillImportEnabled: defineApplicationCommand<
     'settings:set-conversation-skill-import-enabled',
     OwnerArgs<SkillIntegrationWorkflows, 'setConversationSkillImportEnabled'>,
@@ -222,6 +265,13 @@ const settingsSkillApplicationCommandGroup = defineApplicationCommandGroup('sett
 const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
   'settings-connectors',
   [
+    settingsIntegrationApplicationCommands.listDeviceCredentials,
+    settingsIntegrationApplicationCommands.createDeviceCredential,
+    settingsIntegrationApplicationCommands.updateDeviceCredential,
+    settingsIntegrationApplicationCommands.removeDeviceCredential,
+    settingsIntegrationApplicationCommands.authenticateDeviceCredential,
+    settingsIntegrationApplicationCommands.cancelDeviceCredentialAuthentication,
+    settingsIntegrationApplicationCommands.disconnectDeviceCredential,
     settingsIntegrationApplicationCommands.setConnectorEnabled,
     settingsIntegrationApplicationCommands.setConnectorAutoAllow,
     settingsIntegrationApplicationCommands.setToolPermission,
@@ -253,6 +303,7 @@ const settingsApprovalApplicationCommandGroup = defineApplicationCommandGroup(
 type IntegrationSettingsApplicationCommandDependencies = Readonly<{
   skills: SkillIntegrationWorkflows
   connectors: ConnectorIntegrationWorkflows
+  snapshotCommits: SettingsSnapshotCommitOwner
   connectorApprovals: Pick<ApprovalBroker, 'getPending' | 'replayPending' | 'respond'>
   skillImportApprovals: Pick<SkillImportApprovalBroker, 'respond' | 'replayPending'>
 }>
@@ -266,9 +317,11 @@ const registerIntegrationSettingsApplicationCommands = (
   try {
     scope.registerGroup(settingsSkillApplicationCommandGroup, {
       'settings:set-conversation-skill-import-enabled': ({ args }) =>
-        dependencies.skills.setConversationSkillImportEnabled({
-          enabled: readConversationSkillImportEnabled(args[0])
-        }),
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.skills.setConversationSkillImportEnabled({
+            enabled: readConversationSkillImportEnabled(args[0])
+          })
+        ),
       'settings:set-skill-enabled': ({ args }) => dependencies.skills.setSkillEnabled(args[0]),
       'settings:set-skills-enabled': ({ args }) => dependencies.skills.setSkillsEnabled(args[0]),
       'settings:create-skill': ({ args }) => dependencies.skills.createSkill(args[0]),
@@ -280,6 +333,34 @@ const registerIntegrationSettingsApplicationCommands = (
         dependencies.skills.importSkillZipBatch(args[0])
     })
     scope.registerGroup(settingsConnectorApplicationCommandGroup, {
+      'settings:list-device-credentials': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:list-device-credentials')
+        return dependencies.connectors.listDeviceCredentials()
+      },
+      'settings:create-device-credential': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:create-device-credential')
+        return dependencies.connectors.createDeviceCredential(args[0])
+      },
+      'settings:update-device-credential': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:update-device-credential')
+        return dependencies.connectors.updateDeviceCredential(args[0])
+      },
+      'settings:remove-device-credential': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:remove-device-credential')
+        return dependencies.connectors.removeDeviceCredential(args[0])
+      },
+      'settings:authenticate-device-credential': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:authenticate-device-credential')
+        return dependencies.connectors.authenticateDeviceCredential(args[0])
+      },
+      'settings:cancel-device-credential-authentication': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:cancel-device-credential-authentication')
+        return dependencies.connectors.cancelDeviceCredentialAuthentication(args[0])
+      },
+      'settings:disconnect-device-credential': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:disconnect-device-credential')
+        return dependencies.connectors.disconnectDeviceCredential(args[0])
+      },
       'settings:set-connector-enabled': ({ args }) =>
         dependencies.connectors.setConnectorEnabled(args[0]),
       'settings:set-connector-auto-allow': ({ args }) =>

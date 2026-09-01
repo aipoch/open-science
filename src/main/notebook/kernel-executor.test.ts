@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { NotebookKernelExecutor, type KernelProcessKind } from './kernel-executor'
+import {
+  kernelExecutableReadRoot,
+  NotebookKernelExecutor,
+  type KernelProcessKind
+} from './kernel-executor'
 import { framePythonRequest } from './kernel-protocol'
 import {
   DEFAULT_PY_ENV,
@@ -16,9 +20,12 @@ import {
   rScriptBin
 } from './runtime-paths'
 import { TimeoutController } from './timeout-controller'
+import type { NotebookProcessSandbox } from './process-sandbox'
 import { NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES, NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
 import type { NotebookExecutionRequest, NotebookExecutionResult } from './runtime-service'
 import { NotebookHelperModuleHost } from './helper-module-host'
+import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
+import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
 
 // -- TimeoutController: pure state machine, driven with fake timers + a signal recorder. ------------
 
@@ -214,8 +221,12 @@ const rScriptExecutable = ['/usr/local/bin/Rscript', '/opt/homebrew/bin/Rscript'
 
 // Symlinks an env's python interpreter to the system python3 under a runtime root, so the strict
 // resolver (env interpreter only -- no system-PATH fallback) finds it and spawns the fake loop.
-const stubEnvPython = async (runtimeRootDir: string, name: string): Promise<void> => {
-  const bin = pythonBin(envPrefix(runtimeRootDir, name))
+const stubEnvPython = async (
+  runtimeRootDir: string,
+  name: string,
+  platform: NodeJS.Platform = process.platform
+): Promise<void> => {
+  const bin = pythonBin(envPrefix(runtimeRootDir, name, platform), platform)
   await mkdir(dirname(bin), { recursive: true })
   await symlink(python3 as string, bin)
 }
@@ -229,9 +240,12 @@ const stubEnvR = async (runtimeRootDir: string, name: string): Promise<void> => 
 
 // Makes a temp cwd AND stubs its default-python env interpreter, so a default-env execute() passes the
 // readiness gate and spawns the fake loop under an on-disk env interpreter (never a system python).
-const makeDefaultEnvCwd = async (prefix: string): Promise<string> => {
+const makeDefaultEnvCwd = async (
+  prefix: string,
+  platform: NodeJS.Platform = process.platform
+): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), prefix))
-  await stubEnvPython(join(dir, 'runtime'), DEFAULT_PY_ENV)
+  await stubEnvPython(join(dir, 'runtime'), DEFAULT_PY_ENV, platform)
   return dir
 }
 
@@ -322,11 +336,13 @@ const baseRequest = (
 ): {
   cwd: string
   notebookSessionRoot: string
+  inputRoot: string
   dataRoot: string
   runtimeRoot: string
 } => ({
   cwd,
   notebookSessionRoot: join(cwd, 'nb'),
+  inputRoot: join(cwd, 'inputs'),
   dataRoot: join(cwd, 'nb', 'data'),
   runtimeRoot: join(cwd, 'runtime')
 })
@@ -339,6 +355,80 @@ afterEach(async () => {
 })
 
 gate('NotebookKernelExecutor (fake loop)', () => {
+  it('wraps persistent kernel startup with the shared process sandbox', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-network-sandbox-')
+    const request = baseRequest(cwdDir)
+    const requestController = new AbortController()
+    const cleanup = vi.fn()
+    const endExecution = vi.fn()
+    const beginExecution = vi.fn(() => endExecution)
+    const annotateStderr = vi.fn(
+      (stderr: string) => `${stderr}<sandbox_violations>blocked</sandbox_violations>`
+    )
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: { OPEN_SCIENCE_SANDBOX_TEST: 'wrapped' },
+        beginExecution,
+        annotateStderr,
+        cleanup
+      }))
+    }
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: FIXTURE,
+      platform: 'linux',
+      processSandbox
+    })
+
+    try {
+      await expect(
+        executor.execute({
+          ...request,
+          code: 'wrapped',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          signal: requestController.signal
+        })
+      ).resolves.toMatchObject({
+        status: 'completed',
+        stdout: 'wrapped',
+        stderr: '<sandbox_violations>blocked</sandbox_violations>'
+      })
+      await expect(
+        executor.execute({
+          ...request,
+          code: 'wrapped again',
+          sessionId: 'session-1',
+          projectId: 'project-1'
+        })
+      ).resolves.toMatchObject({ status: 'completed', stdout: 'wrapped again' })
+      expect(processSandbox.wrap).toHaveBeenCalledOnce()
+      expect(processSandbox.wrap).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filesystem: expect.objectContaining({
+            readOnlyRoots: expect.arrayContaining([
+              request.runtimeRoot,
+              request.inputRoot,
+              FIXTURE
+            ]),
+            readWriteRoots: expect.arrayContaining([join(request.runtimeRoot, 'cache', 'notebook')])
+          })
+        })
+      )
+      const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
+      expect(sandboxInvocation).not.toHaveProperty('signal')
+      expect(sandboxInvocation.filesystem.readWriteRoots).not.toContain(request.dataRoot)
+      expect(sandboxInvocation.filesystem.deniedWriteRoots).not.toContain(request.runtimeRoot)
+      expect(beginExecution).toHaveBeenCalledTimes(2)
+      expect(endExecution).toHaveBeenCalledTimes(2)
+      expect(annotateStderr).toHaveBeenCalled()
+    } finally {
+      await executor.shutdown()
+    }
+    expect(cleanup).toHaveBeenCalledOnce()
+  })
+
   it('inspects only an already-live kernel and forwards the private-variable option', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-namespace-')
     const executor = makeExecutor()
@@ -374,12 +464,18 @@ gate('NotebookKernelExecutor (fake loop)', () => {
 
   it('drops a kernel when namespace inspection exceeds its hard timeout', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-namespace-timeout-')
-    const previousHang = process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG
-    process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG = '1'
+    const hangingFixture = join(cwdDir, 'fake_loop_namespace_hang.py')
+    const fixtureSource = await readFile(FIXTURE, 'utf8')
+    const hangingFixtureSource = fixtureSource.replace(
+      'if os.environ.get("OPEN_SCIENCE_FAKE_NAMESPACE_HANG") == "1":',
+      'if True:'
+    )
+    expect(hangingFixtureSource).not.toBe(fixtureSource)
+    await writeFile(hangingFixture, hangingFixtureSource)
     const onTerminated = vi.fn()
     const executor = new NotebookKernelExecutor({
       pythonBin: python3,
-      pythonLoopPath: FIXTURE,
+      pythonLoopPath: hangingFixture,
       platform: 'linux',
       namespaceInspectionTimeoutMs: 25,
       onTerminated
@@ -393,8 +489,6 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       expect(procFor(executor, 'python')).toBeUndefined()
       expect(onTerminated).toHaveBeenCalledWith('python', DEFAULT_PY_ENV)
     } finally {
-      if (previousHang === undefined) delete process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG
-      else process.env.OPEN_SCIENCE_FAKE_NAMESPACE_HANG = previousHang
       await executor.shutdown()
     }
   })
@@ -905,7 +999,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
   }, 15_000)
 
   it('drops and respawns the kernel when Windows cancellation cannot preserve it', async () => {
-    cwdDir = await makeDefaultEnvCwd('os-kernel-windows-cancel-')
+    cwdDir = await makeDefaultEnvCwd('os-kernel-windows-cancel-', 'win32')
     const terminated: Array<['python' | 'r' | 'repl', string]> = []
     const executor = new NotebookKernelExecutor({
       pythonLoopPath: FIXTURE,
@@ -2782,6 +2876,17 @@ type BuildEnvFn = (
 ) => NodeJS.ProcessEnv
 
 describe('NotebookKernelExecutor spawn env', () => {
+  it('grants the complete macOS app bundle to the Electron-backed repl kernel', () => {
+    const executable = '/Applications/Open Science.app/Contents/MacOS/Open Science'
+
+    expect(kernelExecutableReadRoot(executable, 'repl', 'darwin')).toBe(
+      '/Applications/Open Science.app'
+    )
+    expect(kernelExecutableReadRoot(executable, 'python', 'darwin')).toBe(
+      '/Applications/Open Science.app/Contents/MacOS'
+    )
+  })
+
   it('injects OPEN_SCIENCE_HANDOFF_DIR under the notebook session root for every kernel language', () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
     const request = { ...baseRequest('/tmp/os-handoff-test'), code: 'x' }
@@ -2812,8 +2917,11 @@ describe('NotebookKernelExecutor spawn env', () => {
     }
   })
 
-  it('gives the repl kernel ELECTRON_RUN_AS_NODE plus the connector RPC endpoint/token', () => {
-    const executor = new NotebookKernelExecutor({ replLoopPath: '/tmp/repl_loop.js' })
+  it('gives non-Linux repl kernels ELECTRON_RUN_AS_NODE plus the connector RPC endpoint/token', () => {
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: '/tmp/repl_loop.js',
+      platform: 'win32'
+    })
     const request = {
       ...baseRequest('/tmp/os-repl-env'),
       code: 'x',
@@ -2828,6 +2936,24 @@ describe('NotebookKernelExecutor spawn env', () => {
     expect(replEnv.OPEN_SCIENCE_MCP_RPC_ENDPOINT).toBe('http://127.0.0.1:9/x')
     expect(replEnv.OPEN_SCIENCE_MCP_RPC_SOCKET_PATH).toBe('\\\\.\\pipe\\open-science-notebook')
     expect(replEnv.OPEN_SCIENCE_MCP_RPC_TOKEN).toBe('tok')
+  })
+
+  it('routes the Linux repl RPC token through inherited fd 3 instead of the environment', () => {
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: '/tmp/repl_loop.js',
+      platform: 'linux'
+    })
+    const request = {
+      ...baseRequest('/tmp/os-repl-env'),
+      code: 'x',
+      mcpRpcEndpoint: 'http://127.0.0.1:9/x',
+      mcpRpcToken: 'tok'
+    }
+    const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
+
+    const replEnv = buildEnv('repl', request, '/tmp/figs')
+    expect(replEnv.OPEN_SCIENCE_MCP_RPC_TOKEN).toBeUndefined()
+    expect(replEnv.OPEN_SCIENCE_MCP_RPC_TOKEN_FD).toBe('3')
   })
 
   it('withholds the connector RPC env from python/r data kernels (host.mcp is repl-only)', () => {
@@ -2964,6 +3090,105 @@ describe('NotebookKernelExecutor shutdown reaping', () => {
 const REPL_LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')
 
 describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
+  it('starts the Linux repl with an fd-only RPC token', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-rpc-fd-'))
+    const token = 'kernel-fd-only-token'
+    const executor = new NotebookKernelExecutor({ replLoopPath: REPL_LOOP, platform: 'linux' })
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        code:
+          `const fs = require('node:fs'); ` +
+          `return JSON.stringify({ ` +
+          `envTokenPresent: Object.hasOwn(process.env, 'OPEN_SCIENCE_MCP_RPC_TOKEN'), ` +
+          `procContainsToken: process.platform === 'linux' && fs.readFileSync('/proc/self/environ').includes(${JSON.stringify(token)}) })`,
+        kind: 'repl',
+        mcpRpcToken: token
+      })
+      expect(result.status).toBe('completed')
+      expect(result.outputs).toContainEqual({
+        type: 'display',
+        data: {
+          'text/plain': JSON.stringify({ envTokenPresent: false, procContainsToken: false })
+        }
+      })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('executes a control-plane repl cell without a managed runtime root', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-no-runtime-'))
+    const executor = new NotebookKernelExecutor({ replLoopPath: REPL_LOOP, platform: 'linux' })
+    try {
+      const result = await executor.execute({
+        code: 'return 1',
+        cwd: cwdDir,
+        kind: 'repl',
+        notebookSessionRoot: '',
+        dataRoot: '',
+        runtimeRoot: ''
+      })
+      expect(result.status).toBe('completed')
+      expect(result.outputs).toContainEqual({
+        type: 'display',
+        data: { 'text/plain': '1' }
+      })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it.runIf(process.platform === 'darwin')(
+    'executes the repl loop through the production network sandbox',
+    async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-sandbox-'))
+      const inputRoot = `${cwdDir}-inputs`
+      const inputPath = join(inputRoot, 'content')
+      await mkdir(inputRoot, { recursive: true })
+      await writeFile(inputPath, 'verified input')
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: resolve(
+          import.meta.dirname,
+          '../../../packages/notebook-network-sandbox/vendor'
+        ),
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      const executor = new NotebookKernelExecutor({
+        replLoopPath: REPL_LOOP,
+        processSandbox: owner
+      })
+
+      try {
+        const result = await executor.execute({
+          ...baseRequest(cwdDir),
+          inputRoot,
+          code:
+            `const fs = require('node:fs'); const value = fs.readFileSync(${JSON.stringify(inputPath)}, 'utf8'); ` +
+            `let writeDenied = false; try { fs.writeFileSync(${JSON.stringify(inputPath)}, 'changed') } catch { writeDenied = true } ` +
+            'return { value, writeDenied }',
+          kind: 'repl',
+          sessionId: 'sandbox-repl-session',
+          projectId: 'sandbox-repl-project'
+        })
+        expect(result.status, result.stderr || result.traceback).toBe('completed')
+        expect(result.outputs).toContainEqual({
+          type: 'display',
+          data: {
+            'text/plain': JSON.stringify({ value: 'verified input', writeDenied: true })
+          }
+        })
+      } finally {
+        await executor.shutdown()
+        await owner.dispose()
+        await rm(inputRoot, { recursive: true, force: true })
+      }
+    },
+    20_000
+  )
+
   it('bounds control output before it crosses the loop protocol', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-output-limit-'))
     const executor = new NotebookKernelExecutor({ replLoopPath: REPL_LOOP, platform: 'linux' })

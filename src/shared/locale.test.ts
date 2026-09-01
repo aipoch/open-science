@@ -12,6 +12,12 @@ import {
 } from './locale'
 
 describe('resolveLocaleFromTags', () => {
+  it('matches German and its regional tags', () => {
+    expect(resolveLocaleFromTags(['de'])).toBe('de')
+    expect(resolveLocaleFromTags(['de-DE'])).toBe('de')
+    expect(resolveLocaleFromTags(['DE_at'])).toBe('de')
+  })
+
   it('matches Korean and its regional tags', () => {
     expect(resolveLocaleFromTags(['ko'])).toBe('ko')
     expect(resolveLocaleFromTags(['ko-KR'])).toBe('ko')
@@ -90,8 +96,8 @@ describe('resolveLocaleFromTags', () => {
 
   it('walks the whole list so an unsupported first entry does not shadow a supported later one', () => {
     // The bug this guards: reading only navigator.language would return 'en' here, not zh-Hans.
-    expect(resolveLocaleFromTags(['de', 'zh-CN', 'en'])).toBe('zh-Hans')
-    expect(resolveLocaleFromTags(['vi-VN', 'de', 'zh-TW'])).toBe('zh-Hant')
+    expect(resolveLocaleFromTags(['it', 'zh-CN', 'en'])).toBe('zh-Hans')
+    expect(resolveLocaleFromTags(['vi-VN', 'it', 'zh-TW'])).toBe('zh-Hant')
   })
 
   it('honors list order between two supported tags', () => {
@@ -100,7 +106,7 @@ describe('resolveLocaleFromTags', () => {
   })
 
   it('falls back to English when nothing matches', () => {
-    expect(resolveLocaleFromTags(['vi', 'de-DE'])).toBe('en')
+    expect(resolveLocaleFromTags(['vi', 'it-IT'])).toBe('en')
     expect(resolveLocaleFromTags([])).toBe('en')
     expect(resolveLocaleFromTags([''])).toBe('en')
   })
@@ -114,6 +120,7 @@ describe('resolveLocale', () => {
     expect(resolveLocale('system', ['ru-RU'])).toBe('ru')
     expect(resolveLocale('system', ['fr-CA'])).toBe('fr')
     expect(resolveLocale('system', ['pt-BR'])).toBe('pt-BR')
+    expect(resolveLocale('system', ['de-CH'])).toBe('de')
     expect(resolveLocale('system', ['es-MX'])).toBe('es')
   })
 
@@ -121,6 +128,7 @@ describe('resolveLocale', () => {
     expect(resolveLocale('en', ['zh-TW'])).toBe('en')
     expect(resolveLocale('fr', ['en-US'])).toBe('fr')
     expect(resolveLocale('pt-BR', ['en-US'])).toBe('pt-BR')
+    expect(resolveLocale('de', ['en-US'])).toBe('de')
     expect(resolveLocale('ja', ['en-US'])).toBe('ja')
     expect(resolveLocale('ko', ['en-US'])).toBe('ko')
     expect(resolveLocale('ru', ['en-US'])).toBe('ru')
@@ -139,6 +147,7 @@ describe('guards and constants', () => {
     expect(isLocale('fr')).toBe(true)
     expect(isLocale('pt-BR')).toBe(true)
     expect(isLocale('pt')).toBe(false)
+    expect(isLocale('de')).toBe(true)
     expect(isLocale('es')).toBe(true)
     expect(isLocale('zh-CN')).toBe(false)
     expect(isLocale('system')).toBe(false)
@@ -151,6 +160,7 @@ describe('guards and constants', () => {
     expect(isLanguagePreference('fr')).toBe(true)
     expect(isLanguagePreference('pt-BR')).toBe(true)
     expect(isLanguagePreference('pt')).toBe(false)
+    expect(isLanguagePreference('de')).toBe(true)
     expect(isLanguagePreference('es')).toBe(true)
   })
 
@@ -171,6 +181,7 @@ describe('guards and constants', () => {
     expect(htmlLang('en')).toBe('en')
     expect(htmlLang('fr')).toBe('fr')
     expect(htmlLang('pt-BR')).toBe('pt-BR')
+    expect(htmlLang('de')).toBe('de')
     expect(htmlLang('es')).toBe('es')
     expect(htmlLang('ja')).toBe('ja')
     expect(htmlLang('ko')).toBe('ko')

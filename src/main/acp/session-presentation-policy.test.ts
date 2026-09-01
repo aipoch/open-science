@@ -231,7 +231,8 @@ describe('ACP Session presentation policy', () => {
                 'Workflow',
                 'SendMessage',
                 'TeamCreate',
-                'TeamDelete'
+                'TeamDelete',
+                'Bash'
               ],
               managedSettings: {
                 disableAgentView: true,

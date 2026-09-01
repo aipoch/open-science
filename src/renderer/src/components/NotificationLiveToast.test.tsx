@@ -61,7 +61,7 @@ const flushToastPosition = async (): Promise<void> => {
 }
 
 beforeEach(() => {
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
   vi.spyOn(document, 'hasFocus').mockReturnValue(true)
   useNotificationInboxStore.setState({
     revision: 1,

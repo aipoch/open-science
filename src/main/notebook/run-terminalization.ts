@@ -3,12 +3,12 @@ import type {
   NotebookHelperModuleEvidence,
   NotebookHelperEvidenceStatus,
   NotebookOutput,
-  NotebookRunFileEvidence,
   NotebookRunEnvironmentCapture,
   NotebookRunRecord,
   NotebookRunStatus,
   NotebookWorkingFile
 } from '../../shared/notebook'
+import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { NotebookRunRepository } from './repository'
 import { notebookLaneKey, type NotebookLaneIdentity } from './lane-identity'
 import { limitNotebookTerminalContent } from './content-limits'
@@ -33,7 +33,7 @@ type NotebookRunTerminalResult = {
   outputs: NotebookOutput[]
   truncated?: boolean
   workingFiles?: NotebookWorkingFile[]
-  fileEvidence?: NotebookRunFileEvidence
+  fileEvidence?: ExecutionFileEvidenceSummary
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
   environmentCapture?: NotebookRunEnvironmentCapture
@@ -65,8 +65,10 @@ const outputPlainText = (stdout: string, stderr: string): string[] =>
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-const unavailableFileEvidence = (): NotebookRunFileEvidence => ({
+const unavailableFileEvidence = (activityId: string): ExecutionFileEvidenceSummary => ({
   schemaVersion: 1,
+  activityId,
+  activityKind: 'notebook-run',
   state: 'unavailable',
   scientificOutputCount: 0,
   initialViewState: 'unavailable',
@@ -224,7 +226,7 @@ class NotebookRunTerminalizationOwner {
       // make the preview render it twice.
       outputs: limitedResult.outputs,
       workingFiles: limitedResult.workingFiles ?? [],
-      fileEvidence: limitedResult.fileEvidence ?? unavailableFileEvidence(),
+      fileEvidence: limitedResult.fileEvidence ?? unavailableFileEvidence(runningRun.runId),
       ...(limitedResult.truncated ? { truncated: true } : {}),
       environmentCapture,
       ...(limitedResult.kernelDispatched !== undefined

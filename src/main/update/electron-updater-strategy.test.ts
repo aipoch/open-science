@@ -437,6 +437,12 @@ describe('ElectronUpdaterStrategy', () => {
     // Hang the download until released, then mimic electron-updater rejecting a cancelled download.
     updater.runDownload = async (token) => {
       seenToken = token
+      updater.emit('download-progress', {
+        percent: 40,
+        transferred: 4000,
+        total: 10000,
+        bytesPerSecond: 12000
+      })
       await new Promise<void>((resolve) => (release = resolve))
       if (token?.cancelled) throw new Error('cancelled')
     }
@@ -454,8 +460,19 @@ describe('ElectronUpdaterStrategy', () => {
     }
 
     const downloading = strategy.download()
+    await vi.waitFor(() => {
+      expect(strategy.getStatus()).toMatchObject({
+        state: 'downloading',
+        downloadedBytes: 4000,
+        totalBytes: 10000
+      })
+    })
     const cancelled = await strategy.cancel()
     expect(cancelled.state).toBe('available')
+    expect(cancelled).not.toHaveProperty('progress')
+    expect(cancelled).not.toHaveProperty('downloadedBytes')
+    expect(cancelled).not.toHaveProperty('downloadProgress')
+    expect(cancelled.totalBytes).toBe(10000)
     expect(seenToken?.cancelled).toBe(true)
 
     // The rejected downloadUpdate must not clobber the reset status with an error.

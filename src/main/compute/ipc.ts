@@ -344,7 +344,8 @@ const createComputeHandlers = (
               connectionBroker,
               hostRepository: repository,
               jobRepository,
-              onJobUpdated: handleJobUpdated
+              onJobUpdated: handleJobUpdated,
+              storageRoot
             }),
           onJobUpdated
         )

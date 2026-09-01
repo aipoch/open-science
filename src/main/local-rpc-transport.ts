@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import {
   request as httpRequest,
   type RequestOptions as HttpRequestOptions,
@@ -29,7 +30,7 @@ type LocalRpcServerLogFields = {
 const namedPipePath = (name: string): string =>
   process.platform === 'win32'
     ? `\\\\.\\pipe\\open-science-${name}-${process.pid}-${randomUUID()}`
-    : join('/tmp', `os-${process.pid}-${randomUUID().slice(0, 8)}.sock`)
+    : join(realpathSync('/tmp'), `os-${process.pid}-${randomUUID().slice(0, 8)}.sock`)
 
 const listen = (server: Server, target: { host: string } | { socketPath: string }): Promise<void> =>
   new Promise((resolve, reject) => {

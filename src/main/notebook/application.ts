@@ -18,6 +18,7 @@ type NotebookApplicationDeps = Pick<
   | 'appVersion'
   | 'translate'
   | 'helperModuleCatalog'
+  | 'processSandbox'
 > &
   ProjectIdScope & {
     events: ApplicationEventPublisher

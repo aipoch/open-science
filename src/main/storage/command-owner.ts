@@ -50,7 +50,7 @@ import {
 import { readMigrationMarker } from './migration-marker'
 import { availableBytes, computeStorageUsage } from './usage'
 import { broadcastToRenderers } from '../renderer-broadcast'
-import { DATA_ROOT_DIRS, RELOCATABLE_DATA_DIRS } from './data-directories'
+import { MIGRATABLE_DATA_DIRS } from './data-directories'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
@@ -124,7 +124,9 @@ type StorageCommandOwnerDeps = {
 type StorageParentRequest = Readonly<{ parent: string }>
 type StorageRootRequest = Readonly<{ parent: string; markOnboarding?: boolean }>
 
-const NON_UPLOAD_DATA_ROOT_DIRS = DATA_ROOT_DIRS.filter((dir) => dir !== UPLOADS_DIR)
+const NON_UPLOAD_DATA_ROOT_DIRS = [...MIGRATABLE_DATA_DIRS, 'runtime'].filter(
+  (dir) => dir !== UPLOADS_DIR
+)
 
 const readDirectoryIfPresent = async (path: string): Promise<Dirent[] | undefined> => {
   try {
@@ -262,7 +264,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       const configRoot = resolveConfigRoot()
       const legacyInPlace = !storedSettings.dataRoot && samePath(dataRoot, configRoot)
       const hasUserData = await (deps.hasAnyExistingPath ?? hasAnyExistingPath)(
-        RELOCATABLE_DATA_DIRS.map((dir) => join(configRoot, dir))
+        MIGRATABLE_DATA_DIRS.map((dir) => join(configRoot, dir))
       )
       legacyDataMovePrompt =
         legacyInPlace && hasUserData && storedSettings.legacyDataMovePromptDismissedAt === undefined

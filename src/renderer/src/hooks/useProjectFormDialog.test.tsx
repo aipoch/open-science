@@ -250,4 +250,18 @@ describe('useProjectFormDialog', () => {
     expect(openProject).not.toHaveBeenCalled()
     hook.unmount()
   })
+
+  it('shows a fallback error when the update mutation resolves without a project', async () => {
+    setProjectsApi({ update: vi.fn().mockResolvedValue(undefined) })
+    const hook = renderHook()
+
+    act(() => hook.current().openEditDialog(createProject()))
+    await act(async () => submitForm(hook.current()))
+
+    expect(hook.current().dialogProps.open).toBe(true)
+    expect(hook.current().dialogProps.error).toBe('Could not save project.')
+    expect(hook.current().dialogProps.isSubmitting).toBe(false)
+    expect(openProject).not.toHaveBeenCalled()
+    hook.unmount()
+  })
 })

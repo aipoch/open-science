@@ -64,6 +64,9 @@ import {
   type MicromambaRunnerDeps
 } from './windows-micromamba-runner'
 import { defaultOperationChildLiveness, readProcessStartToken } from './operation-recovery'
+import { sandboxedPackageSpawn } from './package-process-sandbox'
+import type { InstallRequest } from './package-manager'
+import type { NotebookProcessSandbox } from './process-sandbox'
 import {
   isChildUnconfirmedError,
   captureMicromamba,
@@ -181,7 +184,8 @@ export type ProvisionerDeps = {
     // Called synchronously right before each spawn so the caller can (re)record the per-spawn intent.
     onBeforeSpawn?: () => void,
     cache?: MicromambaCache,
-    maxCacheRelativePath?: number
+    maxCacheRelativePath?: number,
+    sandboxRequest?: InstallRequest
   ) => Promise<void>
   // Runs micromamba's supported unused-package cleanup with MAMBA_ROOT_PREFIX bound to this provisioner's
   // root. Tarballs remain available for offline data-root relocation. The existing prefix-operation
@@ -345,6 +349,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
 
   constructor(private readonly deps: ProvisionerDeps) {}
 
+  private get platform(): NodeJS.Platform {
+    return this.deps.platform ?? process.platform
+  }
+
   private async resolveChannel(): Promise<string> {
     return typeof this.deps.channel === 'string' ? this.deps.channel : this.deps.channel()
   }
@@ -357,7 +365,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     const path = pkgsCache(this.deps.root)
     return {
       path,
-      lockKey: micromambaCacheLockKey(path, { platform: this.deps.platform })
+      lockKey: micromambaCacheLockKey(path, { platform: this.platform })
     }
   }
 
@@ -368,7 +376,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   private cacheLockKeys(cache: MicromambaCache): string[] {
     return [
       cache.lockKey,
-      micromambaCacheLockKey(pkgsCache(this.deps.root), { platform: this.deps.platform })
+      micromambaCacheLockKey(pkgsCache(this.deps.root), { platform: this.platform })
     ]
   }
 
@@ -396,10 +404,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     if (!bundle.packageSourceDir) return
     const legacyCache = pkgsCache(this.deps.root)
     const legacyLockKey = micromambaCacheLockKey(legacyCache, {
-      platform: this.deps.platform
+      platform: this.platform
     })
     const selectedLockKey = micromambaCacheLockKey(cache.path, {
-      platform: this.deps.platform
+      platform: this.platform
     })
     if (legacyLockKey === selectedLockKey) return
     await validateAndSeedPackIntoCache(bundle.packageSourceDir, bundle.lockPath, cache)
@@ -409,7 +417,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     spec: EnvSpec,
     bundle: FetchedBundle
   ): { cache: MicromambaCache; budget: PackPathBudget } {
-    const platform = this.deps.platform ?? process.platform
+    const platform = this.platform
     const budget =
       bundle.pathBudget ??
       (platform === 'win32'
@@ -424,7 +432,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
 
     const cache =
       this.deps.cache ?? selectMicromambaCache(this.deps.root, budget.maxCacheRelativePath)
-    const prefix = envPrefix(this.deps.root, spec.name)
+    const prefix = envPrefix(this.deps.root, spec.name, this.platform)
     if (
       cache.path.length + budget.maxCacheRelativePath > WINDOWS_MAX_USABLE_PATH ||
       prefix.length + budget.maxEnvRelativePath > WINDOWS_MAX_USABLE_PATH
@@ -449,7 +457,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       const recovered = await withExclusiveCacheLocks(this.cacheLockKeys(cache), () =>
         Promise.resolve(
           recoverWindowsMaxPathPackage(original, this.cacheRoots(cache), {
-            platform: this.deps.platform
+            platform: this.platform
           })
         )
       )
@@ -467,12 +475,11 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     cache: MicromambaCache,
     onProgress: (p: ProvisionProgress) => void
   ): Promise<void> {
-    if (this.legacyCacheCleanupComplete || (this.deps.platform ?? process.platform) !== 'win32')
-      return
+    if (this.legacyCacheCleanupComplete || this.platform !== 'win32') return
     const removed = await withExclusiveCacheLocks(this.cacheLockKeys(cache), () =>
       Promise.resolve(
         removeOverBudgetUrlPackages(pkgsCache(this.deps.root), {
-          platform: this.deps.platform
+          platform: this.platform
         })
       )
     )
@@ -754,7 +761,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     if (!bootTokenProvesReboot(recordedBoot, readBoot())) {
       // Platform-specific guidance: Linux can prove reboot via boot_id; macOS/Windows cannot, so we tell
       // the user the manual escape hatch (deleting the recovery metadata) rather than an impossible reboot.
-      const isLinux = process.platform === 'linux'
+      const isLinux = this.platform === 'linux'
       const guidance = isLinux
         ? 'Restart your computer, then try Reset again (a reboot proves the process is gone).'
         : 'The process cannot be verified as stopped on this platform. If you are certain no install is ' +
@@ -866,15 +873,19 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   status(): ProvisionStatus {
     const marker = readReadyMarker(this.deps.root)
     return {
-      pythonReady: pythonReady(this.deps.root, DEFAULT_ENV_VERSION),
-      rReady: rReady(this.deps.root),
+      pythonReady: pythonReady(this.deps.root, DEFAULT_ENV_VERSION, this.platform),
+      rReady: rReady(this.deps.root, DEFAULT_ENV_VERSION, this.platform),
       version: marker?.defaultEnvVersion ?? 0,
       provisioning: this.provisioning,
       bundleSource: this.deps.bundleSource,
       // Surface a recovery quarantine so the UI can offer Reset even when the interpreter/marker still
       // read as ready (recovery blocks the prefix in memory without touching the marker).
-      pythonRecoveryBlocked: this.deps.isPrefixBlocked?.(envPrefix(this.deps.root, DEFAULT_PY_ENV)),
-      rRecoveryBlocked: this.deps.isPrefixBlocked?.(envPrefix(this.deps.root, DEFAULT_R_ENV))
+      pythonRecoveryBlocked: this.deps.isPrefixBlocked?.(
+        envPrefix(this.deps.root, DEFAULT_PY_ENV, this.platform)
+      ),
+      rRecoveryBlocked: this.deps.isPrefixBlocked?.(
+        envPrefix(this.deps.root, DEFAULT_R_ENV, this.platform)
+      )
     }
   }
 
@@ -888,7 +899,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   }
 
   private cleanupLegacyDefaultPrefix(name: string): void {
-    if ((this.deps.platform ?? process.platform) !== 'win32') return
+    if (this.platform !== 'win32') return
     if (name !== DEFAULT_PY_ENV && name !== DEFAULT_R_ENV) return
     const legacy = legacyDefaultEnvPrefix(this.deps.root, name)
     if (envPrefix(this.deps.root, name, 'win32') === legacy) return
@@ -904,7 +915,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   private markerPrefixDirectory(
     name: typeof DEFAULT_PY_ENV | typeof DEFAULT_R_ENV
   ): string | undefined {
-    const platform = this.deps.platform ?? process.platform
+    const platform = this.platform
     return platform === 'win32' ? basename(envPrefix(this.deps.root, name, platform)) : undefined
   }
 
@@ -955,7 +966,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     const onProgress = withLanguage(rawProgress, 'r')
     // R is lazy, but once present it has its own version marker. A legacy/stale R prefix is upgraded
     // from the current explicit pack instead of being accepted merely because R.exe exists.
-    if (rMaterialized(this.deps.root) && !rReady(this.deps.root)) {
+    if (
+      rMaterialized(this.deps.root, this.platform) &&
+      !rReady(this.deps.root, DEFAULT_ENV_VERSION, this.platform)
+    ) {
       await this.upgradeOrRebuildR(onProgress)
     } else {
       await this.materialize(DEFAULT_R_SPEC, onProgress)
@@ -977,7 +991,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     try {
       // Refuse to write the python prefix if recovery flagged it possibly-live — an additive
       // `install --file` still writes into it, so it must not race a survivor either.
-      this.assertPrefixWritable(envPrefix(this.deps.root, DEFAULT_PY_ENV))
+      this.assertPrefixWritable(envPrefix(this.deps.root, DEFAULT_PY_ENV, this.platform))
       // Apply the exact published baseline to the existing env. `install --file --offline` preserves
       // extra user packages while avoiding a repodata solve for the platform-maintained floor.
       onProgress({ phase: 'upgrade', message: 'Updating default packages…', progress: 0.1 })
@@ -989,8 +1003,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       // R is upgraded additively only if already materialized (lazy; spec §6.5) AND not recovery-blocked
       // — a blocked R prefix skips its upgrade rather than failing the (already-applied) python upgrade.
       if (
-        rMaterialized(this.deps.root) &&
-        !this.deps.isPrefixBlocked?.(envPrefix(this.deps.root, DEFAULT_R_ENV))
+        rMaterialized(this.deps.root, this.platform) &&
+        !this.deps.isPrefixBlocked?.(envPrefix(this.deps.root, DEFAULT_R_ENV, this.platform))
       ) {
         onProgress({ phase: 'upgrade-r', message: 'Updating R packages…', progress: 0.6 })
         await this.withEnvPrefixLock(DEFAULT_R_ENV, () => this.upgradeOrRebuildR(onProgress))
@@ -1020,7 +1034,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   ): Promise<void> {
     const onProgress = withLanguage(rawProgress, lang)
     const spec = lang === 'r' ? DEFAULT_R_SPEC : DEFAULT_PYTHON_SPEC
-    const prefix = envPrefix(this.deps.root, spec.name)
+    const prefix = envPrefix(this.deps.root, spec.name, this.platform)
     // Hold the env lock across the WHOLE destructive cycle (quarantine clear / block check → rm →
     // rebuild), so a package install into this env can't slip in between the rm and the rebuild and
     // write into a half-deleted prefix. The rebuild calls the LOCK-FREE do* variants (not the public
@@ -1048,7 +1062,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           }
           // Manual repair / corruption path (spec §6.3): delete the env prefix then re-provision fresh.
           // For python also clear the marker so a partially-deleted state cannot read as ready.
-          rmSync(envPrefix(this.deps.root, spec.name), { recursive: true, force: true })
+          rmSync(envPrefix(this.deps.root, spec.name, this.platform), {
+            recursive: true,
+            force: true
+          })
           if (lang === 'python') {
             rmSync(readyMarkerPath(this.deps.root), { force: true })
             await this.doProvisionPython(onProgress)
@@ -1116,17 +1133,17 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
         // the same key): restore rm -rf's + rebuilds the prefix, and the startup gate runs async with
         // IPC already registered, so without one shared lock a restore could race an installer mid-write.
         await this.withEnvPrefixLock(name, async () => {
-          const prefix = envPrefix(this.deps.root, name)
+          const prefix = envPrefix(this.deps.root, name, this.platform)
           // Skip (leave the lock for a later launch) if recovery flagged this prefix possibly-live: the
           // restore path rm -rf's a broken partial and recreates, which must not race an orphan writer.
           // Other envs still restore; a later restart re-checks the pid and unblocks.
           if (this.deps.isPrefixBlocked?.(prefix)) return
           // A prior restore may have materialized the interpreter before being interrupted. Verify it
           // before consuming the lock; a broken partial prefix is removed and rebuilt below.
-          const existingBin = existsSync(pythonBin(prefix))
-            ? pythonBin(prefix)
-            : existsSync(rBin(prefix))
-              ? rBin(prefix)
+          const existingBin = existsSync(pythonBin(prefix, this.platform))
+            ? pythonBin(prefix, this.platform)
+            : existsSync(rBin(prefix, this.platform))
+              ? rBin(prefix, this.platform)
               : undefined
           if (existingBin) {
             let verified = false
@@ -1203,7 +1220,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
                   : []
               }
             )
-            const bin = existsSync(pythonBin(prefix)) ? pythonBin(prefix) : rBin(prefix)
+            const bin = existsSync(pythonBin(prefix, this.platform))
+              ? pythonBin(prefix, this.platform)
+              : rBin(prefix, this.platform)
             await this.deps.verify(bin, prefix)
             stampDefaultMarkerBeforeLock(name) // marker BEFORE lock delete (no data-loss window)
             rmSync(join(dir, file), { force: true })
@@ -1227,7 +1246,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   async createNamedEnvironment(
     name: string,
     language: NotebookLanguage,
-    packages: string[] = []
+    packages: string[] = [],
+    request?: Pick<InstallRequest, 'projectId' | 'sessionId' | 'workspaceCwd'>
   ): Promise<EnvironmentInfo> {
     const flagLike = packages.find((pkg) => pkg.trim().startsWith('-'))
     if (flagLike) {
@@ -1237,9 +1257,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     }
     const base = language === 'python' ? BASE_PYTHON_PACKAGES : BASE_R_PACKAGES
     const pkgs = [...new Set([...base, ...packages])]
-    const prefix = envPrefix(this.deps.root, name)
+    const prefix = envPrefix(this.deps.root, name, this.platform)
     if (
-      (this.deps.platform ?? process.platform) === 'win32' &&
+      this.platform === 'win32' &&
       prefix.length + DEFAULT_MAX_ENV_RELATIVE_PATH > WINDOWS_MAX_USABLE_PATH
     ) {
       throw new Error(
@@ -1247,7 +1267,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           'choose a shorter name or data-root path.'
       )
     }
-    const bin = language === 'python' ? pythonBin(prefix) : rBin(prefix)
+    const bin =
+      language === 'python' ? pythonBin(prefix, this.platform) : rBin(prefix, this.platform)
     // Refuse if recovery flagged this named prefix possibly-live (an orphan create/install may still
     // be writing it) — the service also gates this, but self-guarding covers every caller.
     this.assertPrefixWritable(prefix)
@@ -1288,7 +1309,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
               onChild,
               onBeforeSpawn,
               this.cache,
-              DEFAULT_MAX_CACHE_RELATIVE_PATH
+              DEFAULT_MAX_CACHE_RELATIVE_PATH,
+              {
+                language,
+                packages,
+                ...request
+              }
             )
           })
         )
@@ -1326,12 +1352,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     const infos: EnvironmentInfo[] = []
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
-      const platform = this.deps.platform ?? process.platform
+      const platform = this.platform
       const name = logicalEnvNameFromDirectory(entry.name)
       const prefix = join(envsDir, entry.name)
       if (prefix !== envPrefix(this.deps.root, name, platform)) continue
-      const isPython = existsSync(pythonBin(prefix))
-      const isR = !isPython && existsSync(rBin(prefix))
+      const isPython = existsSync(pythonBin(prefix, platform))
+      const isR = !isPython && existsSync(rBin(prefix, platform))
       if (!isPython && !isR) continue
       infos.push({
         name,
@@ -1350,16 +1376,16 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     if (name === DEFAULT_PY_ENV || name === DEFAULT_R_ENV) {
       throw new Error(`Refusing to remove the default environment "${name}"`)
     }
-    rmSync(envPrefix(this.deps.root, name), { recursive: true, force: true })
+    rmSync(envPrefix(this.deps.root, name, this.platform), { recursive: true, force: true })
   }
 
   // Keeps a healthy legacy R prefix additive, but replaces an invalid partial prefix from the lock.
   private async upgradeOrRebuildR(onProgress: (p: ProvisionProgress) => void): Promise<void> {
-    const prefix = envPrefix(this.deps.root, DEFAULT_R_ENV)
+    const prefix = envPrefix(this.deps.root, DEFAULT_R_ENV, this.platform)
     // Refuse before the rmSync-and-rebuild branch below can delete a possibly-live prefix.
     this.assertPrefixWritable(prefix)
     try {
-      await this.deps.verify(rBin(prefix), prefix)
+      await this.deps.verify(rBin(prefix, this.platform), prefix)
     } catch {
       // A failed create can leave R.exe before the prefix is runnable. Do not apply an additive
       // upgrade onto unknown partial state; clear it and recreate exactly from the published lock.
@@ -1388,8 +1414,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           'in OPEN_SCIENCE_ENV_BUNDLE_DIR.'
       )
     }
-    const prefix = envPrefix(this.deps.root, spec.name)
-    const bin = spec.language === 'python' ? pythonBin(prefix) : rBin(prefix)
+    const prefix = envPrefix(this.deps.root, spec.name, this.platform)
+    const bin =
+      spec.language === 'python' ? pythonBin(prefix, this.platform) : rBin(prefix, this.platform)
     // Journal the upgrade (child PID + prefix) so a crash mid-install is recovered: the prefix is
     // reconciled only once the survivor is provably gone, else it is blocked. Shared pkgs cache lock (+
     // MAX_PATH recovery):
@@ -1477,11 +1504,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     spec: EnvSpec,
     onProgress: (p: ProvisionProgress) => void
   ): Promise<void> {
-    const prefix = envPrefix(this.deps.root, spec.name)
+    const prefix = envPrefix(this.deps.root, spec.name, this.platform)
     // Refuse to touch a prefix recovery flagged possibly-live, even for the idempotent verify path
     // below: an orphan may be mid-write, so treating a half-built interpreter as "ready" is unsafe.
     this.assertPrefixWritable(prefix)
-    const bin = spec.language === 'python' ? pythonBin(prefix) : rBin(prefix)
+    const bin =
+      spec.language === 'python' ? pythonBin(prefix, this.platform) : rBin(prefix, this.platform)
     // Idempotent: if the interpreter is already on disk the env is materialized, so skip fetch+create.
     // This makes a duplicate/concurrent provision (e.g. the UI R-tab and an on-demand agent run both
     // asking for default-r) a no-op instead of a `create -p <existing prefix>` error. repair() deletes
@@ -1601,10 +1629,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           // re-seed and retry the create ONCE. A Windows native access violation is also recoverable:
           // it carries no stderr signature, and a transient crash may leave only a partial prefix after
           // micromamba already removed its cache leaf. Other failures still surface without retrying.
-          const windowsAccessViolation = isWindowsAccessViolationError(
-            error,
-            this.deps.platform ?? process.platform
-          )
+          const windowsAccessViolation = isWindowsAccessViolationError(error, this.platform)
           if (
             this.abort?.signal.aborted ||
             (!windowsAccessViolation &&
@@ -1747,12 +1772,16 @@ export type StartupAction = 'ready' | 'upgrade' | 'repair' | 'fresh'
 // Decides what the app-startup gate must do. 'upgrade' is chosen before 'repair' so a healthy but
 // outdated env is upgraded additively (spec §6.3) rather than nuked; 'repair' covers a corrupt env
 // (marker without bin, or a residual env dir). Empty root → 'fresh'.
-export const planStartupAction = (root: string, expectedVersion: number): StartupAction => {
-  if (pythonReady(root, expectedVersion)) return 'ready'
+export const planStartupAction = (
+  root: string,
+  expectedVersion: number,
+  platform: NodeJS.Platform = process.platform
+): StartupAction => {
+  if (pythonReady(root, expectedVersion, platform)) return 'ready'
   const marker = readReadyMarker(root)
-  const pyBinPresent = existsSync(pythonBin(envPrefix(root, DEFAULT_PY_ENV)))
+  const pyBinPresent = existsSync(pythonBin(envPrefix(root, DEFAULT_PY_ENV, platform), platform))
   if (marker && pyBinPresent) return 'upgrade'
-  if (needsRepair(root, expectedVersion)) return 'repair'
+  if (needsRepair(root, expectedVersion, platform)) return 'repair'
   return 'fresh'
 }
 
@@ -1763,6 +1792,7 @@ export const planStartupAction = (root: string, expectedVersion: number): Startu
 export type ProductionProvisionerOptions = {
   root: string
   channel: string | (() => Promise<string>)
+  processSandbox?: NotebookProcessSandbox
   micromamba?: MicromambaRunnerDeps
   // PEM CA bundle path (enterprise TLS proxy) exported into micromamba's env so an ONLINE provision /
   // named-env create verifies HTTPS against it. Offline bundle creates need no network, so this only
@@ -1854,7 +1884,15 @@ export const createProductionProvisioner = (
       await runner.resolve()
       return fetchBundle(...args)
     },
-    runArgv: async (argv, signal, onChild, onBeforeSpawn, runCache, maxCacheRelativePath) => {
+    runArgv: async (
+      argv,
+      signal,
+      onChild,
+      onBeforeSpawn,
+      runCache,
+      maxCacheRelativePath,
+      sandboxRequest
+    ) => {
       const selected = await runner.resolve()
       const selectedArgv = [selected, ...argv.slice(1)]
       if (deps.runArgv) {
@@ -1868,24 +1906,35 @@ export const createProductionProvisioner = (
         )
       }
       const workloadCacheEnv = prepareNotebookWorkloadCache(opts.root)
+      const env = {
+        ...micromambaSpawnEnv(
+          opts.root,
+          opts.caBundle,
+          {
+            selectCache: () =>
+              runCache ??
+              selectMicromambaCache(
+                opts.root,
+                maxCacheRelativePath ?? DEFAULT_MAX_CACHE_RELATIVE_PATH
+              )
+          },
+          maxCacheRelativePath ?? DEFAULT_MAX_CACHE_RELATIVE_PATH
+        ),
+        ...workloadCacheEnv
+      }
+      if (opts.processSandbox && sandboxRequest) {
+        const result = await sandboxedPackageSpawn({
+          processSandbox: opts.processSandbox,
+          request: sandboxRequest,
+          runtimeRoot: opts.root,
+          storageRoot: dirname(opts.root)
+        })(selectedArgv[0]!, selectedArgv.slice(1), env, onChild, onBeforeSpawn)
+        if (result.code !== 0) throw new Error(result.stderr || 'micromamba exited unsuccessfully')
+        return
+      }
       return (deps.runMicromamba ?? runMicromamba)(
         selectedArgv,
-        {
-          ...micromambaSpawnEnv(
-            opts.root,
-            opts.caBundle,
-            {
-              selectCache: () =>
-                runCache ??
-                selectMicromambaCache(
-                  opts.root,
-                  maxCacheRelativePath ?? DEFAULT_MAX_CACHE_RELATIVE_PATH
-                )
-            },
-            maxCacheRelativePath ?? DEFAULT_MAX_CACHE_RELATIVE_PATH
-          ),
-          ...workloadCacheEnv
-        },
+        env,
         signal,
         onChild,
         onBeforeSpawn

@@ -427,7 +427,7 @@ describe('dispatchJob', () => {
         })
     }
     const lease = leaseFromRunners(runner)
-    lease.redactSensitiveOutputs = vi.fn(async (values) =>
+    lease.redactSensitiveOutputs = vi.fn(async (values: readonly string[]) =>
       values.map((value) => value.replaceAll(secret, '[redacted]'))
     )
     const { repo, transition } = makeJobRepo(job)
@@ -562,6 +562,64 @@ describe('dispatchJob', () => {
       })
     )
     expect(JSON.stringify(transition.mock.calls)).not.toContain('Connection refused')
+  })
+
+  it('keeps published dispatch-error evidence when its database update fails', async () => {
+    const storageRoot = mkdtempSync(join(tmpdir(), 'open-science-dispatch-evidence-'))
+    launcherFixtures.push(storageRoot)
+    let current = makeJob()
+    const repository = {
+      get: vi.fn(async () => current),
+      updateIfStatus: vi.fn(
+        async (_id: string, _expectedStatuses: unknown, updates: Partial<ComputeJob>) => {
+          current = { ...current, ...updates }
+          return current
+        }
+      ),
+      update: vi.fn(async () => {
+        throw new Error('simulated database update failure')
+      })
+    } as unknown as ComputeJobRepository
+    const runner = makeSshRunner({
+      exitCode: 255,
+      stdout: '',
+      stderr: 'Connection refused',
+      truncated: false,
+      timedOut: false
+    })
+
+    await dispatchJob(current.job_id, {
+      connectionBroker: brokerFromRunners(runner),
+      hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
+      jobRepository: repository,
+      storageRoot
+    })
+
+    expect(
+      readFileSync(
+        join(
+          storageRoot,
+          'execution-file-evidence',
+          current.project_id,
+          current.session_id,
+          `activity-${current.job_id}`,
+          'evidence.json'
+        ),
+        'utf8'
+      )
+    ).toContain('remote-output-not-harvested')
+    expect(
+      readFileSync(
+        join(
+          storageRoot,
+          'execution-file-evidence',
+          current.project_id,
+          current.session_id,
+          `receipt-${current.job_id}.json`
+        ),
+        'utf8'
+      )
+    ).toContain('"phase": "published"')
   })
 
   it('classifies returned authentication stderr without persisting transport output', async () => {
@@ -734,6 +792,54 @@ describe('stageInputs', () => {
 })
 
 describe('dispatchJob — staging integration', () => {
+  it('resolves frozen input paths against the current data root after relocation', async () => {
+    const storageRoot = join(tmpdir(), 'relocated-data-root')
+    const job = makeJob({
+      input_manifest: JSON.stringify([
+        {
+          kind: 'upload',
+          localPath: '$DATA/execution-file-evidence/proj-1/sess-1/staging-job-1/blobs/sha256-a',
+          dstFilename: 'a.csv',
+          label: 'a.csv'
+        }
+      ])
+    })
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '123\n',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async () => ({ exitCode: 0, stderr: '', timedOut: false }))
+    }
+    const { repo } = makeJobRepo(job)
+
+    await dispatchJob(job.job_id, {
+      connectionBroker: brokerFromRunners(runner, scpRunner),
+      hostRepository: makeHostRepo(sampleHost()) as unknown as ComputeHostRepository,
+      jobRepository: repo as unknown as ComputeJobRepository,
+      storageRoot
+    })
+
+    const [, args] = (scpRunner.copy as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      string[]
+    ]
+    expect(args).toContain(
+      join(
+        storageRoot,
+        'execution-file-evidence',
+        'proj-1',
+        'sess-1',
+        'staging-job-1',
+        'blobs',
+        'sha256-a'
+      )
+    )
+  })
+
   it('transitions to dispatch_failed when staging scp fails', async () => {
     // Job with a manifest containing an upload entry.
     const job = makeJob({

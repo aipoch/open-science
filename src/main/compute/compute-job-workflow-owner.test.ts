@@ -1,15 +1,20 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 
 import type { ComputeHost } from '../../shared/compute'
-import { ComputeJobWorkflowOwner, resolveInputs } from './compute-job-workflow-owner'
+import { decodeDataPath } from '../storage/data-path'
+import {
+  ComputeJobWorkflowOwner,
+  createComputeArtifactResolver,
+  resolveInputs
+} from './compute-job-workflow-owner'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
-import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
+import type { ComputeConnectionBrokerAcquirer, ComputeConnectionLease } from './connection-broker'
 import type { ConcurrencyManager } from './concurrency-manager'
 import { sharedDispatchTracker } from './dispatch-tracker'
 import { JobPoller } from './job-poller'
@@ -98,17 +103,20 @@ vi.mock('./ssh-runner', async (importOriginal) => {
 })
 
 const brokerFromRunner = (runner: SshRunner): ComputeConnectionBrokerAcquirer => ({
-  acquire: vi.fn(async () => ({
-    run: (command, options) => runner.run(fakeTarget, command, options),
-    upload: vi.fn(async () => undefined),
-    download: vi.fn(async () => ({
-      exitCode: 0,
-      stderr: '',
-      timedOut: false,
-      bytesWritten: 0,
-      exceeded: false
-    }))
-  }))
+  acquire: vi.fn(
+    async () =>
+      ({
+        run: (command, options) => runner.run(fakeTarget, command, options),
+        upload: vi.fn(async () => undefined),
+        download: vi.fn(async () => ({
+          exitCode: 0,
+          stderr: '',
+          timedOut: false,
+          bytesWritten: 0,
+          exceeded: false
+        }))
+      }) satisfies ComputeConnectionLease
+  )
 })
 
 const makeOwner = (
@@ -233,6 +241,42 @@ const makeJobRepo = (
 }
 
 describe('ComputeJobWorkflowOwner.submitJob', () => {
+  it('does not create a job when cancellation wins after approval', async () => {
+    const controller = new AbortController()
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '123',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo, createCalls } = makeJobRepo()
+    const { repo: hostRepo } = makeRepo()
+    const broker = {
+      request: vi.fn(),
+      requestWithContext: vi.fn(async () => {
+        controller.abort()
+        return 'once' as const
+      }),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = makeOwner(runner, hostRepo, broker, jobRepo)
+
+    await expect(
+      service.submitJob(
+        'ssh:biowulf',
+        'cancelled submission',
+        'echo hi',
+        {},
+        { sessionId: 's1', projectId: 'p1' },
+        controller.signal
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(createCalls).not.toHaveBeenCalled()
+    expect(runner.run).not.toHaveBeenCalled()
+  })
+
   it('keeps an unexpected live dispatch failure recoverable when launch state is unknown', async () => {
     const jobs = new Map<string, import('../../shared/compute').ComputeJob>()
     const runner: SshRunner = { run: vi.fn(() => Promise.reject(new Error('transport crashed'))) }
@@ -416,6 +460,108 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({ session_id: 'sess-1', status: 'submitted' })
     )
+  })
+
+  it('preserves frozen inputs when row creation commits before rejecting', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'compute-ambiguous-create-'))
+    const workspaceRoot = join(storageRoot, 'workspace')
+    await mkdir(workspaceRoot)
+    await writeFile(join(workspaceRoot, 'input.csv'), 'frozen input')
+    const jobs = new Map<string, import('../../shared/compute').ComputeJob>()
+    const { repo: jobRepo } = makeJobRepo(jobs)
+    const create = jobRepo.create.bind(jobRepo)
+    jobRepo.create = vi.fn(async (request) => {
+      await create(request)
+      throw new Error('simulated ambiguous create failure')
+    })
+    const { repo } = makeRepo()
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const broker = {
+      request: vi.fn(),
+      requestWithContext: vi.fn(async () => 'once' as const),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    try {
+      await expect(
+        makeOwner(runner, repo, broker, jobRepo, undefined, undefined, storageRoot).submitJob(
+          'ssh:biowulf',
+          'ambiguous create',
+          'cat input.csv',
+          {
+            inputs: [{ src: 'input.csv', dst_filename: 'input.csv' }],
+            workspaceCwd: workspaceRoot
+          },
+          { sessionId: 'session-1', projectId: 'project-1' }
+        )
+      ).rejects.toThrow('simulated ambiguous create failure')
+
+      const [persisted] = [...jobs.values()]
+      expect(persisted).toBeDefined()
+      const manifest = JSON.parse(persisted!.input_manifest!) as Array<{ localPath: string }>
+      expect(manifest[0]!.localPath).toMatch(/^\$DATA\//u)
+      await expect(
+        readFile(decodeDataPath(manifest[0]!.localPath, storageRoot)!, 'utf8')
+      ).resolves.toBe('frozen input')
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('cleans frozen inputs when row creation is confirmed absent', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'compute-rejected-create-'))
+    const workspaceRoot = join(storageRoot, 'workspace')
+    await mkdir(workspaceRoot)
+    await writeFile(join(workspaceRoot, 'input.csv'), 'uncommitted input')
+    const { repo: jobRepo } = makeJobRepo()
+    let frozenPath: string | undefined
+    jobRepo.create = vi.fn(async (request) => {
+      const manifest = JSON.parse(request.inputManifest!) as Array<{ localPath: string }>
+      frozenPath = manifest[0]!.localPath
+      throw new Error('simulated rejected create')
+    })
+    const { repo } = makeRepo()
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const broker = {
+      request: vi.fn(),
+      requestWithContext: vi.fn(async () => 'once' as const),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    try {
+      await expect(
+        makeOwner(runner, repo, broker, jobRepo, undefined, undefined, storageRoot).submitJob(
+          'ssh:biowulf',
+          'rejected create',
+          'cat input.csv',
+          {
+            inputs: [{ src: 'input.csv', dst_filename: 'input.csv' }],
+            workspaceCwd: workspaceRoot
+          },
+          { sessionId: 'session-1', projectId: 'project-1' }
+        )
+      ).rejects.toThrow('simulated rejected create')
+
+      expect(frozenPath).toBeDefined()
+      expect(frozenPath).toMatch(/^\$DATA\//u)
+      await expect(
+        readFile(decodeDataPath(frozenPath!, storageRoot)!, 'utf8')
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true })
+    }
   })
 
   it('throws approval_denied and does NOT create a DB row when approval is denied', async () => {
@@ -765,6 +911,74 @@ describe('resolveInputs — artifact source', () => {
     )
   })
 
+  it('binds absolute input resolution to the submitting Project and Session', async () => {
+    const resolver = {
+      resolveArtifactPath: vi.fn(async () => '/storage/notebook-inputs/project/session/content')
+    }
+    const scope = { projectId: 'project-1', sessionId: 'session-1', providerId: 'ssh:cluster' }
+
+    await resolveInputs(
+      [{ src: '/storage/notebook-inputs/project/session/content', dst_filename: 'input.csv' }],
+      undefined,
+      resolver,
+      scope
+    )
+
+    expect(resolver.resolveArtifactPath).toHaveBeenCalledWith(
+      '/storage/notebook-inputs/project/session/content',
+      scope
+    )
+  })
+
+  it('hands a staged host.artifactPath file to Compute without exposing another Session', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'compute-notebook-input-'))
+    const stagedPath = join(
+      storageRoot,
+      'notebook-inputs',
+      'project-1',
+      'session-1',
+      'artifact-version',
+      'a'.repeat(64),
+      'content'
+    )
+    const legacyPath = join(storageRoot, 'artifacts', 'legacy.csv')
+    const managedResolver = vi.fn(async (path: string) => {
+      if (path === legacyPath) return path
+      throw new Error('Managed artifact path is outside the artifact store.')
+    })
+    try {
+      await mkdir(join(stagedPath, '..'), { recursive: true })
+      await mkdir(join(legacyPath, '..'), { recursive: true })
+      await Promise.all([writeFile(stagedPath, 'staged'), writeFile(legacyPath, 'legacy')])
+      const resolvedStagedPath = await realpath(stagedPath)
+      const resolver = createComputeArtifactResolver(storageRoot, managedResolver)
+      const scope = { projectId: 'project-1', sessionId: 'session-1', providerId: 'ssh:cluster' }
+
+      await expect(
+        resolveInputs([{ src: stagedPath, dst_filename: 'input.csv' }], undefined, resolver, scope)
+      ).resolves.toMatchObject({
+        entries: [{ kind: 'upload', localPath: resolvedStagedPath, dstFilename: 'input.csv' }]
+      })
+      await expect(
+        resolveInputs([{ src: stagedPath, dst_filename: 'input.csv' }], undefined, resolver, {
+          ...scope,
+          sessionId: 'session-2'
+        })
+      ).rejects.toThrow('not staged for the submitting Project and Session')
+      await expect(
+        resolveInputs([{ src: legacyPath, dst_filename: 'legacy.csv' }], undefined, resolver, scope)
+      ).rejects.toThrow('not staged for the submitting Project and Session')
+      expect(managedResolver).not.toHaveBeenCalled()
+      await expect(
+        resolveInputs([{ src: legacyPath, dst_filename: 'legacy.csv' }], undefined, resolver)
+      ).resolves.toMatchObject({
+        entries: [{ kind: 'upload', localPath: legacyPath, dstFilename: 'legacy.csv' }]
+      })
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+  })
+
   it('throws when artifactResolver is missing for an absolute (artifact) src', async () => {
     await expect(
       resolveInputs(
@@ -831,6 +1045,19 @@ describe('resolveInputs — dst_filename validation', () => {
     await expect(
       resolveInputs([{ src: 'data.csv', dst_filename: '' }], '/workspace', undefined)
     ).rejects.toThrow(/bare filename/)
+  })
+
+  it('rejects duplicate destinations across upload and symlink inputs', async () => {
+    await expect(
+      resolveInputs(
+        [
+          { src: 'data.csv', dst_filename: 'input.csv' },
+          { remote_path: '/shared/reference.csv', dst_filename: 'input.csv' }
+        ],
+        '/workspace',
+        undefined
+      )
+    ).rejects.toThrow(/dst_filename must be unique/)
   })
 })
 

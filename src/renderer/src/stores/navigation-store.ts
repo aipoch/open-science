@@ -108,7 +108,7 @@ const isActiveSession = (projectId: string, sessionId: string): boolean =>
 
 // Owns which top-level screen is visible and which project the workspace is scoped to. Session
 // selection stays in the session store; this store coordinates it when navigating.
-export const useNavigationStore = create<NavigationStore>((set) => ({
+export const useNavigationStore = create<NavigationStore>((set, get) => ({
   view: 'home',
   activeProjectId: undefined,
   userNavigationRevision: 0,
@@ -171,7 +171,7 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
       .sessions.find((candidate) => candidate.id === sessionId)
 
     if (!session) return
-    useNavigationStore.getState().openSession(session.projectId, session.id, origin)
+    get().openSession(session.projectId, session.id, origin)
   },
 
   // Opens a project's New Conversation draft carrying a `/customize` prefill. Clears session selection
@@ -220,7 +220,7 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
     ),
 
   consumeArtifactMention: () => {
-    const file = useNavigationStore.getState().pendingArtifactMention
+    const file = get().pendingArtifactMention
     set({ pendingArtifactMention: undefined })
     return file
   },

@@ -141,7 +141,7 @@ Utilice uno de estos prefijos de tipo estándar:
 - Coincidir con el estilo del código circundante: nombres, estructura y modismos.
 - El formato está a cargo de Prettier. `npm run format` es opcional; revise sus cambios antes de confirmar porque reescribe archivos en todo el repositorio.
 - ESLint aplica las reglas de lint; ejecute `npm run lint`.
-- Envuelva las cadenas visibles para el usuario con la función de traducción `t()` de `react-i18next`. Agregue las traducciones correspondientes al espacio de nombres `renderer` en `src/shared/i18n/locales/es.json` (español), `src/shared/i18n/locales/fr.json` (francés), `src/shared/i18n/locales/ja.json` (japonés), `src/shared/i18n/locales/ko.json` (coreano), `src/shared/i18n/locales/ru.json` (ruso), `src/shared/i18n/locales/zh-Hans.json` (chino simplificado) y `src/shared/i18n/locales/zh-Hant.json` (chino tradicional). Utilice el texto en inglés como clave de traducción. Mantenga los comentarios del código y la documentación en inglés.
+- Envuelva las cadenas visibles para el usuario con la función de traducción `t()` de `react-i18next`. Agregue las traducciones correspondientes al espacio de nombres `renderer` en `src/shared/i18n/locales/de.json` (alemán), `src/shared/i18n/locales/es.json` (español), `src/shared/i18n/locales/fr.json` (francés), `src/shared/i18n/locales/ja.json` (japonés), `src/shared/i18n/locales/ko.json` (coreano), `src/shared/i18n/locales/pt-BR.json` (portugués de Brasil), `src/shared/i18n/locales/ru.json` (ruso), `src/shared/i18n/locales/zh-Hans.json` (chino simplificado) y `src/shared/i18n/locales/zh-Hant.json` (chino tradicional). Utilice el texto en inglés como clave de traducción. Mantenga los comentarios del código y la documentación en inglés.
 
 ## Política de verificación
 

@@ -71,7 +71,10 @@ const assertValidAccess = (access: GrantedLocalRootAccess): void => {
 export class LocalFsService {
   // The granted-roots store is optional so existing call sites/tests that only browse keep working;
   // granted-root operations fail loudly when persistence is not wired.
-  constructor(private readonly grantedRootsStore?: GrantedLocalRootsStore) {}
+  constructor(
+    private readonly grantedRootsStore?: GrantedLocalRootsStore,
+    private readonly beforeGrantedRootsChange: () => Promise<void> = async () => undefined
+  ) {}
 
   // Absolute paths for the browser's initial location and "Go to → Home".
   getRoots(): LocalRoots {
@@ -155,6 +158,7 @@ export class LocalFsService {
         throw new Error('The home folder is already browsable; it cannot be granted.')
       throw new Error('Local path must be absolute.')
     }
+    await this.beforeGrantedRootsChange()
     // De-dupe on the resolved path: re-granting an already granted folder updates its access and
     // keeps the existing id (the store upserts by path).
     await store.upsertByPath({
@@ -175,6 +179,7 @@ export class LocalFsService {
     const roots = await store.list()
     if (!roots.some((root) => root.id === request.id))
       throw new Error(`Unknown granted root: ${request.id}`)
+    await this.beforeGrantedRootsChange()
     await store.setAccess(request.id, request.access)
     return store.list()
   }
@@ -182,6 +187,7 @@ export class LocalFsService {
   // Revokes one granted root and returns the updated list.
   async removeGrantedRoot(request: RemoveGrantedLocalRootRequest): Promise<GrantedLocalRoot[]> {
     const store = this.requireGrantedRootsStore()
+    await this.beforeGrantedRootsChange()
     await store.remove(request.id)
     return store.list()
   }

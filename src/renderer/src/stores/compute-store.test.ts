@@ -34,6 +34,17 @@ const setComputeApi = (api: Partial<Window['api']['compute']>): void => {
   } as never
 }
 
+const deferred = <T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+} => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 beforeEach(() => {
   useComputeStore.setState(createInitialComputeState())
 })
@@ -123,6 +134,58 @@ describe('compute store', () => {
       'ssh:lab-gpu',
       'ssh:old'
     ])
+  })
+
+  it('does not let a stale host load erase a host created while it was in flight', async () => {
+    const staleLoad = deferred<ComputeHost[]>()
+    const created = createHost({ providerId: 'ssh:new', createdAt: 50 })
+    setComputeApi({
+      list: vi.fn().mockReturnValue(staleLoad.promise),
+      create: vi.fn().mockResolvedValue(created)
+    })
+
+    const load = useComputeStore.getState().loadHosts()
+    await useComputeStore.getState().createHost({ sshAlias: 'new' })
+    staleLoad.resolve([])
+    await load
+
+    expect(useComputeStore.getState().hosts).toEqual([created])
+  })
+
+  it('keeps an in-flight host load when an overlapping probe fails', async () => {
+    const hostLoad = deferred<ComputeHost[]>()
+    const loaded = createHost({ providerId: 'ssh:loaded' })
+    setComputeApi({
+      list: vi.fn().mockReturnValue(hostLoad.promise),
+      probe: vi.fn().mockRejectedValue(new Error('probe failed'))
+    })
+
+    const load = useComputeStore.getState().loadHosts()
+    await expect(useComputeStore.getState().probeHost('ssh:biowulf')).rejects.toThrow(
+      'probe failed'
+    )
+    hostLoad.resolve([loaded])
+    await load
+
+    expect(useComputeStore.getState().hosts).toEqual([loaded])
+  })
+
+  it('keeps an in-flight host load when an overlapping details save fails', async () => {
+    const hostLoad = deferred<ComputeHost[]>()
+    const loaded = createHost({ providerId: 'ssh:loaded' })
+    setComputeApi({
+      list: vi.fn().mockReturnValue(hostLoad.promise),
+      detailsSave: vi.fn().mockRejectedValue(new Error('old_text mismatch'))
+    })
+
+    const load = useComputeStore.getState().loadHosts()
+    await expect(
+      useComputeStore.getState().saveDetails('ssh:biowulf', 'new', 'stale')
+    ).rejects.toThrow('old_text mismatch')
+    hostLoad.resolve([loaded])
+    await load
+
+    expect(useComputeStore.getState().hosts).toEqual([loaded])
   })
 
   it('propagates a create rejection (e.g. duplicate alias)', async () => {
@@ -438,6 +501,114 @@ describe('compute store — details', () => {
     await expect(
       useComputeStore.getState().saveDetails('ssh:biowulf', 'new', 'wrong old')
     ).rejects.toThrow(/old_text|mismatch/i)
+  })
+
+  it('keeps the latest post-write host projection when an older re-fetch finishes last', async () => {
+    const olderGet = deferred<ComputeHost | null>()
+    const latestGet = deferred<ComputeHost | null>()
+    setComputeApi({
+      detailsSave: vi.fn().mockResolvedValue(undefined),
+      concurrencySet: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn().mockReturnValueOnce(olderGet.promise).mockReturnValueOnce(latestGet.promise)
+    })
+    useComputeStore.setState({ hosts: [createHost()] })
+
+    const olderWrite = useComputeStore.getState().saveDetails('ssh:biowulf', 'older', '')
+    await Promise.resolve()
+    const latestWrite = useComputeStore.getState().setConcurrency('ssh:biowulf', 20)
+    await Promise.resolve()
+
+    const latest = createHost({ detailsDoc: 'older', concurrencyLimit: 20, updatedAt: 3 })
+    latestGet.resolve(latest)
+    await latestWrite
+    olderGet.resolve(createHost({ detailsDoc: 'older', updatedAt: 2 }))
+    await olderWrite
+
+    expect(useComputeStore.getState().hosts).toEqual([latest])
+  })
+
+  it('keeps the later-started write when its mutation finishes before the older one', async () => {
+    const olderMutation = deferred<void>()
+    const latestMutation = deferred<void>()
+    const latestGet = deferred<ComputeHost | null>()
+    const olderGet = deferred<ComputeHost | null>()
+    setComputeApi({
+      detailsSave: vi.fn().mockReturnValue(olderMutation.promise),
+      concurrencySet: vi.fn().mockReturnValue(latestMutation.promise),
+      get: vi.fn().mockReturnValueOnce(latestGet.promise).mockReturnValueOnce(olderGet.promise)
+    })
+    useComputeStore.setState({ hosts: [createHost()] })
+
+    const olderWrite = useComputeStore.getState().saveDetails('ssh:biowulf', 'older', '')
+    const latestWrite = useComputeStore.getState().setConcurrency('ssh:biowulf', 20)
+
+    latestMutation.resolve(undefined)
+    await Promise.resolve()
+    const latest = createHost({ concurrencyLimit: 20, updatedAt: 3 })
+    latestGet.resolve(latest)
+    await latestWrite
+
+    olderMutation.resolve(undefined)
+    await Promise.resolve()
+    olderGet.resolve(createHost({ detailsDoc: 'older', updatedAt: 2 }))
+    await olderWrite
+
+    expect(useComputeStore.getState().hosts).toEqual([latest])
+  })
+
+  it('projects an older committed write when a later-started mutation fails', async () => {
+    const olderMutation = deferred<void>()
+    const committed = createHost({ detailsDoc: 'committed', updatedAt: 2 })
+    setComputeApi({
+      detailsSave: vi.fn().mockReturnValue(olderMutation.promise),
+      concurrencySet: vi.fn().mockRejectedValue(new Error('newer mutation failed')),
+      get: vi.fn().mockResolvedValue(committed)
+    })
+    useComputeStore.setState({ hosts: [createHost()] })
+
+    const olderWrite = useComputeStore.getState().saveDetails('ssh:biowulf', 'committed', '')
+    await expect(useComputeStore.getState().setConcurrency('ssh:biowulf', 20)).rejects.toThrow(
+      'newer mutation failed'
+    )
+    olderMutation.resolve(undefined)
+    await olderWrite
+
+    expect(useComputeStore.getState().hosts).toEqual([committed])
+  })
+})
+
+describe('compute store — probing', () => {
+  it('keeps probing state and the latest projection across overlapping probes', async () => {
+    const firstProbe = deferred<ProbeResult>()
+    const secondProbe = deferred<ProbeResult>()
+    const latestGet = deferred<ComputeHost | null>()
+    const olderGet = deferred<ComputeHost | null>()
+    setComputeApi({
+      probe: vi
+        .fn()
+        .mockReturnValueOnce(firstProbe.promise)
+        .mockReturnValueOnce(secondProbe.promise),
+      get: vi.fn().mockReturnValueOnce(latestGet.promise).mockReturnValueOnce(olderGet.promise)
+    })
+    useComputeStore.setState({ hosts: [createHost()] })
+
+    const first = useComputeStore.getState().probeHost('ssh:biowulf')
+    const second = useComputeStore.getState().probeHost('ssh:biowulf')
+    secondProbe.resolve({ ok: true, probedAt: 'second', exitCode: 0, errorTail: null })
+    await Promise.resolve()
+
+    const latest = createHost({ updatedAt: 3 })
+    latestGet.resolve(latest)
+    await second
+    expect(useComputeStore.getState().probingIds.has('ssh:biowulf')).toBe(true)
+
+    firstProbe.resolve({ ok: true, probedAt: 'first', exitCode: 0, errorTail: null })
+    await Promise.resolve()
+    olderGet.resolve(createHost({ updatedAt: 2 }))
+    await first
+
+    expect(useComputeStore.getState().hosts).toEqual([latest])
+    expect(useComputeStore.getState().probingIds.has('ssh:biowulf')).toBe(false)
   })
 })
 

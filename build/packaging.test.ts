@@ -71,6 +71,24 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(include).toMatch(/!macro customUnInstallCheckCurrentUser\b/)
   })
 
+  it('hands the first failed old-uninstaller attempt to project recovery without a misleading close-app dialog', () => {
+    // installUtil runs before customUnInstallCheck. If it loops internally, users see
+    // appCannotBeClosed after five non-zero exits even though that same exit may mean a stale or
+    // partially removed first-install registration. Return the first failure to the path-scoped
+    // recovery in this include instead of blaming a process that may not exist.
+    const installUtil = readFileSync(
+      join(appBuilderLibRoot, 'templates/nsis/include/installUtil.nsh'),
+      'utf8'
+    )
+    const uninstallOldVersion =
+      installUtil.match(/Function uninstallOldVersion([\s\S]*?)FunctionEnd/)?.[1] ?? ''
+    const checkResult = uninstallOldVersion.slice(uninstallOldVersion.indexOf('CheckResult:'))
+
+    expect(uninstallOldVersion).not.toContain('$(appCannotBeClosed)')
+    expect(checkResult).toMatch(/CheckResult:[\s\S]*?Return\s+DoesNotExist:/)
+    expect(checkResult).not.toContain('Goto UninstallLoop')
+  })
+
   it('continues the install when the old version is already gone despite a non-zero exit code', () => {
     // The spurious-exit-2 case: the uninstall completed but a benign trailing error leaked as the
     // process exit code. Detect it by the old executable no longer existing and keep installing.
@@ -95,19 +113,21 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     // taskkill /IM matches the exe name in ANY directory — a second install or the portable zip
     // copy would be killed too, discarding unsaved work. It must fire only when the path-scoped
     // PowerShell sweep failed to run (nsExec pushes "error" or a non-zero exit code). micromamba
-    // is included: its image name differs from the app exe, so the app-exe kill alone cannot
-    // cover an in-flight provisioning lock on PowerShell-blocked machines.
+    // and the Notebook AppContainer host are included: their image names differ from the app exe,
+    // so the app-exe kill alone cannot cover an in-flight provisioning or sandbox-host lock on
+    // PowerShell-blocked machines.
     const code = include
       .split('\n')
       .filter((line) => !/^\s*#/.test(line))
       .join('\n')
-    expect(code.match(/taskkill/g) ?? []).toHaveLength(2)
+    expect(code.match(/taskkill/g) ?? []).toHaveLength(3)
     // Capture the whole guard block and assert BOTH kills live inside it — asserting only the
     // first one's position would still pass with micromamba's taskkill moved outside the guard.
     const guardBlock = code.match(/\$\{if\} \$R1 != 0([\s\S]*?)\$\{endif\}/)?.[1] ?? ''
     expect(guardBlock).toContain('taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"')
     expect(guardBlock).toContain('taskkill /F /IM micromamba.exe')
-    expect(guardBlock.match(/taskkill/g) ?? []).toHaveLength(2)
+    expect(guardBlock).toContain('taskkill /F /IM "notebook-appcontainer-host.exe"')
+    expect(guardBlock.match(/taskkill/g) ?? []).toHaveLength(3)
   })
 
   it('retries the old uninstaller exactly once', () => {

@@ -247,7 +247,15 @@ describe('runtime resource profiler', () => {
       }
       return tree([processEntry()])
     })
-    const evaluate = vi.fn().mockResolvedValueOnce('39.0.0').mockResolvedValue([])
+    let retainedElectronMetricsPromise = false
+    const evaluate = vi.fn(
+      async (callback: (electron: { app: { getAppMetrics: () => [] } }) => unknown) => {
+        if (evaluate.mock.calls.length === 1) return '39.0.0'
+        const result = callback({ app: { getAppMetrics: () => [] } })
+        retainedElectronMetricsPromise = result instanceof Promise
+        return result
+      }
+    )
     const application = {
       evaluate,
       off: vi.fn(),
@@ -279,6 +287,7 @@ describe('runtime resource profiler', () => {
       expect(result.summary.phases.recovery.sampleCount).toBe(1)
       expect(result.summary.phases.idle.sampleCount).toBe(1)
       expect(readTree).toHaveBeenCalledTimes(3)
+      expect(retainedElectronMetricsPromise).toBe(true)
     } finally {
       profiler.abort()
       await rm(outputRoot, { force: true, recursive: true })

@@ -106,12 +106,35 @@ const fakeStore = () => {
     setToolPermission: vi.fn().mockResolvedValue({ id: 'tool' }),
     setNcbiCredentials: vi.fn().mockResolvedValue({ connectors: [] }),
     listConnectors: vi.fn().mockResolvedValue({ connectors: [], customServers: [], ncbi: {} }),
+    listDeviceCredentials: vi.fn().mockResolvedValue({ credentials: [] }),
+    deviceCredentialConsumerIds: vi.fn().mockResolvedValue([]),
+    deviceCredentialIdForServer: vi.fn().mockResolvedValue(undefined),
+    createDeviceCredential: vi.fn().mockResolvedValue({
+      credentials: [],
+      createdCredential: {
+        id: 'created',
+        displayName: 'Created',
+        kind: 'token',
+        status: 'stored',
+        needsSecret: false,
+        consumerCount: 0,
+        consumerNames: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    }),
+    updateDeviceCredential: vi.fn().mockResolvedValue({ credentials: [] }),
+    removeDeviceCredential: vi.fn().mockResolvedValue({ credentials: [] }),
+    authenticateDeviceCredential: vi.fn().mockResolvedValue({ credentials: [] }),
+    cancelDeviceCredentialAuthentication: vi.fn().mockResolvedValue(undefined),
+    disconnectDeviceCredential: vi.fn().mockResolvedValue({ credentials: [] }),
     addCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
     setCustomServerEnabled: vi.fn().mockResolvedValue({ connectors: [] }),
     removeCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
     updateCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
     authenticateCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
-    cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined)
+    cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined),
+    disconnectCustomServer: vi.fn().mockResolvedValue({ connectors: [] })
   }
   return { store, capability: store as unknown as SettingsWorkflowStore }
 }
@@ -496,6 +519,203 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
 
     expect(store.cancelCustomServerAuthentication).toHaveBeenCalledWith('server-1')
     expect(refreshConnectorSkillDocs).not.toHaveBeenCalled()
+  })
+
+  it('closes an unbound device credential client before removing the credential', async () => {
+    const calls: string[] = []
+    const { store, capability } = fakeStore()
+    store.removeDeviceCredential.mockImplementation(async () => {
+      calls.push('remove')
+      return { credentials: [] }
+    })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        resetCustomServerClient: async (id) => {
+          calls.push(`reset:${id}`)
+        }
+      })
+    ).connectors
+
+    await workflows.removeDeviceCredential({ id: 'shared-oauth' })
+
+    expect(calls).toEqual(['reset:credential:shared-oauth', 'remove'])
+  })
+
+  it('leaves a bound device credential client untouched when removal will be rejected', async () => {
+    const resetCustomServerClient = vi.fn(async () => undefined)
+    const { store, capability } = fakeStore()
+    store.deviceCredentialConsumerIds.mockResolvedValue(['server-1'])
+    store.removeDeviceCredential.mockRejectedValue(new Error('Credential is used by: server-1'))
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({ resetCustomServerClient })
+    ).connectors
+
+    await expect(workflows.removeDeviceCredential({ id: 'shared-oauth' })).rejects.toThrow(
+      /server-1/
+    )
+
+    expect(resetCustomServerClient).not.toHaveBeenCalled()
+  })
+
+  it('resets every consumer before disconnecting a shared OAuth credential', async () => {
+    const calls: string[] = []
+    const { store, capability } = fakeStore()
+    store.disconnectDeviceCredential.mockImplementation(async (_request, withConsumersBlocked) =>
+      withConsumersBlocked(['server-1', 'server-2'], async () => {
+        calls.push('disconnect')
+        return { credentials: [] }
+      })
+    )
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        beginCustomServerSecurityChange: (id) => {
+          calls.push(`begin:${id}`)
+          return {
+            commit: vi.fn(),
+            rollback: () => calls.push(`release:${id}`)
+          } as never
+        },
+        resetCustomServerClient: async (id) => {
+          calls.push(`reset:${id}`)
+        }
+      })
+    ).connectors
+
+    await workflows.disconnectDeviceCredential({ id: 'shared-oauth' })
+
+    expect(calls).toEqual([
+      'begin:server-1',
+      'begin:server-2',
+      'reset:server-1',
+      'reset:server-2',
+      'disconnect',
+      'reset:server-1',
+      'reset:server-2',
+      'release:server-1',
+      'release:server-2'
+    ])
+  })
+
+  it('uses the same consumer barrier when disconnecting through a Connector', async () => {
+    const calls: string[] = []
+    const { store, capability } = fakeStore()
+    store.disconnectCustomServer.mockImplementation(async (_serverId, withConsumersBlocked) =>
+      withConsumersBlocked(['server-1', 'server-2'], async () => {
+        calls.push('disconnect')
+        return { connectors: [], customServers: [] }
+      })
+    )
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        beginCustomServerSecurityChange: (id) => {
+          calls.push(`begin:${id}`)
+          return {
+            commit: vi.fn(),
+            rollback: () => calls.push(`release:${id}`)
+          } as never
+        },
+        resetCustomServerClient: async (id) => {
+          calls.push(`reset:${id}`)
+        }
+      })
+    ).connectors
+
+    await workflows.disconnectCustomServer({ id: 'server-1' })
+
+    expect(calls).toEqual([
+      'begin:server-1',
+      'begin:server-2',
+      'reset:server-1',
+      'reset:server-2',
+      'disconnect',
+      'reset:server-1',
+      'reset:server-2',
+      'release:server-1',
+      'release:server-2'
+    ])
+  })
+
+  it('blocks and resets consumers across a static credential rotation', async () => {
+    const calls: string[] = []
+    let finishRefresh!: () => void
+    const refresh = new Promise<void>((resolve) => {
+      finishRefresh = resolve
+    })
+    const { store, capability } = fakeStore()
+    store.updateDeviceCredential.mockImplementation(async (_request, withConsumersBlocked) =>
+      withConsumersBlocked(['server-1'], async () => {
+        calls.push('update')
+        return { credentials: [] }
+      })
+    )
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        beginCustomServerSecurityChange: () => {
+          calls.push('begin')
+          return { commit: vi.fn(), rollback: () => calls.push('release') } as never
+        },
+        resetCustomServerClient: async () => {
+          calls.push('reset')
+        },
+        invalidatePermissionProjection: () => calls.push('invalidate'),
+        refreshConnectorSkillDocs: () => {
+          calls.push('refresh')
+          return refresh
+        },
+        requestSkillsReload: () => calls.push('reload')
+      })
+    ).connectors
+
+    const rotation = workflows.updateDeviceCredential({
+      id: 'shared-static',
+      secret: 'rotated'
+    })
+    await vi.waitFor(() =>
+      expect(calls).toEqual(['begin', 'reset', 'update', 'invalidate', 'refresh'])
+    )
+
+    finishRefresh()
+    await rotation
+
+    expect(calls).toEqual([
+      'begin',
+      'reset',
+      'update',
+      'invalidate',
+      'refresh',
+      'reload',
+      'reset',
+      'release'
+    ])
+  })
+
+  it('keeps consumers fail-closed when a rotated credential cannot reach the runtime', async () => {
+    const release = vi.fn()
+    const { store, capability } = fakeStore()
+    store.updateDeviceCredential.mockImplementation(async (_request, withConsumersBlocked) =>
+      withConsumersBlocked(['server-1'], async () => ({ credentials: [] }))
+    )
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        beginCustomServerSecurityChange: () => ({ commit: vi.fn(), rollback: release }) as never,
+        refreshConnectorSkillDocs: async () => {
+          throw new Error('refresh failed')
+        }
+      })
+    ).connectors
+
+    await expect(
+      workflows.updateDeviceCredential({ id: 'shared-static', secret: 'rotated' })
+    ).rejects.toThrow('refresh failed')
+
+    expect(store.updateDeviceCredential).toHaveBeenCalledOnce()
+    expect(release).not.toHaveBeenCalled()
   })
 
   it('waits for a custom Connector retry before returning its refreshed status', async () => {

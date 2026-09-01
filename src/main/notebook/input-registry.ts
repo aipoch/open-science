@@ -46,7 +46,7 @@ type NotebookInputPreviewTarget = {
 type NotebookInputRegistryOptions = {
   inputAuthority: Pick<
     ImmutableInputAuthority,
-    'resolveContent' | 'resolveVersion' | 'validateVersion'
+    'resolveContent' | 'resolveVersion' | 'stageContent' | 'validateVersion'
   >
 }
 
@@ -184,7 +184,7 @@ class NotebookInputRegistry {
       })
     )
     return new NotebookInputRunLease(inputs, (input) =>
-      this.options.inputAuthority.resolveContent(input)
+      this.options.inputAuthority.stageContent(input, request.appSessionId)
     )
   }
 

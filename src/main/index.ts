@@ -97,8 +97,16 @@ if (shouldRunArtifactMcpServer) {
 
 // Boots the Electron app only in normal UI mode, keeping artifact MCP mode free of Electron imports.
 async function startElectronApp(mainEntryPath: string): Promise<void> {
-  const { app, BrowserWindow, crashReporter, ipcMain, nativeImage, nativeTheme, protocol } =
-    createRequire(import.meta.url)('electron') as typeof import('electron')
+  const {
+    app,
+    BrowserWindow,
+    crashReporter,
+    ipcMain,
+    nativeImage,
+    nativeTheme,
+    powerMonitor,
+    protocol
+  } = createRequire(import.meta.url)('electron') as typeof import('electron')
 
   // Electron accepts privileged schemes only before app ready. Keep this in the synchronous UI
   // bootstrap before any awaited import can yield to the ready event.
@@ -133,8 +141,15 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       orchestrateAppStartup,
       prepareVisibleStartupRuntime,
       waitForStartupShell
-    }
-  ] = await Promise.all([import('./single-instance'), import('./app-startup')])
+    },
+    { parseWebModeOptions },
+    { installSystemLifecycleAdapters }
+  ] = await Promise.all([
+    import('./single-instance'),
+    import('./app-startup'),
+    import('./web-service/options'),
+    import('./system-lifecycle-adapters')
+  ])
   const preStartupSecondInstanceRelay = createSecondInstanceRelay()
   if (
     !allowMultiInstance &&
@@ -145,6 +160,11 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     app.quit()
     return
   }
+  const webMode = parseWebModeOptions(process.argv)
+  let bindSystemShutdownWindow = (window: InstanceType<typeof BrowserWindow>): void => {
+    void window
+  }
+  let installPowerMonitorListeners = (): void => {}
 
   // Initialize the file sink after the primary lock but before assets, the backend graph, and
   // app.whenReady so packaged startup failures remain locally diagnosable.
@@ -243,6 +263,20 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       return true
     },
     quit: () => app.quit(),
+    forceExit: () => app.exit(0),
+    installSystemShutdownListeners: (requestSystemShutdown) => {
+      const adapters = installSystemLifecycleAdapters({
+        windowSessionEndEvents: process.platform === 'win32',
+        powerShutdownEvent: process.platform !== 'win32',
+        headless: webMode.headless,
+        signalSource: process,
+        powerMonitor,
+        getWindows: () => BrowserWindow.getAllWindows(),
+        requestSystemShutdown
+      })
+      bindSystemShutdownWindow = adapters.bindWindow
+      installPowerMonitorListeners = adapters.installPowerMonitorListeners
+    },
     prepare: async () => {
       // Start local-only Crashpad after the single-instance lock but before any BrowserWindow can
       // create a renderer. Upload stays disabled: dumps remain local for explicit support collection.
@@ -256,6 +290,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         start: (options) => crashReporter.start(options)
       })
       startupDiagnostics?.phase('crash-reporting', { enabled: crashReporting.enabled })
+
+      startupDiagnostics?.phase('electron-ready')
+      await app.whenReady()
+      installPowerMonitorListeners()
 
       startupDiagnostics?.phase('load-startup-shell-modules')
       const [
@@ -272,8 +310,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { getProjectDbClient },
         { resolveStorageRoot },
         { SettingsDocumentStore },
-        { SettingsRepository },
-        { parseWebModeOptions }
+        { SettingsRepository }
       ] = await Promise.all([
         import('./managed-preview-protocol'),
         import('./windows'),
@@ -288,12 +325,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./projects/prisma-client'),
         import('./storage-root'),
         import('./settings/document-store'),
-        import('./settings/repository'),
-        import('./web-service/options')
+        import('./settings/repository')
       ])
 
-      startupDiagnostics?.phase('electron-ready')
-      await app.whenReady()
       startupDiagnostics?.phase('prepare-shell')
       // The bridge is lightweight, but its protocol handler must exist before the first BrowserWindow
       // creates the default session. macOS otherwise treats later managed-preview requests as an
@@ -323,7 +357,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // preventDefault() on Cmd+- and Cmd+= and silently disables zoom out / reset (issue #336).
       installWindowShortcuts(app)
 
-      const webMode = parseWebModeOptions(process.argv)
       const databaseStartupLogging = createDatabaseStartupLogging(log, app.getVersion())
       const databaseStartupOwner = createDatabaseStartupOwner({
         reportBlocked: databaseStartupLogging.reportBlocked,
@@ -364,6 +397,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       const startupWindow = webMode.headless
         ? undefined
         : createMainWindow(startupWindowCloseOptions, translate)
+      if (startupWindow) bindSystemShutdownWindow(startupWindow)
       // Yield the main-process event loop until Chromium has painted the startup shell. Evaluating the
       // 5 MB backend chunk immediately after BrowserWindow construction can otherwise delay
       // ready-to-show even though the window no longer depends on that chunk.
@@ -479,10 +513,12 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             const {
               applicationCommands,
               applicationEvents,
+              permissionApprovalPresence,
               bindRemoteAccess,
               taskNotifications,
               notificationInbox,
               settingsService,
+              commitClosePreference,
               taskAgent,
               taskControls,
               computePreferences,
@@ -575,6 +611,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               requestQuit: () => app.quit(),
               externalAccess: remoteAccess.webAccess,
               applicationEvents,
+              permissionApprovalPresence,
               taskAgent,
               taskControls,
               computePreferences
@@ -629,7 +666,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
                   {
                     get: () => settingsService.getClosePreference(),
                     set: async (preference) => {
-                      await settingsService.setClosePreference(preference)
+                      await commitClosePreference(preference)
                     }
                   },
                   translate
@@ -683,7 +720,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     // is bound with the live backend handles; the agent teardown latches shutting-down and awaits the
     // process tree so a Windows taskkill /T completes before app.exit.
     installAppLifecycle: (ctx) => {
-      const { showMainWindow, getMainWindow, isMainWindowHidden } = ctx.installAppLifecycle(
+      const lifecycle = ctx.installAppLifecycle(
         withApplicationRuntimeShutdown(
           {
             app,
@@ -722,6 +759,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             quit: () => app.quit(),
             countWindows: () => BrowserWindow.getAllWindows().length,
             createInitialWindow: !ctx.webMode.headless,
+            bindSystemShutdownWindow,
             detectActiveSessions: ctx.detectActiveSessions,
             hasActiveReviewerWork: ctx.hasActiveReviewerWork,
             prepareForQuit: ctx.prepareForQuit,
@@ -740,7 +778,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               ctx.appIconControllerBox.current?.setAppearance(appearance),
             log: ctx.log,
             flushLogs
-          },
+          } satisfies Omit<Parameters<typeof ctx.installAppLifecycle>[0], 'shutdownBackends'>,
           {
             // Application composition owns the one bounded ACP/Notebook shutdown. Remaining surfaces
             // close afterward in their established order, even when an earlier disposer rejects.
@@ -752,6 +790,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           }
         )
       )
+      const { showMainWindow, getMainWindow, isMainWindowHidden, onSystemShutdown } = lifecycle
 
       // Window lifecycle now exists: expose it to the restored controller, reapply any Windows
       // overlay to the first window, then attach completion/focus/window-recreation events.
@@ -800,7 +839,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           onError: (error) => ctx.log.error('on-demand web service start failed', error)
         })
       preStartupSecondInstanceRelay.bind(onSecondInstance)
-      return { onSecondInstance }
+      return { onSecondInstance, onSystemShutdown }
     },
     markReady: (ctx) => {
       ctx.databaseStartupOwner.complete()

@@ -237,7 +237,9 @@ export const serializeReviewerEvidenceCoverage = (
   turnRead: coverage.turnRead,
   allExecutionLogsRead: coverage.allExecutionLogsRead,
   executionLogActivityIds: [...coverage.executionLogActivityIds],
-  artifactReads: [...(coverage.artifactReads ?? new Map())].map(([versionId, read]) => ({
+  artifactReads: [
+    ...(coverage.artifactReads ?? new Map<string, ReviewerArtifactEvidenceCoverage>())
+  ].map(([versionId, read]) => ({
     versionId,
     ...read,
     requestedTargets: read.requestedTargets.map((target) => ({ ...target })),

@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import type {
   AcpCreateSessionResponse,
   AcpResumeSessionRequest,
-  AcpRuntimeEvent
+  AcpRuntimeEventInput
 } from '../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -46,7 +46,7 @@ type ClientContextSessionAttacher = {
   attachSession: (response: SessionAttachmentResponse) => ActiveSession
 }
 
-type ResumeEvent = Omit<AcpRuntimeEvent, 'id' | 'timestamp'>
+type ResumeEvent = AcpRuntimeEventInput
 
 type AcpProviderSessionResumerDependencies = Readonly<{
   defaultCwd: string

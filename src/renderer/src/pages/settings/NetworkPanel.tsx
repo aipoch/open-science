@@ -14,6 +14,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { isMirrorConfigured, mirrorStatusText, MIRROR_HELP_URL } from './mirror-view'
 import { NetworkProxyForm } from './NetworkProxyForm'
+import { NotebookNetworkDomainsForm } from './NotebookNetworkDomainsForm'
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 const actionButtonClassName =
@@ -21,7 +22,7 @@ const actionButtonClassName =
 
 // Package-mirror list vs. configure form. The configure form is a settings-nav sub-view (not local
 // state) so the shared header shows a "Network / Package mirror" breadcrumb with back/forward.
-type NetworkView = { kind: 'list' | 'mirror' | 'proxy' }
+type NetworkView = { kind: 'list' | 'mirror' | 'proxy' | 'domains' }
 type NetworkPanelProps = { view: NetworkView; onNavigate: (view: NetworkView) => void }
 
 // Identity of the single check row this panel renders (and its pending placeholder). Only the id
@@ -41,12 +42,13 @@ const CONNECTION_TYPE_LABELS: Partial<Record<NetworkConnectionType, string>> = {
 // (navigator.onLine link signal plus the store's shared end-to-end reachability probe) and the
 // local interface details reported by the main process; the Package mirror section lets a user
 // behind a firewall or on a slow route to the public conda-forge / pip hosts point package
-// fetches at a mirror instead. The "Claude Science domains" egress allowlist from the mockup is
-// phase-3 (spec §14, §9) and is intentionally not built here.
+// fetches at a mirror instead. Notebook domains configures the application-owned egress policy used
+// by local Notebook and command-line processes.
 const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const packageMirror = useSettingsStore((state) => state.packageMirror)
   const networkProxy = useSettingsStore((state) => state.networkProxy)
+  const notebookNetwork = useSettingsStore((state) => state.notebookNetwork)
   const setPackageMirror = useSettingsStore((state) => state.setPackageMirror)
   const isOnline = useNetworkStore((state) => state.isOnline)
   // End-to-end reachability is owned by the network store (probed on startup, recovery,
@@ -126,6 +128,12 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   }
 
   const handleSave = async (): Promise<void> => {
+    if (
+      packageMirror?.caBundle !== draft.caBundle &&
+      window.confirm(t('Changing the CA bundle will stop active Notebook kernels. Continue?')) ===
+        false
+    )
+      return
     setIsSaving(true)
     setMessage(undefined)
 
@@ -200,6 +208,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
         : Network
 
   if (view.kind === 'proxy') return <NetworkProxyForm onDone={() => onNavigate({ kind: 'list' })} />
+  if (view.kind === 'domains') return <NotebookNetworkDomainsForm />
 
   return (
     <div className="space-y-6 p-5">
@@ -243,6 +252,37 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
                 </Button>
               </div>
             ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {!isConfiguring ? (
+        <section aria-label={t('Notebook network access')}>
+          <h3 className="mb-1 text-sm font-semibold text-foreground">
+            {t('Notebook network access')}
+          </h3>
+          <p className="mb-3 text-xs text-muted-foreground">
+            {t('Control which internet domains Notebook Python, R, REPL, and Bash can reach.')}
+          </p>
+          <div className="rounded-xl border border-border p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-foreground">{t('Open Science domains')}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t('{{count}} custom domains allowed', {
+                    count: notebookNetwork.allowedDomains.length,
+                    defaultValue_one: '{{count}} custom domain allowed'
+                  })}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onNavigate({ kind: 'domains' })}
+                className={actionButtonClassName}
+              >
+                {t('Configure domains')}
+              </button>
+            </div>
           </div>
         </section>
       ) : null}
@@ -351,7 +391,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
                 />
                 <p className="text-[11px] text-muted-foreground">
                   {t(
-                    'PEM bundle for a corporate TLS proxy; trusted by conda, pip, and R downloads.'
+                    'Leave blank to use public certificate authorities. Otherwise, choose a complete PEM bundle with public and corporate roots; Notebook sessions and package downloads will trust it.'
                   )}
                 </p>
               </div>

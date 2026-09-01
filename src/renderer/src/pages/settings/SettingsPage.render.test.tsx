@@ -401,6 +401,21 @@ const openCustomServerEditor = async (displayName: string): Promise<void> => {
   })
 }
 
+const selectSettingsOption = (label: string, option: string): void => {
+  const trigger = document.body.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)
+  act(() => {
+    trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+  const item = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+    (candidate) => candidate.textContent?.includes(option)
+  )
+  act(() => {
+    item?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+    item?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+}
+
 const settingsSection = (title: string): HTMLElement | undefined =>
   Array.from(document.body.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')).find(
     (section) => section.querySelector('h3')?.textContent?.trim() === title
@@ -2103,6 +2118,55 @@ describe('SettingsPage layout', () => {
     expect(remoteAccess.detect).not.toHaveBeenCalled()
   })
 
+  it('shows retained trusted-browser expiry and revocation controls while access is off', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const snapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled',
+      remoteIt: { installed: true, loggedIn: true, registered: true },
+      pendingRequests: [],
+      trustedBrowsers: [
+        {
+          id: 'trusted-browser',
+          browser: 'Safari',
+          platform: 'macOS',
+          createdAt: Date.now() - 1_000,
+          lastSeenAt: Date.now(),
+          expiresAt: Date.now() + 180 * 24 * 60 * 60 * 1_000
+        }
+      ]
+    }
+    remoteAccess.getSnapshot.mockResolvedValue(snapshot)
+    remoteAccess.probe.mockResolvedValue(snapshot)
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote')?.click())
+
+    expect(document.body.textContent).toContain('Trusted browsers')
+    expect(document.body.textContent).toContain('Safari · macOS')
+    expect(document.body.textContent).toContain('Expires')
+    expect(document.body.textContent).toContain(
+      'Remote access is paused. Provider setup and trusted browsers are kept for reuse.'
+    )
+    expect(document.body.textContent).not.toContain('permanent access')
+    expect(document.body.querySelector('button[aria-label="Revoke Safari"]')).not.toBeNull()
+    expect(document.body.textContent).not.toContain('Pairing requests')
+  })
+
   it('exits loading when the initial remote access snapshot fails', async () => {
     const remoteAccess = (
       window as unknown as {
@@ -2666,7 +2730,8 @@ describe('SettingsPage layout', () => {
             browser: 'Chrome on iOS',
             platform: 'iOS/iPadOS',
             createdAt: Date.now(),
-            lastSeenAt: Date.now()
+            lastSeenAt: Date.now(),
+            expiresAt: Date.now() + 180 * 24 * 60 * 60 * 1_000
           }
         ]
       })
@@ -2681,6 +2746,7 @@ describe('SettingsPage layout', () => {
       expect(document.body.textContent).toContain('123456')
       expect(document.body.textContent).toContain('Allow for up to 12 hours')
       expect(document.body.textContent).not.toContain('Allow once')
+      expect(document.body.textContent).not.toContain('Invalid Date')
       expect(document.body.textContent).toContain(
         'Two-step verification requests and trusted browsers can be managed below'
       )
@@ -2995,6 +3061,104 @@ describe('SettingsPage layout', () => {
     ).toHaveBeenCalled()
     expect(document.body.textContent).toContain('Chemistry')
     expect(document.body.textContent).toContain('Contact email')
+  })
+
+  it('keeps a Connector draft when device credential creation uses Settings history', async () => {
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Connectors')?.click())
+
+    const addConnector = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.includes('Add connector'))
+    openRadixMenu(addConnector)
+    const localCommand = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('Local command'))
+    await act(async () => {
+      clickRadixMenuItem(localCommand)
+      await Promise.resolve()
+    })
+
+    const displayName = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Display name"]'
+    )!
+    fireEvent.change(displayName, { target: { value: 'Draft research server' } })
+    act(() =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-controls="connector-advanced-settings"]')
+        ?.click()
+    )
+    fireEvent.change(document.body.querySelector('[aria-label="Variable name"]')!, {
+      target: { value: 'API_TOKEN' }
+    })
+    selectSettingsOption('Credential for API_TOKEN', 'New credential')
+
+    expect(document.body.textContent).toContain('Stored on this device')
+    expect(document.body.textContent).toContain('Add connector')
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    )
+
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value
+    ).toBe('Draft research server')
+  })
+
+  it('keeps edit-time credential creation in the Connector flow without Connector Tags', async () => {
+    const customServer = {
+      id: 'notion-connector-id',
+      name: 'notion2',
+      displayName: 'Notion2',
+      transport: 'stdio' as const,
+      enabled: true,
+      command: 'npx',
+      hasEnv: true,
+      environmentNames: ['API_TOKEN']
+    }
+    vi.mocked(window.api.settings.listConnectors).mockResolvedValue({
+      connectors: [],
+      customServers: [customServer],
+      ncbi: { hasApiKey: false }
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Connectors')?.click())
+    await openCustomServerEditor('Notion2')
+    expect(document.body.querySelector('[aria-label="Manage Tags"]')).not.toBeNull()
+
+    act(() =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-controls="connector-advanced-settings"]')
+        ?.click()
+    )
+    selectSettingsOption('Environment variable action', 'Replace saved variables')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    fireEvent.change(document.body.querySelector('[aria-label="Variable name"]')!, {
+      target: { value: 'API_TOKEN' }
+    })
+    expect(document.body.querySelector('[aria-label="Credential for API_TOKEN"]')).not.toBeNull()
+    selectSettingsOption('Credential for API_TOKEN', 'New credential')
+
+    expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.querySelector('[aria-label="Manage Tags"]')).toBeNull()
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).some(
+        (button) => button.textContent?.trim() === 'Edit notion2'
+      )
+    ).toBe(true)
+    expect(document.body.textContent).toContain('New credential')
+
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    )
+    expect(document.body.querySelector('[aria-label="Manage Tags"]')).not.toBeNull()
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Variable name"]')?.value
+    ).toBe('API_TOKEN')
   })
 
   it('blocks Connector save and preserves the draft when a live refresh removes the target', async () => {

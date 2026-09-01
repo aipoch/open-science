@@ -4,6 +4,7 @@ import type {
   ClaudeSubscriptionProviderId,
   ClaudeInfo,
   CodexSubscriptionAuthMode,
+  CodexSubscriptionTransport,
   CodexInfo,
   ProjectFilesFilterPreference,
   ProviderType,
@@ -17,6 +18,7 @@ import type {
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
+import type { NotebookNetworkSettings } from '../../shared/notebook-network'
 import type {
   CustomReasoningEffortTransport,
   ReasoningEffortPresetSetting
@@ -47,6 +49,10 @@ export type StoredProvider = {
   // Records whether the app-owned Codex profile came from an import or an in-app sign-in. Runtime
   // behavior still keys on the normalized codex-isolated provider type.
   codexAuthMode?: CodexSubscriptionAuthMode
+  // Transport preference for the app-owned Codex subscription profile. Absence is Auto.
+  codexTransport?: CodexSubscriptionTransport
+  // Main-only learned Auto fallback. Never projected to ProviderView or renderer drafts.
+  codexAutoUseHttps?: boolean
   name: string
   // Which chat APIs a custom gateway speaks. Official providers derive it from the registry; absent
   // means ['anthropic'] (all pre-existing providers). Legacy records may carry the removed scalar
@@ -107,6 +113,33 @@ export type StoredCustomMcpOAuthState = {
   discoveryState?: OAuthDiscoveryState
 }
 
+export type StoredDeviceCredential =
+  | {
+      id: string
+      displayName: string
+      kind: 'api_key' | 'token'
+      secretRef: string
+      createdAt: number
+      updatedAt: number
+    }
+  | {
+      id: string
+      displayName: string
+      kind: 'oauth'
+      resourceUri: string
+      transport: 'streamable_http' | 'sse'
+      oauth: StoredCustomMcpOAuthConfig
+      clientSecretRef?: string
+      stateRef?: string
+      createdAt: number
+      updatedAt: number
+    }
+
+export type StoredDeviceCredentialsDocument = {
+  version: 1
+  credentials: StoredDeviceCredential[]
+}
+
 // A user-added custom MCP server. Secret values are stored as safeStorage refs and decrypted only in
 // the main process when constructing the MCP transport.
 export type StoredCustomMcpServer = {
@@ -129,11 +162,14 @@ export type StoredCustomMcpServer = {
   oauth?: StoredCustomMcpOAuthConfig
   // The pre-registered client secret follows the same safeStorage-ref convention as env/headers.
   oauthClientSecretRef?: string
+  // New Connectors may point at a device-global OAuth credential. Legacy records keep encrypted
+  // OAuth state in this field; the `credential:` prefix distinguishes the new reference shape.
   oauthRef?: string
-  // Main-process-only projections populated by ConnectorSettingsModule. Neither field is persisted
-  // to settings.json or sent to the renderer.
+  // Main-process-only projections populated by ConnectorSettingsModule. These fields are not
+  // persisted to settings.json or sent to the renderer.
   oauthClientSecret?: string
   oauthState?: StoredCustomMcpOAuthState
+  oauthCredentialUnavailable?: true
   enabled: boolean
   // Timestamp of the user's explicit add-time trust confirmation (see plan §3.5).
   trustedAt?: number
@@ -233,6 +269,8 @@ export type StoredSettings = {
   packageMirror?: PackageMirror
   // Application-wide proxy preference. Absent in historical documents means follow the system.
   networkProxy?: NetworkProxySettings
+  // Application-wide egress policy for Notebook REPL and Notebook Bash processes.
+  notebookNetwork?: NotebookNetworkSettings
   // Absolute path of the relocatable data root (artifacts/notebooks/runtime/uploads). Absent means
   // "use the config root" (default). Only written after a successful migration; a change needs a restart.
   dataRoot?: string

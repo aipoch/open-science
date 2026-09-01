@@ -4,19 +4,23 @@ import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
-import type {
-  NotebookFileEvidenceCoverage,
-  NotebookFileEvidenceReason,
-  NotebookRunFileEvidence,
-  NotebookRunRecord,
-  NotebookScientificOutput,
-  NotebookWorkingFile
-} from '../../shared/notebook'
+import {
+  parseOwnedExecutionFileEvidenceSummary,
+  type ExecutionActivityKind,
+  type ExecutionFileEvidenceCoverage,
+  type ExecutionFileEvidenceReason,
+  type ExecutionFileEvidenceSummary,
+  type ScientificOutputEvidence
+} from '../../shared/execution-file-evidence'
+import type { ComputeJob } from '../../shared/compute'
+import type { NotebookRunRecord, NotebookWorkingFile } from '../../shared/notebook'
 import { assertDiskReserve } from '../bounded-file-io'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import { availableBytes } from '../storage/usage'
 import { analyzeScientificOutputs } from './scientific-output-analysis'
+import { createRootNotebookLane } from './lane-identity'
+import { getNotebookFileEvidenceLocation } from './repository'
 
 const log = createLogger('notebook:file-evidence')
 
@@ -32,7 +36,7 @@ type WorkingFileObservationRequest = {
 
 type WorkingFileObservationResult = {
   workingFiles: NotebookWorkingFile[]
-  fileEvidence: NotebookRunFileEvidence
+  fileEvidence: ExecutionFileEvidenceSummary
 }
 
 type WorkingFileObservation = {
@@ -44,7 +48,7 @@ type WorkingFileObservationDependencies = {
   createId?: () => string
   now?: () => number
   maxGenerationBytes?: number
-  maxRunBytes?: number
+  maxActivityBytes?: number
   maxEvidenceBytes?: number
   diskReserveBytes?: number
   evidenceQueueTimeoutMs?: number
@@ -63,7 +67,7 @@ type SnapshotEntry = Omit<NotebookWorkingFile, 'size' | 'mtimeMs'> & {
 }
 type SnapshotCapture =
   | { state: 'available'; files: Map<string, SnapshotEntry> }
-  | { state: 'unavailable'; reason: NotebookFileEvidenceReason }
+  | { state: 'unavailable'; reason: ExecutionFileEvidenceReason }
 type ObservedFileChange = {
   relation: 'created' | 'modified' | 'deleted'
   relativePath: string
@@ -72,7 +76,7 @@ type ObservedFileChange = {
 }
 type RootObservationResult = {
   changes: ObservedFileChange[]
-  reasonCodes: NotebookFileEvidenceReason[]
+  reasonCodes: ExecutionFileEvidenceReason[]
   available: boolean
 }
 type RootObservation = {
@@ -92,20 +96,26 @@ type EvidenceWorkerBeginRequest = EvidenceWorkerBlobPoolBinding & {
   receiptName: string
   stagingName: string
   finalName: string
-  runId: string
+  activityId: string
+  activityKind: ExecutionActivityKind
+  parentActivityId?: string
   evidenceId: string
   storageKeyPrefix: string
-  initialViewState: NotebookFileEvidenceCoverage
+  initialViewState: ExecutionFileEvidenceCoverage
   initialFiles: Array<{
     file: SnapshotEntry
     generation: { generationId: string; capturedAt: string }
+    relation?: 'present-before' | 'staged-input'
   }>
   maxGenerationBytes: number
-  maxRunBytes: number
+  maxActivityBytes: number
   maxEvidenceBytes: number
   diskReserveBytes: number
   availableBytes: number
   captureCancelled: boolean
+}
+type EvidenceWorkerEnsureCaptureRequest = Omit<EvidenceWorkerBeginRequest, 'operation'> & {
+  operation: 'ensure-capture'
 }
 type EvidenceWorkerPersistRequest = EvidenceWorkerBlobPoolBinding & {
   operation: 'persist'
@@ -113,36 +123,67 @@ type EvidenceWorkerPersistRequest = EvidenceWorkerBlobPoolBinding & {
   receiptName: string
   stagingName: string
   finalName: string
-  runId: string
+  activityId: string
+  activityKind: ExecutionActivityKind
+  parentActivityId?: string
   evidenceId: string
   storageKeyPrefix: string
   rootKinds: Array<'data' | 'handoff'>
   rootsAvailable: boolean
-  reasonCodes: NotebookFileEvidenceReason[]
-  scientificOutputs: NotebookScientificOutput[]
+  evidenceState?: ExecutionFileEvidenceSummary['state']
+  reasonCodes: ExecutionFileEvidenceReason[]
+  scientificOutputs: ScientificOutputEvidence[]
   changes: Array<{
-    change: ObservedFileChange
+    change: {
+      relation: ObservedFileChange['relation'] | 'harvested-output' | 'remote-input-reference'
+      relativePath: string
+      before?: SnapshotEntry
+      after?: SnapshotEntry
+      pathPortability?: 'relative' | 'absolute'
+      authority?: 'advisory' | 'explicit-transfer'
+    }
     generation: { generationId: string; capturedAt: string }
   }>
   maxGenerationBytes: number
-  maxRunBytes: number
+  maxActivityBytes: number
   maxEvidenceBytes: number
   diskReserveBytes: number
   availableBytes: number
   captureCancelled: boolean
+}
+type EvidenceWorkerRecoverPublishedRequest = Omit<EvidenceWorkerPersistRequest, 'operation'> & {
+  operation: 'recover-published'
 }
 type EvidenceWorkerCompleteRequest = {
   operation: 'complete'
   expectedRootIdentity: FileIdentity
   receiptName: string
   finalName: string
-  runId: string
+  activityId: string
+  activityKind: ExecutionActivityKind
+  parentActivityId?: string
   evidenceId: string
   checksum: string
   storageKey: string
 }
 type EvidenceWorkerReconcileRequest = EvidenceWorkerBlobPoolBinding & {
   operation: 'reconcile'
+  expectedRootIdentity: FileIdentity
+  deferredActivityKinds: ExecutionActivityKind[]
+  deferredActivityIds: string[]
+  retained: Array<{
+    receiptName: string
+    finalName: string
+    activityId: string
+    activityKind: ExecutionActivityKind
+    parentActivityId?: string
+    evidenceId: string
+    checksum: string
+    storageKey: string
+  }>
+}
+type EvidenceWorkerLegacyNotebookReconcileRequest = EvidenceWorkerBlobPoolBinding & {
+  operation: 'reconcile-legacy-notebook'
   expectedRootIdentity: FileIdentity
   retained: Array<{
     receiptName: string
@@ -157,6 +198,7 @@ type EvidenceWorkerCleanupRequest = EvidenceWorkerBlobPoolBinding & {
   operation: 'cleanup'
   expectedRootIdentity: FileIdentity
   receiptName: string
+  preservePublished?: boolean
 }
 type EvidenceWorkerDeleteProjectRequest = {
   operation: 'delete-project'
@@ -170,23 +212,37 @@ type EvidenceWorkerEnsureProjectRequest = {
 }
 type EvidenceWorkerRequest =
   | EvidenceWorkerBeginRequest
+  | EvidenceWorkerEnsureCaptureRequest
   | EvidenceWorkerPersistRequest
+  | EvidenceWorkerRecoverPublishedRequest
   | EvidenceWorkerCompleteRequest
   | EvidenceWorkerReconcileRequest
+  | EvidenceWorkerLegacyNotebookReconcileRequest
   | EvidenceWorkerCleanupRequest
   | EvidenceWorkerDeleteProjectRequest
   | EvidenceWorkerEnsureProjectRequest
 type EvidenceWorkerResult =
-  | { ok: true; capturedInitialGenerations: number }
+  | {
+      ok: true
+      capturedInitialGenerations: number
+      initialGenerations?: Array<{
+        relativePath: string
+        generationId: string
+        checksum: string
+        sizeBytes: number
+      }>
+    }
+  | { ok: true; captureReady: true; initialized: boolean }
+  | { ok: true; recoveredFileEvidence: ExecutionFileEvidenceSummary | null }
   | {
       ok: true
       generations: Array<{ path: string; generationId: string; checksum: string }>
-      fileEvidence: NotebookRunFileEvidence
+      fileEvidence: ExecutionFileEvidenceSummary
     }
   | {
       ok: true
       removedStagingEntries: number
-      removedRunEntries: number
+      removedActivityEntries: number
       removedBlobEntries?: number
     }
   | { ok: true; removedProjectEntries: number }
@@ -198,11 +254,14 @@ type ActiveEvidenceCapture = {
   stagingName: string
   finalName: string
   evidenceId: string
+  activityId: string
+  activityKind: ExecutionActivityKind
+  parentActivityId?: string
   storageKeyPrefix: string
   blobRoot: { path: string; identity: FileIdentity }
   blobStorageKeyPrefix: string
   maxGenerationBytes: number
-  maxRunBytes: number
+  maxActivityBytes: number
   maxEvidenceBytes: number
   diskReserveBytes: number
 }
@@ -216,9 +275,10 @@ const WATCHER_READY_MS = 5
 const MAX_WORKER_OUTPUT_BYTES = 16 * 1024 * 1024
 const EVIDENCE_WORKER_TIMEOUT_MS = 10 * 60 * 1000
 const EVIDENCE_QUEUE_TIMEOUT_MS = 5_000
-const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
-const NOTEBOOK_FILE_EVIDENCE_DIR = 'notebook-file-evidence'
-const BASELINE_REASON_CODES: NotebookFileEvidenceReason[] = [
+const SAFE_ACTIVITY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
+const EXECUTION_FILE_EVIDENCE_DIR = 'execution-file-evidence'
+const LEGACY_NOTEBOOK_FILE_EVIDENCE_DIR = 'notebook-file-evidence'
+const BASELINE_REASON_CODES: ExecutionFileEvidenceReason[] = [
   'file-reads-not-observed',
   'external-paths-not-observed',
   'remote-outputs-not-observed',
@@ -239,13 +299,19 @@ const toPortableNotebookRelativePath = (path: string, hostSeparator = sep): stri
   hostSeparator === '/' ? path : path.split(hostSeparator).join('/')
 
 const uniqueReasons = (
-  reasons: readonly NotebookFileEvidenceReason[]
-): NotebookFileEvidenceReason[] => [...new Set(reasons)].sort()
+  reasons: readonly ExecutionFileEvidenceReason[]
+): ExecutionFileEvidenceReason[] => [...new Set(reasons)].sort()
 
 const unavailableEvidence = (
-  reasons: readonly NotebookFileEvidenceReason[]
-): NotebookRunFileEvidence => ({
+  reasons: readonly ExecutionFileEvidenceReason[],
+  activityId?: string,
+  activityKind: ExecutionActivityKind = 'notebook-run',
+  parentActivityId?: string
+): ExecutionFileEvidenceSummary => ({
   schemaVersion: 1,
+  ...(activityId ? { activityId } : {}),
+  activityKind,
+  ...(parentActivityId ? { parentActivityId } : {}),
   state: 'unavailable',
   scientificOutputCount: 0,
   initialViewState: 'unavailable',
@@ -266,7 +332,7 @@ const isExistingPathError = (error: unknown): boolean =>
 const assertRealDirectory = async (path: string): Promise<void> => {
   const metadata = await lstat(path)
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
-    throw new UnsafeEvidencePathError(`Unsafe Notebook file-evidence directory: ${path}`)
+    throw new UnsafeEvidencePathError(`Unsafe Execution file-evidence directory: ${path}`)
   }
 }
 
@@ -293,7 +359,7 @@ const assertEvidenceRootIdentity = async (path: string, expected: FileIdentity):
     actual.dev !== expected.dev ||
     actual.ino !== expected.ino
   ) {
-    throw new UnsafeEvidencePathError('Notebook file-evidence root identity changed.')
+    throw new UnsafeEvidencePathError('Execution file-evidence root identity changed.')
   }
 }
 
@@ -306,14 +372,14 @@ const secureEvidenceRoot = async (
   const canonicalStorageRoot = await realpath(resolvedStorageRoot)
   const nested = relative(resolvedStorageRoot, resolve(requestedEvidenceRoot))
   if (nested === '' || isAbsolute(nested) || nested === '..' || nested.startsWith(`..${sep}`)) {
-    throw new UnsafeEvidencePathError('Notebook file-evidence root escapes app storage.')
+    throw new UnsafeEvidencePathError('Execution file-evidence root escapes app storage.')
   }
   let evidenceRoot = canonicalStorageRoot
   for (const segment of nested.split(sep)) {
     evidenceRoot = join(evidenceRoot, segment)
     await ensureRealDirectory(evidenceRoot)
     if ((await realpath(evidenceRoot)) !== evidenceRoot) {
-      throw new UnsafeEvidencePathError('Notebook file-evidence root resolves through a symlink.')
+      throw new UnsafeEvidencePathError('Execution file-evidence root resolves through a symlink.')
     }
   }
   return { path: evidenceRoot, identity: await directoryIdentity(evidenceRoot) }
@@ -439,8 +505,8 @@ type WorkingFileEvidenceLocation = {
   storageKeyPrefix: string
 }
 
-const receiptNameForRun = (runId: string): string => `receipt-${runId}.json`
-const finalNameForRun = (runId: string): string => `run-${runId}`
+const receiptNameForActivity = (activityId: string): string => `receipt-${activityId}.json`
+const finalNameForActivity = (activityId: string): string => `activity-${activityId}`
 
 const ensureProjectPromises = new Map<string, Promise<void>>()
 let evidenceMutationTail = Promise.resolve()
@@ -511,10 +577,11 @@ const ensureWorkingFileEvidenceProject = async (
   projectId: string,
   worker: typeof runEvidenceWorker = runEvidenceWorker
 ): Promise<void> => {
-  if (!SAFE_RUN_ID.test(projectId)) throw new Error('Unsafe Notebook file-evidence Project ID.')
+  if (!SAFE_ACTIVITY_ID.test(projectId))
+    throw new Error('Unsafe Execution file-evidence Project ID.')
   const evidenceRoot = await secureEvidenceRoot(
     storageRoot,
-    join(storageRoot, NOTEBOOK_FILE_EVIDENCE_DIR)
+    join(storageRoot, EXECUTION_FILE_EVIDENCE_DIR)
   )
   const key = `${evidenceRoot.path}\0${projectId}`
   const existing = ensureProjectPromises.get(key)
@@ -542,28 +609,30 @@ const projectEvidenceScope = (
   storageKeyPrefix: string
 ): { projectId: string; projectRoot: string; blobStorageKeyPrefix: string } | undefined => {
   const segments = storageKeyPrefix.split('/')
-  if (segments[0] !== NOTEBOOK_FILE_EVIDENCE_DIR) return undefined
+  // An exact root prefix is used by the isolated adapter/tests. Production Project-owned
+  // locations always include both Project and session segments.
+  if (segments[0] !== EXECUTION_FILE_EVIDENCE_DIR || segments.length < 3) return undefined
   const projectId = segments[1]
-  if (!projectId || !SAFE_RUN_ID.test(projectId)) {
-    throw new Error('Unsafe Notebook file-evidence Project storage prefix.')
+  if (!projectId || !SAFE_ACTIVITY_ID.test(projectId)) {
+    throw new Error('Unsafe Execution file-evidence Project storage prefix.')
   }
-  const projectRoot = join(storageRoot, NOTEBOOK_FILE_EVIDENCE_DIR, projectId)
+  const projectRoot = join(storageRoot, EXECUTION_FILE_EVIDENCE_DIR, projectId)
   if (!isPathInside(projectRoot, resolve(evidenceRoot))) {
-    throw new Error('Notebook file-evidence root does not match its Project storage prefix.')
+    throw new Error('Execution file-evidence root does not match its Project storage prefix.')
   }
   return {
     projectId,
     projectRoot,
-    blobStorageKeyPrefix: `${NOTEBOOK_FILE_EVIDENCE_DIR}/${projectId}/blobs`
+    blobStorageKeyPrefix: `${EXECUTION_FILE_EVIDENCE_DIR}/${projectId}/blobs`
   }
 }
 
-const deleteWorkingFileEvidenceProject = async (
+const deleteFileEvidenceProjectAtRoot = async (
   storageRoot: string,
+  evidenceDirectory: string,
   projectId: string
 ): Promise<void> => {
-  if (!SAFE_RUN_ID.test(projectId)) throw new Error('Unsafe Notebook file-evidence Project ID.')
-  const root = await secureEvidenceRoot(storageRoot, join(storageRoot, NOTEBOOK_FILE_EVIDENCE_DIR))
+  const root = await secureEvidenceRoot(storageRoot, join(storageRoot, evidenceDirectory))
   const result = await runSerializedEvidenceWorker(
     runEvidenceWorker,
     root.path,
@@ -580,28 +649,43 @@ const deleteWorkingFileEvidenceProject = async (
   }
 }
 
+const deleteWorkingFileEvidenceProject = async (
+  storageRoot: string,
+  projectId: string
+): Promise<void> => {
+  if (!SAFE_ACTIVITY_ID.test(projectId))
+    throw new Error('Unsafe Execution file-evidence Project ID.')
+  await deleteFileEvidenceProjectAtRoot(storageRoot, EXECUTION_FILE_EVIDENCE_DIR, projectId)
+  if (existsSync(join(storageRoot, LEGACY_NOTEBOOK_FILE_EVIDENCE_DIR))) {
+    await deleteFileEvidenceProjectAtRoot(storageRoot, LEGACY_NOTEBOOK_FILE_EVIDENCE_DIR, projectId)
+  }
+}
+
 const completeWorkingFileEvidence = async (
   location: WorkingFileEvidenceLocation,
   run: Pick<NotebookRunRecord, 'runId' | 'fileEvidence'>
 ): Promise<void> => {
   const evidence = run.fileEvidence
   if (
-    !SAFE_RUN_ID.test(run.runId) ||
+    !SAFE_ACTIVITY_ID.test(run.runId) ||
+    evidence?.activityId !== run.runId ||
+    evidence.activityKind !== 'notebook-run' ||
     !evidence?.evidenceId ||
     !evidence.checksum ||
     !evidence.storageKey
   ) {
     return
   }
-  const finalName = finalNameForRun(run.runId)
+  const finalName = finalNameForActivity(run.runId)
   if (evidence.storageKey !== `${location.storageKeyPrefix}/${finalName}/evidence.json`) return
   const evidenceRoot = await secureEvidenceRoot(location.storageRoot, location.root)
   const result = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
     operation: 'complete',
     expectedRootIdentity: evidenceRoot.identity,
-    receiptName: receiptNameForRun(run.runId),
+    receiptName: receiptNameForActivity(run.runId),
     finalName,
-    runId: run.runId,
+    activityId: run.runId,
+    activityKind: 'notebook-run',
     evidenceId: evidence.evidenceId,
     checksum: evidence.checksum,
     storageKey: evidence.storageKey
@@ -611,10 +695,12 @@ const completeWorkingFileEvidence = async (
   }
 }
 
-const reconcileWorkingFileEvidence = async (
+const reconcileEvidenceReceipts = async (
   location: WorkingFileEvidenceLocation,
-  runs: readonly Pick<NotebookRunRecord, 'runId' | 'fileEvidence'>[]
-): Promise<{ removedStagingEntries: number; removedRunEntries: number }> => {
+  retained: EvidenceWorkerReconcileRequest['retained'],
+  deferredActivityKinds: ExecutionActivityKind[],
+  deferredActivityIds: string[]
+): Promise<{ removedStagingEntries: number; removedActivityEntries: number }> => {
   const projectScope = projectEvidenceScope(
     location.storageRoot,
     location.root,
@@ -628,23 +714,83 @@ const reconcileWorkingFileEvidence = async (
     location.storageRoot,
     projectScope
       ? join(projectScope.projectRoot, 'blobs')
-      : join(location.storageRoot, 'file-evidence-blobs')
+      : join(location.storageRoot, 'execution-file-evidence-blobs')
   )
-  const retained = runs.flatMap((run) => {
+  const result = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
+    operation: 'reconcile',
+    expectedRootIdentity: evidenceRoot.identity,
+    blobRoot: blobRoot.path,
+    expectedBlobRootIdentity: blobRoot.identity,
+    blobStorageKeyPrefix: projectScope?.blobStorageKeyPrefix ?? 'execution-file-evidence-blobs',
+    deferredActivityKinds,
+    deferredActivityIds,
+    retained
+  })
+  if (!('removedStagingEntries' in result)) {
+    throw new Error('File-evidence reconciliation returned an invalid result.')
+  }
+  return {
+    removedStagingEntries: result.removedStagingEntries,
+    removedActivityEntries: result.removedActivityEntries
+  }
+}
+
+const legacyNotebookEvidenceLocation = (
+  location: WorkingFileEvidenceLocation
+):
+  | (WorkingFileEvidenceLocation & {
+      blobRoot: string
+      blobStorageKeyPrefix: string
+    })
+  | undefined => {
+  const segments = location.storageKeyPrefix.split('/')
+  if (segments[0] !== EXECUTION_FILE_EVIDENCE_DIR || segments.length < 3) return undefined
+  if (segments.some((segment) => !SAFE_ACTIVITY_ID.test(segment))) {
+    throw new Error('Unsafe legacy Notebook file-evidence storage prefix.')
+  }
+  if (resolve(location.root) !== resolve(location.storageRoot, ...segments)) {
+    throw new Error('Execution file-evidence root does not match its storage prefix.')
+  }
+  const legacySegments = [LEGACY_NOTEBOOK_FILE_EVIDENCE_DIR, ...segments.slice(1)]
+  const root = join(location.storageRoot, ...legacySegments)
+  if (!existsSync(root)) return undefined
+  return {
+    storageRoot: location.storageRoot,
+    root,
+    storageKeyPrefix: legacySegments.join('/'),
+    blobRoot: join(location.storageRoot, LEGACY_NOTEBOOK_FILE_EVIDENCE_DIR, segments[1], 'blobs'),
+    blobStorageKeyPrefix: `${LEGACY_NOTEBOOK_FILE_EVIDENCE_DIR}/${segments[1]}/blobs`
+  }
+}
+
+const reconcileLegacyNotebookEvidence = async (
+  location: WorkingFileEvidenceLocation,
+  runs: readonly Pick<NotebookRunRecord, 'runId' | 'fileEvidence'>[]
+): Promise<{ removedStagingEntries: number; removedActivityEntries: number }> => {
+  const legacyLocation = legacyNotebookEvidenceLocation(location)
+  if (!legacyLocation) return { removedStagingEntries: 0, removedActivityEntries: 0 }
+  if (!existsSync(legacyLocation.blobRoot)) {
+    throw new Error('Legacy Notebook file-evidence blob pool is missing.')
+  }
+  const retained: EvidenceWorkerLegacyNotebookReconcileRequest['retained'] = runs.flatMap((run) => {
     const evidence = run.fileEvidence
     if (
-      !SAFE_RUN_ID.test(run.runId) ||
-      !evidence?.evidenceId ||
+      !SAFE_ACTIVITY_ID.test(run.runId) ||
+      evidence?.activityId !== run.runId ||
+      evidence.activityKind !== 'notebook-run' ||
+      !evidence.evidenceId ||
       !evidence.checksum ||
       !evidence.storageKey
     ) {
       return []
     }
-    const finalName = finalNameForRun(run.runId)
-    if (evidence.storageKey !== `${location.storageKeyPrefix}/${finalName}/evidence.json`) return []
+    const finalName = `run-${run.runId}`
+    if (evidence.storageKey !== `${legacyLocation.storageKeyPrefix}/${finalName}/evidence.json`) {
+      return []
+    }
     return [
       {
-        receiptName: receiptNameForRun(run.runId),
+        receiptName: receiptNameForActivity(run.runId),
         finalName,
         runId: run.runId,
         evidenceId: evidence.evidenceId,
@@ -653,21 +799,182 @@ const reconcileWorkingFileEvidence = async (
       }
     ]
   })
+  const evidenceRoot = await secureEvidenceRoot(location.storageRoot, legacyLocation.root)
+  const blobRoot = await secureEvidenceRoot(location.storageRoot, legacyLocation.blobRoot)
   const result = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
-    operation: 'reconcile',
+    operation: 'reconcile-legacy-notebook',
     expectedRootIdentity: evidenceRoot.identity,
     blobRoot: blobRoot.path,
     expectedBlobRootIdentity: blobRoot.identity,
-    blobStorageKeyPrefix: projectScope?.blobStorageKeyPrefix ?? 'file-evidence-blobs',
+    blobStorageKeyPrefix: legacyLocation.blobStorageKeyPrefix,
     retained
   })
   if (!('removedStagingEntries' in result)) {
-    throw new Error('File-evidence reconciliation returned an invalid result.')
+    throw new Error('Legacy Notebook file-evidence reconciliation returned an invalid result.')
   }
   return {
     removedStagingEntries: result.removedStagingEntries,
-    removedRunEntries: result.removedRunEntries
+    removedActivityEntries: result.removedActivityEntries
   }
+}
+
+const reconcileWorkingFileEvidence = async (
+  location: WorkingFileEvidenceLocation,
+  runs: readonly Pick<NotebookRunRecord, 'runId' | 'fileEvidence'>[]
+): Promise<{ removedStagingEntries: number; removedActivityEntries: number }> => {
+  const retainedNotebookRuns: EvidenceWorkerReconcileRequest['retained'] = runs.flatMap((run) => {
+    const evidence = run.fileEvidence
+    if (
+      !SAFE_ACTIVITY_ID.test(run.runId) ||
+      evidence?.activityId !== run.runId ||
+      evidence.activityKind !== 'notebook-run' ||
+      !evidence?.evidenceId ||
+      !evidence.checksum ||
+      !evidence.storageKey
+    ) {
+      return []
+    }
+    const finalName = finalNameForActivity(run.runId)
+    if (evidence.storageKey !== `${location.storageKeyPrefix}/${finalName}/evidence.json`) return []
+    return [
+      {
+        receiptName: receiptNameForActivity(run.runId),
+        finalName,
+        activityId: run.runId,
+        activityKind: 'notebook-run' as const,
+        evidenceId: evidence.evidenceId,
+        checksum: evidence.checksum,
+        storageKey: evidence.storageKey
+      }
+    ]
+  })
+  const current = await reconcileEvidenceReceipts(
+    location,
+    retainedNotebookRuns,
+    // Notebook recovery cannot prove whether an unreferenced asynchronous Compute Job is still
+    // queued or running. Its lifecycle owner cleans failures; Project deletion owns final removal.
+    ['compute-job'],
+    []
+  )
+  const legacy = await reconcileLegacyNotebookEvidence(location, runs)
+  return {
+    removedStagingEntries: current.removedStagingEntries + legacy.removedStagingEntries,
+    removedActivityEntries: current.removedActivityEntries + legacy.removedActivityEntries
+  }
+}
+
+type ComputeJobFileEvidenceRecord = Pick<
+  ComputeJob,
+  | 'job_id'
+  | 'project_id'
+  | 'session_id'
+  | 'producer_run_id'
+  | 'file_evidence'
+  | 'status'
+  | 'cancellation_status'
+  | 'submitted_at'
+  | 'harvested_at'
+>
+
+const reconcileComputeJobFileEvidence = async (
+  storageRoot: string,
+  jobs: readonly ComputeJobFileEvidenceRecord[]
+): Promise<{ removedStagingEntries: number; removedActivityEntries: number }> => {
+  const sessions = new Map<
+    string,
+    { location: WorkingFileEvidenceLocation; jobs: ComputeJobFileEvidenceRecord[] }
+  >()
+  const includeSession = (projectId: string, sessionId: string): void => {
+    if (!SAFE_ACTIVITY_ID.test(projectId) || !SAFE_ACTIVITY_ID.test(sessionId)) {
+      throw new Error('Unsafe Compute Job file-evidence owner.')
+    }
+    const key = JSON.stringify([projectId, sessionId])
+    if (!sessions.has(key)) {
+      sessions.set(key, {
+        location: computeEvidenceLocation(storageRoot, projectId, sessionId),
+        jobs: []
+      })
+    }
+  }
+
+  for (const job of jobs) {
+    includeSession(job.project_id, job.session_id)
+    sessions.get(JSON.stringify([job.project_id, job.session_id]))!.jobs.push(job)
+  }
+
+  const root = await secureEvidenceRoot(storageRoot, join(storageRoot, EXECUTION_FILE_EVIDENCE_DIR))
+  for (const projectEntry of await readdir(root.path, { withFileTypes: true })) {
+    if (projectEntry.isSymbolicLink()) {
+      throw new UnsafeEvidencePathError('Execution file-evidence Project is a symlink.')
+    }
+    if (!projectEntry.isDirectory()) continue
+    if (!SAFE_ACTIVITY_ID.test(projectEntry.name)) {
+      throw new UnsafeEvidencePathError('Execution file-evidence Project name is unsafe.')
+    }
+    if (!existsSync(join(root.path, `.project-ownership-${projectEntry.name}.json`))) {
+      // Project deletion tombstones are directories too, but only a live Project directory has a
+      // matching ownership receipt keyed by the directory name.
+      continue
+    }
+    const projectRoot = join(root.path, projectEntry.name)
+    for (const sessionEntry of await readdir(projectRoot, { withFileTypes: true })) {
+      if (sessionEntry.name === 'blobs' || !sessionEntry.isDirectory()) {
+        if (sessionEntry.isSymbolicLink()) {
+          throw new UnsafeEvidencePathError('Execution file-evidence Session is a symlink.')
+        }
+        continue
+      }
+      if (!SAFE_ACTIVITY_ID.test(sessionEntry.name)) {
+        throw new UnsafeEvidencePathError('Execution file-evidence Session name is unsafe.')
+      }
+      includeSession(projectEntry.name, sessionEntry.name)
+    }
+  }
+
+  let removedStagingEntries = 0
+  let removedActivityEntries = 0
+  for (const { location, jobs: sessionJobs } of sessions.values()) {
+    const retained: EvidenceWorkerReconcileRequest['retained'] = []
+    const deferredActivityIds: string[] = []
+    for (const job of sessionJobs) {
+      const evidence = job.file_evidence
+      const finalName = finalNameForActivity(job.job_id)
+      if (
+        evidence?.activityId === job.job_id &&
+        evidence.activityKind === 'compute-job' &&
+        evidence.parentActivityId === job.producer_run_id &&
+        evidence.evidenceId &&
+        evidence.checksum &&
+        evidence.storageKey === `${location.storageKeyPrefix}/${finalName}/evidence.json`
+      ) {
+        retained.push({
+          receiptName: receiptNameForActivity(job.job_id),
+          finalName,
+          activityId: job.job_id,
+          activityKind: 'compute-job',
+          ...(job.producer_run_id ? { parentActivityId: job.producer_run_id } : {}),
+          evidenceId: evidence.evidenceId,
+          checksum: evidence.checksum,
+          storageKey: evidence.storageKey
+        })
+      } else {
+        const cancelledBeforeSubmission =
+          job.cancellation_status === 'cancelled' && job.submitted_at === undefined
+        const mayStillPublishEvidence =
+          !cancelledBeforeSubmission && job.status !== 'error' && job.harvested_at === undefined
+        if (mayStillPublishEvidence) deferredActivityIds.push(job.job_id)
+      }
+    }
+    const result = await reconcileEvidenceReceipts(
+      location,
+      retained,
+      ['notebook-run'],
+      deferredActivityIds
+    )
+    removedStagingEntries += result.removedStagingEntries
+    removedActivityEntries += result.removedActivityEntries
+  }
+  return { removedStagingEntries, removedActivityEntries }
 }
 
 const registerObservation = (
@@ -797,7 +1104,7 @@ const fallbackObservation = (
   logicalObservedRoot: string,
   logicalSessionRoot: string,
   before: ReadonlyMap<string, SnapshotEntry>,
-  reasonCodes: readonly NotebookFileEvidenceReason[],
+  reasonCodes: readonly ExecutionFileEvidenceReason[],
   lifecycle?: { active: ActiveObservation; unregister: () => void }
 ): RootObservation => {
   let finished = false
@@ -1029,15 +1336,15 @@ const beginEvidenceCapture = async (
   observations: readonly RootObservation[],
   dependencies: WorkingFileObservationDependencies
 ): Promise<ActiveEvidenceCapture | undefined> => {
-  if (!request.runId || !SAFE_RUN_ID.test(request.runId)) return undefined
+  if (!request.runId || !SAFE_ACTIVITY_ID.test(request.runId)) return undefined
   // Injected executors may omit the app-owned location. Keep their evidence outside the writable
   // Notebook session by falling back to a sibling private root; production supplies the canonical
   // project/session location explicitly.
   const fileEvidenceStorageRoot =
     request.fileEvidenceStorageRoot ?? resolve(request.notebookSessionRoot, '..')
   const fileEvidenceRoot =
-    request.fileEvidenceRoot ?? join(fileEvidenceStorageRoot, 'file-evidence')
-  const fileEvidenceStoragePrefix = request.fileEvidenceStoragePrefix ?? 'file-evidence'
+    request.fileEvidenceRoot ?? join(fileEvidenceStorageRoot, 'execution-file-evidence')
+  const fileEvidenceStoragePrefix = request.fileEvidenceStoragePrefix ?? 'execution-file-evidence'
   const projectScope = projectEvidenceScope(
     fileEvidenceStorageRoot,
     fileEvidenceRoot,
@@ -1054,26 +1361,28 @@ const beginEvidenceCapture = async (
     fileEvidenceStorageRoot,
     projectScope
       ? join(projectScope.projectRoot, 'blobs')
-      : join(fileEvidenceStorageRoot, 'file-evidence-blobs')
+      : join(fileEvidenceStorageRoot, 'execution-file-evidence-blobs')
   )
-  const evidenceId = `notebook-file-evidence-${request.runId}`
+  const evidenceId = `execution-file-evidence-${request.runId}`
   const capture: ActiveEvidenceCapture = {
     evidenceRoot: await secureEvidenceRoot(fileEvidenceStorageRoot, fileEvidenceRoot),
-    receiptName: receiptNameForRun(request.runId),
+    receiptName: receiptNameForActivity(request.runId),
     stagingName: `staging-${request.runId}-${randomUUID()}`,
-    finalName: finalNameForRun(request.runId),
+    finalName: finalNameForActivity(request.runId),
     evidenceId,
+    activityId: request.runId,
+    activityKind: 'notebook-run',
     storageKeyPrefix: fileEvidenceStoragePrefix,
     blobRoot,
-    blobStorageKeyPrefix: projectScope?.blobStorageKeyPrefix ?? 'file-evidence-blobs',
+    blobStorageKeyPrefix: projectScope?.blobStorageKeyPrefix ?? 'execution-file-evidence-blobs',
     maxGenerationBytes: dependencies.maxGenerationBytes ?? LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
-    maxRunBytes: dependencies.maxRunBytes ?? LOCAL_RESOURCE_BUDGETS.artifactTurnBytes,
+    maxActivityBytes: dependencies.maxActivityBytes ?? LOCAL_RESOURCE_BUDGETS.artifactTurnBytes,
     maxEvidenceBytes:
       dependencies.maxEvidenceBytes ?? LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes,
     diskReserveBytes: dependencies.diskReserveBytes ?? LOCAL_RESOURCE_BUDGETS.diskReserveBytes
   }
   const initialFiles = observations.flatMap((observation) => observation.initialFiles)
-  const initialViewState: NotebookFileEvidenceCoverage = observations.every(
+  const initialViewState: ExecutionFileEvidenceCoverage = observations.every(
     (observation) => observation.initialAvailable
   )
     ? 'complete'
@@ -1081,7 +1390,7 @@ const beginEvidenceCapture = async (
       ? 'partial'
       : 'unavailable'
   const plannedBytes = Math.min(
-    capture.maxRunBytes,
+    capture.maxActivityBytes,
     Buffer.byteLength(JSON.stringify(initialFiles))
   )
   let reservedBytes = 0
@@ -1106,7 +1415,8 @@ const beginEvidenceCapture = async (
         receiptName: capture.receiptName,
         stagingName: capture.stagingName,
         finalName: capture.finalName,
-        runId: request.runId,
+        activityId: capture.activityId,
+        activityKind: capture.activityKind,
         evidenceId,
         storageKeyPrefix: fileEvidenceStoragePrefix,
         blobRoot: capture.blobRoot.path,
@@ -1121,7 +1431,7 @@ const beginEvidenceCapture = async (
           }
         })),
         maxGenerationBytes: capture.maxGenerationBytes,
-        maxRunBytes: capture.maxRunBytes,
+        maxActivityBytes: capture.maxActivityBytes,
         maxEvidenceBytes: capture.maxEvidenceBytes,
         diskReserveBytes: capture.diskReserveBytes,
         availableBytes: Math.max(0, freeBytes - reservedDiskBytes + reservedBytes),
@@ -1175,8 +1485,11 @@ const persistEvidence = async (
       : []
   )
   const workingFilesByPath = new Map(workingFiles.map((file) => [file.path, file]))
-  if (!request.runId || !SAFE_RUN_ID.test(request.runId)) {
-    return { workingFiles, fileEvidence: unavailableEvidence(['run-identity-missing']) }
+  if (!request.runId || !SAFE_ACTIVITY_ID.test(request.runId)) {
+    return {
+      workingFiles,
+      fileEvidence: unavailableEvidence(['activity-identity-missing'])
+    }
   }
   const scientificOutputs = analyzeScientificOutputs(
     changes.map((change) => ({
@@ -1196,14 +1509,17 @@ const persistEvidence = async (
   if (!capture) {
     return {
       workingFiles,
-      fileEvidence: unavailableEvidence([
-        'initial-file-generations-not-captured',
-        'evidence-persistence-failed'
-      ])
+      fileEvidence: unavailableEvidence(
+        ['initial-file-generations-not-captured', 'evidence-persistence-failed'],
+        request.runId
+      )
     }
   }
 
-  const plannedBytes = Math.min(capture.maxRunBytes, Buffer.byteLength(JSON.stringify(changes)))
+  const plannedBytes = Math.min(
+    capture.maxActivityBytes,
+    Buffer.byteLength(JSON.stringify(changes))
+  )
   let reservedBytes = 0
   try {
     const freeBytes = await (dependencies.getAvailableBytes ?? availableBytes)(
@@ -1225,7 +1541,8 @@ const persistEvidence = async (
         receiptName: capture.receiptName,
         stagingName: capture.stagingName,
         finalName: capture.finalName,
-        runId: request.runId,
+        activityId: capture.activityId,
+        activityKind: capture.activityKind,
         evidenceId: capture.evidenceId,
         storageKeyPrefix: capture.storageKeyPrefix,
         blobRoot: capture.blobRoot.path,
@@ -1243,7 +1560,7 @@ const persistEvidence = async (
           }
         })),
         maxGenerationBytes: capture.maxGenerationBytes,
-        maxRunBytes: capture.maxRunBytes,
+        maxActivityBytes: capture.maxActivityBytes,
         maxEvidenceBytes: capture.maxEvidenceBytes,
         diskReserveBytes: capture.diskReserveBytes,
         availableBytes: Math.max(0, freeBytes - reservedDiskBytes + reservedBytes),
@@ -1281,10 +1598,10 @@ const persistEvidence = async (
     }).catch(() => undefined)
     return {
       workingFiles: stripUnpublishedGenerations(workingFiles),
-      fileEvidence: unavailableEvidence([
-        ...rootResults.flatMap((result) => result.reasonCodes),
-        'evidence-persistence-failed'
-      ])
+      fileEvidence: unavailableEvidence(
+        [...rootResults.flatMap((result) => result.reasonCodes), 'evidence-persistence-failed'],
+        request.runId
+      )
     }
   } finally {
     reservedDiskBytes -= reservedBytes
@@ -1319,7 +1636,10 @@ const startWorkingFileObservation = async (
   return {
     finish: async (signal) => {
       if (finished) {
-        return { workingFiles: [], fileEvidence: unavailableEvidence(['observer-failed']) }
+        return {
+          workingFiles: [],
+          fileEvidence: unavailableEvidence(['observer-failed'], request.runId)
+        }
       }
       finished = true
       const results = await Promise.all(observations.map((observation) => observation.finish()))
@@ -1334,11 +1654,449 @@ const startWorkingFileObservation = async (
   }
 }
 
+type ComputeTransferInput = Readonly<{
+  localPath: string
+  dstFilename: string
+  label: string
+}>
+
+type FrozenComputeTransferInput = ComputeTransferInput &
+  Readonly<{
+    frozenPath: string
+    generationId: string
+    checksum: string
+    sizeBytes: number
+  }>
+
+type ComputeTransferOutput = Readonly<{
+  localPath: string
+  relativePath: string
+}>
+
+const computeEvidenceLocation = (
+  storageRoot: string,
+  projectId: string,
+  sessionId: string
+): WorkingFileEvidenceLocation => {
+  const lane = createRootNotebookLane(projectId, sessionId, `root-frame-${sessionId}`)
+  const location = getNotebookFileEvidenceLocation(storageRoot, projectId, sessionId, lane)
+  return { storageRoot, ...location }
+}
+
+const explicitTransferSnapshot = async (
+  localPath: string,
+  relativePath: string
+): Promise<SnapshotEntry> => {
+  const linkMetadata = await lstat(localPath)
+  if (!linkMetadata.isFile() || linkMetadata.isSymbolicLink()) {
+    throw new Error(`Compute transfer source is not a regular file: ${localPath}`)
+  }
+  const physicalPath = await realpath(localPath)
+  const metadata = await stat(physicalPath)
+  if (
+    !metadata.isFile() ||
+    metadata.dev !== linkMetadata.dev ||
+    metadata.ino !== linkMetadata.ino
+  ) {
+    throw new Error(`Compute transfer source changed during capture: ${localPath}`)
+  }
+  return {
+    physicalPath,
+    path: resolve(localPath),
+    relativePath,
+    kind: 'other',
+    size: metadata.size,
+    mtimeMs: metadata.mtimeMs,
+    ctimeMs: metadata.ctimeMs,
+    dev: metadata.dev,
+    ino: metadata.ino
+  }
+}
+
+const beginComputeJobFileEvidence = async (request: {
+  storageRoot: string
+  projectId: string
+  sessionId: string
+  jobId: string
+  producerRunId?: string
+  inputs: readonly ComputeTransferInput[]
+  signal?: AbortSignal
+}): Promise<FrozenComputeTransferInput[]> => {
+  if (!SAFE_ACTIVITY_ID.test(request.jobId)) throw new Error('Unsafe Compute Job evidence ID.')
+  const location = computeEvidenceLocation(
+    request.storageRoot,
+    request.projectId,
+    request.sessionId
+  )
+  const projectScope = projectEvidenceScope(
+    location.storageRoot,
+    location.root,
+    location.storageKeyPrefix
+  )
+  if (!projectScope) throw new Error('Compute Job evidence requires Project-owned storage.')
+  await ensureWorkingFileEvidenceProject(location.storageRoot, projectScope.projectId)
+  const evidenceRoot = await secureEvidenceRoot(location.storageRoot, location.root)
+  const blobRoot = await secureEvidenceRoot(
+    location.storageRoot,
+    join(projectScope.projectRoot, 'blobs')
+  )
+  const stagingName = `staging-${request.jobId}`
+  const finalName = finalNameForActivity(request.jobId)
+  const evidenceId = `execution-file-evidence-${request.jobId}`
+  const inputs = await Promise.all(
+    request.inputs.map(async (input) => ({
+      input,
+      file: await explicitTransferSnapshot(input.localPath, `inputs/${input.dstFilename}`),
+      generationId: randomUUID()
+    }))
+  )
+  const freeBytes = await availableBytes(evidenceRoot.path)
+  try {
+    const result = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
+      operation: 'begin',
+      expectedRootIdentity: evidenceRoot.identity,
+      receiptName: receiptNameForActivity(request.jobId),
+      stagingName,
+      finalName,
+      activityId: request.jobId,
+      activityKind: 'compute-job',
+      ...(request.producerRunId ? { parentActivityId: request.producerRunId } : {}),
+      evidenceId,
+      storageKeyPrefix: location.storageKeyPrefix,
+      blobRoot: blobRoot.path,
+      expectedBlobRootIdentity: blobRoot.identity,
+      blobStorageKeyPrefix: projectScope.blobStorageKeyPrefix,
+      initialViewState: 'complete',
+      initialFiles: inputs.map(({ file, generationId }) => ({
+        file,
+        generation: { generationId, capturedAt: new Date().toISOString() },
+        relation: 'staged-input'
+      })),
+      maxGenerationBytes: LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
+      maxActivityBytes: LOCAL_RESOURCE_BUDGETS.artifactTurnBytes,
+      maxEvidenceBytes: LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes,
+      diskReserveBytes: LOCAL_RESOURCE_BUDGETS.diskReserveBytes,
+      availableBytes: freeBytes,
+      captureCancelled: request.signal?.aborted ?? false
+    })
+    if (!('capturedInitialGenerations' in result)) {
+      throw new Error('Compute input capture returned an invalid result.')
+    }
+    const generations = new Map(
+      (result.initialGenerations ?? []).map((generation) => [generation.relativePath, generation])
+    )
+    return inputs.map(({ input, file }) => {
+      const generation = generations.get(file.relativePath)
+      if (!generation) throw new Error(`Compute input could not be frozen: ${input.label}`)
+      return {
+        ...input,
+        frozenPath: join(evidenceRoot.path, stagingName, 'blobs', `sha256-${generation.checksum}`),
+        generationId: generation.generationId,
+        checksum: generation.checksum,
+        sizeBytes: generation.sizeBytes
+      }
+    })
+  } catch (error) {
+    await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
+      operation: 'cleanup',
+      expectedRootIdentity: evidenceRoot.identity,
+      receiptName: receiptNameForActivity(request.jobId),
+      blobRoot: blobRoot.path,
+      expectedBlobRootIdentity: blobRoot.identity,
+      blobStorageKeyPrefix: projectScope.blobStorageKeyPrefix
+    }).catch(() => undefined)
+    throw error
+  }
+}
+
+const cleanupComputeJobFileEvidence = async (request: {
+  storageRoot: string
+  projectId: string
+  sessionId: string
+  jobId: string
+  preservePublished?: boolean
+}): Promise<void> => {
+  const location = computeEvidenceLocation(
+    request.storageRoot,
+    request.projectId,
+    request.sessionId
+  )
+  const projectScope = projectEvidenceScope(
+    location.storageRoot,
+    location.root,
+    location.storageKeyPrefix
+  )
+  if (!projectScope) return
+  const evidenceRoot = await secureEvidenceRoot(location.storageRoot, location.root)
+  const blobRoot = await secureEvidenceRoot(
+    location.storageRoot,
+    join(projectScope.projectRoot, 'blobs')
+  )
+  await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
+    operation: 'cleanup',
+    expectedRootIdentity: evidenceRoot.identity,
+    receiptName: receiptNameForActivity(request.jobId),
+    preservePublished: request.preservePublished,
+    blobRoot: blobRoot.path,
+    expectedBlobRootIdentity: blobRoot.identity,
+    blobStorageKeyPrefix: projectScope.blobStorageKeyPrefix
+  })
+}
+
+const publishComputeJobFileEvidence = async (request: {
+  storageRoot: string
+  projectId: string
+  sessionId: string
+  jobId: string
+  producerRunId?: string
+  outputs: readonly ComputeTransferOutput[]
+  remoteInputPaths?: readonly string[]
+  reasonCodes?: readonly ExecutionFileEvidenceReason[]
+  signal?: AbortSignal
+}): Promise<ExecutionFileEvidenceSummary> => {
+  const location = computeEvidenceLocation(
+    request.storageRoot,
+    request.projectId,
+    request.sessionId
+  )
+  const projectScope = projectEvidenceScope(
+    location.storageRoot,
+    location.root,
+    location.storageKeyPrefix
+  )
+  if (!projectScope) throw new Error('Compute Job evidence requires Project-owned storage.')
+  await ensureWorkingFileEvidenceProject(location.storageRoot, projectScope.projectId)
+  const evidenceRoot = await secureEvidenceRoot(location.storageRoot, location.root)
+  const blobRoot = await secureEvidenceRoot(
+    location.storageRoot,
+    join(projectScope.projectRoot, 'blobs')
+  )
+  const freeBytes = await availableBytes(evidenceRoot.path)
+  const capture = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
+    operation: 'ensure-capture',
+    expectedRootIdentity: evidenceRoot.identity,
+    receiptName: receiptNameForActivity(request.jobId),
+    stagingName: `staging-${request.jobId}`,
+    finalName: finalNameForActivity(request.jobId),
+    activityId: request.jobId,
+    activityKind: 'compute-job',
+    ...(request.producerRunId ? { parentActivityId: request.producerRunId } : {}),
+    evidenceId: `execution-file-evidence-${request.jobId}`,
+    storageKeyPrefix: location.storageKeyPrefix,
+    blobRoot: blobRoot.path,
+    expectedBlobRootIdentity: blobRoot.identity,
+    blobStorageKeyPrefix: projectScope.blobStorageKeyPrefix,
+    initialViewState: 'unavailable',
+    initialFiles: [],
+    maxGenerationBytes: LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
+    maxActivityBytes: LOCAL_RESOURCE_BUDGETS.artifactTurnBytes,
+    maxEvidenceBytes: LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes,
+    diskReserveBytes: LOCAL_RESOURCE_BUDGETS.diskReserveBytes,
+    availableBytes: freeBytes,
+    captureCancelled: request.signal?.aborted ?? false
+  })
+  if (!('captureReady' in capture)) {
+    throw new Error('Compute recovery capture returned an invalid result.')
+  }
+  const outputs = await Promise.all(
+    request.outputs.map(async (output) => ({
+      output,
+      file: await explicitTransferSnapshot(output.localPath, output.relativePath)
+    }))
+  )
+  const remoteInputPaths = request.remoteInputPaths ?? []
+  const reasons = [
+    ...(request.reasonCodes ?? []),
+    ...(request.producerRunId ? [] : (['compute-activity-lineage-missing'] as const)),
+    ...(remoteInputPaths.length > 0 ? (['remote-input-generation-not-captured'] as const) : [])
+  ]
+  const hasRelations = outputs.length > 0 || remoteInputPaths.length > 0
+  const result = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
+    operation: 'persist',
+    expectedRootIdentity: evidenceRoot.identity,
+    receiptName: receiptNameForActivity(request.jobId),
+    stagingName: `staging-${request.jobId}`,
+    finalName: finalNameForActivity(request.jobId),
+    activityId: request.jobId,
+    activityKind: 'compute-job',
+    ...(request.producerRunId ? { parentActivityId: request.producerRunId } : {}),
+    evidenceId: `execution-file-evidence-${request.jobId}`,
+    storageKeyPrefix: location.storageKeyPrefix,
+    blobRoot: blobRoot.path,
+    expectedBlobRootIdentity: blobRoot.identity,
+    blobStorageKeyPrefix: projectScope.blobStorageKeyPrefix,
+    rootKinds: ['data'],
+    rootsAvailable: true,
+    evidenceState: reasons.length === 0 ? 'available' : hasRelations ? 'partial' : 'unavailable',
+    reasonCodes: [...new Set(reasons)],
+    scientificOutputs: analyzeScientificOutputs(
+      outputs.map(({ file }) => ({ relation: 'created', relativePath: file.relativePath })),
+      request.jobId
+    ),
+    changes: [
+      ...outputs.map(({ file }) => ({
+        change: {
+          relation: 'harvested-output' as const,
+          relativePath: file.relativePath,
+          after: file,
+          pathPortability: 'relative' as const,
+          authority: 'explicit-transfer' as const
+        },
+        generation: { generationId: randomUUID(), capturedAt: new Date().toISOString() }
+      })),
+      ...remoteInputPaths.map((remotePath) => ({
+        change: {
+          relation: 'remote-input-reference' as const,
+          relativePath: remotePath,
+          pathPortability: 'absolute' as const,
+          authority: 'explicit-transfer' as const
+        },
+        generation: { generationId: randomUUID(), capturedAt: new Date().toISOString() }
+      }))
+    ],
+    maxGenerationBytes: LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
+    maxActivityBytes: LOCAL_RESOURCE_BUDGETS.artifactTurnBytes,
+    maxEvidenceBytes: LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes,
+    diskReserveBytes: LOCAL_RESOURCE_BUDGETS.diskReserveBytes,
+    availableBytes: freeBytes,
+    captureCancelled: request.signal?.aborted ?? false
+  })
+  if (!('fileEvidence' in result)) {
+    throw new Error('Compute output capture returned an invalid result.')
+  }
+  const fileEvidence = parseOwnedExecutionFileEvidenceSummary(result.fileEvidence, {
+    activityId: request.jobId,
+    activityKind: 'compute-job',
+    parentActivityId: request.producerRunId,
+    storageKey: `${location.storageKeyPrefix}/${finalNameForActivity(request.jobId)}/evidence.json`
+  })
+  if (!fileEvidence) throw new Error('Compute output capture returned invalid file evidence.')
+  return fileEvidence
+}
+
+const recoverPublishedComputeJobFileEvidence = async (request: {
+  storageRoot: string
+  projectId: string
+  sessionId: string
+  jobId: string
+  producerRunId?: string
+}): Promise<ExecutionFileEvidenceSummary | undefined> => {
+  const location = computeEvidenceLocation(
+    request.storageRoot,
+    request.projectId,
+    request.sessionId
+  )
+  if (!existsSync(location.root)) return undefined
+  const projectScope = projectEvidenceScope(
+    location.storageRoot,
+    location.root,
+    location.storageKeyPrefix
+  )
+  if (!projectScope) throw new Error('Compute Job evidence requires Project-owned storage.')
+  await ensureWorkingFileEvidenceProject(location.storageRoot, projectScope.projectId)
+  const evidenceRoot = await secureEvidenceRoot(location.storageRoot, location.root)
+  const blobRoot = await secureEvidenceRoot(
+    location.storageRoot,
+    join(projectScope.projectRoot, 'blobs')
+  )
+  const result = await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
+    operation: 'recover-published',
+    expectedRootIdentity: evidenceRoot.identity,
+    receiptName: receiptNameForActivity(request.jobId),
+    stagingName: `staging-${request.jobId}`,
+    finalName: finalNameForActivity(request.jobId),
+    activityId: request.jobId,
+    activityKind: 'compute-job',
+    ...(request.producerRunId ? { parentActivityId: request.producerRunId } : {}),
+    evidenceId: `execution-file-evidence-${request.jobId}`,
+    storageKeyPrefix: location.storageKeyPrefix,
+    blobRoot: blobRoot.path,
+    expectedBlobRootIdentity: blobRoot.identity,
+    blobStorageKeyPrefix: projectScope.blobStorageKeyPrefix,
+    rootKinds: ['data'],
+    rootsAvailable: false,
+    evidenceState: 'unavailable',
+    reasonCodes: [],
+    scientificOutputs: [],
+    changes: [],
+    maxGenerationBytes: LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
+    maxActivityBytes: LOCAL_RESOURCE_BUDGETS.artifactTurnBytes,
+    maxEvidenceBytes: LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes,
+    diskReserveBytes: LOCAL_RESOURCE_BUDGETS.diskReserveBytes,
+    availableBytes: 0,
+    captureCancelled: false
+  })
+  if (!('recoveredFileEvidence' in result)) {
+    throw new Error('Compute published evidence recovery returned an invalid result.')
+  }
+  if (!result.recoveredFileEvidence) return undefined
+  const fileEvidence = parseOwnedExecutionFileEvidenceSummary(result.recoveredFileEvidence, {
+    activityId: request.jobId,
+    activityKind: 'compute-job',
+    parentActivityId: request.producerRunId,
+    storageKey: `${location.storageKeyPrefix}/${finalNameForActivity(request.jobId)}/evidence.json`
+  })
+  if (!fileEvidence || !fileEvidence.evidenceId || !fileEvidence.checksum) {
+    throw new Error('Recovered Compute file evidence is not immutable.')
+  }
+  return fileEvidence
+}
+
+const settleComputeJobFileEvidence = async (request: {
+  storageRoot: string
+  projectId: string
+  sessionId: string
+  jobId: string
+  producerRunId?: string
+  fileEvidence: ExecutionFileEvidenceSummary
+}): Promise<void> => {
+  const evidence = request.fileEvidence
+  if (
+    evidence.activityId !== request.jobId ||
+    evidence.activityKind !== 'compute-job' ||
+    evidence.parentActivityId !== request.producerRunId ||
+    !evidence.evidenceId ||
+    !evidence.checksum ||
+    !evidence.storageKey
+  ) {
+    throw new Error('Compute Job file-evidence completion requires a published summary.')
+  }
+  const location = computeEvidenceLocation(
+    request.storageRoot,
+    request.projectId,
+    request.sessionId
+  )
+  const finalName = finalNameForActivity(request.jobId)
+  if (evidence.storageKey !== `${location.storageKeyPrefix}/${finalName}/evidence.json`) {
+    throw new Error('Compute Job file-evidence storage key does not match its owner.')
+  }
+  const evidenceRoot = await secureEvidenceRoot(location.storageRoot, location.root)
+  await runSerializedEvidenceWorker(runEvidenceWorker, evidenceRoot.path, {
+    operation: 'complete',
+    expectedRootIdentity: evidenceRoot.identity,
+    receiptName: receiptNameForActivity(request.jobId),
+    finalName: finalNameForActivity(request.jobId),
+    activityId: request.jobId,
+    activityKind: 'compute-job',
+    ...(request.producerRunId ? { parentActivityId: request.producerRunId } : {}),
+    evidenceId: evidence.evidenceId,
+    checksum: evidence.checksum,
+    storageKey: evidence.storageKey
+  })
+}
+
 export {
+  beginComputeJobFileEvidence,
+  cleanupComputeJobFileEvidence,
   completeWorkingFileEvidence,
   deleteWorkingFileEvidenceProject,
+  reconcileComputeJobFileEvidence,
   reconcileWorkingFileEvidence,
+  publishComputeJobFileEvidence,
+  recoverPublishedComputeJobFileEvidence,
+  settleComputeJobFileEvidence,
   startWorkingFileObservation,
   toPortableNotebookRelativePath
 }
 export type { WorkingFileEvidenceLocation, WorkingFileObservation, WorkingFileObservationResult }
+export type { ComputeTransferInput, ComputeTransferOutput, FrozenComputeTransferInput }

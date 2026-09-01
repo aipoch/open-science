@@ -3,6 +3,7 @@ import {
   createNamespacedResource,
   RENDERER_NAMESPACE
 } from '../../../shared/i18n/core'
+import { common as deCommon, renderer as deRenderer } from '../../../shared/i18n/locales/de.json'
 import { common as esCommon, renderer as esRenderer } from '../../../shared/i18n/locales/es.json'
 import { common as frCommon, renderer as frRenderer } from '../../../shared/i18n/locales/fr.json'
 import { common as jaCommon, renderer as jaRenderer } from '../../../shared/i18n/locales/ja.json'
@@ -30,6 +31,10 @@ export {
 export const DEFAULT_NAMESPACE = RENDERER_NAMESPACE
 
 export const resources = {
+  de: createNamespacedResource({
+    [COMMON_NAMESPACE]: deCommon,
+    [RENDERER_NAMESPACE]: deRenderer
+  }),
   es: createNamespacedResource({
     [COMMON_NAMESPACE]: esCommon,
     [RENDERER_NAMESPACE]: esRenderer

@@ -120,7 +120,8 @@ describe('database startup logging', () => {
               '0020_compute_job_analysis_state',
               '0021_compute_job_analysis_constraints',
               '0022_memory_global_content_unique',
-              '0023_compute_job_operation'
+              '0023_compute_job_operation',
+              '0024_compute_job_file_evidence'
             ],
             adoptedLegacy: true
           })

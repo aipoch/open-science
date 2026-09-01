@@ -131,7 +131,8 @@ async function createLateReplayScenario(): Promise<LateReplayScenario> {
     frame: ['child-frame'],
     attempt: ['attempt-1'],
     message: ['prompt-1', 'pending-1', 'prompt-2', 'answer-1', 'answer-2'],
-    runtime: ['runtime-1', 'runtime-2']
+    runtime: ['runtime-1', 'runtime-2'],
+    question: []
   }
   const work = createDurableDelegatedWork({
     execution,
@@ -739,7 +740,8 @@ describe('Session delegated-work adapter', () => {
       frame: ['child-frame'],
       attempt: ['attempt-1'],
       message: ['prompt-1', 'pending-1', 'prompt-2', 'answer-1'],
-      runtime: ['runtime-1', 'runtime-2']
+      runtime: ['runtime-1', 'runtime-2'],
+      question: []
     }
     const work = createDurableDelegatedWork({
       execution,
@@ -1002,7 +1004,8 @@ describe('Session delegated-work adapter', () => {
       frame: ['child-frame'],
       attempt: ['attempt-1'],
       message: ['prompt-1', 'answer-1', 'fallback-answer'],
-      runtime: ['runtime-1']
+      runtime: ['runtime-1'],
+      question: []
     }
     const work = createDurableDelegatedWork({
       execution,
@@ -1146,7 +1149,12 @@ describe('Session delegated-work adapter', () => {
       createId: (kind) =>
         kind === 'message'
           ? `child-message-${nextMessage++}`
-          : { frame: 'child-frame', attempt: 'child-attempt', runtime: 'child-runtime' }[kind]
+          : {
+              frame: 'child-frame',
+              attempt: 'child-attempt',
+              runtime: 'child-runtime',
+              question: 'child-question'
+            }[kind]
     })
     const caller: AuthenticatedDelegateCaller = {
       session: key,
@@ -1218,7 +1226,8 @@ describe('Session delegated-work adapter', () => {
       frame: ['child-frame'],
       attempt: ['child-attempt'],
       message: ['child-prompt', 'agent-message'],
-      runtime: ['child-runtime']
+      runtime: ['child-runtime'],
+      question: []
     }
     const work = createDurableDelegatedWork({
       execution,
@@ -1384,7 +1393,8 @@ describe('Session delegated-work adapter', () => {
       frame: ['error-frame'],
       attempt: ['error-attempt'],
       message: ['error-prompt', 'partial-agent-message'],
-      runtime: ['error-runtime']
+      runtime: ['error-runtime'],
+      question: []
     }
     const work = createDurableDelegatedWork({
       execution,
@@ -1482,7 +1492,8 @@ describe('Session delegated-work adapter', () => {
       frame: ['cancel-frame'],
       attempt: ['cancel-attempt'],
       message: ['cancel-prompt', 'cancel-partial-message'],
-      runtime: ['cancel-runtime']
+      runtime: ['cancel-runtime'],
+      question: []
     }
     const work = createDurableDelegatedWork({
       execution,
@@ -1578,7 +1589,8 @@ describe('Session delegated-work adapter', () => {
           frame: 'specialist-frame',
           attempt: 'specialist-attempt',
           message: 'specialist-message',
-          runtime: 'specialist-runtime'
+          runtime: 'specialist-runtime',
+          question: 'specialist-question'
         })[kind]
     })
     const caller: AuthenticatedDelegateCaller = {
@@ -1761,7 +1773,12 @@ describe('Session delegated-work adapter', () => {
       createId: (kind) =>
         kind === 'message'
           ? `child-message-${nextMessage++}`
-          : { frame: 'child-frame', attempt: 'child-attempt', runtime: 'child-runtime' }[kind]
+          : {
+              frame: 'child-frame',
+              attempt: 'child-attempt',
+              runtime: 'child-runtime',
+              question: 'child-question'
+            }[kind]
     })
     const caller: AuthenticatedDelegateCaller = {
       session: key,
@@ -1876,7 +1893,8 @@ describe('Session delegated-work adapter', () => {
       frame: ['child-frame'],
       attempt: ['attempt-1', 'attempt-2'],
       message: ['prompt-1', 'answer-1', 'prompt-2'],
-      runtime: ['runtime-1', 'runtime-2']
+      runtime: ['runtime-1', 'runtime-2'],
+      question: []
     }
     const work = createDurableDelegatedWork({
       execution,
@@ -1978,7 +1996,8 @@ describe('Session delegated-work adapter', () => {
       frame: ['child-frame'],
       attempt: ['attempt-1', 'attempt-2', 'attempt-3'],
       message: ['prompt-1', 'answer-1', 'prompt-2', 'prompt-3'],
-      runtime: ['runtime-1', 'runtime-2', 'runtime-3']
+      runtime: ['runtime-1', 'runtime-2', 'runtime-3'],
+      question: []
     }
     const work = createDurableDelegatedWork({
       execution,
@@ -2033,7 +2052,8 @@ describe('Session delegated-work adapter', () => {
       frame: ['child-frame'],
       attempt: ['attempt-1', 'attempt-2'],
       message: ['prompt-1', 'answer-1', 'prompt-2'],
-      runtime: ['runtime-1', 'runtime-2']
+      runtime: ['runtime-1', 'runtime-2'],
+      question: []
     }
     const work = createDurableDelegatedWork({
       execution,

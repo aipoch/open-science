@@ -13,6 +13,7 @@ release-notes/
     fr.md
     pt-BR.md
     ru.md
+    de.md
     es.md
 ```
 

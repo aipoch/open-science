@@ -13,6 +13,8 @@ const runPowerShell = (command: string): ReturnType<typeof runShellCommand> =>
     cwd: process.cwd(),
     handoffDir: process.cwd(),
     runtimeRoot: join(process.cwd(), '.open-science-test-runtime'),
+    sessionId: 'windows-shell-session',
+    projectId: 'windows-shell-project',
     // Cold Windows PowerShell 5.1 module discovery on hosted runners can exceed Vitest's 15-second
     // default, while native-only and parser-error paths finish in under a second. Production allows
     // 120 seconds; this tighter process budget still detects a genuinely stuck shell.

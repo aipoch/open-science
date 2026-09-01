@@ -19,6 +19,16 @@ import type {
 type QuitEvent = { preventDefault: () => void; defaultPrevented: boolean }
 type Handler = (event: QuitEvent) => void
 
+const makeQuitEvent = (): QuitEvent => {
+  const event: QuitEvent = {
+    defaultPrevented: false,
+    preventDefault(): void {
+      event.defaultPrevented = true
+    }
+  }
+  return event
+}
+
 afterEach(() => clearApplicationShutdownTrigger())
 
 type FakeApp = {
@@ -39,12 +49,7 @@ const makeFakeApp = (): FakeApp => {
     },
     exit: vi.fn(),
     emit(event): QuitEvent {
-      const evt: QuitEvent = {
-        defaultPrevented: false,
-        preventDefault(): void {
-          evt.defaultPrevented = true
-        }
-      }
+      const evt = makeQuitEvent()
       for (const handler of handlers.get(event) ?? []) handler(evt)
       return evt
     }
@@ -63,12 +68,13 @@ type FakeWindow = {
   show: () => void
   hide: () => void
   focus: () => void
-  on: (event: 'hide' | 'show', handler: () => void) => void
+  on: (event: string, handler: Handler) => void
+  emit: (event: string) => QuitEvent
 }
 
 // A fake BrowserWindow tracking visibility/focus/destroyed state.
 const makeFakeWindow = (): FakeWindow => {
-  const handlers = new Map<'hide' | 'show', Array<() => void>>()
+  const handlers = new Map<string, Handler[]>()
 
   return {
     destroyed: false,
@@ -89,17 +95,22 @@ const makeFakeWindow = (): FakeWindow => {
     },
     show(): void {
       this.visible = true
-      for (const handler of handlers.get('show') ?? []) handler()
+      for (const handler of handlers.get('show') ?? []) handler(makeQuitEvent())
     },
     hide(): void {
       this.visible = false
-      for (const handler of handlers.get('hide') ?? []) handler()
+      for (const handler of handlers.get('hide') ?? []) handler(makeQuitEvent())
     },
     focus(): void {
       this.focused = true
     },
     on(event, handler): void {
       handlers.set(event, [...(handlers.get(event) ?? []), handler])
+    },
+    emit(event): QuitEvent {
+      const evt = makeQuitEvent()
+      for (const handler of handlers.get(event) ?? []) handler(evt)
+      return evt
     }
   }
 }
@@ -133,6 +144,7 @@ type Harness = {
   showMainWindow: () => void
   getMainWindow: () => import('electron').BrowserWindow | undefined
   isMainWindowHidden: () => boolean
+  onSystemShutdown: () => void
   closeOpts: CapturedCloseOpts[]
   confirmClose: ReturnType<typeof vi.fn>
 }
@@ -185,39 +197,40 @@ const setup = (
   )
   const detectActiveSessions = overrides.detectActiveSessions ?? ((): ActiveSessionInfo[] => [])
 
-  const { showMainWindow, getMainWindow, isMainWindowHidden } = installAppLifecycle({
-    app: app as unknown as AppLifecycleDeps['app'],
-    createMainWindow: (opts) => {
-      closeOpts.push(opts)
-      const w = makeFakeWindow()
-      windows.push(w)
-      return asWindow(w)
-    },
-    initialWindow: overrides.initialWindow,
-    configureMainWindow: overrides.configureMainWindow,
-    createTray: (handlers) => {
-      trayHandlers = handlers
-      return tray as unknown as import('electron').Tray | undefined
-    },
-    shutdownBackends,
-    prepareForQuit,
-    abortQuitPreparation,
-    flushSessionPersistence,
-    log: overrides.log,
-    flushLogs: overrides.flushLogs,
-    logFlushTimeoutMs: overrides.logFlushTimeoutMs,
-    rendererFlushTimeoutMs: overrides.rendererFlushTimeoutMs,
-    shutdownTrigger: overrides.shutdownTrigger,
-    isMigrationInProgress: overrides.isMigrationInProgress ?? ((): boolean => false),
-    quit,
-    countWindows: () => windows.filter((w) => !w.destroyed).length,
-    createInitialWindow: overrides.createInitialWindow,
-    onAppearanceChanged: overrides.onAppearanceChanged,
-    platform: overrides.platform ?? 'linux',
-    detectActiveSessions,
-    hasActiveReviewerWork: overrides.hasActiveReviewerWork ?? (() => false),
-    createConfirmClose: () => confirmClose
-  })
+  const { showMainWindow, getMainWindow, isMainWindowHidden, onSystemShutdown } =
+    installAppLifecycle({
+      app: app as unknown as AppLifecycleDeps['app'],
+      createMainWindow: (opts) => {
+        closeOpts.push(opts)
+        const w = makeFakeWindow()
+        windows.push(w)
+        return asWindow(w)
+      },
+      initialWindow: overrides.initialWindow,
+      configureMainWindow: overrides.configureMainWindow,
+      createTray: (handlers) => {
+        trayHandlers = handlers
+        return tray as unknown as import('electron').Tray | undefined
+      },
+      shutdownBackends,
+      prepareForQuit,
+      abortQuitPreparation,
+      flushSessionPersistence,
+      log: overrides.log,
+      flushLogs: overrides.flushLogs,
+      logFlushTimeoutMs: overrides.logFlushTimeoutMs,
+      rendererFlushTimeoutMs: overrides.rendererFlushTimeoutMs,
+      shutdownTrigger: overrides.shutdownTrigger,
+      isMigrationInProgress: overrides.isMigrationInProgress ?? ((): boolean => false),
+      quit,
+      countWindows: () => windows.filter((w) => !w.destroyed).length,
+      createInitialWindow: overrides.createInitialWindow,
+      onAppearanceChanged: overrides.onAppearanceChanged,
+      platform: overrides.platform ?? 'linux',
+      detectActiveSessions,
+      hasActiveReviewerWork: overrides.hasActiveReviewerWork ?? (() => false),
+      createConfirmClose: () => confirmClose
+    })
   return {
     app,
     windows,
@@ -231,6 +244,7 @@ const setup = (
     showMainWindow,
     getMainWindow,
     isMainWindowHidden,
+    onSystemShutdown,
     closeOpts,
     confirmClose
   }
@@ -347,6 +361,73 @@ describe('installAppLifecycle', () => {
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
+  it('routes a system request through the existing shutdown owner', async () => {
+    const { app, onSystemShutdown, shutdownBackends, flushSessionPersistence, quit, confirmClose } =
+      setup()
+
+    onSystemShutdown()
+    expect(quit).toHaveBeenCalledTimes(1)
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).not.toHaveBeenCalled()
+    expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
+    expect(shutdownBackends).toHaveBeenCalledTimes(1)
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('does not block a system shutdown on active work or renderer persistence conflicts', async () => {
+    const flushSessionPersistence = vi.fn(async () => 'conflict' as const)
+    const { app, onSystemShutdown, shutdownBackends, confirmClose } = setup({
+      detectActiveSessions: () => [
+        { projectId: 'project-1', sessionId: 'session-1', kind: 'delegated' }
+      ],
+      flushSessionPersistence
+    })
+
+    onSystemShutdown()
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).not.toHaveBeenCalled()
+    expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
+    expect(shutdownBackends).toHaveBeenCalledTimes(1)
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('replays a system shutdown that arrives while an ordinary quit is aborting', async () => {
+    let resolvePreflight: ((outcome: 'conflict') => void) | undefined
+    const flushSessionPersistence = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<'conflict'>((resolve) => {
+            resolvePreflight = resolve
+          })
+      )
+      .mockResolvedValue('conflict' as const)
+    const { app, closeOpts, onSystemShutdown, quit, confirmClose, shutdownBackends } = setup({
+      flushSessionPersistence
+    })
+
+    closeOpts[0].requestQuit()
+    app.emit('before-quit')
+    expect(flushSessionPersistence).toHaveBeenCalledOnce()
+
+    onSystemShutdown()
+    resolvePreflight?.('conflict')
+    await flush()
+
+    expect(quit).toHaveBeenCalledTimes(2)
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).not.toHaveBeenCalled()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
   it('defers to the migration guard when a migration is in progress', async () => {
     const { app, shutdownBackends } = setup({ isMigrationInProgress: (): boolean => true })
 
@@ -354,6 +435,25 @@ describe('installAppLifecycle', () => {
     await flush()
     expect(shutdownBackends).not.toHaveBeenCalled()
     expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it('preserves system shutdown intent until the migration guard reissues quit', async () => {
+    let migrationInProgress = true
+    const { app, onSystemShutdown, shutdownBackends, confirmClose } = setup({
+      isMigrationInProgress: () => migrationInProgress
+    })
+
+    onSystemShutdown()
+    app.emit('before-quit')
+    expect(shutdownBackends).not.toHaveBeenCalled()
+
+    migrationInProgress = false
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).not.toHaveBeenCalled()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(app.exit).toHaveBeenCalledWith(0)
   })
 
   it('respects a quit an earlier handler already cancelled (defaultPrevented)', async () => {

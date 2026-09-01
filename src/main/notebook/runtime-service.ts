@@ -19,6 +19,8 @@ import type {
   NotebookNamespaceRequest,
   NotebookNamespaceSnapshot,
   NotebookRunSummary,
+  RequestNotebookNetworkAccessRequest,
+  RequestNotebookNetworkAccessResult,
   NotebookSessionRequest,
   NotebookSessionStateRequest,
   NotebookSessionReference,
@@ -104,6 +106,9 @@ import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
 import type { NotebookShellProcess, NotebookShellResult } from './shell-process'
+import { NotebookShellProcessAdapter } from './shell-process'
+import type { NotebookProcessSandbox } from './process-sandbox'
+import { sandboxedPackageSpawn } from './package-process-sandbox'
 import {
   NotebookExecutionOwner,
   type NotebookControlCompletionInterceptor,
@@ -126,6 +131,7 @@ import {
   assertNotebookCodeWithinLimit
 } from './content-limits'
 import { NotebookHelperModuleHost, type NotebookHelperModuleCatalog } from './helper-module-host'
+import { deleteNotebookProjectInputs, deleteNotebookSessionInputs } from './input-staging'
 
 // The default stays outside CN mirror routing when no explicit locale is injected.
 const DEFAULT_LOCALE = 'en-US'
@@ -198,6 +204,7 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   // Stateless shell child-process port. The production adapter owns platform invocation, encoding,
   // environment projection, and timeout teardown; tests inject a fake without crossing IPC/shared.
   shellProcess?: NotebookShellProcess
+  processSandbox?: NotebookProcessSandbox
   // Latency-probe deps for the fastest-mirror auto-selection, injectable so tests stay hermetic (the
   // real probe does live HEAD requests). Undefined in production → effectiveMirrorAsync's real probe.
   mirrorProbe?: ProbeDeps
@@ -441,7 +448,10 @@ class NotebookRuntimeService {
       runtimeBindings: this.runtimeBindingOwner,
       waitForRevocationDrains: () => this.environmentOperations.waitForRevocationDrains(),
       executorFactory: options.executorFactory,
-      defaultExecutorOptions: resolveDefaultExecutorOptions,
+      defaultExecutorOptions: () => ({
+        ...resolveDefaultExecutorOptions(),
+        ...(options.processSandbox ? { processSandbox: options.processSandbox } : {})
+      }),
       platform: options.platform,
       callbacks: options.callbacks,
       toSessionReference: (session) => this.sessionReadModel.toSessionReference(session),
@@ -502,6 +512,18 @@ class NotebookRuntimeService {
       recovery: this.recoveryCoordinator,
       environmentStateTracker: this.environmentStateTracker,
       installPackages: options.installPackagesImpl ?? installPackagesDefault,
+      ...(options.processSandbox
+        ? {
+            packageSpawn: (target) =>
+              sandboxedPackageSpawn({
+                processSandbox: options.processSandbox!,
+                request: target.request,
+                runtimeRoot,
+                storageRoot: options.dataRoot,
+                interpreter: target.interpreter
+              })
+          }
+        : {}),
       micromambaRunner: options.micromambaRunner,
       ...workingCache,
       createEnvironmentCaptureTarget: (...args) => this.environmentCaptureTarget(...args)
@@ -512,7 +534,8 @@ class NotebookRuntimeService {
       recovery: this.recoveryCoordinator,
       ensureRecovered: () => this.ensureRecovered(),
       resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
-      repairPolicy: this.repairPolicy
+      repairPolicy: this.repairPolicy,
+      platform: options.platform
     })
     this.runTerminalization = new NotebookRunTerminalizationOwner({
       repository: this.repository,
@@ -564,7 +587,9 @@ class NotebookRuntimeService {
       helperModules: this.helperModules,
       logger: this.runtimeLogger,
       platform: options.platform,
-      shellProcess: options.shellProcess
+      shellProcess:
+        options.shellProcess ??
+        new NotebookShellProcessAdapter(options.platform, options.processSandbox)
     })
   }
 
@@ -608,8 +633,15 @@ class NotebookRuntimeService {
   ): Promise<boolean> {
     const enablement = await this.resolveRuntimeEnablement(language)
     if (!enablement) return false
-    const prefix = envPrefix(runtimeRootDir, language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV)
-    const interp = language === 'r' ? rBin(prefix) : pythonBin(prefix)
+    const prefix = envPrefix(
+      runtimeRootDir,
+      language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV,
+      this.options.platform
+    )
+    const interp =
+      language === 'r'
+        ? rBin(prefix, this.options.platform)
+        : pythonBin(prefix, this.options.platform)
     // Match by real path if the interpreter is on disk (how the Settings card keys it); else the path
     // as-is (an unprovisioned default can't have been toggled, so this only matters once it exists).
     let envId = interp
@@ -640,13 +672,16 @@ class NotebookRuntimeService {
     resolvedInterpreter: ResolvedInterpreter | undefined,
     runtimeRootDir: string
   ): EnvironmentCaptureTarget {
-    const prefix = envPrefix(runtimeRootDir, environmentName)
+    const prefix = envPrefix(runtimeRootDir, environmentName, this.options.platform)
     return {
       language,
       environmentName,
       runtimeSource: binding?.source === 'external' ? 'external' : 'managed',
       command:
-        resolvedInterpreter?.command ?? (language === 'r' ? rScriptBin(prefix) : pythonBin(prefix)),
+        resolvedInterpreter?.command ??
+        (language === 'r'
+          ? rScriptBin(prefix, this.options.platform)
+          : pythonBin(prefix, this.options.platform)),
       args: resolvedInterpreter?.args,
       ...(language === 'r' && (resolvedInterpreter?.condaPrefix || binding?.source !== 'external')
         ? { condaPrefix: resolvedInterpreter?.condaPrefix ?? prefix }
@@ -916,6 +951,24 @@ class NotebookRuntimeService {
     })
   }
 
+  async requestNetworkAccess(
+    request: RequestNotebookNetworkAccessRequest,
+    signal?: AbortSignal
+  ): Promise<RequestNotebookNetworkAccessResult> {
+    if (!this.options.processSandbox?.requestNetworkAccess) {
+      return { hostname: request.hostname, status: 'unavailable' }
+    }
+    return this.options.processSandbox.requestNetworkAccess({
+      sessionId: request.sessionId,
+      projectId: resolveProjectId(request),
+      hostname: request.hostname,
+      reason: request.reason,
+      ...(request.runtime ? { runtime: request.runtime } : {}),
+      ...(request.command ? { command: request.command } : {}),
+      ...(signal ? { signal } : {})
+    })
+  }
+
   // Read-only handoff projection for a fresh Agent context. A missing aggregate means Notebook was
   // never used (or was intentionally shut down for a Branch change), so this must not call
   // ensureSession(), load run.json, discover runtimes, or create an executor.
@@ -1109,6 +1162,14 @@ class NotebookRuntimeService {
     await deleteWorkingFileEvidenceProject(this.options.dataRoot, projectId)
   }
 
+  async deleteSessionInputs(projectId: string, sessionId: string): Promise<void> {
+    await deleteNotebookSessionInputs(this.options.dataRoot, projectId, sessionId)
+  }
+
+  async deleteProjectInputs(projectId: string): Promise<void> {
+    await deleteNotebookProjectInputs(this.options.dataRoot, projectId)
+  }
+
   beginProjectDeletion(projectId: string): void {
     this.sessionLifecycle.beginProjectDeletion(projectId)
   }
@@ -1156,7 +1217,8 @@ class NotebookRuntimeService {
   isDefaultEnvRecoveryBlocked(language: NotebookLanguage): boolean {
     const prefix = envPrefix(
       getRuntimeRoot(this.options.dataRoot),
-      language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
+      language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV,
+      this.options.platform
     )
     return this.isPrefixRecoveryBlocked(prefix)
   }

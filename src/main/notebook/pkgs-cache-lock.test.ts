@@ -151,4 +151,38 @@ describe('pkgs cache lock', () => {
     await Promise.all([writer, shared])
     expect(sharedEntered).toBe(true)
   })
+
+  it('settles opposite multi-cache requests across shared and exclusive modes', async () => {
+    const prefix = `mixed-multi-${Math.random()}`
+    const a = `${prefix}-a`
+    const b = `${prefix}-b`
+    let releaseShared!: () => void
+    let sharedEntered!: () => void
+    const release = new Promise<void>((resolve) => {
+      releaseShared = resolve
+    })
+    const entered = new Promise<void>((resolve) => {
+      sharedEntered = resolve
+    })
+    let exclusiveEntered = false
+
+    const shared = withSharedCacheLocks([b, a], async () => {
+      sharedEntered()
+      await release
+    })
+    await entered
+    const exclusive = withExclusiveCacheLocks([a, b], async () => {
+      exclusiveEntered = true
+    })
+    await tick()
+    expect(exclusiveEntered).toBe(false)
+
+    releaseShared()
+    const result = await Promise.race([
+      Promise.all([shared, exclusive]).then(() => 'settled' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50))
+    ])
+    expect(result).toBe('settled')
+    expect(exclusiveEntered).toBe(true)
+  })
 })

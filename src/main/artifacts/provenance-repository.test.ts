@@ -26,11 +26,20 @@ import {
   ArtifactOwnershipPersistenceRaceError,
   ArtifactProvenanceRepository
 } from './provenance-repository'
+import { ArtifactProvenanceVersionWriter } from './provenance-version-writer'
 import { ArtifactRepository } from './repository'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 
 let storageRoot: string | undefined
 let disconnect: (() => Promise<void>) | undefined
+
+const createDeferred = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve!: () => void
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
 
 afterEach(async () => {
   await disconnect?.()
@@ -853,6 +862,90 @@ describe('artifact provenance repository', () => {
       producer: { state: 'unavailable', reason: 'producer-not-supplied' },
       execution_status: { state: 'unavailable', reason: 'producer-not-supplied' }
     })
+  })
+
+  it('does not deadlock app-generated and RPC Version writes for the same pending file', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-lock-order-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository
+    })
+    const content = 'same pending file'
+    const common = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1',
+      agentName: 'Codex',
+      filename: 'shared.txt',
+      contentType: 'text/plain'
+    } as const
+    await compatibilityRepository.writePendingFile({
+      projectId: common.projectId,
+      sessionId: common.artifactStorageSessionId,
+      runId: common.artifactRunId,
+      filename: common.filename,
+      mimeType: common.contentType,
+      source: { kind: 'inline', content, encoding: 'utf8' }
+    })
+
+    const rpcRoutingStarted = createDeferred()
+    const releaseRpcRouting = createDeferred()
+    const sessionWrites = vi.spyOn(ArtifactProvenanceVersionWriter.prototype, 'withSessionWrite')
+    const originalEnsureRouting =
+      compatibilityRepository.ensurePendingVersionRouting.bind(compatibilityRepository)
+    vi.spyOn(compatibilityRepository, 'ensurePendingVersionRouting').mockImplementation(
+      async (request) => {
+        rpcRoutingStarted.resolve()
+        await releaseRpcRouting.promise
+        return originalEnsureRouting(request)
+      }
+    )
+
+    const appPendingTransactionStarted = createDeferred()
+    let appPendingTransactionDidStart = false
+    const originalPendingTransaction =
+      compatibilityRepository.withPendingFileTransaction.bind(compatibilityRepository)
+    vi.spyOn(compatibilityRepository, 'withPendingFileTransaction').mockImplementation(
+      (request, options, operation) =>
+        originalPendingTransaction(request, options, async (...args) => {
+          appPendingTransactionDidStart = true
+          appPendingTransactionStarted.resolve()
+          return operation(...args)
+        })
+    )
+
+    const rpcWrite = repository.createVersion({
+      ...common,
+      writeOperationId: 'rpc-write',
+      writeRequestChecksum: 'a'.repeat(64)
+    })
+    await rpcRoutingStarted.promise
+
+    const appWrite = repository.writeAppGeneratedVersion({
+      ...common,
+      content
+    })
+    await vi.waitFor(() => expect(sessionWrites).toHaveBeenCalledTimes(2))
+    expect(appPendingTransactionDidStart).toBe(false)
+    releaseRpcRouting.resolve()
+    await appPendingTransactionStarted.promise
+
+    const result = await Promise.race([
+      Promise.allSettled([rpcWrite, appWrite]).then(() => 'settled' as const),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 1_000))
+    ])
+    expect(result).toBe('settled')
   })
 
   it('persists a trusted app-owned Connector execution receipt with its generated Version', async () => {
@@ -2025,6 +2118,74 @@ describe('artifact provenance repository', () => {
         inputFiles: [{ ...inputFile, association: 'resolver-accessed' }]
       }
     })
+    await client.computeJob.create({
+      data: {
+        id: 'compute-job-1',
+        providerId: 'ssh:cluster',
+        shape: 'scheduler_cluster',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        producerRunId: 'notebook-run-2',
+        status: 'success',
+        intent: 'render the plot',
+        command: 'python render.py --token must-not-leak',
+        commandHash: 'compute-command-hash',
+        fileEvidence: JSON.stringify({
+          schemaVersion: 1,
+          activityId: 'compute-job-1',
+          activityKind: 'compute-job',
+          parentActivityId: 'notebook-run-2',
+          state: 'partial',
+          evidenceId: 'execution-file-evidence-compute-job-1',
+          checksum: 'd'.repeat(64),
+          storageKey:
+            'execution-file-evidence/project-1/session-1/activity-compute-job-1/evidence.json',
+          relationCount: 2,
+          generationCount: 2,
+          scientificOutputCount: 1,
+          initialViewState: 'complete',
+          managedRootsFinalState: 'partial',
+          scientificOutputAnalysis: 'complete',
+          fileReads: 'unavailable',
+          externalPaths: 'partial',
+          writerAttribution: 'complete',
+          reasonCodes: ['remote-input-generation-not-captured']
+        })
+      }
+    })
+    await client.computeJob.create({
+      data: {
+        id: 'compute-job-misbound',
+        providerId: 'ssh:cluster',
+        shape: 'scheduler_cluster',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        producerRunId: 'notebook-run-2',
+        status: 'success',
+        intent: 'must fail closed',
+        command: 'python forged.py --token must-not-leak-either',
+        commandHash: 'misbound-compute-command-hash',
+        fileEvidence: JSON.stringify({
+          schemaVersion: 1,
+          activityId: 'another-job',
+          activityKind: 'compute-job',
+          parentActivityId: 'notebook-run-2',
+          state: 'partial',
+          evidenceId: 'execution-file-evidence-another-job',
+          checksum: 'e'.repeat(64),
+          storageKey:
+            'execution-file-evidence/project-1/session-1/activity-another-job/evidence.json',
+          scientificOutputCount: 1,
+          initialViewState: 'complete',
+          managedRootsFinalState: 'partial',
+          scientificOutputAnalysis: 'partial',
+          fileReads: 'unavailable',
+          externalPaths: 'partial',
+          writerAttribution: 'complete',
+          reasonCodes: []
+        })
+      }
+    })
     await compatibilityRepository.writePendingFile({
       projectId: 'project-1',
       sessionId: 'artifact-session-1',
@@ -2136,8 +2297,37 @@ describe('artifact provenance repository', () => {
           source_kind: 'upload-version',
           strongest_association: 'resolver-accessed'
         }
+      ],
+      compute_executions: [
+        {
+          activity_id: 'compute-job-1',
+          provider_id: 'ssh:cluster',
+          shape: 'scheduler_cluster',
+          status: 'success',
+          file_evidence: {
+            state: 'partial',
+            evidence_id: 'execution-file-evidence-compute-job-1',
+            checksum: 'd'.repeat(64),
+            storage_key:
+              'execution-file-evidence/project-1/session-1/activity-compute-job-1/evidence.json',
+            generation_count: 2,
+            reason_codes: ['remote-input-generation-not-captured']
+          }
+        },
+        {
+          activity_id: 'compute-job-misbound',
+          provider_id: 'ssh:cluster',
+          shape: 'scheduler_cluster',
+          status: 'success',
+          file_evidence: {
+            state: 'unavailable',
+            reason_codes: ['evidence-persistence-failed']
+          }
+        }
       ]
     })
+    expect(row.evidenceJson).not.toContain('must-not-leak')
+    expect(row.evidenceJson).not.toContain('must-not-leak-either')
     expect(execution.runs.map((run) => run.runId)).toEqual(['notebook-run-1', 'notebook-run-2'])
     expect(execution).toMatchObject({ producerRunId: 'notebook-run-2', producerRunIndex: 3 })
     expect(execution.inputFiles).toEqual([
@@ -2331,7 +2521,10 @@ describe('artifact provenance repository', () => {
       messageAncestry: ['prompt-parent', 'prompt-1'],
       notebookSessionId: 'session-1',
       sourceFileObservation: {
-        path: join(notebookDocument.notebookSessionRoot, 'data', 'ambiguous.png'),
+        // Keep the unverifiable hint outside the durable Notebook root on every platform. On macOS,
+        // /var resolves through /private/var; relying on that alias made this fixture accidentally
+        // exercise a different trust-boundary branch than Linux.
+        path: join(storageRoot, 'unverifiable-source', 'ambiguous.png'),
         sizeBytes: Buffer.byteLength('ambiguous plot bytes'),
         mtimeMs: 1.5
       },

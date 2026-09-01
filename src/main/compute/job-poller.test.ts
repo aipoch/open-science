@@ -10,7 +10,8 @@ import type { SshRunner, ResolvedSshTarget } from './ssh-runner'
 import {
   ComputeConnectionError,
   SshConfigComputeConnectionBroker,
-  type ComputeConnectionBrokerAcquirer
+  type ComputeConnectionBrokerAcquirer,
+  type ComputeConnectionLease
 } from './connection-broker'
 import { JobPoller } from './job-poller'
 import { DispatchTracker } from './dispatch-tracker'
@@ -64,17 +65,20 @@ const makeSshRunner = (result: Awaited<ReturnType<SshRunner['run']>>): SshRunner
 })
 
 const brokerFromRunner = (runner: SshRunner): ComputeConnectionBrokerAcquirer => ({
-  acquire: vi.fn(async () => ({
-    run: (command, options) => runner.run({} as ResolvedSshTarget, command, options),
-    upload: vi.fn(async () => undefined),
-    download: vi.fn(async () => ({
-      exitCode: 0,
-      stderr: '',
-      timedOut: false,
-      bytesWritten: 0,
-      exceeded: false
-    }))
-  }))
+  acquire: vi.fn(
+    async () =>
+      ({
+        run: (command, options) => runner.run({} as ResolvedSshTarget, command, options),
+        upload: vi.fn(async () => undefined),
+        download: vi.fn(async () => ({
+          exitCode: 0,
+          stderr: '',
+          timedOut: false,
+          bytesWritten: 0,
+          exceeded: false
+        }))
+      }) satisfies ComputeConnectionLease
+  )
 })
 
 const guardStatusUpdate = (

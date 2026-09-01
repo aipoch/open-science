@@ -19,6 +19,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  CircleAlert,
   CircleGauge,
   Copy,
   FileText,
@@ -111,6 +112,7 @@ type WorkspaceAssistantTurnCompletionProps = {
   canBranchInNewSession?: boolean
   onBranchInNewSession?: (messageId: string) => void
 }
+type ReviewerCorrectionState = 'waiting' | 'responding' | 'completed' | 'failed'
 type WorkspaceMessageItemProps = {
   message: ChatMessage
   projectId?: string
@@ -161,9 +163,9 @@ type WorkspaceMessageItemProps = {
   // A trailing buffered reply can reserve the loading-row geometry it replaces. When another
   // live row remains below it, the message keeps only its natural text-line height.
   reserveLoadingRowHeight?: boolean
-  // True only while this application-authored correction is the current live Agent prompt and no
-  // Agent response has appeared. Historical/reloaded rows stay settled and motionless.
-  reviewerCorrectionActive?: boolean
+  // Durable lifecycle of an application-authored correction request. Keeping the response state
+  // explicit prevents a missing historical response from looking like a successfully started one.
+  reviewerCorrectionState?: ReviewerCorrectionState
 }
 
 const ARTIFACT_GALLERY_VISIBLE_COUNT = 5
@@ -1245,11 +1247,13 @@ const WorkspaceMessageItemImpl = ({
   presentationSourceOpen,
   presentationAnimateOnMount = true,
   reserveLoadingRowHeight = true,
-  reviewerCorrectionActive = false
+  reviewerCorrectionState = 'failed'
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const { t } = useTranslation()
   const isUserMessage = message.role === 'user'
   const isHumanUser = isHumanUserMessage(message)
+  const reviewerCorrectionActive =
+    reviewerCorrectionState === 'waiting' || reviewerCorrectionState === 'responding'
   const isReviewerCorrection = isReviewerCorrectionAttribution(message.attribution)
   const isComputeJobCompletion =
     isComputeJobCompletionAttribution(message.attribution) ||
@@ -1288,6 +1292,13 @@ const WorkspaceMessageItemImpl = ({
   const [isResendingEdit, setIsResendingEdit] = useState(false)
   // True while the destructive-resend confirmation dialog is open.
   const [isConfirmingEdit, setIsConfirmingEdit] = useState(false)
+  // content-visibility:auto uses contain-intrinsic-size 10rem until a size is remembered. A
+  // one-line streamed reply is ~44px; turning containment on at completion inflates it to 160px
+  // and pushes a live tool below it. Keep this row out of that path for the rest of the mount.
+  const skipContentVisibilityNow =
+    message.status === 'streaming' || isAssistantPresenting || isEditing
+  const [skipContentVisibility, setSkipContentVisibility] = useState(skipContentVisibilityNow)
+  if (skipContentVisibilityNow && !skipContentVisibility) setSkipContentVisibility(true)
   const copyResetTimeoutRef = useRef<number | null>(null)
   const editButtonRef = useRef<HTMLButtonElement | null>(null)
   const editDocRef = useRef(editDoc)
@@ -1436,7 +1447,7 @@ const WorkspaceMessageItemImpl = ({
     <MessageScrollerItem
       key={message.id}
       messageId={message.id}
-      disableContainment={message.status === 'streaming' || isAssistantPresenting || isEditing}
+      disableContainment={skipContentVisibilityNow || skipContentVisibility}
       scrollAnchor={message.role === 'user'}
       className="min-w-0"
     >
@@ -1468,26 +1479,38 @@ const WorkspaceMessageItemImpl = ({
                 className="mt-0.5 size-3.5 shrink-0 animate-spin text-text-300 motion-reduce:animate-none"
                 aria-hidden="true"
               />
-            ) : (
+            ) : reviewerCorrectionState === 'completed' ? (
               <Check
                 data-testid="reviewer-correction-settled-icon"
                 className="mt-0.5 size-3.5 shrink-0 text-text-300"
                 aria-hidden="true"
               />
+            ) : (
+              <CircleAlert
+                data-testid="reviewer-correction-failed-icon"
+                className="mt-0.5 size-3.5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                aria-hidden="true"
+              />
             )}
             <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
               <span className="font-medium text-text-200">
-                {reviewerCorrectionActive
+                {reviewerCorrectionState === 'waiting'
                   ? t('Reviewer requested corrections')
                   : t('Corrections requested')}
               </span>
-              {reviewerCorrectionActive && (
+              {reviewerCorrectionState === 'waiting' && (
                 <span className="text-text-300">{t('Agent is addressing the feedback')}</span>
               )}
-              {!reviewerCorrectionActive && (
+              {reviewerCorrectionState === 'responding' && (
                 <span className="text-text-300">
                   {t('Handed off to the Agent · response started')}
                 </span>
+              )}
+              {reviewerCorrectionState === 'completed' && (
+                <span className="text-text-300">{t('Response completed.')}</span>
+              )}
+              {reviewerCorrectionState === 'failed' && (
+                <span className="text-text-300">{t('Response failed.')}</span>
               )}
             </div>
           </div>
