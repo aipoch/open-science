@@ -61,8 +61,19 @@ const SessionArtifactImage = ({
   const requestKey = createPreviewResourceKey(request)
   const [failedRequestKey, setFailedRequestKey] = useState<string>()
   const [setElement, isNearViewport] = useNearViewport<HTMLButtonElement | HTMLSpanElement>()
+  // Latch the first approach: the loaded <img> is much taller than the alt-text placeholder, so
+  // releasing the resource when the image leaves the viewport collapses its height, the scroll
+  // anchoring compensation then pushes it back inside the observer margin, and the two fight each
+  // other in a per-frame jitter loop at the viewport edge. Once acquired, keep the resource.
+  const [hasBeenNearViewport, setHasBeenNearViewport] = useState(false)
+  if (isNearViewport && !hasBeenNearViewport) {
+    setHasBeenNearViewport(true)
+  }
   const hasFailed = failedRequestKey === requestKey
-  const resourceState = useManagedPreviewResource(request, !isTiff && isNearViewport && !hasFailed)
+  const resourceState = useManagedPreviewResource(
+    request,
+    !isTiff && hasBeenNearViewport && !hasFailed
+  )
   const accessibleAlt = alt || t('Preview of {{name}}', { name })
   const hasError = hasFailed || resourceState.status === 'error'
 

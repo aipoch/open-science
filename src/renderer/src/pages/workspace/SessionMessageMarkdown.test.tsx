@@ -184,7 +184,7 @@ describe('SessionMessageMarkdown', () => {
     ).toBe('error')
   })
 
-  it('acquires and releases image resources near the viewport', async () => {
+  it('keeps the image resource mounted after it has been near the viewport', async () => {
     let intersectionCallback: IntersectionObserverCallback | undefined
     vi.stubGlobal(
       'IntersectionObserver',
@@ -227,8 +227,11 @@ describe('SessionMessageMarkdown', () => {
         {} as IntersectionObserver
       )
     })
-    expect(previewResourceHarness.enabled).toBe(false)
-    expect(container.querySelector('[data-session-artifact-image]')).toBeNull()
+    // Leaving the viewport must not unload the image: the placeholder is much shorter than the
+    // loaded image, so an unload/remount cycle at the viewport edge fights the scroll anchoring
+    // compensation and produces per-frame jitter.
+    expect(previewResourceHarness.enabled).toBe(true)
+    expect(container.querySelector('[data-session-artifact-image]')).not.toBeNull()
   })
 
   it('routes TIFF images through the existing artifact thumbnail and modal', async () => {
