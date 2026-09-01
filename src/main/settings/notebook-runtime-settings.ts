@@ -88,6 +88,9 @@ class NotebookRuntimeSettingsModule implements NotebookRuntimeSettings {
   }
 
   async setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<boolean> {
+    if (typeof enabled !== 'boolean') {
+      throw new TypeError('Agent environment creation enabled must be a boolean.')
+    }
     const settings = await this.repository.setAgentEnvironmentCreationEnabled(enabled)
     return settings.agentEnvironmentCreationEnabled ?? true
   }

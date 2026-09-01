@@ -271,6 +271,19 @@ describe('runtime IPC adapter', () => {
     expect(uninstallManagedEnvironment).not.toHaveBeenCalled()
   })
 
+  it('rejects a non-boolean Agent environment creation policy before persistence', () => {
+    const settingsService = fakeSettingsService()
+    settingsService.setAgentEnvironmentCreationEnabled = vi.fn(
+      settingsService.setAgentEnvironmentCreationEnabled
+    )
+    registerRuntime(fakeDeps({ settingsService }))
+
+    expect(() =>
+      invoke('runtime:set-agent-environment-creation-enabled', { enabled: 'false' })
+    ).toThrow('Agent environment creation enabled must be a boolean.')
+    expect(settingsService.setAgentEnvironmentCreationEnabled).not.toHaveBeenCalled()
+  })
+
   it('returns an injected interpreter path', async () => {
     registerRuntime(fakeDeps(), { showOpenDialog: async () => '/opt/python/bin/python3' })
 

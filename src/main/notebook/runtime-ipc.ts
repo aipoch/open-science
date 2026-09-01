@@ -9,6 +9,13 @@ import type { RuntimeSelectionWorkflows } from './runtime-selection-workflows'
 
 const log = createLogger('notebook:runtime-ipc')
 
+const parseAgentEnvironmentCreationEnabled = (value: unknown): boolean => {
+  if (typeof value !== 'boolean') {
+    throw new TypeError('Agent environment creation enabled must be a boolean.')
+  }
+  return value
+}
+
 export type RuntimeIpcOptions = {
   // Injectable for tests; production defaults to the Electron native open-file dialog.
   showOpenDialog?: () => Promise<string | null>
@@ -70,7 +77,10 @@ const registerRuntimeIpcHandlers = (
 
   ipcMainHandle(
     'runtime:set-agent-environment-creation-enabled',
-    (_event, request: { enabled: boolean }) => workflows.setAgentEnvironmentCreationEnabled(request)
+    (_event, request: { enabled?: unknown }) =>
+      workflows.setAgentEnvironmentCreationEnabled({
+        enabled: parseAgentEnvironmentCreationEnabled(request?.enabled)
+      })
   )
 
   ipcMainHandle(

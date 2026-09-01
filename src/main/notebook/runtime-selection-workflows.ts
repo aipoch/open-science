@@ -241,8 +241,12 @@ const createRuntimeSelectionWorkflows = (
     getEnablement: (request) => deps.settingsService.getRuntimeEnablement(request.language),
     getAgentEnvironmentCreationEnabled: () =>
       deps.settingsService.getAgentEnvironmentCreationEnabled(),
-    setAgentEnvironmentCreationEnabled: (request) =>
-      deps.settingsService.setAgentEnvironmentCreationEnabled(request.enabled),
+    setAgentEnvironmentCreationEnabled: async (request) => {
+      if (typeof request?.enabled !== 'boolean') {
+        throw new TypeError('Agent environment creation enabled must be a boolean.')
+      }
+      return deps.settingsService.setAgentEnvironmentCreationEnabled(request.enabled)
+    },
     describeUsage: async (request) =>
       deps.describeRuntimeUsage?.(request.language, request.envId) ?? {
         running: 0,

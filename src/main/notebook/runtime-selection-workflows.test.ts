@@ -300,6 +300,23 @@ describe('runtime selection workflows', () => {
     await expect(workflows.getAgentEnvironmentCreationEnabled()).resolves.toBe(false)
   })
 
+  it('rejects a non-boolean Agent environment-creation policy before the settings port', async () => {
+    const settingsService = fakeSettingsService()
+    settingsService.setAgentEnvironmentCreationEnabled = vi.fn(
+      settingsService.setAgentEnvironmentCreationEnabled
+    )
+    const workflows = createRuntimeSelectionWorkflows({
+      settingsService,
+      runtimeRoot: () => '/data/runtime',
+      registry: fakeRegistry()
+    })
+
+    await expect(
+      workflows.setAgentEnvironmentCreationEnabled({ enabled: 'false' } as never)
+    ).rejects.toThrow('Agent environment creation enabled must be a boolean.')
+    expect(settingsService.setAgentEnvironmentCreationEnabled).not.toHaveBeenCalled()
+  })
+
   it('uninstalls only the exact current managed default when a legacy managed prefix also exists', async () => {
     const settingsService = fakeSettingsService()
     const rawRuntimeId = managedRuntimeIdentity('/data/runtime', 'python', DEFAULT_PY_ENV).runtimeId
