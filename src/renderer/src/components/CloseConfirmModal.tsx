@@ -200,7 +200,7 @@ export const CloseConfirmModal = ({
                 {t('Minimize to tray')}
               </Button>
             )}
-            {!hasDelegatedWork ? (
+            {!hasDelegatedWork && !isPersistenceFailure ? (
               <Button type="button" onClick={() => reply('quit')}>
                 {t('Quit', { context: 'verb', ns: 'common' })}
               </Button>

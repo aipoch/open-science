@@ -836,9 +836,8 @@ describe('installAppLifecycle', () => {
   it('requires persistence consent again after delegated work interrupts a force-quit attempt', async () => {
     let active: ActiveSessionInfo[] = []
     const flushSessionPersistence = vi.fn(async () => 'timeout' as const)
-    const confirmClose = vi.fn(
-      async (): Promise<CloseConfirmChoice> =>
-        confirmClose.mock.calls.length === 1 ? 'force-quit' : 'cancel'
+    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> =>
+      confirmClose.mock.calls.length === 1 ? 'force-quit' : 'cancel'
     )
     const { app, closeOpts, prepareForQuit, shutdownBackends } = setup({
       detectActiveSessions: () => active,

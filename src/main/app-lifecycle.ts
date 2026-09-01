@@ -142,8 +142,8 @@ export const installAppLifecycle = (
   // confirmation modal is ever open at a time. The renderer holds a single request slot; a second
   // dispatch would silently overwrite the first and strand its promise forever (see app-lifecycle.test.ts).
   let confirmInFlight = false
-  // Set only after the persistence-failure dialog's explicit destructive choice. The next committed
-  // ordinary attempt still retries both Renderer flushes, but their failures cannot cancel that attempt.
+  // Set only after the persistence-failure dialog's explicit destructive choice. The next before-quit
+  // attempt consumes it once; an intervening guard or confirmation cannot leak it to a later attempt.
   let forceQuitAfterPersistenceFailure = false
 
   const normalizeStepOutcome = (outcome: ShutdownStepOutcome | void): ShutdownStepOutcome =>
@@ -303,6 +303,8 @@ export const installAppLifecycle = (
       return
     }
     const trigger = shutdownTrigger()
+    const persistenceFailureIsForced = forceQuitAfterPersistenceFailure
+    forceQuitAfterPersistenceFailure = false
     if (event.defaultPrevented || deps.isMigrationInProgress()) {
       // This quit is being aborted (e.g. the migration guard cancelled it). Clear any prior
       // confirmation and shutdown trigger so neither leaks into a later close: otherwise a later
@@ -386,8 +388,6 @@ export const installAppLifecycle = (
 
     event.preventDefault()
     shutdownStarted = true
-    const persistenceFailureIsForced = forceQuitAfterPersistenceFailure
-    forceQuitAfterPersistenceFailure = false
     void (async () => {
       const diagnostics = deps.log
         ? startDiagnosticOperation(deps.log, {
