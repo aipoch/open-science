@@ -92,6 +92,35 @@ describe('WorkspaceDelegatedQuestionCard', () => {
     )
   })
 
+  it('persists the latest custom answer when the card unmounts during the debounce window', async () => {
+    vi.useFakeTimers()
+    const onRespond = vi.fn<(response: ElicitationResponse) => Promise<void>>(async () => undefined)
+    const { unmount } = render(
+      <WorkspaceDelegatedQuestionCard
+        projectId="project-1"
+        sessionId="session-1"
+        request={{ ...request, questions: request.questions.slice(0, 1) }}
+        onRespond={onRespond}
+      />
+    )
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Type your own answer' }), {
+      target: { value: 'final' }
+    })
+    unmount()
+    await act(async () => Promise.resolve())
+
+    expect(onRespond).toHaveBeenCalledTimes(1)
+    expect(onRespond).toHaveBeenCalledWith(
+      expect.objectContaining({
+        delegatedQuestion: expect.objectContaining({
+          action: 'draft',
+          answers: [{ questionIndex: 0, value: 'final' }]
+        })
+      })
+    )
+  })
+
   it('finishes with the latest answer without waiting for an in-flight draft', async () => {
     vi.useFakeTimers()
     let releaseDraft: (() => void) | undefined

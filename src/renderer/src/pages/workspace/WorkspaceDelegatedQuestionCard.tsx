@@ -35,28 +35,19 @@ const WorkspaceDelegatedQuestionCard = ({
   const [questionIndex, setQuestionIndex] = useState(request.draftQuestionIndex)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
+  const mounted = useRef(true)
   const draftInFlight = useRef(false)
   const pendingDraft = useRef<ElicitationResponse | undefined>(undefined)
+  const scheduledDraft = useRef<ElicitationResponse | undefined>(undefined)
   const draftTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const flushScheduledDraftRef = useRef<() => void>(() => undefined)
   const question = request.questions[questionIndex]
   const currentAnswer = answers.find((answer) => answer.questionIndex === questionIndex)?.value
 
-  const cancelScheduledDraft = (): void => {
-    if (draftTimer.current === undefined) return
-    clearTimeout(draftTimer.current)
-    draftTimer.current = undefined
-  }
-
-  useEffect(
-    () => () => {
-      cancelScheduledDraft()
-      pendingDraft.current = undefined
-    },
-    []
-  )
-
   const responseError = (caught: unknown): void => {
-    setError(caught instanceof Error ? caught.message : t('Could not save the response.'))
+    if (mounted.current) {
+      setError(caught instanceof Error ? caught.message : t('Could not save the response.'))
+    }
   }
 
   const drainDrafts = (): void => {
@@ -64,7 +55,7 @@ const WorkspaceDelegatedQuestionCard = ({
     if (draftInFlight.current || !response) return
     pendingDraft.current = undefined
     draftInFlight.current = true
-    setError(undefined)
+    if (mounted.current) setError(undefined)
     void Promise.resolve()
       .then(() => onRespond(response))
       .catch(responseError)
@@ -74,26 +65,62 @@ const WorkspaceDelegatedQuestionCard = ({
       })
   }
 
+  const queueDraft = (response: ElicitationResponse): void => {
+    pendingDraft.current = response
+    drainDrafts()
+  }
+
+  const cancelScheduledDraft = (): void => {
+    if (draftTimer.current !== undefined) clearTimeout(draftTimer.current)
+    draftTimer.current = undefined
+    scheduledDraft.current = undefined
+  }
+
+  const flushScheduledDraft = (): void => {
+    if (draftTimer.current !== undefined) clearTimeout(draftTimer.current)
+    draftTimer.current = undefined
+    const response = scheduledDraft.current
+    scheduledDraft.current = undefined
+    if (response) queueDraft(response)
+  }
+
+  useEffect(() => {
+    flushScheduledDraftRef.current = flushScheduledDraft
+  })
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      flushScheduledDraftRef.current()
+    }
+  }, [])
+
+  const buildResponse = (
+    action: 'draft' | 'confirm',
+    nextAnswers: readonly DelegatedQuestionAnswer[],
+    nextQuestionIndex = questionIndex
+  ): ElicitationResponse => ({
+    requestId: request.requestId,
+    action: 'accept',
+    delegatedQuestion: {
+      projectId,
+      sessionId,
+      action,
+      answers: nextAnswers,
+      ...(action === 'draft' ? { questionIndex: nextQuestionIndex } : {})
+    }
+  })
+
   const send = async (
     action: 'draft' | 'confirm',
     nextAnswers: readonly DelegatedQuestionAnswer[],
     nextQuestionIndex = questionIndex
   ): Promise<void> => {
-    setError(undefined)
-    const response: ElicitationResponse = {
-      requestId: request.requestId,
-      action: 'accept',
-      delegatedQuestion: {
-        projectId,
-        sessionId,
-        action,
-        answers: nextAnswers,
-        ...(action === 'draft' ? { questionIndex: nextQuestionIndex } : {})
-      }
-    }
+    if (mounted.current) setError(undefined)
+    const response = buildResponse(action, nextAnswers, nextQuestionIndex)
     if (action === 'draft') {
-      pendingDraft.current = response
-      drainDrafts()
+      queueDraft(response)
       return
     }
     pendingDraft.current = undefined
@@ -113,10 +140,8 @@ const WorkspaceDelegatedQuestionCard = ({
     setAnswers(next)
     cancelScheduledDraft()
     if (debounce) {
-      draftTimer.current = setTimeout(() => {
-        draftTimer.current = undefined
-        void send('draft', next).catch(() => undefined)
-      }, DRAFT_DEBOUNCE_MS)
+      scheduledDraft.current = buildResponse('draft', next)
+      draftTimer.current = setTimeout(flushScheduledDraft, DRAFT_DEBOUNCE_MS)
       return
     }
     void send('draft', next).catch(() => undefined)
