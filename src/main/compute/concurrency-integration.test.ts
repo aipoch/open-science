@@ -458,15 +458,23 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       { sessionId: 'session-1', projectId: 'project-1' }
     )
 
-    // Queue 100 jobs
+    // Seed the already-queued state directly; this test exercises rejection of the next submit,
+    // not the cost of submitting every preceding job through the full service pipeline.
     for (let i = 0; i < 100; i++) {
-      await service.submitJob(
+      await jobRepo.create({
+        allowUnencryptedPersistence: true,
+        id: `queued-${i}`,
         providerId,
-        `job ${i}`,
-        'echo test',
-        {},
-        { sessionId: 'session-1', projectId: 'project-1' }
-      )
+        shape: 'direct_ssh',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        intent: `job ${i}`,
+        command: 'echo test',
+        commandHash: `hash-${i}`,
+        timeoutSeconds: 60,
+        remoteWorkdir: `~/.openscience/jobs/queued-${i}`,
+        initialStatus: 'queued'
+      })
     }
 
     // 101st job should throw queue_full error
@@ -479,7 +487,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
         { sessionId: 'session-1', projectId: 'project-1' }
       )
     ).rejects.toThrow(/queue is full/)
-  }, 30_000)
+  })
 
   it('dispatches immediately when the queue is full but an active slot is available', async () => {
     const providerId = computeProviderId('test-host')
