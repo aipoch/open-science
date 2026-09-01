@@ -58,6 +58,18 @@ const MAX_PERMISSION_RAW_INPUT_CHARS = 8_000
 // evict it, while ordinary streams still receive the same frame-level coalescing.
 const MAX_COALESCED_EVENTS = Math.floor(ACP_RUNTIME_EVENT_RETENTION_LIMIT / 2)
 
+const projectPermissionRequest = (request: AcpPermissionRequest): AcpPermissionRequest => {
+  const { rawInput, ...requestProjection } = request
+  const sanitizedRawInput =
+    rawInput === null ? null : sanitizeRawToolPayload(rawInput, MAX_PERMISSION_RAW_INPUT_CHARS)
+
+  return rawInput === undefined
+    ? request
+    : sanitizedRawInput === undefined
+      ? requestProjection
+      : { ...requestProjection, rawInput: sanitizedRawInput }
+}
+
 const scheduleStatePublication = (publish: () => void): (() => void) => {
   const timer = setTimeout(publish, STATE_PUBLICATION_INTERVAL_MS)
   return () => clearTimeout(timer)
@@ -86,11 +98,11 @@ class AcpRuntimePublicationOwner {
   constructor(private readonly options: AcpRuntimePublicationOwnerOptions) {}
 
   getSnapshot(): AcpStateSnapshot {
-    return this.options.snapshotOwner.snapshot(this.options.snapshotProjection())
+    return this.options.snapshotOwner.snapshot(this.snapshotProjection())
   }
 
   getState(): AcpRuntimeState {
-    return this.options.snapshotOwner.state(this.options.snapshotProjection())
+    return this.options.snapshotOwner.state(this.snapshotProjection())
   }
 
   nextEventId(): string {
@@ -164,15 +176,7 @@ class AcpRuntimePublicationOwner {
   }
 
   publishPermissionRequest(request: AcpPermissionRequest): void {
-    const { rawInput, ...requestProjection } = request
-    const sanitizedRawInput =
-      rawInput === null ? null : sanitizeRawToolPayload(rawInput, MAX_PERMISSION_RAW_INPUT_CHARS)
-    const publishedRequest: AcpPermissionRequest =
-      rawInput === undefined
-        ? request
-        : sanitizedRawInput === undefined
-          ? requestProjection
-          : { ...requestProjection, rawInput: sanitizedRawInput }
+    const publishedRequest = projectPermissionRequest(request)
 
     this.pushEvent({
       kind: 'permission',
@@ -186,6 +190,14 @@ class AcpRuntimePublicationOwner {
     })
     this.options.callbacks.onPermissionRequest?.(publishedRequest)
     this.emitState()
+  }
+
+  private snapshotProjection(): RuntimeSnapshotProjection {
+    const projection = this.options.snapshotProjection()
+    return {
+      ...projection,
+      pendingPermissions: projection.pendingPermissions.map(projectPermissionRequest)
+    }
   }
 
   emitState(): void {

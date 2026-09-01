@@ -378,6 +378,7 @@ describe('AcpRuntimePublicationOwner', () => {
 
   it('publishes a sanitized permission projection without mutating the broker request', () => {
     const publishedRequests: AcpPermissionRequest[] = []
+    const publishedStates: unknown[] = []
     const request: AcpPermissionRequest = {
       requestId: 'request-secret',
       sessionId: 'session-1',
@@ -391,16 +392,19 @@ describe('AcpRuntimePublicationOwner', () => {
     const owner = new AcpRuntimePublicationOwner({
       snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
       interactions: new AcpSessionInteractionOwner(),
-      snapshotProjection: createProjection,
+      snapshotProjection: () => ({ ...createProjection(), pendingPermissions: [request] }),
       callbacks: {
-        onPermissionRequest: (published) => publishedRequests.push(published)
+        onEvent: () => undefined,
+        onPermissionRequest: (published) => publishedRequests.push(published),
+        onStateChanged: (state) => publishedStates.push(state)
       }
     })
 
     owner.publishPermissionRequest(request)
 
     expect(JSON.stringify(publishedRequests)).not.toContain('test-permission-secret')
-    expect(JSON.stringify(owner.getSnapshot().events)).not.toContain('test-permission-secret')
+    expect(JSON.stringify(publishedStates)).not.toContain('test-permission-secret')
+    expect(JSON.stringify(owner.getSnapshot())).not.toContain('test-permission-secret')
     expect(JSON.stringify(request)).toContain('test-permission-secret')
   })
 
