@@ -225,11 +225,14 @@ export const ReviewerCard = ({
     setRerunRequested(false)
   }
 
-  const isRunningAssessment = review.lifecycle === 'running' && review.outcome === null
-  const isFixLoopActive = review.lifecycle === 'running' && review.outcome === 'flagged'
+  const hasPersistedFlaggedChecks = review.checks.some(
+    (check) => check.status === 'warn' || check.status === 'fail'
+  )
+  const isRunningAssessment = review.lifecycle === 'running' && !hasPersistedFlaggedChecks
+  const isFixLoopActive = review.lifecycle === 'running' && hasPersistedFlaggedChecks
 
-  // An assessment with no result is status, not a result card. A running flagged Review already has
-  // durable findings and stays visible while its Fix Loop owns the Session.
+  // An assessment with no persisted flagged checks is status, not a result card. A running Review
+  // with durable warn/fail checks stays visible while its Fix Loop owns the Session.
   if (isRunningAssessment) {
     return (
       <div
@@ -255,10 +258,9 @@ export const ReviewerCard = ({
   const warnFailCount = submittedChecks.filter((item) => item.isWarnOrFail).length
   const totalCheckCount = submittedChecks.length
   const hasWarnOrFail = warnFailCount > 0
-  // The durable Review verdict is authoritative. A fix-loop Review may commit its tracked failing
-  // assessments as dispositions on earlier Findings, leaving this Review with no local warn/fail
-  // rows (or only newly assessed pass rows) while its outcome correctly remains flagged.
-  const isFlagged = isComplete && review.outcome === 'flagged'
+  // Terminal Reviews use their durable outcome. While a Fix Loop is active, persisted warn/fail
+  // checks are the durable signal because the existing schema requires a running outcome to be null.
+  const isFlagged = isComplete && (review.outcome === 'flagged' || isFixLoopActive)
 
   // Terminal dispositions distinguish a true round cap from correction transport/persistence failure.
   const isCapReached =
@@ -276,7 +278,7 @@ export const ReviewerCard = ({
   const isInterrupted =
     isTerminal &&
     hasWarnOrFail &&
-    submittedChecks.some((item) => item.isUnaddressed && item.unaddressedTrigger === 'interrupted')
+    submittedChecks.some((item) => item.isUnaddressed && item.unaddressedTrigger === 'aborted')
 
   // A complete review is expandable if it has any checks; an error review is expandable if it carries
   // a message (kept out of the status bar so a verbose Prisma-style error doesn't overflow the line).

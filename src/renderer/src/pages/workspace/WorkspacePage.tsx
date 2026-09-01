@@ -276,7 +276,11 @@ const WorkspacePage = ({
       state.reviewsBySession,
       storedActiveSession.projectId,
       storedActiveSession.id
-    ).some((review) => review.lifecycle === 'running' && review.outcome === 'flagged')
+    ).some(
+      (review) =>
+        review.lifecycle === 'running' &&
+        review.checks.some((check) => check.status === 'warn' || check.status === 'fail')
+    )
   })
   const activeSession = useMemo(
     () =>

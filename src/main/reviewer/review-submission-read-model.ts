@@ -111,7 +111,7 @@ const loadReviewSubmissionProjections = async (
     client.reviewFindingDisposition.findMany({
       where: {
         sourceFinding: { reviewId: { in: [...reviewIds] } },
-        trigger: { in: ['loop_terminated', 'correction_failed', 'aborted', 'interrupted'] },
+        trigger: { in: ['loop_terminated', 'correction_failed', 'aborted'] },
         outcome: 'unaddressed'
       },
       orderBy: [{ sequence: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }]

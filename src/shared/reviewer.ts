@@ -100,8 +100,9 @@ export type DelegatedReviewEvidenceScope = {
   artifactVersionIds: readonly string[]
 }
 
-// Task state of the review itself (did it run/finish/fail). A flagged Review remains running while
-// its automatic Fix Loop owns the audited Session, then becomes complete when remediation settles.
+// Task state of the review itself (did it run/finish/fail). A Review with persisted warn/fail checks
+// remains running while its automatic Fix Loop owns the audited Session, then becomes complete when
+// remediation settles.
 export type ReviewLifecycle = 'running' | 'complete' | 'error'
 // Result of a completed review: no warn/fail checks = pass, at least one warn/fail = flagged.
 export type ReviewOutcome = 'pass' | 'flagged'
@@ -129,7 +130,7 @@ export type FindingResolution = 'open' | 'resolved' | 'unaddressed'
 export type ArtifactBindingState = 'scope_validated' | 'legacy_unverified'
 
 export type ReviewFindingDispositionTrigger =
-  'review_submission' | 'loop_terminated' | 'correction_failed' | 'aborted' | 'interrupted'
+  'review_submission' | 'loop_terminated' | 'correction_failed' | 'aborted'
 export type ReviewFindingDispositionOutcome = 'still_open' | 'resolved' | 'unaddressed'
 
 export type ReviewFindingDisposition = {

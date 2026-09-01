@@ -431,7 +431,11 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
         (review) => review.turnMessageId === 'msg-2'
       )
       initialReviewId = initialReview?.id
-      expect(initialReview).toMatchObject({ lifecycle: 'running', outcome: 'flagged' })
+      expect(initialReview).toMatchObject({
+        lifecycle: 'running',
+        outcome: null,
+        checks: [expect.objectContaining({ status: 'fail' })]
+      })
     } finally {
       releaseCorrection()
     }

@@ -106,6 +106,21 @@ describe('ReviewerCard — running state', () => {
     expect(container.querySelector('[data-testid="reviewer-card"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="open-science-thinking-indicator"]')).toBeNull()
   })
+
+  it('renders persisted findings while the Fix Loop is still running', async () => {
+    await act(async () => {
+      root.render(
+        <ReviewerCard
+          review={makeReview({ lifecycle: 'running', outcome: null, checks: [makeCheck()] })}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="reviewer-running-state"]')).toBeNull()
+    expect(container.querySelector('[data-testid="reviewer-card"]')).not.toBeNull()
+    expect(container.textContent).toContain('1 finding')
+    expect(container.textContent).not.toContain('No issues found')
+  })
 })
 
 describe('ReviewerCard — borderless grayscale hierarchy', () => {
@@ -867,7 +882,8 @@ describe('ReviewerCard — flagged expand (reference-style)', () => {
 
   it('renders the self-correct footer note for warn/fail expansions', async () => {
     const review = makeReview({
-      outcome: 'flagged',
+      lifecycle: 'running',
+      outcome: null,
       checks: [makeCheck({ status: 'warn' })]
     })
     await act(async () => {

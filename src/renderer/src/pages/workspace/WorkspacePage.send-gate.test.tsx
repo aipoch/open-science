@@ -739,7 +739,7 @@ describe('WorkspacePage send gate while compacting', () => {
         artifactVersionIds: []
       },
       lifecycle: 'running',
-      outcome: 'flagged',
+      outcome: null,
       model: 'test-model',
       reviewerLog: [],
       createdAt: 1_000,
@@ -768,6 +768,7 @@ describe('WorkspacePage send gate while compacting', () => {
         review: {
           ...activeFixLoopReview,
           lifecycle: 'complete',
+          outcome: 'flagged',
           updatedAt: 2_000
         }
       })

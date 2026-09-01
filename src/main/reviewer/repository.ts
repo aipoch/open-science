@@ -192,7 +192,11 @@ class ReviewRepository {
   async recoverInterruptedReviews(): Promise<number> {
     const client = await this.getClient()
     const interruptedFixLoops = await client.review.findMany({
-      where: { lifecycle: 'running', outcome: 'flagged' }
+      where: {
+        lifecycle: 'running',
+        outcome: null,
+        findings: { some: { status: { in: ['warn', 'fail'] } } }
+      }
     })
 
     for (const fixLoopReview of interruptedFixLoops) {
@@ -216,7 +220,7 @@ class ReviewRepository {
         openFindings.map((finding) => ({
           reviewId: finding.reviewId,
           sourceFindingId: finding.id,
-          trigger: 'interrupted',
+          trigger: 'aborted',
           outcome: 'unaddressed',
           note: FIX_LOOP_INTERRUPTED_ON_STARTUP_MESSAGE
         }))
@@ -228,7 +232,11 @@ class ReviewRepository {
     }
 
     const interruptedAssessments = await client.review.updateMany({
-      where: { lifecycle: 'running', outcome: null },
+      where: {
+        lifecycle: 'running',
+        outcome: null,
+        findings: { none: { status: { in: ['warn', 'fail'] } } }
+      },
       data: {
         lifecycle: 'error',
         outcome: null,
@@ -402,8 +410,8 @@ class ReviewRepository {
   // submit no checks; tracked mode requires a non-empty submission and exact disposition of its
   // expected ids. Tracked sourceFindingId entries are immutable
   // assessments of existing Review Checks, never new Finding rows; untracked checks are newly
-  // discovered Review Checks. The Review outcome and every materialized disposition commit in the
-  // same SQLite transaction, so a malformed item cannot leave a partially applied audit result.
+  // discovered Review Checks. The Review submission state and every materialized disposition commit
+  // in the same SQLite transaction, so a malformed item cannot leave a partially applied audit result.
   // An initial flagged submission may remain running while its Fix Loop is active; tracked Reviews
   // always become terminal when their submission commits.
   async commitScopedSubmission(input: {
@@ -572,7 +580,10 @@ class ReviewRepository {
             input.mode === 'initial' && input.keepFlaggedReviewRunning && outcome === 'flagged'
               ? 'running'
               : 'complete',
-          outcome,
+          outcome:
+            input.mode === 'initial' && input.keepFlaggedReviewRunning && outcome === 'flagged'
+              ? null
+              : outcome,
           errorMessage: null,
           reviewerLog: JSON.stringify(input.reviewerLog ?? [])
         }
@@ -926,12 +937,7 @@ class ReviewRepository {
   }
 }
 
-export {
-  FIX_LOOP_INTERRUPTED_ON_STARTUP_MESSAGE,
-  REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE,
-  ReviewRepository,
-  toReview
-}
+export { REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE, ReviewRepository, toReview }
 export type { ReviewClient, ReviewClientProvider, ReviewRepositoryOptions, FindingSeverity }
 
 // Legacy exports kept for callers that still reference toFinding.

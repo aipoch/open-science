@@ -78,11 +78,6 @@ describe('Reviewer resilience', () => {
       }
     ])
 
-    await database.review.update({
-      where: { id: review.id },
-      data: { lifecycle: 'running', outcome: 'flagged' }
-    })
-
     expect(await repository.recoverInterruptedReviews()).toBe(1)
     const [restored] = await repository.getReviewsForProjectSession('project-1', 'session-1')
     expect(restored).toMatchObject({
@@ -91,7 +86,7 @@ describe('Reviewer resilience', () => {
       checks: [
         expect.objectContaining({
           resolution: 'unaddressed',
-          unaddressedTrigger: 'interrupted'
+          unaddressedTrigger: 'aborted'
         })
       ]
     })
