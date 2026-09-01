@@ -165,6 +165,7 @@
         "src/main/notebook/provisioner.ts",
         "src/main/notebook/python-command.ts",
         "src/main/notebook/r-command.ts",
+        "src/main/notebook/runtime-target.ts",
         "src/main/notebook/shell-process.ts",
         "src/main/notebook/venv-overlay.ts",
         "src/main/notifications/desktop-attention.ts",
