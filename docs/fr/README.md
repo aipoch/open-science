@@ -2,6 +2,8 @@
 
 [![Télécharger](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![Version](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
+[![🏆 N° 1 sur BiomniBench-DA Public 50](https://img.shields.io/badge/%F0%9F%8F%86%20%231-BiomniBench--DA%20Public%2050-F9B000?style=for-the-badge)](https://huggingface.co/datasets/phylobio/BiomniBench-DA)
+[![Plateformes macOS Windows Linux](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-4dabf7?style=for-the-badge)](https://github.com/aipoch/open-science/releases/latest)
 [![Licence](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
 [![Site web](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
@@ -34,6 +36,7 @@ Open Science prend en charge la recherche computationnelle et intensive en donn�
 
 - [Démarrage rapide](#-démarrage-rapide)
 - [Visite du produit](#visite-du-produit)
+- [Performances aux benchmarks](#performances-aux-benchmarks)
 - [Pourquoi Open Science](#pourquoi-open-science)
 - [Principes de conception](#principes-de-conception)
 - [Capacités principales](#capacités-principales)
@@ -143,6 +146,16 @@ Il inclut aussi **24 connecteurs** de recherche intégrés : Literature Graph, P
     <td align="center"><sub>Bases de données scientifiques exposées comme outils d'agent soumis à autorisation</sub></td>
   </tr>
 </table>
+
+## Performances aux benchmarks
+
+### 🏆 N° 1 sur BiomniBench-DA Public 50
+
+Open Science a obtenu le meilleur score de classement dans la comparaison compilée BiomniBench-DA Public 50, avec **79.05** pour **gpt-5.6-sol (xhigh)**. Ce résultat combine un score du juge Gemini 3.1 Pro de **81.04** et un score du juge DeepSeek v4-pro de **77.06** selon une moyenne à pondération égale, plaçant Open Science **n° 1** parmi les résultats Public 50 recueillis. Explorez le [jeu de données BiomniBench-DA](https://huggingface.co/datasets/phylobio/BiomniBench-DA).
+
+<p align="center">
+  <img src="../images/readme/biomnibench-public50-leaderboard.jpg" alt="Comparaison BiomniBench-DA Public 50 montrant AIPOCH Open Science en première position avec un score de 79.05" width="1200" />
+</p>
 
 ## Pourquoi Open Science
 

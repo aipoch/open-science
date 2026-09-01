@@ -2,6 +2,8 @@
 
 [![Скачать](https://img.shields.io/badge/Скачать-последний%20выпуск-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![Версия](https://img.shields.io/github/v/release/aipoch/open-science?label=Версия&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
+[![🏆 № 1 в BiomniBench-DA Public 50](https://img.shields.io/badge/%F0%9F%8F%86%20%231-BiomniBench--DA%20Public%2050-F9B000?style=for-the-badge)](https://huggingface.co/datasets/phylobio/BiomniBench-DA)
+[![Платформы macOS Windows Linux](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-4dabf7?style=for-the-badge)](https://github.com/aipoch/open-science/releases/latest)
 [![Лицензия](https://img.shields.io/badge/Лицензия-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
 [![Сайт](https://img.shields.io/badge/Сайт-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-присоединиться%20к%20сообществу-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
@@ -34,6 +36,7 @@ Open Science подходит для вычислительных исследо
 
 - [Быстрый старт](#-быстрый-старт)
 - [Обзор продукта](#обзор-продукта)
+- [Результаты тестирования](#результаты-тестирования)
 - [Зачем нужен Open Science](#зачем-нужен-open-science)
 - [Принципы проектирования](#принципы-проектирования)
 - [Основные возможности](#основные-возможности)
@@ -143,6 +146,16 @@ Open Science объединяет исследования в проекты и 
     <td align="center"><sub>Научные базы данных как инструменты агента с управляемыми разрешениями</sub></td>
   </tr>
 </table>
+
+## Результаты тестирования
+
+### 🏆 № 1 в BiomniBench-DA Public 50
+
+Open Science получил наивысший рейтинговый балл в сводном сравнении BiomniBench-DA Public 50 — **79.05** при использовании **gpt-5.6-sol (xhigh)**. Результат представляет собой среднее с равными весами между оценкой Gemini 3.1 Pro (**81.04**) и оценкой DeepSeek v4-pro (**77.06**), благодаря чему Open Science занимает **1-е место** среди собранных результатов Public 50. Ознакомьтесь с [набором данных BiomniBench-DA](https://huggingface.co/datasets/phylobio/BiomniBench-DA).
+
+<p align="center">
+  <img src="../images/readme/biomnibench-public50-leaderboard.jpg" alt="Сравнение BiomniBench-DA Public 50, где AIPOCH Open Science занимает первое место с результатом 79.05" width="1200" />
+</p>
 
 ## Зачем нужен Open Science
 

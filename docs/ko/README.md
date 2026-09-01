@@ -2,6 +2,8 @@
 
 [![다운로드](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![버전](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
+[![🏆 BiomniBench-DA Public 50 1위](https://img.shields.io/badge/%F0%9F%8F%86%20%231-BiomniBench--DA%20Public%2050-F9B000?style=for-the-badge)](https://huggingface.co/datasets/phylobio/BiomniBench-DA)
+[![지원 플랫폼 macOS Windows Linux](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-4dabf7?style=for-the-badge)](https://github.com/aipoch/open-science/releases/latest)
 [![라이선스](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
 [![웹사이트](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
@@ -34,6 +36,7 @@ Open Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물
 
 - [빠른 시작](#-빠른-시작)
 - [제품 둘러보기](#제품-둘러보기)
+- [벤치마크 성능](#벤치마크-성능)
 - [Open Science를 선택하는 이유](#open-science를-선택하는-이유)
 - [설계 원칙](#설계-원칙)
 - [핵심 기능](#핵심-기능)
@@ -143,6 +146,16 @@ Open Science에는 계속 확장되는 **18개의 주요** 파일 기반 연구 
     <td align="center"><sub>권한이 적용된 에이전트 도구로 제공되는 과학 데이터베이스</sub></td>
   </tr>
 </table>
+
+## 벤치마크 성능
+
+### 🏆 BiomniBench-DA Public 50 1위
+
+Open Science는 집계된 BiomniBench-DA Public 50 비교에서 **gpt-5.6-sol (xhigh)**로 **79.05**를 기록해 가장 높은 순위 점수를 달성했습니다. 이 결과는 Gemini 3.1 Pro 평가 점수 **81.04**와 DeepSeek v4-pro 평가 점수 **77.06**을 동일 가중치로 평균한 값이며, 수집된 Public 50 결과에서 Open Science를 **1위**에 올렸습니다. [BiomniBench-DA 데이터세트](https://huggingface.co/datasets/phylobio/BiomniBench-DA)를 살펴보세요.
+
+<p align="center">
+  <img src="../images/readme/biomnibench-public50-leaderboard.jpg" alt="AIPOCH Open Science가 79.05점으로 1위를 기록한 BiomniBench-DA Public 50 비교" width="1200" />
+</p>
 
 ## Open Science를 선택하는 이유
 
