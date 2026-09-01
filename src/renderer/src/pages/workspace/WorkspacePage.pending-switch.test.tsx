@@ -24,7 +24,10 @@ import {
 import { useSpecialistStore } from '@/stores/specialist-store'
 
 import { type ComposerDoc } from './composer/composer-doc'
-import { setDefaultWorkspaceAgentSettings } from './workspace-page-test-fixtures'
+import {
+  markWorkspaceReviewHistoryLoaded,
+  setDefaultWorkspaceAgentSettings
+} from './workspace-page-test-fixtures'
 import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
@@ -201,6 +204,7 @@ const renderPage = async (r: Root): Promise<void> => {
 
 const setupBase = (): void => {
   setDefaultWorkspaceAgentSettings()
+  markWorkspaceReviewHistoryLoaded({ projectId: 'proj-1', sessionId: 'sess-a' })
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   useProjectStore.setState({ projects: [] })
   useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-1' })
