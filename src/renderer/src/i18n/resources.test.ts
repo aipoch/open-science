@@ -3911,8 +3911,16 @@ describe('Brazilian Portuguese safety copy', () => {
       join(__dirname, '..', '..', '..', '..', 'docs', 'i18n-glossary.md'),
       'utf8'
     )
+    const ptBrGlossary = glossary.match(
+      /## Brazilian Portuguese terminology\n(?<section>[\s\S]*?)\n## Spanish terminology/u
+    )?.groups?.section
+    const kernelOffenders = allCatalogEntries('pt-BR')
+      .filter(([key]) => /\bkernels?\b/iu.test(englishOf(key)))
+      .filter(([, value]) => !/\bkernels?\b/iu.test(value))
+      .map(([key]) => key)
 
-    expect(glossary).toMatch(/^\| kernel\s+\| kernel\s+\|$/mu)
+    expect(ptBrGlossary).toMatch(/^\| kernel\s+\| kernel\s+\|$/mu)
+    expect(kernelOffenders).toEqual([])
   })
 
   it.each([
