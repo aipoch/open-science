@@ -59,16 +59,23 @@ const NotebookNetworkProtectionBanner = ({
   useEffect(() => {
     if (previewState) return
     let cancelled = false
-    void window.api.settings.getNotebookNetworkStatus().then(
-      (next) => {
-        if (!cancelled) setRuntimeStatus(next)
-      },
-      () => {
-        if (!cancelled) setRuntimeStatus({ kind: 'error', reason: 'runtimeFailure' })
-      }
-    )
+    let retry: number | undefined
+    const refresh = (): void => {
+      void window.api.settings.getNotebookNetworkStatus().then(
+        (next) => {
+          if (cancelled) return
+          setRuntimeStatus(next)
+          if (next.kind === 'checking') retry = window.setTimeout(refresh, 1_000)
+        },
+        () => {
+          if (!cancelled) setRuntimeStatus({ kind: 'error', reason: 'runtimeFailure' })
+        }
+      )
+    }
+    refresh()
     return () => {
       cancelled = true
+      if (retry !== undefined) window.clearTimeout(retry)
     }
   }, [previewState])
 

@@ -74,4 +74,25 @@ describe('NotebookNetworkProtectionBanner', () => {
     )
     expect(container.textContent).not.toContain('private')
   })
+
+  it('refreshes a checking status until initialization finishes', async () => {
+    vi.useFakeTimers()
+    const getStatus = vi
+      .fn()
+      .mockResolvedValueOnce({ kind: 'checking' })
+      .mockResolvedValueOnce({ kind: 'ready', warnings: [] })
+    window.api.settings.getNotebookNetworkStatus = getStatus
+
+    await act(async () => root.render(<NotebookNetworkProtectionBanner onOpen={() => undefined} />))
+    await flush()
+    expect(container.textContent).toContain('Checking…')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000)
+    })
+
+    expect(getStatus).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('Notebook network protection is active.')
+    vi.useRealTimers()
+  })
 })
