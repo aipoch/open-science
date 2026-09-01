@@ -263,6 +263,73 @@ describe('SessionMessageMarkdown', () => {
     expect(container.querySelector('[data-session-artifact-image]')).not.toBeNull()
   })
 
+  it('reserves the loaded image geometry for the placeholder after a remount', async () => {
+    let intersectionCallback: IntersectionObserverCallback | undefined
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          intersectionCallback = callback
+        }
+
+        observe = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+
+    await act(async () => {
+      root.render(
+        <SessionMessageMarkdown
+          content="![Sine curve](sin_curve.png)"
+          artifacts={[artifact]}
+          onPreviewArtifact={vi.fn()}
+          onPreviewArtifactModal={vi.fn()}
+        />
+      )
+    })
+    await act(async () => {
+      intersectionCallback?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+    })
+
+    const img = container.querySelector<HTMLImageElement>('[data-session-artifact-image] img')
+    expect(img).not.toBeNull()
+    Object.defineProperty(img, 'naturalWidth', { value: 800 })
+    Object.defineProperty(img, 'naturalHeight', { value: 400 })
+    await act(async () => {
+      img?.dispatchEvent(new Event('load'))
+    })
+
+    // A fresh instance (e.g. the transcript window recycling an offscreen message) starts away
+    // from the viewport and shows the placeholder, sized to the cached image geometry.
+    const remountContainer = document.createElement('div')
+    document.body.appendChild(remountContainer)
+    const remountRoot = createRoot(remountContainer)
+    await act(async () => {
+      remountRoot.render(
+        <SessionMessageMarkdown
+          content="![Sine curve](sin_curve.png)"
+          artifacts={[artifact]}
+          onPreviewArtifact={vi.fn()}
+          onPreviewArtifactModal={vi.fn()}
+        />
+      )
+    })
+
+    const placeholder = remountContainer.querySelector<HTMLElement>(
+      '[data-session-artifact-image-status]'
+    )
+    expect(placeholder).not.toBeNull()
+    expect(placeholder?.style.width).toBe('800px')
+    expect(placeholder?.style.maxWidth).toBe('100%')
+    expect(placeholder?.style.aspectRatio).toBe('2 / 1')
+
+    await act(async () => remountRoot.unmount())
+    remountContainer.remove()
+  })
+
   it('routes TIFF images through the existing artifact thumbnail and modal', async () => {
     const onPreviewArtifactModal = vi.fn()
     markdownHarness.artifactRef = 'version-tiff'
