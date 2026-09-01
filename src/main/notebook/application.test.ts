@@ -165,6 +165,15 @@ describe('Notebook application composition', () => {
     expect(hostModelRegistration).toBeGreaterThan(localRpcRegistration)
   })
 
+  it('forwards both managed-removal lifecycle callbacks through production wiring', () => {
+    const source = readFileSync(resolve(__dirname, '../ipc.ts'), 'utf8').replace(/\s+/g, ' ')
+
+    expect(source).toContain(
+      'removeManagedEnvironment: (language, beforeRemove, afterRemove) => ' +
+        'serialized.removeManagedEnvironment!(language, beforeRemove, afterRemove)'
+    )
+  })
+
   it('closes local RPC once when later composition rolls back', async () => {
     const close = vi.fn().mockResolvedValue(undefined)
 

@@ -3502,8 +3502,8 @@ const createApplicationModules = async (
       removeEnvironment: (name) => provisioner.removeEnvironment(name),
       // Use the shared mutation queue: an already-admitted startup restore/upgrade/repair finishes
       // before removal instead of waking after deletion and recreating the managed default.
-      removeManagedEnvironment: (language, beforeRemove) =>
-        serialized.removeManagedEnvironment!(language, beforeRemove)
+      removeManagedEnvironment: (language, beforeRemove, afterRemove) =>
+        serialized.removeManagedEnvironment!(language, beforeRemove, afterRemove)
     })
     // On first agent use of a not-yet-built default env, build it from the offline bundle (via the
     // shared serialized provisioner) instead of erroring — keeps R lazy but avoids the agent creating
