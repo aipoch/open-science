@@ -4,8 +4,14 @@ import { Check, Copy, ListCollapse, MessageCircleQuestionMark, Quote } from 'luc
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type { Annotation, PdfAnnotation, TextAnnotation } from '../../../../../shared/annotations'
-import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
-import { parseUploadVersionReference } from '../../../../../shared/uploads'
+import {
+  createArtifactVersionLocator,
+  parseArtifactVersionLocator
+} from '../../../../../shared/artifact-provenance'
+import {
+  createUploadVersionReference,
+  parseUploadVersionReference
+} from '../../../../../shared/uploads'
 import type { PreviewFileRendererProps } from './preview-types'
 import {
   revealTextAnnotationRange,
@@ -161,22 +167,45 @@ const pdfClipboardContent = (
   }
 }
 
-const projectFileVersionId = (item: PreviewFileItem): string | undefined =>
+const projectFileVersionId = (
+  item: PreviewFileItem,
+  annotationVersionId?: string
+): string | undefined =>
+  annotationVersionId ??
   item.selectedVersionId ??
   (item.source === 'upload'
     ? parseUploadVersionReference(item.path)?.versionId
     : parseArtifactVersionLocator(item.path)?.versionId)
 
+const projectFileAnnotationPath = (item: PreviewFileItem, versionId?: string): string => {
+  if (!item.projectId || !item.managedFileId || !versionId) return item.path
+  return item.source === 'upload'
+    ? createUploadVersionReference(versionId, {
+        projectId: item.projectId,
+        sessionId: item.sessionId,
+        fileId: item.managedFileId
+      })
+    : createArtifactVersionLocator({
+        projectId: item.projectId,
+        appSessionId: item.sessionId,
+        artifactId: item.managedFileId,
+        versionId
+      })
+}
+
 const projectFileSource = (
   item: PreviewFileItem,
-  pageNumber?: number
+  pageNumber?: number,
+  annotationVersionId?: string
 ): TextAnnotation['source'] | undefined => {
   if (!item.projectId || pageNumber !== undefined) return undefined
-  const versionId = projectFileVersionId(item)
+  const versionId = projectFileVersionId(item, annotationVersionId)
+  // Managed annotations must capture an immutable Version before they become actionable.
+  if (item.managedFileId && !versionId) return undefined
   return {
     kind: 'project-file',
     projectId: item.projectId,
-    path: item.path,
+    path: projectFileAnnotationPath(item, versionId),
     name: item.name,
     ...(versionId ? { versionId } : {}),
     ...(item.sessionId ? { sessionId: item.sessionId } : {})
@@ -186,13 +215,22 @@ const projectFileSource = (
 const belongsToPreview = (
   annotation: RangeAnnotation,
   item: PreviewFileItem,
-  pageNumber?: number
+  pageNumber?: number,
+  annotationVersionId?: string
 ): boolean => {
   const source = annotation.source
   if (source.kind !== 'project-file' || !item.projectId) return false
-  if (source.projectId !== item.projectId || source.path !== item.path) return false
-  const versionId = projectFileVersionId(item)
+  const versionId = projectFileVersionId(item, annotationVersionId)
+  const canonicalPath = projectFileAnnotationPath(item, versionId)
+  const matchesLegacyRawPath = source.path === item.path
+  if (
+    source.projectId !== item.projectId ||
+    (source.path !== canonicalPath && !matchesLegacyRawPath)
+  ) {
+    return false
+  }
   if (source.versionId || versionId) {
+    if (!source.versionId && matchesLegacyRawPath) return pageNumber === undefined
     if (source.versionId !== versionId) return false
   }
   return pageNumber === undefined
@@ -219,6 +257,7 @@ const getDraftHighlight = (): Highlight | undefined => {
 export const PreviewTextAnnotationSurface = ({
   item,
   activeAnnotations = NO_ANNOTATIONS,
+  annotationVersionId,
   annotationBlockedByHistoricalVersion = false,
   onAddAnnotation,
   onUpdateAnnotationNote,
@@ -248,14 +287,15 @@ export const PreviewTextAnnotationSurface = ({
   const [copied, setCopied] = useState(false)
   const [annotationControls, setAnnotationControls] = useState<readonly AnnotationControl[]>([])
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string>()
-  const source = projectFileSource(item, sourcePageNumber)
+  const source = projectFileSource(item, sourcePageNumber, annotationVersionId)
   const matchingAnnotations = useMemo(
     () =>
       activeAnnotations.filter(
         (annotation): annotation is RangeAnnotation =>
-          annotation.kind === 'text' && belongsToPreview(annotation, item, sourcePageNumber)
+          annotation.kind === 'text' &&
+          belongsToPreview(annotation, item, sourcePageNumber, annotationVersionId)
       ),
-    [activeAnnotations, item, sourcePageNumber]
+    [activeAnnotations, annotationVersionId, item, sourcePageNumber]
   )
 
   const measureAnnotationControls = useCallback((): void => {

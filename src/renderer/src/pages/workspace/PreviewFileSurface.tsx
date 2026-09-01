@@ -676,6 +676,9 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         ? resolveArtifactVersionDescriptor(lineage, previewItem.selectedVersionId)
         : undefined)
     const selectedVersionId = selectedVersion?.versionId ?? previewItem.selectedVersionId
+    // Default managed previews follow the DB head without pinning the tab, while annotations still
+    // need the exact immutable Version that is currently visible.
+    const annotationVersionId = managedNavigationInspect?.selectedVersionId ?? selectedVersionId
     const resolvedPreviewItem =
       selectedVersion && projectId
         ? createPreviewFileItemForArtifactVersion({
@@ -1167,6 +1170,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
                   item={resolvedPreviewItem}
                   downloadVersionContext={managedWorkflow.downloadVersionContext}
+                  annotationVersionId={annotationVersionId}
                   annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}
                   activeAnnotations={activeAnnotations}
                   onAddAnnotation={onAddAnnotation}
@@ -1196,6 +1200,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
               key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
               item={resolvedPreviewItem}
               downloadVersionContext={managedWorkflow.downloadVersionContext}
+              annotationVersionId={annotationVersionId}
               annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}
               activeAnnotations={activeAnnotations}
               onAddAnnotation={onAddAnnotation}

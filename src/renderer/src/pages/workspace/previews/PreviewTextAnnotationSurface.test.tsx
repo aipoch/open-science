@@ -122,6 +122,7 @@ describe('PreviewTextAnnotationSurface', () => {
     onAnnotationError = vi.fn(),
     onAnnotationAdded,
     previewItem = item(),
+    annotationVersionId,
     sourcePageNumber,
     pdfEvidenceSource,
     annotationBlockedByHistoricalVersion = false,
@@ -133,6 +134,7 @@ describe('PreviewTextAnnotationSurface', () => {
     onAnnotationError?: (error: AnnotationValidationError) => void
     onAnnotationAdded?: () => void
     previewItem?: PreviewFileItem
+    annotationVersionId?: string
     sourcePageNumber?: number
     pdfEvidenceSource?: PdfAnnotation['source']
     annotationBlockedByHistoricalVersion?: boolean
@@ -142,6 +144,7 @@ describe('PreviewTextAnnotationSurface', () => {
       root.render(
         <PreviewTextAnnotationSurface
           item={previewItem}
+          annotationVersionId={annotationVersionId}
           activeAnnotations={activeAnnotations}
           onAddAnnotation={onAddAnnotation}
           onUpdateAnnotationNote={onUpdateAnnotationNote}
@@ -259,6 +262,37 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(onAddAnnotation).toHaveBeenCalledWith(
       expect.objectContaining({
         source: expect.objectContaining({ path, versionId: 'version-3' })
+      })
+    )
+  })
+
+  it('records a logical Version locator when the managed Artifact tab keeps a raw path', async () => {
+    const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
+    await renderSurface({
+      onAddAnnotation,
+      annotationVersionId: 'version-3',
+      previewItem: item({
+        id: 'artifact-9',
+        path: '/stale/managed-file-projection.md',
+        artifactId: 'artifact-9',
+        managedFileId: 'artifact-9',
+        selectedVersionId: undefined
+      })
+    })
+    await selectQuote()
+    await confirmAnnotation()
+
+    expect(onAddAnnotation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: expect.objectContaining({
+          path: createArtifactVersionLocator({
+            projectId: 'project-1',
+            appSessionId: 'session-1',
+            artifactId: 'artifact-9',
+            versionId: 'version-3'
+          }),
+          versionId: 'version-3'
+        })
       })
     )
   })

@@ -51,6 +51,7 @@ vi.mock('./ManagedFileDownloadButton', () => ({
 vi.mock('./previews/PreviewFileContent', () => ({
   PreviewFileContent: (props: {
     item: PreviewFileItem
+    annotationVersionId?: string
     annotationBlockedByHistoricalVersion?: boolean
     onPdfReadingPositionChange?: (position: { pageNumber: number; pageCount: number }) => void
   }) => {
@@ -354,6 +355,50 @@ describe('PreviewFileSurface managed text versions', () => {
 
     expect(previewContentSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({ annotationBlockedByHistoricalVersion: true })
+    )
+  })
+
+  it('supplies the exact head Version when annotating a default managed Artifact', async () => {
+    const managedArtifactItem: PreviewFileItem = {
+      ...managedUploadItem,
+      id: 'artifact-1',
+      artifactId: 'artifact-1',
+      managedFileId: 'artifact-1',
+      selectedVersionId: undefined,
+      source: 'artifact',
+      path: '/stale/managed-file-projection.md'
+    }
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        ...managedInspect,
+        source: 'artifact',
+        fileId: 'artifact-1',
+        headVersionId: 'artifact-v2',
+        selectedVersionId: 'artifact-v2',
+        versions: managedInspect.versions.map((version, index) => ({
+          ...version,
+          id: `artifact-v${index + 1}`,
+          source: 'artifact' as const,
+          fileId: 'artifact-1'
+        }))
+      }
+    })
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedArtifactItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(previewContentSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        annotationVersionId: 'artifact-v2',
+        item: expect.objectContaining({
+          path: '/stale/managed-file-projection.md',
+          selectedVersionId: undefined
+        })
+      })
     )
   })
 

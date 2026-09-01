@@ -7,6 +7,7 @@ import type { PreviewFileRendererProps } from './preview-types'
 export const PreviewFileContent = ({
   item,
   downloadVersionContext,
+  annotationVersionId,
   annotationBlockedByHistoricalVersion,
   activeAnnotations,
   onAddAnnotation,
@@ -21,6 +22,7 @@ export const PreviewFileContent = ({
 }): React.JSX.Element => {
   const content = renderPreviewFile({
     item,
+    annotationVersionId,
     annotationBlockedByHistoricalVersion,
     activeAnnotations,
     onAddAnnotation,
