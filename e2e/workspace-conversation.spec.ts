@@ -139,9 +139,7 @@ test('keeps Memory reversible while the replacement session awaits history repla
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: /Agent controls:/ }).click()
-  const memory = page.getByRole('menuitem', {
-    name: 'Memory Let the agent recall and save memory in this conversation.'
-  })
+  const memory = page.getByRole('menuitem', { name: 'Memory', exact: true })
   await expect(memory).toBeEnabled()
   await memory.click()
 
@@ -153,9 +151,7 @@ test('keeps Memory reversible while the replacement session awaits history repla
       pendingHistoryReplay: { kind: 'all' }
     })
 
-  const autoReview = page.getByRole('menuitem', {
-    name: 'Auto-review A reviewer agent checks every change before it lands.'
-  })
+  const autoReview = page.getByRole('menuitem', { name: 'Auto-review', exact: true })
   const specialist = page.getByTestId('specialist-submenu-trigger')
   const branch = page.getByRole('button', { name: 'Branch in new session' })
   await expect(autoReview).toBeEnabled()
