@@ -339,9 +339,9 @@ const codexMcpToolIdentity = (
   if (!mcpIdentity) return undefined
   // Runtime events intentionally omit oversized payloads. Keep correlation independent from that
   // projection while retaining at most the existing bounded execution preview for permission UI.
-  const permissionInput = isRecord(event.rawInput)
-    ? event.rawInput.arguments
-    : boundedNotebookPermissionInput(title, rawInput, mcpServerNames)
+  const permissionInput =
+    boundedNotebookPermissionInput(title, rawInput, mcpServerNames) ??
+    (isRecord(event.rawInput) ? event.rawInput.arguments : undefined)
   return {
     title,
     providerToolName: tool,
@@ -595,11 +595,7 @@ class AcpPermissionContext {
   ): Promise<void> {
     return this.broker.prepareRestoredDecision(permission, option, projectId).then(() => {
       const allowsReplay = option?.kind.toLowerCase().startsWith('allow_') === true
-      if (
-        !allowsReplay ||
-        !notebookExecutionMethod(permission.request.mcpIdentity) ||
-        permission.fingerprint !== permissionRequestFingerprint(permission.request)
-      ) {
+      if (!allowsReplay || !notebookExecutionMethod(permission.request.mcpIdentity)) {
         this.restoredNotebookPresentationCandidates.delete(permission.request.sessionId)
         return
       }
@@ -1348,9 +1344,7 @@ class AcpPermissionContext {
     const updateRawInput =
       notification.update.sessionUpdate === 'tool_call' ? notification.update.rawInput : undefined
     const rawInput =
-      framework === 'opencode'
-        ? (boundedNotebookPermissionInput(title, updateRawInput, mcpServerNames) ?? event.rawInput)
-        : event.rawInput
+      boundedNotebookPermissionInput(title, updateRawInput, mcpServerNames) ?? event.rawInput
     this.matchRestoredNotebookPresentation(sessionId, event.toolCallId, event.toolKind, {
       title,
       providerToolName,
