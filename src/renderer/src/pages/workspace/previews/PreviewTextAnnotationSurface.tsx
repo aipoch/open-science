@@ -4,6 +4,7 @@ import { Check, Copy, ListCollapse, MessageCircleQuestionMark, Quote } from 'luc
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type { Annotation, PdfAnnotation, TextAnnotation } from '../../../../../shared/annotations'
+import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileRendererProps } from './preview-types'
 import {
@@ -162,7 +163,9 @@ const pdfClipboardContent = (
 
 const projectFileVersionId = (item: PreviewFileItem): string | undefined =>
   item.selectedVersionId ??
-  (item.source === 'upload' ? parseUploadVersionReference(item.path)?.versionId : undefined)
+  (item.source === 'upload'
+    ? parseUploadVersionReference(item.path)?.versionId
+    : parseArtifactVersionLocator(item.path)?.versionId)
 
 const projectFileSource = (
   item: PreviewFileItem,

@@ -9,6 +9,7 @@ import type {
   PdfAnnotation,
   TextAnnotation
 } from '../../../../../shared/annotations'
+import { createArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { requestAnnotationReveal } from '../annotations/annotation-reveal'
@@ -232,6 +233,34 @@ describe('PreviewTextAnnotationSurface', () => {
       })
     )
     expect(registeredRanges.size).toBe(1)
+  })
+
+  it('captures the exact artifact Version from the managed locator', async () => {
+    const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
+    const path = createArtifactVersionLocator({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-9',
+      versionId: 'version-3'
+    })
+    await renderSurface({
+      onAddAnnotation,
+      previewItem: item({
+        id: 'artifact-9',
+        path,
+        artifactId: 'artifact-9',
+        managedFileId: 'artifact-9',
+        selectedVersionId: undefined
+      })
+    })
+    await selectQuote()
+    await confirmAnnotation()
+
+    expect(onAddAnnotation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: expect.objectContaining({ path, versionId: 'version-3' })
+      })
+    )
   })
 
   it('explains why an editable historical version cannot be annotated', async () => {

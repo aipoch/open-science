@@ -14,6 +14,8 @@ import {
   type PreviewFileItem
 } from '@/stores/preview-workbench-store'
 import type { Annotation } from '../../../../../shared/annotations'
+import { createUploadVersionReference } from '../../../../../shared/uploads'
+import { createManagedPreviewRequest } from '../previews/preview-file-reader'
 
 class TestHighlight extends Set<Range> {}
 
@@ -271,6 +273,72 @@ describe('annotation reveal', () => {
           selectedVersionId: 'version-3'
         })
       ]
+    })
+
+    const reopened = usePreviewWorkbenchStore.getState().items[0] as PreviewFileItem
+    expect(
+      createManagedPreviewRequest({
+        projectId: reopened.projectId,
+        sessionId: reopened.sessionId,
+        source: reopened.source,
+        path: reopened.path,
+        managedFileId: reopened.managedFileId,
+        selectedVersionId: reopened.selectedVersionId
+      })
+    ).toEqual({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: 'artifact-9',
+      versionId: 'version-3'
+    })
+  })
+
+  it('reopens a missing upload annotation with its stable file and Version identity', () => {
+    const sourcePath = createUploadVersionReference('upload-version-3', {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      fileId: 'upload-file-9'
+    })
+    const annotation: Annotation = {
+      id: 'upload-quote-1',
+      kind: 'text',
+      target: 'agent',
+      quote: 'Uploaded evidence',
+      source: {
+        kind: 'project-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        path: sourcePath,
+        name: 'evidence.md',
+        versionId: 'upload-version-3'
+      }
+    }
+
+    requestAnnotationReveal(annotation)
+
+    const state = usePreviewWorkbenchStore.getState()
+    expect(state.activeItemId).toBe('upload:upload-file-9')
+    const reopened = state.items[0] as PreviewFileItem
+    expect(reopened).toMatchObject({
+      id: 'upload:upload-file-9',
+      source: 'upload',
+      managedFileId: 'upload-file-9',
+      selectedVersionId: 'upload-version-3'
+    })
+    expect(
+      createManagedPreviewRequest({
+        projectId: reopened.projectId,
+        sessionId: reopened.sessionId,
+        source: reopened.source,
+        path: reopened.path,
+        managedFileId: reopened.managedFileId,
+        selectedVersionId: reopened.selectedVersionId
+      })
+    ).toEqual({
+      source: 'upload',
+      projectId: 'project-1',
+      fileId: 'upload-file-9',
+      versionId: 'upload-version-3'
     })
   })
 })

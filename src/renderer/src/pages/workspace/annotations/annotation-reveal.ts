@@ -95,10 +95,13 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
 
   const name = sourceName(source.path, source.name)
   const versionId = source.versionId ?? artifact?.versionId ?? upload?.versionId
+  // A reopened managed tab keeps the stable logical file identity separate from its exact Version.
+  const uploadFileId = upload?.fileId
+  const managedFileId = artifact?.artifactId ?? uploadFileId
   return createPreviewFileItem({
     id:
       artifact?.artifactId ??
-      (upload ? `upload:${upload.versionId}` : `file:${projectId}:${source.path}`),
+      (upload ? `upload:${uploadFileId ?? upload.versionId}` : `file:${projectId}:${source.path}`),
     projectId,
     sessionId,
     path: source.path,
@@ -111,7 +114,8 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
           : undefined,
     source: upload ? 'upload' : undefined,
     artifactId: artifact?.artifactId,
-    selectedVersionId: artifact ? versionId : undefined
+    managedFileId,
+    selectedVersionId: artifact || uploadFileId ? versionId : undefined
   })
 }
 
