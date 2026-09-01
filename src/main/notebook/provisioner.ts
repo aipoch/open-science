@@ -341,6 +341,9 @@ export interface RuntimeProvisioner {
 export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   private provisioning = false
   private legacyCacheCleanupComplete = false
+  // A remove whose durable journal record could not be cleared must block recreation in this process;
+  // otherwise startup recovery would replay the stale remove intent onto the newly-created env.
+  private readonly pendingRemovalPrefixes = new Set<string>()
   // Prefixes whose write in THIS process failed with a child tree we could not confirm stopped (a worker
   // MAY still be live). A force Reset must NOT delete+rebuild such a prefix. This in-memory set guards the
   // current app lifetime; the retained journal plus downgraded {spawning} sidecar guard later startups
@@ -715,6 +718,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   // Called at every prefix-write site so an unknown-liveness orphan blocks the write this session —
   // covering the startup gate's restore/upgrade/repair, not just the UI provision/repair handlers.
   private assertPrefixWritable(prefix: string): void {
+    if (this.pendingRemovalPrefixes.has(prefix)) {
+      throw new Error(
+        `RUNTIME_RECOVERY_BLOCKED: removal of "${prefix}" could not be finalized durably. ` +
+          'Restart the app to finish recovery before recreating this environment.'
+      )
+    }
     if (this.deps.isPrefixBlocked?.(prefix)) {
       throw new Error(
         `RUNTIME_RECOVERY_BLOCKED: a previous operation on "${prefix}" was interrupted and its worker ` +
@@ -1382,12 +1391,32 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   // Removes exactly one app-managed default plus its readiness receipt. Session teardown and the
   // per-env mutation lock are owned by NotebookRuntimeService/EnvironmentManagementOwner; keeping
   // this filesystem primitive narrow prevents renderer input from becoming deletion authority.
-  removeManagedEnvironment(language: NotebookLanguage): void {
+  async removeManagedEnvironment(language: NotebookLanguage): Promise<void> {
     const name = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
-    rmSync(envPrefix(this.deps.root, name, this.platform), { recursive: true, force: true })
-    rmSync(language === 'r' ? rReadyMarkerPath(this.deps.root) : readyMarkerPath(this.deps.root), {
-      force: true
+    const prefix = envPrefix(this.deps.root, name, this.platform)
+    const targets = [
+      prefix,
+      language === 'r' ? rReadyMarkerPath(this.deps.root) : readyMarkerPath(this.deps.root)
+    ]
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(this.deps.root))
+    const operationId = randomUUID()
+    await journal.begin({
+      operationId,
+      kind: 'remove',
+      runtimeId: name,
+      phase: `remove-${language}`,
+      startedAt: Date.now(),
+      targetPaths: targets
     })
+    try {
+      for (const target of targets) rmSync(target, { recursive: true, force: true })
+      await journal.complete(operationId)
+    } catch (error) {
+      // Keep the durable intent for startup retry and prevent this provisioner from recreating the
+      // prefix before that retry has cleared it.
+      this.pendingRemovalPrefixes.add(prefix)
+      throw error
+    }
   }
 
   // Keeps a healthy legacy R prefix additive, but replaces an invalid partial prefix from the lock.

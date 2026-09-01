@@ -10340,6 +10340,86 @@ describe('v4 runtime bindings & agent tools', () => {
     await run
   })
 
+  it('refuses managed uninstall while a default-Runtime execution is admitted but preflighting', async () => {
+    const root = await createStorageRoot()
+    const preflight = createDeferred<{
+      id: string
+      language: 'python'
+      source: string
+      sourceDigest: string
+      exports: string[]
+      skillIdentity: string
+      packageOrigin: 'personal'
+      interfaceRevision: string
+      registeredGeneration: string
+    }>()
+    const resolveStarted = createDeferred()
+    const removeManagedEnvironment = vi.fn()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      helperModuleCatalog: {
+        resolve: async () => {
+          resolveStarted.resolve(undefined)
+          return preflight.promise
+        }
+      },
+      environmentManager: {
+        createNamedEnvironment: vi.fn(),
+        listEnvironments: vi.fn(() => []),
+        removeEnvironment: vi.fn(() => []),
+        removeManagedEnvironment
+      },
+      executorFactory: () => ({
+        execute: async (request) => ({
+          status: 'completed' as const,
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: [],
+          helperModulesInitialized: ['pending-helper']
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const run = service.execute({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      code: 'pending_helper()',
+      helperModules: ['pending-helper']
+    })
+    await resolveStarted.promise
+
+    expect(
+      service.describeRuntimeUsage(
+        'python',
+        pythonBin(envPrefix(getRuntimeRoot(root), DEFAULT_PY_ENV))
+      )
+    ).toEqual({ running: 1, idle: 0, dormant: 0 })
+    await expect(service.uninstallManagedEnvironment('python')).rejects.toThrow(
+      'RUNTIME_UNINSTALL_IN_USE'
+    )
+    expect(removeManagedEnvironment).not.toHaveBeenCalled()
+
+    const source = 'def pending_helper():\n    return 1'
+    preflight.resolve({
+      id: 'pending-helper',
+      language: 'python',
+      source,
+      sourceDigest: helperDigest(source),
+      exports: ['pending_helper'],
+      skillIdentity: 'skill:pending-helper',
+      packageOrigin: 'personal',
+      interfaceRevision: '1',
+      registeredGeneration: 'generation-1'
+    })
+    await run
+  })
+
   it('force-stop disable aborts the running cell and records it cancelled (WS10 force-stop)', async () => {
     const root = await createStorageRoot()
     // A blocking executor: execute() stays pending until terminate() rejects it (a killed kernel).

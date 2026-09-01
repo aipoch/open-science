@@ -35,6 +35,9 @@ export type OperationRecoveryDeps = {
   // external install: mark the runtime repair-required — an interrupted pip into the user's own env
   // may be half-applied; do NOT assume success and do NOT auto-retry (the user decides).
   markRepairRequired: (record: RuntimeOperationRecord) => Promise<void>
+  // remove: retry the exact app-authorized filesystem targets. The production adapter validates them
+  // against its managed Runtime root before deleting anything.
+  removeTargets: (record: RuntimeOperationRecord) => Promise<void>
   // liveness 'unknown': we couldn't confirm the child died, so we neither kill nor reconcile it — but a
   // survivor might still be writing this operation's prefix. BLOCK that runtime/prefix (persistently, so
   // it survives the barrier releasing) until a later startup can reconcile it, instead of letting a
@@ -65,6 +68,7 @@ export type RecoveryAction =
   | 'clean-staging'
   | 'verify-or-rebuild'
   | 'repair-required'
+  | 'remove-targets'
   | 'noop'
   // Liveness was 'unknown' — a survivor might still be writing, so the entry is left for a later startup.
   | 'skipped-child-unknown'
@@ -182,6 +186,10 @@ const runReconcileAction = async (
       // A disable revoke is idempotent + persisted (the binding is already unavailable); nothing to
       // undo — just clear the journal entry.
       deps.onReconciled?.(record, 'noop')
+      return
+    case 'remove':
+      await deps.removeTargets(record)
+      deps.onReconciled?.(record, 'remove-targets')
       return
   }
 }

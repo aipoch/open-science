@@ -241,6 +241,9 @@ export class NotebookSessionAggregate<
   // executor, so their persistence cannot land on a successor.
   private executorLifecycleQueue: Promise<void> = Promise.resolve()
   private readonly executionQueues = new Map<string, Promise<unknown>>()
+  // Includes queued and admitted work, not only cells that have reached the visible `running` state.
+  // Destructive Runtime operations use this count to close the admission/preflight race window.
+  private readonly pendingExecutionCounts = new Map<string, number>()
   private controlQueue: Promise<unknown> = Promise.resolve()
   private mcpRpcConnection: NotebookSessionMcpRpcConnection | undefined
   private readonly terminatedKernels = new Set<string>()
@@ -401,8 +404,17 @@ export class NotebookSessionAggregate<
     signal?: AbortSignal
   ): Promise<T> {
     const previous = this.executionQueues.get(processKey) ?? Promise.resolve()
+    this.incrementPendingExecution(processKey)
+    let pending = true
+    const releasePending = (): void => {
+      if (!pending) return
+      pending = false
+      const next = (this.pendingExecutionCounts.get(processKey) ?? 1) - 1
+      if (next <= 0) this.pendingExecutionCounts.delete(processKey)
+      else this.pendingExecutionCounts.set(processKey, next)
+    }
     if (!signal) {
-      const run = previous.then(task)
+      const run = previous.then(task).finally(releasePending)
       this.executionQueues.set(
         processKey,
         run.catch(() => undefined)
@@ -410,7 +422,12 @@ export class NotebookSessionAggregate<
       return run
     }
 
-    signal.throwIfAborted()
+    try {
+      signal.throwIfAborted()
+    } catch (error) {
+      releasePending()
+      throw error
+    }
     let started = false
     let resolveResult!: (result: T | PromiseLike<T>) => void
     let rejectResult!: (reason?: unknown) => void
@@ -419,9 +436,13 @@ export class NotebookSessionAggregate<
       rejectResult = reject
     })
     const onAbort = (): void => {
-      if (!started) rejectResult(signal.reason)
+      if (!started) {
+        releasePending()
+        rejectResult(signal.reason)
+      }
     }
     signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) onAbort()
 
     const run = previous.then(async () => {
       if (signal.aborted) return
@@ -431,6 +452,8 @@ export class NotebookSessionAggregate<
         resolveResult(await task())
       } catch (error) {
         rejectResult(error)
+      } finally {
+        releasePending()
       }
     })
     this.executionQueues.set(
@@ -438,6 +461,17 @@ export class NotebookSessionAggregate<
       run.catch(() => undefined)
     )
     return result
+  }
+
+  hasPendingExecution(processKey: string): boolean {
+    return (this.pendingExecutionCounts.get(processKey) ?? 0) > 0
+  }
+
+  private incrementPendingExecution(processKey: string): void {
+    this.pendingExecutionCounts.set(
+      processKey,
+      (this.pendingExecutionCounts.get(processKey) ?? 0) + 1
+    )
   }
 
   async drainExecution(processKey: string): Promise<void> {

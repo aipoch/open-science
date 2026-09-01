@@ -44,6 +44,7 @@ const makeDeps = (over: Partial<OperationRecoveryDeps> = {}): OperationRecoveryD
   cleanStaging: vi.fn().mockResolvedValue(undefined),
   verifyOrRebuildEnv: vi.fn().mockResolvedValue(undefined),
   markRepairRequired: vi.fn().mockResolvedValue(undefined),
+  removeTargets: vi.fn().mockResolvedValue(undefined),
   blockUnknownChildTarget: vi.fn().mockResolvedValue(undefined),
   ...over
 })
@@ -68,14 +69,16 @@ describe('reconcileInterruptedOperations', () => {
     await journal.begin(
       record({ operationId: 'x', kind: 'disable', runtimeId: '/usr/bin/python3' })
     )
+    await journal.begin(record({ operationId: 'r', kind: 'remove', runtimeId: 'default-python' }))
 
     const deps = makeDeps()
     const reconciled = await reconcileInterruptedOperations(journal, deps)
 
-    expect(reconciled).toHaveLength(5)
+    expect(reconciled).toHaveLength(6)
     expect(deps.cleanStaging).toHaveBeenCalledTimes(1) // download
     expect(deps.verifyOrRebuildEnv).toHaveBeenCalledTimes(2) // materialize + upgrade
     expect(deps.markRepairRequired).toHaveBeenCalledTimes(1) // install
+    expect(deps.removeTargets).toHaveBeenCalledTimes(1) // remove
     // Every entry is cleared, so a second startup reconciles nothing.
     expect(await journal.pending()).toEqual([])
   })

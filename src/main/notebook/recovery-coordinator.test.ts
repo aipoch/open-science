@@ -6,7 +6,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
-import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, pythonBin, rBin } from './runtime-paths'
+import {
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
+  envPrefix,
+  pythonBin,
+  rBin,
+  readyMarkerPath
+} from './runtime-paths'
 
 let root: string | undefined
 
@@ -41,6 +48,55 @@ const beginInterruptedMaterialize = async (
 }
 
 describe('NotebookRecoveryCoordinator', () => {
+  it('finishes an interrupted managed-Runtime removal using only the exact journalled targets', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    const marker = readyMarkerPath(runtimeRoot)
+    const preserved = envPrefix(runtimeRoot, 'analysis')
+    await Promise.all([
+      mkdir(prefix, { recursive: true }),
+      mkdir(preserved, { recursive: true }),
+      mkdir(dirname(marker), { recursive: true })
+    ])
+    await writeFile(marker, 'ready')
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'remove-after-crash',
+      kind: 'remove',
+      runtimeId: DEFAULT_PY_ENV,
+      phase: 'remove-python',
+      startedAt: 100,
+      targetPaths: [prefix, marker]
+    })
+
+    await new NotebookRecoveryCoordinator(runtimeRoot).recover()
+
+    expect(existsSync(prefix)).toBe(false)
+    expect(existsSync(marker)).toBe(false)
+    expect(existsSync(preserved)).toBe(true)
+    expect(await journal.pending()).toEqual([])
+  })
+
+  it('retains an interrupted removal whose persisted targets are not the exact managed pair', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const unsafe = join(root!, 'outside-runtime')
+    await mkdir(unsafe, { recursive: true })
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'unsafe-remove-after-crash',
+      kind: 'remove',
+      runtimeId: DEFAULT_PY_ENV,
+      phase: 'remove-python',
+      startedAt: 100,
+      targetPaths: [envPrefix(runtimeRoot, DEFAULT_PY_ENV), unsafe]
+    })
+
+    await new NotebookRecoveryCoordinator(runtimeRoot).recover()
+
+    expect(existsSync(unsafe)).toBe(true)
+    expect(await journal.pending()).toHaveLength(1)
+  })
+
   it('finalizes a leftover working cache only after recovery has no blocked writer', async () => {
     const runtimeRoot = await createRuntimeRoot()
     const finalizeWorkingCache = vi.fn().mockResolvedValue(true)

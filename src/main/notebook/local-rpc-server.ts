@@ -2816,7 +2816,14 @@ class NotebookLocalRpcServer {
       )
     }
 
-    let trustedParams = params
+    // Notebook execution requests reaching this server originate from the authenticated Agent bridge.
+    // `source` controls policy admission and is therefore host-owned authority, not caller metadata.
+    // Keep accepting the field on the wire for compatibility, but canonicalize every execution entry
+    // point so an Agent cannot claim `user` and bypass Agent-only Runtime creation policy.
+    let trustedParams =
+      method === 'beginCodeCell' || method === 'runCell' || method === 'execute'
+        ? { ...params, source: 'agent' }
+        : params
     if (method === 'execute' && typeof params.sessionId === 'string') {
       const specialistId = this.sessionSpecialists.get(params.sessionId)
       if (specialistId) {
@@ -2824,7 +2831,7 @@ class NotebookLocalRpcServer {
           ? await this.resolveSpecialistSkillIds(specialistId).catch(() => [])
           : []
         trustedParams = {
-          ...params,
+          ...trustedParams,
           registeredHelperSkillIds: [...allowedSkillIds]
         }
       }

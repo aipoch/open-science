@@ -19,7 +19,7 @@ type NotebookEnvironmentManager = {
   ) => Promise<EnvironmentInfo>
   listEnvironments: () => EnvironmentInfo[]
   removeEnvironment: (name: string) => void
-  removeManagedEnvironment?: (language: NotebookLanguage) => void
+  removeManagedEnvironment?: (language: NotebookLanguage) => void | Promise<void>
 }
 
 type EnvironmentManagementSession = {
@@ -148,7 +148,7 @@ class NotebookEnvironmentManagementOwner {
     this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, environmentName))
     await this.options.environmentOperations.runMutation(environmentName, async () => {
       await beforeRemove(environmentName)
-      manager.removeManagedEnvironment?.(language)
+      await manager.removeManagedEnvironment?.(language)
       this.options.runtimeRepair.completeRemovedManagedEnvironment(environmentName)
     })
   }

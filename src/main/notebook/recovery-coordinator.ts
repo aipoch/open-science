@@ -19,7 +19,17 @@ import {
 } from './windows-micromamba-working-cache'
 import { defaultOperationChildLiveness, reconcileInterruptedOperations } from './operation-recovery'
 import { verifyExecutable } from './provisioner-runtime'
-import { addRepairRequired, DEFAULT_PY_ENV, DEFAULT_R_ENV, pythonBin, rBin } from './runtime-paths'
+import {
+  addRepairRequired,
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
+  envPrefix,
+  legacyDefaultEnvPrefix,
+  pythonBin,
+  rBin,
+  rReadyMarkerPath,
+  readyMarkerPath
+} from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 
 const log = createLogger('notebook:recovery')
@@ -289,6 +299,33 @@ export class NotebookRecoveryCoordinator {
         if (!record.runtimeId) return
         const marker = this.repairPolicy.recoveryMarker(record)
         addRepairRequired(this.runtimeRoot, marker.key, marker.reason)
+      },
+      removeTargets: async (record) => {
+        const language =
+          record.runtimeId === DEFAULT_R_ENV
+            ? 'r'
+            : record.runtimeId === DEFAULT_PY_ENV
+              ? 'python'
+              : undefined
+        if (!language) throw new Error('Interrupted Runtime removal has an unknown target.')
+        const environmentName = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
+        const expectedMarker =
+          language === 'r' ? rReadyMarkerPath(this.runtimeRoot) : readyMarkerPath(this.runtimeRoot)
+        const allowedPrefixes = new Set([
+          envPrefix(this.runtimeRoot, environmentName),
+          legacyDefaultEnvPrefix(this.runtimeRoot, environmentName)
+        ])
+        const targets = record.targetPaths ?? []
+        const recordedPrefixes = targets.filter((target) => allowedPrefixes.has(target))
+        if (
+          targets.length !== 2 ||
+          new Set(targets).size !== 2 ||
+          !targets.includes(expectedMarker) ||
+          recordedPrefixes.length !== 1
+        ) {
+          throw new Error('Interrupted Runtime removal contains an unsafe filesystem target.')
+        }
+        for (const target of targets) await rm(target, { recursive: true, force: true })
       },
       blockUnknownChildTarget: async (record) => {
         if (record.kind === 'install') nextStartupBlockedRuntimeIds.add(record.runtimeId)

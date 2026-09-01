@@ -102,7 +102,7 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
 }
 
 describe('DefaultRuntimeProvisioner.provisionPython', () => {
-  it('removes only the requested app-managed default and its readiness receipt', () => {
+  it('removes only the requested app-managed default and its readiness receipt', async () => {
     const root = makeRoot()
     const managedPython = envPrefix(root, DEFAULT_PY_ENV)
     const managedR = envPrefix(root, DEFAULT_R_ENV)
@@ -115,7 +115,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     writeReadyMarker(root, DEFAULT_ENV_VERSION, 'ready')
     writeRReadyMarker(root, DEFAULT_ENV_VERSION, 'ready')
 
-    new DefaultRuntimeProvisioner(makeDeps(root)).removeManagedEnvironment('python')
+    await new DefaultRuntimeProvisioner(makeDeps(root)).removeManagedEnvironment('python')
 
     expect(existsSync(managedPython)).toBe(false)
     expect(readReadyMarker(root)).toBeUndefined()
@@ -123,6 +123,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     expect(readRReadyMarker(root)).toBeDefined()
     expect(existsSync(named)).toBe(true)
     expect(existsSync(userOwned)).toBe(true)
+    expect(await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()).toEqual([])
   })
 
   it('maintains the package cache under the materialize journal after fetching the runtime', async () => {

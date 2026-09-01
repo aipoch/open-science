@@ -4,6 +4,7 @@ import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import type { NotebookLaneIdentity } from './lane-identity'
 import { EnvironmentLeaseManager, type EnvironmentLeaseMode } from './environment-lease-manager'
 import type { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import { managedRuntimeIdentity } from './runtime-target'
 import { errorLogFields } from '../logger'
 import {
   boundedRuntimeDiagnostic,
@@ -24,10 +25,12 @@ type EnvironmentOperationKind = 'execution' | 'inspection' | 'mutation' | 'provi
 type EnvironmentOperationSession = {
   readonly projectId: string
   readonly sessionId: string
+  readonly runtimeRoot?: string
   readonly lane: NotebookLaneIdentity
   runtimeBinding(language: NotebookLanguage): NotebookSessionRuntimeBinding | undefined
   setRuntimeBinding(language: NotebookLanguage, binding: NotebookSessionRuntimeBinding): void
   kernelStatus(processKey: string): NotebookKernelMetadata['lastKnownStatus'] | undefined
+  hasPendingExecution?(processKey: string): boolean
   markForceStopped(processKey: string): void
   drainExecution(processKey: string): Promise<void>
   terminateExecutor(kind: 'python' | 'r', env: string): Promise<void>
@@ -223,9 +226,17 @@ export class NotebookEnvironmentOperations {
     const usage = { running: 0, idle: 0, dormant: 0 }
     for (const session of this.options.sessions()) {
       const binding = session.runtimeBinding(language)
-      if (!binding || binding.runtimeId !== runtimeId) continue
-      const status = session.kernelStatus(processKey(language, runEnvironment(session, language)))
-      if (status === 'running') usage.running += 1
+      const environment = runEnvironment(session, language)
+      const matchesBinding = binding?.runtimeId === runtimeId
+      const matchesImplicitManagedDefault =
+        session.runtimeRoot !== undefined &&
+        binding?.source !== 'external' &&
+        managedRuntimeIdentity(session.runtimeRoot, language, environment).runtimeId === runtimeId
+      if (!matchesBinding && !matchesImplicitManagedDefault) continue
+      const targetProcessKey = processKey(language, environment)
+      const status = session.kernelStatus(targetProcessKey)
+      if (session.hasPendingExecution?.(targetProcessKey) || status === 'running')
+        usage.running += 1
       else if (status !== undefined) usage.idle += 1
       else usage.dormant += 1
     }

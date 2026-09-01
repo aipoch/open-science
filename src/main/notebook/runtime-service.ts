@@ -802,7 +802,13 @@ class NotebookRuntimeService {
       )
     })
     const targetProcessKey = dataProcessKey(language, environmentName)
-    if (initialTargets.some((session) => session.kernelStatus(targetProcessKey) === 'running')) {
+    if (
+      initialTargets.some(
+        (session) =>
+          session.hasPendingExecution(targetProcessKey) ||
+          session.kernelStatus(targetProcessKey) === 'running'
+      )
+    ) {
       throw new Error(
         `RUNTIME_UNINSTALL_IN_USE: the ${language} Runtime is running work. Wait for it to finish before uninstalling.`
       )
@@ -818,7 +824,13 @@ class NotebookRuntimeService {
             this.resolveRunEnv(session, language) === lockedEnvironmentName
           )
         })
-        if (targets.some((session) => session.kernelStatus(targetProcessKey) === 'running')) {
+        if (
+          targets.some(
+            (session) =>
+              session.hasPendingExecution(targetProcessKey) ||
+              session.kernelStatus(targetProcessKey) === 'running'
+          )
+        ) {
           throw new Error(
             `RUNTIME_UNINSTALL_IN_USE: the ${language} Runtime is running work. Wait for it to finish before uninstalling.`
           )

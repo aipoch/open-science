@@ -237,7 +237,8 @@ export const listOperationChildren = (
 // One in-flight, crash-recoverable runtime operation. Persisted BEFORE the operation runs (write
 // intent) and removed only after it commits, so a process that dies mid-operation leaves a record the
 // next startup can reconcile (redownload/verify/repair). See notebook-runtime-crash-recovery.
-export type RuntimeOperationKind = 'download' | 'materialize' | 'upgrade' | 'install' | 'disable'
+export type RuntimeOperationKind =
+  'download' | 'materialize' | 'upgrade' | 'install' | 'disable' | 'remove'
 
 export type RuntimeArchivePublication = {
   workingRoot: string
@@ -259,6 +260,9 @@ export type RuntimeOperationRecord = {
   repairReason?: 'interrupted-install' | 'protected-identity-change'
   // Staging/prefix the op writes into, so recovery can clean a partial ".incoming-*" or verify a prefix.
   targetPath?: string
+  // Exact filesystem entries authorized for a destructive remove. Kept as a list in one record so the
+  // environment prefix and its readiness receipt share one atomic intent and recover together.
+  targetPaths?: readonly string[]
   // The OS pid of the child (micromamba/pip/R) doing the work + when it started, so recovery can
   // confirm the recorded process is still the ORIGINAL op process (not a pid reused after a crash)
   // before cleaning staging / verifying / retrying.
@@ -547,6 +551,10 @@ const isOperationRecord = (value: unknown): value is RuntimeOperationRecord => {
     typeof record.runtimeId === 'string' &&
     typeof record.phase === 'string' &&
     typeof record.startedAt === 'number' &&
+    (record.targetPaths === undefined ||
+      (Array.isArray(record.targetPaths) &&
+        record.targetPaths.length > 0 &&
+        record.targetPaths.every((target) => typeof target === 'string' && target.length > 0))) &&
     (record.repairReason === undefined ||
       record.repairReason === 'interrupted-install' ||
       record.repairReason === 'protected-identity-change') &&
