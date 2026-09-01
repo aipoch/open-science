@@ -41,22 +41,38 @@ const managedRuntimeIdentityAtPrefix = (
   }
 }
 
+const managedRuntimeIdentitiesAtPrefix = (
+  prefix: string,
+  language: NotebookLanguage,
+  platform: NodeJS.Platform
+): readonly { prefix: string; runtimeId: string }[] => {
+  const interpreter = language === 'r' ? rBin(prefix, platform) : pythonBin(prefix, platform)
+  const canonical = managedRuntimeIdentityAtPrefix(prefix, language, platform)
+  return canonical.runtimeId === interpreter
+    ? [canonical]
+    : [canonical, { prefix, runtimeId: interpreter }]
+}
+
 // Windows preserves a healthy legacy default prefix across upgrades, but uninstall removes its marker.
 // After removal, envPrefix() intentionally resolves to the short directory used for the next install.
-// Persist policy against BOTH executable identities so the physical-layout transition cannot re-enable
-// an explicitly uninstalled Runtime. Other platforms have one stable default identity.
+// Persist policy against canonical and raw executable identities so deletion cannot change the lookup
+// key. On Windows, cover both the legacy and future short layouts as well. Other platforms have one
+// stable default layout.
 const managedDefaultRuntimeIdentities = (
   runtimeRoot: string,
   language: NotebookLanguage,
   platform: NodeJS.Platform = process.platform
 ): readonly { prefix: string; runtimeId: string }[] => {
   const environmentName = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
-  const current = managedRuntimeIdentity(runtimeRoot, language, environmentName, platform)
+  const currentPrefix = envPrefix(runtimeRoot, environmentName, platform)
+  const current = managedRuntimeIdentitiesAtPrefix(currentPrefix, language, platform)
   const shortDirectory = envDirectoryName(environmentName, platform)
-  if (shortDirectory === environmentName) return [current]
+  if (shortDirectory === environmentName) return current
   const shortPrefix = join(runtimeRoot, 'envs', shortDirectory)
-  const future = managedRuntimeIdentityAtPrefix(shortPrefix, language, platform)
-  return current.runtimeId === future.runtimeId ? [current] : [current, future]
+  const future = managedRuntimeIdentitiesAtPrefix(shortPrefix, language, platform)
+  return [
+    ...new Map([...current, ...future].map((identity) => [identity.runtimeId, identity])).values()
+  ]
 }
 
 const runtimeTargetReceipt = (options: {
