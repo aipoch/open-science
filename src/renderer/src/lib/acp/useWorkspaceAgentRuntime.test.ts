@@ -800,6 +800,44 @@ describe('workspace agent runtime event processing', () => {
     }
   })
 
+  it('continues with later lane events after an evicted retry fails', async () => {
+    vi.useFakeTimers()
+    try {
+      const failedEvent = createEvent({
+        id: 'message-event-1',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: '字'.repeat(100)
+      })
+      const laterEvents = createTextEvents(2).map((event, index) => ({
+        ...event,
+        id: `message-event-${index + 2}`
+      }))
+      const applyEvent = vi
+        .fn<(runtimeEvent: AcpRuntimeEvent) => Promise<boolean>>()
+        .mockRejectedValueOnce(new Error('move failed'))
+        .mockRejectedValueOnce(new Error('move still failing'))
+        .mockResolvedValue(true)
+      const processor = createWorkspaceRuntimeEventProcessor(applyEvent, {
+        presentation: createTimerPresentation()
+      })
+
+      await processor.process([failedEvent])
+      await processor.processIncremental(laterEvents)
+      await processor.process(laterEvents)
+      await vi.advanceTimersByTimeAsync(250)
+
+      expect(applyEvent.mock.calls.map(([event]) => event.id)).toEqual([
+        'message-event-1',
+        'message-event-1',
+        'message-event-2',
+        'message-event-3'
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('resolves a snapshot without waiting for an in-flight lane that is no longer visible', async () => {
     const artifactEvent = createEvent({
       id: 'artifact-event-1',

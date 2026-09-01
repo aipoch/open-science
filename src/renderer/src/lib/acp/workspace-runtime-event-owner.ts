@@ -234,6 +234,7 @@ const createWorkspaceRuntimeEventProcessor = (
         await presentationBuffer.prepare(lane.presentation, pendingBeforeWait)
         const selectedEvents = presentationBuffer.select(lane.presentation, pendingLaneEvents(lane))
         if (selectedEvents.length === 0) continue
+        let releasedFailedEvictedEvent = false
 
         await processVisibleWorkspaceRuntimeEvents(
           selectedEvents,
@@ -254,6 +255,7 @@ const createWorkspaceRuntimeEventProcessor = (
                 lane.acceptedEvents.delete(event.id)
                 lane.failedEventAttempts.delete(event.id)
                 lane.failedEventIds.delete(event.id)
+                releasedFailedEvictedEvent = true
               } else if (attempt > WORKSPACE_RUNTIME_EVENT_RETRY_DELAYS_MS.length) {
                 cancelLaneRetry(lane)
                 lane.failedEventAttempts.delete(event.id)
@@ -283,6 +285,8 @@ const createWorkspaceRuntimeEventProcessor = (
         } else if (madeProgress) {
           presentationBuffer.recordProgress(lane.presentation, selectedEvents, hasPending)
           if (hasPending) lane.drainAgain = true
+        } else if (releasedFailedEvictedEvent && hasPending) {
+          lane.drainAgain = true
         }
       } while (lane.drainAgain)
     })()
