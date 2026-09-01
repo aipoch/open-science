@@ -168,7 +168,7 @@ Release and compare the entry for your installer:
 shasum -a 256 aipoch-open-science-<version>-mac-arm64.dmg
 
 # Linux
-sha256sum aipoch-open-science-<version>-linux-x86_64.AppImage
+sha256sum aipoch-open-science-<version>-linux-x64.AppImage
 ```
 
 ```powershell
