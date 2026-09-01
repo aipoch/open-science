@@ -26,6 +26,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
 import { cn } from '@/lib/utils'
@@ -475,9 +476,9 @@ const WorkspaceSidebarView = ({
                 <DropdownMenuSeparator />
                 {otherProjects.length > INITIAL_PROJECT_MENU_LIMIT ? (
                   // Keep the input outside the Radix item collection so typing never selects a row.
-                  <div className="relative px-1 pb-1">
+                  <div className="relative mx-1 mb-1">
                     <Search
-                      className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                      className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
                       aria-hidden="true"
                     />
                     <Input
@@ -487,7 +488,7 @@ const WorkspaceSidebarView = ({
                       placeholder={t('Search projects…')}
                       value={projectQuery}
                       autoComplete="off"
-                      className="h-8 pl-7"
+                      className="h-8 pl-7 pr-8 [&::-webkit-search-cancel-button]:hidden"
                       onChange={(event) => onProjectQueryChange?.(event.currentTarget.value)}
                       onKeyDown={(event) => {
                         if (event.nativeEvent.isComposing) {
@@ -506,6 +507,25 @@ const WorkspaceSidebarView = ({
                         if (event.key !== 'Escape' && event.key !== 'Tab') event.stopPropagation()
                       }}
                     />
+                    {projectQuery ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={t('Clear search')}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 text-text-100 hover:bg-bg-200 hover:text-text-100"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={(event) => {
+                          // Restore focus before the controlled clear unmounts this keyboard target.
+                          event.currentTarget.parentElement
+                            ?.querySelector<HTMLInputElement>('[data-project-search]')
+                            ?.focus()
+                          onProjectQueryChange?.('')
+                        }}
+                      >
+                        <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                      </Button>
+                    ) : null}
                   </div>
                 ) : null}
                 {projectQuery.trim() && projectMatches.length === 0 ? (

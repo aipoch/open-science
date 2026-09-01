@@ -192,6 +192,34 @@ test('switches projects from the Workspace project menu and expands remaining pr
     'Project 12Description 12',
     'Project 11Description 11'
   ])
+  const clearSearch = menu.getByRole('button', { name: 'Clear search' })
+  await expect(clearSearch).toBeVisible()
+  const searchPresentation = await menu.evaluate((element) => {
+    const menuBounds = element.getBoundingClientRect()
+    const searchInput = element.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+    const clearButton = element.querySelector<HTMLButtonElement>('[aria-label="Clear search"]')
+    if (!searchInput || !clearButton) return null
+
+    const searchBounds = searchInput.getBoundingClientRect()
+    return {
+      clearButtonSize: clearButton.getBoundingClientRect().width,
+      leftInset: searchBounds.left - menuBounds.left,
+      rightInset: menuBounds.right - searchBounds.right
+    }
+  })
+  expect(searchPresentation).not.toBeNull()
+  expect(searchPresentation?.clearButtonSize).toBe(24)
+  expect(
+    Math.abs((searchPresentation?.leftInset ?? 0) - (searchPresentation?.rightInset ?? 0))
+  ).toBe(0)
+
+  await clearSearch.focus()
+  await expect(clearSearch).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(search).toHaveValue('')
+  await expect(search).toBeFocused()
+  await expect(menu).toBeVisible()
+  await search.fill('  PROJECT 1  ')
   const filteredShowRemaining = menu.getByRole('menuitem', {
     name: 'Show remaining 2 projects',
     exact: true

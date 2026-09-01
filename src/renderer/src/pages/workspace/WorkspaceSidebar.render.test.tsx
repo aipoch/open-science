@@ -1094,6 +1094,89 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
+  it('centers project search and uses the shared clear button treatment', async () => {
+    const projects = Array.from({ length: 6 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const mounted = await mountProjectSidebar(projects)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const searchContainer = search?.parentElement
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+
+      expect(searchContainer?.className).toContain('mx-1')
+      expect(search?.className).toContain('[&::-webkit-search-cancel-button]:hidden')
+      expect(search?.className).toContain('pr-8')
+      expect(document.body.querySelector('[aria-label="Clear search"]')).toBeNull()
+
+      await act(async () => {
+        valueSetter?.call(search, 'Project')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+
+      const clearButton = document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Clear search"]'
+      )
+      expect(clearButton?.getAttribute('data-slot')).toBe('button')
+      expect(clearButton?.getAttribute('data-variant')).toBe('ghost')
+      expect(clearButton?.getAttribute('data-size')).toBe('icon-xs')
+      expect(clearButton?.className).toContain('text-text-100')
+      expect(clearButton?.className).toContain('hover:bg-bg-200')
+      expect(clearButton?.className).toContain('focus-visible:ring-3')
+
+      const mouseDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      await act(async () => {
+        search?.focus()
+        clearButton?.dispatchEvent(mouseDown)
+        clearButton?.click()
+      })
+      expect(mouseDown.defaultPrevented).toBe(true)
+      expect(document.activeElement).toBe(search)
+      expect(search?.value).toBe('')
+      expect(document.body.querySelector('[aria-label="Clear search"]')).toBeNull()
+      expect(document.body.querySelector('[aria-label="Project actions"]')).not.toBeNull()
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('returns keyboard focus to project search after clearing', async () => {
+    const projects = Array.from({ length: 6 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const mounted = await mountProjectSidebar(projects)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, 'Project')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+
+      const clearButton = document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Clear search"]'
+      )
+      await act(async () => {
+        clearButton?.focus()
+        clearButton?.click()
+      })
+
+      expect(search?.value).toBe('')
+      expect(document.activeElement).toBe(search)
+      expect(document.body.querySelector('[aria-label="Project actions"]')).not.toBeNull()
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
   it('fuzzy matches project titles before descriptions without reordering either group', async () => {
     const otherProjects = [
       { id: 'title-first', name: 'Alpha Lab', description: 'Alpha outcomes' },
