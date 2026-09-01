@@ -531,6 +531,32 @@ describe('workspace agent runtime event processing', () => {
     }
   })
 
+  it('retries a transiently failed text batch without requiring new runtime input', async () => {
+    vi.useFakeTimers()
+    try {
+      const events = createTextEvents(2)
+      const applyEventBatch = vi
+        .fn<(runtimeEvents: AcpRuntimeEvent[]) => Promise<boolean>>()
+        .mockRejectedValueOnce(new Error('batch apply failed'))
+        .mockResolvedValueOnce(true)
+      const processor = createWorkspaceRuntimeEventProcessor(async () => true, {
+        applyEventBatch
+      })
+
+      await processor.process(events)
+      expect(applyEventBatch).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(249)
+      expect(applyEventBatch).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(applyEventBatch).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('applies a scheduled retry before resolving an explicit session drain', async () => {
     vi.useFakeTimers()
     try {

@@ -236,43 +236,64 @@ const createWorkspaceRuntimeEventProcessor = (
         if (selectedEvents.length === 0) continue
         let releasedFailedEvictedEvent = false
 
-        await processVisibleWorkspaceRuntimeEvents(
-          selectedEvents,
-          lane.processedEventIds,
-          async (event) => {
-            const hadFailed = lane.failedEventIds.has(event.id)
-            try {
-              const applied = await applyEvent(event)
+        const applyAcceptedEvents = async (
+          events: AcpRuntimeEvent[],
+          apply: () => Promise<boolean>
+        ): Promise<boolean> => {
+          const previouslyFailedEventIds = new Set(
+            events.filter((event) => lane.failedEventIds.has(event.id)).map((event) => event.id)
+          )
+          try {
+            const applied = await apply()
+            for (const event of events) {
               lane.failedEventAttempts.delete(event.id)
               lane.failedEventIds.delete(event.id)
-              if (lane.failedEventAttempts.size === 0) cancelLaneRetry(lane)
-              return applied
-            } catch (error) {
+            }
+            if (lane.failedEventAttempts.size === 0) cancelLaneRetry(lane)
+            return applied
+          } catch (error) {
+            let retryAttempt: number | undefined
+            let releasedInThisApply = false
+            for (const event of events) {
               const attempt = (lane.failedEventAttempts.get(event.id) ?? 0) + 1
               lane.failedEventAttempts.set(event.id, attempt)
               const isVisible = latestEventsById.has(event.id)
-              if (hadFailed && !isVisible) {
+              if (previouslyFailedEventIds.has(event.id) && !isVisible) {
                 lane.acceptedEvents.delete(event.id)
                 lane.failedEventAttempts.delete(event.id)
                 lane.failedEventIds.delete(event.id)
                 releasedFailedEvictedEvent = true
+                releasedInThisApply = true
               } else if (attempt > WORKSPACE_RUNTIME_EVENT_RETRY_DELAYS_MS.length) {
-                cancelLaneRetry(lane)
                 lane.failedEventAttempts.delete(event.id)
                 lane.failedEventIds.delete(event.id)
-                // Resolving without throwing lets processVisibleWorkspaceRuntimeEvents quarantine
-                // this id in processedEventIds until the retained source window evicts it.
-                return false
+                // Quarantine terminal ids even if another member of this batch remains retryable.
+                lane.processedEventIds.add(event.id)
               } else {
                 lane.failedEventIds.add(event.id)
-                scheduleLaneRetry(laneKey, lane, attempt)
+                retryAttempt = Math.min(retryAttempt ?? attempt, attempt)
               }
-              throw error
             }
-          },
+
+            if (retryAttempt !== undefined) {
+              scheduleLaneRetry(laneKey, lane, retryAttempt)
+            } else if (lane.failedEventAttempts.size === 0) {
+              cancelLaneRetry(lane)
+            }
+            if (retryAttempt !== undefined || releasedInThisApply) throw error
+            return false
+          }
+        }
+
+        await processVisibleWorkspaceRuntimeEvents(
+          selectedEvents,
+          lane.processedEventIds,
+          (event) => applyAcceptedEvents([event], () => applyEvent(event)),
           lane.processingEventIds,
           {
-            applyEventBatch: options.applyEventBatch,
+            applyEventBatch: options.applyEventBatch
+              ? (events) => applyAcceptedEvents(events, () => options.applyEventBatch!(events))
+              : undefined,
             retainedEvents: [...lane.acceptedEvents.values()]
           }
         )
