@@ -22,7 +22,7 @@ import { verifyExecutable } from './provisioner-runtime'
 import {
   assertManagedRuntimeRemovalOwnership,
   parseManagedRuntimeRemovalTargets
-} from './managed-runtime-removal'
+} from './managed-runtime-removal-paths'
 import {
   addRepairRequired,
   clearRepairRequired,

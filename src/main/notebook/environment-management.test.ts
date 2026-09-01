@@ -6,7 +6,7 @@ import {
   NotebookEnvironmentManagementOwner,
   type NotebookEnvironmentManager
 } from './environment-management'
-import { managedRuntimeRemovalTargets } from './managed-runtime-removal'
+import { managedRuntimeRemovalTargets } from './managed-runtime-removal-paths'
 import { envPrefix, pythonBin } from './runtime-paths'
 
 type OwnerOptions = ConstructorParameters<typeof NotebookEnvironmentManagementOwner>[0]

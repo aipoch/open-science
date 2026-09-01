@@ -70,7 +70,7 @@ import type { NotebookProcessSandbox } from './process-sandbox'
 import {
   assertManagedRuntimeRemovalOwnership,
   managedRuntimeRemovalTargets
-} from './managed-runtime-removal'
+} from './managed-runtime-removal-paths'
 import {
   isChildUnconfirmedError,
   captureMicromamba,

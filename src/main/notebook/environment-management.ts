@@ -9,7 +9,7 @@ import { assertSafeEnvName, DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix } from './r
 import type { NotebookRuntimeRepairOwner } from './runtime-repair'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import { managedRuntimeIdentity } from './runtime-target'
-import { managedRuntimeRemovalTargets } from './managed-runtime-removal'
+import { managedRuntimeRemovalTargets } from './managed-runtime-removal-paths'
 
 type NotebookEnvironmentManager = {
   createNamedEnvironment: (

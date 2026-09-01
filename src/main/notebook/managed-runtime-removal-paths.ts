@@ -12,6 +12,7 @@ import {
   readyMarkerPath
 } from './runtime-paths'
 
+/** Exact app-owned filesystem paths authorized for one managed Runtime removal. */
 type ManagedRuntimeRemovalTargets = Readonly<{
   environmentName: typeof DEFAULT_PY_ENV | typeof DEFAULT_R_ENV
   prefixes: readonly string[]
