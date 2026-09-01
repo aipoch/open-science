@@ -46,11 +46,11 @@ describe('remote-compute-ssh immediate failure guidance', () => {
       events.push('create')
       return { submitJob, attachJob }
     })
-    const print = vi.fn((value: unknown) => {
-      events.push('print')
-      expect(value).toBe(resultSnapshot)
+    const print = vi.fn(() => {
+      throw new Error('the JS kernel has no print; use a trailing expression or return')
     })
     const execute = new AsyncFunction('host', 'print', workflow!)
+    let returned: unknown
     vi.useFakeTimers()
     try {
       const completion = execute({ compute: { create } }, print)
@@ -59,12 +59,13 @@ describe('remote-compute-ssh immediate failure guidance', () => {
       await vi.advanceTimersByTimeAsync(1999)
       expect(result).not.toHaveBeenCalled()
       await vi.advanceTimersByTimeAsync(1)
-      await completion
+      returned = await completion
     } finally {
       vi.useRealTimers()
     }
 
-    expect(events).toEqual(['create', 'submit', 'attach:job-1', 'result', 'print'])
+    expect(events).toEqual(['create', 'submit', 'attach:job-1', 'result'])
+    expect(returned).toBe(resultSnapshot)
     expect(status).not.toHaveBeenCalled()
     expect(result).toHaveBeenCalledOnce()
   })

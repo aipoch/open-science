@@ -120,7 +120,7 @@ await new Promise((resolve) => setTimeout(resolve, 2000))
 // result() is a non-blocking local DB/directory read in every state; it never waits for completion,
 // triggers SSH, or starts another harvest. Fetching it once exposes immediate stderr/error details.
 const initial = await c.attachJob(job.job_id).result()
-print(initial)
+return initial
 ```
 
 ### Immediate failure check after submission
@@ -279,7 +279,7 @@ for (const seed of [0, 1, 2, 3, 4]) {
   )
   jobs.push(job.job_id)
 }
-print(jobs) // end the cell — no waiting, no loop
+return jobs // end the cell — no waiting, no loop
 ```
 
 The app triggers one analysis turn per job completion (or a merged turn for simultaneous
