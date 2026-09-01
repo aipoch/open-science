@@ -19,8 +19,7 @@ import {
 } from './environment-discovery'
 import { listEnvPackages } from './package-listing'
 import { RuntimeRegistry } from './runtime-registry'
-import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from './runtime-paths'
-import { managedRuntimeIdentity } from './runtime-target'
+import { managedDefaultRuntimeIdentities } from './runtime-target'
 import { prepareExternalPythonRuntime, type AppOwnedExternalSelection } from './venv-overlay'
 import type { MicromambaRunner } from './windows-micromamba-runner'
 
@@ -76,6 +75,7 @@ type RuntimeSelectionWorkflowDeps = {
   // Optional because sessions may not be composed yet during startup; absence means no live usage.
   describeRuntimeUsage?: (language: NotebookLanguage, envId: string) => RuntimeUsage
   uninstallManagedEnvironment?: (language: NotebookLanguage) => Promise<void>
+  platform?: NodeJS.Platform
   // Injectable for tests so the package-listing workflows never spawn micromamba/pip/Rscript;
   // production defaults to listEnvPackages against the real env.
   listPackages?: (env: DiscoveredInterpreter) => Promise<EnvPackage[]>
@@ -302,12 +302,11 @@ const createRuntimeSelectionWorkflows = (
       if (!deps.uninstallManagedEnvironment) {
         throw new Error('Managed Runtime uninstall is unavailable.')
       }
-      const environmentName = request.language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
-      const rawRuntimeId = managedRuntimeIdentity(
+      const defaultRuntimeIds = managedDefaultRuntimeIdentities(
         deps.runtimeRoot(),
         request.language,
-        environmentName
-      ).runtimeId
+        deps.platform
+      ).map(({ runtimeId }) => runtimeId)
       const managed = (await discoverLanguageEnvs(request.language)).find(
         isCurrentAppManagedDefault
       )
@@ -324,8 +323,9 @@ const createRuntimeSelectionWorkflows = (
         }
         await deps.settingsService.setEnvironmentEnabled(request.language, managed.envId, false)
       }
-      if (!managed || managed.envId !== rawRuntimeId) {
-        await deps.settingsService.setEnvironmentEnabled(request.language, rawRuntimeId, false)
+      for (const runtimeId of defaultRuntimeIds) {
+        if (managed?.envId === runtimeId) continue
+        await deps.settingsService.setEnvironmentEnabled(request.language, runtimeId, false)
       }
       await deps.uninstallManagedEnvironment(request.language)
       invalidateDiscovery()

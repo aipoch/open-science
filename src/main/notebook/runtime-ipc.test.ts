@@ -261,6 +261,16 @@ describe('runtime IPC adapter', () => {
     await expect(invoke('runtime:get-enablement', { language: 'python' })).rejects.toBe(failure)
   })
 
+  it('rejects an invalid uninstall language before destructive workflow dispatch', async () => {
+    const uninstallManagedEnvironment = vi.fn().mockResolvedValue(undefined)
+    registerRuntime(fakeDeps({ uninstallManagedEnvironment }))
+
+    expect(() => invoke('runtime:uninstall-managed-environment', { language: 'julia' })).toThrow(
+      'Notebook language must be python or r.'
+    )
+    expect(uninstallManagedEnvironment).not.toHaveBeenCalled()
+  })
+
   it('returns an injected interpreter path', async () => {
     registerRuntime(fakeDeps(), { showOpenDialog: async () => '/opt/python/bin/python3' })
 

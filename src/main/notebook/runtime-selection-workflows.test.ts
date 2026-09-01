@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { join } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type {
@@ -7,7 +8,7 @@ import type {
   RuntimeSelection
 } from '../../shared/notebook-runtime'
 import type { DiscoveredInterpreter } from './environment-discovery'
-import { DEFAULT_PY_ENV } from './runtime-paths'
+import { DEFAULT_PY_ENV, envDirectoryName, pythonBin } from './runtime-paths'
 import { managedRuntimeIdentity } from './runtime-target'
 
 const discoveryState = vi.hoisted(() => ({
@@ -347,6 +348,40 @@ describe('runtime selection workflows', () => {
     })
     expect(settingsService.enablement.get('python')?.enabled[legacyRuntimeId]).toBeUndefined()
     expect(settingsService.enablement.get('python')?.enabled['/usr/bin/python3']).toBeUndefined()
+  })
+
+  it('keeps a legacy Windows default disabled after uninstall switches resolution to the short prefix', async () => {
+    const settingsService = fakeSettingsService()
+    const legacyRuntimeId = pythonBin('/data/runtime/envs/default-python', 'win32')
+    const futureShortRuntimeId = pythonBin(
+      join('/data/runtime', 'envs', envDirectoryName(DEFAULT_PY_ENV, 'win32')),
+      'win32'
+    )
+    discoveryState.python = [
+      {
+        language: 'python',
+        provenance: 'app-managed',
+        envId: legacyRuntimeId,
+        interpreterPath: legacyRuntimeId,
+        label: 'Current managed Python in legacy layout',
+        condaEnv: DEFAULT_PY_ENV,
+        runnable: true
+      }
+    ]
+    const workflows = createRuntimeSelectionWorkflows({
+      settingsService,
+      runtimeRoot: () => '/data/runtime',
+      registry: fakeRegistry(),
+      platform: 'win32',
+      uninstallManagedEnvironment: vi.fn(async () => undefined)
+    })
+
+    await workflows.uninstallManagedEnvironment({ language: 'python' })
+
+    expect(settingsService.enablement.get('python')?.enabled).toMatchObject({
+      [legacyRuntimeId]: false,
+      [futureShortRuntimeId]: false
+    })
   })
 
   it('refuses managed uninstall while work is running before changing persisted state', async () => {

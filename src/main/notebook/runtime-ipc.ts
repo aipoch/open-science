@@ -3,7 +3,7 @@ import { dialog } from 'electron'
 import { ipcMainHandle } from '../ipc-handler-registry'
 import { createLogger, diagnosticErrorFields } from '../logger'
 
-import type { NotebookLanguage } from '../../shared/notebook'
+import { parseNotebookLanguage, type NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeSelection } from '../../shared/notebook-runtime'
 import type { RuntimeSelectionWorkflows } from './runtime-selection-workflows'
 
@@ -75,8 +75,8 @@ const registerRuntimeIpcHandlers = (
 
   ipcMainHandle(
     'runtime:uninstall-managed-environment',
-    (_event, request: { language: NotebookLanguage }) =>
-      workflows.uninstallManagedEnvironment(request)
+    (_event, request: { language?: unknown }) =>
+      workflows.uninstallManagedEnvironment({ language: parseNotebookLanguage(request?.language) })
   )
 
   ipcMainHandle('runtime:pick-interpreter', async (): Promise<string | null> => {

@@ -1,8 +1,16 @@
 import { realpathSync } from 'node:fs'
+import { join } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { NotebookRuntimeBinding, RuntimeTargetReceipt } from '../../shared/notebook-runtime'
-import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, pythonBin, rBin } from './runtime-paths'
+import {
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
+  envDirectoryName,
+  envPrefix,
+  pythonBin,
+  rBin
+} from './runtime-paths'
 
 type RuntimeTargetBinding = Pick<NotebookRuntimeBinding, 'source' | 'runtimeId' | 'label'> & {
   envName?: string
@@ -13,15 +21,41 @@ type RuntimeTargetBinding = Pick<NotebookRuntimeBinding, 'source' | 'runtimeId' 
 const managedRuntimeIdentity = (
   runtimeRoot: string,
   language: NotebookLanguage,
-  environmentName: string
+  environmentName: string,
+  platform: NodeJS.Platform = process.platform
 ): { prefix: string; runtimeId: string } => {
-  const prefix = envPrefix(runtimeRoot, environmentName)
-  const interpreter = language === 'r' ? rBin(prefix) : pythonBin(prefix)
+  const prefix = envPrefix(runtimeRoot, environmentName, platform)
+  return managedRuntimeIdentityAtPrefix(prefix, language, platform)
+}
+
+const managedRuntimeIdentityAtPrefix = (
+  prefix: string,
+  language: NotebookLanguage,
+  platform: NodeJS.Platform
+): { prefix: string; runtimeId: string } => {
+  const interpreter = language === 'r' ? rBin(prefix, platform) : pythonBin(prefix, platform)
   try {
     return { prefix, runtimeId: realpathSync(interpreter) }
   } catch {
     return { prefix, runtimeId: interpreter }
   }
+}
+
+// Windows preserves a healthy legacy default prefix across upgrades, but uninstall removes its marker.
+// After removal, envPrefix() intentionally resolves to the short directory used for the next install.
+// Persist policy against BOTH executable identities so the physical-layout transition cannot re-enable
+// an explicitly uninstalled Runtime. Other platforms have one stable default identity.
+const managedDefaultRuntimeIdentities = (
+  runtimeRoot: string,
+  language: NotebookLanguage,
+  platform: NodeJS.Platform = process.platform
+): readonly { prefix: string; runtimeId: string }[] => {
+  const environmentName = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
+  const current = managedRuntimeIdentity(runtimeRoot, language, environmentName, platform)
+  if (platform !== 'win32') return [current]
+  const shortPrefix = join(runtimeRoot, 'envs', envDirectoryName(environmentName, 'win32'))
+  const future = managedRuntimeIdentityAtPrefix(shortPrefix, language, 'win32')
+  return current.runtimeId === future.runtimeId ? [current] : [current, future]
 }
 
 const runtimeTargetReceipt = (options: {
@@ -58,4 +92,4 @@ const runtimeTargetReceipt = (options: {
   }
 }
 
-export { managedRuntimeIdentity, runtimeTargetReceipt }
+export { managedDefaultRuntimeIdentities, managedRuntimeIdentity, runtimeTargetReceipt }
