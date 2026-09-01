@@ -2,6 +2,8 @@
 
 [![Download](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![Version](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
+[![🏆 #1 BiomniBench-DA Public 50](https://img.shields.io/badge/%F0%9F%8F%86%20%231-BiomniBench--DA%20Public%2050-F9B000?style=for-the-badge)](https://huggingface.co/datasets/phylobio/BiomniBench-DA)
+[![Platforms macOS Windows Linux](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-4dabf7?style=for-the-badge)](https://github.com/aipoch/open-science/releases/latest)
 [![License](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](LICENSE)
 [![Website](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
@@ -32,6 +34,7 @@ Open Science supports computational and data-intensive research across disciplin
 
 - [Quick Start](#-quick-start)
 - [Product Tour](#product-tour)
+- [Benchmark Performance](#benchmark-performance)
 - [Why Open Science](#why-open-science)
 - [Design Principles](#design-principles)
 - [Core Capabilities](#core-capabilities)
@@ -142,6 +145,16 @@ It also includes **24 built-in** research connectors: Literature Graph, PubMed, 
     <td align="center"><sub>Scientific databases exposed as permissioned agent tools</sub></td>
   </tr>
 </table>
+
+## Benchmark Performance
+
+### 🏆 #1 on BiomniBench-DA Public 50
+
+Open Science achieved the highest ranking score in the compiled BiomniBench-DA Public 50 comparison, earning **79.05** with **gpt-5.6-sol (xhigh)**. The result combines a Gemini 3.1 Pro judge score of **81.04** and a DeepSeek v4-pro judge score of **77.06** through an equal-weight mean, placing Open Science **#1** among the collected Public 50 results. Explore the [BiomniBench-DA dataset](https://huggingface.co/datasets/phylobio/BiomniBench-DA).
+
+<p align="center">
+  <img src="docs/images/readme/biomnibench-public50-leaderboard.jpg" alt="BiomniBench-DA Public 50 comparison showing AIPOCH Open Science ranked first with a score of 79.05" width="1200" />
+</p>
 
 ## Why Open Science
 

@@ -2,6 +2,8 @@
 
 [![Download](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![Version](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
+[![🏆 Platz 1 bei BiomniBench-DA Public 50](https://img.shields.io/badge/%F0%9F%8F%86%20%231-BiomniBench--DA%20Public%2050-F9B000?style=for-the-badge)](https://huggingface.co/datasets/phylobio/BiomniBench-DA)
+[![Plattformen macOS Windows Linux](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-4dabf7?style=for-the-badge)](https://github.com/aipoch/open-science/releases/latest)
 [![Lizenz](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
 [![Website](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
@@ -34,6 +36,7 @@ Open Science unterstützt rechen- und datenintensive Forschung in zahlreichen Di
 
 - [Schnellstart](#-schnellstart)
 - [Produkttour](#produkttour)
+- [Benchmark-Ergebnisse](#benchmark-ergebnisse)
 - [Warum Open Science](#warum-open-science)
 - [Designprinzipien](#designprinzipien)
 - [Kernkompetenzen](#kernkompetenzen)
@@ -144,6 +147,16 @@ Hinzu kommen **24 integrierte** Forschungskonnektoren: Literature Graph, PubMed,
 <td align="center"><sub>Wissenschaftliche Datenbanken, die als autorisierte Agent-Tools bereitgestellt werden</sub></td>
 </tr>
 </table>
+
+## Benchmark-Ergebnisse
+
+### 🏆 Platz 1 bei BiomniBench-DA Public 50
+
+Open Science erzielte im zusammengestellten Vergleich BiomniBench-DA Public 50 den höchsten Ranking-Wert: **79.05** mit **gpt-5.6-sol (xhigh)**. Das Ergebnis kombiniert einen Bewertungswert von Gemini 3.1 Pro (**81.04**) und einen Bewertungswert von DeepSeek v4-pro (**77.06**) als gleich gewichteten Mittelwert und platziert Open Science damit auf **Platz 1** der gesammelten Public-50-Ergebnisse. Erkunden Sie den [BiomniBench-DA-Datensatz](https://huggingface.co/datasets/phylobio/BiomniBench-DA).
+
+<p align="center">
+  <img src="../images/readme/biomnibench-public50-leaderboard.jpg" alt="BiomniBench-DA-Public-50-Vergleich mit AIPOCH Open Science auf Platz 1 und einem Wert von 79.05" width="1200" />
+</p>
 
 ## Warum Open Science
 

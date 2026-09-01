@@ -2,6 +2,8 @@
 
 [![Descargar](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![Versión](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
+[![🏆 N.º 1 en BiomniBench-DA Public 50](https://img.shields.io/badge/%F0%9F%8F%86%20%231-BiomniBench--DA%20Public%2050-F9B000?style=for-the-badge)](https://huggingface.co/datasets/phylobio/BiomniBench-DA)
+[![Plataformas macOS Windows Linux](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-4dabf7?style=for-the-badge)](https://github.com/aipoch/open-science/releases/latest)
 [![Licencia](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
 [![Sitio web](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
@@ -34,6 +36,7 @@ Open Science respalda la investigación computacional y con uso intensivo de dat
 
 - [Inicio rápido](#-inicio-rápido)
 - [Recorrido por el producto](#recorrido-por-el-producto)
+- [Rendimiento en benchmarks](#rendimiento-en-benchmarks)
 - [Por qué Open Science](#por-qué-open-science)
 - [Principios de diseño](#principios-de-diseño)
 - [Capacidades principales](#capacidades-principales)
@@ -144,6 +147,16 @@ También incluye **24 conectores de investigación integrados**: Gráfico de lit
 <td align="center"> <sub> Bases de datos científicas expuestas como herramientas de agentes autorizados </sub> </td>
 </tr>
 </table>
+
+## Rendimiento en benchmarks
+
+### 🏆 N.º 1 en BiomniBench-DA Public 50
+
+Open Science obtuvo la puntuación de clasificación más alta en la comparación recopilada de BiomniBench-DA Public 50: **79.05** con **gpt-5.6-sol (xhigh)**. El resultado combina una puntuación del evaluador Gemini 3.1 Pro de **81.04** y una puntuación del evaluador DeepSeek v4-pro de **77.06** mediante una media con ponderación equivalente, lo que sitúa a Open Science en el **n.º 1** entre los resultados recopilados de Public 50. Consulte el [conjunto de datos BiomniBench-DA](https://huggingface.co/datasets/phylobio/BiomniBench-DA).
+
+<p align="center">
+  <img src="../images/readme/biomnibench-public50-leaderboard.jpg" alt="Comparación BiomniBench-DA Public 50 que muestra a AIPOCH Open Science en primer lugar con una puntuación de 79.05" width="1200" />
+</p>
 
 ## Por qué Open Science
 

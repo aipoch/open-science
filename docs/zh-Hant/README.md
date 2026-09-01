@@ -2,6 +2,8 @@
 
 [![下載](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![版本](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
+[![🏆 BiomniBench-DA Public 50 第一名](https://img.shields.io/badge/%F0%9F%8F%86%20%231-BiomniBench--DA%20Public%2050-F9B000?style=for-the-badge)](https://huggingface.co/datasets/phylobio/BiomniBench-DA)
+[![支援平台 macOS Windows Linux](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-4dabf7?style=for-the-badge)](https://github.com/aipoch/open-science/releases/latest)
 [![授權條款](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
 [![網站](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
@@ -34,6 +36,7 @@ Open Science 支援機器學習、統計學、生命科學、化學、材料科�
 
 - [快速開始](#-快速開始)
 - [產品導覽](#產品導覽)
+- [基準測試表現](#基準測試表現)
 - [為何選擇 Open Science](#為何選擇-open-science)
 - [設計原則](#設計原則)
 - [核心能力](#核心能力)
@@ -143,6 +146,16 @@ Open Science 包含持續擴充的 **18 個精選**檔案型研究技能目錄�
     <td align="center"><sub>以受權限控制的智能體工具提供科學資料庫</sub></td>
   </tr>
 </table>
+
+## 基準測試表現
+
+### 🏆 BiomniBench-DA Public 50 第一名
+
+Open Science 在彙整的 BiomniBench-DA Public 50 比較中取得最高排名分：使用 **gpt-5.6-sol (xhigh)** 獲得 **79.05** 分。該成績是 Gemini 3.1 Pro 評審得分 **81.04** 與 DeepSeek v4-pro 評審得分 **77.06** 的等權平均值，使 Open Science 在所收集的 Public 50 結果中位列 **第一**。查看 [BiomniBench-DA 資料集](https://huggingface.co/datasets/phylobio/BiomniBench-DA)。
+
+<p align="center">
+  <img src="../images/readme/biomnibench-public50-leaderboard.jpg" alt="BiomniBench-DA Public 50 比較，其中 AIPOCH Open Science 以 79.05 分排名第一" width="1200" />
+</p>
 
 ## 為何選擇 Open Science
 
