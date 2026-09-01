@@ -234,6 +234,41 @@ describe('NotebookEnvironmentOperations', () => {
     expect(order).toEqual(['provision', 'remove'])
   })
 
+  it('invalidates stale package admission and drains a package request admitted before removal', async () => {
+    const { owner } = await createOwner()
+    const staleToken = owner.captureRemovalAdmission('default-python')
+    const admittedToken = owner.captureRemovalAdmission('default-python')
+    const order: string[] = []
+    let releasePackage!: () => void
+    const packageRequest = owner.runPackageAdmission(
+      admittedToken,
+      () =>
+        new Promise<void>((resolve) => {
+          order.push('package')
+          releasePackage = resolve
+        })
+    )
+    await vi.waitFor(() => expect(releasePackage).toBeTypeOf('function'))
+
+    const removal = owner.withRemovalBarrier('default-python', async () => {
+      order.push('remove')
+    })
+    const duringRemovalToken = owner.captureRemovalAdmission('default-python')
+    await Promise.resolve()
+    expect(order).toEqual(['package'])
+
+    releasePackage()
+    await Promise.all([packageRequest, removal])
+    expect(order).toEqual(['package', 'remove'])
+
+    await expect(owner.runPackageAdmission(staleToken, async () => undefined)).rejects.toThrow(
+      'RUNTIME_ENVIRONMENT_REMOVING'
+    )
+    await expect(
+      owner.runPackageAdmission(duringRemovalToken, async () => undefined)
+    ).rejects.toThrow('RUNTIME_ENVIRONMENT_REMOVING')
+  })
+
   it('marks a binding unavailable before tracking its background revocation drain', async () => {
     let releaseDrain!: () => void
     const terminations: string[] = []

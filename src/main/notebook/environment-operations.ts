@@ -58,6 +58,12 @@ export type NotebookEnvironmentOperationDiagnostic = Readonly<{
   fields: Record<string, unknown>
 }>
 
+export type EnvironmentRemovalAdmissionToken = Readonly<{
+  environment: string
+  generation: number
+  removing: boolean
+}>
+
 export type NotebookEnvironmentOperationsSnapshot = Readonly<{
   disposed: boolean
   active: ReadonlyArray<{
@@ -164,9 +170,11 @@ export class NotebookEnvironmentOperations {
   private readonly executionReservations = new Map<string, Set<Promise<void>>>()
   private readonly repairBlocks = new Set<string>()
   private readonly removals = new Set<string>()
-  // A separate reservation avoids holding a shared env lease while the provisioner later takes its
-  // exclusive prefix lease. Closing the removal barrier makes this set finite before it is drained.
-  private readonly provisionDrains = new Map<string, Set<Promise<void>>>()
+  private readonly removalGenerations = new Map<string, number>()
+  // These reservations avoid holding a shared env lease while a provision/package request performs
+  // admission work before later taking the exclusive prefix lease. Closing the removal barrier makes
+  // the set finite before it is drained.
+  private readonly removalAdmissionDrains = new Map<string, Set<Promise<void>>>()
   private provisioner: DefaultEnvProvisioner | undefined
   private reportProvisionProgress: (progress: ProvisionProgress) => void = () => undefined
   private progress: ProvisionProgress | undefined
@@ -273,14 +281,51 @@ export class NotebookEnvironmentOperations {
     })
   }
 
+  captureRemovalAdmission(environment: string): EnvironmentRemovalAdmissionToken {
+    return {
+      environment,
+      generation: this.removalGenerations.get(environment) ?? 0,
+      removing: this.removals.has(environment)
+    }
+  }
+
+  runPackageAdmission<T>(
+    token: EnvironmentRemovalAdmissionToken,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const { environment } = token
+    if (
+      token.removing ||
+      this.removals.has(environment) ||
+      token.generation !== (this.removalGenerations.get(environment) ?? 0)
+    ) {
+      return Promise.reject(this.removalInProgress(environment))
+    }
+
+    const release = this.reserveRemovalAdmission(environment)
+    try {
+      if (
+        this.removals.has(environment) ||
+        token.generation !== (this.removalGenerations.get(environment) ?? 0)
+      ) {
+        throw this.removalInProgress(environment)
+      }
+      return operation().finally(release)
+    } catch (error) {
+      release()
+      return Promise.reject(error)
+    }
+  }
+
   async withRemovalBarrier<T>(environment: string, operation: () => Promise<T>): Promise<T> {
     if (this.removals.has(environment)) throw this.removalInProgress(environment)
+    this.removalGenerations.set(environment, (this.removalGenerations.get(environment) ?? 0) + 1)
     this.removals.add(environment)
     try {
       const admittedExecutions = this.executionReservations.get(environment)
       if (admittedExecutions) await Promise.all(admittedExecutions)
-      const admittedProvisions = this.provisionDrains.get(environment)
-      if (admittedProvisions) await Promise.all(admittedProvisions)
+      const admittedWrites = this.removalAdmissionDrains.get(environment)
+      if (admittedWrites) await Promise.all(admittedWrites)
       const admittedRevocations = this.revocationReservations.get(environment)
       if (admittedRevocations) await Promise.all(admittedRevocations)
       return await operation()
@@ -541,20 +586,27 @@ export class NotebookEnvironmentOperations {
 
   runProvisionAdmission<T>(environment: string, operation: () => Promise<T>): Promise<T> {
     if (this.removals.has(environment)) return Promise.reject(this.removalInProgress(environment))
+    const release = this.reserveRemovalAdmission(environment)
+    return this.track('provision', environment, operation).finally(release)
+  }
 
+  private reserveRemovalAdmission(environment: string): () => void {
     let resolveDrain!: () => void
     const drain = new Promise<void>((resolve) => {
       resolveDrain = resolve
     })
-    const drains = this.provisionDrains.get(environment) ?? new Set<Promise<void>>()
+    const drains = this.removalAdmissionDrains.get(environment) ?? new Set<Promise<void>>()
     drains.add(drain)
-    this.provisionDrains.set(environment, drains)
+    this.removalAdmissionDrains.set(environment, drains)
 
-    return this.track('provision', environment, operation).finally(() => {
+    let released = false
+    return () => {
+      if (released) return
+      released = true
       drains.delete(drain)
-      if (drains.size === 0) this.provisionDrains.delete(environment)
+      if (drains.size === 0) this.removalAdmissionDrains.delete(environment)
       resolveDrain()
-    })
+    }
   }
 
   private reserveRevocations(environments: Iterable<string>): { release: () => void } {
