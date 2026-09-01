@@ -75,6 +75,7 @@ class AcpRuntimeSnapshotOwner {
     let image = event.image
     let raw = event.raw
     let text = event.text
+    const title = typeof event.title === 'string' ? sanitizeToolDetailText(event.title) : undefined
     const rawInput = sanitizeRawToolPayload(event.rawInput, MAX_RUNTIME_RAW_PAYLOAD_CHARS)
     const rawOutput = sanitizeRawToolPayload(event.rawOutput, MAX_RUNTIME_RAW_PAYLOAD_CHARS)
     const toolContent = sanitizeToolContent(event.toolContent) as
@@ -104,6 +105,7 @@ class AcpRuntimeSnapshotOwner {
       id: event.id ?? this.nextEventId(),
       timestamp: event.timestamp ?? Date.now(),
       level: event.level ?? 'info',
+      title,
       text,
       image,
       rawInput,

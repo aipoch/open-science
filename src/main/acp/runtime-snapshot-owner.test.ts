@@ -56,6 +56,23 @@ describe('AcpRuntimeSnapshotOwner', () => {
     })
   })
 
+  it('redacts tool titles in published and retained events without mutating the source', () => {
+    const owner = new AcpRuntimeSnapshotOwner('/workspace')
+    const input = {
+      kind: 'tool' as const,
+      level: 'info' as const,
+      title: 'curl https://example.test/data?token=test-tool-title-secret',
+      toolCallId: 'tool-secret'
+    }
+
+    const event = owner.appendEvent(input)
+    const snapshot = owner.snapshot(createProjection())
+
+    expect(JSON.stringify({ event, snapshot })).not.toContain('test-tool-title-secret')
+    expect(event.title).toContain('[redacted]')
+    expect(input.title).toContain('test-tool-title-secret')
+  })
+
   it('retains the terminal context window in the renderer-visible event', () => {
     const owner = new AcpRuntimeSnapshotOwner('/workspace')
     const terminalContextWindow = {

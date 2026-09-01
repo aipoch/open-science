@@ -3099,7 +3099,7 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   const sanitized: PersistedToolActivity = {
     id,
     kind: 'tool',
-    title: asString(activity.title) ?? '',
+    title: asCappedString(activity.title) ?? '',
     status: asToolActivityStatus(activity.status),
     sortIndex: asNumber(activity.sortIndex) ?? 0,
     eventIds: asStringArray(activity.eventIds),

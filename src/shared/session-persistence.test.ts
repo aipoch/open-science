@@ -90,6 +90,7 @@ describe('Session file envelope versions', () => {
       createSessionWithActivity({
         id: 'tool-secret',
         status: 'completed',
+        title: 'curl https://example.test/data?token=test-persisted-title-secret',
         rawInput: {
           query: 'safe input',
           connection: { apiKey: 'test-api-key-secret' }
@@ -109,6 +110,8 @@ describe('Session file envelope versions', () => {
       result: 'safe output',
       authorization: '[redacted]'
     })
+    expect(activity?.title).toContain('[redacted]')
+    expect(JSON.stringify(activity)).not.toContain('test-persisted-title-secret')
     expect(JSON.stringify(activity)).not.toContain('test-api-key-secret')
     expect(JSON.stringify(activity)).not.toContain('test-authorization-secret')
   })
