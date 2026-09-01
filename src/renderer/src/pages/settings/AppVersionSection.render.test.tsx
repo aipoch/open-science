@@ -93,7 +93,8 @@ describe('AppVersionSection', () => {
           ) &&
           title.classList.contains(
             '[@media(hover:hover)_and_(pointer:fine)]:group-focus-visible:translate-y-0'
-          )
+          ) &&
+          title.classList.contains('[@media(any-pointer:coarse)]:!translate-y-0')
       )
     ).toBe(true)
     expect(descriptions).toHaveLength(2)
@@ -109,7 +110,8 @@ describe('AppVersionSection', () => {
           ) &&
           description.classList.contains(
             '[@media(hover:hover)_and_(pointer:fine)]:group-focus-visible:opacity-100'
-          )
+          ) &&
+          description.classList.contains('[@media(any-pointer:coarse)]:!opacity-100')
       )
     ).toBe(true)
   })
