@@ -201,6 +201,17 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;')
 }
 
+export function toGitHubOutputPlan(plan) {
+  const output = {
+    schemaVersion: plan.schemaVersion,
+    mode: plan.mode,
+    roots: [...plan.roots],
+    lanes: [...plan.lanes]
+  }
+  if (Array.isArray(plan.bundles)) output.bundles = [...plan.bundles]
+  return output
+}
+
 export function formatPlanSummary(plan) {
   const roots = plan.roots.length === 0 ? '_none_' : plan.roots.map(escapeHtml).join(', ')
   const lanes = plan.lanes.length === 0 ? '_none_' : plan.lanes.map(escapeHtml).join(', ')
@@ -229,10 +240,11 @@ export function runClassifierCli(arguments_ = process.argv.slice(2), environment
   const diff = execFileSync('git', ['diff', '--name-status', '-z', base, head])
   const plan = classifyChanges(parseNameStatus(diff.toString('utf8')))
   const planJson = JSON.stringify(plan)
+  const outputPlanJson = JSON.stringify(toGitHubOutputPlan(plan))
   const lanesJson = JSON.stringify(plan.lanes)
 
   if (environment.GITHUB_OUTPUT) {
-    appendFileSync(environment.GITHUB_OUTPUT, `plan=${planJson}\nlanes=${lanesJson}\n`)
+    appendFileSync(environment.GITHUB_OUTPUT, `plan=${outputPlanJson}\nlanes=${lanesJson}\n`)
   } else {
     process.stdout.write(`${planJson}\n`)
   }

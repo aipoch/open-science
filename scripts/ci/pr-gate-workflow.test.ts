@@ -205,12 +205,7 @@ describe('PR Gate workflow', () => {
     expect(gate.needs).toEqual(
       expect.arrayContaining(['preflight', ...manifest.bundleOrder, 'coverage_macos'])
     )
-    expect(gate.env).toEqual({
-      PR_GATE_EXECUTION_MODE: 'bundles',
-      PR_GATE_NEEDS: '${{ toJSON(needs) }}',
-      PR_GATE_PLAN: '${{ needs.preflight.outputs.plan }}',
-      PREFLIGHT_RESULT: '${{ needs.preflight.result }}'
-    })
+    expect(gate.env).toBeUndefined()
     expect(gate.steps?.at(0)).toMatchObject({
       name: 'Checkout trusted gate evaluator',
       if: "${{ needs.preflight.result == 'success' }}",
@@ -220,11 +215,25 @@ describe('PR Gate workflow', () => {
         ref: "${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha || github.event.merge_group.base_sha || needs.preflight.outputs.base }}"
       }
     })
+    expect(gate.steps?.at(0)?.env).toBeUndefined()
     expect(gate.steps?.at(-1)).toMatchObject({
-      name: 'Evaluate deterministic gate from trusted base'
+      name: 'Evaluate deterministic gate from trusted base',
+      env: {
+        PR_GATE_EXECUTION_MODE: 'bundles',
+        PR_GATE_PLAN: '${{ needs.preflight.outputs.plan }}',
+        PREFLIGHT_RESULT: '${{ needs.preflight.result }}'
+      }
     })
+    const gateNeeds = Array.isArray(gate.needs) ? gate.needs : []
+    for (const jobId of gateNeeds) {
+      expect(gate.steps?.at(-1)?.env?.PR_GATE_NEEDS).toContain(
+        `"${jobId}":{"result":"\${{ needs.${jobId}.result }}"}`
+      )
+    }
+    expect(gate.steps?.at(-1)?.env?.PR_GATE_NEEDS).not.toContain('outputs')
     expect(gate.steps?.at(-1)?.run).toContain('node scripts/ci/evaluate-pr-gate.mjs')
     expect(gate.steps?.at(-1)?.run).toContain('Bootstrap-only strict evaluator')
+    expect(workflowText).not.toContain('toJSON(needs)')
     expect(workflowText).not.toMatch(/needs:.*(?:ai|codex|review)/i)
   })
 
