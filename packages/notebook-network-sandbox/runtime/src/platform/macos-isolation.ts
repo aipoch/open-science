@@ -1,4 +1,5 @@
 import { homedir, tmpdir } from 'node:os'
+import { basename } from 'node:path'
 
 import { findExecutable } from './executable.js'
 import {
@@ -75,11 +76,24 @@ const seatbeltProfile = (request: MacLaunchRequest): string => {
   return rules.join('\n')
 }
 
+const shellArguments = (shell: string, command: string): readonly string[] => {
+  const name = basename(shell).toLowerCase()
+  if (name === 'bash' || name === 'bash.exe' || name === 'zsh' || name === 'zsh.exe') {
+    return [shell, '--noprofile', '--norc', '-c', command]
+  }
+  return [shell, '-c', command]
+}
+
 const macosLaunch = (request: MacLaunchRequest): { argv: string[]; env: NodeJS.ProcessEnv } => {
   const shell = findExecutable(request.shell, request.env.PATH)
   if (!shell) throw new Error(`Notebook sandbox shell is not executable: ${request.shell}`)
   return {
-    argv: ['/usr/bin/sandbox-exec', '-p', seatbeltProfile(request), shell, '-c', request.command],
+    argv: [
+      '/usr/bin/sandbox-exec',
+      '-p',
+      seatbeltProfile(request),
+      ...shellArguments(shell, request.command)
+    ],
     env: {
       ...request.env,
       ...proxyEnvironment(request.gatewayPort, request.gatewayCredentials)

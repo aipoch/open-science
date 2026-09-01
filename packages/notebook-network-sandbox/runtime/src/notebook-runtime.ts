@@ -164,6 +164,7 @@ const initialize = async (config: NetworkRuntimeConfig, ask: NetworkAskCallback)
 const wrap = async (
   request: NetworkWrapRequest
 ): Promise<{ argv: string[]; env: NodeJS.ProcessEnv }> => {
+  if (finishing.size > 0) await Promise.allSettled([...finishing])
   const config = runtimeConfig
   if (!config) throw new Error('Notebook process runtime is not initialized.')
   const filesystem = normalizeFilesystemLayout({

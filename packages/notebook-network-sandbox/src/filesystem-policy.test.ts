@@ -8,7 +8,7 @@ import {
   hiddenByFilesystemLayout,
   normalizeFilesystemLayout
 } from '../runtime/src/platform/filesystem-layout.js'
-import { seatbeltProfile } from '../runtime/src/platform/macos-isolation.js'
+import { macosLaunch, seatbeltProfile } from '../runtime/src/platform/macos-isolation.js'
 import { linuxLaunch } from '../runtime/src/platform/linux-isolation.js'
 import { ViolationLog } from '../runtime/src/gateway/violation-log.js'
 
@@ -69,8 +69,48 @@ describe('Notebook filesystem policy', () => {
         absolutePhysicalPath('/tmp/open-science-notebook.sock')
       )}))`
     )
+    expect(profile).toContain('(allow network-outbound (remote ip "localhost:3128"))')
     expect(profile).not.toContain('(deny system-socket')
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'launches bash without reading profile or rc files',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'open-science-bash-rc-'))
+      const workspace = join(root, 'workspace')
+      mkdirSync(workspace)
+
+      try {
+        const launch = macosLaunch({
+          command: '/usr/bin/curl --silent http://example.com/',
+          gatewayPort: 4312,
+          gatewayCredentials: { username: 'command', password: 'secret' },
+          shell: '/bin/bash',
+          env: { PATH: '/usr/bin:/bin' },
+          filesystem: {
+            privateRoot: root,
+            readOnlyRoots: ['/bin', '/usr/bin'],
+            readWriteRoots: [workspace],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+
+        expect(launch.argv).toEqual([
+          '/usr/bin/sandbox-exec',
+          '-p',
+          expect.any(String),
+          '/bin/bash',
+          '--noprofile',
+          '--norc',
+          '-c',
+          '/usr/bin/curl --silent http://example.com/'
+        ])
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('turns native permission failures into an actionable structured violation', () => {
     const log = new ViolationLog()

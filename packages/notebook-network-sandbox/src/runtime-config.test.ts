@@ -85,6 +85,40 @@ describe('Notebook runtime configuration updates', () => {
     expect(gateway.resetConnections).toHaveBeenCalledOnce()
   })
 
+  it('opens the next command only after the previous gateway has closed', async () => {
+    let releaseClose: (() => void) | undefined
+    gateway.close.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseClose = resolve
+        })
+    )
+
+    try {
+      NotebookNetworkRuntime.cleanupAfterCommand('command-1')
+      const wrapping = NotebookNetworkRuntime.wrap({
+        command: 'curl https://example.com',
+        commandId: 'command-2',
+        cwd: '/workspace',
+        env: {},
+        filesystem: {
+          readOnlyRoots: ['/usr/bin'],
+          readWriteRoots: ['/workspace'],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+
+      expect(CommandGateway.open).toHaveBeenCalledTimes(1)
+      expect(releaseClose).toBeTypeOf('function')
+      releaseClose?.()
+      await wrapping
+      expect(CommandGateway.open).toHaveBeenCalledTimes(2)
+    } finally {
+      releaseClose?.()
+    }
+  })
+
   it('forwards inherited file descriptors to the Linux isolation launcher', async () => {
     await NotebookNetworkRuntime.reset()
     vi.clearAllMocks()
