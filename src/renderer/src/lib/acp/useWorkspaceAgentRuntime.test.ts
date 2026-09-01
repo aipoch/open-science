@@ -554,7 +554,7 @@ describe('workspace agent runtime event processing', () => {
     }
   })
 
-  it('terminalizes a persistently failing runtime event after three attempts', async () => {
+  it('terminalizes a persistently failing event across later snapshots and drains', async () => {
     vi.useFakeTimers()
     try {
       const event = createEvent({
@@ -571,6 +571,7 @@ describe('workspace agent runtime event processing', () => {
       await processor.process([event])
       await vi.runAllTimersAsync()
       await processor.process([event])
+      await processor.processIncremental([event])
       await processor.drain()
 
       expect(applyEvent).toHaveBeenCalledTimes(3)

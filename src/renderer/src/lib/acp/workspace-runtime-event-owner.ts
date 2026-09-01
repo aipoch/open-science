@@ -258,6 +258,8 @@ const createWorkspaceRuntimeEventProcessor = (
                 cancelLaneRetry(lane)
                 lane.failedEventAttempts.delete(event.id)
                 lane.failedEventIds.delete(event.id)
+                // Resolving without throwing lets processVisibleWorkspaceRuntimeEvents quarantine
+                // this id in processedEventIds until the retained source window evicts it.
                 return false
               } else {
                 lane.failedEventIds.add(event.id)
