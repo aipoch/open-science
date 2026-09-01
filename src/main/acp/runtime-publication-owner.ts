@@ -5,7 +5,7 @@ import type {
   AcpStateSnapshot,
   AcpStateUpdate
 } from '../../shared/acp'
-import { sanitizeRawToolPayload } from '../../shared/tool-detail-sanitizer'
+import { sanitizeRawToolPayload, sanitizeToolDetailText } from '../../shared/tool-detail-sanitizer'
 import { createLogger } from '../logger'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import {
@@ -60,14 +60,18 @@ const MAX_COALESCED_EVENTS = Math.floor(ACP_RUNTIME_EVENT_RETENTION_LIMIT / 2)
 
 const projectPermissionRequest = (request: AcpPermissionRequest): AcpPermissionRequest => {
   const { rawInput, ...requestProjection } = request
+  const sanitizedProjection = {
+    ...requestProjection,
+    title: sanitizeToolDetailText(request.title)
+  }
   const sanitizedRawInput =
     rawInput === null ? null : sanitizeRawToolPayload(rawInput, MAX_PERMISSION_RAW_INPUT_CHARS)
 
   return rawInput === undefined
-    ? request
+    ? sanitizedProjection
     : sanitizedRawInput === undefined
-      ? requestProjection
-      : { ...requestProjection, rawInput: sanitizedRawInput }
+      ? sanitizedProjection
+      : { ...sanitizedProjection, rawInput: sanitizedRawInput }
 }
 
 const scheduleStatePublication = (publish: () => void): (() => void) => {

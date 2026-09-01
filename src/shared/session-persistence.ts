@@ -2356,7 +2356,8 @@ const sanitizePermissionRequest = (value: unknown): AcpPermissionRequest | undef
   const requestId = boundedPermissionString(value.requestId)
   const sessionId = boundedPermissionString(value.sessionId)
   const toolCallId = boundedPermissionString(value.toolCallId)
-  const title = boundedPermissionString(value.title)
+  const rawTitle = boundedPermissionString(value.title)
+  const title = rawTitle ? sanitizeToolDetailText(rawTitle) : undefined
   if (!requestId || !sessionId || !toolCallId || !title || !Array.isArray(value.options)) {
     return undefined
   }

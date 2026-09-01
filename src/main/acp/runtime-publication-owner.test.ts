@@ -383,7 +383,7 @@ describe('AcpRuntimePublicationOwner', () => {
       requestId: 'request-secret',
       sessionId: 'session-1',
       toolCallId: 'tool-secret',
-      title: 'Run command',
+      title: 'curl https://example.test/data?token=test-permission-title-secret',
       rawInput: {
         command: 'curl "https://example.test/data?token=test-permission-secret"'
       },
@@ -405,7 +405,11 @@ describe('AcpRuntimePublicationOwner', () => {
     expect(JSON.stringify(publishedRequests)).not.toContain('test-permission-secret')
     expect(JSON.stringify(publishedStates)).not.toContain('test-permission-secret')
     expect(JSON.stringify(owner.getSnapshot())).not.toContain('test-permission-secret')
+    expect(JSON.stringify(publishedRequests)).not.toContain('test-permission-title-secret')
+    expect(JSON.stringify(publishedStates)).not.toContain('test-permission-title-secret')
+    expect(JSON.stringify(owner.getSnapshot())).not.toContain('test-permission-title-secret')
     expect(JSON.stringify(request)).toContain('test-permission-secret')
+    expect(request.title).toContain('test-permission-title-secret')
   })
 
   it('publishes sanitized synthesized tool events without mutating the source event', () => {

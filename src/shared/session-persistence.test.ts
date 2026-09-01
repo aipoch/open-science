@@ -2732,7 +2732,7 @@ describe('normalizeSessionFile with activities', () => {
               requestId: 'permission-secret',
               sessionId: 'session-1',
               toolCallId: 'tool-secret',
-              title: 'Call MCP tool',
+              title: 'curl https://example.test/data?token=test-permission-title-secret',
               options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }],
               rawInput: {
                 query: 'safe input',
@@ -2754,6 +2754,9 @@ describe('normalizeSessionFile with activities', () => {
       connection: { password: '[redacted]' }
     })
     expect(JSON.stringify(rawInput)).not.toContain('test-password-secret')
+    expect(restored?.runtimeContext?.permission?.request.title).not.toContain(
+      'test-permission-title-secret'
+    )
   })
 
   it.each(['pending', 'in_progress'] as const)(

@@ -1288,23 +1288,32 @@ class AcpPermissionContext {
     sessionId: string,
     providerToolCallId: string,
     toolKind: AcpPermissionRequest['toolKind'],
-    identity: CodexMcpToolIdentity | ClaudeCodeMcpToolInput | OpenCodeMcpToolInput | undefined
+    identity: CodexMcpToolIdentity | ClaudeCodeMcpToolInput | OpenCodeMcpToolInput | undefined,
+    trustedRawInput?: Record<string, unknown>
   ): void {
     const candidate = this.restoredNotebookPresentationCandidates.get(sessionId)
     if (!candidate || !identity || !notebookExecutionMethod(identity.mcpIdentity)) return
-    const fingerprint = permissionRequestFingerprint({
-      requestId: 'restored-notebook-presentation',
-      sessionId,
-      toolCallId: providerToolCallId,
-      title: identity.title,
-      providerToolName: identity.providerToolName,
-      isMcp: true,
-      mcpIdentity: identity.mcpIdentity,
-      toolKind,
-      rawInput: identity.rawInput,
-      options: []
-    })
-    if (fingerprint !== candidate.fingerprint) return
+    const fingerprint = (rawInput: unknown): string | undefined =>
+      permissionRequestFingerprint({
+        requestId: 'restored-notebook-presentation',
+        sessionId,
+        toolCallId: providerToolCallId,
+        title: identity.title,
+        providerToolName: identity.providerToolName,
+        isMcp: true,
+        mcpIdentity: identity.mcpIdentity,
+        toolKind,
+        rawInput,
+        options: []
+      })
+    const trustedFingerprint =
+      trustedRawInput === undefined ? undefined : fingerprint(trustedRawInput)
+    if (
+      fingerprint(identity.rawInput) !== candidate.fingerprint &&
+      trustedFingerprint !== candidate.fingerprint
+    ) {
+      return
+    }
 
     const aliases = this.restoredNotebookPresentationAliases.get(sessionId) ?? new Map()
     aliases.set(providerToolCallId, candidate.originalToolCallId)
@@ -1328,7 +1337,12 @@ class AcpPermissionContext {
           sessionId,
           event.toolCallId,
           event.toolKind,
-          identity
+          identity,
+          trustedNotebookExecutionInput(
+            identity.title,
+            notification.update.rawInput,
+            mcpServerNames
+          )
         )
       }
       return
@@ -1345,12 +1359,18 @@ class AcpPermissionContext {
       notification.update.sessionUpdate === 'tool_call' ? notification.update.rawInput : undefined
     const rawInput =
       boundedNotebookPermissionInput(title, updateRawInput, mcpServerNames) ?? event.rawInput
-    this.matchRestoredNotebookPresentation(sessionId, event.toolCallId, event.toolKind, {
-      title,
-      providerToolName,
-      mcpIdentity,
-      ...(isRecord(rawInput) ? { rawInput } : {})
-    })
+    this.matchRestoredNotebookPresentation(
+      sessionId,
+      event.toolCallId,
+      event.toolKind,
+      {
+        title,
+        providerToolName,
+        mcpIdentity,
+        ...(isRecord(rawInput) ? { rawInput } : {})
+      },
+      trustedNotebookExecutionInput(title, updateRawInput, mcpServerNames)
+    )
   }
 
   private rememberNotebookExecutionInput(

@@ -186,6 +186,68 @@ describe('ACP permission context', () => {
     }
   )
 
+  it('preserves a legacy restored Notebook fingerprint above the current preview limit', async () => {
+    const code = 'x'.repeat(7_600)
+    const title = 'mcp.open-science-notebook.notebook_execute'
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting({
+        sessionSnapshot: () => ({
+          cwd: '/workspace',
+          frameworkId: 'codex',
+          permissionProfile: { selectedProfile: 'ask' }
+        })
+      })
+    })
+    const request = {
+      requestId: 'permission-restored',
+      sessionId: 'session-1',
+      toolCallId: 'tool-original',
+      title,
+      providerToolName: 'notebook_execute',
+      isMcp: true,
+      mcpIdentity: 'open-science-notebook/notebook_execute',
+      toolKind: 'execute' as const,
+      rawInput: { language: 'python', code },
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' as const }]
+    }
+    const restoredPermission = sanitizeSessionPermissionRuntimeContext({
+      state: 'pending',
+      request,
+      originatingPromptMessageId: 'prompt-1',
+      fingerprint: permissionRequestFingerprint(request)!,
+      createdAt: 1
+    })
+
+    await context.prepareRestoredDecision(
+      restoredPermission!,
+      request.options[0],
+      'default-project'
+    )
+    observe(
+      context,
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-replayed',
+          title,
+          kind: 'execute',
+          status: 'pending',
+          rawInput: {
+            server: 'open-science-notebook',
+            tool: 'notebook_execute',
+            arguments: { language: 'python', code }
+          },
+          _meta: { is_mcp_tool_call: true }
+        }
+      },
+      'codex'
+    )
+
+    expect(context.presentationToolCallId('session-1', 'tool-replayed')).toBe('tool-original')
+  })
+
   it('keeps a non-matching restored Notebook replay on its provider toolCallId', async () => {
     const context = new AcpPermissionContext({
       emitPermissionRequest: vi.fn(),
