@@ -212,7 +212,7 @@ export class NotebookRecoveryCoordinator {
 
     const validatedRemovalTargets = (
       record: RuntimeOperationRecord
-    ): { prefix: string; targets: string[] } => {
+    ): { prefix: string; targets: readonly string[] } => {
       const language =
         record.runtimeId === DEFAULT_R_ENV
           ? 'r'
