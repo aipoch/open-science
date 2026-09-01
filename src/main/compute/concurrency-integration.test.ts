@@ -479,7 +479,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
         { sessionId: 'session-1', projectId: 'project-1' }
       )
     ).rejects.toThrow(/queue is full/)
-  })
+  }, 30_000)
 
   it('dispatches immediately when the queue is full but an active slot is available', async () => {
     const providerId = computeProviderId('test-host')

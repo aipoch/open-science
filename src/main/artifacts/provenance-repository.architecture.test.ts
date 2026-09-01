@@ -404,6 +404,7 @@ describe('Artifact Provenance repository architecture', () => {
         'src/main/artifacts/provenance-message-snapshot.test.ts',
         'src/main/artifacts/provenance-repository.architecture.test.ts',
         'src/main/artifacts/provenance-repository.test.ts',
+        'src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts',
         'src/main/artifacts/provenance-write-contract.test.ts',
         'src/main/artifacts/write-budget-owner.test.ts'
       ].sort()

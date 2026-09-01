@@ -5996,6 +5996,44 @@ describe('SettingsService: default permission profile', () => {
   })
 })
 
+describe('SettingsService: compatibility projections', () => {
+  it('round-trips provider-scoped Compute bookmarks through the facade', async () => {
+    const service = createService()
+
+    await expect(service.getComputeBookmarks('ssh:cluster')).resolves.toEqual([])
+    await service.setComputeBookmarks('ssh:cluster', ['/scratch/project', '/data/results'])
+
+    await expect(service.getComputeBookmarks('ssh:cluster')).resolves.toEqual([
+      '/scratch/project',
+      '/data/results'
+    ])
+  })
+
+  it('returns and clears the valid legacy granted roots', async () => {
+    await writeFile(
+      join(storageRoot, 'settings.json'),
+      JSON.stringify({
+        version: 1,
+        providers: [],
+        grantedLocalRoots: [
+          { id: 'root-1', path: '/data/project', name: 'Project data', access: 'rw' },
+          { id: 'invalid-root', path: '/data/private', name: 'Private data', access: 'owner' }
+        ]
+      })
+    )
+    const service = createService()
+
+    await expect(service.getGrantedLocalRoots()).resolves.toEqual([
+      { id: 'root-1', path: '/data/project', name: 'Project data', access: 'rw' }
+    ])
+    await service.clearGrantedLocalRoots()
+
+    expect(
+      JSON.parse(await readFile(join(storageRoot, 'settings.json'), 'utf8'))
+    ).not.toHaveProperty('grantedLocalRoots')
+  })
+})
+
 describe('SettingsService: listAgentHomeSkills framework routing', () => {
   // The shared ~/.agents/skills directory is always scanned. The active framework contributes one
   // additional source: ~/.claude/skills for Claude Code or ~/.codex/skills for Codex.
