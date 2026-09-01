@@ -3364,6 +3364,31 @@ describe('SettingsPage layout', () => {
     expect(window.api.settings.getNotebookNetworkStatus).not.toHaveBeenCalled()
   })
 
+  it('hides Notebook network settings when compatibility bootstrap metadata omits the RPC', async () => {
+    ;(
+      window.api.settings as unknown as {
+        getNotebookNetworkStatus?: typeof window.api.settings.getNotebookNetworkStatus
+      }
+    ).getNotebookNetworkStatus = undefined
+    useRuntimeSettingsStore.setState({
+      envs: { python: [], r: [] },
+      loaded: true,
+      checkedAt: Date.now()
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      navButton('Runtimes')?.click()
+      await Promise.resolve()
+    })
+
+    expect(
+      document.body.querySelector('[data-testid="notebook-network-protection-banner"]')
+    ).toBeNull()
+  })
+
   it('shows a breadcrumb in the header when a skill detail is open, and returns on breadcrumb click', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)

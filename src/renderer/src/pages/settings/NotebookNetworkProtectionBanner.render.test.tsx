@@ -75,6 +75,21 @@ describe('NotebookNetworkProtectionBanner', () => {
     expect(container.textContent).not.toContain('private')
   })
 
+  it('fails safely when the status method is unavailable', async () => {
+    ;(
+      window.api.settings as unknown as {
+        getNotebookNetworkStatus?: typeof window.api.settings.getNotebookNetworkStatus
+      }
+    ).getNotebookNetworkStatus = undefined
+
+    await act(async () => root.render(<NotebookNetworkProtectionBanner onOpen={() => undefined} />))
+    await flush()
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not check Notebook network protection.'
+    )
+  })
+
   it('refreshes a checking status until initialization finishes', async () => {
     vi.useFakeTimers()
     const getStatus = vi

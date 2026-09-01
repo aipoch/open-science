@@ -1637,6 +1637,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         'Enable the environments each notebook language may run in. The app-managed environment is on by default; enable your own interpreters to make them available to the agent.'
                       )}
                       onOpenNetworkProtection={
+                        typeof window.api.settings.getNotebookNetworkStatus !== 'function' ||
                         document.documentElement.hasAttribute(
                           'data-open-science-notebook-network-unavailable'
                         )

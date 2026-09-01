@@ -61,7 +61,12 @@ const NotebookNetworkProtectionBanner = ({
     let cancelled = false
     let retry: number | undefined
     const refresh = (): void => {
-      void window.api.settings.getNotebookNetworkStatus().then(
+      const getStatus = window.api.settings?.getNotebookNetworkStatus
+      if (typeof getStatus !== 'function') {
+        setRuntimeStatus({ kind: 'error', reason: 'runtimeFailure' })
+        return
+      }
+      void getStatus().then(
         (next) => {
           if (cancelled) return
           setRuntimeStatus(next)
