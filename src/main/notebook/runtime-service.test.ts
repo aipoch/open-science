@@ -10288,14 +10288,16 @@ describe('v4 runtime bindings & agent tools', () => {
     const session = { sessionId: 's', workspaceCwd: root } as const
     await service.bindRuntime({ ...session, language: 'python', runtimeId })
     await service.execute({ ...session, language: 'python', code: '1' })
+    const commitDisabledState = vi.fn(async () => undefined)
 
-    await service.uninstallManagedEnvironment('python')
+    await service.uninstallManagedEnvironment('python', commitDisabledState)
 
     expect(removeManagedEnvironment).toHaveBeenCalledWith(
       'python',
       expect.any(Function),
       expect.any(Function)
     )
+    expect(commitDisabledState).toHaveBeenCalledOnce()
     expect(terminations).toEqual([`python:${DEFAULT_PY_ENV}`])
     expect((await service.state(session)).runtimeBindings.python).toMatchObject({
       status: 'unavailable',

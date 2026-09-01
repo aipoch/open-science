@@ -793,7 +793,10 @@ class NotebookRuntimeService {
     await this.environmentOperations.revokeRuntime(language, runtimeId, options)
   }
 
-  async uninstallManagedEnvironment(language: NotebookLanguage): Promise<void> {
+  async uninstallManagedEnvironment(
+    language: NotebookLanguage,
+    commitDisabledState?: () => Promise<void>
+  ): Promise<void> {
     const environmentName = this.defaultEnvNameFor(language)
     const initialTargets = Array.from(this.sessions.values()).filter((session) => {
       const binding = session.runtimeBinding(language)
@@ -814,7 +817,7 @@ class NotebookRuntimeService {
       )
     }
 
-    await this.environmentOperations.runRemoval(environmentName, () =>
+    await this.environmentOperations.withRemovalBarrier(environmentName, () =>
       this.environmentManagement.uninstallManagedEnvironment(
         language,
         async (lockedEnvironmentName) => {
@@ -836,6 +839,8 @@ class NotebookRuntimeService {
               `RUNTIME_UNINSTALL_IN_USE: the ${language} Runtime is running work. Wait for it to finish before uninstalling.`
             )
           }
+
+          await commitDisabledState?.()
 
           await this.runtimeBindingOwner.runWrites(
             targets.map((session) => session.sessionId),
@@ -1390,6 +1395,13 @@ class NotebookRuntimeService {
   // from its top-level entries (never re-entrantly), so it cannot deadlock against itself.
   withEnvLock<T>(envName: string, fn: () => Promise<T>): Promise<T> {
     return this.environmentOperations.runMutation(envName, fn)
+  }
+
+  // The removal barrier is closed before the provisioner queue is entered. Once the queued removal
+  // reaches the prefix boundary, this takes the exclusive lease for teardown, durable cleanup, and
+  // deletion without inverting the shared queue -> lease ordering used by every provisioner write.
+  withEnvRemovalLock<T>(envName: string, fn: () => Promise<T>): Promise<T> {
+    return this.environmentOperations.runRemoval(envName, fn)
   }
 
   // Shuts down every live interpreter, used by app-level cleanup paths. Returns { reaped }: true only

@@ -325,8 +325,8 @@ describe('NotebookEnvironmentOperations', () => {
       order.push('package')
     })
     const packageOutcome = expect(packageMutation).rejects.toThrow('RUNTIME_ENVIRONMENT_REMOVING')
-    const removal = owner.runRemoval('default-python', () =>
-      owner.runMutation('default-python', async () => {
+    const removal = owner.withRemovalBarrier('default-python', () =>
+      owner.runRemoval('default-python', async () => {
         order.push('remove')
       })
     )
@@ -354,8 +354,8 @@ describe('NotebookEnvironmentOperations', () => {
       order.push('execution')
     })
     const executionOutcome = expect(execution).rejects.toThrow('RUNTIME_ENVIRONMENT_REMOVING')
-    const removal = owner.runRemoval('default-python', () =>
-      owner.runMutation('default-python', async () => {
+    const removal = owner.withRemovalBarrier('default-python', () =>
+      owner.runRemoval('default-python', async () => {
         order.push('remove')
       })
     )
@@ -368,12 +368,14 @@ describe('NotebookEnvironmentOperations', () => {
   it('rejects new shared work while managed removal is active', async () => {
     const { owner } = await createOwner()
     let releaseRemoval!: () => void
-    const removal = owner.runRemoval(
-      'default-python',
-      () =>
-        new Promise<void>((resolve) => {
-          releaseRemoval = resolve
-        })
+    const removal = owner.withRemovalBarrier('default-python', () =>
+      owner.runRemoval(
+        'default-python',
+        () =>
+          new Promise<void>((resolve) => {
+            releaseRemoval = resolve
+          })
+      )
     )
     await vi.waitFor(() => expect(releaseRemoval).toBeTypeOf('function'))
 

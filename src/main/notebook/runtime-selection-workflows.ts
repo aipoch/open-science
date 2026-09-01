@@ -74,7 +74,10 @@ type RuntimeSelectionWorkflowDeps = {
   onRuntimeDisabled?: (language: NotebookLanguage, envId: string, force?: boolean) => Promise<void>
   // Optional because sessions may not be composed yet during startup; absence means no live usage.
   describeRuntimeUsage?: (language: NotebookLanguage, envId: string) => RuntimeUsage
-  uninstallManagedEnvironment?: (language: NotebookLanguage) => Promise<void>
+  uninstallManagedEnvironment?: (
+    language: NotebookLanguage,
+    commitDisabledState: () => Promise<void>
+  ) => Promise<void>
   platform?: NodeJS.Platform
   // Injectable for tests so the package-listing workflows never spawn micromamba/pip/Rscript;
   // production defaults to listEnvPackages against the real env.
@@ -321,13 +324,16 @@ const createRuntimeSelectionWorkflows = (
             `RUNTIME_UNINSTALL_IN_USE: the ${request.language} Runtime is running work. Wait for it to finish before uninstalling.`
           )
         }
-        await deps.settingsService.setEnvironmentEnabled(request.language, managed.envId, false)
       }
-      for (const runtimeId of defaultRuntimeIds) {
-        if (managed?.envId === runtimeId) continue
-        await deps.settingsService.setEnvironmentEnabled(request.language, runtimeId, false)
-      }
-      await deps.uninstallManagedEnvironment(request.language)
+      await deps.uninstallManagedEnvironment(request.language, async () => {
+        if (managed) {
+          await deps.settingsService.setEnvironmentEnabled(request.language, managed.envId, false)
+        }
+        for (const runtimeId of defaultRuntimeIds) {
+          if (managed?.envId === runtimeId) continue
+          await deps.settingsService.setEnvironmentEnabled(request.language, runtimeId, false)
+        }
+      })
       invalidateDiscovery()
     },
     register: async (request) => {

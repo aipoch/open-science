@@ -228,7 +228,7 @@ export class NotebookEnvironmentOperations {
     })
   }
 
-  async runRemoval<T>(environment: string, operation: () => Promise<T>): Promise<T> {
+  async withRemovalBarrier<T>(environment: string, operation: () => Promise<T>): Promise<T> {
     if (this.removals.has(environment)) throw this.removalInProgress(environment)
     this.removals.add(environment)
     try {
@@ -236,6 +236,18 @@ export class NotebookEnvironmentOperations {
     } finally {
       this.removals.delete(environment)
     }
+  }
+
+  runRemoval<T>(environment: string, operation: () => Promise<T>): Promise<T> {
+    if (!this.removals.has(environment)) {
+      return Promise.reject(
+        new Error(
+          `RUNTIME_ENVIRONMENT_REMOVAL_BARRIER_REQUIRED: Runtime Environment "${environment}" ` +
+            'cannot be removed without first closing operation admission.'
+        )
+      )
+    }
+    return this.withLease('mutation', environment, 'exclusive', operation)
   }
 
   describeRuntimeUsage(

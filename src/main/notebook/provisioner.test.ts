@@ -119,7 +119,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     const journal = RuntimeOperationJournal.forPath(operationJournalPath(root))
     await new DefaultRuntimeProvisioner(
       makeDeps(root, {
-        withPrefixLock: async (environment, operation) => {
+        withRemovalLock: async (environment, operation) => {
           order.push(`lock:${environment}`)
           const result = await operation()
           order.push('unlock')

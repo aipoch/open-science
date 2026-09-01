@@ -267,6 +267,9 @@ export type ProvisionerDeps = {
   // (matching the service's envLock key). Injected from main/ipc.ts; unset in unit tests (runs
   // unlocked). Passes fn's result through.
   withPrefixLock?: <T>(envName: string, fn: () => Promise<T>) => Promise<T>
+  // Managed uninstall enters the serialized provisioner queue before acquiring this removal-only
+  // lock. Production wires it to the service removal lease, whose barrier was closed before queueing.
+  withRemovalLock?: <T>(envName: string, fn: () => Promise<T>) => Promise<T>
   // Scheduler for the create-phase progress ticker. Defaults to a self-unref'ing setInterval; tests
   // inject a manual one to drive ticks synchronously instead of waiting real wall-clock time. Returns
   // a cancel fn that stops further ticks.
@@ -918,6 +921,11 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     return this.deps.withPrefixLock ? this.deps.withPrefixLock(envName, fn) : fn()
   }
 
+  private withManagedRemovalLock<T>(envName: string, fn: () => Promise<T>): Promise<T> {
+    if (this.deps.withRemovalLock) return this.deps.withRemovalLock(envName, fn)
+    return this.withEnvPrefixLock(envName, fn)
+  }
+
   private cleanupLegacyDefaultPrefix(name: string): void {
     if (this.platform !== 'win32') return
     if (name !== DEFAULT_PY_ENV && name !== DEFAULT_R_ENV) return
@@ -1409,7 +1417,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     afterRemove?: () => Promise<void> | void
   ): Promise<void> {
     const name = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
-    await this.withEnvPrefixLock(name, async () => {
+    await this.withManagedRemovalLock(name, async () => {
       const removal = managedRuntimeRemovalTargets(this.deps.root, language, this.platform)
       assertManagedRuntimeRemovalOwnership(this.deps.root, removal)
       await beforeRemove?.()
@@ -1876,6 +1884,9 @@ export type ProductionProvisionerOptions = {
   // Forwarded to ProvisionerDeps.withPrefixLock: shares the service's per-env install lock so a default
   // env create/repair/upgrade never runs concurrently with an install into the same env prefix.
   withPrefixLock?: <T>(envName: string, fn: () => Promise<T>) => Promise<T>
+  // Forwarded to ProvisionerDeps.withRemovalLock: takes the removal-only lease after the shared
+  // provisioner queue, preserving queue -> lease ordering while admission is already closed.
+  withRemovalLock?: <T>(envName: string, fn: () => Promise<T>) => Promise<T>
 }
 
 export type ProductionProvisionerDeps = {
@@ -2040,6 +2051,7 @@ export const createProductionProvisioner = (
     clearCorruptBlock: opts.clearCorruptBlock,
     blockPrefix: opts.blockPrefix,
     isPrefixLiveUnconfirmed: opts.isPrefixLiveUnconfirmed,
-    withPrefixLock: opts.withPrefixLock
+    withPrefixLock: opts.withPrefixLock,
+    withRemovalLock: opts.withRemovalLock
   })
 }

@@ -3331,8 +3331,8 @@ const createApplicationModules = async (
     // WS11: live-session usage of a runtime, for the disable-impact warning.
     describeRuntimeUsage: (language, envId) =>
       notebookService.describeRuntimeUsage(language, envId),
-    uninstallManagedEnvironment: (language) =>
-      notebookService.uninstallManagedEnvironment(language),
+    uninstallManagedEnvironment: (language, commitDisabledState) =>
+      notebookService.uninstallManagedEnvironment(language, commitDisabledState),
     prepareExternalPython: async (selection, root) => {
       const configuredMirror = await settingsService.getPackageMirror()
       const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
@@ -3435,7 +3435,10 @@ const createApplicationModules = async (
         isPrefixLiveUnconfirmed: (prefix) => notebookService.isPrefixLiveUnconfirmed(prefix),
         // Share the service's per-env install lock so a default-env create/repair/upgrade serializes with
         // a package install into the same env prefix instead of racing it on a separate lock.
-        withPrefixLock: (envName, fn) => notebookService.withEnvLock(envName, fn)
+        withPrefixLock: (envName, fn) => notebookService.withEnvLock(envName, fn),
+        // Admission closes before the shared provisioner queue; deletion takes this removal-only
+        // exclusive lease after reaching the front of that queue.
+        withRemovalLock: (envName, fn) => notebookService.withEnvRemovalLock(envName, fn)
       },
       { runner: micromambaRunner }
     )

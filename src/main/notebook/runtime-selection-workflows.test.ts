@@ -332,7 +332,9 @@ describe('runtime selection workflows', () => {
         runnable: true
       }
     ]
-    const uninstallManagedEnvironment = vi.fn(async () => undefined)
+    const uninstallManagedEnvironment = vi.fn(async (_language, commitDisabledState) =>
+      commitDisabledState()
+    )
     const workflows = createRuntimeSelectionWorkflows({
       settingsService,
       runtimeRoot: () => '/data/runtime',
@@ -342,7 +344,7 @@ describe('runtime selection workflows', () => {
 
     await workflows.uninstallManagedEnvironment({ language: 'python' })
 
-    expect(uninstallManagedEnvironment).toHaveBeenCalledWith('python')
+    expect(uninstallManagedEnvironment).toHaveBeenCalledWith('python', expect.any(Function))
     expect(settingsService.enablement.get('python')?.enabled).toMatchObject({
       [rawRuntimeId]: false
     })
@@ -373,7 +375,9 @@ describe('runtime selection workflows', () => {
       runtimeRoot: () => '/data/runtime',
       registry: fakeRegistry(),
       platform: 'win32',
-      uninstallManagedEnvironment: vi.fn(async () => undefined)
+      uninstallManagedEnvironment: vi.fn(async (_language, commitDisabledState) =>
+        commitDisabledState()
+      )
     })
 
     await workflows.uninstallManagedEnvironment({ language: 'python' })
@@ -412,6 +416,36 @@ describe('runtime selection workflows', () => {
     )
     expect(settingsService.enablement.has('python')).toBe(false)
     expect(uninstallManagedEnvironment).not.toHaveBeenCalled()
+  })
+
+  it('does not persist disabled state when locked uninstall admission rejects', async () => {
+    const settingsService = fakeSettingsService()
+    const runtimeId = managedRuntimeIdentity('/data/runtime', 'python', DEFAULT_PY_ENV).runtimeId
+    discoveryState.python = [
+      {
+        language: 'python',
+        provenance: 'app-managed',
+        envId: runtimeId,
+        interpreterPath: runtimeId,
+        label: 'Managed Python',
+        condaEnv: DEFAULT_PY_ENV,
+        runnable: true
+      }
+    ]
+    const workflows = createRuntimeSelectionWorkflows({
+      settingsService,
+      runtimeRoot: () => '/data/runtime',
+      registry: fakeRegistry(),
+      describeRuntimeUsage: () => ({ running: 0, idle: 1, dormant: 0 }),
+      uninstallManagedEnvironment: vi.fn(async () => {
+        throw new Error('RUNTIME_UNINSTALL_IN_USE: execution won the admission race')
+      })
+    })
+
+    await expect(workflows.uninstallManagedEnvironment({ language: 'python' })).rejects.toThrow(
+      'RUNTIME_UNINSTALL_IN_USE'
+    )
+    expect(settingsService.enablement.has('python')).toBe(false)
   })
 
   it('discovers both languages from one manual-catalog and runtime-root snapshot', async () => {
