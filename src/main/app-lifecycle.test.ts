@@ -833,6 +833,41 @@ describe('installAppLifecycle', () => {
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
+  it('requires persistence consent again after delegated work interrupts a force-quit attempt', async () => {
+    let active: ActiveSessionInfo[] = []
+    const flushSessionPersistence = vi.fn(async () => 'timeout' as const)
+    const confirmClose = vi.fn(
+      async (): Promise<CloseConfirmChoice> =>
+        confirmClose.mock.calls.length === 1 ? 'force-quit' : 'cancel'
+    )
+    const { app, closeOpts, prepareForQuit, shutdownBackends } = setup({
+      detectActiveSessions: () => active,
+      flushSessionPersistence,
+      confirmClose
+    })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+    expect(confirmClose).toHaveBeenCalledWith('persistence-failed', [])
+
+    active = [{ projectId: 'demo', sessionId: 'child-live', kind: 'delegated' }]
+    app.emit('before-quit')
+    await flush()
+    expect(confirmClose).toHaveBeenLastCalledWith('quit', active)
+
+    active = []
+    closeOpts[0].requestQuit()
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenLastCalledWith('persistence-failed', [])
+    expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
+    expect(prepareForQuit).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
   it('keeps the app open when the terminal renderer flush conflicts', async () => {
     const flushSessionPersistence = vi
       .fn()

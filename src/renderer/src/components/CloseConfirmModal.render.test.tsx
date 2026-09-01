@@ -250,6 +250,9 @@ describe('CloseConfirmModal', () => {
     expect(document.body.textContent).toContain(
       'Open Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.'
     )
+    expect(
+      Array.from(document.querySelectorAll('button'), (button) => button.textContent)
+    ).not.toContain('Quit')
     const retryButton = await findButtonByName(/^Retry saving$/)
     act(() => retryButton.click())
     expect(sendResponse).toHaveBeenCalledWith({
