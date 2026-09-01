@@ -245,5 +245,5 @@ class AcpRuntimePublicationOwner {
   }
 }
 
-export { AcpRuntimePublicationOwner }
+export { AcpRuntimePublicationOwner, projectPermissionRequest }
 export type { AcpRuntimePublicationCallbacks, AcpRuntimePublicationOwnerOptions }

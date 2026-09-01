@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   capToolDetailText,
   sanitizeRawToolPayload,
-  sanitizeToolContent
+  sanitizeToolContent,
+  sanitizeToolDetailText
 } from './tool-detail-sanitizer'
 
 describe('capToolDetailText', () => {
@@ -12,6 +13,14 @@ describe('capToolDetailText', () => {
 
     expect(capToolDetailText(bounded)).toBe(bounded)
     expect(capToolDetailText(`${bounded}tail`)).toBe(`${bounded}\n…`)
+  })
+
+  it('caps text again after redaction markers expand the result', () => {
+    const result = sanitizeToolDetailText('token=x;'.repeat(2_000))
+
+    expect(result).toHaveLength(16_002)
+    expect(result).toMatch(/\n…$/)
+    expect(result).not.toContain('token=x')
   })
 })
 

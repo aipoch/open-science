@@ -40,6 +40,7 @@ import {
   type DelegateMessageAcceptanceEvidence
 } from '../delegation/execution-port'
 import type { ShutdownStepOutcome } from '../lifecycle-shutdown'
+import { projectPermissionRequest } from './runtime-publication-owner'
 
 const QUIT_PREPARATION_TIMEOUT_MS = 4_000
 
@@ -199,7 +200,7 @@ class AcpRuntimeCoordinator {
     this.delegatedWork?.subscribe((event) => {
       this.delegatedWorkRevision += 1
       if (event.kind === 'permission-requested') {
-        this.callbacks.onPermissionRequest?.(event.request)
+        this.callbacks.onPermissionRequest?.(projectPermissionRequest(event.request))
       }
       this.emitState()
     })
@@ -310,7 +311,7 @@ class AcpRuntimeCoordinator {
       pendingPermissions: [
         ...states.flatMap(({ state }) => state.pendingPermissions),
         ...(this.delegatedWork?.pendingPermissions() ?? [])
-      ],
+      ].map(projectPermissionRequest),
       pendingElicitations: states.flatMap(({ state }) => state.pendingElicitations ?? []),
       permissionProfiles: Object.assign({}, ...states.map(({ state }) => state.permissionProfiles)),
       permissionGrants: this.permissionGrantSnapshot?.() ?? this.permissionGrantStore.snapshot(),
@@ -1666,7 +1667,7 @@ class AcpRuntimeCoordinator {
           : {}),
         onPermissionRequest: (request) => {
           this.permissionRuntimes.set(request.requestId, runtime)
-          this.callbacks.onPermissionRequest?.(request)
+          this.callbacks.onPermissionRequest?.(projectPermissionRequest(request))
         },
         onPermissionSettled: (requestId, state) => {
           this.callbacks.onPermissionSettled?.(requestId, state)

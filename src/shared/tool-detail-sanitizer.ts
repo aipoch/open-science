@@ -19,7 +19,7 @@ const capToolDetailText = (text: string): string =>
     : text
 
 const sanitizeToolDetailText = (text: string): string =>
-  redactSensitiveText(capToolDetailText(text))
+  capToolDetailText(redactSensitiveText(capToolDetailText(text)))
 
 const asSanitizedString = (value: unknown): string | undefined => {
   const text = asString(value)
