@@ -36,6 +36,32 @@ type SessionMessageLinkComponentProps = ComponentProps<'a'> & {
   'data-incomplete'?: boolean
 }
 
+type CachedImageGeometry = { naturalWidth: number; aspectRatio: number }
+
+// Rendered-geometry cache keyed like the preview resource (path + size + mtime), so an in-place
+// file replacement invalidates itself. Lets the alt-text placeholder reserve the loaded image's
+// exact footprint: when the transcript window recycles a far-offscreen message, the remounted
+// placeholder matches the image height instead of collapsing back to ~100px and shifting the
+// scroll position.
+const imageGeometryCache = new Map<string, CachedImageGeometry>()
+const IMAGE_GEOMETRY_CACHE_LIMIT = 200
+
+const cacheImageGeometry = (
+  requestKey: string,
+  naturalWidth: number,
+  naturalHeight: number
+): void => {
+  if (naturalWidth <= 0 || naturalHeight <= 0) return
+  imageGeometryCache.delete(requestKey)
+  imageGeometryCache.set(requestKey, {
+    naturalWidth,
+    aspectRatio: naturalWidth / naturalHeight
+  })
+  if (imageGeometryCache.size <= IMAGE_GEOMETRY_CACHE_LIMIT) return
+  const oldestKey = imageGeometryCache.keys().next().value
+  if (oldestKey !== undefined) imageGeometryCache.delete(oldestKey)
+}
+
 const SessionArtifactImage = ({
   artifact,
   alt,
@@ -99,11 +125,23 @@ const SessionArtifactImage = ({
   }
 
   if (resourceState.status !== 'ready') {
+    const cachedGeometry = imageGeometryCache.get(requestKey)
     return (
       <span
         ref={setElement}
         data-session-artifact-image-status=""
         data-state={hasError ? 'error' : 'loading'}
+        style={
+          cachedGeometry
+            ? {
+                // Mirror the loaded <img> geometry (natural width capped by max-w-full) so the
+                // placeholder reserves the same height and remounts stay scroll-neutral.
+                width: `${cachedGeometry.naturalWidth}px`,
+                maxWidth: '100%',
+                aspectRatio: String(cachedGeometry.aspectRatio)
+              }
+            : undefined
+        }
       >
         {accessibleAlt}
       </span>
@@ -124,6 +162,13 @@ const SessionArtifactImage = ({
         loading="lazy"
         decoding="async"
         draggable={false}
+        onLoad={(event) =>
+          cacheImageGeometry(
+            requestKey,
+            event.currentTarget.naturalWidth,
+            event.currentTarget.naturalHeight
+          )
+        }
         onError={() => setFailedRequestKey(requestKey)}
       />
     </button>
