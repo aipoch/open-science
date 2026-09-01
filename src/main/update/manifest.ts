@@ -62,7 +62,8 @@ const parseLocalizedNotes = (value: unknown): LocalizedReleaseNotes | undefined 
 
   const localizedNotes: LocalizedReleaseNotes = {}
   for (const [locale, notes] of Object.entries(value)) {
-    if (!LOCALIZED_NOTE_LOCALES.has(locale) || typeof notes !== 'string' || !notes.trim()) {
+    if (!LOCALIZED_NOTE_LOCALES.has(locale)) continue
+    if (typeof notes !== 'string' || !notes.trim()) {
       throw new Error(`Invalid localized release notes: ${locale}`)
     }
     localizedNotes[locale as keyof LocalizedReleaseNotes] = notes

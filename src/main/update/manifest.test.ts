@@ -40,10 +40,17 @@ describe('parseManifest', () => {
   it('throws on a malformed download entry', () => {
     expect(() => parseManifest({ version: '1.0.0', downloads: { x: { url: 1 } } })).toThrow()
   })
-  it('throws on unsupported or malformed localized release notes', () => {
-    expect(() =>
-      parseManifest({ version: '1.0.0', downloads: {}, localizedNotes: { it: 'Novità' } })
-    ).toThrow(/it/)
+  it('ignores unsupported localized notes without dropping supported locales', () => {
+    const manifest = parseManifest({
+      version: '1.0.0',
+      downloads: {},
+      localizedNotes: { 'zh-Hans': '更新说明', it: 'Novità' }
+    })
+
+    expect(manifest.localizedNotes).toEqual({ 'zh-Hans': '更新说明' })
+  })
+
+  it('throws on malformed supported localized release notes', () => {
     expect(() =>
       parseManifest({ version: '1.0.0', downloads: {}, localizedNotes: { fr: '' } })
     ).toThrow(/fr/)
