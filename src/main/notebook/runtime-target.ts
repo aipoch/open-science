@@ -52,9 +52,10 @@ const managedDefaultRuntimeIdentities = (
 ): readonly { prefix: string; runtimeId: string }[] => {
   const environmentName = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
   const current = managedRuntimeIdentity(runtimeRoot, language, environmentName, platform)
-  if (platform !== 'win32') return [current]
-  const shortPrefix = join(runtimeRoot, 'envs', envDirectoryName(environmentName, 'win32'))
-  const future = managedRuntimeIdentityAtPrefix(shortPrefix, language, 'win32')
+  const shortDirectory = envDirectoryName(environmentName, platform)
+  if (shortDirectory === environmentName) return [current]
+  const shortPrefix = join(runtimeRoot, 'envs', shortDirectory)
+  const future = managedRuntimeIdentityAtPrefix(shortPrefix, language, platform)
   return current.runtimeId === future.runtimeId ? [current] : [current, future]
 }
 
