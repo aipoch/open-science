@@ -87,9 +87,13 @@ describe('AppVersionSection', () => {
     expect(
       titles.every(
         (title) =>
-          title.classList.contains('[@media(hover:hover)]:translate-y-2.5') &&
-          title.classList.contains('[@media(hover:hover)]:group-hover:translate-y-0') &&
-          title.classList.contains('[@media(hover:hover)]:group-focus-visible:translate-y-0')
+          title.classList.contains('[@media(hover:hover)_and_(pointer:fine)]:translate-y-2.5') &&
+          title.classList.contains(
+            '[@media(hover:hover)_and_(pointer:fine)]:group-hover:translate-y-0'
+          ) &&
+          title.classList.contains(
+            '[@media(hover:hover)_and_(pointer:fine)]:group-focus-visible:translate-y-0'
+          )
       )
     ).toBe(true)
     expect(descriptions).toHaveLength(2)
@@ -99,9 +103,13 @@ describe('AppVersionSection', () => {
     expect(
       descriptions.every(
         (description) =>
-          description.classList.contains('[@media(hover:hover)]:opacity-0') &&
-          description.classList.contains('[@media(hover:hover)]:group-hover:opacity-100') &&
-          description.classList.contains('[@media(hover:hover)]:group-focus-visible:opacity-100')
+          description.classList.contains('[@media(hover:hover)_and_(pointer:fine)]:opacity-0') &&
+          description.classList.contains(
+            '[@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100'
+          ) &&
+          description.classList.contains(
+            '[@media(hover:hover)_and_(pointer:fine)]:group-focus-visible:opacity-100'
+          )
       )
     ).toBe(true)
   })

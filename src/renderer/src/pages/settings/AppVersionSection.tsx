@@ -28,10 +28,10 @@ const resourceIconClassName =
   'size-5 shrink-0 text-muted-foreground transition-colors duration-150 motion-reduce:transition-none group-hover:text-primary group-focus-visible:text-primary group-[.is-hover]:text-primary group-[.is-focus]:text-primary'
 
 const resourceTitleClassName =
-  'block whitespace-nowrap text-sm font-medium transition-transform duration-150 ease-out motion-reduce:transition-none [@media(hover:hover)]:translate-y-2.5 [@media(hover:hover)]:group-hover:translate-y-0 [@media(hover:hover)]:group-focus-visible:translate-y-0 group-[.is-hover]:translate-y-0 group-[.is-focus]:translate-y-0'
+  'block whitespace-nowrap text-sm font-medium transition-transform duration-150 ease-out motion-reduce:transition-none [@media(hover:hover)_and_(pointer:fine)]:translate-y-2.5 [@media(hover:hover)_and_(pointer:fine)]:group-hover:translate-y-0 [@media(hover:hover)_and_(pointer:fine)]:group-focus-visible:translate-y-0 group-[.is-hover]:translate-y-0 group-[.is-focus]:translate-y-0'
 
 const resourceDescriptionClassName =
-  'mt-0.5 block text-[13px] leading-5 text-muted-foreground transition-opacity duration-150 ease-out motion-reduce:transition-none [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-visible:opacity-100 group-[.is-hover]:opacity-100 group-[.is-focus]:opacity-100'
+  'mt-0.5 block text-[13px] leading-5 text-muted-foreground transition-opacity duration-150 ease-out motion-reduce:transition-none [@media(hover:hover)_and_(pointer:fine)]:opacity-0 [@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:group-focus-visible:opacity-100 group-[.is-hover]:opacity-100 group-[.is-focus]:opacity-100'
 
 // App identity + update control in Settings→General. Reads the shared update store so it stays in
 // sync with the external capsule; the update button opens the shared dialog (version + notes +
