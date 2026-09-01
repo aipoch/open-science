@@ -170,6 +170,7 @@ describe('SpecialistSubmenu — trigger', () => {
     renderSubmenu({ selectedId: undefined, onChange: vi.fn() })
     const trigger = container.querySelector('[data-testid="specialist-submenu-trigger"]')!
     expect(trigger.textContent).toContain('None')
+    expect(trigger.textContent).not.toContain('Bind a personal specialist to this conversation.')
   })
 
   it('shows the specialist name in the capsule when one is selected', () => {

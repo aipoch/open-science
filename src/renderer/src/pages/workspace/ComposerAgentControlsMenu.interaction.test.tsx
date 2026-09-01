@@ -293,11 +293,7 @@ describe('ComposerAgentControlsMenu', () => {
     expect(trigger?.getAttribute('aria-label')).toBe(
       'Agent controls: Ask for approval, auto-review off'
     )
-    act(() =>
-      findButton(
-        'Auto-approve editsAuto-approve edits to files in the workspace. Still ask before commands, network, and MCP.'
-      ).click()
-    )
+    act(() => findButton('Auto-approve edits').click())
 
     expect(onProfileChange).toHaveBeenCalledWith('auto')
     expect(container.textContent).not.toContain('Enable Full access?')
@@ -319,9 +315,7 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    act(() =>
-      findButton('MemoryLet the agent recall and save memory in this conversation.').click()
-    )
+    act(() => findButton('Memory').click())
 
     expect(onMemoryChange).toHaveBeenCalledWith(false)
     expect(selectEvents.at(-1)?.prevented).toBe(true)
@@ -346,11 +340,42 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    const memoryRow = findButton(`Memory${reason}`)
+    const memoryRow = findButton('Memory')
     expect(memoryRow.disabled).toBe(true)
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>('[data-testid="tooltip-content"]')).find(
+        (tooltip) => tooltip.textContent === reason
+      )
+    ).toBeDefined()
     expect(container.querySelector('[data-testid="controls-nondefault-dot"]')).toBeNull()
     act(() => memoryRow.click())
     expect(onMemoryChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps rows compact while preserving their descriptions in tooltips', () => {
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          memoryEnabled
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+        />
+      )
+    })
+
+    expect(findButton('Ask for approval').textContent).toBe('Ask for approval')
+    expect(findButton('Auto-review').textContent).toBe('Auto-review')
+    expect(findButton('Memory').textContent).toBe('Memory')
+
+    const tooltipDescriptions = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-testid="tooltip-content"]')
+    ).map((tooltip) => tooltip.textContent)
+    expect(tooltipDescriptions).toContain('A reviewer agent checks every change before it lands.')
+    expect(tooltipDescriptions).toContain(
+      'Applies to future actions; completed actions are unchanged.'
+    )
   })
 
   it('opens permission choices inside the same menu on mobile and can return', () => {
@@ -402,11 +427,7 @@ describe('ComposerAgentControlsMenu', () => {
         />
       )
     })
-    act(() =>
-      findButton(
-        'Full accessRun everything without prompts, including commands and network.'
-      ).click()
-    )
+    act(() => findButton('Full access').click())
 
     expect(onProfileChange).not.toHaveBeenCalled()
     expect(container.textContent).toContain('Enable Full access?')
@@ -464,9 +485,7 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    expect(
-      findButton('Full accessThe current agent does not support native bypass mode.').disabled
-    ).toBe(true)
+    expect(findButton('Full access').disabled).toBe(true)
   })
 
   it('lists session grants and revokes the clicked one', () => {
@@ -589,7 +608,7 @@ describe('ComposerAgentControlsMenu', () => {
     expect(fullCapsule?.getAttribute('class')).toContain('text-amber-600')
   })
 
-  it('renders the Full access submenu row as a warning in amber', () => {
+  it('renders the Full access label as a warning and moves its description to a tooltip', () => {
     act(() => {
       root.render(
         <ComposerAgentControlsMenu
@@ -600,14 +619,17 @@ describe('ComposerAgentControlsMenu', () => {
         />
       )
     })
-    const row = findButton(
-      'Full accessRun everything without prompts, including commands and network.'
-    )
+    const row = findButton('Full access')
 
     const title = row.querySelector('span.text-\\[13px\\]')
-    const description = row.querySelector('span.text-\\[11px\\]')
     expect(title?.getAttribute('class')).toContain('text-amber-600')
-    expect(description?.getAttribute('class')).toContain('text-amber-600/70')
+    expect(row.querySelector('span.text-\\[11px\\]')).toBeNull()
+    expect(
+      Array.from(container.querySelectorAll('[data-testid="tooltip-content"]')).some(
+        (tooltip) =>
+          tooltip.textContent === 'Run everything without prompts, including commands and network.'
+      )
+    ).toBe(true)
   })
 
   it('hides the non-default dot at defaults and shows it for a non-default profile', () => {
@@ -668,9 +690,7 @@ describe('ComposerAgentControlsMenu', () => {
         />
       )
     })
-    act(() =>
-      findButton('Auto-reviewA reviewer agent checks every change before it lands.').click()
-    )
+    act(() => findButton('Auto-review').click())
 
     expect(onAutoReviewChange).toHaveBeenCalledWith(true)
     // The row must not bubble into a profile change or close the menu (preventDefault).
@@ -692,7 +712,7 @@ describe('ComposerAgentControlsMenu', () => {
         />
       )
     })
-    const row = findButton('Auto-reviewA reviewer agent checks every change before it lands.')
+    const row = findButton('Auto-review')
     expect(row.disabled).toBe(true)
 
     act(() => row.click())
@@ -721,13 +741,8 @@ describe('ComposerAgentControlsMenu', () => {
     expect(trigger?.hasAttribute('disabled')).toBe(false)
 
     // Every mutating control is disabled: profile items, auto-review row, grant actions.
-    expect(
-      findButton('Ask for approvalAsk before file edits, commands, network, and MCP tools.')
-        .disabled
-    ).toBe(true)
-    expect(
-      findButton('Auto-reviewA reviewer agent checks every change before it lands.').disabled
-    ).toBe(true)
+    expect(findButton('Ask for approval').disabled).toBe(true)
+    expect(findButton('Auto-review').disabled).toBe(true)
 
     const clearButton = Array.from(container.querySelectorAll('button')).find(
       (candidate) => candidate.getAttribute('aria-label') === 'Clear all session grants'
@@ -757,14 +772,8 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    expect(
-      findButton(
-        'Auto-approve editsAuto-approve edits to files in the workspace. Still ask before commands, network, and MCP.'
-      ).disabled
-    ).toBe(false)
-    expect(
-      findButton('Auto-reviewA reviewer agent checks every change before it lands.').disabled
-    ).toBe(true)
+    expect(findButton('Auto-approve edits').disabled).toBe(false)
+    expect(findButton('Auto-review').disabled).toBe(true)
     expect(
       container.querySelector<HTMLButtonElement>(
         '[data-testid="compute-host-enabled-ssh:cluster-1"]'
@@ -800,11 +809,9 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    const autoReviewRow = findButton(
-      'Auto-reviewA reviewer agent checks every change before it lands.'
-    )
+    const autoReviewRow = findButton('Auto-review')
     expect(autoReviewRow.disabled).toBe(false)
-    const memoryRow = findButton('MemoryLet the agent recall and save memory in this conversation.')
+    const memoryRow = findButton('Memory')
     expect(memoryRow.disabled).toBe(false)
     expect(
       container
@@ -846,10 +853,7 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    expect(
-      findButton('Ask for approvalAsk before file edits, commands, network, and MCP tools.')
-        .disabled
-    ).toBe(true)
+    expect(findButton('Ask for approval').disabled).toBe(true)
 
     const clearButton = Array.from(container.querySelectorAll('button')).find(
       (candidate) => candidate.getAttribute('aria-label') === 'Clear all session grants'
@@ -1151,9 +1155,7 @@ describe('ComposerAgentControlsMenu', () => {
     }
     const permissionTrigger = orderAnchor('Permission mode')
     const computeTrigger = computeTriggers[0] as Element
-    const autoReviewRow = findButton(
-      'Auto-reviewA reviewer agent checks every change before it lands.'
-    )
+    const autoReviewRow = findButton('Auto-review')
     const sessionGrantsHeading = Array.from(container.querySelectorAll('span')).find(
       (element) => element.textContent === 'Allowed this session'
     )
