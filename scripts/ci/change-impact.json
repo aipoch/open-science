@@ -152,6 +152,7 @@
         "src/main/notebook/kernel-executor.ts",
         "src/main/notebook/local-rpc-server.ts",
         "src/main/notebook/managed-runtime-guard.ts",
+        "src/main/notebook/managed-runtime-removal.ts",
         "src/main/notebook/mcp-server.ts",
         "src/main/notebook/micromamba-cache-recovery.ts",
         "src/main/notebook/micromamba-cache.ts",
