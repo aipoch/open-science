@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { OpenScienceThinkingIndicator } from '@/components/OpenScienceThinkingIndicator'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
+import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useSessionStore } from '@/stores/session-store'
 import { getAgentThinkingStartedAt, type AgentLoadingPhase } from './agent-loading-message'
 
@@ -11,6 +12,7 @@ type WorkspaceAgentLoadingRowProps = {
   sessionId: string
   phase: Exclude<AgentLoadingPhase, 'hidden'> | 'resuming'
   agentStatus?: string
+  visiblePermissionPending?: boolean
 }
 
 type AgentLoadingIndicatorProps = Omit<WorkspaceAgentLoadingRowProps, 'sessionId'> & {
@@ -78,13 +80,31 @@ const ThinkingLoadingContent = ({
 const AgentLoadingIndicator = ({
   sessionId,
   phase,
-  agentStatus
+  agentStatus,
+  visiblePermissionPending = false
 }: AgentLoadingIndicatorProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const environmentProgress = useNotebookEnvStore((state) => {
+    const progress = state.progress
+    return sessionId &&
+      progress?.sessionId === sessionId &&
+      progress.phase !== 'done' &&
+      progress.phase !== 'error'
+      ? progress
+      : undefined
+  })
 
   return (
     <div className="flex min-h-5 flex-col gap-1" role="status" aria-live="polite">
-      {phase === 'thinking' ? (
+      {environmentProgress && !visiblePermissionPending && phase !== 'waiting-for-response' ? (
+        <div className="flex items-center gap-2 text-xs text-text-000/70">
+          <OpenScienceThinkingIndicator />
+          <span>{environmentProgress.message}</span>
+          <span className="tabular-nums" aria-hidden="true">
+            {Math.round(environmentProgress.progress * 100)}%
+          </span>
+        </div>
+      ) : phase === 'thinking' ? (
         <ThinkingLoadingContent sessionId={sessionId} agentStatus={agentStatus} />
       ) : (
         <div className="flex items-center gap-2 text-xs text-text-000/70">
@@ -108,7 +128,8 @@ const AgentLoadingIndicator = ({
 const WorkspaceAgentLoadingRow = ({
   sessionId,
   phase,
-  agentStatus
+  agentStatus,
+  visiblePermissionPending
 }: WorkspaceAgentLoadingRowProps): React.JSX.Element => (
   <MessageScrollerItem
     key={`${sessionId}-agent-loading`}
@@ -117,7 +138,12 @@ const WorkspaceAgentLoadingRow = ({
   >
     <div className="px-4 pb-1 pt-5 md:px-6">
       <div className={cn(assistantMessageSurfaceClassName, 'px-0 py-2')}>
-        <AgentLoadingIndicator sessionId={sessionId} phase={phase} agentStatus={agentStatus} />
+        <AgentLoadingIndicator
+          sessionId={sessionId}
+          phase={phase}
+          agentStatus={agentStatus}
+          visiblePermissionPending={visiblePermissionPending}
+        />
       </div>
     </div>
   </MessageScrollerItem>

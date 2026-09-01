@@ -1060,6 +1060,7 @@ const ConversationPanel = ({
             <WorkspaceMessageScroller
               activeSession={activeSession}
               credentialPending={pendingCredentialRequest !== undefined}
+              visiblePermissionPending={pendingPermissions.length > 0}
               optimisticMessage={optimisticMessage}
               isResumingSession={isResuming}
               notebookReference={notebookReference}

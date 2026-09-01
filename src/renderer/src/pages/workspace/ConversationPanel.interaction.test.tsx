@@ -165,10 +165,12 @@ vi.mock('./WorkspaceMessageScroller', () => ({
   WorkspaceMessageScroller: ({
     credentialPending,
     isResumingSession,
+    visiblePermissionPending,
     pendingElicitations = []
   }: {
     credentialPending?: boolean
     isResumingSession?: boolean
+    visiblePermissionPending?: boolean
     pendingElicitations?: unknown[]
   }): React.JSX.Element => (
     <>
@@ -177,6 +179,9 @@ vi.mock('./WorkspaceMessageScroller', () => ({
       ) : null}
       <span data-testid="scroller-pending-elicitations">{pendingElicitations.length}</span>
       <span data-testid="scroller-credential-pending">{String(credentialPending ?? false)}</span>
+      <span data-testid="scroller-visible-permission-pending">
+        {String(visiblePermissionPending ?? false)}
+      </span>
     </>
   )
 }))
@@ -1187,6 +1192,9 @@ describe('ConversationPanel composer intake', () => {
 
     expect(container.querySelector('[data-testid="permission-composer"]')).toBeNull()
     expect(container.querySelector('[data-testid="permission-approval-controls"]')).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="scroller-visible-permission-pending"]')?.textContent
+    ).toBe('true')
     expect(getComposerForm().hidden).toBe(false)
     expect(getComposerEditor().getAttribute('contenteditable')).toBe('true')
   })
