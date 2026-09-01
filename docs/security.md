@@ -85,11 +85,11 @@ system's secure storage. Those stores reject new secret writes when a secure bac
 unavailable, including Linux's unprotected `basic_text` backend. The renderer receives
 masked or non-secret projections rather than plaintext credential values.
 
-Subscription login profiles use backend-native storage outside those credential stores.
 Codex subscription authentication uses an app-owned `codex-subscription/auth.json` file
 under the configuration root and relies on operating-system account and filesystem
-protection. Shared Claude mode uses the default `~/.claude` profile; isolated Claude mode
-uses an app-owned provider profile under the Open Science configuration root.
+protection. Shared Claude mode uses the default `~/.claude` profile. Isolated Claude mode
+stores its OAuth token as a `safeStorage`-encrypted provider key and uses an app-owned
+`CLAUDE_CONFIG_DIR` under the Open Science configuration root, separate from `~/.claude`.
 
 ## Diagnostics
 
