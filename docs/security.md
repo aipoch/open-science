@@ -79,21 +79,24 @@ Project, session, Notebook, artifact, and log content remain user-readable local
 and rely on operating-system account isolation and filesystem protection. Use full-disk
 encryption when the device or research data requires protection at rest.
 
-API keys, Connector secrets and OAuth state, GitHub tokens, and compute passwords saved
-through Open Science's credential stores use Electron `safeStorage`, backed by the
-operating system's secure storage. New secret writes fail closed when a secure backend is
+Open Science's credential stores protect API keys, Connector secrets and OAuth state,
+GitHub tokens, and compute passwords with Electron `safeStorage`, backed by the operating
+system's secure storage. Those stores reject new secret writes when a secure backend is
 unavailable, including Linux's unprotected `basic_text` backend. The renderer receives
 masked or non-secret projections rather than plaintext credential values.
 
-Shared Claude subscription mode uses the default `~/.claude` credential profile. Isolated
-mode uses an app-owned provider profile under the Open Science configuration root.
+Subscription login profiles use backend-native storage outside those credential stores.
+Codex subscription authentication uses an app-owned `codex-subscription/auth.json` file
+under the configuration root and relies on operating-system account and filesystem
+protection. Shared Claude mode uses the default `~/.claude` profile; isolated Claude mode
+uses an app-owned provider profile under the Open Science configuration root.
 
 ## Diagnostics
 
-Diagnostics pass through shared redaction rules. In-app report dialogs show the exact
-payload and require review and consent before it is shared. Remove credentials, cookies,
-private keys, patient identifiers, unpublished data, and other sensitive content from
-logs or reports. Do not attach storage roots, provider profiles (including `~/.claude`),
+In-app report dialogs show the exact payload and require review and consent before it is
+shared. Treat every diagnostic payload as potentially sensitive and manually remove
+credentials, cookies, private keys, patient identifiers, unpublished data, and other
+sensitive content. Do not attach storage roots, provider profiles (including `~/.claude`),
 credential files, shell environments, or unreviewed log bundles to public issues or pull
 requests.
 
