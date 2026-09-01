@@ -249,6 +249,25 @@ describe('PreviewFileSurface Provenance entry', () => {
     expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
   })
 
+  it('does not open the Provenance tooltip on programmatic focus', async () => {
+    // The preview dialog auto-focuses this first header button on open; the tooltip must stay
+    // closed unless real keyboard focus (":focus-visible") lands on the trigger.
+    await act(async () => {
+      root.render(<PreviewFileSurface item={item} provenanceEntry="trailing" onClose={vi.fn()} />)
+    })
+    const trigger = container.querySelector<HTMLElement>(
+      '[aria-label="Open Provenance for sin.png"]'
+    )
+    if (!trigger) throw new Error('Provenance trigger did not render')
+
+    await act(async () => trigger.focus())
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 350))
+    })
+
+    expect(document.body.querySelector('[role="tooltip"]')).toBeNull()
+  })
+
   it('does not offer Provenance for uploaded inputs', async () => {
     await act(async () => {
       root.render(

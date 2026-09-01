@@ -75,7 +75,16 @@ const PreviewProvenanceButton = ({
   return (
     <TooltipProvider delayDuration={300}>
       <Tooltip>
-        <TooltipTrigger asChild>
+        {/* The preview dialog auto-focuses this first header button on open, and Radix opens
+            tooltips on any focus — only real keyboard focus (":focus-visible") may open it. */}
+        <TooltipTrigger
+          asChild
+          onFocus={(event) => {
+            if (!event.currentTarget.matches(':focus-visible')) {
+              event.preventDefault()
+            }
+          }}
+        >
           <Button
             type="button"
             variant="ghost"
