@@ -10435,6 +10435,98 @@ describe('v4 runtime bindings & agent tools', () => {
     await run
   })
 
+  it('rejects execution admission after the uninstall final check closes the environment barrier', async () => {
+    const root = await createStorageRoot()
+    const commitStarted = createDeferred<void>()
+    const releaseCommit = createDeferred<void>()
+    const preflightStarted = createDeferred<void>()
+    const preflight = createDeferred<{
+      id: string
+      language: 'python'
+      source: string
+      sourceDigest: string
+      exports: string[]
+      skillIdentity: string
+      packageOrigin: 'personal'
+      interfaceRevision: string
+      registeredGeneration: string
+    }>()
+    const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
+      status: 'completed' as const,
+      stdout: '',
+      stderr: '',
+      traceback: '',
+      cwdAfter: request.cwd,
+      outputs: [],
+      helperModulesInitialized: ['pending-helper']
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      helperModuleCatalog: {
+        resolve: async () => {
+          preflightStarted.resolve(undefined)
+          return preflight.promise
+        }
+      },
+      environmentManager: {
+        createNamedEnvironment: vi.fn(),
+        listEnvironments: vi.fn(() => []),
+        removeEnvironment: vi.fn(() => []),
+        removeManagedEnvironment: vi.fn(async (_language, beforeRemove, afterRemove) => {
+          await beforeRemove()
+          await afterRemove()
+        })
+      },
+      executorFactory: () => ({
+        execute,
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const uninstall = service.uninstallManagedEnvironment('python', async () => {
+      commitStarted.resolve(undefined)
+      await releaseCommit.promise
+    })
+    await commitStarted.promise
+
+    const execution = service.execute({
+      sessionId: 'late-session',
+      workspaceCwd: root,
+      language: 'python',
+      code: 'pending_helper()',
+      helperModules: ['pending-helper']
+    })
+    const executionOutcome = execution.then(
+      () => 'completed' as const,
+      () => 'rejected' as const
+    )
+    const firstOutcome = await Promise.race([
+      executionOutcome,
+      preflightStarted.promise.then(() => 'preflight' as const)
+    ])
+
+    releaseCommit.resolve(undefined)
+    await uninstall
+    const source = 'def pending_helper():\n    return 1'
+    preflight.resolve({
+      id: 'pending-helper',
+      language: 'python',
+      source,
+      sourceDigest: helperDigest(source),
+      exports: ['pending_helper'],
+      skillIdentity: 'skill:pending-helper',
+      packageOrigin: 'personal',
+      interfaceRevision: '1',
+      registeredGeneration: 'generation-1'
+    })
+
+    expect(firstOutcome).toBe('rejected')
+    await expect(executionOutcome).resolves.toBe('rejected')
+    expect(execute).not.toHaveBeenCalled()
+  })
+
   it('force-stop disable aborts the running cell and records it cancelled (WS10 force-stop)', async () => {
     const root = await createStorageRoot()
     // A blocking executor: execute() stays pending until terminate() rejects it (a killed kernel).

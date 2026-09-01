@@ -146,6 +146,7 @@ export class NotebookEnvironmentOperations {
   private readonly restartRecommendations = new Set<string>()
   private readonly revocationDrains = new Set<Promise<void>>()
   private readonly revocationReservations = new Map<string, Set<Promise<void>>>()
+  private readonly executionReservations = new Map<string, Set<Promise<void>>>()
   private readonly repairBlocks = new Set<string>()
   private readonly removals = new Set<string>()
   // A separate reservation avoids holding a shared env lease while the provisioner later takes its
@@ -220,6 +221,31 @@ export class NotebookEnvironmentOperations {
     })
   }
 
+  runExecutionAdmission<T>(environment: string, operation: () => Promise<T>): Promise<T> {
+    if (this.removals.has(environment)) return Promise.reject(this.removalInProgress(environment))
+
+    let resolveDrain!: () => void
+    const drain = new Promise<void>((resolve) => {
+      resolveDrain = resolve
+    })
+    const drains = this.executionReservations.get(environment) ?? new Set<Promise<void>>()
+    drains.add(drain)
+    this.executionReservations.set(environment, drains)
+    const release = (): void => {
+      drains.delete(drain)
+      if (drains.size === 0) this.executionReservations.delete(environment)
+      resolveDrain()
+    }
+
+    try {
+      if (this.removals.has(environment)) throw this.removalInProgress(environment)
+      return operation().finally(release)
+    } catch (error) {
+      release()
+      return Promise.reject(error)
+    }
+  }
+
   runMutation<T>(environment: string, operation: () => Promise<T>): Promise<T> {
     return this.withLease('mutation', environment, 'exclusive', operation)
   }
@@ -236,6 +262,8 @@ export class NotebookEnvironmentOperations {
     if (this.removals.has(environment)) throw this.removalInProgress(environment)
     this.removals.add(environment)
     try {
+      const admittedExecutions = this.executionReservations.get(environment)
+      if (admittedExecutions) await Promise.all(admittedExecutions)
       const admittedProvisions = this.provisionDrains.get(environment)
       if (admittedProvisions) await Promise.all(admittedProvisions)
       const admittedRevocations = this.revocationReservations.get(environment)
