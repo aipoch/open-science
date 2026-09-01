@@ -12,7 +12,7 @@ import {
   SKILL_IMPORT_MCP_SERVER_ARG,
   SKILL_RUNTIME_MCP_SERVER_ARG
 } from './mcp-server-args'
-import { withApplicationRuntimeShutdown } from './application-runtime'
+import { createApplicationLifecycleShutdown } from './application-runtime'
 import { installChildProcessGoneLogging, startLocalCrashReporting } from './crash-diagnostics'
 import type { DiagnosticOperation } from './diagnostics/operation'
 import {
@@ -85,13 +85,14 @@ if (shouldRunArtifactMcpServer) {
     })
 } else {
   void startElectronApp(fileURLToPath(import.meta.url)).catch(async (error: unknown) => {
+    bootstrapLog.error('application startup failed', diagnosticErrorFields(error))
     await reportApplicationStartupFailure({
       operation: startupDiagnostics,
       error,
       flush: startupFlush
     })
-    bootstrapLog.error('application startup failed', diagnosticErrorFields(error))
-    process.exitCode = 1
+    const { app } = createRequire(import.meta.url)('electron') as typeof import('electron')
+    app.exit(1)
   })
 }
 
@@ -626,6 +627,21 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             // A missing or signed-out third-party remote-access installation must never delay the desktop window.
             void remoteAccess.restore()
 
+            const disposeApplicationIpcHandlers = (): void => {
+              disposeTrayLocaleSubscription()
+              disposeLocalePreferenceIpc()
+              managedPreviewProtocolBridge.dispose()
+              disposeDatabaseStartupIpc()
+              disposeIpcHandlerRegistry()
+            }
+            const shutdownApplicationSurfaces = createApplicationLifecycleShutdown({
+              disposeApplicationRuntime,
+              remoteAccess,
+              webController,
+              disposeIpcHandlers: disposeApplicationIpcHandlers,
+              log
+            })
+
             return {
               installMigrationQuitGuard,
               isMigrationInProgress,
@@ -679,15 +695,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               webMode,
               webController,
               remoteAccess,
+              shutdownApplicationSurfaces,
               databaseStartupOwner,
-              databaseStartupQuitGuard,
-              disposeIpcHandlerRegistry: () => {
-                disposeTrayLocaleSubscription()
-                disposeLocalePreferenceIpc()
-                managedPreviewProtocolBridge.dispose()
-                disposeDatabaseStartupIpc()
-                disposeIpcHandlerRegistry()
-              }
+              databaseStartupQuitGuard
             }
           } catch (error) {
             // Invalidate caller leases immediately if composition fails after registering IPC. The
@@ -720,76 +730,66 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     // is bound with the live backend handles; the agent teardown latches shutting-down and awaits the
     // process tree so a Windows taskkill /T completes before app.exit.
     installAppLifecycle: (ctx) => {
-      const lifecycle = ctx.installAppLifecycle(
-        withApplicationRuntimeShutdown(
-          {
-            app,
-            createMainWindow: ctx.createMainWindow,
-            configureMainWindow: ctx.configureMainWindow,
-            initialWindow: ctx.startupWindow,
-            createTray: (handlers) => {
-              const webPort = ctx.webController.runningPort()
-              const headlessWeb = ctx.webMode.headless && webPort !== undefined
-              const tray = ctx.createAppTray({
-                iconPath: trayIconPath,
-                variantIconPaths: trayVariantIconPaths,
-                initialVariant: ctx.getAppIconVariant(),
-                translate: ctx.translate,
-                templateIconPath: process.platform === 'darwin' ? trayMacTemplate : undefined,
-                ...handlers,
-                ...(headlessWeb
-                  ? {
-                      headless: true,
-                      onOpenWeb: async () => {
-                        const { shell } = await import('electron')
-                        await shell.openExternal(await ctx.buildAuthenticatedWebUrl(webPort))
-                      },
-                      onCopyWebUrl: async () => {
-                        const { clipboard } = await import('electron')
-                        clipboard.writeText(await ctx.buildAuthenticatedWebUrl(webPort))
-                      }
-                    }
-                  : {})
-              })
-              // Publish the tray so a later settings change can restyle it (onAppIconVariantChanged).
-              ctx.appTrayBox.current = tray
-              return tray
-            },
-            isMigrationInProgress: ctx.isMigrationInProgress,
-            quit: () => app.quit(),
-            countWindows: () => BrowserWindow.getAllWindows().length,
-            createInitialWindow: !ctx.webMode.headless,
-            bindSystemShutdownWindow,
-            detectActiveSessions: ctx.detectActiveSessions,
-            hasActiveReviewerWork: ctx.hasActiveReviewerWork,
-            prepareForQuit: ctx.prepareForQuit,
-            abortQuitPreparation: (reason) => {
-              ctx.abortQuitPreparation()
-              ctx.notifySessionPersistenceFlushAborted(
-                () => ctx.mainWindowGetterBox.current?.(),
-                reason
-              )
-            },
-            flushSessionPersistence: ctx.createSessionPersistenceFlush(() =>
-              ctx.mainWindowGetterBox.current?.()
-            ),
-            createConfirmClose: ctx.createConfirmClose,
-            onAppearanceChanged: (appearance) =>
-              ctx.appIconControllerBox.current?.setAppearance(appearance),
-            log: ctx.log,
-            flushLogs
-          } satisfies Omit<Parameters<typeof ctx.installAppLifecycle>[0], 'shutdownBackends'>,
-          {
-            // Application composition owns the one bounded ACP/Notebook shutdown. Remaining surfaces
-            // close afterward in their established order, even when an earlier disposer rejects.
-            disposeApplicationRuntime: ctx.disposeApplicationRuntime,
-            remoteAccess: ctx.remoteAccess,
-            webController: ctx.webController,
-            disposeIpcHandlers: ctx.disposeIpcHandlerRegistry,
-            log: ctx.log
-          }
-        )
-      )
+      const lifecycle = ctx.installAppLifecycle({
+        app,
+        createMainWindow: ctx.createMainWindow,
+        configureMainWindow: ctx.configureMainWindow,
+        initialWindow: ctx.startupWindow,
+        createTray: (handlers) => {
+          const webPort = ctx.webController.runningPort()
+          const headlessWeb = ctx.webMode.headless && webPort !== undefined
+          const tray = ctx.createAppTray({
+            iconPath: trayIconPath,
+            variantIconPaths: trayVariantIconPaths,
+            initialVariant: ctx.getAppIconVariant(),
+            translate: ctx.translate,
+            templateIconPath: process.platform === 'darwin' ? trayMacTemplate : undefined,
+            ...handlers,
+            ...(headlessWeb
+              ? {
+                  headless: true,
+                  onOpenWeb: async () => {
+                    const { shell } = await import('electron')
+                    await shell.openExternal(await ctx.buildAuthenticatedWebUrl(webPort))
+                  },
+                  onCopyWebUrl: async () => {
+                    const { clipboard } = await import('electron')
+                    clipboard.writeText(await ctx.buildAuthenticatedWebUrl(webPort))
+                  }
+                }
+              : {})
+          })
+          // Publish the tray so a later settings change can restyle it (onAppIconVariantChanged).
+          ctx.appTrayBox.current = tray
+          return tray
+        },
+        isMigrationInProgress: ctx.isMigrationInProgress,
+        quit: () => app.quit(),
+        countWindows: () => BrowserWindow.getAllWindows().length,
+        createInitialWindow: !ctx.webMode.headless,
+        bindSystemShutdownWindow,
+        detectActiveSessions: ctx.detectActiveSessions,
+        hasActiveReviewerWork: ctx.hasActiveReviewerWork,
+        prepareForQuit: ctx.prepareForQuit,
+        abortQuitPreparation: (reason) => {
+          ctx.abortQuitPreparation()
+          ctx.notifySessionPersistenceFlushAborted(
+            () => ctx.mainWindowGetterBox.current?.(),
+            reason
+          )
+        },
+        flushSessionPersistence: ctx.createSessionPersistenceFlush(() =>
+          ctx.mainWindowGetterBox.current?.()
+        ),
+        createConfirmClose: ctx.createConfirmClose,
+        onAppearanceChanged: (appearance) =>
+          ctx.appIconControllerBox.current?.setAppearance(appearance),
+        log: ctx.log,
+        flushLogs,
+        // Application composition owns the one bounded ACP/Notebook shutdown. Startup failures
+        // after composition and ordinary lifecycle shutdown reuse this exact ordered owner.
+        shutdownBackends: ctx.shutdownApplicationSurfaces
+      })
       const { showMainWindow, getMainWindow, isMainWindowHidden, onSystemShutdown } = lifecycle
 
       // Window lifecycle now exists: expose it to the restored controller, reapply any Windows
@@ -840,6 +840,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         })
       preStartupSecondInstanceRelay.bind(onSecondInstance)
       return { onSecondInstance, onSystemShutdown }
+    },
+    cleanupAfterStartupFailure: async (ctx) => {
+      await ctx.shutdownApplicationSurfaces()
     },
     markReady: (ctx) => {
       ctx.databaseStartupOwner.complete()
