@@ -345,6 +345,76 @@ describe('NotebookEnvironmentOperations', () => {
     expect(order).toEqual(['drain', 'terminate', 'remove'])
   })
 
+  it('holds managed removal behind an admitted forced revocation teardown', async () => {
+    let releaseExecution!: () => void
+    let releaseTermination!: () => void
+    const order: string[] = []
+    const session: TestSession = {
+      projectId: 'project',
+      sessionId: 'session-1',
+      lane: createRootNotebookLane('project', 'session-1', 'root-frame-session-1'),
+      bindings: {
+        python: {
+          language: 'python',
+          runtimeId: '/managed/python',
+          source: 'managed',
+          provenance: 'app-managed',
+          interpreterPath: '/managed/python',
+          label: 'Python',
+          status: 'active',
+          envName: 'default-python'
+        }
+      },
+      statuses: new Map([['python:default-python', 'running']]),
+      runtimeBinding(language) {
+        return this.bindings[language]
+      },
+      setRuntimeBinding(language, binding) {
+        this.bindings[language] = binding
+      },
+      kernelStatus(processKey) {
+        return this.statuses.get(processKey)
+      },
+      markForceStopped: vi.fn(),
+      drainExecution: async () => undefined,
+      terminateExecutor: () => {
+        order.push('terminate')
+        releaseExecution()
+        return new Promise<void>((resolve) => {
+          releaseTermination = resolve
+        })
+      },
+      clearProcessState(processKey) {
+        order.push('clear')
+        this.statuses.delete(processKey)
+      }
+    }
+    const { owner } = await createOwner([session])
+    const execution = owner.runShared(
+      'execution',
+      'default-python',
+      () =>
+        new Promise<void>((resolve) => {
+          releaseExecution = resolve
+        })
+    )
+    await vi.waitFor(() => expect(releaseExecution).toBeTypeOf('function'))
+
+    const revocation = owner.revokeRuntime('python', '/managed/python', { force: true })
+    await vi.waitFor(() => expect(releaseTermination).toBeTypeOf('function'))
+    const removal = owner.withRemovalBarrier('default-python', () =>
+      owner.runRemoval('default-python', async () => {
+        order.push('remove')
+      })
+    )
+    await Promise.resolve()
+
+    expect(order).toEqual(['terminate'])
+    releaseTermination()
+    await Promise.all([execution, revocation, removal])
+    expect(order).toEqual(['terminate', 'clear', 'remove'])
+  })
+
   it('rejects a queued package mutation after managed removal closes admission', async () => {
     const { owner } = await createOwner()
     const order: string[] = []

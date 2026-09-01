@@ -145,6 +145,7 @@ export class NotebookEnvironmentOperations {
   >()
   private readonly restartRecommendations = new Set<string>()
   private readonly revocationDrains = new Set<Promise<void>>()
+  private readonly revocationReservations = new Map<string, Set<Promise<void>>>()
   private readonly repairBlocks = new Set<string>()
   private readonly removals = new Set<string>()
   // A separate reservation avoids holding a shared env lease while the provisioner later takes its
@@ -237,6 +238,8 @@ export class NotebookEnvironmentOperations {
     try {
       const admittedProvisions = this.provisionDrains.get(environment)
       if (admittedProvisions) await Promise.all(admittedProvisions)
+      const admittedRevocations = this.revocationReservations.get(environment)
+      if (admittedRevocations) await Promise.all(admittedRevocations)
       return await operation()
     } finally {
       this.removals.delete(environment)
@@ -292,60 +295,83 @@ export class NotebookEnvironmentOperations {
       const binding = session.runtimeBinding(language)
       return binding?.runtimeId === runtimeId && binding.status !== 'unavailable'
     })
-    await this.options.bindings.runWrites(
-      targetSessions.map((session) => session.sessionId),
-      async () => {
-        for (const session of targetSessions) {
-          const current = Array.from(this.options.sessions()).find(
-            (candidate) => candidate.sessionId === session.sessionId
-          )
-          if (current !== session) continue
-          const revocation = await this.options.bindings.revoke(
-            session,
-            language,
-            runtimeId,
-            () => {
-              const environment = runEnvironment(session, language)
-              return { environment, processKey: processKey(language, environment) }
-            }
-          )
-          if (!revocation) continue
-
-          const { environment, processKey: revokedProcessKey } = revocation
-          this.options.notifyChanged(session)
-          if (options.force) {
-            if (session.kernelStatus(revokedProcessKey) === 'running') {
-              session.markForceStopped(revokedProcessKey)
-            }
-            await session.terminateExecutor(language === 'r' ? 'r' : 'python', environment)
-            await this.options.clearKernelTermination(session, revokedProcessKey)
-            session.clearProcessState(revokedProcessKey)
-            this.options.notifyChanged(session)
-            continue
-          }
-
-          // Revocation teardown and every prefix mutation share the environment's exclusive lease.
-          // Whichever request arrives first completes its executor teardown/remove before the other
-          // can proceed, so uninstall never deletes a prefix while this drain still owns a process.
-          const drain = this.withLease('revocation', environment, 'exclusive', async () => {
-            try {
-              await session.drainExecution(revokedProcessKey)
-              await session.terminateExecutor(language === 'r' ? 'r' : 'python', environment)
-              await this.options.clearKernelTermination(session, revokedProcessKey)
-              session.clearProcessState(revokedProcessKey)
-              this.options.notifyChanged(session)
-            } catch (error) {
-              this.options.logger?.error('failed to drain or close a revoked runtime', {
-                ...errorLogFields(error),
-                environment
-              })
-            }
-          })
-          this.revocationDrains.add(drain)
-          void drain.finally(() => this.revocationDrains.delete(drain))
-        }
-      }
+    const reservation = this.reserveRevocations(
+      targetSessions.map((session) => runEnvironment(session, language))
     )
+    const backgroundDrains: Promise<void>[] = []
+    try {
+      await this.options.bindings.runWrites(
+        targetSessions.map((session) => session.sessionId),
+        async () => {
+          for (const session of targetSessions) {
+            const current = Array.from(this.options.sessions()).find(
+              (candidate) => candidate.sessionId === session.sessionId
+            )
+            if (current !== session) continue
+            const revocation = await this.options.bindings.revoke(
+              session,
+              language,
+              runtimeId,
+              () => {
+                const environment = runEnvironment(session, language)
+                return { environment, processKey: processKey(language, environment) }
+              }
+            )
+            if (!revocation) continue
+
+            const { environment, processKey: revokedProcessKey } = revocation
+            this.options.notifyChanged(session)
+            if (options.force) {
+              if (session.kernelStatus(revokedProcessKey) === 'running') {
+                session.markForceStopped(revokedProcessKey)
+              }
+              // Start termination before waiting for the exclusive lease: an in-flight execution owns
+              // a shared lease until the killed executor settles. The revocation reservation prevents
+              // uninstall from crossing this handoff, and final teardown runs under the same exclusive
+              // lease used by removal.
+              const termination = session.terminateExecutor(
+                language === 'r' ? 'r' : 'python',
+                environment
+              )
+              await this.withLease('revocation', environment, 'exclusive', async () => {
+                await termination
+                await this.options.clearKernelTermination(session, revokedProcessKey)
+                session.clearProcessState(revokedProcessKey)
+                this.options.notifyChanged(session)
+              })
+              continue
+            }
+
+            // Revocation teardown and every prefix mutation share the environment's exclusive lease.
+            // Whichever request arrives first completes its executor teardown/remove before the other
+            // can proceed, so uninstall never deletes a prefix while this drain still owns a process.
+            const drain = this.withLease('revocation', environment, 'exclusive', async () => {
+              try {
+                await session.drainExecution(revokedProcessKey)
+                await session.terminateExecutor(language === 'r' ? 'r' : 'python', environment)
+                await this.options.clearKernelTermination(session, revokedProcessKey)
+                session.clearProcessState(revokedProcessKey)
+                this.options.notifyChanged(session)
+              } catch (error) {
+                this.options.logger?.error('failed to drain or close a revoked runtime', {
+                  ...errorLogFields(error),
+                  environment
+                })
+              }
+            })
+            backgroundDrains.push(drain)
+            this.revocationDrains.add(drain)
+            void drain.finally(() => this.revocationDrains.delete(drain))
+          }
+        }
+      )
+    } finally {
+      if (backgroundDrains.length > 0) {
+        void Promise.all(backgroundDrains).then(reservation.release, reservation.release)
+      } else {
+        reservation.release()
+      }
+    }
   }
 
   waitForRevocationDrains(): Promise<void> {
@@ -483,6 +509,38 @@ export class NotebookEnvironmentOperations {
       if (drains.size === 0) this.provisionDrains.delete(environment)
       resolveDrain()
     })
+  }
+
+  private reserveRevocations(environments: Iterable<string>): { release: () => void } {
+    const unique = Array.from(new Set(environments))
+    for (const environment of unique) {
+      if (this.removals.has(environment)) throw this.removalInProgress(environment)
+    }
+    if (unique.length === 0) return { release: () => undefined }
+
+    let resolveDrain!: () => void
+    const drain = new Promise<void>((resolve) => {
+      resolveDrain = resolve
+    })
+    for (const environment of unique) {
+      const drains = this.revocationReservations.get(environment) ?? new Set<Promise<void>>()
+      drains.add(drain)
+      this.revocationReservations.set(environment, drains)
+    }
+
+    let released = false
+    return {
+      release: () => {
+        if (released) return
+        released = true
+        for (const environment of unique) {
+          const drains = this.revocationReservations.get(environment)
+          drains?.delete(drain)
+          if (drains?.size === 0) this.revocationReservations.delete(environment)
+        }
+        resolveDrain()
+      }
+    }
   }
 
   private async track<T>(
