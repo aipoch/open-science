@@ -981,8 +981,7 @@ jobs:
     timeout-minutes: 3
     env:
       PR_GATE_EXECUTION_MODE: bundles
-      PR_GATE_NEEDS: >-
-        {"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"coverage_macos":{"result":"${{ needs.coverage_macos.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}
+      PR_GATE_NEEDS: ${{ toJSON(needs) }}
       PR_GATE_PLAN: ${{ needs.preflight.outputs.plan }}
       PREFLIGHT_RESULT: ${{ needs.preflight.result }}
     steps:

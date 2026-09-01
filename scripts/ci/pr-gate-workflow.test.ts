@@ -205,23 +205,12 @@ describe('PR Gate workflow', () => {
     expect(gate.needs).toEqual(
       expect.arrayContaining(['preflight', ...manifest.bundleOrder, 'coverage_macos'])
     )
-    expect(gate.env).toMatchObject({
+    expect(gate.env).toEqual({
       PR_GATE_EXECUTION_MODE: 'bundles',
+      PR_GATE_NEEDS: '${{ toJSON(needs) }}',
       PR_GATE_PLAN: '${{ needs.preflight.outputs.plan }}',
       PREFLIGHT_RESULT: '${{ needs.preflight.result }}'
     })
-    expect(JSON.parse(gate.env?.PR_GATE_NEEDS ?? '')).toEqual({
-      preflight: { result: '${{ needs.preflight.result }}' },
-      policy: { result: '${{ needs.policy.result }}' },
-      static: { result: '${{ needs.static.result }}' },
-      unit: { result: '${{ needs.unit.result }}' },
-      linux_runtime: { result: '${{ needs.linux_runtime.result }}' },
-      coverage_macos: { result: '${{ needs.coverage_macos.result }}' },
-      windows_core: { result: '${{ needs.windows_core.result }}' },
-      macos_e2e: { result: '${{ needs.macos_e2e.result }}' },
-      windows_e2e: { result: '${{ needs.windows_e2e.result }}' }
-    })
-    expect(gate.env?.PR_GATE_NEEDS).not.toContain('toJSON(needs)')
     expect(gate.steps?.at(0)).toMatchObject({
       name: 'Checkout trusted gate evaluator',
       if: "${{ needs.preflight.result == 'success' }}",
