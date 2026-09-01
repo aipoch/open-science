@@ -314,6 +314,7 @@ const installApi = (): void => {
 }
 
 beforeEach(() => {
+  document.documentElement.removeAttribute('data-open-science-notebook-network-unavailable')
   installApi()
   useSettingsStore.setState(createInitialSettingsState())
   useProjectStore.setState(createInitialProjectState())
@@ -3339,6 +3340,28 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to network"]')).not.toBeNull()
     expect(document.body.textContent).toContain('Notebook network access')
     expect(document.body.querySelector('[aria-label="Allowed domains"]')).not.toBeNull()
+  })
+
+  it('hides local-only Notebook network settings from remote Web', async () => {
+    document.documentElement.setAttribute('data-open-science-notebook-network-unavailable', '')
+    useRuntimeSettingsStore.setState({
+      envs: { python: [], r: [] },
+      loaded: true,
+      checkedAt: Date.now()
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      navButton('Runtimes')?.click()
+      await Promise.resolve()
+    })
+
+    expect(
+      document.body.querySelector('[data-testid="notebook-network-protection-banner"]')
+    ).toBeNull()
+    expect(window.api.settings.getNotebookNetworkStatus).not.toHaveBeenCalled()
   })
 
   it('shows a breadcrumb in the header when a skill detail is open, and returns on breadcrumb click', async () => {

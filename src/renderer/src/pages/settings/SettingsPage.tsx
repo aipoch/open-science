@@ -1636,7 +1636,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       description={t(
                         'Enable the environments each notebook language may run in. The app-managed environment is on by default; enable your own interpreters to make them available to the agent.'
                       )}
-                      onOpenNetworkProtection={() => navigateNetwork({ kind: 'domains' })}
+                      onOpenNetworkProtection={
+                        document.documentElement.hasAttribute(
+                          'data-open-science-notebook-network-unavailable'
+                        )
+                          ? undefined
+                          : () => navigateNetwork({ kind: 'domains' })
+                      }
                     />
                   ) : activePanel === 'network' ? (
                     <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
