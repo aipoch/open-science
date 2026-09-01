@@ -204,7 +204,8 @@ class ReviewRepository {
         where: {
           projectId: fixLoopReview.projectId,
           sessionId: fixLoopReview.sessionId,
-          turnMessageId: fixLoopReview.turnMessageId
+          turnMessageId: fixLoopReview.turnMessageId,
+          createdAt: { gte: fixLoopReview.createdAt }
         },
         select: { id: true }
       })

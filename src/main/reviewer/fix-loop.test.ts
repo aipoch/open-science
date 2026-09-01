@@ -462,6 +462,75 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
     await client.$disconnect()
   })
 
+  it('publishes the terminal review when the Fix Loop exits exceptionally', async () => {
+    const process = new FakeAgentProcess()
+    const shared = makeSharedSession(makeSession())
+
+    startFixLoopFakeAgent(
+      process,
+      {
+        mainSessionId: 'main-session-1',
+        initialChecks: [
+          {
+            status: 'fail',
+            claim: 'Agent claimed 42 results',
+            evidence: 'Tool output shows 0 results',
+            locator: { blockRef: { blockIndex: 1 }, contentHash: 'abc123' }
+          }
+        ],
+        reReviewChecksByRound: [
+          [
+            {
+              status: 'pass',
+              claim: 'Agent claimed 42 results',
+              evidence: 'Correction confirmed: results now correct'
+            }
+          ]
+        ]
+      },
+      shared
+    )
+
+    const runtime = createFixLoopRuntime(process, shared)
+    await runtime.createSession({ cwd: '/workspace' })
+    const client = createProjectDbClient(temporaryRoot!)
+    await migrateApplicationDatabase(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+    const onReviewUpdate = vi.fn()
+    const onFixLoopStart = vi.fn(() => {
+      vi.spyOn(repository, 'commitFindingDispositions').mockRejectedValueOnce(
+        new Error('disposition write failed')
+      )
+    })
+
+    await expect(
+      runReview({
+        sessionId: 'session-1',
+        turnMessageId: 'msg-2',
+        projectId: 'project-1',
+        getSession: () => shared.getSession(),
+        reviewRepository: repository,
+        acpRuntime: runtime,
+        artifactStorageRoot: temporaryRoot!,
+        mainSessionId: 'main-session-1',
+        onReviewUpdate,
+        onFixLoopStart,
+        fixLoopMaxRounds: 0,
+        agentTarget: {
+          frameworkId: 'codex',
+          providerId: 'provider-1',
+          model: 'model-1',
+          reasoningEffort: 'high'
+        }
+      })
+    ).rejects.toThrow('disposition write failed')
+
+    expect(onReviewUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lifecycle: 'complete', outcome: 'flagged' })
+    )
+    await client.$disconnect()
+  })
+
   it('resolves all checks when re-review passes; exactly 1 [Auditor] injection for 1 round', async () => {
     const process = new FakeAgentProcess()
     const shared = makeSharedSession(

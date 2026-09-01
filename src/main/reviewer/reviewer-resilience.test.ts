@@ -92,6 +92,46 @@ describe('Reviewer resilience', () => {
     })
   })
 
+  it('does not abort findings from an older review chain for the same turn', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-reviewer-fix-loop-history-'))
+    const database = await getProjectDbClient(storageRoot)
+    const repository = new ReviewRepository(() => Promise.resolve(database))
+    const oldReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'turn-1',
+      scope: { turnMessageId: 'turn-1', blocks: [], artifactVersionIds: [] }
+    })
+    await repository.addChecks(oldReview.id, [
+      { status: 'fail', claim: 'Old issue', evidence: 'Still part of review history.' }
+    ])
+    await repository.updateReview(oldReview.id, { lifecycle: 'complete', outcome: 'flagged' })
+    await database.review.update({
+      where: { id: oldReview.id },
+      data: { createdAt: new Date('2020-01-01T00:00:00.000Z') }
+    })
+
+    const activeReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'turn-1',
+      scope: { turnMessageId: 'turn-1', blocks: [], artifactVersionIds: [] }
+    })
+    await repository.addChecks(activeReview.id, [
+      { status: 'fail', claim: 'Current issue', evidence: 'Belongs to the interrupted Fix Loop.' }
+    ])
+
+    expect(await repository.recoverInterruptedReviews()).toBe(1)
+    const reviews = await repository.getReviewsForProjectSession('project-1', 'session-1')
+    expect(reviews.find((review) => review.id === oldReview.id)?.checks[0]).toMatchObject({
+      resolution: 'open'
+    })
+    expect(reviews.find((review) => review.id === activeReview.id)?.checks[0]).toMatchObject({
+      resolution: 'unaddressed',
+      unaddressedTrigger: 'aborted'
+    })
+  })
+
   it('accepts no more than five checks in one Reviewer result', () => {
     expect(
       submitFindingsInputSchema.safeParse({ checks: [check, check, check, check, check] }).success
