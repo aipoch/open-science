@@ -60,6 +60,8 @@ const isSensitiveDiagnosticKey = (key: string): boolean => {
   if (words.some((word) => SENSITIVE_KEY_WORDS.has(word))) return true
 
   return [
+    'accesskey',
+    'accesskeys',
     'accesstoken',
     'apikey',
     'apikeys',
@@ -132,11 +134,11 @@ const redactSensitiveText = (value: string): string =>
       `$1$2${REDACTED_MARKER}`
     )
     .replace(
-      /\b(api[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*)(["'])(?:\\.|(?!\3)[^\\\r\n])*\3/gi,
+      /\b(api[_-]?key|access[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*)(["'])(?:\\.|(?!\3)[^\\\r\n])*\3/gi,
       `$1$2$3${REDACTED_MARKER}$3`
     )
     .replace(
-      /\b(api[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^"'&;}\r\n]+/gi,
+      /\b(api[_-]?key|access[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^"'&;}\r\n]+/gi,
       `$1$2${REDACTED_MARKER}`
     )
     .replace(
@@ -152,11 +154,11 @@ const redactSensitiveText = (value: string): string =>
         isSensitiveDiagnosticKey(key) ? `${key}${separator}${REDACTED_MARKER}` : match
     )
     .replace(
-      /(--?(?:access[-_]?token|api[-_]?key|auth[-_]?token|authorization|bearer[-_]?token|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|secret|token))(\s+|=)(["'])(?:\\.|(?!\3)[^\\\r\n])*\3/gi,
+      /(--?(?:access[-_]?key|access[-_]?token|api[-_]?key|auth[-_]?token|authorization|bearer[-_]?token|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|secret|token))(\s+|=)(["'])(?:\\.|(?!\3)[^\\\r\n])*\3/gi,
       `$1$2$3${REDACTED_MARKER}$3`
     )
     .replace(
-      /(--?(?:access[-_]?token|api[-_]?key|auth[-_]?token|authorization|bearer[-_]?token|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|secret|token))(\s+|=)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;]+/gi,
+      /(--?(?:access[-_]?key|access[-_]?token|api[-_]?key|auth[-_]?token|authorization|bearer[-_]?token|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|secret|token))(\s+|=)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;]+/gi,
       `$1$2${REDACTED_MARKER}`
     )
     .replace(/\bBearer\s+[^\s"']+/gi, `Bearer ${REDACTED_MARKER}`)

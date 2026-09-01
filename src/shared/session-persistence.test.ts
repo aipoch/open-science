@@ -93,7 +93,11 @@ describe('Session file envelope versions', () => {
         title: 'curl https://example.test/data?token=test-persisted-title-secret',
         rawInput: {
           query: 'safe input',
-          connection: { apiKey: 'test-api-key-secret' }
+          connection: {
+            apiKey: 'test-api-key-secret',
+            accessKey: 'test-persisted-structured-access-key-secret'
+          },
+          command: 'provider --access-key test-persisted-cli-access-key-secret'
         },
         rawOutput: {
           result: 'safe output',
@@ -104,7 +108,8 @@ describe('Session file envelope versions', () => {
 
     expect(activity?.rawInput).toMatchObject({
       query: 'safe input',
-      connection: { apiKey: '[redacted]' }
+      connection: { apiKey: '[redacted]', accessKey: '[redacted]' },
+      command: 'provider --access-key [redacted]'
     })
     expect(activity?.rawOutput).toMatchObject({
       result: 'safe output',
@@ -113,6 +118,8 @@ describe('Session file envelope versions', () => {
     expect(activity?.title).toContain('[redacted]')
     expect(JSON.stringify(activity)).not.toContain('test-persisted-title-secret')
     expect(JSON.stringify(activity)).not.toContain('test-api-key-secret')
+    expect(JSON.stringify(activity)).not.toContain('test-persisted-structured-access-key-secret')
+    expect(JSON.stringify(activity)).not.toContain('test-persisted-cli-access-key-secret')
     expect(JSON.stringify(activity)).not.toContain('test-authorization-secret')
   })
 })

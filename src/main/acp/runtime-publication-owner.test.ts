@@ -421,7 +421,9 @@ describe('AcpRuntimePublicationOwner', () => {
       toolCallId: 'tool-synthesized',
       title: 'Permission declined',
       rawInput: {
-        command: 'curl "https://example.test/data?token=test-synthesized-secret"'
+        command:
+          'curl "https://example.test/data?token=test-synthesized-secret" --access-key test-runtime-access-key-secret',
+        accessKey: 'test-runtime-structured-access-key-secret'
       }
     }
     const owner = new AcpRuntimePublicationOwner({
@@ -437,7 +439,12 @@ describe('AcpRuntimePublicationOwner', () => {
 
     expect(JSON.stringify(publishedEvents)).not.toContain('test-synthesized-secret')
     expect(JSON.stringify(owner.getSnapshot().events)).not.toContain('test-synthesized-secret')
+    expect(JSON.stringify(publishedEvents)).not.toContain('test-runtime-access-key-secret')
+    expect(JSON.stringify(owner.getSnapshot().events)).not.toContain(
+      'test-runtime-structured-access-key-secret'
+    )
     expect(JSON.stringify(event)).toContain('test-synthesized-secret')
+    expect(JSON.stringify(event)).toContain('test-runtime-access-key-secret')
   })
 
   it('attaches only the active prompt id and preserves an explicit event id', () => {
