@@ -119,10 +119,43 @@ const STAGED_CLAUDE_RUNTIME_PATTERN =
 const RUNTIME_OWNER_MARKER = '.open-science-managed-runtime'
 const CLAUDE_RUNTIME_OWNER = 'open-science:claude-code:v1\n'
 
+const ensureClaudeRuntimeOwnerMarker = async (root: string): Promise<void> => {
+  const markerPath = join(root, RUNTIME_OWNER_MARKER)
+  const markerStats = await lstat(markerPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  })
+
+  if (!markerStats) {
+    try {
+      await writeFile(markerPath, CLAUDE_RUNTIME_OWNER, { flag: 'wx' })
+      return
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        return ensureClaudeRuntimeOwnerMarker(root)
+      }
+      throw error
+    }
+  }
+
+  if (markerStats.isSymbolicLink()) {
+    throw new Error(`Refusing to use a symbolic-link ownership marker: ${markerPath}`)
+  }
+  if (!markerStats.isFile()) {
+    throw new Error(`Refusing to use a non-file ownership marker: ${markerPath}`)
+  }
+  if (markerStats.nlink > 1) {
+    throw new Error(`Refusing to use an ownership marker with multiple hard links: ${markerPath}`)
+  }
+  if ((await readFile(markerPath, 'utf8')) !== CLAUDE_RUNTIME_OWNER) {
+    throw new Error(`Refusing to replace an unrecognized ownership marker: ${markerPath}`)
+  }
+}
+
 const isOwnedClaudeRuntime = async (root: string): Promise<boolean> => {
   const markerPath = join(root, RUNTIME_OWNER_MARKER)
   const markerStats = await lstat(markerPath).catch(() => undefined)
-  if (!markerStats?.isFile()) return false
+  if (!markerStats?.isFile() || markerStats.nlink > 1) return false
   return (await readFile(markerPath, 'utf8').catch(() => undefined)) === CLAUDE_RUNTIME_OWNER
 }
 
@@ -491,16 +524,9 @@ const replaceManagedClaudeRoot = async (
   }
 
   await rejectSymbolicLink(root, 'the managed Claude runtime root')
-  await rejectSymbolicLink(
-    join(root, RUNTIME_OWNER_MARKER),
-    'the managed Claude runtime ownership marker'
-  )
-
-  try {
-    await writeFile(join(root, RUNTIME_OWNER_MARKER), CLAUDE_RUNTIME_OWNER)
-  } catch (error) {
+  await ensureClaudeRuntimeOwnerMarker(root).catch((error) => {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-  }
+  })
 
   try {
     await renamePath(root, backup)
@@ -556,7 +582,7 @@ const installManagedClaude = async ({
   await removeOwnedClaudeRuntimeSiblings(dataRoot, STAGED_CLAUDE_RUNTIME_PATTERN)
   try {
     await mkdir(scratch, { recursive: true })
-    await writeFile(join(scratch, RUNTIME_OWNER_MARKER), CLAUDE_RUNTIME_OWNER)
+    await ensureClaudeRuntimeOwnerMarker(scratch)
   } catch (error) {
     lastError = describeManagedInstallError(error)
     onEvent({
@@ -608,7 +634,7 @@ const installManagedClaude = async ({
             'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
           )
         }
-        await writeFile(join(stagedRoot, RUNTIME_OWNER_MARKER), CLAUDE_RUNTIME_OWNER)
+        await ensureClaudeRuntimeOwnerMarker(stagedRoot)
 
         reachedPublication = true
         await replaceManagedClaudeRoot(stagedRoot, root, renamePath)

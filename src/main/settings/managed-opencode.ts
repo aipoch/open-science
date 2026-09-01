@@ -175,10 +175,43 @@ const STAGED_OPENCODE_RUNTIME_PATTERN =
 const RUNTIME_OWNER_MARKER = '.open-science-managed-runtime'
 const OPENCODE_RUNTIME_OWNER = 'open-science:opencode:v1\n'
 
+const ensureOpencodeRuntimeOwnerMarker = async (root: string): Promise<void> => {
+  const markerPath = join(root, RUNTIME_OWNER_MARKER)
+  const markerStats = await lstat(markerPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  })
+
+  if (!markerStats) {
+    try {
+      await writeFile(markerPath, OPENCODE_RUNTIME_OWNER, { flag: 'wx' })
+      return
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        return ensureOpencodeRuntimeOwnerMarker(root)
+      }
+      throw error
+    }
+  }
+
+  if (markerStats.isSymbolicLink()) {
+    throw new Error(`Refusing to use a symbolic-link ownership marker: ${markerPath}`)
+  }
+  if (!markerStats.isFile()) {
+    throw new Error(`Refusing to use a non-file ownership marker: ${markerPath}`)
+  }
+  if (markerStats.nlink > 1) {
+    throw new Error(`Refusing to use an ownership marker with multiple hard links: ${markerPath}`)
+  }
+  if ((await readFile(markerPath, 'utf8')) !== OPENCODE_RUNTIME_OWNER) {
+    throw new Error(`Refusing to replace an unrecognized ownership marker: ${markerPath}`)
+  }
+}
+
 const isOwnedOpencodeRuntime = async (root: string): Promise<boolean> => {
   const markerPath = join(root, RUNTIME_OWNER_MARKER)
   const markerStats = await lstat(markerPath).catch(() => undefined)
-  if (!markerStats?.isFile()) return false
+  if (!markerStats?.isFile() || markerStats.nlink > 1) return false
   return (await readFile(markerPath, 'utf8').catch(() => undefined)) === OPENCODE_RUNTIME_OWNER
 }
 
@@ -355,16 +388,9 @@ const replaceManagedOpencodeRoot = async (
   }
 
   await rejectSymbolicLink(root, 'the managed OpenCode runtime root')
-  await rejectSymbolicLink(
-    join(root, RUNTIME_OWNER_MARKER),
-    'the managed OpenCode runtime ownership marker'
-  )
-
-  try {
-    await writeFile(join(root, RUNTIME_OWNER_MARKER), OPENCODE_RUNTIME_OWNER)
-  } catch (error) {
+  await ensureOpencodeRuntimeOwnerMarker(root).catch((error) => {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-  }
+  })
 
   try {
     await renamePath(root, backup)
@@ -473,7 +499,7 @@ export const installManagedOpencode = async ({
           error: `OpenCode installed but failed to run (${verification.reason}).${hint}`
         }
       }
-      await writeFile(join(stagedRoot, RUNTIME_OWNER_MARKER), OPENCODE_RUNTIME_OWNER)
+      await ensureOpencodeRuntimeOwnerMarker(stagedRoot)
 
       return { ok: true, version: resolution.version }
     } finally {
@@ -493,7 +519,7 @@ export const installManagedOpencode = async ({
   await removeOwnedOpencodeRuntimeSiblings(dataRoot, STAGED_OPENCODE_RUNTIME_PATTERN)
   try {
     await mkdir(scratch, { recursive: true })
-    await writeFile(join(scratch, RUNTIME_OWNER_MARKER), OPENCODE_RUNTIME_OWNER)
+    await ensureOpencodeRuntimeOwnerMarker(scratch)
   } catch (error) {
     lastError = error instanceof Error ? error.message : String(error)
     onEvent({

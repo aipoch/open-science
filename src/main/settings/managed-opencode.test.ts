@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import {
   chmod,
+  link,
   mkdir,
   mkdtemp,
   readFile,
@@ -230,6 +231,39 @@ describe('installManagedOpencode', () => {
     expect(outcome.result).toMatchObject({
       ok: false,
       error: expect.stringMatching(/symbolic link/i)
+    })
+  })
+
+  it('rejects a hard-linked ownership marker without modifying its external inode', async () => {
+    root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+    const externalMarker = join(root, 'external-opencode-marker')
+    const managedRoot = dirname(managedOpencodeDir(root))
+    await mkdir(managedOpencodeDir(root), { recursive: true })
+    await writeFile(externalMarker, 'EXTERNAL-DATA')
+    await link(externalMarker, join(managedRoot, '.open-science-managed-runtime'))
+    const tgz = buildTgz([
+      { name: 'package/bin/opencode', content: Buffer.from('#!/bin/sh\necho replacement\n') }
+    ])
+
+    const outcome = await installManagedOpencode({
+      installId: 'reject-hard-linked-marker',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform: { key: 'darwin-arm64', binName: 'opencode' },
+      fetchJson: async (url) =>
+        url.endsWith('/opencode-ai')
+          ? { 'dist-tags': { latest: '1.18.3' } }
+          : { dist: { tarball: 'https://reg/opencode.tgz', integrity: sha512(tgz) } },
+      fetchTarball: async () => ({ stream: Readable.from(tgz), totalBytes: tgz.length }),
+      verifyBinary: () => ({ ok: true }),
+      tmpDir: root
+    })
+
+    expect(await readFile(externalMarker, 'utf8')).toBe('EXTERNAL-DATA')
+    expect(outcome.result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/hard link/i)
     })
   })
 
@@ -889,6 +923,21 @@ describe('isManagedOpencodePath / uninstallManagedOpencode', () => {
     // Windows CI cannot create file symlinks without extra privileges. Model the no-follow lstat
     // result at the filesystem boundary while retaining real directory and read/remove behavior.
     nonRegularMarkerPaths.add(ownerMarker)
+
+    await uninstallManagedOpencode(root)
+
+    await expect(readFile(orphanPayload, 'utf8')).resolves.toBe('present')
+  })
+
+  it('preserves an orphan whose ownership marker has multiple hard links', async () => {
+    const uuid = '12345678-1234-1234-1234-123456789abc'
+    const orphanRoot = join(root, `opencode-managed.backup-${uuid}`)
+    const orphanPayload = join(orphanRoot, 'user-data')
+    const externalMarker = join(root, 'external-owner-marker')
+    await mkdir(orphanRoot, { recursive: true })
+    await writeFile(orphanPayload, 'present')
+    await writeFile(externalMarker, 'open-science:opencode:v1\n')
+    await link(externalMarker, join(orphanRoot, '.open-science-managed-runtime'))
 
     await uninstallManagedOpencode(root)
 

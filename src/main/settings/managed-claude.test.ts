@@ -1,4 +1,14 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -560,6 +570,35 @@ describe('managed-claude: install orchestration', () => {
     })
   })
 
+  it('rejects a hard-linked ownership marker without modifying its external inode', async () => {
+    const externalMarker = join(root, 'external-claude-marker')
+    const managedRoot = dirname(managedClaudeDir(root))
+    await mkdir(managedClaudeDir(root), { recursive: true })
+    await writeFile(externalMarker, 'EXTERNAL-DATA')
+    await link(externalMarker, join(managedRoot, '.open-science-managed-runtime'))
+    const { tgz } = fixture()
+
+    const outcome = await installManagedClaude({
+      installId: 'reject-hard-linked-marker',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      platform,
+      fetchJson: async (url) =>
+        url.endsWith('claude-code-linux-x64/2.1.209')
+          ? { dist: { tarball: 'https://reg/x.tgz', integrity: sha512(tgz) } }
+          : { 'dist-tags': { latest: '2.1.209' } },
+      fetchTarball: async () => ({ stream: Readable.from([tgz]), totalBytes: tgz.length }),
+      verifyBinary: async () => '2.1.209'
+    })
+
+    expect(await readFile(externalMarker, 'utf8')).toBe('EXTERNAL-DATA')
+    expect(outcome.result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/hard link/i)
+    })
+  })
+
   it('restores the existing runtime when publication fails', async () => {
     const existingPath = join(managedClaudeDir(root), 'claude')
     const managedRoot = dirname(managedClaudeDir(root))
@@ -761,6 +800,21 @@ describe('isManagedClaudePath / uninstallManagedClaude', () => {
     // Windows CI cannot create file symlinks without extra privileges. Model the no-follow lstat
     // result at the filesystem boundary while retaining real directory and read/remove behavior.
     nonRegularMarkerPaths.add(ownerMarker)
+
+    await uninstallManagedClaude(root)
+
+    await expect(readFile(orphanPayload, 'utf8')).resolves.toBe('present')
+  })
+
+  it('preserves an orphan whose ownership marker has multiple hard links', async () => {
+    const uuid = '12345678-1234-1234-1234-123456789abc'
+    const orphanRoot = join(root, `claude-code.backup-${uuid}`)
+    const orphanPayload = join(orphanRoot, 'user-data')
+    const externalMarker = join(root, 'external-owner-marker')
+    await mkdir(orphanRoot, { recursive: true })
+    await writeFile(orphanPayload, 'present')
+    await writeFile(externalMarker, 'open-science:claude-code:v1\n')
+    await link(externalMarker, join(orphanRoot, '.open-science-managed-runtime'))
 
     await uninstallManagedClaude(root)
 
