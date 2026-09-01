@@ -20,6 +20,21 @@ const deferred = (): {
   return { promise, resolve }
 }
 
+const runWithPageLocalStorage = (
+  script: (key: string) => void,
+  key: string,
+  localStorage: Pick<Storage, 'setItem'>
+): void => {
+  const previousWindow = (globalThis as { window?: unknown }).window
+  ;(globalThis as { window: { localStorage: Pick<Storage, 'setItem'> } }).window = { localStorage }
+  try {
+    script(key)
+  } finally {
+    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window
+    else (globalThis as { window: unknown }).window = previousWindow
+  }
+}
+
 describe('Electron E2E cleanup', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -101,44 +116,44 @@ describe('Electron E2E GitHub star nudge suppression', () => {
   it('suppresses the workspace star nudge on every E2E platform', async () => {
     const fixtureSource = await readFile(resolve('e2e/fixtures/electron-app.ts'), 'utf8')
     expect(fixtureSource).toContain('await suppressWorkspaceStarNudge(page)')
+    expect(fixtureSource).toContain("await page.reload({ waitUntil: 'domcontentloaded' })")
+    expect(fixtureSource).not.toContain('addInitScript')
     expect(fixtureSource).not.toMatch(
       /if \(process\.platform === 'win32'\) \{\s*\/\/ The workspace GitHub star nudge/
     )
   })
 
-  it('records the cooldown on the current page and later navigations', async () => {
+  it('records the cooldown on the current page', async () => {
     const now = 1_700_000_000_000
     const store = new Map<string, string>()
-    let initScriptArg: string | undefined
     vi.spyOn(Date, 'now').mockReturnValue(now)
 
-    const runInPage = (script: (key: string) => void, key: string): void => {
-      const previousWindow = (globalThis as { window?: unknown }).window
-      ;(globalThis as { window: { localStorage: Storage } }).window = {
-        localStorage: {
+    await suppressWorkspaceStarNudge({
+      evaluate: async (script, arg) => {
+        runWithPageLocalStorage(script, arg, {
           setItem: (name, value) => {
             store.set(name, value)
           }
-        } as Storage
-      }
-      try {
-        script(key)
-      } finally {
-        if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window
-        else (globalThis as { window: unknown }).window = previousWindow
-      }
-    }
-
-    await suppressWorkspaceStarNudge({
-      addInitScript: async (script, arg) => {
-        initScriptArg = arg
-      },
-      evaluate: async (script, arg) => {
-        runInPage(script, arg)
+        })
       }
     })
 
-    expect(initScriptArg).toBe(STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
     expect(store.get(STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)).toBe(String(now))
+  })
+
+  it('does not throw when the document denies localStorage', async () => {
+    await expect(
+      suppressWorkspaceStarNudge({
+        evaluate: async (script, arg) => {
+          runWithPageLocalStorage(script, arg, {
+            setItem: () => {
+              throw new Error(
+                "Failed to read the 'localStorage' property from 'Window': Access is denied for this document."
+              )
+            }
+          })
+        }
+      })
+    ).resolves.toBeUndefined()
   })
 })

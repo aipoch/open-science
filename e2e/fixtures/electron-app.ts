@@ -24,13 +24,14 @@ type E2eWindowMode = 'hidden' | 'normal'
 const STAR_NUDGE_LAST_SHOWN_STORAGE_KEY = 'open-science:github-star-nudge-last-shown-at'
 
 const recordStarNudgeCooldown = (storageKey: string): void => {
-  window.localStorage.setItem(storageKey, String(Date.now()))
+  try {
+    window.localStorage.setItem(storageKey, String(Date.now()))
+  } catch {
+    // Isolated source-preview documents and opaque origins deny localStorage.
+  }
 }
 
-const suppressWorkspaceStarNudge = async (
-  page: Pick<Page, 'addInitScript' | 'evaluate'>
-): Promise<void> => {
-  await page.addInitScript(recordStarNudgeCooldown, STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
+const suppressWorkspaceStarNudge = async (page: Pick<Page, 'evaluate'>): Promise<void> => {
   await page.evaluate(recordStarNudgeCooldown, STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
 }
 
@@ -260,16 +261,7 @@ const makeTreeWritable = async (root: string): Promise<void> => {
   )
 }
 
-const openMainWindow = async (
-  application: ElectronApplication,
-  rendererFailures: RendererFailureGate,
-  windowMode: E2eWindowMode
-): Promise<Page> => {
-  const page = await application.firstWindow()
-  // Hidden BrowserWindows do not produce animation frames reliably, so make
-  // presentation buffers commit immediately without changing normal-window tests.
-  if (windowMode === 'hidden') await page.emulateMedia({ reducedMotion: 'reduce' })
-  await rendererFailures.observe(page)
+const waitForRendererReady = async (page: Page): Promise<void> => {
   await page.waitForLoadState('domcontentloaded')
   // A fresh Windows profile can spend longer than the general assertion budget applying the real
   // schema manifest under runner I/O contention. Keep the startup gate aligned with settings load.
@@ -286,9 +278,32 @@ const openMainWindow = async (
     )
     .toBe('ready')
   await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
-  // The workspace GitHub star nudge is not part of these journeys. Record the cooldown before
-  // workspace mounts, and again for later reloads, so the 5s popover cannot intercept clicks.
+}
+
+const applyHiddenWindowPresentation = async (
+  page: Page,
+  windowMode: E2eWindowMode
+): Promise<void> => {
+  // Hidden BrowserWindows do not produce animation frames reliably, so make
+  // presentation buffers commit immediately without changing normal-window tests.
+  if (windowMode === 'hidden') await page.emulateMedia({ reducedMotion: 'reduce' })
+}
+
+const openMainWindow = async (
+  application: ElectronApplication,
+  rendererFailures: RendererFailureGate,
+  windowMode: E2eWindowMode
+): Promise<Page> => {
+  const page = await application.firstWindow()
+  await applyHiddenWindowPresentation(page, windowMode)
+  await rendererFailures.observe(page)
+  await waitForRendererReady(page)
+  // Writing the cooldown after first paint does not cancel a timer GitHubStarBadge already
+  // scheduled. Reload so the workspace variant remounts with the cooldown already set.
   await suppressWorkspaceStarNudge(page)
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await applyHiddenWindowPresentation(page, windowMode)
+  await waitForRendererReady(page)
   return page
 }
 
