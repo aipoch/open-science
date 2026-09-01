@@ -715,6 +715,66 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(useSessionStore.getState().sessions[0]?.branchSwitchBlocked).not.toBe(true)
   })
 
+  it('restores the send lock from a persisted active Fix Loop review', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createReviewableSession()],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('do not race the correction'))
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+
+    const activeFixLoopReview: ReviewWithChecks = {
+      id: 'review-fix-loop',
+      projectId: 'proj-1',
+      sessionId: 'sess-a',
+      turnMessageId: 'agent-1',
+      scope: {
+        turnMessageId: 'agent-1',
+        blocks: [],
+        artifactVersionIds: []
+      },
+      lifecycle: 'running',
+      outcome: 'flagged',
+      model: 'test-model',
+      reviewerLog: [],
+      createdAt: 1_000,
+      updatedAt: 1_000,
+      checks: [
+        {
+          id: 'finding-1',
+          reviewId: 'review-fix-loop',
+          status: 'fail',
+          claim: 'The answer is incorrect.',
+          evidence: 'The persisted result still requires correction.',
+          resolution: 'open',
+          reflagCount: 0,
+          sortIndex: 0
+        }
+      ]
+    }
+
+    await act(async () => {
+      useReviewStore.getState().handleReviewUpdate({ review: activeFixLoopReview })
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(false)
+
+    await act(async () => {
+      useReviewStore.getState().handleReviewUpdate({
+        review: {
+          ...activeFixLoopReview,
+          lifecycle: 'complete',
+          updatedAt: 2_000
+        }
+      })
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+  })
+
   it('disables sending while the runtime owns an otherwise idle session', async () => {
     await renderPage()
 

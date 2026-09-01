@@ -47,6 +47,56 @@ describe('Reviewer resilience', () => {
     })
   })
 
+  it('recovers a persisted active Fix Loop without discarding its flagged result', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-reviewer-fix-loop-restart-'))
+    const database = await getProjectDbClient(storageRoot)
+    const repository = new ReviewRepository(() => Promise.resolve(database))
+    const review = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'turn-1',
+      scope: {
+        turnMessageId: 'turn-1',
+        blocks: [
+          {
+            id: 'message:turn-1',
+            kind: 'message',
+            sourceId: 'turn-1',
+            blockIndex: 0,
+            contentHash: 'hash-1'
+          }
+        ],
+        artifactVersionIds: []
+      }
+    })
+    await repository.addChecks(review.id, [
+      {
+        status: 'fail',
+        claim: 'The result is incorrect.',
+        evidence: 'The persisted assessment found a contradiction.',
+        locator: { blockRef: { messageId: 'turn-1', blockIndex: 0 }, contentHash: 'hash-1' }
+      }
+    ])
+
+    await database.review.update({
+      where: { id: review.id },
+      data: { lifecycle: 'running', outcome: 'flagged' }
+    })
+
+    expect(await repository.recoverInterruptedReviews()).toBe(1)
+    const [restored] = await repository.getReviewsForProjectSession('project-1', 'session-1')
+    expect(restored).toMatchObject({
+      lifecycle: 'complete',
+      outcome: 'flagged',
+      checks: [
+        expect.objectContaining({
+          resolution: 'unaddressed',
+          unaddressedTrigger: 'interrupted'
+        })
+      ]
+    })
+  })
+
   it('accepts no more than five checks in one Reviewer result', () => {
     expect(
       submitFindingsInputSchema.safeParse({ checks: [check, check, check, check, check] }).success

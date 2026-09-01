@@ -177,6 +177,7 @@ const runReviewWithSession = async (
     model,
     onReviewUpdate,
     onStarted,
+    keepFlaggedReviewRunning: mainSessionId !== undefined,
     reviewerTimeoutMs,
     reviewerMaxUpdates,
     abortSignal: fixLoopAbortSignal,
@@ -219,7 +220,17 @@ const runReviewWithSession = async (
         recordUsage
       })
     } finally {
-      onFixLoopEnd?.()
+      try {
+        await runReviewMutation(runSessionMutation, () =>
+          reviewRepository.updateReview(finalReview.id, {
+            lifecycle: 'complete',
+            outcome: 'flagged',
+            errorMessage: null
+          })
+        )
+      } finally {
+        onFixLoopEnd?.()
+      }
     }
 
     // Reload checks after the fix loop so the returned object reflects final resolutions.

@@ -262,7 +262,7 @@ const WorkspacePage = ({
   // The selected session is the only conversation rendered in the center panel. Selecting it by
   // id (instead of deriving it from the full list) keeps chunk commits for other sessions from
   // re-rendering the page; the active session's own per-chunk identity changes still do.
-  const activeSession = useSessionStore((state) => {
+  const storedActiveSession = useSessionStore((state) => {
     if (activeProject?.archivedAt !== undefined) return undefined
     const selected = state.sessions.find((session) => session.id === selectedSessionId)
     if (!selected || selected.projectId !== scopedProjectId || selected.archivedAt !== undefined) {
@@ -270,6 +270,21 @@ const WorkspacePage = ({
     }
     return selected
   })
+  const hasPersistedActiveFixLoop = useReviewStore((state) => {
+    if (!storedActiveSession) return false
+    return selectProjectSessionReviews(
+      state.reviewsBySession,
+      storedActiveSession.projectId,
+      storedActiveSession.id
+    ).some((review) => review.lifecycle === 'running' && review.outcome === 'flagged')
+  })
+  const activeSession = useMemo(
+    () =>
+      storedActiveSession && hasPersistedActiveFixLoop && !storedActiveSession.fixLoopActive
+        ? { ...storedActiveSession, fixLoopActive: true }
+        : storedActiveSession,
+    [hasPersistedActiveFixLoop, storedActiveSession]
+  )
   const {
     activeAgentConfiguration,
     agentConfigurationUnavailable,

@@ -7,7 +7,7 @@
 
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ReviewWithChecks, ReviewCheck } from '../../../../shared/reviewer'
 
@@ -240,6 +240,20 @@ describe('SessionReviewerPanel — stale review notice', () => {
     })
 
     expect(container.querySelector('[data-testid="reviewer-stale-notice"]')).toBeNull()
+  })
+
+  it('offers a re-run for a fresh terminal review with unresolved findings', () => {
+    const onRerun = vi.fn().mockResolvedValue(true)
+
+    act(() => {
+      root.render(<ReviewerCard review={makeReview()} onRerun={onRerun} />)
+    })
+
+    expect(
+      Array.from(container.querySelectorAll('button')).some(
+        (button) => button.textContent === 'Re-run review'
+      )
+    ).toBe(true)
   })
 })
 

@@ -3575,6 +3575,52 @@ describe('loop guard: suppressNextAutoReview', () => {
     vi.unstubAllGlobals()
   })
 
+  it('does not auto-review a Reviewer correction when the one-shot suppression event was missed', async () => {
+    const reviewerRun = vi.fn().mockResolvedValue(undefined)
+    stubReviewerApi(reviewerRun)
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'reviewer-correction-prompt',
+        role: 'user',
+        messageId: 'reviewer-correction-prompt',
+        promptMessageId: 'reviewer-correction-prompt',
+        text: '[Auditor] Correct the unsupported claim.',
+        attribution: {
+          kind: 'application',
+          feature: 'reviewer',
+          purpose: 'correction',
+          causeReviewId: 'review-1'
+        }
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'reviewer-correction-response',
+        role: 'assistant',
+        messageId: 'reviewer-correction-response',
+        promptMessageId: 'reviewer-correction-prompt',
+        text: 'Corrected the unsupported claim.'
+      })
+    )
+
+    // Simulate a refreshed or late-joining renderer: it has the durable correction attribution but
+    // never received reviewer:suppress-next-auto-review before the correction turn stopped.
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'reviewer-correction-stop',
+        kind: 'stop',
+        sessionId: 'transport-session-1',
+        promptMessageId: 'reviewer-correction-prompt'
+      })
+    )
+    await vi.runAllTimersAsync()
+
+    expect(reviewerRun).not.toHaveBeenCalled()
+
+    vi.unstubAllGlobals()
+  })
+
   it('does not suppress a different session', async () => {
     const reviewerRun = vi.fn().mockResolvedValue(undefined)
     stubReviewerApi(reviewerRun)
