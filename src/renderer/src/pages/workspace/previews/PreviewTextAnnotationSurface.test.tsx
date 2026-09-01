@@ -123,6 +123,7 @@ describe('PreviewTextAnnotationSurface', () => {
     previewItem = item(),
     sourcePageNumber,
     pdfEvidenceSource,
+    annotationBlockedByHistoricalVersion = false,
     content = 'Experiment result: confidence intervals overlap.'
   }: {
     activeAnnotations?: readonly Annotation[]
@@ -133,6 +134,7 @@ describe('PreviewTextAnnotationSurface', () => {
     previewItem?: PreviewFileItem
     sourcePageNumber?: number
     pdfEvidenceSource?: PdfAnnotation['source']
+    annotationBlockedByHistoricalVersion?: boolean
     content?: string
   } = {}): Promise<void> => {
     await act(async () => {
@@ -147,6 +149,7 @@ describe('PreviewTextAnnotationSurface', () => {
           sourcePageNumber={sourcePageNumber}
           pdfEvidenceSource={pdfEvidenceSource}
           pdfExtractorVersion={pdfEvidenceSource ? 'pdfjs-5.4.624' : undefined}
+          annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}
         >
           <p>{content}</p>
         </PreviewTextAnnotationSurface>
@@ -229,6 +232,25 @@ describe('PreviewTextAnnotationSurface', () => {
       })
     )
     expect(registeredRanges.size).toBe(1)
+  })
+
+  it('explains why an editable historical version cannot be annotated', async () => {
+    const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
+    await renderSurface({
+      onAddAnnotation,
+      annotationBlockedByHistoricalVersion: true
+    })
+    await selectQuote()
+
+    const entry = document.querySelector<HTMLElement>('[data-annotation-trigger]')
+    await act(async () => entry?.click())
+
+    expect(document.querySelector('[data-annotation-trigger]')).toBe(entry)
+    expect(document.querySelector('textarea')).toBeNull()
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      'Historical versions cannot be annotated. Switch to the latest version to annotate.'
+    )
+    expect(onAddAnnotation).not.toHaveBeenCalled()
   })
 
   it('records the owning PDF page with a selected quote', async () => {

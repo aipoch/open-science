@@ -216,6 +216,7 @@ const getDraftHighlight = (): Highlight | undefined => {
 export const PreviewTextAnnotationSurface = ({
   item,
   activeAnnotations = NO_ANNOTATIONS,
+  annotationBlockedByHistoricalVersion = false,
   onAddAnnotation,
   onUpdateAnnotationNote,
   onAnnotationError,
@@ -652,6 +653,7 @@ export const PreviewTextAnnotationSurface = ({
           onCancel={() => setOpen(false)}
           onNoteChange={setNote}
           onAdd={() => add()}
+          annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}
           triggerActions={triggerActions}
         />
       ) : null}

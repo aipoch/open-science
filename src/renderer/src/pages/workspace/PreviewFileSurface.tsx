@@ -634,6 +634,10 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       navigationInspect: managedNavigationInspect,
       controlsInspect: managedControlsInspect
     } = managedWorkflow
+    // Editable managed files accept new annotations only at the logical DB head.
+    const annotationBlockedByHistoricalVersion =
+      managedNavigationInspect?.canEdit === true &&
+      managedNavigationInspect.selectedVersionId !== managedNavigationInspect.headVersionId
     const surfaceKey = item.id
     const showProvenance = provenanceTarget === surfaceKey
     const lineageKey = `${projectId ?? ''}:${previewItem.sessionId}:${previewItem.artifactId ?? ''}`
@@ -1163,6 +1167,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
                   item={resolvedPreviewItem}
                   downloadVersionContext={managedWorkflow.downloadVersionContext}
+                  annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}
                   activeAnnotations={activeAnnotations}
                   onAddAnnotation={onAddAnnotation}
                   onUpdateAnnotationNote={onUpdateAnnotationNote}
@@ -1191,6 +1196,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
               key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
               item={resolvedPreviewItem}
               downloadVersionContext={managedWorkflow.downloadVersionContext}
+              annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}
               activeAnnotations={activeAnnotations}
               onAddAnnotation={onAddAnnotation}
               onUpdateAnnotationNote={onUpdateAnnotationNote}

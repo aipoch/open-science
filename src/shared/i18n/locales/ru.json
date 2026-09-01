@@ -155,6 +155,7 @@
     "An annotated image is no longer available. Restore access to its fixed version or remove the annotation, then try again.": "Аннотированное изображение больше недоступно. Восстановите доступ к зафиксированной версии или удалите аннотацию и повторите попытку.",
     "Annotated for Agent": "Аннотировано для Агента",
     "Annotate": "Аннотировать",
+    "Historical versions cannot be annotated. Switch to the latest version to annotate.": "Исторические версии нельзя аннотировать. Переключитесь на последнюю версию, чтобы добавить аннотацию.",
     "Citate": "Цитировать",
     "Explain": "Объяснить",
     "Explain this passage.": "Объясните этот фрагмент.",

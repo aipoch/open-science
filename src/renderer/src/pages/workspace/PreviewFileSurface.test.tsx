@@ -51,6 +51,7 @@ vi.mock('./ManagedFileDownloadButton', () => ({
 vi.mock('./previews/PreviewFileContent', () => ({
   PreviewFileContent: (props: {
     item: PreviewFileItem
+    annotationBlockedByHistoricalVersion?: boolean
     onPdfReadingPositionChange?: (position: { pageNumber: number; pageCount: number }) => void
   }) => {
     previewContentSpy(props)
@@ -331,6 +332,29 @@ describe('PreviewFileSurface managed text versions', () => {
       container.querySelector('[aria-label="Compare README.md with its source version"]')
     ).toBeNull()
     expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
+  })
+
+  it('blocks annotation when an editable managed file is not on its head Version', async () => {
+    const historicalItem = {
+      ...managedUploadItem,
+      selectedVersionId: 'upload-v1',
+      versionNumber: 1,
+      path: 'upload-version:project-1/session-1/upload-v1'
+    }
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { ...managedInspect, selectedVersionId: 'upload-v1', text: '# Original\n' }
+    })
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={historicalItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(previewContentSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ annotationBlockedByHistoricalVersion: true })
+    )
   })
 
   it('uses the exact item passed to an independent surface instead of a same-id workbench tab', async () => {

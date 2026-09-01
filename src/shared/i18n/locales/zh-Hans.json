@@ -146,6 +146,7 @@
     "An annotated image is no longer available. Restore access to its fixed version or remove the annotation, then try again.": "某个已标注的图片已不可用。请恢复对其固定版本的访问权限，或移除该标注，然后重试。",
     "Annotated for Agent": "已为智能体标注",
     "Annotate": "标注",
+    "Historical versions cannot be annotated. Switch to the latest version to annotate.": "无法标注历史版本。请切换到最新版本后再进行标注。",
     "Citate": "引用",
     "Explain": "解释",
     "Explain this passage.": "解释这段内容。",

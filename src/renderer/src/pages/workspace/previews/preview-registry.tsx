@@ -16,6 +16,7 @@ import { TiffPreviewRenderer } from './renderers/TiffPreview'
 // Keeps the registry as the single routing point while avoiding dynamic component creation in render.
 export const renderPreviewFile = ({
   item,
+  annotationBlockedByHistoricalVersion,
   activeAnnotations,
   onAddAnnotation,
   onUpdateAnnotationNote,
@@ -25,6 +26,7 @@ export const renderPreviewFile = ({
 }: PreviewFileRendererProps): React.JSX.Element | undefined => {
   const props = {
     item,
+    annotationBlockedByHistoricalVersion,
     activeAnnotations,
     onAddAnnotation,
     onUpdateAnnotationNote,
