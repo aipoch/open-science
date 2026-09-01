@@ -463,7 +463,7 @@ describe('preload bridge — public surface inventory', () => {
       'runtime.setInstallAuthorized',
       'runtime.setSelection',
       'runtime.survey',
-      'runtime.uninstallManagedEnvironment',
+      'runtime.uninstallAgentEnvironment',
       'runtime.unregisterInterpreter',
       'saveBlobFile',
       'saveManagedFile',

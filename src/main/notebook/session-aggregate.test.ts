@@ -92,16 +92,11 @@ describe('NotebookSessionAggregate', () => {
       return 'other-result'
     })
 
-    expect(session.hasPendingExecution('python:default-python')).toBe(true)
-    expect(session.hasPendingExecution('r:default-r')).toBe(true)
-
     await expect(other).resolves.toBe('other-result')
-    expect(session.hasPendingExecution('r:default-r')).toBe(false)
     expect(started).toEqual(['first', 'other'])
 
     releaseFirst()
     await expect(Promise.all([first, second])).resolves.toEqual(['first-result', 'second-result'])
-    expect(session.hasPendingExecution('python:default-python')).toBe(false)
     expect(started).toEqual(['first', 'other', 'second'])
   })
 

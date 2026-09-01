@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { join } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type {
@@ -8,8 +7,6 @@ import type {
   RuntimeSelection
 } from '../../shared/notebook-runtime'
 import type { DiscoveredInterpreter } from './environment-discovery'
-import { DEFAULT_PY_ENV, envDirectoryName, pythonBin } from './runtime-paths'
-import { managedRuntimeIdentity } from './runtime-target'
 
 const discoveryState = vi.hoisted(() => ({
   python: [] as DiscoveredInterpreter[],
@@ -300,170 +297,74 @@ describe('runtime selection workflows', () => {
     await expect(workflows.getAgentEnvironmentCreationEnabled()).resolves.toBe(false)
   })
 
-  it('rejects a non-boolean Agent environment-creation policy before the settings port', async () => {
-    const settingsService = fakeSettingsService()
-    settingsService.setAgentEnvironmentCreationEnabled = vi.fn(
-      settingsService.setAgentEnvironmentCreationEnabled
-    )
+  it('rejects a non-boolean Agent environment creation policy', async () => {
     const workflows = createRuntimeSelectionWorkflows({
-      settingsService,
+      settingsService: fakeSettingsService(),
       runtimeRoot: () => '/data/runtime',
       registry: fakeRegistry()
     })
 
     await expect(
       workflows.setAgentEnvironmentCreationEnabled({ enabled: 'false' } as never)
-    ).rejects.toThrow('Agent environment creation enabled must be a boolean.')
-    expect(settingsService.setAgentEnvironmentCreationEnabled).not.toHaveBeenCalled()
+    ).rejects.toThrow('must be a boolean')
   })
 
-  it('uninstalls only the exact current managed default when a legacy managed prefix also exists', async () => {
+  it('uninstalls a freshly discovered Agent-created named environment', async () => {
     const settingsService = fakeSettingsService()
-    const rawRuntimeId = managedRuntimeIdentity('/data/runtime', 'python', DEFAULT_PY_ENV).runtimeId
-    const legacyRuntimeId = '/data/runtime/envs/default-python-3.13/bin/python'
+    const runtimeId = '/data/runtime/envs/analysis/bin/python'
     discoveryState.python = [
       {
         language: 'python',
-        provenance: 'app-managed',
-        envId: legacyRuntimeId,
-        interpreterPath: legacyRuntimeId,
-        label: 'Legacy managed Python',
-        condaEnv: 'default-python-3.13',
-        runnable: true
-      },
-      {
-        language: 'python',
-        provenance: 'app-managed',
-        envId: rawRuntimeId,
-        interpreterPath: rawRuntimeId,
-        label: 'Current managed Python',
-        condaEnv: DEFAULT_PY_ENV,
-        runnable: true
-      },
-      {
-        language: 'python',
-        provenance: 'user-own',
-        envId: '/usr/bin/python3',
-        interpreterPath: '/usr/bin/python3',
-        label: 'System Python',
-        runnable: true
-      }
-    ]
-    const uninstallManagedEnvironment = vi.fn(async (_language, commitDisabledState) =>
-      commitDisabledState()
-    )
-    const workflows = createRuntimeSelectionWorkflows({
-      settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry(),
-      uninstallManagedEnvironment
-    })
-
-    await workflows.uninstallManagedEnvironment({ language: 'python' })
-
-    expect(uninstallManagedEnvironment).toHaveBeenCalledWith('python', expect.any(Function))
-    expect(settingsService.enablement.get('python')?.enabled).toMatchObject({
-      [rawRuntimeId]: false
-    })
-    expect(settingsService.enablement.get('python')?.enabled[legacyRuntimeId]).toBeUndefined()
-    expect(settingsService.enablement.get('python')?.enabled['/usr/bin/python3']).toBeUndefined()
-  })
-
-  it('keeps a legacy Windows default disabled after uninstall switches resolution to the short prefix', async () => {
-    const settingsService = fakeSettingsService()
-    const legacyRuntimeId = pythonBin('/data/runtime/envs/default-python', 'win32')
-    const futureShortRuntimeId = pythonBin(
-      join('/data/runtime', 'envs', envDirectoryName(DEFAULT_PY_ENV, 'win32')),
-      'win32'
-    )
-    discoveryState.python = [
-      {
-        language: 'python',
-        provenance: 'app-managed',
-        envId: legacyRuntimeId,
-        interpreterPath: legacyRuntimeId,
-        label: 'Current managed Python in legacy layout',
-        condaEnv: DEFAULT_PY_ENV,
-        runnable: true
-      }
-    ]
-    const workflows = createRuntimeSelectionWorkflows({
-      settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry(),
-      platform: 'win32',
-      uninstallManagedEnvironment: vi.fn(async (_language, commitDisabledState) =>
-        commitDisabledState()
-      )
-    })
-
-    await workflows.uninstallManagedEnvironment({ language: 'python' })
-
-    expect(settingsService.enablement.get('python')?.enabled).toMatchObject({
-      [legacyRuntimeId]: false,
-      [futureShortRuntimeId]: false
-    })
-  })
-
-  it('refuses managed uninstall while work is running before changing persisted state', async () => {
-    const settingsService = fakeSettingsService()
-    const runtimeId = managedRuntimeIdentity('/data/runtime', 'python', DEFAULT_PY_ENV).runtimeId
-    discoveryState.python = [
-      {
-        language: 'python',
-        provenance: 'app-managed',
+        provenance: 'agent-created',
         envId: runtimeId,
         interpreterPath: runtimeId,
-        label: 'Managed Python',
-        condaEnv: DEFAULT_PY_ENV,
+        label: 'analysis',
+        condaEnv: 'analysis',
         runnable: true
       }
     ]
-    const uninstallManagedEnvironment = vi.fn(async () => undefined)
+    const removeAgentEnvironment = vi.fn(async () => undefined)
     const workflows = createRuntimeSelectionWorkflows({
       settingsService,
       runtimeRoot: () => '/data/runtime',
       registry: fakeRegistry(),
-      describeRuntimeUsage: () => ({ running: 1, idle: 0, dormant: 0 }),
-      uninstallManagedEnvironment
+      removeAgentEnvironment
     })
 
-    await expect(workflows.uninstallManagedEnvironment({ language: 'python' })).rejects.toThrow(
-      'RUNTIME_UNINSTALL_IN_USE'
-    )
-    expect(settingsService.enablement.has('python')).toBe(false)
-    expect(uninstallManagedEnvironment).not.toHaveBeenCalled()
+    await workflows.uninstallAgentEnvironment({ language: 'python', envId: runtimeId })
+
+    expect(removeAgentEnvironment).toHaveBeenCalledWith('analysis')
   })
 
-  it('does not persist disabled state when locked uninstall admission rejects', async () => {
-    const settingsService = fakeSettingsService()
-    const runtimeId = managedRuntimeIdentity('/data/runtime', 'python', DEFAULT_PY_ENV).runtimeId
-    discoveryState.python = [
-      {
-        language: 'python',
-        provenance: 'app-managed',
-        envId: runtimeId,
-        interpreterPath: runtimeId,
-        label: 'Managed Python',
-        condaEnv: DEFAULT_PY_ENV,
-        runnable: true
-      }
-    ]
-    const workflows = createRuntimeSelectionWorkflows({
-      settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry(),
-      describeRuntimeUsage: () => ({ running: 0, idle: 1, dormant: 0 }),
-      uninstallManagedEnvironment: vi.fn(async () => {
-        throw new Error('RUNTIME_UNINSTALL_IN_USE: execution won the admission race')
+  it.each(['app-managed', 'user-own'] as const)(
+    'refuses to uninstall a %s environment',
+    async (provenance) => {
+      const settingsService = fakeSettingsService()
+      discoveryState.python = [
+        {
+          language: 'python',
+          provenance,
+          envId: '/target/python',
+          interpreterPath: '/target/python',
+          label: 'Protected Python',
+          condaEnv: provenance === 'app-managed' ? 'default-python' : undefined,
+          runnable: true
+        }
+      ]
+      const removeAgentEnvironment = vi.fn(async () => undefined)
+      const workflows = createRuntimeSelectionWorkflows({
+        settingsService,
+        runtimeRoot: () => '/data/runtime',
+        registry: fakeRegistry(),
+        removeAgentEnvironment
       })
-    })
 
-    await expect(workflows.uninstallManagedEnvironment({ language: 'python' })).rejects.toThrow(
-      'RUNTIME_UNINSTALL_IN_USE'
-    )
-    expect(settingsService.enablement.has('python')).toBe(false)
-  })
+      await expect(
+        workflows.uninstallAgentEnvironment({ language: 'python', envId: '/target/python' })
+      ).rejects.toThrow('Only a discovered Runtime Environment created by the Agent')
+      expect(removeAgentEnvironment).not.toHaveBeenCalled()
+    }
+  )
 
   it('discovers both languages from one manual-catalog and runtime-root snapshot', async () => {
     const settingsService = fakeSettingsService()

@@ -110,16 +110,7 @@ const harness = (
       logPackageFailure: vi.fn(),
       logPackageResult: vi.fn(),
       recommendRestart: vi.fn(),
-      captureRemovalAdmission: vi.fn((environment: string) => ({
-        environment,
-        generation: 0,
-        removing: false
-      })),
-      runPackageAdmission: async <Result>(
-        _token: { environment: string; generation: number; removing: boolean },
-        operation: () => Promise<Result>
-      ): Promise<Result> => operation(),
-      runPackageMutation: async <Result>(
+      runMutation: async <Result>(
         _environment: string,
         operation: () => Promise<Result>
       ): Promise<Result> => operation(),
@@ -237,49 +228,6 @@ describe('NotebookPackageOperations', () => {
     )
     expect(options.environmentOperations.recommendRestart).toHaveBeenCalledWith('r', 'default-r')
     expect(options.notifyChanged).toHaveBeenCalledWith(activeSession)
-  })
-
-  it('rejects a default package request when removal completes during mirror resolution', async () => {
-    let removalGeneration = 0
-    const capturedEnvironments: string[] = []
-    const admittedTokens: Array<{ environment: string; generation: number }> = []
-    const captureRemovalAdmission = (
-      environment: string
-    ): { environment: string; generation: number; removing: boolean } => {
-      capturedEnvironments.push(environment)
-      return { environment, generation: removalGeneration, removing: false }
-    }
-    const runPackageAdmission = async <Result>(
-      token: { environment: string; generation: number; removing: boolean },
-      operation: () => Promise<Result>
-    ): Promise<Result> => {
-      admittedTokens.push(token)
-      if (token.generation !== removalGeneration) {
-        throw new Error(`RUNTIME_ENVIRONMENT_REMOVING: ${token.environment}`)
-      }
-      return operation()
-    }
-    const { owner, options } = harness(session('session-1'), {
-      resolvePackageMirror: vi.fn(async () => {
-        removalGeneration += 1
-        return { pypiIndex: 'https://mirror/simple' }
-      })
-    })
-    options.environmentOperations.captureRemovalAdmission = captureRemovalAdmission
-    options.environmentOperations.runPackageAdmission = runPackageAdmission
-
-    const result = await owner.manage({ language: 'python', packages: ['numpy'] })
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: expect.stringContaining('RUNTIME_ENVIRONMENT_REMOVING'),
-      target: { environmentName: 'default-python' }
-    })
-    expect(capturedEnvironments).toEqual(['default-python'])
-    expect(admittedTokens).toEqual([
-      { environment: 'default-python', generation: 0, removing: false }
-    ])
-    expect(options.installPackages).not.toHaveBeenCalled()
   })
 
   it('returns an explicit target receipt when the admitted installer throws', async () => {

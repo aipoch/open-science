@@ -4,7 +4,6 @@ import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import type { NotebookLaneIdentity } from './lane-identity'
 import { EnvironmentLeaseManager, type EnvironmentLeaseMode } from './environment-lease-manager'
 import type { NotebookRecoveryCoordinator } from './recovery-coordinator'
-import { managedRuntimeIdentity } from './runtime-target'
 import { errorLogFields } from '../logger'
 import {
   boundedRuntimeDiagnostic,
@@ -25,12 +24,10 @@ type EnvironmentOperationKind = 'execution' | 'inspection' | 'mutation' | 'provi
 type EnvironmentOperationSession = {
   readonly projectId: string
   readonly sessionId: string
-  readonly runtimeRoot?: string
   readonly lane: NotebookLaneIdentity
   runtimeBinding(language: NotebookLanguage): NotebookSessionRuntimeBinding | undefined
   setRuntimeBinding(language: NotebookLanguage, binding: NotebookSessionRuntimeBinding): void
   kernelStatus(processKey: string): NotebookKernelMetadata['lastKnownStatus'] | undefined
-  hasPendingExecution?(processKey: string): boolean
   markForceStopped(processKey: string): void
   drainExecution(processKey: string): Promise<void>
   terminateExecutor(kind: 'python' | 'r', env: string): Promise<void>
@@ -56,12 +53,6 @@ export type NotebookEnvironmentOperationDiagnostic = Readonly<{
   level: 'info' | 'warn' | 'error'
   message: string
   fields: Record<string, unknown>
-}>
-
-export type EnvironmentRemovalAdmissionToken = Readonly<{
-  environment: string
-  generation: number
-  removing: boolean
 }>
 
 export type NotebookEnvironmentOperationsSnapshot = Readonly<{
@@ -131,21 +122,6 @@ const runEnvironment = (
   return defaultEnvironment(language)
 }
 
-const implicitManagedRuntimeTarget = (
-  session: EnvironmentOperationSession,
-  language: NotebookLanguage,
-  runtimeId: string
-): { environment: string; processKey: string } | undefined => {
-  if (session.runtimeBinding(language) !== undefined || session.runtimeRoot === undefined) {
-    return undefined
-  }
-  const environment = defaultEnvironment(language)
-  if (managedRuntimeIdentity(session.runtimeRoot, language, environment).runtimeId !== runtimeId) {
-    return undefined
-  }
-  return { environment, processKey: processKey(language, environment) }
-}
-
 const cloneDiagnosticValue = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(cloneDiagnosticValue)
   if (value === null || typeof value !== 'object') return value
@@ -166,15 +142,7 @@ export class NotebookEnvironmentOperations {
   >()
   private readonly restartRecommendations = new Set<string>()
   private readonly revocationDrains = new Set<Promise<void>>()
-  private readonly revocationReservations = new Map<string, Set<Promise<void>>>()
-  private readonly executionReservations = new Map<string, Set<Promise<void>>>()
   private readonly repairBlocks = new Set<string>()
-  private readonly removals = new Set<string>()
-  private readonly removalGenerations = new Map<string, number>()
-  // These reservations avoid holding a shared env lease while a provision/package request performs
-  // admission work before later taking the exclusive prefix lease. Closing the removal barrier makes
-  // the set finite before it is drained.
-  private readonly removalAdmissionDrains = new Map<string, Set<Promise<void>>>()
   private provisioner: DefaultEnvProvisioner | undefined
   private reportProvisionProgress: (progress: ProvisionProgress) => void = () => undefined
   private progress: ProvisionProgress | undefined
@@ -218,7 +186,7 @@ export class NotebookEnvironmentOperations {
       this.progress = scoped
       this.reportProvisionProgress(scoped)
     }
-    await this.runProvisionAdmission(input.environment, async () => {
+    await this.track('provision', input.environment, async () => {
       try {
         if (input.language === 'r') await provisioner.provisionR(report)
         else await provisioner.provisionPython(report)
@@ -237,112 +205,10 @@ export class NotebookEnvironmentOperations {
     environment: string,
     operation: () => Promise<T>
   ): Promise<T> {
-    if (this.removals.has(environment)) return Promise.reject(this.removalInProgress(environment))
-    return this.withLease(kind, environment, 'shared', async () => {
-      if (this.removals.has(environment)) throw this.removalInProgress(environment)
-      return operation()
-    })
-  }
-
-  runExecutionAdmission<T>(environment: string, operation: () => Promise<T>): Promise<T> {
-    if (this.removals.has(environment)) return Promise.reject(this.removalInProgress(environment))
-
-    let resolveDrain!: () => void
-    const drain = new Promise<void>((resolve) => {
-      resolveDrain = resolve
-    })
-    const drains = this.executionReservations.get(environment) ?? new Set<Promise<void>>()
-    drains.add(drain)
-    this.executionReservations.set(environment, drains)
-    const release = (): void => {
-      drains.delete(drain)
-      if (drains.size === 0) this.executionReservations.delete(environment)
-      resolveDrain()
-    }
-
-    try {
-      if (this.removals.has(environment)) throw this.removalInProgress(environment)
-      return operation().finally(release)
-    } catch (error) {
-      release()
-      return Promise.reject(error)
-    }
+    return this.withLease(kind, environment, 'shared', operation)
   }
 
   runMutation<T>(environment: string, operation: () => Promise<T>): Promise<T> {
-    return this.withLease('mutation', environment, 'exclusive', operation)
-  }
-
-  runPackageMutation<T>(environment: string, operation: () => Promise<T>): Promise<T> {
-    if (this.removals.has(environment)) return Promise.reject(this.removalInProgress(environment))
-    return this.withLease('mutation', environment, 'exclusive', async () => {
-      if (this.removals.has(environment)) throw this.removalInProgress(environment)
-      return operation()
-    })
-  }
-
-  captureRemovalAdmission(environment: string): EnvironmentRemovalAdmissionToken {
-    return {
-      environment,
-      generation: this.removalGenerations.get(environment) ?? 0,
-      removing: this.removals.has(environment)
-    }
-  }
-
-  runPackageAdmission<T>(
-    token: EnvironmentRemovalAdmissionToken,
-    operation: () => Promise<T>
-  ): Promise<T> {
-    const { environment } = token
-    if (
-      token.removing ||
-      this.removals.has(environment) ||
-      token.generation !== (this.removalGenerations.get(environment) ?? 0)
-    ) {
-      return Promise.reject(this.removalInProgress(environment))
-    }
-
-    const release = this.reserveRemovalAdmission(environment)
-    try {
-      if (
-        this.removals.has(environment) ||
-        token.generation !== (this.removalGenerations.get(environment) ?? 0)
-      ) {
-        throw this.removalInProgress(environment)
-      }
-      return operation().finally(release)
-    } catch (error) {
-      release()
-      return Promise.reject(error)
-    }
-  }
-
-  async withRemovalBarrier<T>(environment: string, operation: () => Promise<T>): Promise<T> {
-    if (this.removals.has(environment)) throw this.removalInProgress(environment)
-    this.removalGenerations.set(environment, (this.removalGenerations.get(environment) ?? 0) + 1)
-    this.removals.add(environment)
-    try {
-      const admittedExecutions = this.executionReservations.get(environment)
-      if (admittedExecutions) await Promise.all(admittedExecutions)
-      const admittedWrites = this.removalAdmissionDrains.get(environment)
-      if (admittedWrites) await Promise.all(admittedWrites)
-      const admittedRevocations = this.revocationReservations.get(environment)
-      if (admittedRevocations) await Promise.all(admittedRevocations)
-      return await operation()
-    } finally {
-      this.removals.delete(environment)
-    }
-  }
-
-  runRemoval<T>(environment: string, operation: () => Promise<T>): Promise<T> {
-    if (!this.removals.has(environment)) {
-      return Promise.reject(
-        new Error(
-          `RUNTIME_ENVIRONMENT_REMOVAL_BARRIER_REQUIRED: Runtime Environment "${environment}" ` +
-            'cannot be removed without first closing operation admission.'
-        )
-      )
-    }
     return this.withLease('mutation', environment, 'exclusive', operation)
   }
 
@@ -357,15 +223,9 @@ export class NotebookEnvironmentOperations {
     const usage = { running: 0, idle: 0, dormant: 0 }
     for (const session of this.options.sessions()) {
       const binding = session.runtimeBinding(language)
-      const environment = runEnvironment(session, language)
-      const matchesBinding = binding?.runtimeId === runtimeId
-      const matchesImplicitManagedDefault =
-        implicitManagedRuntimeTarget(session, language, runtimeId) !== undefined
-      if (!matchesBinding && !matchesImplicitManagedDefault) continue
-      const targetProcessKey = processKey(language, environment)
-      const status = session.kernelStatus(targetProcessKey)
-      if (session.hasPendingExecution?.(targetProcessKey) || status === 'running')
-        usage.running += 1
+      if (!binding || binding.runtimeId !== runtimeId) continue
+      const status = session.kernelStatus(processKey(language, runEnvironment(session, language)))
+      if (status === 'running') usage.running += 1
       else if (status !== undefined) usage.idle += 1
       else usage.dormant += 1
     }
@@ -379,90 +239,59 @@ export class NotebookEnvironmentOperations {
   ): Promise<void> {
     const targetSessions = Array.from(this.options.sessions()).filter((session) => {
       const binding = session.runtimeBinding(language)
-      return (
-        (binding?.runtimeId === runtimeId && binding.status !== 'unavailable') ||
-        implicitManagedRuntimeTarget(session, language, runtimeId) !== undefined
-      )
+      return binding?.runtimeId === runtimeId && binding.status !== 'unavailable'
     })
-    const reservation = this.reserveRevocations(
-      targetSessions.map((session) => runEnvironment(session, language))
-    )
-    const backgroundDrains: Promise<void>[] = []
-    try {
-      await this.options.bindings.runWrites(
-        targetSessions.map((session) => session.sessionId),
-        async () => {
-          for (const session of targetSessions) {
-            const current = Array.from(this.options.sessions()).find(
-              (candidate) => candidate.sessionId === session.sessionId
-            )
-            if (current !== session) continue
-            const bindingRevocation = await this.options.bindings.revoke(
-              session,
-              language,
-              runtimeId,
-              () => {
-                const environment = runEnvironment(session, language)
-                return { environment, processKey: processKey(language, environment) }
-              }
-            )
-            const revocation =
-              bindingRevocation ?? implicitManagedRuntimeTarget(session, language, runtimeId)
-            if (!revocation) continue
-
-            const { environment, processKey: revokedProcessKey } = revocation
-            if (bindingRevocation) this.options.notifyChanged(session)
-            if (options.force) {
-              if (session.kernelStatus(revokedProcessKey) === 'running') {
-                session.markForceStopped(revokedProcessKey)
-              }
-              // Start termination before waiting for the exclusive lease: an in-flight execution owns
-              // a shared lease until the killed executor settles. The revocation reservation prevents
-              // uninstall from crossing this handoff, and final teardown runs under the same exclusive
-              // lease used by removal.
-              const termination = session.terminateExecutor(
-                language === 'r' ? 'r' : 'python',
-                environment
-              )
-              await this.withLease('revocation', environment, 'exclusive', async () => {
-                await termination
-                await this.options.clearKernelTermination(session, revokedProcessKey)
-                session.clearProcessState(revokedProcessKey)
-                this.options.notifyChanged(session)
-              })
-              continue
+    await this.options.bindings.runWrites(
+      targetSessions.map((session) => session.sessionId),
+      async () => {
+        for (const session of targetSessions) {
+          const current = Array.from(this.options.sessions()).find(
+            (candidate) => candidate.sessionId === session.sessionId
+          )
+          if (current !== session) continue
+          const revocation = await this.options.bindings.revoke(
+            session,
+            language,
+            runtimeId,
+            () => {
+              const environment = runEnvironment(session, language)
+              return { environment, processKey: processKey(language, environment) }
             }
+          )
+          if (!revocation) continue
 
-            // Revocation teardown and every prefix mutation share the environment's exclusive lease.
-            // Whichever request arrives first completes its executor teardown/remove before the other
-            // can proceed, so uninstall never deletes a prefix while this drain still owns a process.
-            const drain = this.withLease('revocation', environment, 'exclusive', async () => {
-              try {
-                await session.drainExecution(revokedProcessKey)
-                await session.terminateExecutor(language === 'r' ? 'r' : 'python', environment)
-                await this.options.clearKernelTermination(session, revokedProcessKey)
-                session.clearProcessState(revokedProcessKey)
-                this.options.notifyChanged(session)
-              } catch (error) {
-                this.options.logger?.error('failed to drain or close a revoked runtime', {
-                  ...errorLogFields(error),
-                  environment
-                })
-              }
-            })
-            backgroundDrains.push(drain)
-            this.revocationDrains.add(drain)
-            void drain.finally(() => this.revocationDrains.delete(drain))
+          const { environment, processKey: revokedProcessKey } = revocation
+          this.options.notifyChanged(session)
+          if (options.force) {
+            if (session.kernelStatus(revokedProcessKey) === 'running') {
+              session.markForceStopped(revokedProcessKey)
+            }
+            await session.terminateExecutor(language === 'r' ? 'r' : 'python', environment)
+            await this.options.clearKernelTermination(session, revokedProcessKey)
+            session.clearProcessState(revokedProcessKey)
+            this.options.notifyChanged(session)
+            continue
           }
+
+          const drain = this.track('revocation', environment, async () => {
+            try {
+              await session.drainExecution(revokedProcessKey)
+              await session.terminateExecutor(language === 'r' ? 'r' : 'python', environment)
+              await this.options.clearKernelTermination(session, revokedProcessKey)
+              session.clearProcessState(revokedProcessKey)
+              this.options.notifyChanged(session)
+            } catch (error) {
+              this.options.logger?.error('failed to drain or close a revoked runtime', {
+                ...errorLogFields(error),
+                environment
+              })
+            }
+          })
+          this.revocationDrains.add(drain)
+          void drain.finally(() => this.revocationDrains.delete(drain))
         }
-      )
-    } finally {
-      if (backgroundDrains.length > 0) {
-        void Promise.all(backgroundDrains).then(reservation.release, reservation.release)
-      } else {
-        reservation.release()
       }
-    }
+    )
   }
 
   waitForRevocationDrains(): Promise<void> {
@@ -584,63 +413,6 @@ export class NotebookEnvironmentOperations {
     }
   }
 
-  runProvisionAdmission<T>(environment: string, operation: () => Promise<T>): Promise<T> {
-    if (this.removals.has(environment)) return Promise.reject(this.removalInProgress(environment))
-    const release = this.reserveRemovalAdmission(environment)
-    return this.track('provision', environment, operation).finally(release)
-  }
-
-  private reserveRemovalAdmission(environment: string): () => void {
-    let resolveDrain!: () => void
-    const drain = new Promise<void>((resolve) => {
-      resolveDrain = resolve
-    })
-    const drains = this.removalAdmissionDrains.get(environment) ?? new Set<Promise<void>>()
-    drains.add(drain)
-    this.removalAdmissionDrains.set(environment, drains)
-
-    let released = false
-    return () => {
-      if (released) return
-      released = true
-      drains.delete(drain)
-      if (drains.size === 0) this.removalAdmissionDrains.delete(environment)
-      resolveDrain()
-    }
-  }
-
-  private reserveRevocations(environments: Iterable<string>): { release: () => void } {
-    const unique = Array.from(new Set(environments))
-    for (const environment of unique) {
-      if (this.removals.has(environment)) throw this.removalInProgress(environment)
-    }
-    if (unique.length === 0) return { release: () => undefined }
-
-    let resolveDrain!: () => void
-    const drain = new Promise<void>((resolve) => {
-      resolveDrain = resolve
-    })
-    for (const environment of unique) {
-      const drains = this.revocationReservations.get(environment) ?? new Set<Promise<void>>()
-      drains.add(drain)
-      this.revocationReservations.set(environment, drains)
-    }
-
-    let released = false
-    return {
-      release: () => {
-        if (released) return
-        released = true
-        for (const environment of unique) {
-          const drains = this.revocationReservations.get(environment)
-          drains?.delete(drain)
-          if (drains?.size === 0) this.revocationReservations.delete(environment)
-        }
-        resolveDrain()
-      }
-    }
-  }
-
   private async track<T>(
     kind: EnvironmentOperationKind,
     environment: string,
@@ -666,11 +438,5 @@ export class NotebookEnvironmentOperations {
     } catch {
       // Diagnostics are best-effort and must never replace the installer result.
     }
-  }
-
-  private removalInProgress(environment: string): Error {
-    return new Error(
-      `RUNTIME_ENVIRONMENT_REMOVING: Runtime Environment "${environment}" is being uninstalled.`
-    )
   }
 }

@@ -2905,7 +2905,7 @@ describe('startWebHttpServer', () => {
       'runtime:set-environment-enabled',
       'runtime:set-install-authorized',
       'runtime:set-selection',
-      'runtime:uninstall-managed-environment',
+      'runtime:uninstall-agent-environment',
       'runtime:unregister-interpreter'
     ])
     expect(

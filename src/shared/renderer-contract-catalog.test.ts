@@ -189,7 +189,7 @@ describe('renderer contract catalog', () => {
       'runtime.setEnvironmentEnabled',
       'runtime.setInstallAuthorized',
       'runtime.setSelection',
-      'runtime.uninstallManagedEnvironment',
+      'runtime.uninstallAgentEnvironment',
       'runtime.unregisterInterpreter',
       'storage.commitAndRelaunch',
       'storage.discardMigratedCopy',

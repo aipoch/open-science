@@ -93,11 +93,11 @@ const runtimeApplicationCommands = Object.freeze({
     readonly [request: RuntimeAgentEnvironmentCreationRequest],
     boolean
   >('runtime:set-agent-environment-creation-enabled'),
-  uninstallManagedEnvironment: defineApplicationCommand<
-    'runtime:uninstall-managed-environment',
-    readonly [request: RuntimeLanguageRequest],
+  uninstallAgentEnvironment: defineApplicationCommand<
+    'runtime:uninstall-agent-environment',
+    readonly [request: RuntimeEnvironmentRequest],
     void
-  >('runtime:uninstall-managed-environment'),
+  >('runtime:uninstall-agent-environment'),
   pickInterpreter: defineApplicationCommand<'runtime:pick-interpreter', readonly [], string | null>(
     'runtime:pick-interpreter'
   ),
@@ -127,7 +127,7 @@ const runtimeApplicationCommandGroup = defineApplicationCommandGroup('runtime', 
   runtimeApplicationCommands.setInstallAuthorized,
   runtimeApplicationCommands.setSelection,
   runtimeApplicationCommands.survey,
-  runtimeApplicationCommands.uninstallManagedEnvironment,
+  runtimeApplicationCommands.uninstallAgentEnvironment,
   runtimeApplicationCommands.unregisterInterpreter
 ] as const)
 
@@ -178,9 +178,9 @@ const registerRuntimeApplicationCommands = (
         requireLocalCaller(invocation.callerContext)
         return dependencies.workflows.setAgentEnvironmentCreationEnabled(invocation.args[0])
       },
-      'runtime:uninstall-managed-environment': (invocation) => {
+      'runtime:uninstall-agent-environment': (invocation) => {
         requireLocalCaller(invocation.callerContext)
-        return dependencies.workflows.uninstallManagedEnvironment(invocation.args[0])
+        return dependencies.workflows.uninstallAgentEnvironment(invocation.args[0])
       },
       'runtime:pick-interpreter': async ({ callerContext }) => {
         requireLocalCaller(callerContext)

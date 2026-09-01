@@ -1,22 +1,12 @@
 import { existsSync } from 'node:fs'
 import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, win32 } from 'node:path'
+import { dirname, join, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { operationJournalPath, RuntimeOperationJournal } from './operation-journal'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
-import {
-  addRepairRequired,
-  DEFAULT_PY_ENV,
-  DEFAULT_R_ENV,
-  envPrefix,
-  managedRepairRegistryKey,
-  pythonBin,
-  rBin,
-  readRepairRequired,
-  readyMarkerPath
-} from './runtime-paths'
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, pythonBin, rBin } from './runtime-paths'
 
 let root: string | undefined
 
@@ -51,166 +41,6 @@ const beginInterruptedMaterialize = async (
 }
 
 describe('NotebookRecoveryCoordinator', () => {
-  it('finishes an interrupted managed-Runtime removal using only the exact journalled targets', async () => {
-    const runtimeRoot = await createRuntimeRoot()
-    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
-    const marker = readyMarkerPath(runtimeRoot)
-    const preserved = envPrefix(runtimeRoot, 'analysis')
-    await Promise.all([
-      mkdir(prefix, { recursive: true }),
-      mkdir(preserved, { recursive: true }),
-      mkdir(dirname(marker), { recursive: true })
-    ])
-    await writeFile(marker, 'ready')
-    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
-    await journal.begin({
-      operationId: 'remove-after-crash',
-      kind: 'remove',
-      runtimeId: DEFAULT_PY_ENV,
-      phase: 'remove-python',
-      startedAt: 100,
-      targetPaths: [prefix, marker]
-    })
-
-    await new NotebookRecoveryCoordinator(runtimeRoot).recover()
-
-    expect(existsSync(prefix)).toBe(false)
-    expect(existsSync(marker)).toBe(false)
-    expect(existsSync(preserved)).toBe(true)
-    expect(await journal.pending()).toEqual([])
-  })
-
-  it('clears durable managed repair aliases before completing recovered removal', async () => {
-    const runtimeRoot = await createRuntimeRoot()
-    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
-    const marker = readyMarkerPath(runtimeRoot)
-    await Promise.all([
-      mkdir(prefix, { recursive: true }),
-      mkdir(dirname(marker), { recursive: true })
-    ])
-    await writeFile(marker, 'ready')
-    for (const repairKey of [
-      DEFAULT_PY_ENV,
-      managedRepairRegistryKey(DEFAULT_PY_ENV, 'python'),
-      managedRepairRegistryKey(DEFAULT_PY_ENV, 'r'),
-      pythonBin(prefix)
-    ]) {
-      addRepairRequired(runtimeRoot, repairKey)
-    }
-    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
-    await journal.begin({
-      operationId: 'remove-repair-aliases-after-crash',
-      kind: 'remove',
-      runtimeId: DEFAULT_PY_ENV,
-      phase: 'remove-python',
-      startedAt: 100,
-      targetPaths: [prefix, marker]
-    })
-
-    await new NotebookRecoveryCoordinator(runtimeRoot).recover()
-
-    expect(readRepairRequired(runtimeRoot)).toEqual([])
-    expect(await journal.pending()).toEqual([])
-  })
-
-  it('retains an interrupted removal whose persisted targets are not the exact managed pair', async () => {
-    const runtimeRoot = await createRuntimeRoot()
-    const unsafe = join(root!, 'outside-runtime')
-    await mkdir(unsafe, { recursive: true })
-    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
-    await journal.begin({
-      operationId: 'unsafe-remove-after-crash',
-      kind: 'remove',
-      runtimeId: DEFAULT_PY_ENV,
-      phase: 'remove-python',
-      startedAt: 100,
-      targetPaths: [envPrefix(runtimeRoot, DEFAULT_PY_ENV), unsafe]
-    })
-
-    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
-    await coordinator.recover()
-
-    expect(existsSync(unsafe)).toBe(true)
-    expect(await journal.pending()).toHaveLength(1)
-    const managedPrefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
-    expect(coordinator.isGloballyBlocked()).toBe(true)
-    expect(coordinator.isPrefixBlocked(managedPrefix)).toBe(true)
-    coordinator.allowCorruptReset(managedPrefix)
-    expect(coordinator.isPrefixBlocked(managedPrefix)).toBe(true)
-  })
-
-  it('blocks recreation when removal succeeds but journal completion remains pending', async () => {
-    const runtimeRoot = await createRuntimeRoot()
-    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
-    const marker = readyMarkerPath(runtimeRoot)
-    await Promise.all([
-      mkdir(prefix, { recursive: true }),
-      mkdir(dirname(marker), { recursive: true })
-    ])
-    await writeFile(marker, 'ready')
-    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
-    await journal.begin({
-      operationId: 'remove-completion-pending',
-      kind: 'remove',
-      runtimeId: DEFAULT_PY_ENV,
-      phase: 'remove-python',
-      startedAt: 100,
-      targetPaths: [prefix, marker]
-    })
-    const complete = vi
-      .spyOn(RuntimeOperationJournal.prototype, 'complete')
-      .mockRejectedValueOnce(new Error('journal fsync failed'))
-    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
-
-    try {
-      await coordinator.recover()
-    } finally {
-      complete.mockRestore()
-    }
-
-    expect(existsSync(prefix)).toBe(false)
-    expect(existsSync(marker)).toBe(false)
-    expect(await journal.pending()).toHaveLength(1)
-    expect(coordinator.isPrefixBlocked(prefix)).toBe(true)
-    expect(coordinator.snapshot().blockedPrefixes).toContain(prefix)
-  })
-
-  it('retains and blocks a managed removal routed through a symlinked envs root', async () => {
-    const runtimeRoot = await createRuntimeRoot()
-    const outsideEnvs = join(root!, 'outside-envs')
-    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
-    const outsidePrefix = join(outsideEnvs, basename(prefix))
-    const marker = readyMarkerPath(runtimeRoot)
-    await Promise.all([
-      mkdir(runtimeRoot, { recursive: true }),
-      mkdir(outsidePrefix, { recursive: true })
-    ])
-    await writeFile(join(outsidePrefix, 'keep'), 'x')
-    await symlink(
-      outsideEnvs,
-      join(runtimeRoot, 'envs'),
-      process.platform === 'win32' ? 'junction' : 'dir'
-    )
-    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
-    await journal.begin({
-      operationId: 'remove-symlinked-envs',
-      kind: 'remove',
-      runtimeId: DEFAULT_PY_ENV,
-      phase: 'remove-python',
-      startedAt: 100,
-      targetPaths: [prefix, marker]
-    })
-    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
-
-    await coordinator.recover()
-
-    expect(existsSync(join(outsidePrefix, 'keep'))).toBe(true)
-    expect(await journal.pending()).toHaveLength(1)
-    expect(coordinator.isPrefixBlocked(prefix)).toBe(true)
-    expect(coordinator.isGloballyBlocked()).toBe(true)
-    expect(coordinator.isPrefixBlocked(envPrefix(runtimeRoot, DEFAULT_R_ENV))).toBe(true)
-  })
-
   it('finalizes a leftover working cache only after recovery has no blocked writer', async () => {
     const runtimeRoot = await createRuntimeRoot()
     const finalizeWorkingCache = vi.fn().mockResolvedValue(true)

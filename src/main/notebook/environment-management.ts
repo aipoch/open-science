@@ -9,7 +9,6 @@ import { assertSafeEnvName, DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix } from './r
 import type { NotebookRuntimeRepairOwner } from './runtime-repair'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import { managedRuntimeIdentity } from './runtime-target'
-import { managedRuntimeRemovalTargets } from './managed-runtime-removal-paths'
 
 type NotebookEnvironmentManager = {
   createNamedEnvironment: (
@@ -20,11 +19,6 @@ type NotebookEnvironmentManager = {
   ) => Promise<EnvironmentInfo>
   listEnvironments: () => EnvironmentInfo[]
   removeEnvironment: (name: string) => void
-  removeManagedEnvironment?: (
-    language: NotebookLanguage,
-    beforeRemove: () => Promise<void>,
-    afterRemove: () => Promise<void> | void
-  ) => void | Promise<void>
 }
 
 type EnvironmentManagementSession = {
@@ -138,29 +132,6 @@ class NotebookEnvironmentManagementOwner {
         })
       }
     }
-  }
-
-  async uninstallManagedEnvironment(
-    language: NotebookLanguage,
-    beforeRemove: (environmentName: string) => Promise<void>
-  ): Promise<void> {
-    const manager = this.manager
-    if (!manager?.removeManagedEnvironment) {
-      throw new Error('Managed Runtime uninstall is unavailable.')
-    }
-    const environmentName = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
-    await this.options.ensureRecovered()
-    for (const prefix of managedRuntimeRemovalTargets(this.options.runtimeRoot, language)
-      .prefixes) {
-      this.options.assertPrefixRecoverable(prefix)
-    }
-    // The production manager enters the shared provisioner queue before taking the environment lease;
-    // `beforeRemove` then tears down sessions inside that lease immediately before filesystem removal.
-    await manager.removeManagedEnvironment(
-      language,
-      () => beforeRemove(environmentName),
-      () => this.options.runtimeRepair.completeRemovedManagedEnvironment(environmentName)
-    )
   }
 
   private isLive(name: string): boolean {

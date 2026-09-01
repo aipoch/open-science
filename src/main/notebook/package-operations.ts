@@ -83,9 +83,7 @@ type NotebookPackageOperationsOptions = {
     | 'logPackageFailure'
     | 'logPackageResult'
     | 'recommendRestart'
-    | 'captureRemovalAdmission'
-    | 'runPackageAdmission'
-    | 'runPackageMutation'
+    | 'runMutation'
     | 'runShared'
   >
   environmentStateTracker: Pick<
@@ -239,40 +237,26 @@ class NotebookPackageOperations {
   }
 
   async manage(request: InstallRequest): Promise<InstallResult> {
-    const defaultRemovalAdmission = this.options.environmentOperations.captureRemovalAdmission(
-      defaultEnvironment(request.language)
-    )
     const resolution = await this.admission.resolveTarget(request)
     try {
-      const removalAdmission =
-        resolution.status === 'resolved'
-          ? resolution.environmentName === defaultRemovalAdmission.environment
-            ? defaultRemovalAdmission
-            : this.options.environmentOperations.captureRemovalAdmission(resolution.environmentName)
-          : undefined
       await this.options.ensureRecovered()
       const mirror = await effectiveMirrorAsync(
         await this.resolvePackageMirror(),
         this.options.locale,
         this.options.mirrorProbe
       )
-      const mutate = async (): Promise<InstallResult> => {
-        const admission = await this.admission.admit(request, resolution)
-        if (admission.status === 'refused') return admission.result
-        const result = await this.mutation.mutate({ target: admission.target, mirror })
-        if (result.ok && result.needsRestart && request.language === 'r') {
-          this.options.environmentOperations.recommendRestart('r', admission.target.environmentName)
-          for (const session of this.options.sessions()) this.options.notifyChanged(session)
-        }
-        const environmentName =
-          admission.target.binding?.source === 'external'
-            ? (admission.target.binding.label ?? admission.target.environmentName)
-            : admission.target.environmentName
-        return { ...result, environmentName, target: admission.target.receipt }
+      const admission = await this.admission.admit(request, resolution)
+      if (admission.status === 'refused') return admission.result
+      const result = await this.mutation.mutate({ target: admission.target, mirror })
+      if (result.ok && result.needsRestart && request.language === 'r') {
+        this.options.environmentOperations.recommendRestart('r', admission.target.environmentName)
+        for (const session of this.options.sessions()) this.options.notifyChanged(session)
       }
-      return removalAdmission
-        ? await this.options.environmentOperations.runPackageAdmission(removalAdmission, mutate)
-        : await mutate()
+      const environmentName =
+        admission.target.binding?.source === 'external'
+          ? (admission.target.binding.label ?? admission.target.environmentName)
+          : admission.target.environmentName
+      return { ...result, environmentName, target: admission.target.receipt }
     } catch (error) {
       return packageOperationFailure(error, resolution.receipt)
     }

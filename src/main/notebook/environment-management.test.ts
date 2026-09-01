@@ -6,7 +6,6 @@ import {
   NotebookEnvironmentManagementOwner,
   type NotebookEnvironmentManager
 } from './environment-management'
-import { managedRuntimeRemovalTargets } from './managed-runtime-removal-paths'
 import { envPrefix, pythonBin } from './runtime-paths'
 
 type OwnerOptions = ConstructorParameters<typeof NotebookEnvironmentManagementOwner>[0]
@@ -21,11 +20,7 @@ const manager = (): NotebookEnvironmentManager => ({
     isDefault: false
   })),
   listEnvironments: vi.fn(() => []),
-  removeEnvironment: vi.fn(() => []),
-  removeManagedEnvironment: vi.fn(async (_language, beforeRemove, afterRemove) => {
-    await beforeRemove()
-    await afterRemove()
-  })
+  removeEnvironment: vi.fn(() => [])
 })
 
 const session = (
@@ -376,49 +371,5 @@ describe('NotebookEnvironmentManagementOwner', () => {
     )
 
     expect(options.runtimeRepair.completeRemovedManagedEnvironment).not.toHaveBeenCalled()
-  })
-
-  it('uninstalls only the exact managed default after recovery and session teardown', async () => {
-    const order: string[] = []
-    const configured = manager()
-    vi.mocked(configured.removeManagedEnvironment!).mockImplementation(
-      async (language, beforeRemove, afterRemove) => {
-        order.push(`remove-managed:${language}`)
-        await beforeRemove()
-        await afterRemove()
-      }
-    )
-    const { owner } = harness({
-      manager: configured,
-      ensureRecovered: vi.fn(async () => {
-        order.push('recovery')
-      }),
-      assertPrefixRecoverable: vi.fn(() => {
-        order.push('recoverable')
-      }),
-      environmentOperations: {
-        runMutation: vi.fn(async (environment, operation) => {
-          order.push(`mutation:${environment}`)
-          return operation()
-        })
-      },
-      runtimeRepair: {
-        completeRemovedManagedEnvironment: vi.fn((environment) => {
-          order.push(`repair:${environment}`)
-        })
-      }
-    })
-
-    await owner.uninstallManagedEnvironment('python', async (environment) => {
-      order.push(`sessions:${environment}`)
-    })
-
-    expect(order).toEqual([
-      'recovery',
-      ...managedRuntimeRemovalTargets('/runtime', 'python').prefixes.map(() => 'recoverable'),
-      'remove-managed:python',
-      'sessions:default-python',
-      'repair:default-python'
-    ])
   })
 })

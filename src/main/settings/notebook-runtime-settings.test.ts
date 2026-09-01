@@ -41,11 +41,11 @@ describe('NotebookRuntimeSettingsModule', () => {
     await expect(settings.getAgentEnvironmentCreationEnabled()).resolves.toBe(false)
   })
 
-  it('rejects a non-boolean Agent environment creation choice before persistence', async () => {
+  it('rejects a non-boolean Agent environment creation policy', async () => {
     const settings = await createModule()
 
     await expect(settings.setAgentEnvironmentCreationEnabled('false' as never)).rejects.toThrow(
-      'Agent environment creation enabled must be a boolean.'
+      'must be a boolean'
     )
     await expect(settings.getAgentEnvironmentCreationEnabled()).resolves.toBe(true)
   })

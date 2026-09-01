@@ -116,19 +116,17 @@ describe('NotebookPackageAdmissionOwner', () => {
     expect(isAgentEnvironmentCreationEnabled).toHaveBeenCalledOnce()
   })
 
-  it('refuses to recreate a missing bound managed default when Agent creation is disabled', async () => {
+  it('also refuses a missing default selected by an explicit managed binding', async () => {
     const binding: NotebookSessionRuntimeBinding = {
-      language: 'python',
-      runtimeId: '/runtime/envs/default-python/bin/python',
-      source: 'managed',
+      ...managedBinding(),
+      runtimeId: 'default-python-id',
       provenance: 'app-managed',
-      interpreterPath: '/runtime/envs/default-python/bin/python',
-      label: 'Python',
-      status: 'active',
+      label: 'Managed Python',
       envName: 'default-python'
     }
-    const isAgentEnvironmentCreationEnabled = vi.fn(async () => false)
-    const { owner } = ownerHarness(binding, { isAgentEnvironmentCreationEnabled })
+    const { owner } = ownerHarness(binding, {
+      isAgentEnvironmentCreationEnabled: vi.fn(async () => false)
+    })
 
     const admission = await owner.admit({
       language: 'python',
@@ -141,7 +139,6 @@ describe('NotebookPackageAdmissionOwner', () => {
       status: 'refused',
       result: { error: expect.stringContaining('AGENT_ENVIRONMENT_CREATION_DISABLED') }
     })
-    expect(isAgentEnvironmentCreationEnabled).toHaveBeenCalledOnce()
   })
 
   it('loads the Session and pins a managed named target instead of trusting the request', async () => {

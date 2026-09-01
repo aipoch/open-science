@@ -67,10 +67,8 @@ const ownerHarness = (
     storageRoot,
     runtimeRoot,
     environmentOperations: {
-      runPackageMutation: async <T>(
-        _environment: string,
-        operation: () => Promise<T>
-      ): Promise<T> => operation(),
+      runMutation: async <T>(_environment: string, operation: () => Promise<T>): Promise<T> =>
+        operation(),
       logPackageFailure: vi.fn(),
       logPackageResult: vi.fn()
     },
@@ -113,10 +111,7 @@ describe('NotebookPackageMutationOwner', () => {
     const order: string[] = []
     const { owner, options, target, runtimeRoot } = ownerHarness({
       environmentOperations: {
-        runPackageMutation: async <T>(
-          _environment: string,
-          operation: () => Promise<T>
-        ): Promise<T> => {
+        runMutation: async <T>(_environment: string, operation: () => Promise<T>): Promise<T> => {
           order.push('lock')
           return operation()
         },
@@ -142,10 +137,7 @@ describe('NotebookPackageMutationOwner', () => {
     let operationId = ''
     const { owner, options, target, runtimeRoot } = ownerHarness({
       environmentOperations: {
-        runPackageMutation: async <T>(
-          environment: string,
-          operation: () => Promise<T>
-        ): Promise<T> => {
+        runMutation: async <T>(environment: string, operation: () => Promise<T>): Promise<T> => {
           expect(environment).toBe('analysis')
           order.push('lock')
           const result = await operation()
@@ -460,10 +452,7 @@ describe('NotebookPackageMutationOwner', () => {
     }
     const { owner, target, runtimeRoot } = ownerHarness({
       environmentOperations: {
-        runPackageMutation: async <T>(
-          _environment: string,
-          operation: () => Promise<T>
-        ): Promise<T> => {
+        runMutation: async <T>(_environment: string, operation: () => Promise<T>): Promise<T> => {
           await operation()
           throw wrapperFailure
         },

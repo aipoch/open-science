@@ -208,15 +208,10 @@ class NotebookExecutionOwner {
       throw new Error(`Notebook cell is still receiving code: ${cell.id}`)
     }
     const route = this.options.dataExecutionAdmission.route(session, cell.language)
-    // Reserve environment admission from the queue boundary through terminalization. This closes the
-    // preflight gap where uninstall could finish after the Session queued a cell but before the
-    // executor-facing shared lease was acquired, without holding that lease while the cell is queued.
-    return this.options.dataExecutionAdmission.runAdmission(route, () =>
-      session.enqueueExecution(
-        route.processKey,
-        () => this.executeDataCellExclusive(session, cell, request, signal, helperModuleIds),
-        signal
-      )
+    return session.enqueueExecution(
+      route.processKey,
+      () => this.executeDataCellExclusive(session, cell, request, signal, helperModuleIds),
+      signal
     )
   }
   private async executeDataCellExclusive(

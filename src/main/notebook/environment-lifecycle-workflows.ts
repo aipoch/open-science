@@ -34,7 +34,6 @@ type NotebookEnvironmentLifecycleDeps = {
   projectProgress: (progress: ProvisionProgress) => void
   waitForRecovery?: () => Promise<void>
   assertProvisionAllowed?: (language: NotebookLanguage) => void
-  runProvisionAdmission?: <T>(language: NotebookLanguage, operation: () => Promise<T>) => Promise<T>
   onRepairCompleted?: (language: NotebookLanguage) => Promise<void> | void
 }
 
@@ -87,12 +86,6 @@ const createNotebookEnvironmentLifecycle = (
 
   const provisioner = serializeProvisioner(deps.provisioner)
   const platform = deps.platform ?? process.platform
-  const runProvisionAdmission = <T>(
-    language: NotebookLanguage,
-    operation: () => Promise<T>
-  ): Promise<T> => deps.runProvisionAdmission?.(language, operation) ?? operation()
-  const runStartupAdmission = <T>(operation: () => Promise<T>): Promise<T> =>
-    runProvisionAdmission('python', () => runProvisionAdmission('r', operation))
 
   const status = (): Promise<ProvisionStatus> =>
     withDataRootWrite(async () => {
@@ -110,17 +103,14 @@ const createNotebookEnvironmentLifecycle = (
         withDataRootWrite(async () => {
           if (deps.waitForRecovery) await deps.waitForRecovery()
           deps.assertProvisionAllowed?.(parsedLanguage)
-          const provisionDefault = async (): Promise<void> => {
-            switch (parsedLanguage) {
-              case 'r':
-                await provisioner.provisionR(report)
-                return
-              case 'python':
-                await provisioner.provisionPython(report)
-                return
-            }
+          switch (parsedLanguage) {
+            case 'r':
+              await provisioner.provisionR(report)
+              return
+            case 'python':
+              await provisioner.provisionPython(report)
+              return
           }
-          await runProvisionAdmission(parsedLanguage, provisionDefault)
         }),
       (progress) =>
         deps.projectProgress({
@@ -140,12 +130,10 @@ const createNotebookEnvironmentLifecycle = (
       (report) =>
         withDataRootWrite(async () => {
           if (deps.waitForRecovery) await deps.waitForRecovery()
-          const repairDefault = (): Promise<void> =>
-            provisioner.repair(parsedLanguage, report, {
-              force: true,
-              onVerified: () => deps.onRepairCompleted?.(parsedLanguage)
-            })
-          await runProvisionAdmission(parsedLanguage, repairDefault)
+          await provisioner.repair(parsedLanguage, report, {
+            force: true,
+            onVerified: () => deps.onRepairCompleted?.(parsedLanguage)
+          })
         }),
       (progress) =>
         deps.projectProgress({
@@ -160,24 +148,22 @@ const createNotebookEnvironmentLifecycle = (
     try {
       await withDataRootWrite(async () => {
         if (deps.waitForRecovery) await deps.waitForRecovery()
-        await runStartupAdmission(async () => {
-          await provisioner.restoreRelocatedEnvs(deps.projectProgress)
+        await provisioner.restoreRelocatedEnvs(deps.projectProgress)
 
-          const action = planStartupAction(deps.root, DEFAULT_ENV_VERSION, platform)
-          if (action === 'ready') return
-          if (action === 'upgrade') {
-            await provisioner.upgradeIfNeeded(deps.projectProgress)
-            return
-          }
-          if (action !== 'repair') return
+        const action = planStartupAction(deps.root, DEFAULT_ENV_VERSION, platform)
+        if (action === 'ready') return
+        if (action === 'upgrade') {
+          await provisioner.upgradeIfNeeded(deps.projectProgress)
+          return
+        }
+        if (action !== 'repair') return
 
-          // A residual default-r prefix makes the planner report repair even for an R-first user. Only
-          // maintain Python eagerly when it was actually provisioned before; fresh Python stays lazy.
-          const pythonWasProvisioned =
-            readReadyMarker(deps.root) !== undefined ||
-            existsSync(envPrefix(deps.root, DEFAULT_PY_ENV, platform))
-          if (pythonWasProvisioned) await provisioner.repair('python', deps.projectProgress)
-        })
+        // A residual default-r prefix makes the planner report repair even for an R-first user. Only
+        // maintain Python eagerly when it was actually provisioned before; fresh Python stays lazy.
+        const pythonWasProvisioned =
+          readReadyMarker(deps.root) !== undefined ||
+          existsSync(envPrefix(deps.root, DEFAULT_PY_ENV, platform))
+        if (pythonWasProvisioned) await provisioner.repair('python', deps.projectProgress)
       })
     } catch (error) {
       logStartupGateFailure(error)

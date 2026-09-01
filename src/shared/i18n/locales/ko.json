@@ -2452,7 +2452,7 @@
     "Could not change Agent environment creation.": "에이전트 환경 생성 설정을 변경하지 못했습니다.",
     "Could not uninstall that runtime.": "해당 런타임을 제거하지 못했습니다.",
     "Uninstall {{label}}?": "{{label}}을(를) 제거할까요?",
-    "This removes the app-managed environment and closes its idle kernels. Running work must finish first. You can download it again later.": "앱 관리 환경을 제거하고 유휴 커널을 닫습니다. 실행 중인 작업이 먼저 완료되어야 합니다. 나중에 다시 다운로드할 수 있습니다.",
+    "This permanently removes the Agent-created environment and its installed packages. It cannot be undone.": "에이전트가 만든 환경과 설치된 패키지를 영구적으로 제거합니다. 이 작업은 실행 취소할 수 없습니다.",
     "Uninstall": "제거",
     "Uninstall command": "제거 명령",
     "Uninstall {{name}}?": "제거할까요? 대상: {{name}}",

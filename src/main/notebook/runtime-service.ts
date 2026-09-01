@@ -628,19 +628,6 @@ class NotebookRuntimeService {
     this.environmentOperations.setDefaultEnvProvisioner(provisioner, onProgress)
   }
 
-  // Lifecycle setup/reset/startup uses the same transactional admission as lazy default
-  // provisioning. The reservation is acquired before the shared provisioner queue is entered, so
-  // uninstall drains already-admitted work and rejects requests that arrive after its barrier closes.
-  runDefaultEnvironmentProvisionAdmission<T>(
-    language: NotebookLanguage,
-    operation: () => Promise<T>
-  ): Promise<T> {
-    return this.environmentOperations.runProvisionAdmission(
-      this.defaultEnvNameFor(language),
-      operation
-    )
-  }
-
   // Before running a data cell against a DEFAULT env, build it from the offline bundle if it isn't
   // materialized yet — so an agent's first R (or Python) run auto-provisions instead of erroring and
   // nudging the agent to create a redundant named env. Named envs are NOT auto-created here: the agent
@@ -785,115 +772,25 @@ class NotebookRuntimeService {
     )
   }
 
-  // WS11: how many live sessions select a runtime, explicitly or through the unbound app-managed
-  // default, split by kernel state so Settings can warn before disabling it. A running cell → running,
-  // a live-but-idle kernel → idle, and a selected runtime with no live kernel → dormant. Purely
-  // in-memory (no disk read).
+  // WS11: how many live sessions are bound to a runtime, split by kernel state, so Settings can warn
+  // before disabling it. Counts only sessions whose binding for this language IS this runtime; a
+  // running cell → running, a live-but-idle kernel → idle, a bound session with no live kernel →
+  // dormant (nothing to drain). Purely in-memory (no disk read).
   describeRuntimeUsage(language: NotebookLanguage, runtimeId: string): RuntimeUsage {
     return this.environmentOperations.describeRuntimeUsage(language, runtimeId)
   }
 
-  // WS10: a runtime was DISABLED in Settings. Revoke it from every session selecting it. Explicit
-  // bindings become unavailable/disabled so subsequent execute/install rejects without silent fallback;
-  // unbound sessions using the app-managed default have that implicit kernel closed too. The agent
-  // recovers via list_notebook_runtimes -> notebook_switch_runtime. See
-  // [[notebook-runtime-disable-binding-lifecycle]].
+  // WS10: a runtime was DISABLED in Settings. Revoke it from every session bound to it — mark the
+  // binding unavailable/disabled so subsequent execute/install REJECT with RUNTIME_BINDING_UNAVAILABLE
+  // (no silent fallback); an in-flight run is left to finish (its kernel drains, then idle-times out —
+  // explicit post-drain kernel teardown is WS5). The agent recovers via list_notebook_runtimes ->
+  // notebook_switch_runtime. See [[notebook-runtime-disable-binding-lifecycle]].
   async revokeRuntime(
     language: NotebookLanguage,
     runtimeId: string,
     options: { force?: boolean } = {}
   ): Promise<void> {
     await this.environmentOperations.revokeRuntime(language, runtimeId, options)
-  }
-
-  async uninstallManagedEnvironment(
-    language: NotebookLanguage,
-    commitDisabledState?: () => Promise<void>
-  ): Promise<void> {
-    const environmentName = this.defaultEnvNameFor(language)
-    const initialTargets = Array.from(this.sessions.values()).filter((session) => {
-      const binding = session.runtimeBinding(language)
-      return (
-        binding?.source !== 'external' && this.resolveRunEnv(session, language) === environmentName
-      )
-    })
-    const targetProcessKey = dataProcessKey(language, environmentName)
-    if (
-      initialTargets.some(
-        (session) =>
-          session.hasPendingExecution(targetProcessKey) ||
-          session.kernelStatus(targetProcessKey) === 'running'
-      )
-    ) {
-      throw new Error(
-        `RUNTIME_UNINSTALL_IN_USE: the ${language} Runtime is running work. Wait for it to finish before uninstalling.`
-      )
-    }
-
-    await this.environmentOperations.withRemovalBarrier(environmentName, () =>
-      this.environmentManagement.uninstallManagedEnvironment(
-        language,
-        async (lockedEnvironmentName) => {
-          const targets = Array.from(this.sessions.values()).filter((session) => {
-            const binding = session.runtimeBinding(language)
-            return (
-              binding?.source !== 'external' &&
-              this.resolveRunEnv(session, language) === lockedEnvironmentName
-            )
-          })
-          if (
-            targets.some(
-              (session) =>
-                session.hasPendingExecution(targetProcessKey) ||
-                session.kernelStatus(targetProcessKey) === 'running'
-            )
-          ) {
-            throw new Error(
-              `RUNTIME_UNINSTALL_IN_USE: the ${language} Runtime is running work. Wait for it to finish before uninstalling.`
-            )
-          }
-
-          await commitDisabledState?.()
-
-          await this.runtimeBindingOwner.runWrites(
-            targets.map((session) => session.sessionId),
-            async () => {
-              for (const session of targets) {
-                const binding = session.runtimeBinding(language)
-                let bindingChanged = false
-                if (
-                  binding?.source === 'managed' &&
-                  binding.envName === lockedEnvironmentName &&
-                  binding.reason !== 'missing'
-                ) {
-                  bindingChanged = this.runtimeBindingOwner.markUnavailable(
-                    session,
-                    language,
-                    'missing'
-                  )
-                }
-
-                const status = session.kernelStatus(targetProcessKey)
-                if (status !== undefined && status !== 'terminated') {
-                  await session.terminateExecutor(
-                    language === 'r' ? 'r' : 'python',
-                    lockedEnvironmentName
-                  )
-                  await this.sessionLifecycle.clearPersistedKernelTermination(
-                    session,
-                    targetProcessKey
-                  )
-                  session.clearProcessState(targetProcessKey)
-                }
-                if (bindingChanged) await this.runtimeBindingOwner.persist(session)
-                if (bindingChanged || status !== undefined)
-                  this.sessionLifecycle.notifyChanged(session)
-              }
-            }
-          )
-        }
-      )
-    )
   }
 
   // Clears the state of ONE (language, env) runtime after its kernel was torn down on switch: drops its
@@ -1408,13 +1305,6 @@ class NotebookRuntimeService {
   // from its top-level entries (never re-entrantly), so it cannot deadlock against itself.
   withEnvLock<T>(envName: string, fn: () => Promise<T>): Promise<T> {
     return this.environmentOperations.runMutation(envName, fn)
-  }
-
-  // The removal barrier is closed before the provisioner queue is entered. Once the queued removal
-  // reaches the prefix boundary, this takes the exclusive lease for teardown, durable cleanup, and
-  // deletion without inverting the shared queue -> lease ordering used by every provisioner write.
-  withEnvRemovalLock<T>(envName: string, fn: () => Promise<T>): Promise<T> {
-    return this.environmentOperations.runRemoval(envName, fn)
   }
 
   // Shuts down every live interpreter, used by app-level cleanup paths. Returns { reaped }: true only

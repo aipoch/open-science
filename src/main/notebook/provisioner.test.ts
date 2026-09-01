@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -102,106 +102,6 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
 }
 
 describe('DefaultRuntimeProvisioner.provisionPython', () => {
-  it('removes only the requested app-managed default and its readiness receipt', async () => {
-    const root = makeRoot()
-    const managedPython = envPrefix(root, DEFAULT_PY_ENV)
-    const managedR = envPrefix(root, DEFAULT_R_ENV)
-    const named = envPrefix(root, 'analysis')
-    const userOwned = join(root, 'user-owned-python')
-    for (const directory of [managedPython, managedR, named, userOwned]) {
-      mkdirSync(directory, { recursive: true })
-      writeFileSync(join(directory, 'keep'), 'x')
-    }
-    writeReadyMarker(root, DEFAULT_ENV_VERSION, 'ready')
-    writeRReadyMarker(root, DEFAULT_ENV_VERSION, 'ready')
-
-    const order: string[] = []
-    const journal = RuntimeOperationJournal.forPath(operationJournalPath(root))
-    await new DefaultRuntimeProvisioner(
-      makeDeps(root, {
-        withRemovalLock: async (environment, operation) => {
-          order.push(`lock:${environment}`)
-          const result = await operation()
-          order.push('unlock')
-          return result
-        }
-      })
-    ).removeManagedEnvironment(
-      'python',
-      async () => {
-        order.push('sessions')
-        expect(existsSync(managedPython)).toBe(true)
-      },
-      async () => {
-        order.push('repair')
-        expect(existsSync(managedPython)).toBe(false)
-        expect(await journal.pending()).toHaveLength(1)
-      }
-    )
-
-    expect(existsSync(managedPython)).toBe(false)
-    expect(readReadyMarker(root)).toBeUndefined()
-    expect(existsSync(managedR)).toBe(true)
-    expect(readRReadyMarker(root)).toBeDefined()
-    expect(existsSync(named)).toBe(true)
-    expect(existsSync(userOwned)).toBe(true)
-    expect(await journal.pending()).toEqual([])
-    expect(order).toEqual(['lock:default-python', 'sessions', 'repair', 'unlock'])
-  })
-
-  it('removes both validated Windows default layouts when short and legacy prefixes coexist', async () => {
-    const root = makeRoot()
-    const short = join(root, 'envs', envDirectoryName(DEFAULT_PY_ENV, 'win32'))
-    const legacy = legacyDefaultEnvPrefix(root, DEFAULT_PY_ENV)
-    const preserved = envPrefix(root, 'analysis', 'win32')
-    for (const directory of [short, legacy, preserved]) {
-      mkdirSync(directory, { recursive: true })
-      writeFileSync(join(directory, 'keep'), 'x')
-    }
-    writeReadyMarker(root, DEFAULT_ENV_VERSION, 'ready', envDirectoryName(DEFAULT_PY_ENV, 'win32'))
-
-    await new DefaultRuntimeProvisioner(
-      makeDeps(root, { platform: 'win32' })
-    ).removeManagedEnvironment('python')
-
-    expect(existsSync(short)).toBe(false)
-    expect(existsSync(legacy)).toBe(false)
-    expect(existsSync(preserved)).toBe(true)
-    expect(readReadyMarker(root)).toBeUndefined()
-  })
-
-  it('refuses managed removal through a symlinked or junction prefix', async () => {
-    const root = makeRoot()
-    const prefix = envPrefix(root, DEFAULT_PY_ENV)
-    const outside = join(root, 'outside')
-    mkdirSync(outside, { recursive: true })
-    writeFileSync(join(outside, 'keep'), 'x')
-    mkdirSync(dirname(prefix), { recursive: true })
-    symlinkSync(outside, prefix, process.platform === 'win32' ? 'junction' : 'dir')
-
-    await expect(
-      new DefaultRuntimeProvisioner(makeDeps(root)).removeManagedEnvironment('python')
-    ).rejects.toThrow(/app-owned|symbolic link|junction/)
-
-    expect(existsSync(join(outside, 'keep'))).toBe(true)
-  })
-
-  it('refuses managed removal through a symlinked or junction envs root', async () => {
-    const root = makeRoot()
-    const outsideEnvs = makeRoot()
-    const expectedPrefix = envPrefix(root, DEFAULT_PY_ENV)
-    const outsidePrefix = join(outsideEnvs, basename(expectedPrefix))
-    mkdirSync(outsidePrefix, { recursive: true })
-    writeFileSync(join(outsidePrefix, 'keep'), 'x')
-    symlinkSync(outsideEnvs, join(root, 'envs'), process.platform === 'win32' ? 'junction' : 'dir')
-
-    await expect(
-      new DefaultRuntimeProvisioner(makeDeps(root)).removeManagedEnvironment('python')
-    ).rejects.toThrow(/app-owned|symbolic link|junction/)
-
-    expect(existsSync(join(outsidePrefix, 'keep'))).toBe(true)
-  })
-
   it('maintains the package cache under the materialize journal after fetching the runtime', async () => {
     const root = makeRoot()
     const cachePath = join(root, 'pkgs')

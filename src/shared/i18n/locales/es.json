@@ -2555,7 +2555,7 @@
     "Could not change Agent environment creation.": "No se pudo cambiar la creación de entornos por parte del Agente.",
     "Could not uninstall that runtime.": "No se pudo desinstalar ese entorno de ejecución.",
     "Uninstall {{label}}?": "¿Desinstalar {{label}}?",
-    "This removes the app-managed environment and closes its idle kernels. Running work must finish first. You can download it again later.": "Esto elimina el entorno administrado por la aplicación y cierra sus kernels inactivos. El trabajo en curso debe finalizar primero. Puede volver a descargarlo más adelante.",
+    "This permanently removes the Agent-created environment and its installed packages. It cannot be undone.": "Esto elimina de forma permanente el entorno creado por el Agente y sus paquetes instalados. Esta acción no se puede deshacer.",
     "Uninstall": "Desinstalar",
     "Uninstall command": "Comando de desinstalación",
     "Uninstall {{name}}?": "¿Desinstalar {{name}}?",

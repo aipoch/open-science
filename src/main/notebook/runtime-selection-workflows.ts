@@ -6,7 +6,6 @@ import type {
   RuntimeSurvey,
   RuntimeUsage
 } from '../../shared/notebook-runtime'
-import { isCurrentAppManagedDefault } from '../../shared/notebook-runtime'
 import {
   createExternalAdapter,
   createManagedAdapter,
@@ -19,7 +18,6 @@ import {
 } from './environment-discovery'
 import { listEnvPackages } from './package-listing'
 import { RuntimeRegistry } from './runtime-registry'
-import { managedDefaultRuntimeIdentities } from './runtime-target'
 import { prepareExternalPythonRuntime, type AppOwnedExternalSelection } from './venv-overlay'
 import type { MicromambaRunner } from './windows-micromamba-runner'
 
@@ -74,11 +72,7 @@ type RuntimeSelectionWorkflowDeps = {
   onRuntimeDisabled?: (language: NotebookLanguage, envId: string, force?: boolean) => Promise<void>
   // Optional because sessions may not be composed yet during startup; absence means no live usage.
   describeRuntimeUsage?: (language: NotebookLanguage, envId: string) => RuntimeUsage
-  uninstallManagedEnvironment?: (
-    language: NotebookLanguage,
-    commitDisabledState: () => Promise<void>
-  ) => Promise<void>
-  platform?: NodeJS.Platform
+  removeAgentEnvironment?: (name: string) => Promise<void>
   // Injectable for tests so the package-listing workflows never spawn micromamba/pip/Rscript;
   // production defaults to listEnvPackages against the real env.
   listPackages?: (env: DiscoveredInterpreter) => Promise<EnvPackage[]>
@@ -115,7 +109,7 @@ type RuntimeSelectionWorkflows = {
     envId: string
     authorized: boolean
   }): Promise<RuntimeEnablement>
-  uninstallManagedEnvironment(request: { language: NotebookLanguage }): Promise<void>
+  uninstallAgentEnvironment(request: { language: NotebookLanguage; envId: string }): Promise<void>
   register(request: { language: NotebookLanguage; path: string }): Promise<string[]>
   unregister(request: { language: NotebookLanguage; path: string }): Promise<string[]>
 }
@@ -305,39 +299,22 @@ const createRuntimeSelectionWorkflows = (
         request.envId,
         request.authorized
       ),
-    uninstallManagedEnvironment: async (request) => {
-      if (!deps.uninstallManagedEnvironment) {
-        throw new Error('Managed Runtime uninstall is unavailable.')
+    uninstallAgentEnvironment: async (request) => {
+      if (typeof request?.envId !== 'string' || request.envId.length === 0) {
+        throw new TypeError('Runtime environment id must be a non-empty string.')
       }
-      const defaultRuntimeIds = managedDefaultRuntimeIdentities(
-        deps.runtimeRoot(),
-        request.language,
-        deps.platform
-      ).map(({ runtimeId }) => runtimeId)
-      const managed = (await discoverLanguageEnvs(request.language)).find(
-        isCurrentAppManagedDefault
+      if (!deps.removeAgentEnvironment) {
+        throw new Error('Agent-created Runtime uninstall is unavailable.')
+      }
+      const environment = (await discoverLanguageEnvs(request.language)).find(
+        (candidate) => candidate.envId === request.envId
       )
-      if (managed) {
-        const usage = deps.describeRuntimeUsage?.(request.language, managed.envId) ?? {
-          running: 0,
-          idle: 0,
-          dormant: 0
-        }
-        if (usage.running > 0) {
-          throw new Error(
-            `RUNTIME_UNINSTALL_IN_USE: the ${request.language} Runtime is running work. Wait for it to finish before uninstalling.`
-          )
-        }
+      if (environment?.provenance !== 'agent-created' || !environment.condaEnv) {
+        throw new Error(
+          'Only a discovered Runtime Environment created by the Agent can be uninstalled.'
+        )
       }
-      await deps.uninstallManagedEnvironment(request.language, async () => {
-        if (managed) {
-          await deps.settingsService.setEnvironmentEnabled(request.language, managed.envId, false)
-        }
-        for (const runtimeId of defaultRuntimeIds) {
-          if (managed?.envId === runtimeId) continue
-          await deps.settingsService.setEnvironmentEnabled(request.language, runtimeId, false)
-        }
-      })
+      await deps.removeAgentEnvironment(environment.condaEnv)
       invalidateDiscovery()
     },
     register: async (request) => {

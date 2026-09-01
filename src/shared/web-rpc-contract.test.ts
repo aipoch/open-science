@@ -147,7 +147,7 @@ describe('Web RPC contract', () => {
       'runtime.setInstallAuthorized',
       'runtime.setSelection',
       'runtime.survey',
-      'runtime.uninstallManagedEnvironment',
+      'runtime.uninstallAgentEnvironment',
       'runtime.unregisterInterpreter'
     ])
     expect(eventPaths.filter((path) => path.startsWith('notebook.'))).toEqual([

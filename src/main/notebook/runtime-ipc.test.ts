@@ -168,7 +168,7 @@ describe('runtime IPC adapter', () => {
       'runtime:set-environment-enabled',
       'runtime:set-install-authorized',
       'runtime:set-agent-environment-creation-enabled',
-      'runtime:uninstall-managed-environment',
+      'runtime:uninstall-agent-environment',
       'runtime:pick-interpreter',
       'runtime:register-interpreter',
       'runtime:unregister-interpreter'
@@ -179,7 +179,7 @@ describe('runtime IPC adapter', () => {
     const settingsService = fakeSettingsService()
     const usage = { running: 1, idle: 2, dormant: 3 }
     const onRuntimeDisabled = vi.fn().mockResolvedValue(undefined)
-    const uninstallManagedEnvironment = vi.fn().mockResolvedValue(undefined)
+    const removeAgentEnvironment = vi.fn().mockResolvedValue(undefined)
     discoveryState.python = [
       {
         language: 'python',
@@ -188,6 +188,15 @@ describe('runtime IPC adapter', () => {
         interpreterPath: '/usr/bin/python3',
         label: 'System Python',
         runnable: true
+      },
+      {
+        language: 'python',
+        provenance: 'agent-created',
+        envId: '/runtime/envs/analysis/bin/python',
+        interpreterPath: '/runtime/envs/analysis/bin/python',
+        label: 'analysis',
+        condaEnv: 'analysis',
+        runnable: true
       }
     ]
     registerRuntime(
@@ -195,7 +204,7 @@ describe('runtime IPC adapter', () => {
         settingsService,
         describeRuntimeUsage: () => usage,
         onRuntimeDisabled,
-        uninstallManagedEnvironment
+        removeAgentEnvironment
       })
     )
 
@@ -235,9 +244,12 @@ describe('runtime IPC adapter', () => {
       })
     ).resolves.toMatchObject({ installAuthorized: { '/usr/bin/python3': true } })
     await expect(
-      invoke('runtime:uninstall-managed-environment', { language: 'python' })
+      invoke('runtime:uninstall-agent-environment', {
+        language: 'python',
+        envId: '/runtime/envs/analysis/bin/python'
+      })
     ).resolves.toBeUndefined()
-    expect(uninstallManagedEnvironment).toHaveBeenCalledWith('python', expect.any(Function))
+    expect(removeAgentEnvironment).toHaveBeenCalledWith('analysis')
     await expect(
       invoke('runtime:register-interpreter', {
         language: 'python',
@@ -261,27 +273,18 @@ describe('runtime IPC adapter', () => {
     await expect(invoke('runtime:get-enablement', { language: 'python' })).rejects.toBe(failure)
   })
 
-  it('rejects an invalid uninstall language before destructive workflow dispatch', async () => {
-    const uninstallManagedEnvironment = vi.fn().mockResolvedValue(undefined)
-    registerRuntime(fakeDeps({ uninstallManagedEnvironment }))
-
-    expect(() => invoke('runtime:uninstall-managed-environment', { language: 'julia' })).toThrow(
-      'Notebook language must be python or r.'
-    )
-    expect(uninstallManagedEnvironment).not.toHaveBeenCalled()
-  })
-
-  it('rejects a non-boolean Agent environment creation policy before persistence', () => {
-    const settingsService = fakeSettingsService()
-    settingsService.setAgentEnvironmentCreationEnabled = vi.fn(
-      settingsService.setAgentEnvironmentCreationEnabled
-    )
-    registerRuntime(fakeDeps({ settingsService }))
+  it('rejects malformed creation policy and uninstall identities at the IPC boundary', async () => {
+    registerRuntime(fakeDeps())
 
     expect(() =>
       invoke('runtime:set-agent-environment-creation-enabled', { enabled: 'false' })
-    ).toThrow('Agent environment creation enabled must be a boolean.')
-    expect(settingsService.setAgentEnvironmentCreationEnabled).not.toHaveBeenCalled()
+    ).toThrow('must be a boolean')
+    expect(() =>
+      invoke('runtime:uninstall-agent-environment', { language: 'python', envId: '' })
+    ).toThrow('must be a non-empty string')
+    expect(() =>
+      invoke('runtime:uninstall-agent-environment', { language: 'javascript', envId: '/env' })
+    ).toThrow('Notebook language must be python or r')
   })
 
   it('returns an injected interpreter path', async () => {

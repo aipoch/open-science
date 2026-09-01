@@ -1430,10 +1430,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (language: NotebookLanguage, selection: RuntimeSelection | null) => Promise<RuntimeSurvey>
   >()('runtime', ['runtime:set-selection', LOCAL, RUNTIME_SELECTION]),
   'runtime.survey': callable<() => Promise<RuntimeSurvey[]>>()('runtime', ['runtime:survey']),
-  'runtime.uninstallManagedEnvironment': callable<(language: NotebookLanguage) => Promise<void>>()(
-    'runtime',
-    ['runtime:uninstall-managed-environment', LOCAL, RUNTIME_LANGUAGE]
-  ),
+  'runtime.uninstallAgentEnvironment': callable<
+    (language: NotebookLanguage, envId: string) => Promise<void>
+  >()('runtime', ['runtime:uninstall-agent-environment', LOCAL, RUNTIME_LANGUAGE_ENV]),
   'runtime.unregisterInterpreter': callable<
     (language: NotebookLanguage, path: string) => Promise<string[]>
   >()('runtime', ['runtime:unregister-interpreter', LOCAL, RUNTIME_INTERPRETER]),

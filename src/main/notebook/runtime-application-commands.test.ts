@@ -82,7 +82,7 @@ const createWorkflows = (): RuntimeSelectionWorkflows => ({
     enabled: {},
     installAuthorized: { managed: true }
   })),
-  uninstallManagedEnvironment: vi.fn(async () => undefined),
+  uninstallAgentEnvironment: vi.fn(async () => undefined),
   register: vi.fn(async () => ['/opt/python']),
   unregister: vi.fn(async () => [])
 })
@@ -166,8 +166,8 @@ describe('runtime application commands', () => {
       invocation([{ enabled: false }] as const)
     )
     await router.dispatcher.invoke(
-      runtimeApplicationCommands.uninstallManagedEnvironment,
-      invocation([{ language: 'python' }] as const)
+      runtimeApplicationCommands.uninstallAgentEnvironment,
+      invocation([{ language: 'python', envId: 'analysis' }] as const)
     )
     await router.dispatcher.invoke(
       runtimeApplicationCommands.registerInterpreter,
@@ -197,7 +197,10 @@ describe('runtime application commands', () => {
       authorized: true
     })
     expect(workflows.setAgentEnvironmentCreationEnabled).toHaveBeenCalledWith({ enabled: false })
-    expect(workflows.uninstallManagedEnvironment).toHaveBeenCalledWith({ language: 'python' })
+    expect(workflows.uninstallAgentEnvironment).toHaveBeenCalledWith({
+      language: 'python',
+      envId: 'analysis'
+    })
     expect(workflows.register).toHaveBeenCalledWith({ language: 'python', path: '/opt/python' })
     expect(workflows.unregister).toHaveBeenCalledWith({ language: 'python', path: '/opt/python' })
   })
@@ -232,8 +235,8 @@ describe('runtime application commands', () => {
     ).rejects.toThrow('Runtime command is only available to local callers.')
     await expect(
       router.dispatcher.invoke(
-        runtimeApplicationCommands.uninstallManagedEnvironment,
-        invocation([{ language: 'python' }] as const, 'remote')
+        runtimeApplicationCommands.uninstallAgentEnvironment,
+        invocation([{ language: 'python', envId: 'analysis' }] as const, 'remote')
       )
     ).rejects.toThrow('Runtime command is only available to local callers.')
     await expect(
@@ -259,7 +262,7 @@ describe('runtime application commands', () => {
     expect(workflows.setEnvironmentEnabled).not.toHaveBeenCalled()
     expect(workflows.setInstallAuthorized).not.toHaveBeenCalled()
     expect(workflows.setAgentEnvironmentCreationEnabled).not.toHaveBeenCalled()
-    expect(workflows.uninstallManagedEnvironment).not.toHaveBeenCalled()
+    expect(workflows.uninstallAgentEnvironment).not.toHaveBeenCalled()
     expect(workflows.register).not.toHaveBeenCalled()
     expect(workflows.unregister).not.toHaveBeenCalled()
     expect(pickInterpreter).not.toHaveBeenCalled()

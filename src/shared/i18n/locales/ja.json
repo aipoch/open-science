@@ -2442,7 +2442,7 @@
     "Could not change Agent environment creation.": "エージェントによる環境作成の設定を変更できませんでした。",
     "Could not uninstall that runtime.": "そのランタイムをアンインストールできませんでした。",
     "Uninstall {{label}}?": "{{label}} をアンインストールしますか？",
-    "This removes the app-managed environment and closes its idle kernels. Running work must finish first. You can download it again later.": "アプリ管理環境を削除し、アイドル状態のカーネルを閉じます。実行中の処理が先に完了する必要があります。後で再度ダウンロードできます。",
+    "This permanently removes the Agent-created environment and its installed packages. It cannot be undone.": "エージェントが作成した環境とインストール済みパッケージを完全に削除します。この操作は元に戻せません。",
     "Uninstall": "アンインストール",
     "Uninstall command": "アンインストールコマンド",
     "Uninstall {{name}}?": "{{name}}をアンインストールしますか？",

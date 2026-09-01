@@ -19,20 +19,7 @@ import {
 } from './windows-micromamba-working-cache'
 import { defaultOperationChildLiveness, reconcileInterruptedOperations } from './operation-recovery'
 import { verifyExecutable } from './provisioner-runtime'
-import {
-  assertManagedRuntimeRemovalOwnership,
-  parseManagedRuntimeRemovalTargets
-} from './managed-runtime-removal-paths'
-import {
-  addRepairRequired,
-  clearRepairRequired,
-  DEFAULT_PY_ENV,
-  DEFAULT_R_ENV,
-  managedRepairRegistryKey,
-  pythonBin,
-  rBin,
-  readRepairRequired
-} from './runtime-paths'
+import { addRepairRequired, DEFAULT_PY_ENV, DEFAULT_R_ENV, pythonBin, rBin } from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 
 const log = createLogger('notebook:recovery')
@@ -83,7 +70,6 @@ export class NotebookRecoveryCoordinator {
   private readonly liveUnconfirmedPrefixes = new Set<string>()
   private readonly liveUnconfirmedRuntimeIds = new Set<string>()
   private recoveryCorrupt = false
-  private unsafeRemovalRetained = false
   private disposed = false
 
   constructor(
@@ -128,8 +114,7 @@ export class NotebookRecoveryCoordinator {
     if (
       this.startupBlockedPrefixes.size > 0 ||
       this.startupBlockedRuntimeIds.size > 0 ||
-      this.recoveryCorrupt ||
-      this.unsafeRemovalRetained
+      this.recoveryCorrupt
     ) {
       await this.recover()
     }
@@ -155,7 +140,7 @@ export class NotebookRecoveryCoordinator {
   }
 
   isPrefixBlocked(prefix: string): boolean {
-    if (this.disposed || this.unsafeRemovalRetained || this.blockedPrefixes.has(prefix)) return true
+    if (this.disposed || this.blockedPrefixes.has(prefix)) return true
     return this.recoveryCorrupt && !this.corruptResetAllowlist.has(prefix)
   }
 
@@ -164,7 +149,7 @@ export class NotebookRecoveryCoordinator {
   }
 
   isGloballyBlocked(): boolean {
-    return this.disposed || this.recoveryCorrupt || this.unsafeRemovalRetained
+    return this.disposed || this.recoveryCorrupt
   }
 
   clearPrefixBlock(prefix: string): void {
@@ -204,7 +189,6 @@ export class NotebookRecoveryCoordinator {
     const nextStartupBlockedRuntimeIds = new Set<string>()
     const publishedArchiveRecords: RuntimeOperationRecord[] = []
     let recoveryIncomplete = false
-    let unsafeRemovalRetained = false
 
     await rm(join(this.runtimeRoot, 'packs', '.cache'), { recursive: true, force: true }).catch(
       () => undefined
@@ -214,17 +198,6 @@ export class NotebookRecoveryCoordinator {
       log.error('operation journal is unreadable; blocking all runtime writes until recovery')
       this.recoveryCorrupt = true
       return
-    }
-
-    const removalLanguage = (record: RuntimeOperationRecord): 'python' | 'r' => {
-      const language =
-        record.runtimeId === DEFAULT_R_ENV
-          ? 'r'
-          : record.runtimeId === DEFAULT_PY_ENV
-            ? 'python'
-            : undefined
-      if (!language) throw new Error('Interrupted Runtime removal has an unknown target.')
-      return language
     }
 
     const reconciled = await reconcileInterruptedOperations(journal, {
@@ -317,26 +290,6 @@ export class NotebookRecoveryCoordinator {
         const marker = this.repairPolicy.recoveryMarker(record)
         addRepairRequired(this.runtimeRoot, marker.key, marker.reason)
       },
-      removeTargets: async (record) => {
-        const removal = parseManagedRuntimeRemovalTargets(
-          this.runtimeRoot,
-          removalLanguage(record),
-          record.targetPaths ?? []
-        )
-        assertManagedRuntimeRemovalOwnership(this.runtimeRoot, removal)
-        for (const target of removal.targets) await rm(target, { recursive: true, force: true })
-        const repairKeys = new Set([
-          removal.environmentName,
-          managedRepairRegistryKey(removal.environmentName, 'python'),
-          managedRepairRegistryKey(removal.environmentName, 'r')
-        ])
-        for (const runtimeId of readRepairRequired(this.runtimeRoot)) {
-          if (removal.prefixes.some((prefix) => isPathInside(prefix, runtimeId))) {
-            repairKeys.add(runtimeId)
-          }
-        }
-        for (const repairKey of repairKeys) clearRepairRequired(this.runtimeRoot, repairKey)
-      },
       blockUnknownChildTarget: async (record) => {
         if (record.kind === 'install') nextStartupBlockedRuntimeIds.add(record.runtimeId)
         if (record.targetPath) nextStartupBlockedPrefixes.add(record.targetPath)
@@ -347,26 +300,7 @@ export class NotebookRecoveryCoordinator {
         publishedArchiveRecords.push(record)
       },
       deferArchiveCompletion: true,
-      onRetained: (record) => {
-        if (record.kind === 'remove') {
-          try {
-            // The delete may have succeeded before journal completion failed. Keep this exact prefix
-            // blocked so no new provision can be recreated under a stale remove intent that recovery
-            // will replay on the next attempt.
-            const removal = parseManagedRuntimeRemovalTargets(
-              this.runtimeRoot,
-              removalLanguage(record),
-              record.targetPaths ?? []
-            )
-            assertManagedRuntimeRemovalOwnership(this.runtimeRoot, removal)
-            for (const prefix of removal.prefixes) nextStartupBlockedPrefixes.add(prefix)
-          } catch {
-            // A retained remove intent whose structural paths or physical ownership cannot be proven
-            // safe blocks every write. Never turn any of its unvalidated paths into delete authority,
-            // and never let a per-prefix corrupt-journal reset bypass this independent barrier.
-            unsafeRemovalRetained = true
-          }
-        }
+      onRetained: () => {
         recoveryIncomplete = true
       }
     })
@@ -395,7 +329,6 @@ export class NotebookRecoveryCoordinator {
       this.blockedRuntimeIds.add(runtimeId)
     }
     this.recoveryCorrupt = false
-    this.unsafeRemovalRetained = unsafeRemovalRetained
     this.corruptResetAllowlist.clear()
 
     for (const record of reconciled) {

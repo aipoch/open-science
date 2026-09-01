@@ -158,7 +158,7 @@ export const WEB_INVOKE_CHANNELS = {
   'runtime.setInstallAuthorized': 'runtime:set-install-authorized',
   'runtime.setSelection': 'runtime:set-selection',
   'runtime.survey': 'runtime:survey',
-  'runtime.uninstallManagedEnvironment': 'runtime:uninstall-managed-environment',
+  'runtime.uninstallAgentEnvironment': 'runtime:uninstall-agent-environment',
   'runtime.unregisterInterpreter': 'runtime:unregister-interpreter',
   saveBlobFile: 'file:save-blob',
   saveManagedFile: 'file:save-managed',

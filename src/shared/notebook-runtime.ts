@@ -102,14 +102,6 @@ export type DiscoveredInterpreter = {
   detail?: string
 }
 
-// Discovery retains versioned legacy defaults as app-managed so the Agent can never remove them,
-// but only the exact current default is owned by the Settings uninstall workflow. `condaEnv` is the
-// logical prefix name (including the Windows .p/.r mapping), so this check stays renderer-safe and
-// does not derive filesystem ownership from an interpreter path.
-export const isCurrentAppManagedDefault = (env: DiscoveredInterpreter): boolean =>
-  env.provenance === 'app-managed' &&
-  env.condaEnv === (env.language === 'r' ? 'default-r' : 'default-python')
-
 // One installed package in a discovered environment, surfaced by the Settings "Packages" dialog.
 // `build`/`channel` are present only for conda-tracked entries (a micromamba listing); pip and CRAN
 // listings carry name + version only.

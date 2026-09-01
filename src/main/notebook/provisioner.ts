@@ -68,10 +68,6 @@ import { sandboxedPackageSpawn } from './package-process-sandbox'
 import type { InstallRequest } from './package-manager'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import {
-  assertManagedRuntimeRemovalOwnership,
-  managedRuntimeRemovalTargets
-} from './managed-runtime-removal-paths'
-import {
   isChildUnconfirmedError,
   captureMicromamba,
   micromambaDiagnosticText,
@@ -267,9 +263,6 @@ export type ProvisionerDeps = {
   // (matching the service's envLock key). Injected from main/ipc.ts; unset in unit tests (runs
   // unlocked). Passes fn's result through.
   withPrefixLock?: <T>(envName: string, fn: () => Promise<T>) => Promise<T>
-  // Managed uninstall enters the serialized provisioner queue before acquiring this removal-only
-  // lock. Production wires it to the service removal lease, whose barrier was closed before queueing.
-  withRemovalLock?: <T>(envName: string, fn: () => Promise<T>) => Promise<T>
   // Scheduler for the create-phase progress ticker. Defaults to a self-unref'ing setInterval; tests
   // inject a manual one to drive ticks synchronously instead of waiting real wall-clock time. Returns
   // a cancel fn that stops further ticks.
@@ -329,13 +322,6 @@ export interface RuntimeProvisioner {
   provisionPython(onProgress: (p: ProvisionProgress) => void): Promise<void>
   provisionR(onProgress: (p: ProvisionProgress) => void): Promise<void>
   upgradeIfNeeded(onProgress: (p: ProvisionProgress) => void): Promise<void>
-  // Optional because unavailable/test provisioners may expose only setup operations. Production uses
-  // this hook through the same serialized mutation queue as startup, UI setup, and lazy provisioning.
-  removeManagedEnvironment?(
-    language: NotebookLanguage,
-    beforeRemove?: () => Promise<void>,
-    afterRemove?: () => Promise<void> | void
-  ): Promise<void>
   // `force` = explicit user recovery: clears a recovery quarantine (block + retained journal record +
   // sidecar) before rebuilding, so a stuck/uncertain runtime can be reset. Auto/startup repair omits it
   // and stays gated by the block.
@@ -355,9 +341,6 @@ export interface RuntimeProvisioner {
 export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   private provisioning = false
   private legacyCacheCleanupComplete = false
-  // A remove whose durable journal record could not be cleared must block recreation in this process;
-  // otherwise startup recovery would replay the stale remove intent onto the newly-created env.
-  private readonly pendingRemovalPrefixes = new Set<string>()
   // Prefixes whose write in THIS process failed with a child tree we could not confirm stopped (a worker
   // MAY still be live). A force Reset must NOT delete+rebuild such a prefix. This in-memory set guards the
   // current app lifetime; the retained journal plus downgraded {spawning} sidecar guard later startups
@@ -732,12 +715,6 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   // Called at every prefix-write site so an unknown-liveness orphan blocks the write this session —
   // covering the startup gate's restore/upgrade/repair, not just the UI provision/repair handlers.
   private assertPrefixWritable(prefix: string): void {
-    if (this.pendingRemovalPrefixes.has(prefix)) {
-      throw new Error(
-        `RUNTIME_RECOVERY_BLOCKED: removal of "${prefix}" could not be finalized durably. ` +
-          'Restart the app to finish recovery before recreating this environment.'
-      )
-    }
     if (this.deps.isPrefixBlocked?.(prefix)) {
       throw new Error(
         `RUNTIME_RECOVERY_BLOCKED: a previous operation on "${prefix}" was interrupted and its worker ` +
@@ -919,11 +896,6 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   // it calls stay lock-free.
   private withEnvPrefixLock<T>(envName: string, fn: () => Promise<T>): Promise<T> {
     return this.deps.withPrefixLock ? this.deps.withPrefixLock(envName, fn) : fn()
-  }
-
-  private withManagedRemovalLock<T>(envName: string, fn: () => Promise<T>): Promise<T> {
-    if (this.deps.withRemovalLock) return this.deps.withRemovalLock(envName, fn)
-    return this.withEnvPrefixLock(envName, fn)
   }
 
   private cleanupLegacyDefaultPrefix(name: string): void {
@@ -1407,43 +1379,6 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     rmSync(envPrefix(this.deps.root, name, this.platform), { recursive: true, force: true })
   }
 
-  // Removes exactly one app-managed default plus its readiness receipt. The serialized provisioner
-  // queue enters this method before it takes the per-env mutation lock, preserving one lock order for
-  // startup writes, session teardown, and deletion. The callback lets the service close sessions while
-  // the lock is held without giving renderer input filesystem deletion authority.
-  async removeManagedEnvironment(
-    language: NotebookLanguage,
-    beforeRemove?: () => Promise<void>,
-    afterRemove?: () => Promise<void> | void
-  ): Promise<void> {
-    const name = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
-    await this.withManagedRemovalLock(name, async () => {
-      const removal = managedRuntimeRemovalTargets(this.deps.root, language, this.platform)
-      assertManagedRuntimeRemovalOwnership(this.deps.root, removal)
-      await beforeRemove?.()
-      const journal = RuntimeOperationJournal.forPath(operationJournalPath(this.deps.root))
-      const operationId = randomUUID()
-      await journal.begin({
-        operationId,
-        kind: 'remove',
-        runtimeId: name,
-        phase: `remove-${language}`,
-        startedAt: Date.now(),
-        targetPaths: removal.targets
-      })
-      try {
-        for (const target of removal.targets) rmSync(target, { recursive: true, force: true })
-        await afterRemove?.()
-        await journal.complete(operationId)
-      } catch (error) {
-        // Keep the durable intent for startup retry and prevent this provisioner from recreating the
-        // prefix before that retry has cleared it.
-        for (const prefix of removal.prefixes) this.pendingRemovalPrefixes.add(prefix)
-        throw error
-      }
-    })
-  }
-
   // Keeps a healthy legacy R prefix additive, but replaces an invalid partial prefix from the lock.
   private async upgradeOrRebuildR(onProgress: (p: ProvisionProgress) => void): Promise<void> {
     const prefix = envPrefix(this.deps.root, DEFAULT_R_ENV, this.platform)
@@ -1884,9 +1819,6 @@ export type ProductionProvisionerOptions = {
   // Forwarded to ProvisionerDeps.withPrefixLock: shares the service's per-env install lock so a default
   // env create/repair/upgrade never runs concurrently with an install into the same env prefix.
   withPrefixLock?: <T>(envName: string, fn: () => Promise<T>) => Promise<T>
-  // Forwarded to ProvisionerDeps.withRemovalLock: takes the removal-only lease after the shared
-  // provisioner queue, preserving queue -> lease ordering while admission is already closed.
-  withRemovalLock?: <T>(envName: string, fn: () => Promise<T>) => Promise<T>
 }
 
 export type ProductionProvisionerDeps = {
@@ -2051,7 +1983,6 @@ export const createProductionProvisioner = (
     clearCorruptBlock: opts.clearCorruptBlock,
     blockPrefix: opts.blockPrefix,
     isPrefixLiveUnconfirmed: opts.isPrefixLiveUnconfirmed,
-    withPrefixLock: opts.withPrefixLock,
-    withRemovalLock: opts.withRemovalLock
+    withPrefixLock: opts.withPrefixLock
   })
 }

@@ -37,7 +37,7 @@ type NotebookDataExecutionAdmissionOwnerOptions = {
   runtimeRoot: string
   environmentOperations: Pick<
     NotebookEnvironmentOperations,
-    'ensureDefaultEnvironmentReady' | 'isRepairBlocked' | 'runExecutionAdmission' | 'runShared'
+    'ensureDefaultEnvironmentReady' | 'isRepairBlocked' | 'runShared'
   >
   recovery: Pick<
     NotebookRecoveryCoordinator,
@@ -117,10 +117,6 @@ class NotebookDataExecutionAdmissionOwner {
         ? binding.envName
         : defaultEnvironment(language)
     return { environment, processKey: processKey(language, environment) }
-  }
-
-  runAdmission<T>(route: NotebookDataExecutionRoute, operation: () => Promise<T>): Promise<T> {
-    return this.options.environmentOperations.runExecutionAdmission(route.environment, operation)
   }
 
   async admit(

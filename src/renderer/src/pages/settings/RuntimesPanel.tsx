@@ -24,7 +24,6 @@ import { cn } from '@/lib/utils'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useRuntimeSettingsStore } from '@/stores/runtime-settings-store'
 import {
-  isCurrentAppManagedDefault,
   isEnvEnabled,
   type DiscoveredInterpreter,
   type EnvPackage,
@@ -306,7 +305,9 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       // The provisioner updates files and registry metadata in the main process; reload both the
       // discovered environments and persisted enablement before rendering the completed card.
       const snapshot = await recheckRuntimeSettings()
-      const managed = snapshot.envs[language].find(isCurrentAppManagedDefault)
+      const managed = snapshot.envs[language].find(
+        (environment) => environment.provenance === 'app-managed'
+      )
       if (managed) {
         const next = await window.api.runtime.setEnvironmentEnabled(language, managed.envId, true)
         setEnablement(language, next)
@@ -320,12 +321,12 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
 
   const confirmUninstall = async (): Promise<void> => {
     if (!uninstallTarget) return
-    const { language } = uninstallTarget
+    const { language, env } = uninstallTarget
     setUninstalling(true)
     setBusy(true)
     setError(null)
     try {
-      await window.api.runtime.uninstallManagedEnvironment(language)
+      await window.api.runtime.uninstallAgentEnvironment(language, env.envId)
       setUninstallTarget(null)
       await recheckRuntimeSettings()
     } catch (e) {
@@ -366,7 +367,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   // Managed readiness is derived from discovery: the app-managed env for a language is present and
   // runnable once it is set up (replaces the old survey().managed readiness).
   const managedRunnableFor = (language: NotebookLanguage): boolean =>
-    (envs?.[language] ?? []).some((env) => isCurrentAppManagedDefault(env) && env.runnable)
+    (envs?.[language] ?? []).some((env) => env.provenance === 'app-managed' && env.runnable)
 
   // One environment card (detected app-managed or user-own): identity + readiness + enable toggle,
   // plus the install-authorization row for an enabled external env. Shared by the managed-first card
@@ -407,7 +408,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
           />
         </div>
 
-        {env.runnable || env.provenance === 'app-managed' ? (
+        {env.runnable || env.provenance === 'agent-created' ? (
           <div className="mt-2 flex flex-wrap gap-2">
             {env.runnable ? (
               <Button
@@ -431,13 +432,13 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                 ) : null}
               </Button>
             ) : null}
-            {isCurrentAppManagedDefault(env) ? (
+            {env.provenance === 'agent-created' ? (
               <Button
                 type="button"
                 variant="destructive"
                 size="sm"
                 data-testid="runtime-uninstall-button"
-                disabled={busy || managedOperations[language] === true}
+                disabled={busy}
                 onClick={() => setUninstallTarget({ language, env })}
               >
                 <Trash2 aria-hidden="true" />
@@ -562,8 +563,8 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
             // App-managed goes FIRST; the user's own detected interpreters follow. A provisioned
             // app-managed env appears in `list` (provenance app-managed) and renders as a normal card;
             // when it isn't set up yet there is no such entry, so a setup card is shown in its place.
-            const managedEnv = list.find(isCurrentAppManagedDefault)
-            const otherEnvs = list.filter((env) => env !== managedEnv)
+            const managedEnv = list.find((env) => env.provenance === 'app-managed')
+            const ownEnvs = list.filter((env) => env.provenance !== 'app-managed')
 
             return (
               <SettingsSection
@@ -730,7 +731,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                     </div>
                   )}
 
-                  {otherEnvs.map((env) => renderEnvCard(id, env))}
+                  {ownEnvs.map((env) => renderEnvCard(id, env))}
                 </div>
               </SettingsSection>
             )
@@ -845,7 +846,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
             <div className={dialogBodyClassName}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
                 {t(
-                  'This removes the app-managed environment and closes its idle kernels. Running work must finish first. You can download it again later.'
+                  'This permanently removes the Agent-created environment and its installed packages. It cannot be undone.'
                 )}
               </AlertDialog.Description>
             </div>

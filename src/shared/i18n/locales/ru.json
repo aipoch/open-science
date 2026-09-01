@@ -2577,7 +2577,7 @@
     "Could not change Agent environment creation.": "Не удалось изменить настройку создания окружений Агентом.",
     "Could not uninstall that runtime.": "Не удалось удалить эту среду выполнения.",
     "Uninstall {{label}}?": "Удалить {{label}}?",
-    "This removes the app-managed environment and closes its idle kernels. Running work must finish first. You can download it again later.": "Это удалит управляемое приложением окружение и закроет его бездействующие ядра. Сначала необходимо завершить выполняющуюся работу. Позже окружение можно загрузить снова.",
+    "This permanently removes the Agent-created environment and its installed packages. It cannot be undone.": "Это навсегда удалит окружение, созданное Агентом, и установленные в нём пакеты. Это действие нельзя отменить.",
     "Uninstall": "Удалить",
     "Uninstall command": "Команда удаления",
     "Uninstall {{name}}?": "Удалить {{name}}?",

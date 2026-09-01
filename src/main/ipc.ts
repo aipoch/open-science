@@ -3331,8 +3331,9 @@ const createApplicationModules = async (
     // WS11: live-session usage of a runtime, for the disable-impact warning.
     describeRuntimeUsage: (language, envId) =>
       notebookService.describeRuntimeUsage(language, envId),
-    uninstallManagedEnvironment: (language, commitDisabledState) =>
-      notebookService.uninstallManagedEnvironment(language, commitDisabledState),
+    removeAgentEnvironment: async (name) => {
+      await notebookService.manageEnvironments({ action: 'remove', name })
+    },
     prepareExternalPython: async (selection, root) => {
       const configuredMirror = await settingsService.getPackageMirror()
       const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
@@ -3435,10 +3436,7 @@ const createApplicationModules = async (
         isPrefixLiveUnconfirmed: (prefix) => notebookService.isPrefixLiveUnconfirmed(prefix),
         // Share the service's per-env install lock so a default-env create/repair/upgrade serializes with
         // a package install into the same env prefix instead of racing it on a separate lock.
-        withPrefixLock: (envName, fn) => notebookService.withEnvLock(envName, fn),
-        // Admission closes before the shared provisioner queue; deletion takes this removal-only
-        // exclusive lease after reaching the front of that queue.
-        withRemovalLock: (envName, fn) => notebookService.withEnvRemovalLock(envName, fn)
+        withPrefixLock: (envName, fn) => notebookService.withEnvLock(envName, fn)
       },
       { runner: micromambaRunner }
     )
@@ -3484,8 +3482,6 @@ const createApplicationModules = async (
     projectProgress: broadcastNotebookEnvProgress,
     waitForRecovery,
     assertProvisionAllowed,
-    runProvisionAdmission: (language, operation) =>
-      notebookService.runDefaultEnvironmentProvisionAdmission(language, operation),
     onRepairCompleted: (language) => notebookService.completeRuntimeRepair(language)
   })
   // Always register the handlers (serialized is undefined when the provisioner could not be built).
@@ -3498,15 +3494,7 @@ const createApplicationModules = async (
     // Back the notebook service's manage_environments tool with the same provisioner that owns the env
     // gate (it is a DefaultRuntimeProvisioner, which implements createNamedEnvironment/listEnvironments/
     // removeEnvironment). Wired after construction like the mcp/mirror resolvers above.
-    notebookService.setEnvironmentManager({
-      createNamedEnvironment: (...args) => provisioner.createNamedEnvironment(...args),
-      listEnvironments: () => provisioner.listEnvironments(),
-      removeEnvironment: (name) => provisioner.removeEnvironment(name),
-      // Use the shared mutation queue: an already-admitted startup restore/upgrade/repair finishes
-      // before removal instead of waking after deletion and recreating the managed default.
-      removeManagedEnvironment: (language, beforeRemove, afterRemove) =>
-        serialized.removeManagedEnvironment!(language, beforeRemove, afterRemove)
-    })
+    notebookService.setEnvironmentManager(provisioner)
     // On first agent use of a not-yet-built default env, build it from the offline bundle (via the
     // shared serialized provisioner) instead of erroring — keeps R lazy but avoids the agent creating
     // a redundant named env.

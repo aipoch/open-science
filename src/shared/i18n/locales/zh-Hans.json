@@ -2518,7 +2518,7 @@
     "Could not change Agent environment creation.": "无法更改智能体环境创建设置。",
     "Could not uninstall that runtime.": "无法卸载该运行时。",
     "Uninstall {{label}}?": "卸载 {{label}}？",
-    "This removes the app-managed environment and closes its idle kernels. Running work must finish first. You can download it again later.": "这会移除应用管理的环境并关闭其空闲内核。正在运行的工作必须先完成。您可以稍后重新下载。",
+    "This permanently removes the Agent-created environment and its installed packages. It cannot be undone.": "这会永久移除智能体创建的环境及其中已安装的软件包。此操作无法撤销。",
     "Uninstall": "卸载",
     "Uninstall command": "卸载命令",
     "Uninstall {{name}}?": "卸载 {{name}}？",

@@ -197,7 +197,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-environment-enabled',
     'set-install-authorized',
     'set-selection',
-    'uninstall-managed-environment',
+    'uninstall-agent-environment',
     'unregister-interpreter'
   ],
   settings: [

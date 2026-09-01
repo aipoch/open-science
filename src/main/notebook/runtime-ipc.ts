@@ -16,6 +16,13 @@ const parseAgentEnvironmentCreationEnabled = (value: unknown): boolean => {
   return value
 }
 
+const parseEnvironmentId = (value: unknown): string => {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new TypeError('Runtime environment id must be a non-empty string.')
+  }
+  return value
+}
+
 export type RuntimeIpcOptions = {
   // Injectable for tests; production defaults to the Electron native open-file dialog.
   showOpenDialog?: () => Promise<string | null>
@@ -84,9 +91,12 @@ const registerRuntimeIpcHandlers = (
   )
 
   ipcMainHandle(
-    'runtime:uninstall-managed-environment',
-    (_event, request: { language?: unknown }) =>
-      workflows.uninstallManagedEnvironment({ language: parseNotebookLanguage(request?.language) })
+    'runtime:uninstall-agent-environment',
+    (_event, request: { language?: unknown; envId?: unknown }) =>
+      workflows.uninstallAgentEnvironment({
+        language: parseNotebookLanguage(request?.language),
+        envId: parseEnvironmentId(request?.envId)
+      })
   )
 
   ipcMainHandle('runtime:pick-interpreter', async (): Promise<string | null> => {
