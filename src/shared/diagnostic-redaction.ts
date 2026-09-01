@@ -82,6 +82,13 @@ const isSensitiveUrlQueryKey = (key: string): boolean =>
   isSensitiveDiagnosticKey(key) ||
   diagnosticKeyWords(key).some((word) => SIGNED_URL_QUERY_WORDS.has(word))
 
+const hasSensitiveUrlFragment = (hash: string): boolean => {
+  const fragment = hash.slice(1)
+  const queryStart = fragment.indexOf('?')
+  const params = new URLSearchParams(queryStart === -1 ? fragment : fragment.slice(queryStart + 1))
+  return [...params].some(([key, value]) => value !== '' && isSensitiveUrlQueryKey(key))
+}
+
 const redactUrlCredentials = (rawUrl: string): string => {
   try {
     const url = new URL(rawUrl)
@@ -97,7 +104,7 @@ const redactUrlCredentials = (rawUrl: string): string => {
       url.searchParams.set(key, REDACTED_MARKER)
       changed = true
     }
-    if (url.hash) {
+    if (url.hash && hasSensitiveUrlFragment(url.hash)) {
       url.hash = ''
       changed = true
     }
@@ -108,12 +115,18 @@ const redactUrlCredentials = (rawUrl: string): string => {
   }
 }
 
+const redactEmbeddedUrlCredentials = (rawUrl: string): string => {
+  const hasEscapedSeparators = rawUrl.includes('\\/')
+  const redacted = redactUrlCredentials(rawUrl.replaceAll('\\/', '/'))
+  return hasEscapedSeparators ? redacted.replace('://', ':\\/\\/') : redacted
+}
+
 // Shared credential-text policy for diagnostic sinks and persisted tool payloads. Keep this
 // helper unbounded: each caller owns its own output budget, while the credential patterns stay
 // identical at every boundary.
 const redactSensitiveText = (value: string): string =>
   value
-    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, redactUrlCredentials)
+    .replace(/\b[a-z][a-z0-9+.-]*:(?:\\?\/){2}[^\s"'<>]+/gi, redactEmbeddedUrlCredentials)
     .replace(
       /\b(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b(\s*["']?\s*:\s*["']?)[^"'\r\n}]*/gi,
       `$1$2${REDACTED_MARKER}`

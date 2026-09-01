@@ -34,6 +34,19 @@ describe('sanitizeRawToolPayload', () => {
       inputTokenCount: 42
     })
   })
+
+  it('redacts signed URLs whose separators are JSON-escaped', () => {
+    const result = sanitizeRawToolPayload(
+      {
+        command:
+          'curl "https:\\/\\/storage.example.test/private?sig=test-escaped-signature&version=7"'
+      },
+      8_000
+    )
+
+    expect(JSON.stringify(result)).not.toContain('test-escaped-signature')
+    expect(JSON.stringify(result)).toContain('[redacted]')
+  })
 })
 
 describe('sanitizeToolContent', () => {
@@ -77,6 +90,14 @@ describe('sanitizeToolContent', () => {
         content: { type: 'resource', resource: { uri: 'file:///notes.txt', text: 'notes' } }
       }
     ])
+  })
+
+  it('preserves non-sensitive resource URI fragments', () => {
+    const uri = 'https://example.test/report#methods'
+
+    expect(
+      sanitizeToolContent([{ type: 'content', content: { type: 'resource_link', uri } }])
+    ).toEqual([{ type: 'content', content: { type: 'resource_link', uri } }])
   })
 
   it('normalizes diffs and caps each text field independently', () => {
