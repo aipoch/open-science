@@ -3048,6 +3048,10 @@ const createApplicationModules = async (
       }
     },
     notebook: notebookService,
+    sideChat: {
+      shutdown: () => sideChatRuntime.shutdown(),
+      suspendAll: () => sideChatRuntime.suspendAll()
+    },
     log: createLogger('shutdown')
   })
   const durableBackendHandoffGate = createDurableInstallGate(
@@ -4036,8 +4040,9 @@ const createApplicationModules = async (
     }
   }
 
-  // The shared coordinator remains the sole ACP + Notebook teardown owner. Register command routing
-  // after it so reverse disposal removes adapters, then the router, before any underlying owner stops.
+  // The shared coordinator remains the sole ACP + Side Chat + Notebook teardown owner. Register
+  // command routing after it so reverse disposal removes adapters, then the router, before any
+  // underlying owner stops.
   await modules.add({ shutdownCoordinator }, ({ shutdownCoordinator: coordinator }) => ({
     name: 'backend-shutdown-coordinator',
     capability: undefined,

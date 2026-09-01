@@ -18,6 +18,10 @@ const makeDeps = (overrides: Partial<BackendShutdownDeps> = {}): BackendShutdown
     shutdownAll: vi.fn(async () => ({ reaped: true })),
     dispose: vi.fn(async () => ({ reaped: true }))
   },
+  sideChat: {
+    shutdown: vi.fn(async () => undefined),
+    suspendAll: vi.fn(async () => undefined)
+  },
   log: { error: vi.fn() },
   ...overrides
 })
@@ -137,7 +141,13 @@ describe('BackendShutdownCoordinator', () => {
   })
 
   it('runForUpdateGate uses the non-latching teardown', async () => {
-    const deps = makeDeps()
+    const suspendAll = vi.fn(async () => undefined)
+    const deps = makeDeps({
+      sideChat: {
+        shutdown: vi.fn(async () => undefined),
+        suspendAll
+      }
+    })
     const coordinator = new BackendShutdownCoordinator(deps)
 
     const outcome = await coordinator.runForUpdateGate()
@@ -146,6 +156,7 @@ describe('BackendShutdownCoordinator', () => {
     expect(deps.runtime.shutdownForUpdateGate).toHaveBeenCalledTimes(1)
     expect(deps.runtime.shutdownForQuit).not.toHaveBeenCalled()
     expect(deps.notebook.shutdownAll).toHaveBeenCalledTimes(1)
+    expect(suspendAll).toHaveBeenCalledOnce()
   })
 
   it('reports reaped:false when a tree kill was degraded', async () => {
@@ -160,6 +171,21 @@ describe('BackendShutdownCoordinator', () => {
     const outcome = await coordinator.runForUpdateGate()
 
     expect(outcome).toEqual({ completed: true, reaped: false })
+  })
+
+  it('refuses a handoff when Side Chat suspension cannot persist its conversation', async () => {
+    const deps = makeDeps({
+      sideChat: {
+        shutdown: vi.fn(async () => undefined),
+        suspendAll: vi.fn(async () => Promise.reject(new Error('save failed')))
+      }
+    })
+    const coordinator = new BackendShutdownCoordinator(deps)
+
+    await expect(coordinator.runForUpdateGate()).resolves.toEqual({
+      completed: true,
+      reaped: false
+    })
   })
 
   it('reports completed:false (and reaped:false) when the gate teardown exceeds its budget', async () => {

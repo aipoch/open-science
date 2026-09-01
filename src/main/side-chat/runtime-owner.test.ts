@@ -1778,7 +1778,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     expect(String(sent[1]?.historyPreamble)).not.toContain('Failed follow-up')
   })
 
-  it('keeps durable state and provider data when app shutdown interrupts a turn', async () => {
+  it('keeps durable state and remains reusable when a handoff suspends a turn', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-shutdown-'))
     const persistence = createPersistence()
     let runtimeOptions: AcpRuntimeOptions | undefined
@@ -1807,6 +1807,11 @@ describe('SideChatRuntimeOwner lifecycle', () => {
             sessionId: 'provider-shutdown',
             frameworkId: 'claude-code' as const
           })),
+          resumeSession: vi.fn(async () => ({
+            sessionId: 'provider-shutdown',
+            providerSessionId: 'provider-shutdown',
+            frameworkId: 'claude-code' as const
+          })),
           sendPrompt: vi.fn((request: { sessionId: string }) => {
             runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
             return turn
@@ -1824,7 +1829,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       projectId: 'project-1',
       text: 'Still running'
     })
-    await owner.shutdown()
+    await owner.suspendAll()
 
     expect(cancelPrompt).toHaveBeenCalledWith({ sessionId: 'provider-shutdown' })
     expect(deleteSession).not.toHaveBeenCalled()
@@ -1848,6 +1853,11 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     await expect(
       stat(join(temporaryRoot, 'runtime-support', 'side-chat', started.sideSessionId))
     ).resolves.toBeDefined()
+
+    await expect(
+      owner.send({ sideSessionId: started.sideSessionId, text: 'Continue after handoff' })
+    ).resolves.toBeUndefined()
+    await owner.close({ sideSessionId: started.sideSessionId })
   })
 
   it('waits for dormant activation and blocks prompt admission during app shutdown', async () => {

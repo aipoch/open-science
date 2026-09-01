@@ -288,6 +288,7 @@ class SideChatRuntimeOwner {
   private readonly pausedParents = new Set<string>()
   private revision = 0
   private shuttingDown = false
+  private suspension: Promise<void> | undefined
 
   constructor(private readonly options: SideChatRuntimeOwnerOptions) {
     this.root = join(options.configRoot, 'runtime-support', 'side-chat')
@@ -370,7 +371,7 @@ class SideChatRuntimeOwner {
   }
 
   async start(request: SideChatRuntimeStartRequest): Promise<SideChatStartResponse> {
-    if (this.shuttingDown) throw new Error('Side chat is shutting down.')
+    if (this.shuttingDown || this.suspension) throw new Error('Side chat is shutting down.')
     if (this.invalidatedParents.has(request.parentSessionId)) {
       throw new Error('The parent Session is unavailable.')
     }
@@ -747,8 +748,23 @@ class SideChatRuntimeOwner {
     }
   }
 
-  async shutdown(): Promise<void> {
+  suspendAll(): Promise<void> {
+    if (this.suspension) return this.suspension
+    const suspension = this.drainActive()
+    this.suspension = suspension
+    const clear = (): void => {
+      if (this.suspension === suspension) this.suspension = undefined
+    }
+    void suspension.then(clear, clear)
+    return suspension
+  }
+
+  shutdown(): Promise<void> {
     this.shuttingDown = true
+    return this.suspendAll()
+  }
+
+  private async drainActive(): Promise<void> {
     const failures: unknown[] = []
     const settle = async (operations: readonly Promise<unknown>[]): Promise<void> => {
       const results = await Promise.allSettled(operations)
@@ -776,7 +792,7 @@ class SideChatRuntimeOwner {
   ): Promise<void> {
     const text = requirePromptText(request.text)
     const active = await this.ensureActive(request.sideSessionId)
-    if (this.shuttingDown) throw new Error('Side chat is shutting down.')
+    if (this.shuttingDown || this.suspension) throw new Error('Side chat is shutting down.')
     if (active.turn || active.running) throw new Error('A Side chat prompt is already running.')
     await this.flushQueuedPersistence(active)
     let historyPreamble = request.historyPreamble
@@ -885,7 +901,7 @@ class SideChatRuntimeOwner {
   }
 
   private async activateDormant(dormant: DormantSideChat): Promise<ActiveSideChat> {
-    if (this.shuttingDown) throw new Error('Side chat is shutting down.')
+    if (this.shuttingDown || this.suspension) throw new Error('Side chat is shutting down.')
     const sideChat = dormant.sideChat
     const jobRoot = join(this.root, sideChat.id)
     const cwd = join(jobRoot, 'cwd')

@@ -301,6 +301,10 @@ describe('application surface shutdown', () => {
         notebook: {
           dispose: async () => ({ reaped: true }),
           shutdownAll: async () => ({ reaped: true })
+        },
+        sideChat: {
+          shutdown: async () => undefined,
+          suspendAll: async () => undefined
         }
       })
       const runtime = await composeApplicationRuntime(async (modules) => {
