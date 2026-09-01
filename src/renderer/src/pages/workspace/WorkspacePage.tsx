@@ -28,7 +28,12 @@ import {
   type ChatSession
 } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
-import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
+import {
+  selectProjectSessionReviewLoadError,
+  selectProjectSessionReviewSnapshot,
+  selectProjectSessionReviews,
+  useReviewStore
+} from '@/stores/review-store'
 import {
   assembleReviewRunRequest,
   suppressNextAutoReview,
@@ -270,6 +275,22 @@ const WorkspacePage = ({
     }
     return selected
   })
+  const persistedReviewSnapshot = useReviewStore((state) => {
+    if (!storedActiveSession) return undefined
+    return selectProjectSessionReviewSnapshot(
+      state.reviewsBySession,
+      storedActiveSession.projectId,
+      storedActiveSession.id,
+      state.loadedReviewSessions
+    )
+  })
+  const reviewLoadError = useReviewStore((state) =>
+    selectProjectSessionReviewLoadError(
+      state.loadErrorsBySession,
+      storedActiveSession?.projectId,
+      storedActiveSession?.id
+    )
+  )
   const hasPersistedActiveFixLoop = useReviewStore((state) => {
     if (!storedActiveSession) return false
     return selectProjectSessionReviews(
@@ -289,6 +310,9 @@ const WorkspacePage = ({
         : storedActiveSession,
     [hasPersistedActiveFixLoop, storedActiveSession]
   )
+  const isReviewHistoryUnavailable =
+    storedActiveSession !== undefined &&
+    (persistedReviewSnapshot === undefined || reviewLoadError !== undefined)
   const {
     activeAgentConfiguration,
     agentConfigurationUnavailable,
@@ -534,6 +558,7 @@ const WorkspacePage = ({
     agentConfigurationReady: !agentConfigurationUnavailable,
     permissionProfile: activePermissionProfile,
     isReviewing: isReviewBusy,
+    isTurnAdmissionBlocked: isReviewHistoryUnavailable,
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds,

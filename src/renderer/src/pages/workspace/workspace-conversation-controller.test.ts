@@ -105,6 +105,7 @@ const options = (
     agentConfigurationReady: true,
     permissionProfile: 'full',
     isReviewing: false,
+    isTurnAdmissionBlocked: false,
     promptInFlightSessionIds: [],
     sendPreparationInFlightSessionIds: [],
     saveAsSkillInFlightSessionIds: [],

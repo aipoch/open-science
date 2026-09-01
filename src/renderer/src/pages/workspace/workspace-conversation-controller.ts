@@ -99,6 +99,7 @@ type WorkspaceConversationControllerOptions = {
   agentConfigurationReady: boolean
   permissionProfile: PermissionProfileId
   isReviewing: boolean
+  isTurnAdmissionBlocked: boolean
   promptInFlightSessionIds: string[]
   sendPreparationInFlightSessionIds: string[]
   saveAsSkillInFlightSessionIds: string[]
@@ -242,6 +243,7 @@ const canSubmitImmediately = (options: WorkspaceConversationControllerOptions): 
       composer.view.annotations.length > 0) &&
     (options.actionability?.actions.startTurn.allowed ?? true) &&
     !hasRuntimeInteraction(options) &&
+    !options.isTurnAdmissionBlocked &&
     !activeSession?.fixLoopActive &&
     !activeSession?.conversationGraphSyncBlocked &&
     !activeSession?.compacting &&
@@ -263,6 +265,7 @@ const canQueueDraft = (options: WorkspaceConversationControllerOptions): boolean
       composer.view.annotations.length > 0) &&
     !options.sendPreparationInFlightSessionIds.includes(activeSession.id) &&
     !options.saveAsSkillInFlightSessionIds.includes(activeSession.id) &&
+    !options.isTurnAdmissionBlocked &&
     !activeSession.fixLoopActive &&
     !activeSession.conversationGraphSyncBlocked &&
     !activeSession.compacting &&

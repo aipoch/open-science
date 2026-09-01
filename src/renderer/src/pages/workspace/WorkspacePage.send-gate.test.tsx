@@ -176,7 +176,10 @@ describe('WorkspacePage send gate while compacting', () => {
     setDefaultWorkspaceAgentSettings()
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useProjectStore.setState({ projects: [] })
-    useReviewStore.setState(createInitialReviewState())
+    useReviewStore.setState({
+      ...createInitialReviewState(),
+      loadedReviewSessions: { 'proj-1\0sess-a': true }
+    })
     useMemoryStore.setState(createInitialMemoryState())
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-1' })
     useSessionStore.setState({
@@ -774,6 +777,65 @@ describe('WorkspacePage send gate while compacting', () => {
       })
     })
     expect(conversationProps.conversation.availability.submit).toBe(true)
+  })
+
+  it('keeps sending locked until review history hydration establishes no active Fix Loop', async () => {
+    useReviewStore.setState(createInitialReviewState())
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createReviewableSession()],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('wait for review history'))
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(false)
+
+    await act(async () => {
+      useReviewStore.setState({ loadedReviewSessions: { 'proj-1\0sess-a': true } })
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+  })
+
+  it('keeps queueing locked until review history hydration establishes no active Fix Loop', async () => {
+    useReviewStore.setState(createInitialReviewState())
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [{ ...createReviewableSession(), status: 'running' }],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('do not queue before review history'))
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(false)
+
+    await act(async () => {
+      useReviewStore.setState({ loadedReviewSessions: { 'proj-1\0sess-a': true } })
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+  })
+
+  it('keeps sending locked when review history hydration fails', async () => {
+    useReviewStore.setState({
+      ...createInitialReviewState(),
+      loadedReviewSessions: { 'proj-1\0sess-a': true },
+      loadErrorsBySession: { 'proj-1\0sess-a': 'database unavailable' }
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createReviewableSession()],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('wait for review retry'))
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(false)
   })
 
   it('disables sending while the runtime owns an otherwise idle session', async () => {
