@@ -25,7 +25,9 @@ vulnerability.** Public disclosure may expose users before a fix is available.
 Use GitHub's private
 [Report a vulnerability](https://github.com/aipoch/open-science/security/advisories/new)
 form. The report and follow-up discussion remain in a private repository security
-advisory.
+advisory. If GitHub private reporting is unavailable, contact a maintainer directly
+through the channels listed in the [README](README.md#get-involved) and request a private
+channel without sharing vulnerability details publicly.
 
 Please include:
 

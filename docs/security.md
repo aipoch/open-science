@@ -27,8 +27,12 @@ Notebook execution path.
   administrator setup. Standard mode provides an authenticated proxy for compatible
   software and is a compatibility control rather than hard network isolation.
 
-Local policies limit access to declared filesystem roots and approved public network
-destinations. A bypass of an enforced boundary is in scope under the
+On macOS, Linux, and Windows protected mode, enforced policies protect declared user-data
+roots while allowing system files required by tools, and restrict outbound access to
+approved public network destinations. Windows standard mode inherits the host user's
+filesystem access; its proxy applies only to software that honors proxy settings and
+cannot guarantee network enforcement. Enable protected mode before treating those Windows
+rules as security boundaries. A bypass of an enforced boundary is in scope under the
 [security policy](../SECURITY.md#what-to-report).
 
 Remote compute adopts the security boundary of the remote host: approved commands run as
@@ -67,8 +71,9 @@ Open Science keeps configuration and research data in local storage by default:
   runtimes, and related large files. The data root can be relocated in Settings.
 
 Development builds use `~/.open-science-project` and `~/OpenScience-DEV` unless an
-explicit development override is supplied. Application logs use Electron's
-operating-system-specific logs directory.
+explicit development override is supplied. Desktop logs use Electron's
+operating-system-specific logs directory; the CLI daemon writes `cli-daemon.log` under
+the configuration root.
 
 Project, session, Notebook, artifact, and log content remain user-readable local files
 and rely on operating-system account isolation and filesystem protection. Use full-disk
@@ -80,13 +85,17 @@ operating system's secure storage. New secret writes fail closed when a secure b
 unavailable, including Linux's unprotected `basic_text` backend. The renderer receives
 masked or non-secret projections rather than plaintext credential values.
 
+Shared Claude subscription mode uses the default `~/.claude` credential profile. Isolated
+mode uses an app-owned provider profile under the Open Science configuration root.
+
 ## Diagnostics
 
 Diagnostics pass through shared redaction rules. In-app report dialogs show the exact
 payload and require review and consent before it is shared. Remove credentials, cookies,
 private keys, patient identifiers, unpublished data, and other sensitive content from
-logs or reports. Do not attach storage roots, provider profiles, credential files, shell
-environments, or unreviewed log bundles to public issues or pull requests.
+logs or reports. Do not attach storage roots, provider profiles (including `~/.claude`),
+credential files, shell environments, or unreviewed log bundles to public issues or pull
+requests.
 
 ## Distribution and hardening
 
