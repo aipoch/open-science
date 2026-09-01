@@ -1398,6 +1398,35 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
+  it('keeps keyboard focus on project results after expanding the menu', async () => {
+    const otherProjects = Array.from({ length: 7 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const mounted = await mountProjectSidebar(otherProjects)
+
+    try {
+      mounted.openMenu()
+      const showRemaining = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+      ).find((item) => item.textContent?.trim() === 'Show remaining 2 projects')
+
+      await act(async () => {
+        showRemaining?.focus()
+        showRemaining?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        await new Promise((resolve) => window.setTimeout(resolve, 0))
+      })
+
+      expect(document.body.querySelectorAll('[data-project-id]')).toHaveLength(7)
+      expect(document.activeElement).toBe(
+        document.body.querySelector<HTMLElement>('[data-project-id]')
+      )
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
   it('shows five other projects, expands in place, switches projects, and resets after close', async () => {
     const onOpenProject = vi.fn()
     const otherProjects = Array.from({ length: 7 }, (_, index) => ({

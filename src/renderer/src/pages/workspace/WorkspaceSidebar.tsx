@@ -618,7 +618,14 @@ const WorkspaceSidebarView = ({
                     asChild
                     onSelect={(event) => {
                       event.preventDefault()
+                      const menu = (event.currentTarget as HTMLElement).closest<HTMLElement>(
+                        '[role="menu"]'
+                      )
                       onShowAllProjectsChange?.(true)
+                      // The selected control unmounts after expansion; restore focus after that commit.
+                      window.setTimeout(() => {
+                        menu?.querySelector<HTMLElement>('[data-project-id]')?.focus()
+                      }, 0)
                     }}
                   >
                     <button
