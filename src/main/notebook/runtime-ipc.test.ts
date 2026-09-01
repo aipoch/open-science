@@ -237,7 +237,7 @@ describe('runtime IPC adapter', () => {
     await expect(
       invoke('runtime:uninstall-managed-environment', { language: 'python' })
     ).resolves.toBeUndefined()
-    expect(uninstallManagedEnvironment).toHaveBeenCalledWith('python')
+    expect(uninstallManagedEnvironment).toHaveBeenCalledWith('python', expect.any(Function))
     await expect(
       invoke('runtime:register-interpreter', {
         language: 'python',
