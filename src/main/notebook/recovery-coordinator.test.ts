@@ -91,10 +91,48 @@ describe('NotebookRecoveryCoordinator', () => {
       targetPaths: [envPrefix(runtimeRoot, DEFAULT_PY_ENV), unsafe]
     })
 
-    await new NotebookRecoveryCoordinator(runtimeRoot).recover()
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
+    await coordinator.recover()
 
     expect(existsSync(unsafe)).toBe(true)
     expect(await journal.pending()).toHaveLength(1)
+    expect(coordinator.isPrefixBlocked(envPrefix(runtimeRoot, DEFAULT_PY_ENV))).toBe(false)
+  })
+
+  it('blocks recreation when removal succeeds but journal completion remains pending', async () => {
+    const runtimeRoot = await createRuntimeRoot()
+    const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+    const marker = readyMarkerPath(runtimeRoot)
+    await Promise.all([
+      mkdir(prefix, { recursive: true }),
+      mkdir(dirname(marker), { recursive: true })
+    ])
+    await writeFile(marker, 'ready')
+    const journal = RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot))
+    await journal.begin({
+      operationId: 'remove-completion-pending',
+      kind: 'remove',
+      runtimeId: DEFAULT_PY_ENV,
+      phase: 'remove-python',
+      startedAt: 100,
+      targetPaths: [prefix, marker]
+    })
+    const complete = vi
+      .spyOn(RuntimeOperationJournal.prototype, 'complete')
+      .mockRejectedValueOnce(new Error('journal fsync failed'))
+    const coordinator = new NotebookRecoveryCoordinator(runtimeRoot)
+
+    try {
+      await coordinator.recover()
+    } finally {
+      complete.mockRestore()
+    }
+
+    expect(existsSync(prefix)).toBe(false)
+    expect(existsSync(marker)).toBe(false)
+    expect(await journal.pending()).toHaveLength(1)
+    expect(coordinator.isPrefixBlocked(prefix)).toBe(true)
+    expect(coordinator.snapshot().blockedPrefixes).toContain(prefix)
   })
 
   it('finalizes a leftover working cache only after recovery has no blocked writer', async () => {

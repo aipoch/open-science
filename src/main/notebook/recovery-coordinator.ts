@@ -210,6 +210,36 @@ export class NotebookRecoveryCoordinator {
       return
     }
 
+    const validatedRemovalTargets = (
+      record: RuntimeOperationRecord
+    ): { prefix: string; targets: string[] } => {
+      const language =
+        record.runtimeId === DEFAULT_R_ENV
+          ? 'r'
+          : record.runtimeId === DEFAULT_PY_ENV
+            ? 'python'
+            : undefined
+      if (!language) throw new Error('Interrupted Runtime removal has an unknown target.')
+      const environmentName = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
+      const expectedMarker =
+        language === 'r' ? rReadyMarkerPath(this.runtimeRoot) : readyMarkerPath(this.runtimeRoot)
+      const allowedPrefixes = new Set([
+        envPrefix(this.runtimeRoot, environmentName),
+        legacyDefaultEnvPrefix(this.runtimeRoot, environmentName)
+      ])
+      const targets = record.targetPaths ?? []
+      const recordedPrefixes = targets.filter((target) => allowedPrefixes.has(target))
+      if (
+        targets.length !== 2 ||
+        new Set(targets).size !== 2 ||
+        !targets.includes(expectedMarker) ||
+        recordedPrefixes.length !== 1
+      ) {
+        throw new Error('Interrupted Runtime removal contains an unsafe filesystem target.')
+      }
+      return { prefix: recordedPrefixes[0], targets }
+    }
+
     const reconciled = await reconcileInterruptedOperations(journal, {
       operationChildLiveness: defaultOperationChildLiveness,
       hydrateInterruptedChild: (record) => {
@@ -301,30 +331,7 @@ export class NotebookRecoveryCoordinator {
         addRepairRequired(this.runtimeRoot, marker.key, marker.reason)
       },
       removeTargets: async (record) => {
-        const language =
-          record.runtimeId === DEFAULT_R_ENV
-            ? 'r'
-            : record.runtimeId === DEFAULT_PY_ENV
-              ? 'python'
-              : undefined
-        if (!language) throw new Error('Interrupted Runtime removal has an unknown target.')
-        const environmentName = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
-        const expectedMarker =
-          language === 'r' ? rReadyMarkerPath(this.runtimeRoot) : readyMarkerPath(this.runtimeRoot)
-        const allowedPrefixes = new Set([
-          envPrefix(this.runtimeRoot, environmentName),
-          legacyDefaultEnvPrefix(this.runtimeRoot, environmentName)
-        ])
-        const targets = record.targetPaths ?? []
-        const recordedPrefixes = targets.filter((target) => allowedPrefixes.has(target))
-        if (
-          targets.length !== 2 ||
-          new Set(targets).size !== 2 ||
-          !targets.includes(expectedMarker) ||
-          recordedPrefixes.length !== 1
-        ) {
-          throw new Error('Interrupted Runtime removal contains an unsafe filesystem target.')
-        }
+        const { targets } = validatedRemovalTargets(record)
         for (const target of targets) await rm(target, { recursive: true, force: true })
       },
       blockUnknownChildTarget: async (record) => {
@@ -337,7 +344,17 @@ export class NotebookRecoveryCoordinator {
         publishedArchiveRecords.push(record)
       },
       deferArchiveCompletion: true,
-      onRetained: () => {
+      onRetained: (record) => {
+        if (record.kind === 'remove') {
+          try {
+            // The delete may have succeeded before journal completion failed. Keep this exact prefix
+            // blocked so no new provision can be recreated under a stale remove intent that recovery
+            // will replay on the next attempt.
+            nextStartupBlockedPrefixes.add(validatedRemovalTargets(record).prefix)
+          } catch {
+            // Unsafe remove records remain retained, but never turn an unvalidated path into authority.
+          }
+        }
         recoveryIncomplete = true
       }
     })
