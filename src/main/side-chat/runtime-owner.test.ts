@@ -1865,7 +1865,10 @@ describe('SideChatRuntimeOwner lifecycle', () => {
 
     await owner.suspendAll()
     await expect(
-      owner.send({ sideSessionId: started.sideSessionId, text: 'Continue after ordinary suspension' })
+      owner.send({
+        sideSessionId: started.sideSessionId,
+        text: 'Continue after ordinary suspension'
+      })
     ).resolves.toBeUndefined()
     await owner.close({ sideSessionId: started.sideSessionId })
   })
