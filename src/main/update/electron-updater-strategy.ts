@@ -64,6 +64,8 @@ export type ElectronUpdaterDeps = {
   manifestUrl?: string
   // Pre-install backend-shutdown gate, fixed when the strategy is constructed.
   installGate?: InstallGate
+  // Releases resources the install gate may have held when the installer handoff is aborted.
+  releaseInstallHandoff?: () => void
   // Diagnostics sink for update lifecycle operations; defaults to a no-op so unit tests stay quiet.
   log?: Logger
   // Marks the app lifecycle handoff immediately before quitAndInstall. Injectable for tests.
@@ -202,6 +204,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private pendingInstallRollback?: () => void
   // Pre-install backend-shutdown gate, owned immutably for the strategy lifetime.
   private readonly installGate?: InstallGate
+  private readonly releaseInstallHandoff: () => void
   private readonly markUpdateShutdown: () => () => void
 
   constructor(deps: ElectronUpdaterDeps = {}) {
@@ -229,6 +232,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.log = deps.log ?? NOOP_LOGGER
     this.createCancellationToken = deps.createCancellationToken ?? (() => new CancellationToken())
     this.installGate = deps.installGate
+    this.releaseInstallHandoff = deps.releaseInstallHandoff ?? (() => undefined)
     this.markUpdateShutdown =
       deps.markUpdateShutdown ?? (() => markApplicationShutdownTrigger('update'))
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'restart' }
@@ -312,6 +316,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       if (this.installerStarted) {
         this.pendingInstallRollback?.()
         this.pendingInstallRollback = undefined
+        this.releaseAbortedInstallHandoff()
         const operation = startDiagnosticOperation(this.log, {
           operation: 'update-installer',
           fields: { strategy: 'in-place' }
@@ -327,6 +332,14 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         error: err instanceof Error ? err.message : 'Update error'
       })
     })
+  }
+
+  private releaseAbortedInstallHandoff(): void {
+    try {
+      this.releaseInstallHandoff()
+    } catch (error) {
+      this.log.warn('update install handoff cleanup failed', error)
+    }
   }
 
   // Always re-stamps current + applyKind so every broadcast status is self-consistent regardless of
@@ -545,6 +558,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       try {
         readiness = await this.installGate()
       } catch (error) {
+        this.releaseAbortedInstallHandoff()
         this.log.error('update install gate failed', error)
         this.applying = false
         this.setStatus({
@@ -556,10 +570,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         return this.status
       }
       if (!this.applying) {
+        this.releaseAbortedInstallHandoff()
         operation.cancel({ reason: 'apply-interrupted' })
         return this.status
       }
       if (!readiness.completed || !readiness.reaped) {
+        this.releaseAbortedInstallHandoff()
         this.log.error('update install gate refused: backend teardown degraded', readiness)
         this.applying = false
         this.setStatus({
@@ -593,6 +609,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     } catch (error) {
       rollbackTrigger()
       this.pendingInstallRollback = undefined
+      this.releaseAbortedInstallHandoff()
       this.applying = false
       this.installerStarted = false
       this.setStatus({

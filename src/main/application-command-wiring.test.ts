@@ -152,6 +152,19 @@ describe('production application command wiring', () => {
     )
   })
 
+  it('holds side chat admission through the in-place update handoff', () => {
+    const updateGate = compact(
+      between(ipcSource, 'const durableBackendHandoffGate', 'const detectResearchBlockers')
+    )
+    const updateStrategy = compact(
+      between(ipcSource, 'const updateStrategy', 'const updateCommandOwner')
+    )
+    expect(updateGate).toContain(
+      'shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, { holdSideChatAdmission: true })'
+    )
+    expect(updateStrategy).toContain('releaseInstallHandoff: abortUpdateHandoff')
+  })
+
   it('keeps native-only commands inside the Electron owner adapter and exposes only narrow views', () => {
     const electronOwner = compact(
       between(dependencyBlock, 'electron: {', 'events: applicationEvents')

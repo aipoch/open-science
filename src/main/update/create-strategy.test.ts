@@ -95,6 +95,22 @@ describe('createUpdateStrategy', () => {
     expect(quitAndInstall).toHaveBeenCalledWith(true, true)
   })
 
+  it('forwards update handoff cleanup to the in-place strategy', async () => {
+    const releaseInstallHandoff = vi.fn()
+    quitAndInstall.mockImplementationOnce(() => {
+      throw new Error('installer unavailable')
+    })
+    const strategy = createUpdateStrategy('win32', {
+      installGate: vi.fn(async () => ({ completed: true, reaped: true })),
+      releaseInstallHandoff
+    })
+    updaterListeners.get('update-downloaded')?.()
+
+    await strategy.apply()
+
+    expect(releaseInstallHandoff).toHaveBeenCalledOnce()
+  })
+
   it('uses ElectronUpdaterStrategy on darwin for a packaged stable build', () => {
     expect(createUpdateStrategy('darwin', { isPackaged: true, version: '1.2.3' })).toBeInstanceOf(
       ElectronUpdaterStrategy

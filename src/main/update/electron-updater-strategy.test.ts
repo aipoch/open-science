@@ -709,15 +709,18 @@ describe('ElectronUpdaterStrategy', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledWith(true, false)
   })
 
-  it('rolls back the update shutdown trigger when quitAndInstall throws', async () => {
+  it('rolls back the update handoff when quitAndInstall throws', async () => {
     const updater = new FakeUpdater()
+    const releaseInstallHandoff = vi.fn()
     updater.quitAndInstall.mockImplementation(() => {
       throw new Error('installer unavailable')
     })
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
-      broadcast: vi.fn()
+      broadcast: vi.fn(),
+      installGate: vi.fn(async () => ({ completed: true, reaped: true })),
+      releaseInstallHandoff
     })
     markUpdateReady(updater)
 
@@ -726,6 +729,7 @@ describe('ElectronUpdaterStrategy', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
     expect(status.state).toBe('error')
     expect(currentApplicationShutdownTrigger()).toBe('quit')
+    expect(releaseInstallHandoff).toHaveBeenCalledOnce()
   })
 
   it('apply runs the install gate before quitAndInstall when the teardown is clean', async () => {
@@ -866,12 +870,14 @@ describe('ElectronUpdaterStrategy', () => {
   it('apply refuses to install and reports an error when the teardown times out', async () => {
     const updater = new FakeUpdater()
     const gate = vi.fn(async () => ({ completed: false, reaped: false }))
+    const releaseInstallHandoff = vi.fn()
     const log = createLogSpy()
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
       installGate: gate,
+      releaseInstallHandoff,
       log
     })
     markUpdateReady(updater)
@@ -879,6 +885,7 @@ describe('ElectronUpdaterStrategy', () => {
     const status = await strategy.apply()
 
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(releaseInstallHandoff).toHaveBeenCalledOnce()
     expect(status.state).toBe('error')
     expect(diagnosticRecords(log)).toEqual(
       expect.arrayContaining([
@@ -950,11 +957,14 @@ describe('ElectronUpdaterStrategy', () => {
 
   it('restores an actionable error after the installer handoff starts', async () => {
     const updater = new FakeUpdater()
+    const releaseInstallHandoff = vi.fn()
     const log = createLogSpy()
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
+      installGate: vi.fn(async () => ({ completed: true, reaped: true })),
+      releaseInstallHandoff,
       log
     })
     markUpdateReady(updater)
@@ -966,6 +976,7 @@ describe('ElectronUpdaterStrategy', () => {
     expect(strategy.getStatus().state).toBe('error')
     expect(strategy.getStatus().error).toBe('installer failed')
     expect(currentApplicationShutdownTrigger()).toBe('quit')
+    expect(releaseInstallHandoff).toHaveBeenCalledOnce()
     expect(diagnosticRecords(log)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

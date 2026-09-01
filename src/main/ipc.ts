@@ -3055,7 +3055,10 @@ const createApplicationModules = async (
     log: createLogger('shutdown')
   })
   const durableBackendHandoffGate = createDurableInstallGate(
-    () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS),
+    () =>
+      shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, {
+        holdSideChatAdmission: true
+      }),
     () => confirmRendererDurability()
   )
   const detectResearchBlockers = (): UpdateBlocker[] => {
@@ -3094,14 +3097,21 @@ const createApplicationModules = async (
   // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
+  const abortUpdateHandoff = (): void => {
+    try {
+      sideChatRuntime.resumeAfterHandoff()
+    } finally {
+      notifyRendererDurabilityAborted()
+    }
+  }
   const updateStrategy = createUpdateStrategy(process.platform, {
     translate,
     installGate: createActiveResearchSafeInstallGate(
       detectResearchBlockers,
       durableBackendHandoffGate,
-      () => isMigrationInProgress() || isMigrationPending(),
-      notifyRendererDurabilityAborted
-    )
+      () => isMigrationInProgress() || isMigrationPending()
+    ),
+    releaseInstallHandoff: abortUpdateHandoff
   })
   const updateCommandOwner = createUpdateCommandOwner(updateStrategy)
   let stopUpdateScheduler: (() => void) | undefined
