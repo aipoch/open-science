@@ -16,7 +16,7 @@
 ## 🔧 Melhorias
 
 - Os arquivos criados ou modificados por execuções do Notebook e de computação são preservados como gerações imutáveis identificadas por soma de verificação. Assim, um resultado anterior nunca é sobrescrito silenciosamente, estabelecendo a base para futuras verificações de reprodutibilidade. (#1902, #1949)
-- Os comandos de terminal dos agentes nos quatro frameworks compatíveis agora passam pelo próprio fluxo de execução do aplicativo, para que cada comando preserve seu registro durável e seus limites de aprovação. (#1968)
+- Os comandos da linha de comando dos agentes nos quatro frameworks compatíveis agora passam pelo próprio fluxo de execução do aplicativo, para que cada comando preserve seu registro durável e seus limites de aprovação. (#1968)
 - As tarefas de computação remota sobrevivem a reinicializações e falhas: recibos de operação duráveis, cancelamento e limpeza seguros, recuperação automática de tarefas desvinculadas do aplicativo e limites de ciclo de vida aplicados nos hosts remotos. (#1944, #1937, #1921, #1925)
 - O Revisor lê as evidências dentro de limites definidos — visualizações paginadas de PDFs e documentos do Office, leitura de artefatos adequada ao tipo de mídia e proveniência dos arquivos —, e as rodadas de correção preservam suas respostas e a identidade do modelo do Revisor. (#1946, #1959)
 - O alemão passa a integrar os idiomas da interface, e o catálogo em alemão permanece sincronizado com as evidências de execução. (#1761, #1970)

@@ -3894,6 +3894,7 @@ describe('Brazilian Portuguese safety copy', () => {
     ['Args', 'Argumentos'],
     ['Database', 'Banco de dados'],
     ['Marketplace', 'Marketplace'],
+    ['Notebooks', 'Notebooks'],
     ['Prompt', 'Prompt'],
     ['Provenance', 'Proveniência'],
     ['Provider', 'Provedor'],
@@ -3903,6 +3904,15 @@ describe('Brazilian Portuguese safety copy', () => {
     ['Skills', 'Habilidades']
   ])('uses established Brazilian technical terminology for %s', (key, expected) => {
     expect(catalog('pt-BR')[key]).toBe(expected)
+  })
+
+  it('keeps kernel as the established Brazilian scientific-computing term', () => {
+    const glossary = readFileSync(
+      join(__dirname, '..', '..', '..', '..', 'docs', 'i18n-glossary.md'),
+      'utf8'
+    )
+
+    expect(glossary).toMatch(/^\| kernel\s+\| kernel\s+\|$/mu)
   })
 
   it.each([
@@ -4401,6 +4411,10 @@ describe('Brazilian Portuguese safety copy', () => {
     ['Allow for this project', 'Permitir para este projeto'],
     ['Clear all session grants', 'Revogar todas as permissões da sessão'],
     ['Delete project', 'Excluir projeto'],
+    [
+      'Deleting this project will stop its running tasks and notebooks.',
+      'Excluir este projeto interromperá as tarefas e os Notebooks em execução.'
+    ],
     ['Retry', 'Tentar novamente'],
     [
       'This message snapshot was created by a newer version of Open Science. Update the app to view it.',

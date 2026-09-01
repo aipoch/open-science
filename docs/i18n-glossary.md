@@ -212,7 +212,7 @@ for prose in the `common`, `native`, and `renderer` namespaces:
 | main agent         | agente principal        |
 | token (model)      | token                   |
 | token (credential) | token                   |
-| kernel             | núcleo                  |
+| kernel             | kernel                  |
 | artifact           | artefato                |
 | activity group     | grupo de atividades     |
 | tool               | ferramenta              |
