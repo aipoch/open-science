@@ -649,6 +649,30 @@ describe('useAcpRuntime state subscription', () => {
     expect(removeStateListener).toHaveBeenCalledTimes(1)
   })
 
+  it('clears omitted optional fields from an authoritative state-only update', async () => {
+    const { result } = await mountRuntime()
+
+    act(() => {
+      capturedStateListener?.(
+        createSnapshot({
+          revision: 1,
+          sessionId: 'session-1',
+          sessionIds: ['session-1'],
+          error: 'connection failed'
+        })
+      )
+      capturedStateListener?.({
+        ...createSnapshot({ revision: 2, status: 'idle' }),
+        events: undefined
+      })
+    })
+
+    expect(result.current.state.sessionId).toBeUndefined()
+    expect(result.current.state.error).toBeUndefined()
+    expect(result.current.state.events).toEqual([])
+    expect(result.current.state.revision).toBe(2)
+  })
+
   it('does not let an older initial snapshot overwrite a newer pushed lifecycle event', async () => {
     const initial = createDeferred<AcpStateSnapshot>()
     acpApi.getState.mockReturnValueOnce(initial.promise)

@@ -162,7 +162,7 @@ const useAcpRuntime = (): {
       }
       // Preserve the explicit synchronization window loaded at startup. It remains the fallback for
       // an older Main without acp:event; current incremental consumers read the event owner instead.
-      setState((current) => ({ ...current, ...update }))
+      setState((current) => ({ ...update, events: current.events }))
     },
     [runtimeEventOwner]
   )
