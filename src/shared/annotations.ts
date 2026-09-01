@@ -51,6 +51,70 @@ export type TextAnnotationSource =
       sectionId?: string
     }>
 
+type ProjectFileAnnotationSource = Extract<TextAnnotationSource, { kind: 'project-file' }>
+
+export type ManagedProjectFileAnnotationIdentity = Readonly<{
+  fileSource: 'artifact' | 'upload'
+  fileId: string
+  versionId: string
+}>
+
+// Managed annotations carry one logical file identity and one immutable Version. A null result is
+// fail-closed malformed input; undefined is a legacy raw-path annotation with no managed identity.
+export const resolveManagedProjectFileAnnotationIdentity = (
+  source: ProjectFileAnnotationSource
+): ManagedProjectFileAnnotationIdentity | null | undefined => {
+  const artifact = parseArtifactVersionLocator(source.path)
+  const upload = parseUploadVersionReference(source.path)
+  const hasExplicitSource = source.fileSource !== undefined
+  const hasExplicitFileId = source.sourceFileId !== undefined
+  if (hasExplicitSource !== hasExplicitFileId) return null
+
+  if (
+    artifact &&
+    (artifact.projectId !== source.projectId ||
+      (source.sessionId !== undefined && artifact.appSessionId !== source.sessionId) ||
+      (source.versionId !== undefined && artifact.versionId !== source.versionId))
+  ) {
+    return null
+  }
+  if (
+    upload &&
+    ((upload.projectId !== undefined && upload.projectId !== source.projectId) ||
+      (source.sessionId !== undefined &&
+        upload.sessionId !== undefined &&
+        upload.sessionId !== source.sessionId) ||
+      (source.versionId !== undefined && upload.versionId !== source.versionId))
+  ) {
+    return null
+  }
+
+  if (source.fileSource && source.sourceFileId) {
+    if (!source.versionId) return null
+    const locatorSource = artifact ? 'artifact' : upload ? 'upload' : undefined
+    const locatorFileId = artifact?.artifactId ?? upload?.fileId
+    if (
+      (locatorSource && locatorSource !== source.fileSource) ||
+      (locatorFileId && locatorFileId !== source.sourceFileId)
+    ) {
+      return null
+    }
+    return {
+      fileSource: source.fileSource,
+      fileId: source.sourceFileId,
+      versionId: source.versionId
+    }
+  }
+
+  if (artifact) {
+    return { fileSource: 'artifact', fileId: artifact.artifactId, versionId: artifact.versionId }
+  }
+  if (upload?.fileId) {
+    return { fileSource: 'upload', fileId: upload.fileId, versionId: upload.versionId }
+  }
+  return undefined
+}
+
 export type SessionTextAnnotationSource = Exclude<
   TextAnnotationSource,
   Readonly<{ kind: 'project-file'; projectId: string; path: string }>
@@ -365,7 +429,7 @@ const sanitizeTextSource = (value: unknown): TextAnnotationSource | undefined =>
     const sourceFileId = trimmed(value.sourceFileId)
     if (Boolean(fileSource) !== Boolean(sourceFileId)) return undefined
     const versionId = trimmed(value.versionId)
-    return {
+    const source: ProjectFileAnnotationSource = {
       kind,
       projectId,
       path,
@@ -374,6 +438,7 @@ const sanitizeTextSource = (value: unknown): TextAnnotationSource | undefined =>
       ...(versionId ? { versionId } : {}),
       ...(trimmed(value.sessionId) ? { sessionId: trimmed(value.sessionId) } : {})
     }
+    return resolveManagedProjectFileAnnotationIdentity(source) === null ? undefined : source
   }
   if (kind === 'session-item') {
     const sessionId = trimmed(value.sessionId)

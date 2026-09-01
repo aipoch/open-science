@@ -53,6 +53,7 @@ vi.mock('./previews/PreviewFileContent', () => ({
     item: PreviewFileItem
     annotationVersionId?: string
     annotationBlockedByHistoricalVersion?: boolean
+    annotationVersionPending?: boolean
     onPdfReadingPositionChange?: (position: { pageNumber: number; pageCount: number }) => void
   }) => {
     previewContentSpy(props)
@@ -354,6 +355,57 @@ describe('PreviewFileSurface managed text versions', () => {
     })
 
     expect(previewContentSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        annotationBlockedByHistoricalVersion: true,
+        annotationVersionPending: false
+      })
+    )
+  })
+
+  it('keeps managed annotation blocked until Version inspection confirms the head', async () => {
+    window.api.managedFileVersions.inspect = vi.fn().mockReturnValue(new Promise(() => undefined))
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    expect(previewContentSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ annotationVersionPending: true })
+    )
+  })
+
+  it('blocks historical managed files independently of text editing eligibility', async () => {
+    const historicalItem = {
+      ...managedUploadItem,
+      name: 'alignment.fasta',
+      title: 'alignment.fasta',
+      format: 'fasta' as const,
+      selectedVersionId: 'upload-v1',
+      versionNumber: 1,
+      path: 'upload-version:project-1/session-1/upload-v1'
+    }
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        ...managedInspect,
+        displayName: 'alignment.fasta',
+        selectedVersionId: 'upload-v1',
+        canEdit: false,
+        canDiff: false,
+        text: undefined,
+        textFormat: undefined,
+        unavailableReason: 'NOT_EDITABLE_EXTENSION' as const
+      }
+    })
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={historicalItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(previewContentSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({ annotationBlockedByHistoricalVersion: true })
     )
   })
@@ -398,6 +450,59 @@ describe('PreviewFileSurface managed text versions', () => {
           path: '/stale/managed-file-projection.md',
           selectedVersionId: undefined
         })
+      })
+    )
+  })
+
+  it('retains the last confirmed annotation Version while its managed inspect refreshes', async () => {
+    const managedArtifactItem: PreviewFileItem = {
+      ...managedUploadItem,
+      id: 'artifact-1',
+      artifactId: 'artifact-1',
+      managedFileId: 'artifact-1',
+      selectedVersionId: undefined,
+      source: 'artifact',
+      path: '/stale/managed-file-projection.md'
+    }
+    const artifactInspect = {
+      ...managedInspect,
+      source: 'artifact' as const,
+      fileId: 'artifact-1',
+      headVersionId: 'artifact-v2',
+      selectedVersionId: 'artifact-v2',
+      versions: managedInspect.versions.map((version, index) => ({
+        ...version,
+        id: `artifact-v${index + 1}`,
+        source: 'artifact' as const,
+        fileId: 'artifact-1'
+      }))
+    }
+    window.api.managedFileVersions.inspect = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, value: artifactInspect })
+      .mockReturnValueOnce(new Promise(() => undefined))
+    window.api.managedFileVersions.saveTextEdit = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        kind: 'noop',
+        version: artifactInspect.versions[1],
+        headVersionId: 'artifact-v2'
+      }
+    })
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedArtifactItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Revised\n')
+    await click(container.querySelector('[aria-label="Save changes"]'))
+
+    expect(previewContentSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        annotationVersionId: 'artifact-v2',
+        annotationVersionPending: true
       })
     )
   })

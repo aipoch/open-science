@@ -3,7 +3,12 @@ import { useTranslation } from 'react-i18next'
 import { Check, Copy, ListCollapse, MessageCircleQuestionMark, Quote } from 'lucide-react'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import type { Annotation, PdfAnnotation, TextAnnotation } from '../../../../../shared/annotations'
+import {
+  resolveManagedProjectFileAnnotationIdentity,
+  type Annotation,
+  type PdfAnnotation,
+  type TextAnnotation
+} from '../../../../../shared/annotations'
 import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileRendererProps } from './preview-types'
@@ -174,12 +179,13 @@ const projectFileVersionId = (
 const projectFileSource = (
   item: PreviewFileItem,
   pageNumber?: number,
-  annotationVersionId?: string
+  annotationVersionId?: string,
+  annotationVersionPending = false
 ): TextAnnotation['source'] | undefined => {
   if (!item.projectId || pageNumber !== undefined) return undefined
   const versionId = projectFileVersionId(item, annotationVersionId)
-  // Managed annotations must capture an immutable Version before they become actionable.
-  if (item.managedFileId && !versionId) return undefined
+  // Managed annotations stay unavailable until inspection confirms the exact visible Version.
+  if (item.managedFileId && (annotationVersionPending || !versionId)) return undefined
   return {
     kind: 'project-file',
     projectId: item.projectId,
@@ -205,17 +211,17 @@ const belongsToPreview = (
   const source = annotation.source
   if (source.kind !== 'project-file' || !item.projectId) return false
   const versionId = projectFileVersionId(item, annotationVersionId)
-  const artifactIdentity = parseArtifactVersionLocator(source.path)
-  const uploadIdentity = parseUploadVersionReference(source.path)
-  const sourceFileId = source.sourceFileId ?? artifactIdentity?.artifactId ?? uploadIdentity?.fileId
-  const fileSource =
-    source.fileSource ?? (artifactIdentity ? 'artifact' : uploadIdentity ? 'upload' : undefined)
+  const managedIdentity = resolveManagedProjectFileAnnotationIdentity(source)
+  if (managedIdentity === null) return false
   const itemSource = item.source === 'upload' ? 'upload' : 'artifact'
   const matchesLogicalIdentity =
-    Boolean(sourceFileId) && sourceFileId === item.managedFileId && fileSource === itemSource
+    managedIdentity !== undefined &&
+    managedIdentity.fileId === item.managedFileId &&
+    managedIdentity.fileSource === itemSource
   if (source.projectId !== item.projectId || (!matchesLogicalIdentity && source.path !== item.path))
     return false
-  if (source.versionId && versionId && source.versionId !== versionId) return false
+  const sourceVersionId = managedIdentity?.versionId ?? source.versionId
+  if (sourceVersionId && sourceVersionId !== versionId) return false
   return pageNumber === undefined
 }
 
@@ -242,6 +248,7 @@ export const PreviewTextAnnotationSurface = ({
   activeAnnotations = NO_ANNOTATIONS,
   annotationVersionId,
   annotationBlockedByHistoricalVersion = false,
+  annotationVersionPending = false,
   onAddAnnotation,
   onUpdateAnnotationNote,
   onAnnotationError,
@@ -270,7 +277,12 @@ export const PreviewTextAnnotationSurface = ({
   const [copied, setCopied] = useState(false)
   const [annotationControls, setAnnotationControls] = useState<readonly AnnotationControl[]>([])
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string>()
-  const source = projectFileSource(item, sourcePageNumber, annotationVersionId)
+  const source = projectFileSource(
+    item,
+    sourcePageNumber,
+    annotationVersionId,
+    annotationVersionPending
+  )
   const matchingAnnotations = useMemo(
     () =>
       activeAnnotations.filter(
@@ -453,11 +465,22 @@ export const PreviewTextAnnotationSurface = ({
     setCopied(false)
   }, [open])
 
+  useEffect(() => {
+    if (!annotationVersionPending) return
+    let active = true
+    queueMicrotask(() => {
+      if (active) clearDraft()
+    })
+    return () => {
+      active = false
+    }
+  }, [annotationVersionPending, clearDraft])
+
   const captureSelection = (): void => {
     // While the note editor is open the draft is frozen; stray mouseup/keyup
     // events from the surface must neither replace nor drop it.
     if (open) return
-    if ((!source && !pdfEvidenceSource) || !onAddAnnotation) {
+    if (annotationVersionPending || (!source && !pdfEvidenceSource) || !onAddAnnotation) {
       clearDraft()
       return
     }
@@ -519,7 +542,15 @@ export const PreviewTextAnnotationSurface = ({
   )
 
   const add = (noteValue = note): void => {
-    if (!selection || (!source && !pdfEvidenceSource) || !onAddAnnotation) return
+    if (
+      annotationVersionPending ||
+      annotationBlockedByHistoricalVersion ||
+      !selection ||
+      (!source && !pdfEvidenceSource) ||
+      !onAddAnnotation
+    ) {
+      return
+    }
     const pdfSelector =
       pdfEvidenceSource && sourcePageNumber !== undefined && pdfExtractorVersion
         ? pdfTextSelectorForRange(
@@ -629,6 +660,7 @@ export const PreviewTextAnnotationSurface = ({
           label: copied ? t('Copied') : t('Copy'),
           icon: copied ? Check : Copy,
           disabled: !canCopy,
+          availableWhenAnnotationBlocked: true,
           onActivate: () => void copySelection()
         }
       ]

@@ -192,7 +192,18 @@ const AnnotationDraftEditor = ({
   const presentation = editorPresentation[variant]
   // The blocked state keeps the selection trigger visible while its explanation is open.
   const [blockedRange, setBlockedRange] = useState<Range>()
-  const blockedOpen = annotationBlockedByHistoricalVersion && blockedRange === range
+  const blockedOpen = annotationBlockedByHistoricalVersion && (open || blockedRange === range)
+  const effectiveTriggerActions = triggerActions?.map((action) =>
+    action.availableWhenAnnotationBlocked
+      ? action
+      : {
+          ...action,
+          onActivate: () => {
+            if (annotationBlockedByHistoricalVersion) setBlockedRange(range)
+            else action.onActivate()
+          }
+        }
+  )
 
   return (
     <Popover
@@ -200,19 +211,20 @@ const AnnotationDraftEditor = ({
       onOpenChange={(next) => {
         if (blockedOpen) {
           if (!next) setBlockedRange(undefined)
+          if (open) onOpenChange(false)
         } else onOpenChange(next)
       }}
     >
       <AnnotationTrigger
         range={range}
         backward={backward}
-        hidden={open}
+        hidden={open && !blockedOpen}
         label={t('Annotate')}
         onActivate={() => {
           if (annotationBlockedByHistoricalVersion) setBlockedRange(range)
           else onOpenChange(true)
         }}
-        actions={triggerActions}
+        actions={effectiveTriggerActions}
         actionMenuLabel={triggerActions ? t('Selection actions') : undefined}
       />
       {blockedOpen ? (

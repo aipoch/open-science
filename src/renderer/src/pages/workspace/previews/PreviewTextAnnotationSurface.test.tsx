@@ -266,7 +266,7 @@ describe('PreviewTextAnnotationSurface', () => {
     )
   })
 
-  it('keeps a managed annotation marker while Version inspection reloads', async () => {
+  it('shows a managed annotation marker only while its exact Version remains known', async () => {
     const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
     const previewItem = item({
       id: 'artifact-9',
@@ -304,6 +304,19 @@ describe('PreviewTextAnnotationSurface', () => {
       container
         .querySelector('[data-preview-text-annotation-surface="true"]')
         ?.getAttribute('data-annotation-active')
+    ).toBeNull()
+    expect(container.querySelector('[data-text-annotation-edit="true"]')).toBeNull()
+
+    await renderSurface({
+      activeAnnotations: [created],
+      annotationVersionId: 'version-3',
+      onAddAnnotation,
+      previewItem
+    })
+    expect(
+      container
+        .querySelector('[data-preview-text-annotation-surface="true"]')
+        ?.getAttribute('data-annotation-active')
     ).toBe('true')
     expect(container.querySelector('[data-text-annotation-edit="true"]')).not.toBeNull()
   })
@@ -321,6 +334,50 @@ describe('PreviewTextAnnotationSurface', () => {
 
     expect(document.querySelector('[data-annotation-trigger]')).toBe(entry)
     expect(document.querySelector('textarea')).toBeNull()
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      'Historical versions cannot be annotated. Switch to the latest version to annotate.'
+    )
+    expect(onAddAnnotation).not.toHaveBeenCalled()
+  })
+
+  it('withdraws an open annotation editor when the selected Version becomes historical', async () => {
+    const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
+    await renderSurface({ onAddAnnotation })
+    await selectQuote()
+
+    await act(async () => document.querySelector<HTMLElement>('[data-annotation-trigger]')?.click())
+    expect(document.querySelector('textarea')).not.toBeNull()
+
+    await renderSurface({ onAddAnnotation, annotationBlockedByHistoricalVersion: true })
+    const annotateButtons = Array.from(document.querySelectorAll('button')).filter(
+      (button) => button.textContent === 'Annotate'
+    )
+    await act(async () => annotateButtons.at(-1)?.click())
+
+    expect(document.querySelector('textarea')).toBeNull()
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      'Historical versions cannot be annotated. Switch to the latest version to annotate.'
+    )
+    expect(onAddAnnotation).not.toHaveBeenCalled()
+  })
+
+  it('blocks PDF annotation shortcuts on historical Versions while keeping Copy available', async () => {
+    const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
+    await renderSurface({
+      onAddAnnotation,
+      sourcePageNumber: 3,
+      pdfEvidenceSource: pdfSource(),
+      annotationBlockedByHistoricalVersion: true
+    })
+    await selectQuote()
+
+    expect(document.querySelector('[data-selection-action="copy"]')).not.toBeNull()
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('[data-selection-action="citate"]')
+        ?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    )
+
     expect(document.querySelector('[role="alert"]')?.textContent).toBe(
       'Historical versions cannot be annotated. Switch to the latest version to annotate.'
     )

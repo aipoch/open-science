@@ -239,6 +239,38 @@ describe('annotation reveal', () => {
     expect(state.items[0]).toMatchObject({ size: 123, selectedVersionId: 'version-1' })
   })
 
+  it('reconstructs a missing image annotation with its managed Artifact identity', () => {
+    requestAnnotationReveal({
+      id: 'point-missing',
+      kind: 'image-point',
+      target: 'agent',
+      note: 'Inspect this point',
+      source: {
+        kind: 'artifact-version',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        versionId: 'version-3',
+        name: 'figure.png',
+        path: 'artifact-version:project-1/session-1/artifact-9/version-3',
+        mimeType: 'image/png'
+      },
+      point: { x: 0.4, y: 0.6 },
+      naturalSize: { width: 800, height: 600 }
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'artifact-9',
+      items: [
+        expect.objectContaining({
+          id: 'artifact-9',
+          artifactId: 'artifact-9',
+          managedFileId: 'artifact-9',
+          selectedVersionId: 'version-3'
+        })
+      ]
+    })
+  })
+
   it('opens a missing source file tab from the annotation version identity', () => {
     const sourcePath = 'artifact-version:project-1/session-1/artifact-9/version-3'
     const annotation: Annotation = {

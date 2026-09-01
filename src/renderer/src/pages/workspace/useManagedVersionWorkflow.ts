@@ -74,7 +74,8 @@ const useManagedVersionWorkflow = ({
     : undefined
   const inspect =
     storedInspect && storedInspect.key === requestKey ? storedInspect.value : undefined
-  // Preserve version navigation while the newly selected Version is being inspected.
+  // Preserve the last confirmed Version while the same logical file is being re-inspected. Default
+  // previews keep following the DB head without pinning selectedVersionId on the workbench item.
   const previousInspect =
     identity &&
     storedInspect?.value.source === source &&
@@ -85,9 +86,11 @@ const useManagedVersionWorkflow = ({
   const navigationInspect =
     inspect ??
     (previousInspect &&
-    item.selectedVersionId &&
-    previousInspect.versions.some((version) => version.id === item.selectedVersionId)
-      ? { ...previousInspect, selectedVersionId: item.selectedVersionId }
+    (!item.selectedVersionId ||
+      previousInspect.versions.some((version) => version.id === item.selectedVersionId))
+      ? item.selectedVersionId
+        ? { ...previousInspect, selectedVersionId: item.selectedVersionId }
+        : previousInspect
       : undefined)
   const controlsInspect = inspect ?? (mode === 'diff' ? navigationInspect : undefined)
   const selectedDownloadVersion = navigationInspect?.versions.find(
