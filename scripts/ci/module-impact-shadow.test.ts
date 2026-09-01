@@ -221,7 +221,9 @@ describe('module impact shadow', () => {
       '/output',
       expect.stringContaining(`plan=${JSON.stringify(toGitHubOutputPlan(plan))}`)
     )
-    expect(append.mock.calls.find(([path]) => path === '/output')?.[1]).not.toContain('reasonChains')
+    expect(append.mock.calls.find(([path]) => path === '/output')?.[1]).not.toContain(
+      'reasonChains'
+    )
     expect(append).toHaveBeenCalledWith('/summary', expect.stringContaining('Resolved mode'))
   })
 
