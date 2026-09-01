@@ -215,14 +215,16 @@ export const ReviewerCard = ({
 }: ReviewerCardProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(defaultExpanded)
-  // Latches on the first Re-run click so the button can't fire twice. Reset whenever the review updates
-  // (a fresh review row arrived, or its lifecycle/timestamp changed) so a later re-stale review can be
-  // re-run again. setState-during-render pattern, matching the composer popup's query reset.
+  // Latches on the first Re-run click so the button can't fire twice. Once main confirms that the
+  // replacement Review row was created, that new card owns progress and this card drops its notice.
+  // Reset if this row itself changes so a later re-stale Review can be re-run again.
   const [rerunRequested, setRerunRequested] = useState(false)
+  const [rerunStarted, setRerunStarted] = useState(false)
   const [lastReviewStamp, setLastReviewStamp] = useState(review.updatedAt)
   if (lastReviewStamp !== review.updatedAt) {
     setLastReviewStamp(review.updatedAt)
     setRerunRequested(false)
+    setRerunStarted(false)
   }
 
   const hasPersistedFlaggedChecks = review.checks.some(
@@ -289,12 +291,28 @@ export const ReviewerCard = ({
   // describe the current turn. Computed at load time (see flagStaleReviews); only meaningful for a
   // completed review, since running/error reviews have no verdict to go stale.
   const isStale = isTerminal && review.stale === true
-  const hasUnresolvedFindings = review.checks.some(
-    (check) =>
-      (check.status === 'warn' || check.status === 'fail') && check.resolution !== 'resolved'
-  )
+  const hasUnresolvedFindings =
+    review.submittedChecks === undefined
+      ? review.checks.some(
+          (check) =>
+            (check.status === 'warn' || check.status === 'fail') && check.resolution !== 'resolved'
+        )
+      : review.submittedChecks.some((item) => {
+          if (item.kind === 'new') {
+            return (
+              (item.check.status === 'warn' || item.check.status === 'fail') &&
+              item.check.resolution !== 'resolved'
+            )
+          }
+          const status = item.assessment?.status ?? item.sourceCheck.status
+          return (
+            (status === 'warn' || status === 'fail') &&
+            item.dispositionOutcome !== 'resolved' &&
+            item.sourceCheck.resolution !== 'resolved'
+          )
+        })
   const canRerunUnresolved = isTerminal && hasUnresolvedFindings
-  const showRerunNotice = isStale || canRerunUnresolved
+  const showRerunNotice = (isStale || canRerunUnresolved) && !rerunStarted
 
   // Compact summary line.
   const summaryText = (): string => {
@@ -409,10 +427,12 @@ export const ReviewerCard = ({
               className="shrink-0 rounded bg-bg-000 px-2 py-0.5 text-[11px] text-amber-800 transition-colors hover:bg-bg-300 disabled:cursor-default disabled:opacity-50 dark:text-amber-300"
               onClick={() => {
                 setRerunRequested(true)
-                // Release the latch if no review actually started (e.g. the session couldn't load), so
-                // the button stays usable; on success the running-review push clears it via updatedAt.
+                // Release the latch if no review actually started (e.g. the session couldn't load).
+                // A true result is emitted only after the replacement running Review row was pushed,
+                // so its new card can take over while this superseded notice disappears.
                 void onRerun(review).then((started) => {
-                  if (!started) setRerunRequested(false)
+                  setRerunRequested(false)
+                  if (started) setRerunStarted(true)
                 })
               }}
             >

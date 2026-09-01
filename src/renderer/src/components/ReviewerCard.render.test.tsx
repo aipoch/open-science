@@ -1238,6 +1238,35 @@ describe('ReviewerCard — stale review', () => {
     expect(container.querySelector('[data-testid="reviewer-stale-notice"]')).toBeNull()
   })
 
+  it('offers a Re-run button when a tracked submission leaves its source finding unresolved', async () => {
+    const sourceCheck = makeCheck({ id: 'source-finding', reviewId: 'source-review' })
+    const review = makeReview({
+      outcome: 'flagged',
+      checks: [],
+      submittedChecks: [
+        {
+          kind: 'tracked',
+          submissionIndex: 0,
+          sourceFindingId: sourceCheck.id,
+          dispositionOutcome: 'still_open',
+          assessment: {
+            status: 'fail',
+            claim: 'The tracked issue remains',
+            evidence: 'The rerun reproduced the issue.',
+            sortIndex: 0
+          },
+          sourceCheck
+        }
+      ]
+    })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} onRerun={vi.fn().mockResolvedValue(true)} />)
+    })
+
+    expect(container.querySelector('[data-testid="reviewer-unresolved-notice"]')).not.toBeNull()
+    expect(container.textContent).toContain('Re-run review')
+  })
+
   it('disables the Re-run button after the first click so a double-click fires once', async () => {
     const review = makeReview({ outcome: 'pass', checks: [], stale: true })
     const onRerun = vi.fn().mockResolvedValue(true)
@@ -1260,6 +1289,25 @@ describe('ReviewerCard — stale review', () => {
 
     expect(onRerun).toHaveBeenCalledTimes(1)
     expect(rerunButton.disabled).toBe(true)
+  })
+
+  it('removes the old Re-run notice once a replacement review has started', async () => {
+    const review = makeReview({ outcome: 'pass', checks: [], stale: true })
+    const onRerun = vi.fn().mockResolvedValue(true)
+    await act(async () => {
+      root.render(<ReviewerCard review={review} onRerun={onRerun} />)
+    })
+
+    const rerunButton = container.querySelector(
+      '[data-testid="reviewer-stale-notice"] button'
+    ) as HTMLButtonElement
+    await act(async () => {
+      rerunButton.click()
+    })
+
+    expect(onRerun).toHaveBeenCalledOnce()
+    expect(container.querySelector('[data-testid="reviewer-stale-notice"]')).toBeNull()
+    expect(container.textContent).not.toContain('Re-running…')
   })
 
   it('re-enables the Re-run button when no review actually started', async () => {
