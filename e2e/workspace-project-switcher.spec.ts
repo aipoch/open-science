@@ -1,16 +1,7 @@
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 
-import { test } from './fixtures/electron-app'
-
-// Keep in sync with GitHubStarBadge. Workspace variant waits 5s, then opens above menus.
-const STAR_NUDGE_LAST_SHOWN_STORAGE_KEY = 'open-science:github-star-nudge-last-shown-at'
-
-const suppressStarNudge = async (page: Page): Promise<void> => {
-  await page.evaluate((storageKey) => {
-    window.localStorage.setItem(storageKey, String(Date.now()))
-  }, STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
-}
+import { suppressWorkspaceStarNudge, test } from './fixtures/electron-app'
 
 const createProject = async (
   page: Page,
@@ -75,7 +66,7 @@ test('switches projects from the Workspace project menu and expands remaining pr
 }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await suppressStarNudge(page)
+  await suppressWorkspaceStarNudge(page)
 
   await seedProjects(page, 15)
   page = await app.restart()
@@ -198,7 +189,7 @@ test('switches projects from the Workspace project menu and expands remaining pr
 test('closes mobile navigation when switching projects', async ({ app }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await suppressStarNudge(page)
+  await suppressWorkspaceStarNudge(page)
 
   await seedProjects(page, 1)
   page = await app.restart()

@@ -19,6 +19,21 @@ const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.c
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 type E2eWindowMode = 'hidden' | 'normal'
 
+// Keep in sync with GitHubStarBadge. Workspace variant waits 5s, then opens a popover that can
+// swallow the next pointer click (revision navigation, project menus) on macOS and Windows CI.
+const STAR_NUDGE_LAST_SHOWN_STORAGE_KEY = 'open-science:github-star-nudge-last-shown-at'
+
+const recordStarNudgeCooldown = (storageKey: string): void => {
+  window.localStorage.setItem(storageKey, String(Date.now()))
+}
+
+const suppressWorkspaceStarNudge = async (
+  page: Pick<Page, 'addInitScript' | 'evaluate'>
+): Promise<void> => {
+  await page.addInitScript(recordStarNudgeCooldown, STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
+  await page.evaluate(recordStarNudgeCooldown, STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
+}
+
 const electronLaunchTarget = (
   userDataRoot: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -271,17 +286,9 @@ const openMainWindow = async (
     )
     .toBe('ready')
   await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
-  if (process.platform === 'win32') {
-    // The workspace GitHub star nudge opens after 5s in a visible Windows window and is not part
-    // of these journeys. Leave other platforms on the default cooldown so their layout timing
-    // matches the previously passing CI.
-    await page.evaluate(() => {
-      window.localStorage.setItem(
-        'open-science:github-star-nudge-last-shown-at',
-        String(Date.now())
-      )
-    })
-  }
+  // The workspace GitHub star nudge is not part of these journeys. Record the cooldown before
+  // workspace mounts, and again for later reloads, so the 5s popover cannot intercept clicks.
+  await suppressWorkspaceStarNudge(page)
   return page
 }
 
@@ -859,5 +866,12 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
   }
 })
 
-export { closeElectronApplicationForCleanup, electronLaunchTarget, launchEnvironment, test }
+export {
+  closeElectronApplicationForCleanup,
+  electronLaunchTarget,
+  launchEnvironment,
+  STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
+  suppressWorkspaceStarNudge,
+  test
+}
 export type { ElectronApp }

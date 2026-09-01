@@ -1,6 +1,13 @@
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { closeElectronApplicationForCleanup } from '../e2e/fixtures/electron-app'
+import {
+  closeElectronApplicationForCleanup,
+  STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
+  suppressWorkspaceStarNudge
+} from '../e2e/fixtures/electron-app'
 
 const deferred = (): {
   promise: Promise<void>
@@ -75,5 +82,63 @@ describe('Electron E2E cleanup', () => {
     await vi.advanceTimersByTimeAsync(150)
     await rejection
     expect(forceClose).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Electron E2E GitHub star nudge suppression', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('uses the same cooldown key as GitHubStarBadge', async () => {
+    const badgeSource = await readFile(
+      resolve('src/renderer/src/components/GitHubStarBadge.tsx'),
+      'utf8'
+    )
+    expect(badgeSource).toContain(`'${STAR_NUDGE_LAST_SHOWN_STORAGE_KEY}'`)
+  })
+
+  it('suppresses the workspace star nudge on every E2E platform', async () => {
+    const fixtureSource = await readFile(resolve('e2e/fixtures/electron-app.ts'), 'utf8')
+    expect(fixtureSource).toContain('await suppressWorkspaceStarNudge(page)')
+    expect(fixtureSource).not.toMatch(
+      /if \(process\.platform === 'win32'\) \{\s*\/\/ The workspace GitHub star nudge/
+    )
+  })
+
+  it('records the cooldown on the current page and later navigations', async () => {
+    const now = 1_700_000_000_000
+    const store = new Map<string, string>()
+    let initScriptArg: string | undefined
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+
+    const runInPage = (script: (key: string) => void, key: string): void => {
+      const previousWindow = (globalThis as { window?: unknown }).window
+      ;(globalThis as { window: { localStorage: Storage } }).window = {
+        localStorage: {
+          setItem: (name, value) => {
+            store.set(name, value)
+          }
+        } as Storage
+      }
+      try {
+        script(key)
+      } finally {
+        if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window
+        else (globalThis as { window: unknown }).window = previousWindow
+      }
+    }
+
+    await suppressWorkspaceStarNudge({
+      addInitScript: async (script, arg) => {
+        initScriptArg = arg
+      },
+      evaluate: async (script, arg) => {
+        runInPage(script, arg)
+      }
+    })
+
+    expect(initScriptArg).toBe(STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
+    expect(store.get(STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)).toBe(String(now))
   })
 })
