@@ -5,7 +5,7 @@ import { join, relative, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { classifyChanges, parseNameStatus } from './classify-pr-changes.mjs'
+import { classifyChanges, parseNameStatus, toGitHubOutputPlan } from './classify-pr-changes.mjs'
 
 const readManifest = (): ReturnType<JSON['parse']> =>
   JSON.parse(readFileSync(resolve('scripts/ci/change-impact.json'), 'utf8'))
@@ -68,7 +68,14 @@ describe('pull request change classification', () => {
           .map((line) => line.split('=', 2))
       )
       expect(JSON.parse(outputs.lanes)).toContain('e2e_workspace_macos')
-      expect(JSON.parse(outputs.plan).mode).toBe('selective')
+      expect(JSON.parse(outputs.plan)).toEqual({
+        schemaVersion: 1,
+        mode: 'selective',
+        roots: expect.any(Array),
+        lanes: expect.any(Array),
+        bundles: expect.arrayContaining(['policy', 'static', 'unit', 'macos_e2e'])
+      })
+      expect(JSON.parse(outputs.plan)).not.toHaveProperty('reasonChains')
       expect(readFileSync(summary, 'utf8')).toContain(
         'src/shared/acp.ts -&gt; shared_contract -&gt; preload_adapter'
       )
@@ -78,6 +85,30 @@ describe('pull request change classification', () => {
     } finally {
       rmSync(root, { force: true, recursive: true })
     }
+  })
+
+  it('keeps GitHub Actions plan output bounded without per-path reason chains', () => {
+    const linuxMaxArgStrlen = 131_072
+    const changes = Array.from({ length: 2_000 }, (_, index) => ({
+      path: `src/renderer/src/pages/workspace/generated-${index}.tsx`,
+      status: 'modified' as const
+    }))
+    const plan = classifyChanges(changes)
+    const output = toGitHubOutputPlan(plan)
+    const outputJson = JSON.stringify(output)
+
+    expect(plan.reasonChains.length).toBeGreaterThan(1_000)
+    expect(JSON.stringify(plan).length).toBeGreaterThan(linuxMaxArgStrlen)
+    expect(output).not.toHaveProperty('reasonChains')
+    expect(outputJson).not.toContain('reasonChains')
+    expect(outputJson.length).toBeLessThan(8_192)
+    expect(output).toMatchObject({
+      schemaVersion: plan.schemaVersion,
+      mode: plan.mode,
+      roots: plan.roots,
+      lanes: plan.lanes,
+      bundles: plan.bundles
+    })
   })
 
   it('preserves both paths from NUL-delimited Git rename and deletion records', () => {

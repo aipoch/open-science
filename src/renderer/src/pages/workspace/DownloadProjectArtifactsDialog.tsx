@@ -51,10 +51,11 @@ const getFileType = (file: ProjectFileItem): string => {
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-// Paths can collide across sessions and sources, so failures match on the full identity the save
-// contract reports back, not on path alone.
-const fileKey = (file: Pick<ProjectFileItem, 'source' | 'sessionId' | 'path'>): string =>
-  `${file.source}\u0000${file.sessionId}\u0000${file.path}`
+const projectFileKey = (file: Pick<ProjectFileItem, 'source' | 'sourceFileId'>): string =>
+  `${file.source}\u0000${file.sourceFileId}`
+
+const failedFileKey = (file: { source: ProjectFileItem['source']; fileId: string }): string =>
+  `${file.source}\u0000${file.fileId}`
 
 // Generated output is the primary product of a Project, so it leads; Uploads follow. Empty groups
 // are dropped entirely, and rows stay flat inside a group — no per-session nesting.
@@ -167,15 +168,17 @@ const DownloadProjectArtifactsDialog = ({
         files: selectedFiles.map((file) => ({
           source: file.source,
           sessionId: file.sessionId,
-          path: file.path,
+          fileId: file.sourceFileId,
           suggestedName: file.name
         }))
       })
       if (!result.saved) return
       if (result.failures?.length) {
-        const failedKeys = new Set(result.failures.map((failure) => fileKey(failure)))
+        const failedKeys = new Set(result.failures.map(failedFileKey))
         setSelectedIds(
-          new Set(files.filter((file) => failedKeys.has(fileKey(file))).map((file) => file.id))
+          new Set(
+            files.filter((file) => failedKeys.has(projectFileKey(file))).map((file) => file.id)
+          )
         )
         setDownloadError(
           `Downloaded ${selectedFiles.length - result.failures.length} of ${selectedFiles.length} artifacts. ${result.failures.length} failed.`

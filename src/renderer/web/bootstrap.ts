@@ -419,6 +419,10 @@ const installWebApi = async (): Promise<EventCursor> => {
   const api: Record<string, unknown> = { platform: bootstrap.platform }
   const availableRpcChannels = new Set(bootstrap.rpcChannels)
   const restrictedRpcChannels = new Set(bootstrap.restrictedRpcChannels ?? [])
+  document.documentElement.toggleAttribute(
+    'data-open-science-notebook-network-unavailable',
+    restrictedRpcChannels.has('settings:get-notebook-network-status')
+  )
 
   installWebRendererContracts(api, {
     availableRpcChannels,

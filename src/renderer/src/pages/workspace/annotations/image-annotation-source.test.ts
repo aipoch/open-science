@@ -57,12 +57,14 @@ describe('static image annotation source', () => {
   it('captures an immutable scoped Upload Version identity', () => {
     const path = createUploadVersionReference('upload-version-1', {
       projectId: 'project-1',
-      sessionId: 'session-1'
+      sessionId: 'session-1',
+      fileId: 'upload-1'
     })
     expect(
       imagePointAnnotationSourceForPreview(
         item({
           id: 'upload:upload-1',
+          managedFileId: 'upload-1',
           source: 'upload',
           artifactId: undefined,
           selectedVersionId: undefined,

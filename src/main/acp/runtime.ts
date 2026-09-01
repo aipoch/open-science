@@ -320,13 +320,11 @@ type AcpRuntimeArtifactOptions = {
   provenance?: Pick<
     import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
     'listRunVersions' | 'writeAppGeneratedVersion'
-  > &
-    Partial<
-      Pick<
-        import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
-        'resolveVersionContent'
-      >
-    >
+  >
+  managedFileVersions?: Pick<
+    import('../managed-file-versions/service').ManagedFileVersionService,
+    'openLatest' | 'openVersion'
+  >
 }
 
 type AcpRuntimeUploadOptions = {

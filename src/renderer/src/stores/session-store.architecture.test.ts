@@ -928,6 +928,7 @@ describe('Session Store architecture', () => {
     expect(
       ownerTypeProperties('session-store-persistence-owner.ts', 'SessionPersistenceActions')
     ).toEqual([
+      'applyDelegationPolicyAuthority',
       'applyDurableSessionProjection',
       'hydrateSessionSummaries',
       'hydrateSessions',

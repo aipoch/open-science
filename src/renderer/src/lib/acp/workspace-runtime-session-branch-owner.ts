@@ -6,7 +6,11 @@ import {
   type UploadedAttachment
 } from '../../../../shared/uploads'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
-import { saveSessionInOrder } from '../session-persistence/session-persistence'
+import type { DelegationPolicy } from '../../../../shared/session-persistence'
+import {
+  confirmPendingDelegationPolicyAuthority,
+  saveSessionInOrder
+} from '../session-persistence/session-persistence'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { toPersistedSession, useSessionStore, type ChatMessage } from '../../stores/session-store'
 import type { useAcpRuntime } from './useAcpRuntime'
@@ -18,6 +22,7 @@ export type BranchWorkspaceSessionFromMessageIntent = {
   agentBackendId?: string
   agentModel?: string
   agentConfiguration?: SessionAgentConfiguration
+  delegationPolicy?: DelegationPolicy
   specialistId?: string | null
 }
 
@@ -149,7 +154,7 @@ export const branchWorkspaceSessionFromMessage = async (
       .getState()
       .sessions.find((session) => session.id === sessionId)
     if (!boundSession) throw new Error('Branched Session could not be created.')
-    await saveSessionInOrder(toPersistedSession(boundSession))
+    await confirmPendingDelegationPolicyAuthority(boundSession)
     if (pdfContextSources.length > 0) {
       if (!boundSession.projectId) throw new Error('PDF context requires a Project.')
       const runtimeContext = await window.api.sessions.linkPdfContext({

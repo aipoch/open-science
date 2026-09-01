@@ -137,8 +137,10 @@ const buildContinuationRequest = (
             name: part.name,
             path: part.path,
             source: part.source,
+            sourceFileId: part.sourceFileId,
             mimeType: part.mimeType,
-            versionId: part.versionId
+            versionId: part.versionId,
+            checksum: part.checksum
           }
     )
     return references

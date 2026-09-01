@@ -35,7 +35,10 @@ import type {
 } from '../../shared/artifacts'
 import { resolveDataRoot } from '../storage-root'
 import { withDataRootWrite } from '../storage/migration-state'
-import { readBoundedManagedFilePreview } from '../managed-file-preview'
+import {
+  readBoundedManagedFilePreviewLease,
+  type ManagedFilePreviewReadLease
+} from '../managed-file-preview'
 import { createLogger, type Logger } from '../logger'
 import { ArtifactRepository } from './repository'
 import { ArtifactRunRegistry } from './run-registry'
@@ -80,6 +83,12 @@ type ArtifactHandlers = {
 type ArtifactHandlerDependencies = {
   openPath?: (path: string) => Promise<string>
   logger?: Pick<Logger, 'error'>
+  openLatestManagedFile?: (
+    request: Omit<ReadArtifactPreviewRequest, 'versionId'> & { versionId?: never }
+  ) => Promise<ManagedFilePreviewReadLease & { path?: string }>
+  openManagedFileVersion?: (
+    request: ReadArtifactPreviewRequest & { versionId: string }
+  ) => Promise<ManagedFilePreviewReadLease>
   // Run ids of turns in flight right now (live runtime state). Their pending files are still being
   // written, so the orphan scan excludes them; a crashed run is absent here and correctly surfaces.
   getActiveArtifactRunIds?: () => string[]
@@ -91,6 +100,7 @@ type ArtifactHandlerDependencies = {
   provenance?: Pick<
     ArtifactProvenanceRepository,
     | 'finalizeRun'
+    | 'activateFinalizedRun'
     | 'listRunVersions'
     | 'getLineage'
     | 'getVersionProvenance'
@@ -99,7 +109,6 @@ type ArtifactHandlerDependencies = {
     | 'getVersionMessages'
     | 'getVersionReview'
     | 'resolveVersionDescriptors'
-    | 'resolveVersionContent'
   >
   codeReconstruction?: {
     get(request: GetArtifactCodeReconstructionRequest): Promise<ArtifactCodeReconstructionState>
@@ -187,24 +196,72 @@ const createArtifactHandlers = (
     openFile: async (request) => {
       // Resolve through the repository first so shell.openPath never sees unmanaged locations.
       const versionIdentity = parseArtifactVersionLocator(request.path)
-      const filePath = versionIdentity
-        ? await dependencies.provenance
-            ?.resolveVersionContent(versionIdentity)
-            .then((resolved) => resolved.path)
-        : await repository.resolveManagedFilePath(request)
-      if (!filePath) throw new Error('Artifact Provenance is not configured.')
-      const openError = await openPath(filePath)
-
-      if (openError) {
-        throw new Error(openError)
+      if (!versionIdentity) {
+        const openError = await openPath(await repository.resolveManagedFilePath(request))
+        if (openError) throw new Error(openError)
+        return
       }
+      if (!dependencies.openLatestManagedFile) {
+        throw new Error('Managed Artifact Version reader is not configured.')
+      }
+      const lease = await dependencies.openLatestManagedFile({
+        ...request,
+        projectId: versionIdentity.projectId,
+        sessionId: versionIdentity.appSessionId,
+        fileId: versionIdentity.artifactId,
+        versionId: undefined
+      })
+      try {
+        if (!lease.path) throw new Error('Managed Artifact Version reader returned no path.')
+        const openError = await openPath(lease.path)
+        if (openError) throw new Error(openError)
+      } catch (error) {
+        await lease.close().catch(() => undefined)
+        throw error
+      }
+      await lease.close()
     },
     readPreview: async (request) => {
       const versionIdentity = parseArtifactVersionLocator(request.path)
-      if (!versionIdentity) return repository.readManagedFilePreview(request)
-      if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
-      const { path } = await dependencies.provenance.resolveVersionContent(versionIdentity)
-      return readBoundedManagedFilePreview(path, request, 'Invalid artifact preview encoding.')
+      const logicalRequest =
+        request.projectId && request.fileId
+          ? request
+          : versionIdentity
+            ? {
+                ...request,
+                projectId: versionIdentity.projectId,
+                sessionId: versionIdentity.appSessionId,
+                fileId: versionIdentity.artifactId,
+                versionId: undefined
+              }
+            : undefined
+      const lease = logicalRequest
+        ? logicalRequest.versionId
+          ? dependencies.openManagedFileVersion
+            ? await dependencies.openManagedFileVersion({
+                ...logicalRequest,
+                versionId: logicalRequest.versionId
+              })
+            : undefined
+          : dependencies.openLatestManagedFile
+            ? await dependencies.openLatestManagedFile({ ...logicalRequest, versionId: undefined })
+            : undefined
+        : undefined
+      if (lease) {
+        try {
+          return await readBoundedManagedFilePreviewLease(
+            lease,
+            request,
+            'Invalid artifact preview encoding.'
+          )
+        } finally {
+          await lease.close()
+        }
+      }
+      if (logicalRequest) {
+        throw new Error('Managed Artifact Version reader is not configured.')
+      }
+      throw new Error('Managed Artifact preview requires a logical identity.')
     },
     getLineage: (request) => {
       if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
@@ -253,7 +310,10 @@ const finalizeRunArtifacts = async (
   repository: ArtifactRepository,
   runRegistry: ArtifactRunRegistry,
   request: FinalizeRunArtifactsRequest,
-  provenance?: Pick<ArtifactProvenanceRepository, 'finalizeRun' | 'listRunVersions'>,
+  provenance?: Pick<
+    ArtifactProvenanceRepository,
+    'finalizeRun' | 'activateFinalizedRun' | 'listRunVersions'
+  >,
   logger: Pick<Logger, 'error'> = log
 ): Promise<ArtifactFile[]> => {
   const claim = runRegistry.resolve(request.claimId)
@@ -351,6 +411,10 @@ const finalizeRunArtifacts = async (
     })
     compatibilityPublicationCompleted = true
 
+    if (provenance && provenanceRequest) {
+      provenanceArtifacts = await provenance.activateFinalizedRun(provenanceRequest)
+    }
+
     runRegistry.markFinalized(request.claimId, request.messageId)
 
     return provenanceArtifacts ?? artifacts
@@ -396,6 +460,7 @@ const registerArtifactIpcHandlers = (
   provenance?: Pick<
     ArtifactProvenanceRepository,
     | 'finalizeRun'
+    | 'activateFinalizedRun'
     | 'listRunVersions'
     | 'getLineage'
     | 'getVersionProvenance'
@@ -404,7 +469,6 @@ const registerArtifactIpcHandlers = (
     | 'getVersionMessages'
     | 'getVersionReview'
     | 'resolveVersionDescriptors'
-    | 'resolveVersionContent'
   >,
   withSessionMutation?: ArtifactHandlerDependencies['withSessionMutation'],
   handlers: ArtifactHandlers = createArtifactHandlers(repository, runRegistry, {

@@ -8,6 +8,7 @@ import type { HostArtifactCatalogItem } from '../../shared/project-files'
 import { createUploadVersionReference } from '../../shared/uploads'
 import { createDeterministicDelegateExecution } from '../delegation/deterministic-execution'
 import { createInMemoryDelegatedWorkRecords } from '../delegation/durable-delegated-work'
+import { DELEGATION_DISABLED_MESSAGE } from '../delegation/durable-delegated-work-error'
 import { createTestDurableDelegatedWork as createDurableDelegatedWork } from '../delegation/durable-delegated-work-test-fixture'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 
@@ -35,6 +36,90 @@ describe('authenticated delegatedWorkCall route', () => {
     rootFrameId: 'root-frame',
     agentFrameId: 'child-frame',
     ...overrides
+  })
+
+  it('projects authoritative Session delegation policy without disabling existing-child operations', async () => {
+    let delegationAllowed = true
+    const work = {
+      isDelegationAllowed: vi.fn(async () => delegationAllowed),
+      delegate: vi.fn(),
+      children: vi.fn(),
+      collect: vi.fn(),
+      stopChildren: vi.fn(),
+      sendMessage: vi.fn(),
+      messageReceipt: vi.fn(),
+      resolveMessage: vi.fn()
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      delegatedWorkService: work
+    })
+    const connection = await server.issueControlConnection('session-1', 'project-1', 'root-frame')
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-1',
+      originatingUserMessageId: 'message-1'
+    })
+    const call = async (
+      method: 'capabilitiesCall' | 'hostSdkHelp',
+      query?: string
+    ): Promise<unknown> => {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method, params: query === undefined ? {} : { query } })
+      })
+      expect(response.status).toBe(200)
+      return response.json()
+    }
+
+    await expect(call('capabilitiesCall')).resolves.toMatchObject({
+      result: { delegate: true, children: true, collect: true, stopChild: true }
+    })
+    await expect(call('hostSdkHelp', 'delegate')).resolves.toMatchObject({
+      result: { availability: { status: 'available' } }
+    })
+
+    delegationAllowed = false
+    await expect(call('capabilitiesCall')).resolves.toMatchObject({
+      result: {
+        delegate: false,
+        children: true,
+        collect: true,
+        stopChild: true,
+        sendFrameMessage: true,
+        messageReceipt: true,
+        resolveMessage: true
+      }
+    })
+    const catalog = (await call('hostSdkHelp')) as {
+      result: { topics: Array<{ id: string; availability: { status: string } }> }
+    }
+    expect(catalog.result.topics).toContainEqual(
+      expect.objectContaining({
+        id: 'host.delegate',
+        availability: { status: 'unavailable' }
+      })
+    )
+    await expect(call('hostSdkHelp', 'delegate')).resolves.toMatchObject({
+      result: {
+        availability: {
+          status: 'unavailable',
+          reason: DELEGATION_DISABLED_MESSAGE
+        }
+      }
+    })
+    expect(work.isDelegationAllowed).toHaveBeenLastCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+
+    endInvocation()
+    connection.release()
   })
 
   it('lets only a delegated control-kernel capability submit output for its bound Attempt', async () => {

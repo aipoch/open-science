@@ -12,7 +12,9 @@ import {
 } from '../../shared/conversation-graph'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
+import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { UploadRepository } from '../uploads/repository'
 import { createManagedFileIndexRepository, ManagedFileIndexRepository } from './repository'
 
 const PROJECT_ID = 'project-a'
@@ -42,18 +44,189 @@ describe('ManagedFileIndexRepository', () => {
   let storageRoot: string
   let client: PrismaClient
   let repository: ManagedFileIndexRepository
+  let uploadRepository: UploadRepository
 
   beforeEach(async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-files-'))
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
-    repository = new ManagedFileIndexRepository(() => Promise.resolve(client), storageRoot)
+    await client.project.createMany({
+      data: [
+        { id: PROJECT_ID, name: 'Project A' },
+        { id: 'project-b', name: 'Project B' }
+      ]
+    })
+    uploadRepository = new UploadRepository(storageRoot, {
+      getClient: () => Promise.resolve(client)
+    })
+    repository = new ManagedFileIndexRepository(
+      () => Promise.resolve(client),
+      storageRoot,
+      new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      }),
+      uploadRepository
+    )
   }, WINDOWS_SQLITE_HOOK_TIMEOUT_MS)
 
   afterEach(async () => {
     await client.$disconnect()
     await rm(storageRoot, { recursive: true, force: true })
   }, WINDOWS_SQLITE_HOOK_TIMEOUT_MS)
+
+  it('adopts a path-only legacy Artifact into an immutable v1 before indexing it', async () => {
+    const artifactPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'legacy.md'
+    )
+    await writeManagedFile(artifactPath, 'legacy artifact\n')
+
+    const session = createSession({
+      artifacts: [
+        {
+          id: 'legacy-artifact-1',
+          kind: 'managed-file',
+          path: artifactPath,
+          name: 'legacy.md',
+          mimeType: 'text/markdown'
+        }
+      ]
+    })
+    await repository.syncSession(session)
+
+    const lineage = await client.artifactLineage.findUniqueOrThrow({
+      where: { id: 'legacy-artifact-1' },
+      include: { currentVersion: true }
+    })
+    expect(lineage.currentVersion).toMatchObject({
+      versionNumber: 1,
+      state: 'finalized',
+      originKind: 'legacy',
+      basedOnVersionId: null,
+      checksum: createHash('sha256').update('legacy artifact\n').digest('hex')
+    })
+    const indexed = await client.managedFile.findUniqueOrThrow({
+      where: {
+        projectId_source_sourceFileId: {
+          projectId: PROJECT_ID,
+          source: 'artifact',
+          sourceFileId: lineage.id
+        }
+      }
+    })
+    expect(indexed.sourceVersionId).toBe(lineage.currentVersionId)
+    expect(indexed.storageKey).toMatch(
+      /^artifacts\/project-a\/session-a\/legacy-artifact-1\/managed-versions\/v[a-z0-9]{8}_legacy\.md$/u
+    )
+    expect(indexed.storageKey).not.toBe(storageKey(storageRoot, artifactPath))
+
+    await rm(artifactPath)
+    await expect(repository.syncSession(session)).resolves.toEqual([])
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      artifactCount: 1,
+      isIndexComplete: true
+    })
+  })
+
+  it('does not publish a legacy Artifact when its persisted checksum disagrees with the source', async () => {
+    const artifactPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'legacy-mismatch.md'
+    )
+    await writeManagedFile(artifactPath, 'actual legacy bytes\n')
+
+    await repository.syncSession(
+      createSession({
+        artifacts: [
+          {
+            id: 'legacy-artifact-mismatch',
+            kind: 'managed-file',
+            path: artifactPath,
+            name: 'legacy-mismatch.md',
+            sha256: createHash('sha256').update('different bytes\n').digest('hex')
+          }
+        ]
+      })
+    )
+
+    expect(await client.artifactLineage.count({ where: { id: 'legacy-artifact-mismatch' } })).toBe(
+      0
+    )
+    expect(await client.artifactVersion.count()).toBe(0)
+  })
+
+  it('upgrades a path-only Artifact even when the legacy projection revision already matches', async () => {
+    const artifactPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'legacy-fast-path.md'
+    )
+    await writeManagedFile(artifactPath, 'legacy fast path\n')
+    await client.managedFile.create({
+      data: {
+        source: 'artifact',
+        sourceFileId: 'legacy-fast-path',
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        displayName: 'legacy-fast-path.md',
+        storageKey: storageKey(storageRoot, artifactPath),
+        sizeBytes: BigInt(Buffer.byteLength('legacy fast path\n')),
+        sortAtMs: 1n
+      }
+    })
+    await client.managedFileSessionSync.create({
+      data: {
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        filesRevision: 1,
+        groupSortAtMs: 1n,
+        artifactCount: 1,
+        uploadCount: 0
+      }
+    })
+
+    await expect(
+      repository.syncSession(
+        createSession({
+          artifacts: [
+            {
+              id: 'legacy-fast-path',
+              kind: 'managed-file',
+              path: artifactPath,
+              name: 'legacy-fast-path.md'
+            }
+          ]
+        })
+      )
+    ).resolves.toEqual(['artifact'])
+
+    await expect(
+      client.artifactLineage.findUniqueOrThrow({ where: { id: 'legacy-fast-path' } })
+    ).resolves.toMatchObject({ currentVersionId: expect.any(String) })
+    await expect(
+      client.managedFile.findUniqueOrThrow({
+        where: {
+          projectId_source_sourceFileId: {
+            projectId: PROJECT_ID,
+            source: 'artifact',
+            sourceFileId: 'legacy-fast-path'
+          }
+        }
+      })
+    ).resolves.toMatchObject({ sourceVersionId: expect.any(String) })
+  })
 
   it('indexes uploads and all finalized managed artifacts without requiring a message link', async () => {
     const uploadPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')
@@ -80,58 +253,57 @@ describe('ManagedFileIndexRepository', () => {
       writeManagedFile(orphanArtifactPath, 'notes')
     ])
 
-    const changedSources = await repository.syncSession(
-      createSession({
-        messages: [
-          {
-            id: 'message-user',
-            role: 'user',
-            content: 'Analyze',
-            status: 'complete',
-            eventIds: [],
-            uploads: [
-              {
-                id: 'upload-1',
-                sessionId: SESSION_ID,
-                name: 'input.csv',
-                originalName: 'samples.csv',
-                path: uploadPath,
-                mimeType: 'text/csv',
-                size: 7
-              }
-            ],
-            createdAt: 1_710_000_000_100,
-            updatedAt: 1_710_000_000_200
-          },
-          {
-            id: 'message-agent',
-            role: 'agent',
-            content: 'Done',
-            status: 'complete',
-            eventIds: [],
-            artifactIds: ['artifact-linked'],
-            createdAt: 1_710_000_000_300,
-            updatedAt: 1_710_000_000_400
-          }
-        ],
-        artifacts: [
-          {
-            id: 'artifact-linked',
-            kind: 'managed-file',
-            path: linkedArtifactPath,
-            name: 'chart.png',
-            mimeType: 'image/png'
-          },
-          {
-            id: 'artifact-orphan',
-            kind: 'managed-file',
-            path: orphanArtifactPath,
-            name: 'notes.txt',
-            mimeType: 'text/plain'
-          }
-        ]
-      })
-    )
+    const legacySession = createSession({
+      messages: [
+        {
+          id: 'message-user',
+          role: 'user',
+          content: 'Analyze',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'upload-1',
+              sessionId: SESSION_ID,
+              name: 'input.csv',
+              originalName: 'samples.csv',
+              path: uploadPath,
+              mimeType: 'text/csv',
+              size: 7
+            }
+          ],
+          createdAt: 1_710_000_000_100,
+          updatedAt: 1_710_000_000_200
+        },
+        {
+          id: 'message-agent',
+          role: 'agent',
+          content: 'Done',
+          status: 'complete',
+          eventIds: [],
+          artifactIds: ['artifact-linked'],
+          createdAt: 1_710_000_000_300,
+          updatedAt: 1_710_000_000_400
+        }
+      ],
+      artifacts: [
+        {
+          id: 'artifact-linked',
+          kind: 'managed-file',
+          path: linkedArtifactPath,
+          name: 'chart.png',
+          mimeType: 'image/png'
+        },
+        {
+          id: 'artifact-orphan',
+          kind: 'managed-file',
+          path: orphanArtifactPath,
+          name: 'notes.txt',
+          mimeType: 'text/plain'
+        }
+      ]
+    })
+    const changedSources = await repository.syncSession(legacySession)
     expect(changedSources).toEqual(['artifact', 'upload'])
 
     await expect(repository.getOverview(PROJECT_ID)).resolves.toEqual({
@@ -151,9 +323,12 @@ describe('ManagedFileIndexRepository', () => {
       expect.objectContaining({
         source: 'upload',
         sourceFileId: 'upload-1',
-        messageId: 'message-user',
+        sourceVersionId: expect.any(String),
+        messageId: undefined,
         name: 'samples.csv',
-        path: uploadPath
+        path: expect.stringMatching(
+          /^upload-version:project-a\/session-a\/upload-1\/[a-zA-Z0-9-]+$/u
+        )
       })
     ])
 
@@ -186,7 +361,13 @@ describe('ManagedFileIndexRepository', () => {
     await expect(
       repository.listArtifactGroups({ projectId: PROJECT_ID, limit: 10 })
     ).resolves.toEqual({
-      items: [{ sessionId: SESSION_ID, artifactCount: 2 }],
+      items: [
+        {
+          sessionId: SESSION_ID,
+          artifactCount: 2,
+          originSession: { state: 'active' }
+        }
+      ],
       totalCount: 1,
       nextCursor: undefined
     })
@@ -253,8 +434,10 @@ describe('ManagedFileIndexRepository', () => {
       promptMessageId: `prompt-${versionNumber}`,
       messageId,
       state: 'finalized',
+      managedVisibleAt: new Date(`2026-07-28T00:00:0${versionNumber}.500Z`),
       contentStorageKey: storageKey(storageRoot, contentPath),
       evidenceStorageKey: `artifacts/${PROJECT_ID}/${SESSION_ID}/.provenance/${lineageId}/versions/${id}/evidence.json`,
+      evidenceSchemaVersion: 1,
       contentType: 'image/png',
       sizeBytes: BigInt(versionNumber === 1 ? 9 : 12),
       checksum: checksumCharacter.repeat(64),
@@ -264,6 +447,10 @@ describe('ManagedFileIndexRepository', () => {
     })
     await client.artifactVersion.create({
       data: createVersionData(versionOneId, 1, versionOnePath, 'message-v1', 'a')
+    })
+    await client.artifactLineage.update({
+      where: { id: lineageId },
+      data: { currentVersionId: versionOneId }
     })
 
     // Session metadata can lag the independently committed Version catalog until the next save.
@@ -286,6 +473,10 @@ describe('ManagedFileIndexRepository', () => {
     await repository.syncSession(staleSession)
     await client.artifactVersion.create({
       data: createVersionData(versionTwoId, 2, versionTwoPath, 'message-v2', 'b')
+    })
+    await client.artifactLineage.update({
+      where: { id: lineageId },
+      data: { currentVersionId: versionTwoId }
     })
     await expect(repository.syncSession(staleSession)).resolves.toContain('artifact')
 
@@ -368,6 +559,10 @@ describe('ManagedFileIndexRepository', () => {
         }
       }
     })
+    await client.uploadFile.update({
+      where: { id: 'upload-1' },
+      data: { currentVersionId: 'upload-version-1' }
+    })
     await repository.syncSession(
       createSession({
         messages: [
@@ -404,10 +599,382 @@ describe('ManagedFileIndexRepository', () => {
     ).resolves.toMatchObject({
       items: [
         expect.objectContaining({
-          path: `upload-version:${PROJECT_ID}/${SESSION_ID}/upload-version-1`
+          path: `upload-version:${PROJECT_ID}/${SESSION_ID}/upload-1/upload-version-1`
         })
       ]
     })
+  })
+
+  it('keeps the DB Upload head as the default projection when Session references an older Version', async () => {
+    const uploadId = 'upload-versioned'
+    const versions = await Promise.all(
+      [1, 2, 3].map(async (versionNumber) => {
+        const id = `upload-version-${versionNumber}`
+        const content = `version ${versionNumber}\n`
+        const path = join(
+          storageRoot,
+          'uploads',
+          PROJECT_ID,
+          SESSION_ID,
+          uploadId,
+          'versions',
+          id,
+          'content'
+        )
+        await writeManagedFile(path, content)
+        return {
+          id,
+          versionNumber,
+          state: 'ready',
+          contentStorageKey: storageKey(storageRoot, path),
+          filename: 'notes.md',
+          originalFilename: 'notes.md',
+          contentType: 'text/markdown',
+          sizeBytes: BigInt(Buffer.byteLength(content)),
+          checksum: createHash('sha256').update(content).digest('hex')
+        }
+      })
+    )
+    await client.fileOriginSession.create({
+      data: { projectId: PROJECT_ID, sessionId: SESSION_ID }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: uploadId,
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        filename: 'notes.md',
+        originalFilename: 'notes.md',
+        currentVersionId: null,
+        versions: { create: versions }
+      }
+    })
+    await client.uploadFile.update({
+      where: { id: uploadId },
+      data: { currentVersionId: versions[1]!.id }
+    })
+    const session = createSession({
+      messages: [
+        {
+          id: 'message-upload-v1',
+          role: 'user',
+          content: 'Use the original upload',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: uploadId,
+              versionId: versions[0]!.id,
+              versionNumber: 1,
+              sessionId: SESSION_ID,
+              name: 'notes.md',
+              originalName: 'notes.md',
+              size: Number(versions[0]!.sizeBytes)
+            }
+          ],
+          createdAt: 1_710_000_000_100,
+          updatedAt: 1_710_000_000_200
+        }
+      ]
+    })
+    await repository.syncSession(session)
+    await client.uploadFile.update({
+      where: { id: uploadId },
+      data: { currentVersionId: versions[2]!.id }
+    })
+
+    await repository.syncSession({ ...session, filesRevision: 2 })
+
+    await expect(
+      client.managedFile.findFirstOrThrow({ where: { source: 'upload', sourceFileId: uploadId } })
+    ).resolves.toMatchObject({
+      sourceVersionId: versions[2]!.id,
+      storageKey: versions[2]!.contentStorageKey,
+      checksum: versions[2]!.checksum
+    })
+  })
+
+  it('invalidates the filesRevision fast path when the native Upload head advances', async () => {
+    const uploadId = 'upload-head-fast-path'
+    const versions = await Promise.all(
+      [1, 2].map(async (versionNumber) => {
+        const id = `upload-head-fast-path-v${versionNumber}`
+        const content = `version ${versionNumber}\n`
+        const path = join(
+          storageRoot,
+          'uploads',
+          PROJECT_ID,
+          SESSION_ID,
+          uploadId,
+          'versions',
+          id,
+          'content'
+        )
+        await writeManagedFile(path, content)
+        return {
+          id,
+          versionNumber,
+          state: 'ready',
+          contentStorageKey: storageKey(storageRoot, path),
+          filename: 'fast-path.md',
+          originalFilename: 'fast-path.md',
+          contentType: 'text/markdown',
+          sizeBytes: BigInt(Buffer.byteLength(content)),
+          checksum: createHash('sha256').update(content).digest('hex')
+        }
+      })
+    )
+    await client.fileOriginSession.create({
+      data: { projectId: PROJECT_ID, sessionId: SESSION_ID }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: uploadId,
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        filename: 'fast-path.md',
+        originalFilename: 'fast-path.md',
+        versions: { create: versions }
+      }
+    })
+    await client.uploadFile.update({
+      where: { id: uploadId },
+      data: { currentVersionId: versions[0]!.id }
+    })
+    const session = createSession({
+      filesRevision: 7,
+      messages: [
+        {
+          id: 'message-fast-path',
+          role: 'user',
+          content: 'upload',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: uploadId,
+              versionId: versions[0]!.id,
+              versionNumber: 1,
+              sessionId: SESSION_ID,
+              name: 'fast-path.md',
+              originalName: 'fast-path.md',
+              size: Number(versions[0]!.sizeBytes)
+            }
+          ],
+          createdAt: 1_710_000_000_100,
+          updatedAt: 1_710_000_000_200
+        }
+      ]
+    })
+    await repository.syncSession(session)
+    await client.uploadFile.update({
+      where: { id: uploadId },
+      data: { currentVersionId: versions[1]!.id }
+    })
+
+    await expect(repository.syncSession(session)).resolves.toEqual(['upload'])
+    await expect(
+      client.managedFile.findFirstOrThrow({ where: { sourceFileId: uploadId } })
+    ).resolves.toMatchObject({
+      sourceVersionId: versions[1]!.id,
+      storageKey: versions[1]!.contentStorageKey
+    })
+  })
+
+  it('paginates native Upload heads by authoritative session and head sort metadata', async () => {
+    await client.fileOriginSession.createMany({
+      data: [
+        { projectId: PROJECT_ID, sessionId: 'session-old' },
+        { projectId: PROJECT_ID, sessionId: 'session-new' }
+      ]
+    })
+    for (const input of [
+      {
+        fileId: 'upload-old',
+        sessionId: 'session-old',
+        versionId: 'upload-old-v2',
+        createdAt: new Date('2026-08-13T00:00:00.000Z')
+      },
+      {
+        fileId: 'upload-new',
+        sessionId: 'session-new',
+        versionId: 'upload-new-v2',
+        createdAt: new Date('2026-08-14T00:00:00.000Z')
+      }
+    ]) {
+      await client.uploadFile.create({
+        data: {
+          id: input.fileId,
+          projectId: PROJECT_ID,
+          sessionId: input.sessionId,
+          filename: `${input.fileId}.txt`,
+          originalFilename: `${input.fileId}.txt`,
+          versions: {
+            create: {
+              id: input.versionId,
+              versionNumber: 2,
+              state: 'ready',
+              contentStorageKey: `uploads/${PROJECT_ID}/${input.sessionId}/${input.versionId}`,
+              filename: `${input.fileId}.txt`,
+              originalFilename: `${input.fileId}.txt`,
+              contentType: 'text/plain',
+              sizeBytes: 2n,
+              checksum: input.fileId === 'upload-new' ? 'a'.repeat(64) : 'b'.repeat(64),
+              createdAt: input.createdAt
+            }
+          }
+        }
+      })
+      await client.uploadFile.update({
+        where: { id: input.fileId },
+        data: { currentVersionId: input.versionId }
+      })
+    }
+    await client.managedFile.createMany({
+      data: [
+        {
+          source: 'upload',
+          sourceFileId: 'upload-new',
+          sourceVersionId: 'stale-new-v1',
+          projectId: PROJECT_ID,
+          sessionId: 'stale-session',
+          displayName: 'stale-new.txt',
+          storageKey: 'stale-new',
+          sizeBytes: 1n,
+          sortAtMs: 1n
+        },
+        {
+          source: 'upload',
+          sourceFileId: 'upload-old',
+          sourceVersionId: 'stale-old-v1',
+          projectId: PROJECT_ID,
+          sessionId: 'stale-session',
+          displayName: 'stale-old.txt',
+          storageKey: 'stale-old',
+          sizeBytes: 1n,
+          sortAtMs: 9_999_999_999_999n
+        }
+      ]
+    })
+
+    const first = await repository.listFiles({
+      projectId: PROJECT_ID,
+      collection: { kind: 'uploads' },
+      limit: 1
+    })
+    const second = await repository.listFiles({
+      projectId: PROJECT_ID,
+      collection: { kind: 'uploads' },
+      limit: 1,
+      cursor: first.nextCursor
+    })
+
+    expect(first).toMatchObject({
+      items: [
+        {
+          sourceFileId: 'upload-new',
+          sourceVersionId: 'upload-new-v2',
+          sessionId: 'session-new',
+          name: 'upload-new.txt'
+        }
+      ],
+      totalCount: 2
+    })
+    expect(second).toMatchObject({
+      items: [
+        {
+          sourceFileId: 'upload-old',
+          sourceVersionId: 'upload-old-v2',
+          sessionId: 'session-old'
+        }
+      ],
+      totalCount: 2
+    })
+  })
+
+  it('bounds large authoritative catalog pages inside SQLite on every cursor request', async () => {
+    await client.fileOriginSession.create({
+      data: { projectId: PROJECT_ID, sessionId: 'large-session' }
+    })
+    const artifacts = Array.from({ length: 125 }, (_, index) => {
+      const suffix = index.toString().padStart(3, '0')
+      return {
+        fileId: `large-artifact-${suffix}`,
+        versionId: `large-artifact-version-${suffix}`,
+        filename: `large-${suffix}.txt`,
+        storageKey: `large/${index}`,
+        sortAtMs: BigInt(index)
+      }
+    })
+    await client.artifactLineage.createMany({
+      data: artifacts.map((artifact) => ({
+        id: artifact.fileId,
+        projectId: PROJECT_ID,
+        sessionId: 'large-session',
+        normalizedFilename: artifact.filename,
+        filename: artifact.filename
+      }))
+    })
+    await client.artifactVersion.createMany({
+      data: artifacts.map((artifact) => ({
+        id: artifact.versionId,
+        artifactId: artifact.fileId,
+        versionNumber: 1,
+        filename: artifact.filename,
+        originKind: 'legacy',
+        state: 'finalized',
+        contentStorageKey: artifact.storageKey,
+        sizeBytes: 1n,
+        checksum: 'a'.repeat(64)
+      }))
+    })
+    await client.$transaction(
+      artifacts.map((artifact) =>
+        client.artifactLineage.update({
+          where: { id: artifact.fileId },
+          data: { currentVersionId: artifact.versionId }
+        })
+      )
+    )
+    await client.managedFile.createMany({
+      data: artifacts.map((artifact) => ({
+        source: 'artifact',
+        sourceFileId: artifact.fileId,
+        sourceVersionId: artifact.versionId,
+        checksum: 'a'.repeat(64),
+        projectId: PROJECT_ID,
+        sessionId: 'large-session',
+        displayName: artifact.filename,
+        storageKey: artifact.storageKey,
+        sizeBytes: 1n,
+        sortAtMs: artifact.sortAtMs
+      }))
+    })
+    const queryRaw = vi.spyOn(client, '$queryRaw')
+
+    const first = await repository.listFiles({
+      projectId: PROJECT_ID,
+      collection: { kind: 'sessionArtifacts', sessionId: 'large-session' },
+      limit: 100
+    })
+    const second = await repository.listFiles({
+      projectId: PROJECT_ID,
+      collection: { kind: 'sessionArtifacts', sessionId: 'large-session' },
+      cursor: first.nextCursor,
+      limit: 100
+    })
+
+    expect(first.items).toHaveLength(100)
+    expect(second.items).toHaveLength(25)
+    expect(new Set([...first.items, ...second.items].map((item) => item.sourceFileId)).size).toBe(
+      125
+    )
+    const sqlCalls = queryRaw.mock.calls.map(([query]) =>
+      'strings' in (query as object)
+        ? (query as { strings: readonly string[] }).strings.join('?')
+        : String(query)
+    )
+    expect(sqlCalls.filter((sql) => /ORDER BY[\s\S]+LIMIT/u.test(sql))).toHaveLength(2)
   })
 
   it('repairs a native Upload projection that copied the referencing Session scope', async () => {
@@ -450,6 +1017,10 @@ describe('ManagedFileIndexRepository', () => {
           }
         }
       }
+    })
+    await client.uploadFile.update({
+      where: { id: uploadId },
+      data: { currentVersionId: versionId }
     })
     await client.managedFile.create({
       data: {
@@ -519,7 +1090,7 @@ describe('ManagedFileIndexRepository', () => {
           sourceFileId: uploadId,
           sourceVersionId: versionId,
           sessionId: sourceSessionId,
-          path: `upload-version:${PROJECT_ID}/${sourceSessionId}/${versionId}`
+          path: `upload-version:${PROJECT_ID}/${sourceSessionId}/${uploadId}/${versionId}`
         }
       ]
     })
@@ -601,9 +1172,11 @@ describe('ManagedFileIndexRepository', () => {
       items: [
         {
           sourceFileId: uploadId,
-          sourceVersionId: undefined,
+          sourceVersionId: expect.any(String),
           sessionId: sourceSessionId,
-          path: uploadPath
+          path: expect.stringMatching(
+            /^upload-version:project-a\/session-source-legacy\/upload-cross-session-legacy\/[a-zA-Z0-9-]+$/u
+          )
         }
       ]
     })
@@ -659,6 +1232,10 @@ describe('ManagedFileIndexRepository', () => {
           }
         }
       }
+    })
+    await client.uploadFile.update({
+      where: { id: 'upload-inactive' },
+      data: { currentVersionId: 'upload-version-inactive' }
     })
     const inactiveMessage = {
       id: 'message-inactive-upload',
@@ -718,15 +1295,21 @@ describe('ManagedFileIndexRepository', () => {
         promptMessageId: inactiveMessage.id,
         messageId: inactiveMessage.id,
         state: 'finalized',
+        managedVisibleAt: new Date('2026-07-28T00:00:00.500Z'),
         contentStorageKey: storageKey(storageRoot, artifactPath),
         evidenceStorageKey:
           'artifacts/project-a/session-a/.provenance/artifact-lineage-inactive/versions/artifact-version-inactive/evidence.json',
+        evidenceSchemaVersion: 1,
         contentType: 'text/plain',
         sizeBytes: BigInt(Buffer.byteLength('inactive artifact')),
         checksum: createHash('sha256').update('inactive artifact').digest('hex'),
         evidenceJson: '{"schema_version":1}',
         evidenceChecksum: 'b'.repeat(64)
       }
+    })
+    await client.artifactLineage.update({
+      where: { id: 'artifact-lineage-inactive' },
+      data: { currentVersionId: 'artifact-version-inactive' }
     })
 
     await repository.syncSession(
@@ -778,7 +1361,16 @@ describe('ManagedFileIndexRepository', () => {
       expect(root).toBe(storageRoot)
       return client
     })
-    const dataRepository = createManagedFileIndexRepository(getClientForRoot, storageRoot, dataRoot)
+    const dataRepository = createManagedFileIndexRepository(
+      getClientForRoot,
+      storageRoot,
+      dataRoot,
+      new ManagedFileVersionService({
+        storageRoot: dataRoot,
+        getClient: () => Promise.resolve(client)
+      }),
+      new UploadRepository(dataRoot, { getClient: () => Promise.resolve(client) })
+    )
     const artifactPath = join(
       dataRoot,
       'artifacts',
@@ -816,14 +1408,22 @@ describe('ManagedFileIndexRepository', () => {
           collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
           limit: 20
         })
-      ).resolves.toMatchObject({ items: [expect.objectContaining({ path: artifactPath })] })
+      ).resolves.toMatchObject({
+        items: [
+          expect.objectContaining({
+            path: expect.stringMatching(
+              /^artifact-version:project-a\/session-a\/artifact-data-root\//u
+            )
+          })
+        ]
+      })
       expect(getClientForRoot).toHaveBeenCalledWith(storageRoot)
     } finally {
       await rm(dataRoot, { recursive: true, force: true })
     }
   })
 
-  it('keeps an active cross-session storage collision on the existing canonical row', async () => {
+  it('does not use a shared legacy path as cross-session logical file identity', async () => {
     const sharedPath = join(
       storageRoot,
       'artifacts',
@@ -844,12 +1444,12 @@ describe('ManagedFileIndexRepository', () => {
       artifacts: [{ id: 'artifact-b', kind: 'managed-file', path: sharedPath, name: 'result.txt' }]
     })
 
-    await expect(repository.syncSession(duplicateSession)).resolves.toEqual([])
+    await expect(repository.syncSession(duplicateSession)).resolves.toEqual(['artifact'])
 
     await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
-      totalCount: 1,
-      artifactCount: 1,
-      artifactGroupCount: 1,
+      totalCount: 2,
+      artifactCount: 2,
+      artifactGroupCount: 2,
       isIndexComplete: true
     })
     await expect(
@@ -858,10 +1458,13 @@ describe('ManagedFileIndexRepository', () => {
         collection: { kind: 'sessionArtifacts', sessionId: 'session-b' },
         limit: 20
       })
-    ).resolves.toMatchObject({ items: [], totalCount: 0 })
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ sourceFileId: 'artifact-b' })],
+      totalCount: 1
+    })
 
     await repository.softDeleteSession(PROJECT_ID, SESSION_ID)
-    await expect(repository.syncSession(duplicateSession)).resolves.toEqual(['artifact'])
+    await expect(repository.syncSession(duplicateSession)).resolves.toEqual([])
     await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
       totalCount: 1,
       artifactCount: 1,
@@ -880,7 +1483,7 @@ describe('ManagedFileIndexRepository', () => {
     })
   })
 
-  it('restores a soft-deleted owner before another active session can claim its file', async () => {
+  it('restores a soft-deleted owner without hiding another session logical file', async () => {
     const sharedPath = join(
       storageRoot,
       'artifacts',
@@ -924,7 +1527,10 @@ describe('ManagedFileIndexRepository', () => {
         collection: { kind: 'sessionArtifacts', sessionId: 'session-b' },
         limit: 20
       })
-    ).resolves.toMatchObject({ items: [], totalCount: 0 })
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ sourceFileId: 'artifact-claimant' })],
+      totalCount: 1
+    })
   })
 
   it('skips pending uploads and artifacts during migration', async () => {
@@ -2238,10 +2844,18 @@ describe('ManagedFileIndexRepository', () => {
 
   it('reports incomplete when index access fails before the revision fast-path', async () => {
     let shouldFail = true
-    const recoveringRepository = new ManagedFileIndexRepository(async () => {
-      if (shouldFail) throw new Error('database unavailable')
-      return client
-    }, storageRoot)
+    const recoveringRepository = new ManagedFileIndexRepository(
+      async () => {
+        if (shouldFail) throw new Error('database unavailable')
+        return client
+      },
+      storageRoot,
+      new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      }),
+      uploadRepository
+    )
     const session = createSession()
 
     await expect(recoveringRepository.syncSession(session)).rejects.toThrow('database unavailable')
@@ -2275,7 +2889,7 @@ describe('ManagedFileIndexRepository', () => {
     await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({ totalCount: 0 })
   })
 
-  it('keeps native Artifact projections visible after the origin Session is deleted', async () => {
+  it('hides native Artifact Versions with a deleted origin Session and restores the same head', async () => {
     const artifactPath = join(
       storageRoot,
       'artifacts',
@@ -2336,9 +2950,11 @@ describe('ManagedFileIndexRepository', () => {
         promptMessageId: 'prompt-1',
         messageId: 'message-1',
         state: 'finalized',
+        managedVisibleAt: new Date('2026-07-27T11:59:59.000Z'),
         contentStorageKey: storageKey(storageRoot, artifactPath),
         evidenceStorageKey:
           'artifacts/project-a/session-a/.provenance/artifact-lineage-1/versions/artifact-version-1/evidence.json',
+        evidenceSchemaVersion: 1,
         contentType: 'text/plain',
         sizeBytes: 6n,
         checksum: 'a'.repeat(64),
@@ -2346,17 +2962,57 @@ describe('ManagedFileIndexRepository', () => {
         evidenceChecksum: 'c'.repeat(64)
       }
     })
+    await client.artifactLineage.update({
+      where: { id: 'artifact-lineage-1' },
+      data: { currentVersionId: 'artifact-version-1' }
+    })
     // Session JSON is gone and the derived row is accidentally lost. SQLite Version authority must
     // be sufficient to recreate Project Files without reconstructing identity from a filename/path.
     await client.managedFile.deleteMany({ where: { projectId: PROJECT_ID } })
 
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+        limit: 20
+      })
+    ).resolves.toMatchObject({ items: [], totalCount: 0 })
+    await expect(
+      repository.searchArtifacts({
+        primaryProjectId: PROJECT_ID,
+        otherProjectIds: [],
+        filenameContains: 'result',
+        primaryLimit: 10,
+        otherLimit: 0
+      })
+    ).resolves.toMatchObject({ primary: { items: [], totalCount: 0 } })
+    await expect(
+      repository.listArtifactGroups({ projectId: PROJECT_ID, limit: 20 })
+    ).resolves.toMatchObject({ items: [], totalCount: 0 })
+
     await repository.reconcileActiveSessions([])
 
     await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
-      totalCount: 1,
-      artifactCount: 1,
-      artifactGroupCount: 1
+      totalCount: 0,
+      artifactCount: 0,
+      artifactGroupCount: 0
     })
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+        limit: 20
+      })
+    ).resolves.toMatchObject({ items: [], totalCount: 0 })
+
+    await client.fileOriginSession.update({
+      where: { projectId_sessionId: { projectId: PROJECT_ID, sessionId: SESSION_ID } },
+      data: { state: 'active', deletedAt: null, deletionOperationId: null }
+    })
+
+    await expect(
+      client.artifactLineage.findUniqueOrThrow({ where: { id: 'artifact-lineage-1' } })
+    ).resolves.toMatchObject({ currentVersionId: 'artifact-version-1' })
     await expect(
       repository.listFiles({
         projectId: PROJECT_ID,
@@ -2368,31 +3024,10 @@ describe('ManagedFileIndexRepository', () => {
         {
           sourceFileId: 'artifact-lineage-1',
           sourceVersionId: 'artifact-version-1',
-          checksum: 'a'.repeat(64),
-          path: 'artifact-version:project-a/session-a/artifact-lineage-1/artifact-version-1',
-          originSession: {
-            state: 'deleted',
-            title: 'Retained analysis',
-            deletedAt: '2026-07-27T12:00:00.000Z'
-          }
+          checksum: 'a'.repeat(64)
         }
       ],
       totalCount: 1
-    })
-    await expect(
-      repository.listArtifactGroups({ projectId: PROJECT_ID, limit: 20 })
-    ).resolves.toMatchObject({
-      items: [
-        {
-          sessionId: SESSION_ID,
-          artifactCount: 1,
-          originSession: {
-            state: 'deleted',
-            title: 'Retained analysis',
-            deletedAt: '2026-07-27T12:00:00.000Z'
-          }
-        }
-      ]
     })
   })
 
@@ -2414,13 +3049,21 @@ describe('ManagedFileIndexRepository', () => {
       })
     )
     let shouldFail = true
-    const recoveringRepository = new ManagedFileIndexRepository(async () => {
-      if (shouldFail) {
-        shouldFail = false
-        throw new Error('database busy')
-      }
-      return client
-    }, storageRoot)
+    const recoveringRepository = new ManagedFileIndexRepository(
+      async () => {
+        if (shouldFail) {
+          shouldFail = false
+          throw new Error('database busy')
+        }
+        return client
+      },
+      storageRoot,
+      new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      }),
+      uploadRepository
+    )
 
     await expect(recoveringRepository.reconcileActiveSessions([])).rejects.toThrow('database busy')
     await expect(recoveringRepository.getOverview(PROJECT_ID)).resolves.toMatchObject({
@@ -2551,7 +3194,7 @@ describe('ManagedFileIndexRepository', () => {
       limit: 24
     })
     expect(page.items).toHaveLength(1)
-    expect(page.items[0].sourceFileId).toBe('legacy-b')
+    expect(page.items[0].sourceFileId).toBe('legacy-a')
     await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
       artifactCount: 1,
       isIndexComplete: true

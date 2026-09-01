@@ -12,7 +12,7 @@ export type ProjectFileItem = {
   id: string
   source: ProjectFileSource
   sourceFileId: string
-  sourceVersionId?: string
+  sourceVersionId: string
   checksum?: string
   projectId: string
   sessionId: string

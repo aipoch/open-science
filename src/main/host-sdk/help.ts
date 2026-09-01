@@ -2,6 +2,7 @@ import {
   HOST_CAPABILITY_OPERATION_KEYS,
   type HostCapabilityOperationKey
 } from './capability-projection'
+import { DELEGATION_DISABLED_MESSAGE } from '../delegation/durable-delegated-work-error'
 
 const HOST_SDK_SUBAGENT_OPERATION_IDS = HOST_CAPABILITY_OPERATION_KEYS.map(
   (operation) => `host.${operation}` as const
@@ -21,6 +22,7 @@ type HostSdkSubagentOperation = HostCapabilityOperationKey
 
 type HostSdkHelpContext = Readonly<{
   callerRole: 'main' | 'delegate'
+  delegationAllowed?: boolean
   capabilities: Readonly<
     Record<HostSdkSubagentOperation, boolean> & {
       currentModel?: boolean
@@ -245,12 +247,15 @@ const DELEGATE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
       code: "await host.delegate({name:'Audit',task:'Audit sources.'},{wait:false})"
     }
   ],
-  resolveAvailability: ({ callerRole, capabilities }) => {
+  resolveAvailability: ({ callerRole, capabilities, delegationAllowed }) => {
     if (callerRole === 'delegate') {
       return {
         status: 'unavailable',
         reason: 'Nested delegation is unsupported for Delegate agents.'
       }
+    }
+    if (delegationAllowed === false) {
+      return { status: 'unavailable', reason: DELEGATION_DISABLED_MESSAGE }
     }
     return capabilities.delegate ? { status: 'available' } : unavailableProvisioning('delegate')
   }
@@ -1045,7 +1050,7 @@ if (JSON.stringify(registeredOperationIds) !== JSON.stringify(HOST_SDK_SUBAGENT_
 const MAX_HELP_QUERY_CHARS = 128
 const MAX_CATALOG_RESULT_CHARS = 2_900
 const MAX_OPERATION_RESULT_CHARS = 3_600
-const MAX_DELEGATE_RESULT_CHARS = 3_200
+const MAX_DELEGATE_RESULT_CHARS = 3_400
 
 const normalizeTopic = (value: string): string => value.trim().toLowerCase()
 

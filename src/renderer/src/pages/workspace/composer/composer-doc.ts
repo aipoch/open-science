@@ -218,6 +218,7 @@ export const docToArtifactRefs = (doc: ComposerDoc): FileReference[] => {
     } else {
       refs.push({
         id: node.id,
+        ...(node.sourceFileId ? { sourceFileId: node.sourceFileId } : {}),
         name: node.name,
         path: node.path,
         source: node.source,
@@ -309,6 +310,7 @@ export const docFromMessageParts = (parts: MessagePart[]): ComposerDoc => {
     return {
       type: 'artifact',
       id: part.id,
+      ...(part.sourceFileId ? { sourceFileId: part.sourceFileId } : {}),
       name: part.name,
       path: part.path,
       source: part.source,
@@ -353,8 +355,18 @@ const artifactNodeFromEl = (el: HTMLElement): ComposerArtifactNode | null => {
 
   const path = el.getAttribute('data-mention-path')
   if (path === null || (source !== 'upload' && source !== 'artifact')) return null
+  const sourceFileId = el.getAttribute('data-mention-source-file-id') ?? undefined
   const versionId = el.getAttribute('data-mention-version-id') ?? undefined
-  return { type: 'artifact', id, name, path, source, mimeType, versionId }
+  return {
+    type: 'artifact',
+    id,
+    ...(sourceFileId ? { sourceFileId } : {}),
+    name,
+    path,
+    source,
+    mimeType,
+    versionId
+  }
 }
 
 // Read a contenteditable root into a doc, mapping chip spans to skill/artifact nodes and collapsing
@@ -447,6 +459,7 @@ export const createArtifactChip = (node: ComposerArtifactNode): HTMLSpanElement 
     span.setAttribute('data-mention-relative-path', node.relativePath)
   } else {
     span.setAttribute('data-mention-path', node.path)
+    if (node.sourceFileId) span.setAttribute('data-mention-source-file-id', node.sourceFileId)
   }
   if (node.mimeType) span.setAttribute('data-mention-mime-type', node.mimeType)
   if (!linkedFolder && node.versionId) {

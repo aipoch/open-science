@@ -3,6 +3,7 @@ import type {
   ReadArtifactPreviewRequest
 } from '../../../../../shared/artifacts'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
+import type { AcquireManagedPreviewRequest } from '../../../../../shared/preview-resources'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 
 type PreviewFileReader = (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
@@ -12,6 +13,13 @@ type PreviewRequestIdentity = {
   sessionId?: string
   source?: PreviewFileSource
   path: string
+}
+
+type ManagedPreviewRequestInput = PreviewRequestIdentity & {
+  managedFileId?: string
+  selectedVersionId?: string
+  mimeType?: string
+  maxBytes?: number
 }
 
 // Version locators carry their immutable source Session. Use that trusted locator scope instead of
@@ -31,6 +39,37 @@ const createPreviewRequestScope = ({
   }
 }
 
+const createManagedPreviewRequest = (
+  input: ManagedPreviewRequestInput
+): AcquireManagedPreviewRequest => {
+  const source = input.source ?? 'artifact'
+  const scope = createPreviewRequestScope({ ...input, source })
+  const presentation = {
+    ...(input.mimeType ? { mimeType: input.mimeType } : {}),
+    ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes })
+  }
+
+  if (source === 'artifact' || source === 'upload') {
+    if (!scope.projectId || !input.managedFileId) {
+      throw new Error('Managed preview requires a logical identity.')
+    }
+    return {
+      source,
+      projectId: scope.projectId,
+      fileId: input.managedFileId,
+      ...(input.selectedVersionId ? { versionId: input.selectedVersionId } : {}),
+      ...presentation
+    }
+  }
+
+  return {
+    source,
+    path: input.path,
+    ...scope,
+    ...presentation
+  }
+}
+
 // Selects the managed IPC reader once so callers remain source-neutral.
 const getPreviewFileReader = (source: PreviewFileSource = 'artifact'): PreviewFileReader => {
   if (source === 'upload') return window.api.uploads.readPreview
@@ -39,5 +78,5 @@ const getPreviewFileReader = (source: PreviewFileSource = 'artifact'): PreviewFi
   return window.api.artifacts.readPreview
 }
 
-export { createPreviewRequestScope, getPreviewFileReader }
+export { createManagedPreviewRequest, createPreviewRequestScope, getPreviewFileReader }
 export type { PreviewFileReader }

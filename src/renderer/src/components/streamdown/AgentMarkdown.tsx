@@ -13,6 +13,7 @@ import { cjk } from '@streamdown/cjk'
 import { createMathPlugin } from '@streamdown/math'
 import {
   Streamdown,
+  type AllowedTags,
   type Components,
   type LinkSafetyConfig,
   type PluginConfig,
@@ -30,11 +31,19 @@ import { useCodeHighlighter } from './use-code-highlighter'
 import { useSmoothStreamingContent } from './use-smooth-streaming-content'
 import { cn } from '@/lib/utils'
 
+type AgentMarkdownExtension = {
+  allowedTags: AllowedTags
+  components: Components
+  literalTagContent?: string[]
+}
+
 type AgentMarkdownProps = {
   content: string
   isAnimating?: boolean
   allowMedia?: boolean
   sessionLinks?: boolean
+  extension?: AgentMarkdownExtension
+  fallback?: ReactNode
   components?: Components
 }
 
@@ -62,6 +71,7 @@ const NETWORK_FETCHING_MEDIA_ELEMENTS = [
 type AgentMarkdownErrorBoundaryProps = {
   content: string
   children: ReactNode
+  fallback?: ReactNode
 }
 
 type AgentMarkdownErrorBoundaryState = {
@@ -183,6 +193,7 @@ class AgentMarkdownErrorBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.hasError) {
+      if (this.props.fallback !== undefined) return this.props.fallback
       return (
         <pre
           data-agent-markdown-fallback=""
@@ -205,16 +216,25 @@ const RichAgentMarkdown = memo(
     allowMedia = true,
     sessionLinks = false,
     components,
-    incrementalBlocks = false
+    incrementalBlocks = false,
+    extension
   }: RichAgentMarkdownProps): React.JSX.Element => {
     // Append-only streaming re-normalizes just the trailing block instead of the full message.
     const [normalizer] = useState(() => createAgentMarkdownNormalizer())
     const renderedContent = useMemo(() => normalizer(content), [normalizer, content])
-    const plugins = useMarkdownPlugins(renderedContent)
-    const renderedComponents = useMemo(
-      () => (sessionLinks ? { ...sessionLinkComponents, ...components } : components),
-      [components, sessionLinks]
+    const allowedTags = useMemo(
+      () => (extension ? { ...AGENT_ALLOWED_TAGS, ...extension.allowedTags } : AGENT_ALLOWED_TAGS),
+      [extension]
     )
+    const plugins = useMarkdownPlugins(renderedContent)
+    const renderedComponents = useMemo(() => {
+      if (!sessionLinks && !components && !extension) return undefined
+      return {
+        ...(sessionLinks ? sessionLinkComponents : {}),
+        ...components,
+        ...extension?.components
+      }
+    }, [components, extension, sessionLinks])
 
     return (
       <div
@@ -236,7 +256,8 @@ const RichAgentMarkdown = memo(
           BlockComponent={StreamingBlock}
           parseIncompleteMarkdown={isAnimating}
           normalizeHtmlIndentation={!isAnimating}
-          allowedTags={AGENT_ALLOWED_TAGS}
+          allowedTags={allowedTags}
+          literalTagContent={extension?.literalTagContent}
           disallowedElements={allowMedia ? undefined : NETWORK_FETCHING_MEDIA_ELEMENTS}
           shikiTheme={plugins.code ? shikiThemes : undefined}
           mermaid={plugins.mermaid ? mermaidOptions : undefined}
@@ -259,9 +280,11 @@ const PresentedAgentMarkdown = memo(
     allowMedia = true,
     sessionLinks = false,
     components,
-    incrementalBlocks = true
+    incrementalBlocks = true,
+    extension,
+    fallback
   }: RichAgentMarkdownProps): React.JSX.Element => (
-    <AgentMarkdownErrorBoundary content={content}>
+    <AgentMarkdownErrorBoundary content={content} fallback={fallback}>
       <RichAgentMarkdown
         content={content}
         isAnimating={isAnimating}
@@ -269,6 +292,7 @@ const PresentedAgentMarkdown = memo(
         sessionLinks={sessionLinks}
         components={components}
         incrementalBlocks={incrementalBlocks}
+        extension={extension}
       />
     </AgentMarkdownErrorBoundary>
   )
@@ -283,7 +307,9 @@ const AgentMarkdown = memo(
     isAnimating = false,
     allowMedia = true,
     sessionLinks = false,
-    components
+    components,
+    extension,
+    fallback
   }: AgentMarkdownProps): React.JSX.Element => {
     const presentation = useSmoothStreamingContent(content, isAnimating)
 
@@ -295,6 +321,8 @@ const AgentMarkdown = memo(
         sessionLinks={sessionLinks}
         components={components}
         incrementalBlocks={false}
+        extension={extension}
+        fallback={fallback}
       />
     )
   }
@@ -303,3 +331,4 @@ const AgentMarkdown = memo(
 AgentMarkdown.displayName = 'AgentMarkdown'
 
 export { AgentMarkdown, PresentedAgentMarkdown }
+export type { AgentMarkdownExtension }

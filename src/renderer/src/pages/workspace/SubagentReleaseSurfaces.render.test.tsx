@@ -286,18 +286,7 @@ describe('release-gate Subagent surfaces', () => {
 
     renderSurface(
       <>
-        <SubagentAvailabilityNotice
-          frameworkId="codebuddy"
-          frameworks={[
-            {
-              id: 'codebuddy',
-              displayName: 'CodeBuddy',
-              supportsSkills: false,
-              supportsDelegatedWork: true
-            }
-          ]}
-          onOpenSettings={vi.fn()}
-        />
+        <SubagentAvailabilityNotice onTurnOnDelegation={vi.fn()} onOpenSettings={vi.fn()} />
         <SubagentsBar session={session} permissions={[]} />
       </>
     )
@@ -811,44 +800,52 @@ describe('release-gate Subagent surfaces', () => {
     )
   })
 
-  it('shows an actionable unavailable notice and no false support claim', () => {
-    const onOpenSettings = vi.fn()
+  it('hides the notice without an admission rejection', () => {
+    renderSurface(
+      <SubagentAvailabilityNotice onTurnOnDelegation={vi.fn()} onOpenSettings={vi.fn()} />
+    )
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('routes a Delegation-policy rejection to the composer agent controls menu', () => {
+    const onTurnOnDelegation = vi.fn()
     renderSurface(
       <SubagentAvailabilityNotice
-        frameworkId="opencode"
-        frameworks={[
-          {
-            id: 'opencode',
-            displayName: 'OpenCode',
-            supportsSkills: true,
-            supportsDelegatedWork: false
-          }
-        ]}
-        onOpenSettings={onOpenSettings}
+        unavailable={{
+          kind: 'delegation-disabled',
+          reason: 'Delegation is disabled for this Session.'
+        }}
+        onTurnOnDelegation={onTurnOnDelegation}
+        onOpenSettings={vi.fn()}
       />
     )
 
-    expect(screen.getByRole('status').textContent).toContain('Subagents unavailable for OpenCode')
-    const settingsButton = screen.getByRole('button', { name: 'Open Settings' })
-    expect(settingsButton.className).toContain('focus-visible:ring-[3px]')
-    fireEvent.click(settingsButton)
-    expect(onOpenSettings).toHaveBeenCalledOnce()
+    expect(screen.getByRole('status').textContent).toContain(
+      'Delegation is off for this conversation'
+    )
+    // The agent-facing rejection text is restated for the user, not rendered verbatim.
+    expect(screen.getByRole('status').textContent).not.toContain(
+      'Delegation is disabled for this Session.'
+    )
+    expect(screen.getByRole('status').textContent).toContain(
+      'The agent cannot create new Subagents. Enable Delegation from the composer agent controls menu.'
+    )
+    const turnOnButton = screen.getByRole('button', { name: 'Turn on Delegation' })
+    expect(turnOnButton.className).toContain('focus-visible:ring-[3px]')
+    fireEvent.click(turnOnButton)
+    expect(onTurnOnDelegation).toHaveBeenCalledOnce()
   })
 
-  it('shows a production admission rejection as an actionable product notice', () => {
+  it('routes a configuration unavailability to Settings with its user-facing reason', () => {
     const onOpenSettings = vi.fn()
     renderSurface(
       <SubagentAvailabilityNotice
-        frameworkId="opencode"
-        frameworks={[
-          {
-            id: 'opencode',
-            displayName: 'OpenCode',
-            supportsSkills: true,
-            supportsDelegatedWork: true
-          }
-        ]}
-        unavailableReason="The requested Specialist configuration is unavailable."
+        unavailable={{
+          kind: 'unavailable',
+          reason:
+            'The configured Subagent model is unavailable. Open Settings → Model → Scenario models and choose an available model.'
+        }}
+        onTurnOnDelegation={vi.fn()}
         onOpenSettings={onOpenSettings}
       />
     )
@@ -857,9 +854,11 @@ describe('release-gate Subagent surfaces', () => {
       'Subagents unavailable for this configuration'
     )
     expect(screen.getByRole('status').textContent).toContain(
-      'The requested Specialist configuration is unavailable.'
+      'The configured Subagent model is unavailable.'
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Open Settings' }))
+    const settingsButton = screen.getByRole('button', { name: 'Open Settings' })
+    expect(settingsButton.className).toContain('focus-visible:ring-[3px]')
+    fireEvent.click(settingsButton)
     expect(onOpenSettings).toHaveBeenCalledOnce()
   })
 

@@ -61,6 +61,7 @@ type PreloadApi = {
     linkPdfContext: (request: unknown) => Promise<unknown>
     unlinkPdfContext: (request: unknown) => Promise<unknown>
     saveSession: (session: unknown, options?: unknown) => unknown
+    setDelegationPolicy: (projectId: string, sessionId: string, policy: 'allow' | 'deny') => unknown
     editDetails: (request: unknown) => unknown
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
@@ -357,6 +358,10 @@ describe('preload bridge — public surface inventory', () => {
       'logs.getStatus',
       'logs.openFile',
       'logs.revealInFolder',
+      'managedFileVersions.cancelDiff',
+      'managedFileVersions.diffText',
+      'managedFileVersions.inspect',
+      'managedFileVersions.saveTextEdit',
       'memory.clearAll',
       'memory.createCategory',
       'memory.createEntry',
@@ -484,6 +489,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.saveManifest',
       'sessions.saveSession',
       'sessions.sendFlushResponse',
+      'sessions.setDelegationPolicy',
       'sessions.unlinkPdfContext',
       'sessions.updateArchive',
       'settings.addCustomServer',
@@ -800,6 +806,7 @@ describe('preload bridge — core renderer contract catalog', () => {
       'local-fs',
       'memory',
       'logs',
+      'managed-file-versions',
       'network',
       'notifications',
       'office-preview',
@@ -868,6 +875,10 @@ describe('preload bridge — core renderer contract catalog', () => {
   it('unwraps the runtime-validated PDF context Session commands', async () => {
     const cases = [
       {
+        call: () => api.sessions.setDelegationPolicy('project-1', 'session-1', 'deny'),
+        channel: 'sessions:set-delegation-policy'
+      },
+      {
         call: () =>
           api.sessions.filterPdfContextCandidates({
             projectId: 'project-1',
@@ -901,7 +912,16 @@ describe('preload bridge — core renderer contract catalog', () => {
     for (const testCase of cases) {
       invokeMock.mockResolvedValueOnce({ ok: true, result: { version: 1, revision: 2 } })
       await expect(testCase.call()).resolves.toEqual({ version: 1, revision: 2 })
-      expect(invokeMock).toHaveBeenLastCalledWith(testCase.channel, expect.any(Object))
+      if (testCase.channel === 'sessions:set-delegation-policy') {
+        expect(invokeMock).toHaveBeenLastCalledWith(
+          testCase.channel,
+          'project-1',
+          'session-1',
+          'deny'
+        )
+      } else {
+        expect(invokeMock).toHaveBeenLastCalledWith(testCase.channel, expect.any(Object))
+      }
     }
   })
 
@@ -1268,6 +1288,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.sessions.saveSession(sampleSession),
     channel: 'sessions:save-session',
     args: [sampleSession]
+  },
+  {
+    name: 'sessions.setDelegationPolicy → sessions:set-delegation-policy',
+    invoke: (a) => a.sessions.setDelegationPolicy('p-1', 's-1', 'deny'),
+    channel: 'sessions:set-delegation-policy',
+    args: ['p-1', 's-1', 'deny']
   },
   {
     name: 'sessions.editDetails → sessions:edit-details',

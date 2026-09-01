@@ -49,6 +49,22 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
+  it('restores durable deletion barriers before managed file version recovery', () => {
+    expect(
+      ipcSource.indexOf('await projectDeletionCoordinator.restorePendingDeletionBarriers()')
+    ).toBeLessThan(ipcSource.indexOf('managedFileVersionService.recoverPendingWrites()'))
+    expect(ipcSource).toMatch(
+      /withDataRootWrite\(\(\)\s*=>\s*managedFileVersionService\.recoverPendingWrites\(\)\)/
+    )
+  })
+
+  it('does not block application startup on managed file content integrity scanning', () => {
+    expect(ipcSource).toMatch(/managedFileVersionService\s*\.auditActiveVersionIntegrity\(\)/)
+    expect(ipcSource).not.toMatch(
+      /await\s+managedFileVersionService\s*\.auditActiveVersionIntegrity\(\)/
+    )
+  })
+
   it('injects each stateful owner into its Electron adapter and command composition', () => {
     const sharedOwners = [
       [

@@ -155,6 +155,7 @@ class AcpPromptPreparationOwner {
 
   async prepare(input: AcpPromptPreparationInput): Promise<PreparedPromptHandle> {
     let releaseGrant: (() => void) | undefined
+    let releasePromptContent: (() => void) | undefined
     let contextTurn: ContextWindowTurnHandle | undefined
     const preDispatchModelCalls: AcpProviderModelCallUsage[] = []
     let closed = false
@@ -165,14 +166,28 @@ class AcpPromptPreparationOwner {
       const ownedContext = contextTurn
       contextTurn = undefined
       try {
-        if (ownedContext && failContext) ownedContext.fail()
+        const releaseContent = releasePromptContent
+        releasePromptContent = undefined
+        try {
+          releaseContent?.()
+        } catch (error) {
+          try {
+            log.error('prepared prompt content cleanup failed', errorLogFields(error))
+          } catch {
+            // Cleanup diagnostics cannot replace the preparation or provider outcome.
+          }
+        }
       } finally {
         try {
-          ownedContext?.supersede()
+          if (ownedContext && failContext) ownedContext.fail()
         } finally {
-          const release = releaseGrant
-          releaseGrant = undefined
-          release?.()
+          try {
+            ownedContext?.supersede()
+          } finally {
+            const release = releaseGrant
+            releaseGrant = undefined
+            release?.()
+          }
         }
       }
     }
@@ -285,20 +300,7 @@ class AcpPromptPreparationOwner {
         .filter((segment): segment is string => Boolean(segment))
         .join('\n\n')
 
-      if (input.skillImportEnabled && this.options.authorizeReferencedUploads) {
-        const paths = (input.request.referencedArtifacts ?? []).flatMap((reference) => {
-          if (reference.source !== 'upload') return []
-          const name = reference.name.toLowerCase()
-          return name.endsWith('.skill') || name.endsWith('.zip') ? [reference.path] : []
-        })
-        releaseGrant = await this.options.authorizeReferencedUploads(
-          input.projectId,
-          input.request.sessionId,
-          paths
-        )
-        if (await cancelled()) return cancelPrepared()
-      }
-
+      const skillImportAttachmentPaths = new Set<string>()
       const references = input.request.referencedArtifacts ?? []
       const requestedHistoryUploads = input.request.historyAttachments ?? []
       const historyUploads = filterUnlinkedPdfHistory(requestedHistoryUploads, references)
@@ -309,7 +311,6 @@ class AcpPromptPreparationOwner {
           filteredCount: requestedHistoryUploads.length - historyUploads.length
         })
       }
-
       const prepared = await this.options.promptContent.prepare({
         appSessionId: input.request.sessionId,
         projectId: input.projectId,
@@ -327,9 +328,21 @@ class AcpPromptPreparationOwner {
           this.options.imageInputCompatibility !== undefined,
         fileTextBudget: resolveFileTextBudget(input.backend.context.window),
         skillImportTurnToken: input.skillImportTurnToken,
-        onSkillImportAttachmentEligible: input.onSkillImportAttachmentEligible
+        onSkillImportAttachmentEligible: (attachmentUri) => {
+          skillImportAttachmentPaths.add(attachmentUri)
+          input.onSkillImportAttachmentEligible?.(attachmentUri)
+        }
       })
+      releasePromptContent = prepared.close
       if (await cancelled()) return cancelPrepared()
+      if (input.skillImportEnabled && this.options.authorizeReferencedUploads) {
+        releaseGrant = await this.options.authorizeReferencedUploads(
+          input.projectId,
+          input.request.sessionId,
+          [...skillImportAttachmentPaths]
+        )
+        if (await cancelled()) return cancelPrepared()
+      }
       const providerContent = this.options.imageInputCompatibility
         ? await this.options.imageInputCompatibility.prepare({
             content: prepared.content,

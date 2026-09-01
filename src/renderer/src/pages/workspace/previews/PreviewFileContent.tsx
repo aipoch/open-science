@@ -1,10 +1,15 @@
 import { renderPreviewFile } from './preview-registry'
 import { PreviewUnsupportedContent } from './PreviewFallback'
 import { PreviewRuntimeBoundary } from './preview-runtime'
+import type { PreviewDownloadVersionContext } from './preview-runtime-context'
 import type { PreviewFileRendererProps } from './preview-types'
 
 export const PreviewFileContent = ({
   item,
+  downloadVersionContext,
+  annotationVersionId,
+  annotationBlockedByHistoricalVersion,
+  annotationVersionPending,
   activeAnnotations,
   onAddAnnotation,
   onUpdateAnnotationNote,
@@ -13,9 +18,14 @@ export const PreviewFileContent = ({
   onRedoAnnotation,
   onAnnotationError,
   onPdfReadingPositionChange
-}: PreviewFileRendererProps): React.JSX.Element => {
+}: PreviewFileRendererProps & {
+  downloadVersionContext?: PreviewDownloadVersionContext
+}): React.JSX.Element => {
   const content = renderPreviewFile({
     item,
+    annotationVersionId,
+    annotationBlockedByHistoricalVersion,
+    annotationVersionPending,
     activeAnnotations,
     onAddAnnotation,
     onUpdateAnnotationNote,
@@ -27,9 +37,16 @@ export const PreviewFileContent = ({
   })
 
   return (
-    <PreviewRuntimeBoundary item={item}>
+    <PreviewRuntimeBoundary item={item} downloadVersionContext={downloadVersionContext}>
       {content ?? (
-        <PreviewUnsupportedContent path={item.path} name={item.name} source={item.source} />
+        <PreviewUnsupportedContent
+          path={item.path}
+          name={item.name}
+          source={item.source}
+          projectId={item.projectId}
+          fileId={item.managedFileId}
+          versionId={item.selectedVersionId}
+        />
       )}
     </PreviewRuntimeBoundary>
   )

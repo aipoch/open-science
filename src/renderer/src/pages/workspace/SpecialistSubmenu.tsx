@@ -8,6 +8,8 @@ import { Check, ChevronRight, UserRound } from 'lucide-react'
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { AgentControlMenuItemTooltip } from './AgentControlMenuItemTooltip'
+
 import {
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -85,8 +87,6 @@ const SpecialistSubmenu = ({
     none: t('None'),
     unavailable: t('Unavailable')
   })
-  const showValue = Boolean(selectedId) || unavailable
-
   // When the selected specialist is unavailable, keep it visible in the list as struck-through so
   // the user understands which profile is bound. Only applies to the currently-bound unavailable
   // profile; other disabled profiles stay out of the picker as normal.
@@ -96,48 +96,60 @@ const SpecialistSubmenu = ({
       : undefined
   const unavailableProfile = unavailableItem?.kind !== 'reviewer' ? unavailableItem : undefined
 
+  const triggerContent = (
+    <>
+      <UserRound
+        className={cn(
+          'size-4 shrink-0 text-text-200',
+          unavailable && 'text-amber-600 dark:text-amber-400'
+        )}
+        strokeWidth={2}
+        aria-hidden="true"
+      />
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
+        {t('Specialist')}
+      </span>
+      {/* Value capsule mirrors the permission-mode capsule: current selection on the right. */}
+      <span
+        className={cn(
+          'flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium leading-4',
+          unavailable
+            ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+            : 'bg-bg-200 text-text-100'
+        )}
+      >
+        <span className="max-w-[120px] truncate">{label}</span>
+        {!readOnly ? (
+          <ChevronRight className="size-3 shrink-0 opacity-60" strokeWidth={2} aria-hidden="true" />
+        ) : null}
+      </span>
+    </>
+  )
+
   return (
     <DropdownMenuSub>
-      <DropdownMenuSubTrigger
-        disabled={readOnly}
-        className="items-center gap-2 px-2 py-1.5"
-        data-testid="specialist-submenu-trigger"
+      <AgentControlMenuItemTooltip
+        description={t('Bind a personal specialist to this conversation.')}
+        submenu
       >
-        <UserRound
-          className={cn(
-            'size-4 shrink-0 text-text-200',
-            unavailable && 'text-amber-600 dark:text-amber-400'
-          )}
-          strokeWidth={2}
-          aria-hidden="true"
-        />
-        <span className="min-w-0 flex-1">
-          <span className="block text-[13px] font-medium leading-5">{t('Specialist')}</span>
-          {!showValue ? (
-            <span className="block text-[11px] leading-4 text-text-300">
-              {t('Bind a personal specialist to this conversation.')}
-            </span>
-          ) : null}
-        </span>
-        {/* Value capsule mirrors the permission-mode capsule: current selection on the right. */}
-        <span
-          className={cn(
-            'flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium leading-4',
-            unavailable
-              ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-              : 'bg-bg-200 text-text-100'
-          )}
-        >
-          <span className="max-w-[120px] truncate">{label}</span>
-          {!readOnly ? (
-            <ChevronRight
-              className="size-3 shrink-0 opacity-60"
-              strokeWidth={2}
-              aria-hidden="true"
-            />
-          ) : null}
-        </span>
-      </DropdownMenuSubTrigger>
+        {readOnly ? (
+          <DropdownMenuItem
+            aria-disabled="true"
+            className="items-center gap-2 px-2 py-1.5 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+            data-testid="specialist-submenu-trigger"
+            onSelect={(event) => event.preventDefault()}
+          >
+            {triggerContent}
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuSubTrigger
+            className="items-center gap-2 px-2 py-1.5"
+            data-testid="specialist-submenu-trigger"
+          >
+            {triggerContent}
+          </DropdownMenuSubTrigger>
+        )}
+      </AgentControlMenuItemTooltip>
 
       {!readOnly ? (
         <DropdownMenuSubContent className="w-56 p-1">

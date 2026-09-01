@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { ApplicationModule } from '../application-runtime'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { ConnectorApplicationSettingsCapabilities } from '../settings/service-capabilities'
 import type { UploadRepository } from '../uploads/repository'
 import type { SpecialistView } from '../../shared/specialist'
@@ -37,6 +38,7 @@ export type ConnectorApplicationDeps = {
   onSkillImportSettled: (id: string) => void
   onSkillImportLifecycleSettled: (id: string, state: 'resolved' | 'expired' | 'cancelled') => void
   uploads: Pick<UploadRepository, 'resolveManagedUpload' | 'resolveSessionUpload'>
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'>
   fetchImpl: typeof fetch
   resolveApiKey: (ref?: string) => string | undefined
   canRequestCredential: () => boolean
@@ -172,6 +174,7 @@ const createConnectorApplication = (
 
   const skillImporter = new ConversationSkillImporter({
     uploads: deps.uploads,
+    managedFileVersions: deps.managedFileVersions,
     createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
       skillImportApprovals.createCancellationGuard(sessionId, turnToken, attachmentUri),
     createSessionCancellationGuard: (sessionId) =>

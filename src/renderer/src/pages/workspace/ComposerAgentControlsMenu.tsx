@@ -4,7 +4,8 @@
 // standalone SpecialistPicker, and ComputeHostSelector. A primary-color dot on the trigger
 // marks any deviation from the defaults (profile 'ask', auto-review off); session grants
 // keep their own count pill. The first-level menu shows the current permission level as a
-// borderless colored capsule (ask = neutral, auto = blue, full = warning amber); picking a
+// borderless colored capsule (ask = neutral, auto = blue, full = warning amber); Delegation Off
+// also marks the trigger as non-default. Picking a
 // level lives in a submenu. Specialist and Compute are hover-expanded submenus below
 // auto-review: Specialist offers None / personal specialists / Create new…; Compute folds
 // the SSH host list and "Manage compute…" together. Both read from global stores.
@@ -22,6 +23,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  GitFork,
   ScanEye,
   Server,
   Settings,
@@ -36,6 +38,7 @@ import { AlertDialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
 import { SpecialistSubmenu } from './SpecialistSubmenu'
+import { AgentControlMenuContent, AgentControlMenuItemTooltip } from './AgentControlMenuItemTooltip'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -51,7 +54,6 @@ import {
 } from '@/components/ui/dialog-chrome'
 import {
   DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -78,12 +80,17 @@ type ComposerAgentControlsMenuProps = {
   grants?: AcpPermissionGrant[]
   autoReviewEnabled: boolean
   memoryEnabled?: boolean
+  delegationEnabled?: boolean
+  delegationPending?: boolean
+  delegationHasLiveAttempts?: boolean
   // Read-only while a session is running: the menu stays openable and the permission
   // submenu still expands on hover, but profiles, auto-review, and compute stay immutable.
   readOnly?: boolean
   // Memory may be reconfigured again after context replacement while transcript replay is pending.
   memoryReadOnly?: boolean
   memoryDisabledReason?: string
+  delegationReadOnly?: boolean
+  delegationDisabledReason?: string
   // Auto-review is a durable preference and does not depend on the provider transcript state.
   autoReviewReadOnly?: boolean
   // Permission mode remains independently editable during a running prompt.
@@ -94,6 +101,7 @@ type ComposerAgentControlsMenuProps = {
   onProfileChange: (profile: PermissionProfileId) => void
   onAutoReviewChange: (enabled: boolean) => void
   onMemoryChange?: (enabled: boolean) => void
+  onDelegationChange?: (enabled: boolean) => void
   onRevokeGrant?: (categoryKey: string) => void
   onClearGrants?: () => void
   // Compute hosts: the SSH section is appended below auto-review. Optional so the menu still
@@ -160,9 +168,14 @@ const ComposerAgentControlsMenu = ({
   grants,
   autoReviewEnabled,
   memoryEnabled = true,
+  delegationEnabled = true,
+  delegationPending = false,
+  delegationHasLiveAttempts = false,
   readOnly = false,
   memoryReadOnly = readOnly,
   memoryDisabledReason,
+  delegationReadOnly = readOnly,
+  delegationDisabledReason,
   autoReviewReadOnly = readOnly,
   permissionProfileReadOnly = readOnly,
   grantActionsReadOnly = readOnly,
@@ -170,6 +183,7 @@ const ComposerAgentControlsMenu = ({
   onProfileChange,
   onAutoReviewChange,
   onMemoryChange = () => undefined,
+  onDelegationChange = () => undefined,
   onRevokeGrant,
   onClearGrants,
   enabledComputeHosts,
@@ -189,6 +203,8 @@ const ComposerAgentControlsMenu = ({
   const [mobilePermissionOpen, setMobilePermissionOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [computeMenuOpen, setComputeMenuOpen] = useState(false)
+  const [tooltipCollisionBoundary, setTooltipCollisionBoundary] = useState<HTMLElement | null>(null)
+  const controlsTriggerRef = useRef<HTMLButtonElement>(null)
   const previousOpenRequest = useRef(openRequest)
   const previousComputeOpenRequest = useRef(computeOpenRequest)
   const isMobile = useMediaQuery('(max-width: 767px)')
@@ -201,13 +217,22 @@ const ComposerAgentControlsMenu = ({
   const isNonDefault =
     profile !== DEFAULT_PERMISSION_PROFILE ||
     autoReviewEnabled ||
-    (!memoryEnabled && !memoryDisabledReason)
+    (!memoryEnabled && !memoryDisabledReason) ||
+    !delegationEnabled
+  const autoReviewItemDisabled = autoReviewReadOnly || autoReviewDisabled
 
   useEffect(() => {
     if (openRequest === undefined || openRequest === previousOpenRequest.current) return
     previousOpenRequest.current = openRequest
     setMenuOpen(true)
   }, [openRequest])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    setTooltipCollisionBoundary(
+      controlsTriggerRef.current?.closest<HTMLElement>('[data-slot="resizable-panel"]') ?? null
+    )
+  }, [menuOpen])
 
   const selectProfile = (next: PermissionProfileId): void => {
     if (next === profile) return
@@ -260,46 +285,46 @@ const ComposerAgentControlsMenu = ({
         const isSelected = candidate.id === profile
         const isFull = candidate.id === 'full'
         const isDisabled = isFull && fullAccessUnavailable
+        const itemDisabled = permissionProfileReadOnly || isDisabled
+
+        const description = isDisabled
+          ? t('The current agent does not support native bypass mode.')
+          : t(candidate.descriptionKey)
 
         return (
-          <DropdownMenuItem
-            key={candidate.id}
-            disabled={permissionProfileReadOnly || isDisabled}
-            className="items-center gap-2 px-2 py-1.5"
-            onSelect={() => selectProfile(candidate.id)}
-          >
-            <ProfileIcon
-              className={cn(
-                'size-4 shrink-0',
-                isFull ? 'text-amber-600 dark:text-amber-400' : 'text-text-200'
-              )}
-              strokeWidth={2}
-              aria-hidden="true"
-            />
-            <span className="min-w-0 flex-1">
+          <AgentControlMenuItemTooltip key={candidate.id} description={description}>
+            <DropdownMenuItem
+              aria-disabled={itemDisabled}
+              className="items-center gap-2 px-2 py-1.5 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+              onSelect={(event) => {
+                if (itemDisabled) {
+                  event.preventDefault()
+                  return
+                }
+                selectProfile(candidate.id)
+              }}
+            >
+              <ProfileIcon
+                className={cn(
+                  'size-4 shrink-0',
+                  isFull ? 'text-amber-600 dark:text-amber-400' : 'text-text-200'
+                )}
+                strokeWidth={2}
+                aria-hidden="true"
+              />
               <span
                 className={cn(
-                  'block text-[13px] font-medium leading-5',
+                  'min-w-0 flex-1 truncate text-[13px] font-medium leading-5',
                   isFull && 'text-amber-600 dark:text-amber-400'
                 )}
               >
                 {t(candidate.labelKey)}
               </span>
-              <span
-                className={cn(
-                  'block text-[11px] leading-4',
-                  isFull ? 'text-amber-600/70 dark:text-amber-400/70' : 'text-text-300'
-                )}
-              >
-                {isDisabled
-                  ? t('The current agent does not support native bypass mode.')
-                  : t(candidate.descriptionKey)}
-              </span>
-            </span>
-            {isSelected ? (
-              <Check className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
-            ) : null}
-          </DropdownMenuItem>
+              {isSelected ? (
+                <Check className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
+              ) : null}
+            </DropdownMenuItem>
+          </AgentControlMenuItemTooltip>
         )
       })}
       {profile === 'auto' && profileState?.autoReviewStrategy === 'conservative' ? (
@@ -315,11 +340,8 @@ const ComposerAgentControlsMenu = ({
   const permissionSummary = (
     <>
       <Shield className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
-      <span className="min-w-0 flex-1">
-        <span className="block text-[13px] font-medium leading-5">{t('Permission mode')}</span>
-        <span className="block text-[11px] leading-4 text-text-300">
-          {t('Applies to future actions; completed actions are unchanged.')}
-        </span>
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
+        {t('Permission mode')}
       </span>
       <span
         data-testid="profile-capsule"
@@ -335,6 +357,42 @@ const ComposerAgentControlsMenu = ({
     </>
   )
 
+  const delegationDescription =
+    delegationDisabledReason ??
+    (delegationHasLiveAttempts
+      ? t(
+          'Turning Delegation off only blocks new Subagents. Existing Subagents continue running and remain available.'
+        )
+      : delegationEnabled
+        ? t('Allow the Main Agent to create new Subagents.')
+        : t('Block new Subagents. Existing Subagents are unaffected.'))
+
+  const delegationItem = (
+    <DropdownMenuItem
+      disabled={delegationPending}
+      aria-disabled={delegationPending ? undefined : delegationReadOnly}
+      className="items-center gap-2 px-2 py-1.5 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+      onSelect={(event) => {
+        event.preventDefault()
+        if (!delegationPending && !delegationReadOnly) {
+          onDelegationChange(!delegationEnabled)
+        }
+      }}
+    >
+      <GitFork className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
+        {t('Delegation')}
+      </span>
+      <Switch
+        size="sm"
+        checked={delegationEnabled}
+        tabIndex={-1}
+        aria-hidden="true"
+        className="pointer-events-none"
+      />
+    </DropdownMenuItem>
+  )
+
   return (
     <>
       <DropdownMenu open={menuOpen} onOpenChange={handleOpenChange}>
@@ -342,12 +400,17 @@ const ComposerAgentControlsMenu = ({
             remains browsable while a session is running; only the controls are disabled. */}
         <DropdownMenuTrigger asChild>
           <button
+            ref={controlsTriggerRef}
             type="button"
             className={triggerButtonClassName}
-            aria-label={t('Agent controls: {{profile}}, auto-review {{autoReview}}', {
-              profile: t(selectedProfile.labelKey),
-              autoReview: autoReviewEnabled ? 'on' : 'off'
-            })}
+            aria-label={t(
+              'Agent controls: {{profile}}, auto-review {{autoReview}}, Delegation {{delegation}}',
+              {
+                profile: t(selectedProfile.labelKey),
+                autoReview: autoReviewEnabled ? t('On') : t('Off'),
+                delegation: delegationEnabled ? t('On') : t('Off')
+              }
+            )}
             data-testid="composer-controls-trigger"
           >
             <SlidersHorizontal className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
@@ -369,7 +432,8 @@ const ComposerAgentControlsMenu = ({
             ) : null}
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent
+        <AgentControlMenuContent
+          boundary={tooltipCollisionBoundary}
           side="top"
           align="start"
           sideOffset={8}
@@ -397,21 +461,30 @@ const ComposerAgentControlsMenu = ({
             <>
               {/* On mobile, open the permission choices in this panel. Desktop keeps the submenu. */}
               {isMobile ? (
-                <DropdownMenuItem
-                  className="items-center gap-2 px-2 py-1.5"
-                  data-testid="mobile-permission-trigger"
-                  onSelect={(event) => {
-                    event.preventDefault()
-                    setMobilePermissionOpen(true)
-                  }}
+                <AgentControlMenuItemTooltip
+                  description={t('Applies to future actions; completed actions are unchanged.')}
                 >
-                  {permissionSummary}
-                </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="items-center gap-2 px-2 py-1.5"
+                    data-testid="mobile-permission-trigger"
+                    onSelect={(event) => {
+                      event.preventDefault()
+                      setMobilePermissionOpen(true)
+                    }}
+                  >
+                    {permissionSummary}
+                  </DropdownMenuItem>
+                </AgentControlMenuItemTooltip>
               ) : (
                 <DropdownMenuSub>
-                  <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
-                    {permissionSummary}
-                  </DropdownMenuSubTrigger>
+                  <AgentControlMenuItemTooltip
+                    description={t('Applies to future actions; completed actions are unchanged.')}
+                    submenu
+                  >
+                    <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
+                      {permissionSummary}
+                    </DropdownMenuSubTrigger>
+                  </AgentControlMenuItemTooltip>
                   <DropdownMenuSubContent
                     collisionPadding={8}
                     className="max-h-[calc(100dvh-1rem)] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto p-1"
@@ -477,64 +550,74 @@ const ComposerAgentControlsMenu = ({
               <DropdownMenuSeparator />
 
               {/* The whole row toggles auto-review; the Switch is a visual indicator only. */}
-              <DropdownMenuItem
-                disabled={autoReviewReadOnly || autoReviewDisabled}
-                className="items-center gap-2 px-2 py-1.5"
-                onSelect={(event) => {
-                  event.preventDefault()
-                  onAutoReviewChange(!autoReviewEnabled)
-                }}
+              <AgentControlMenuItemTooltip
+                description={t('A reviewer agent checks every change before it lands.')}
               >
-                <ScanEye
-                  className="size-4 shrink-0 text-text-200"
-                  strokeWidth={2}
-                  aria-hidden="true"
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[13px] font-medium leading-5">
+                <DropdownMenuItem
+                  aria-disabled={autoReviewItemDisabled}
+                  className="items-center gap-2 px-2 py-1.5 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                  onSelect={(event) => {
+                    event.preventDefault()
+                    if (!autoReviewItemDisabled) onAutoReviewChange(!autoReviewEnabled)
+                  }}
+                >
+                  <ScanEye
+                    className="size-4 shrink-0 text-text-200"
+                    strokeWidth={2}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
                     {t('Auto-review')}
                   </span>
-                  <span className="block text-[11px] leading-4 text-text-300">
-                    {t('A reviewer agent checks every change before it lands.')}
-                  </span>
-                </span>
-                <Switch
-                  size="sm"
-                  checked={autoReviewEnabled}
-                  tabIndex={-1}
-                  aria-hidden="true"
-                  className="pointer-events-none"
-                />
-              </DropdownMenuItem>
+                  <Switch
+                    size="sm"
+                    checked={autoReviewEnabled}
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    className="pointer-events-none"
+                  />
+                </DropdownMenuItem>
+              </AgentControlMenuItemTooltip>
 
-              <DropdownMenuItem
-                disabled={memoryReadOnly}
-                className="items-center gap-2 px-2 py-1.5"
-                onSelect={(event) => {
-                  event.preventDefault()
-                  onMemoryChange(!memoryEnabled)
-                }}
+              <AgentControlMenuItemTooltip
+                description={
+                  memoryDisabledReason ??
+                  t('Let the agent recall and save memory in this conversation.')
+                }
               >
-                <BrainCircuit
-                  className="size-4 shrink-0 text-text-200"
-                  strokeWidth={2}
-                  aria-hidden="true"
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[13px] font-medium leading-5">{t('Memory')}</span>
-                  <span className="block text-[11px] leading-4 text-text-300">
-                    {memoryDisabledReason ??
-                      t('Let the agent recall and save memory in this conversation.')}
+                <DropdownMenuItem
+                  aria-disabled={memoryReadOnly}
+                  className="items-center gap-2 px-2 py-1.5 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                  onSelect={(event) => {
+                    event.preventDefault()
+                    if (!memoryReadOnly) onMemoryChange(!memoryEnabled)
+                  }}
+                >
+                  <BrainCircuit
+                    className="size-4 shrink-0 text-text-200"
+                    strokeWidth={2}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
+                    {t('Memory')}
                   </span>
-                </span>
-                <Switch
-                  size="sm"
-                  checked={memoryEnabled}
-                  tabIndex={-1}
-                  aria-hidden="true"
-                  className="pointer-events-none"
-                />
-              </DropdownMenuItem>
+                  <Switch
+                    size="sm"
+                    checked={memoryEnabled}
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    className="pointer-events-none"
+                  />
+                </DropdownMenuItem>
+              </AgentControlMenuItemTooltip>
+
+              {delegationPending ? (
+                delegationItem
+              ) : (
+                <AgentControlMenuItemTooltip description={delegationDescription}>
+                  {delegationItem}
+                </AgentControlMenuItemTooltip>
+              )}
 
               {/* Specialist + Compute are one resource-selection group: a single divider leads
                   the group (above Specialist when present, above Compute otherwise), so the two
@@ -554,29 +637,31 @@ const ComposerAgentControlsMenu = ({
               )}
 
               <DropdownMenuSub open={computeMenuOpen} onOpenChange={setComputeMenuOpen}>
-                <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
-                  <Server
-                    className="size-4 shrink-0 text-text-200"
-                    strokeWidth={2}
-                    aria-hidden="true"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[13px] font-medium leading-5">{t('Compute')}</span>
-                    <span className="block text-[11px] leading-4 text-text-300">
-                      {t('Run jobs on a remote SSH host, or manage hosts.')}
-                    </span>
-                  </span>
-                  {/* Align the chevron with the capsule chevrons on the Permission/Specialist
-                      rows: same px-2 (one vertical line) and text-text-100 (depth) as the
-                      capsule chevrons — Compute has no capsule, so the color is set here. */}
-                  <span className="flex shrink-0 items-center px-2 py-0.5 text-text-100">
-                    <ChevronRight
-                      className="size-3 shrink-0 opacity-60"
+                <AgentControlMenuItemTooltip
+                  description={t('Run jobs on a remote SSH host, or manage hosts.')}
+                  submenu
+                >
+                  <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
+                    <Server
+                      className="size-4 shrink-0 text-text-200"
                       strokeWidth={2}
                       aria-hidden="true"
                     />
-                  </span>
-                </DropdownMenuSubTrigger>
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
+                      {t('Compute')}
+                    </span>
+                    {/* Align the chevron with the capsule chevrons on the Permission/Specialist
+                        rows: same px-2 (one vertical line) and text-text-100 (depth) as the
+                        capsule chevrons — Compute has no capsule, so the color is set here. */}
+                    <span className="flex shrink-0 items-center px-2 py-0.5 text-text-100">
+                      <ChevronRight
+                        className="size-3 shrink-0 opacity-60"
+                        strokeWidth={2}
+                        aria-hidden="true"
+                      />
+                    </span>
+                  </DropdownMenuSubTrigger>
+                </AgentControlMenuItemTooltip>
                 <DropdownMenuSubContent
                   collisionPadding={8}
                   className="max-h-[calc(100dvh-1rem)] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto p-1"
@@ -687,7 +772,7 @@ const ComposerAgentControlsMenu = ({
               </DropdownMenuSub>
             </>
           )}
-        </DropdownMenuContent>
+        </AgentControlMenuContent>
       </DropdownMenu>
 
       <AlertDialog.Root open={confirmFullAccess} onOpenChange={setConfirmFullAccess}>

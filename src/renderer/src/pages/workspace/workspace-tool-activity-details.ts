@@ -44,23 +44,12 @@ type ToolDiffSection = {
   removedLines: number
 }
 
-// An artifact-save tool result that echoes an image file; rendered as an inline preview.
-type ToolImageSection = {
-  kind: 'image'
-  label: string
-  path: string
-  mimeType: string
-  name?: string
-  sizeLabel?: string
-}
-
 type ToolLiteratureSection = {
   kind: 'literature'
   summary: LiteratureToolSummary
 }
 
-type ToolDetailSection =
-  ToolCodeSection | ToolDiffSection | ToolImageSection | ToolLiteratureSection
+type ToolDetailSection = ToolCodeSection | ToolDiffSection | ToolLiteratureSection
 
 type ToolActivityDetails = {
   displayName: string
@@ -542,7 +531,7 @@ const getRecordNumber = (
   return undefined
 }
 
-// Summarizes a saved artifact file (name/type/size/path) without echoing its raw content payload.
+// Summarizes a saved artifact file (name/type/size/path) without reading or echoing its raw bytes.
 const buildArtifactDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
   const rawInput = isRecord(activity.rawInput) ? activity.rawInput : undefined
   const output = extractArtifactOutput(activity)
@@ -560,25 +549,6 @@ const buildArtifactDetails = (activity: ToolActivity): ToolActivityDetails | und
 
   if (!filename && !path) return undefined
 
-  // Image artifacts render an inline preview instead of a raw JSON metadata dump.
-  if (path && mimeType?.startsWith('image/')) {
-    const imageSection: ToolImageSection = {
-      kind: 'image',
-      label: 'Output',
-      path,
-      mimeType,
-      name: filename,
-      sizeLabel
-    }
-
-    return {
-      displayName: 'Write file',
-      subtitle: filename ?? path,
-      metaLabel: sizeLabel,
-      sections: [imageSection]
-    }
-  }
-
   const summary: Record<string, string> = {}
 
   if (filename) summary.file = filename
@@ -586,7 +556,11 @@ const buildArtifactDetails = (activity: ToolActivity): ToolActivityDetails | und
   if (sizeLabel) summary.size = sizeLabel
   if (path) summary.path = path
 
-  const summarySection = createCodeSection('File', JSON.stringify(summary, null, 2), 'json')
+  const summarySection = createCodeSection(
+    mimeType?.startsWith('image/') ? 'Tool output image' : 'File',
+    JSON.stringify(summary, null, 2),
+    'json'
+  )
 
   return {
     displayName: 'Write file',
@@ -1274,6 +1248,5 @@ export type {
   ToolCodeSection,
   ToolDetailSection,
   ToolDiffSection,
-  ToolImageSection,
   ToolLiteratureSection
 }

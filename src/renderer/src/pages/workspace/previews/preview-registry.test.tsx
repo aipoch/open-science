@@ -61,11 +61,13 @@ describe('preview registry Office routing', () => {
 
     const rendered = renderPreviewFile({
       item: createItem('pdf'),
+      annotationVersionPending: true,
       activeAnnotations,
       onAddAnnotation
     })
 
     expect(rendered?.type).toBe(PdfPreviewRenderer)
+    expect(rendered?.props.annotationVersionPending).toBe(true)
     expect(rendered?.props.activeAnnotations).toBe(activeAnnotations)
     expect(rendered?.props.onAddAnnotation).toBe(onAddAnnotation)
   })

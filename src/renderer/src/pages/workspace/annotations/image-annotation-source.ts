@@ -35,12 +35,15 @@ const imagePointAnnotationSourceForPreview = (
     const identity = parseUploadVersionReference(item.path)
     const projectId = identity?.projectId
     const sessionId = identity?.sessionId
+    const fileId = identity?.fileId
     if (
       !identity ||
       !projectId ||
       !sessionId ||
+      !fileId ||
       projectId !== item.projectId ||
-      sessionId !== item.sessionId
+      sessionId !== item.sessionId ||
+      fileId !== item.managedFileId
     ) {
       return undefined
     }

@@ -295,6 +295,7 @@ export type NotebookInputFileSummary = Omit<NotebookRunInputFile, 'storageKey'>
 export type NotebookInputPreviewIdentity = {
   projectId: string
   sourceKind: NotebookRunInputFile['sourceKind']
+  sourceFileId: string
   inputFileVersionId: string
 }
 
@@ -302,7 +303,12 @@ const NOTEBOOK_INPUT_PREVIEW_PREFIX = 'notebook-input:'
 
 export const createNotebookInputPreviewKey = (identity: NotebookInputPreviewIdentity): string =>
   `${NOTEBOOK_INPUT_PREVIEW_PREFIX}${encodeURIComponent(
-    JSON.stringify([identity.projectId, identity.sourceKind, identity.inputFileVersionId])
+    JSON.stringify([
+      identity.projectId,
+      identity.sourceKind,
+      identity.sourceFileId,
+      identity.inputFileVersionId
+    ])
   )}`
 
 export const parseNotebookInputPreviewKey = (key: string): NotebookInputPreviewIdentity => {
@@ -314,7 +320,7 @@ export const parseNotebookInputPreviewKey = (key: string): NotebookInputPreviewI
   ) as unknown
   if (
     !Array.isArray(parsed) ||
-    parsed.length !== 3 ||
+    parsed.length !== 4 ||
     parsed.some((value) => typeof value !== 'string') ||
     (parsed[1] !== 'upload-version' && parsed[1] !== 'artifact-version')
   ) {
@@ -323,7 +329,8 @@ export const parseNotebookInputPreviewKey = (key: string): NotebookInputPreviewI
   return {
     projectId: parsed[0] as string,
     sourceKind: parsed[1],
-    inputFileVersionId: parsed[2] as string
+    sourceFileId: parsed[2] as string,
+    inputFileVersionId: parsed[3] as string
   }
 }
 

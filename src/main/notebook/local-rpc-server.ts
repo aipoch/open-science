@@ -301,7 +301,10 @@ type NotebookLocalRpcServerOptions = {
         | 'submitOutput'
         | 'requestUserInput'
       >
-    >
+    > &
+    Readonly<{
+      isDelegationAllowed?(session: { projectId: string; sessionId: string }): Promise<boolean>
+    }>
   skillsService?: {
     dispatch(op: unknown, context: TrustedCallingSession): Promise<unknown>
   }
@@ -1439,9 +1442,9 @@ class NotebookLocalRpcServer {
     }
   }
 
-  private async projectHostCapabilities(
+  private async projectHostCapabilityState(
     sessionBinding: NotebookRpcSessionBinding
-  ): Promise<HostCapabilityProjection> {
+  ): Promise<Readonly<{ capabilities: HostCapabilityProjection; delegationAllowed: boolean }>> {
     const allowsMethod = (method: string): boolean =>
       !sessionBinding.allowedMethods || sessionBinding.allowedMethods.has(method)
     const callerRole = sessionBinding.delegatedWorkRole ?? 'main'
@@ -1460,43 +1463,58 @@ class NotebookLocalRpcServer {
         ? !sessionBinding.delegatedNotebook.revoked &&
           (await sessionBinding.delegatedNotebook.isAttemptWritable())
         : Boolean(sessionBinding.isControl && sessionBinding.activeControlInvocation))
+    let delegationAllowed = true
+    if (
+      callerRole === 'main' &&
+      sessionBinding.projectId &&
+      this.delegatedWorkService?.isDelegationAllowed
+    ) {
+      delegationAllowed = await this.delegatedWorkService.isDelegationAllowed({
+        projectId: sessionBinding.projectId,
+        sessionId: sessionBinding.sessionId
+      })
+    }
 
-    return projectHostCapabilities({
-      callerRole,
-      isControl: Boolean(sessionBinding.isControl),
-      hasActiveControlInvocation: Boolean(sessionBinding.activeControlInvocation),
-      hasWorkspace: Boolean(sessionBinding.executionCwd),
-      allowsMethod,
-      delegatedWorkReady,
-      services: {
-        mcp: Boolean(this.connectorService),
-        compute: Boolean(this.computeService),
-        agents: Boolean(this.agentsService),
-        skills:
-          Boolean(this.skillsService) &&
-          (this.isHostSkillsAvailable?.(sessionBinding.sessionId) ?? true),
-        artifacts: Boolean(this.hostArtifacts),
-        lineage: Boolean(this.hostLineage),
-        frames: Boolean(this.hostFrames),
-        sessions: Boolean(this.hostSessions),
-        llm: Boolean(this.hostModel) && (await this.hostModel!.isLlmAvailable()),
-        currentModel:
-          Boolean(this.hostModel) &&
-          (await this.hostModel!.isCurrentModelAvailable(sessionBinding.sessionId)),
-        listModels: Boolean(this.hostModel) && (await this.hostModel!.isListModelsAvailable()),
-        viewImage:
-          Boolean(this.hostViewImage) &&
-          (await this.hostViewImage!.isAvailable({ sessionId: sessionBinding.sessionId })),
-        delegate: Boolean(this.delegatedWorkService?.delegate),
-        children: Boolean(this.delegatedWorkService?.children),
-        collect: Boolean(this.delegatedWorkService?.collect),
-        stopChild: Boolean(this.delegatedWorkService?.stopChildren),
-        sendFrameMessage: Boolean(this.delegatedWorkService?.sendMessage),
-        messageReceipt: Boolean(this.delegatedWorkService?.messageReceipt),
-        resolveMessage: Boolean(this.delegatedWorkService?.resolveMessage),
-        submitOutput: Boolean(this.delegatedWorkService?.submitOutput)
-      }
-    })
+    return {
+      delegationAllowed,
+      capabilities: projectHostCapabilities({
+        callerRole,
+        isControl: Boolean(sessionBinding.isControl),
+        hasActiveControlInvocation: Boolean(sessionBinding.activeControlInvocation),
+        hasWorkspace: Boolean(sessionBinding.executionCwd),
+        allowsMethod,
+        delegatedWorkReady,
+        delegationAllowed,
+        services: {
+          mcp: Boolean(this.connectorService),
+          compute: Boolean(this.computeService),
+          agents: Boolean(this.agentsService),
+          skills:
+            Boolean(this.skillsService) &&
+            (this.isHostSkillsAvailable?.(sessionBinding.sessionId) ?? true),
+          artifacts: Boolean(this.hostArtifacts),
+          lineage: Boolean(this.hostLineage),
+          frames: Boolean(this.hostFrames),
+          sessions: Boolean(this.hostSessions),
+          llm: Boolean(this.hostModel) && (await this.hostModel!.isLlmAvailable()),
+          currentModel:
+            Boolean(this.hostModel) &&
+            (await this.hostModel!.isCurrentModelAvailable(sessionBinding.sessionId)),
+          listModels: Boolean(this.hostModel) && (await this.hostModel!.isListModelsAvailable()),
+          viewImage:
+            Boolean(this.hostViewImage) &&
+            (await this.hostViewImage!.isAvailable({ sessionId: sessionBinding.sessionId })),
+          delegate: Boolean(this.delegatedWorkService?.delegate),
+          children: Boolean(this.delegatedWorkService?.children),
+          collect: Boolean(this.delegatedWorkService?.collect),
+          stopChild: Boolean(this.delegatedWorkService?.stopChildren),
+          sendFrameMessage: Boolean(this.delegatedWorkService?.sendMessage),
+          messageReceipt: Boolean(this.delegatedWorkService?.messageReceipt),
+          resolveMessage: Boolean(this.delegatedWorkService?.resolveMessage),
+          submitOutput: Boolean(this.delegatedWorkService?.submitOutput)
+        }
+      })
+    }
   }
 
   // Authenticates one HTTP request, dispatches it, and serializes either result or error.
@@ -1564,6 +1582,7 @@ class NotebookLocalRpcServer {
       let params = isRecord(payload.params) ? payload.params : {}
       if (method === 'hostSdkHelp') delete params.view_image_available
       let hostCapabilities: HostCapabilityProjection | undefined
+      let delegationAllowed: boolean | undefined
       if (isArtifactRpcMethod(method)) {
         const acquired = this.acquireArtifactRpcRequest(method, bearerToken, params)
         params = acquired.params
@@ -1669,7 +1688,9 @@ class NotebookLocalRpcServer {
             )
           }
           if (method === 'capabilitiesCall' || method === 'hostSdkHelp') {
-            hostCapabilities = await this.projectHostCapabilities(sessionBinding)
+            const state = await this.projectHostCapabilityState(sessionBinding)
+            hostCapabilities = state.capabilities
+            delegationAllowed = state.delegationAllowed
           }
           if (
             method === 'skillsCall' &&
@@ -1786,7 +1807,8 @@ class NotebookLocalRpcServer {
                 : method === 'hostSdkHelp'
                   ? {
                       caller_role: sessionBinding.delegatedWorkRole,
-                      _hostCapabilityProjection: hostCapabilities
+                      _hostCapabilityProjection: hostCapabilities,
+                      _delegationAllowed: delegationAllowed
                     }
                   : {}),
             ...(MEMORY_RPC_METHODS.has(method)
@@ -2634,6 +2656,7 @@ class NotebookLocalRpcServer {
       }
       return hostSdkHelp.query(params.query, {
         callerRole: params.caller_role === 'delegate' ? 'delegate' : 'main',
+        delegationAllowed: params._delegationAllowed !== false,
         capabilities: capabilities as HostCapabilityProjection
       })
     }
@@ -2868,7 +2891,7 @@ class NotebookLocalRpcServer {
           signal
         )
       } finally {
-        lease.close()
+        await lease.close()
         leases.delete(lease)
         this.inputRunLeaseIds.delete(lease)
         if (leases.size === 0) this.activeInputRunLeases.delete(sessionId)

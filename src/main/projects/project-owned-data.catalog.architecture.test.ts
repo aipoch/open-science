@@ -695,15 +695,19 @@ describe('Project-owned data catalog architecture', () => {
       'deleteProjectProvenance'
     )
     expectCallsInOrder(cleanup, [
+      'client.artifactVersion.findMany',
       'client.uploadVersion.findMany',
+      'this.versionFileOperator.removeImmutable',
+      'this.versionFileOperator.inspectRecovery',
+      'this.versionFileOperator.removeIncomplete',
+      'rm',
       'rm',
       'client.$transaction',
       'tx.artifactVersionInput.deleteMany',
       'tx.artifactLineage.deleteMany',
       'tx.uploadFile.deleteMany',
       'tx.artifactMessageSnapshot.deleteMany',
-      'tx.fileOriginSession.deleteMany',
-      'rm'
+      'tx.fileOriginSession.deleteMany'
     ])
   })
 })

@@ -30,6 +30,8 @@ import { assertReviewSubmissionWithinLimits } from './submission-limits'
 
 const REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE =
   'Review was interrupted because Open Science exited before it completed.'
+const FIX_LOOP_INTERRUPTED_ON_STARTUP_MESSAGE =
+  'Fix Loop was interrupted because Open Science exited before it completed.'
 
 // Legacy alias for callers still using FindingSeverity (now CheckStatus).
 type FindingSeverity = CheckStatus
@@ -189,15 +191,67 @@ class ReviewRepository {
 
   async recoverInterruptedReviews(): Promise<number> {
     const client = await this.getClient()
-    const result = await client.review.updateMany({
-      where: { lifecycle: 'running' },
+    const interruptedFixLoops = await client.review.findMany({
+      where: {
+        lifecycle: 'running',
+        outcome: null,
+        findings: { some: { status: { in: ['warn', 'fail'] } } }
+      }
+    })
+
+    for (const fixLoopReview of interruptedFixLoops) {
+      const chainReviewIds = new Set([fixLoopReview.id])
+      for (;;) {
+        const linkedReviews = await client.reviewFindingDisposition.findMany({
+          where: {
+            trigger: 'review_submission',
+            sourceFinding: { reviewId: { in: [...chainReviewIds] } },
+            causeReviewId: { not: null }
+          },
+          select: { causeReviewId: true }
+        })
+        const previousSize = chainReviewIds.size
+        for (const { causeReviewId } of linkedReviews) {
+          if (causeReviewId) chainReviewIds.add(causeReviewId)
+        }
+        if (chainReviewIds.size === previousSize) break
+      }
+      const openFindings = await client.finding.findMany({
+        where: {
+          reviewId: { in: [...chainReviewIds] },
+          status: { in: ['warn', 'fail'] },
+          resolution: 'open'
+        },
+        select: { id: true, reviewId: true }
+      })
+      await this.commitFindingDispositions(
+        openFindings.map((finding) => ({
+          reviewId: finding.reviewId,
+          sourceFindingId: finding.id,
+          trigger: 'aborted',
+          outcome: 'unaddressed',
+          note: FIX_LOOP_INTERRUPTED_ON_STARTUP_MESSAGE
+        }))
+      )
+      await client.review.update({
+        where: { id: fixLoopReview.id },
+        data: { lifecycle: 'complete', outcome: 'flagged', errorMessage: null }
+      })
+    }
+
+    const interruptedAssessments = await client.review.updateMany({
+      where: {
+        lifecycle: 'running',
+        outcome: null,
+        findings: { none: { status: { in: ['warn', 'fail'] } } }
+      },
       data: {
         lifecycle: 'error',
         outcome: null,
         errorMessage: REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE
       }
     })
-    return result.count
+    return interruptedFixLoops.length + interruptedAssessments.count
   }
 
   // Inserts a new review, defaulting a fresh audit to the 'running' lifecycle with no outcome yet.
@@ -364,20 +418,26 @@ class ReviewRepository {
   // submit no checks; tracked mode requires a non-empty submission and exact disposition of its
   // expected ids. Tracked sourceFindingId entries are immutable
   // assessments of existing Review Checks, never new Finding rows; untracked checks are newly
-  // discovered Review Checks. Review completion and every materialized disposition commit in the
-  // same SQLite transaction, so a malformed item cannot leave a partially applied audit result.
+  // discovered Review Checks. The Review submission state and every materialized disposition commit
+  // in the same SQLite transaction, so a malformed item cannot leave a partially applied audit result.
+  // An initial flagged submission may remain running while its Fix Loop is active; tracked Reviews
+  // always become terminal when their submission commits.
   async commitScopedSubmission(input: {
     mode: 'initial' | 'tracked'
     reviewId: string
     checks: NewCheck[]
     expectedSourceFindingIds: string[]
     reviewerLog?: ReviewerLogEntry[]
+    keepFlaggedReviewRunning?: boolean
   }): Promise<ReviewWithChecks> {
     if (input.mode !== 'initial' && input.mode !== 'tracked') {
       throw new Error('Review submission mode must be initial or tracked.')
     }
     if (input.mode === 'tracked' && input.checks.length === 0) {
       throw new Error('A tracked Review submission requires at least one Review Check.')
+    }
+    if (input.mode === 'tracked' && input.keepFlaggedReviewRunning) {
+      throw new Error('Only an initial Review may remain running for an active Fix Loop.')
     }
     assertReviewSubmissionWithinLimits(input.checks, input.expectedSourceFindingIds.length)
     const trackedFindingIds = input.checks.flatMap((check) =>
@@ -521,11 +581,17 @@ class ReviewRepository {
       for (const sourceReviewId of touchedSourceReviewIds) {
         await touchReview(tx, sourceReviewId)
       }
-      const completedReview = await tx.review.update({
+      const committedReview = await tx.review.update({
         where: { id: assessmentReview.id },
         data: {
-          lifecycle: 'complete',
-          outcome,
+          lifecycle:
+            input.mode === 'initial' && input.keepFlaggedReviewRunning && outcome === 'flagged'
+              ? 'running'
+              : 'complete',
+          outcome:
+            input.mode === 'initial' && input.keepFlaggedReviewRunning && outcome === 'flagged'
+              ? null
+              : outcome,
           errorMessage: null,
           reviewerLog: JSON.stringify(input.reviewerLog ?? [])
         }
@@ -535,7 +601,7 @@ class ReviewRepository {
         assessmentReview.id
       )
       return {
-        ...toReview(completedReview),
+        ...toReview(committedReview),
         checks,
         submittedChecks,
         get findings() {

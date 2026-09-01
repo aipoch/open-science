@@ -5,6 +5,7 @@ import type {
   AcpStateSnapshot,
   AcpStateUpdate
 } from '../../shared/acp'
+import { sanitizeRawToolPayload, sanitizeToolDetailText } from '../../shared/tool-detail-sanitizer'
 import { createLogger } from '../logger'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import {
@@ -51,10 +52,27 @@ type AcpRuntimePublicationOwnerOptions = Readonly<{
 }>
 
 const STATE_PUBLICATION_INTERVAL_MS = 33
+const MAX_PERMISSION_RAW_INPUT_CHARS = 8_000
 // A fast provider can emit more than one retained window before the 33 ms timer runs. Publish
 // midway through that window so every prefix chunk reaches subscribers before bounded history can
 // evict it, while ordinary streams still receive the same frame-level coalescing.
 const MAX_COALESCED_EVENTS = Math.floor(ACP_RUNTIME_EVENT_RETENTION_LIMIT / 2)
+
+const projectPermissionRequest = (request: AcpPermissionRequest): AcpPermissionRequest => {
+  const { rawInput, ...requestProjection } = request
+  const sanitizedProjection = {
+    ...requestProjection,
+    title: sanitizeToolDetailText(request.title)
+  }
+  const sanitizedRawInput =
+    rawInput === null ? null : sanitizeRawToolPayload(rawInput, MAX_PERMISSION_RAW_INPUT_CHARS)
+
+  return rawInput === undefined
+    ? sanitizedProjection
+    : sanitizedRawInput === undefined
+      ? sanitizedProjection
+      : { ...sanitizedProjection, rawInput: sanitizedRawInput }
+}
 
 const scheduleStatePublication = (publish: () => void): (() => void) => {
   const timer = setTimeout(publish, STATE_PUBLICATION_INTERVAL_MS)
@@ -84,11 +102,11 @@ class AcpRuntimePublicationOwner {
   constructor(private readonly options: AcpRuntimePublicationOwnerOptions) {}
 
   getSnapshot(): AcpStateSnapshot {
-    return this.options.snapshotOwner.snapshot(this.options.snapshotProjection())
+    return this.options.snapshotOwner.snapshot(this.snapshotProjection())
   }
 
   getState(): AcpRuntimeState {
-    return this.options.snapshotOwner.state(this.options.snapshotProjection())
+    return this.options.snapshotOwner.state(this.snapshotProjection())
   }
 
   nextEventId(): string {
@@ -162,18 +180,28 @@ class AcpRuntimePublicationOwner {
   }
 
   publishPermissionRequest(request: AcpPermissionRequest): void {
+    const publishedRequest = projectPermissionRequest(request)
+
     this.pushEvent({
       kind: 'permission',
       level: 'warning',
-      sessionId: request.sessionId,
-      permissionRequestId: request.requestId,
-      toolCallId: request.toolCallId,
+      sessionId: publishedRequest.sessionId,
+      permissionRequestId: publishedRequest.requestId,
+      toolCallId: publishedRequest.toolCallId,
       title: 'Permission requested',
-      text: request.title,
-      raw: request
+      text: publishedRequest.title,
+      raw: publishedRequest
     })
-    this.options.callbacks.onPermissionRequest?.(request)
+    this.options.callbacks.onPermissionRequest?.(publishedRequest)
     this.emitState()
+  }
+
+  private snapshotProjection(): RuntimeSnapshotProjection {
+    const projection = this.options.snapshotProjection()
+    return {
+      ...projection,
+      pendingPermissions: projection.pendingPermissions.map(projectPermissionRequest)
+    }
   }
 
   emitState(): void {
@@ -217,5 +245,5 @@ class AcpRuntimePublicationOwner {
   }
 }
 
-export { AcpRuntimePublicationOwner }
+export { AcpRuntimePublicationOwner, projectPermissionRequest }
 export type { AcpRuntimePublicationCallbacks, AcpRuntimePublicationOwnerOptions }

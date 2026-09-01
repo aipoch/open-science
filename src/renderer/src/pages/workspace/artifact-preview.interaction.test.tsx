@@ -62,7 +62,12 @@ describe('ArtifactPreview image lifecycle', () => {
     const renderImage = async (): Promise<void> => {
       await act(async () => {
         root.render(
-          <ArtifactPreview artifact={imageArtifact} projectId="project-1" sessionId="session-1" />
+          <ArtifactPreview
+            artifact={imageArtifact}
+            projectId="project-1"
+            sessionId="session-1"
+            managedFileId="artifact-chart"
+          />
         )
       })
       await waitFor(() => expect(container.querySelector('img')).not.toBeNull())
@@ -76,6 +81,7 @@ describe('ArtifactPreview image lifecycle', () => {
           artifact={imageArtifact}
           projectId="project-1"
           sessionId="session-1"
+          managedFileId="artifact-chart"
           isVisible={false}
         />
       )

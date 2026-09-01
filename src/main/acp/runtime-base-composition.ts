@@ -184,14 +184,11 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       : undefined
   const planInteractions = new SessionPlanInteractionOwner()
   const planService =
-    options.plan && artifactTurns && options.artifacts?.provenance?.resolveVersionContent
+    options.plan && artifactTurns && options.artifacts?.managedFileVersions
       ? createProductionPlanService({
           interactions: planInteractions,
           artifactTurns,
-          provenance: {
-            resolveVersionContent: (request) =>
-              options.artifacts!.provenance!.resolveVersionContent!(request)
-          },
+          managedFileVersions: options.artifacts.managedFileVersions,
           sessions: options.plan.sessions,
           onApprovalRequested: options.plan.onApprovalRequested,
           onApprovalSettled: options.plan.onApprovalSettled
@@ -201,8 +198,8 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
   const fileReferenceResolver = createManagedFileReferenceResolver({
     uploads: uploadRepository,
     artifacts: artifactRepository,
-    artifactVersions: options.artifacts?.provenance,
-    grantedRoots: options.grantedRoots
+    grantedRoots: options.grantedRoots,
+    managedFileVersions: options.artifacts?.managedFileVersions
   })
 
   return Object.freeze({
@@ -234,6 +231,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     planService,
     promptContentOwner: new AcpPromptContentOwner({
       uploadRepository,
+      managedFileVersions: options.artifacts?.managedFileVersions,
       fileReferenceResolver,
       inlineImageBudgetBytes: options.inlineImageBudgetBytes
     }),

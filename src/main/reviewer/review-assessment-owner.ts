@@ -64,6 +64,7 @@ type CommonAssessmentOptions = {
 type InitialAssessmentOptions = CommonAssessmentOptions & {
   mode: 'initial'
   onStarted?: () => void
+  keepFlaggedReviewRunning?: boolean
 }
 
 type TrackedAssessmentOptions = CommonAssessmentOptions & {
@@ -527,7 +528,9 @@ export const runReviewAssessment = async (
         reviewId: review.id,
         checks: checksReceived,
         expectedSourceFindingIds: trackedChecks.map((check) => check.id),
-        reviewerLog: capturedLog
+        reviewerLog: capturedLog,
+        keepFlaggedReviewRunning:
+          options.mode === 'initial' && options.keepFlaggedReviewRunning === true
       })
     )
     review = finalReview

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 
 import type { ComputeHost } from '../../../../shared/compute'
+import { i18next } from '@/i18n'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
@@ -59,25 +60,15 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
     children,
     disabled,
     onSelect,
-    'data-testid': testId,
-    role,
-    'aria-checked': ariaChecked,
-    'aria-label': ariaLabel
+    ...rest
   }: PropsWithChildren<{
     disabled?: boolean
     onSelect?: (event: { preventDefault: () => void }) => void
-    'data-testid'?: string
-    role?: string
-    'aria-checked'?: boolean
-    'aria-label'?: string
+    [key: string]: unknown
   }>): React.JSX.Element => (
     <button
       type="button"
       disabled={disabled}
-      data-testid={testId}
-      role={role}
-      aria-checked={ariaChecked}
-      aria-label={ariaLabel}
       onClick={() => {
         const event = {
           prevented: false,
@@ -88,6 +79,7 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
         selectEvents.push(event)
         onSelect?.(event)
       }}
+      {...rest}
     >
       {children}
     </button>
@@ -224,6 +216,11 @@ const findButton = (label: string): HTMLButtonElement => {
   return button
 }
 
+const expectStandingDisabled = (button: HTMLButtonElement, disabled: boolean): void => {
+  expect(button.disabled).toBe(false)
+  expect(button.getAttribute('aria-disabled')).toBe(String(disabled))
+}
+
 describe('ComposerAgentControlsMenu', () => {
   it('opens when the composer requests Specialist selection', () => {
     const props = {
@@ -291,16 +288,36 @@ describe('ComposerAgentControlsMenu', () => {
     })
     const trigger = container.querySelector('[data-testid="composer-controls-trigger"]')
     expect(trigger?.getAttribute('aria-label')).toBe(
-      'Agent controls: Ask for approval, auto-review off'
+      'Agent controls: Ask for approval, auto-review Off, Delegation On'
     )
-    act(() =>
-      findButton(
-        'Auto-approve editsAuto-approve edits to files in the workspace. Still ask before commands, network, and MCP.'
-      ).click()
-    )
+    act(() => findButton('Auto-approve edits').click())
 
     expect(onProfileChange).toHaveBeenCalledWith('auto')
     expect(container.textContent).not.toContain('Enable Full access?')
+  })
+
+  it('localizes auto-review and Delegation states in the trigger accessible label', async () => {
+    await act(() => i18next.changeLanguage('ja'))
+    try {
+      act(() => {
+        root.render(
+          <ComposerAgentControlsMenu
+            profile="ask"
+            autoReviewEnabled={false}
+            onProfileChange={vi.fn()}
+            onAutoReviewChange={vi.fn()}
+          />
+        )
+      })
+
+      expect(
+        container
+          .querySelector('[data-testid="composer-controls-trigger"]')
+          ?.getAttribute('aria-label')
+      ).toBe('エージェントコントロール：承認を求める、自動レビュー オフ、委任 オン')
+    } finally {
+      await act(() => i18next.changeLanguage('en'))
+    }
   })
 
   it('toggles Memory for the conversation without closing the menu', () => {
@@ -319,12 +336,136 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    act(() =>
-      findButton('MemoryLet the agent recall and save memory in this conversation.').click()
-    )
+    act(() => findButton('Memory').click())
 
     expect(onMemoryChange).toHaveBeenCalledWith(false)
     expect(selectEvents.at(-1)?.prevented).toBe(true)
+  })
+
+  it('shows Delegation after Memory, exposes the saved state, and treats Off as non-default', () => {
+    const onDelegationChange = vi.fn()
+
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          memoryEnabled
+          delegationEnabled={false}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onDelegationChange={onDelegationChange}
+        />
+      )
+    })
+
+    const row = findButton('Delegation')
+    expectStandingDisabled(row, false)
+    expect(container.textContent).toContain(
+      'Block new Subagents. Existing Subagents are unaffected.'
+    )
+    expect(container.querySelector('[data-testid="controls-nondefault-dot"]')).not.toBeNull()
+    expect(
+      container
+        .querySelector('[data-testid="composer-controls-trigger"]')
+        ?.getAttribute('aria-label')
+    ).toBe('Agent controls: Ask for approval, auto-review Off, Delegation Off')
+    expect(container.textContent!.indexOf('Memory')).toBeLessThan(
+      container.textContent!.indexOf('Delegation')
+    )
+    expect(container.textContent!.indexOf('Delegation')).toBeLessThan(
+      container.textContent!.indexOf('Compute')
+    )
+
+    act(() => row.click())
+
+    expect(onDelegationChange).toHaveBeenCalledWith(true)
+    expect(selectEvents.at(-1)?.prevented).toBe(true)
+  })
+
+  it('disables Delegation while its authoritative mutation is pending', () => {
+    const onDelegationChange = vi.fn()
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          delegationEnabled
+          delegationPending
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onDelegationChange={onDelegationChange}
+        />
+      )
+    })
+
+    const row = findButton('Delegation')
+    expect(row.disabled).toBe(true)
+    expect(row.hasAttribute('aria-disabled')).toBe(false)
+    expect(container.textContent).not.toContain('Allow the Main Agent to create new Subagents.')
+    act(() => row.click())
+    expect(onDelegationChange).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])(
+    'keeps Delegation independently editable while the rest of Agent controls are read-only (mobile=%s)',
+    (mobile) => {
+      mediaState.mobile = mobile
+      const onDelegationChange = vi.fn()
+      act(() => {
+        root.render(
+          <ComposerAgentControlsMenu
+            profile="ask"
+            autoReviewEnabled={false}
+            delegationEnabled
+            readOnly
+            delegationReadOnly={false}
+            delegationHasLiveAttempts
+            onProfileChange={vi.fn()}
+            onAutoReviewChange={vi.fn()}
+            onDelegationChange={onDelegationChange}
+          />
+        )
+      })
+
+      const row = findButton('Delegation')
+      expectStandingDisabled(row, false)
+      expect(container.textContent).toContain(
+        'Turning Delegation off only blocks new Subagents. Existing Subagents continue running and remain available.'
+      )
+      act(() => row.click())
+      expect(onDelegationChange).toHaveBeenCalledWith(false)
+    }
+  )
+
+  it('shows the saved value and framework reason without mutating when unavailable', () => {
+    const onDelegationChange = vi.fn()
+    const reason = 'The selected agent framework does not support delegated work.'
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          delegationEnabled={false}
+          delegationReadOnly
+          delegationDisabledReason={reason}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onDelegationChange={onDelegationChange}
+        />
+      )
+    })
+
+    const row = findButton('Delegation')
+    expectStandingDisabled(row, true)
+    expect(container.textContent).toContain(reason)
+    expect(
+      container
+        .querySelector('[data-testid="composer-controls-trigger"]')
+        ?.getAttribute('aria-label')
+    ).toContain('Delegation Off')
+    act(() => row.click())
+    expect(onDelegationChange).not.toHaveBeenCalled()
   })
 
   it('shows why Memory is unavailable when the global setting is off', () => {
@@ -346,11 +487,30 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    const memoryRow = findButton(`Memory${reason}`)
-    expect(memoryRow.disabled).toBe(true)
+    const memoryRow = findButton('Memory')
+    expectStandingDisabled(memoryRow, true)
     expect(container.querySelector('[data-testid="controls-nondefault-dot"]')).toBeNull()
     act(() => memoryRow.click())
     expect(onMemoryChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps menu descriptions out of the compact rows', () => {
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          memoryEnabled
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+        />
+      )
+    })
+
+    expect(findButton('Ask for approval').textContent).toBe('Ask for approval')
+    expect(findButton('Auto-review').textContent).toBe('Auto-review')
+    expect(findButton('Memory').textContent).toBe('Memory')
+    expect(findButton('Delegation').textContent).toBe('Delegation')
   })
 
   it('opens permission choices inside the same menu on mobile and can return', () => {
@@ -402,11 +562,7 @@ describe('ComposerAgentControlsMenu', () => {
         />
       )
     })
-    act(() =>
-      findButton(
-        'Full accessRun everything without prompts, including commands and network.'
-      ).click()
-    )
+    act(() => findButton('Full access').click())
 
     expect(onProfileChange).not.toHaveBeenCalled()
     expect(container.textContent).toContain('Enable Full access?')
@@ -464,9 +620,7 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    expect(
-      findButton('Full accessThe current agent does not support native bypass mode.').disabled
-    ).toBe(true)
+    expectStandingDisabled(findButton('Full access'), true)
   })
 
   it('lists session grants and revokes the clicked one', () => {
@@ -589,7 +743,7 @@ describe('ComposerAgentControlsMenu', () => {
     expect(fullCapsule?.getAttribute('class')).toContain('text-amber-600')
   })
 
-  it('renders the Full access submenu row as a warning in amber', () => {
+  it('renders the compact Full access label as a warning', () => {
     act(() => {
       root.render(
         <ComposerAgentControlsMenu
@@ -600,14 +754,11 @@ describe('ComposerAgentControlsMenu', () => {
         />
       )
     })
-    const row = findButton(
-      'Full accessRun everything without prompts, including commands and network.'
-    )
+    const row = findButton('Full access')
 
     const title = row.querySelector('span.text-\\[13px\\]')
-    const description = row.querySelector('span.text-\\[11px\\]')
     expect(title?.getAttribute('class')).toContain('text-amber-600')
-    expect(description?.getAttribute('class')).toContain('text-amber-600/70')
+    expect(row.querySelector('span.text-\\[11px\\]')).toBeNull()
   })
 
   it('hides the non-default dot at defaults and shows it for a non-default profile', () => {
@@ -668,9 +819,7 @@ describe('ComposerAgentControlsMenu', () => {
         />
       )
     })
-    act(() =>
-      findButton('Auto-reviewA reviewer agent checks every change before it lands.').click()
-    )
+    act(() => findButton('Auto-review').click())
 
     expect(onAutoReviewChange).toHaveBeenCalledWith(true)
     // The row must not bubble into a profile change or close the menu (preventDefault).
@@ -692,8 +841,8 @@ describe('ComposerAgentControlsMenu', () => {
         />
       )
     })
-    const row = findButton('Auto-reviewA reviewer agent checks every change before it lands.')
-    expect(row.disabled).toBe(true)
+    const row = findButton('Auto-review')
+    expectStandingDisabled(row, true)
 
     act(() => row.click())
 
@@ -721,13 +870,8 @@ describe('ComposerAgentControlsMenu', () => {
     expect(trigger?.hasAttribute('disabled')).toBe(false)
 
     // Every mutating control is disabled: profile items, auto-review row, grant actions.
-    expect(
-      findButton('Ask for approvalAsk before file edits, commands, network, and MCP tools.')
-        .disabled
-    ).toBe(true)
-    expect(
-      findButton('Auto-reviewA reviewer agent checks every change before it lands.').disabled
-    ).toBe(true)
+    expectStandingDisabled(findButton('Ask for approval'), true)
+    expectStandingDisabled(findButton('Auto-review'), true)
 
     const clearButton = Array.from(container.querySelectorAll('button')).find(
       (candidate) => candidate.getAttribute('aria-label') === 'Clear all session grants'
@@ -757,14 +901,8 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    expect(
-      findButton(
-        'Auto-approve editsAuto-approve edits to files in the workspace. Still ask before commands, network, and MCP.'
-      ).disabled
-    ).toBe(false)
-    expect(
-      findButton('Auto-reviewA reviewer agent checks every change before it lands.').disabled
-    ).toBe(true)
+    expectStandingDisabled(findButton('Auto-approve edits'), false)
+    expectStandingDisabled(findButton('Auto-review'), true)
     expect(
       container.querySelector<HTMLButtonElement>(
         '[data-testid="compute-host-enabled-ssh:cluster-1"]'
@@ -800,12 +938,10 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    const autoReviewRow = findButton(
-      'Auto-reviewA reviewer agent checks every change before it lands.'
-    )
-    expect(autoReviewRow.disabled).toBe(false)
-    const memoryRow = findButton('MemoryLet the agent recall and save memory in this conversation.')
-    expect(memoryRow.disabled).toBe(false)
+    const autoReviewRow = findButton('Auto-review')
+    expectStandingDisabled(autoReviewRow, false)
+    const memoryRow = findButton('Memory')
+    expectStandingDisabled(memoryRow, false)
     expect(
       container
         .querySelector('[data-testid="specialist-submenu-stub"]')
@@ -846,10 +982,7 @@ describe('ComposerAgentControlsMenu', () => {
       )
     })
 
-    expect(
-      findButton('Ask for approvalAsk before file edits, commands, network, and MCP tools.')
-        .disabled
-    ).toBe(true)
+    expectStandingDisabled(findButton('Ask for approval'), true)
 
     const clearButton = Array.from(container.querySelectorAll('button')).find(
       (candidate) => candidate.getAttribute('aria-label') === 'Clear all session grants'
@@ -1151,9 +1284,7 @@ describe('ComposerAgentControlsMenu', () => {
     }
     const permissionTrigger = orderAnchor('Permission mode')
     const computeTrigger = computeTriggers[0] as Element
-    const autoReviewRow = findButton(
-      'Auto-reviewA reviewer agent checks every change before it lands.'
-    )
+    const autoReviewRow = findButton('Auto-review')
     const sessionGrantsHeading = Array.from(container.querySelectorAll('span')).find(
       (element) => element.textContent === 'Allowed this session'
     )

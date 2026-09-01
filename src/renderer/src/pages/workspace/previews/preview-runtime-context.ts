@@ -2,10 +2,18 @@ import { createContext, useContext } from 'react'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
+type PreviewDownloadVersionContext = {
+  versionId: string
+  versionNumber: number
+  latestVersionId: string
+  latestVersionNumber: number
+}
+
 type PreviewRuntime = {
   attempt: number
   item: PreviewFileItem
   retry: () => void
+  downloadVersionContext?: PreviewDownloadVersionContext
 }
 
 const PreviewRuntimeContext = createContext<PreviewRuntime | undefined>(undefined)
@@ -13,4 +21,4 @@ const PreviewRuntimeContext = createContext<PreviewRuntime | undefined>(undefine
 const usePreviewRuntime = (): PreviewRuntime | undefined => useContext(PreviewRuntimeContext)
 
 export { PreviewRuntimeContext, usePreviewRuntime }
-export type { PreviewRuntime }
+export type { PreviewDownloadVersionContext, PreviewRuntime }

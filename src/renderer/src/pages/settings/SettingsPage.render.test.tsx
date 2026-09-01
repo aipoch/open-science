@@ -154,7 +154,8 @@ const installApi = (): void => {
       }),
       onConnectorRuntimeChanged: vi.fn().mockReturnValue(() => undefined),
       getPackageMirror: vi.fn().mockResolvedValue({}),
-      setPackageMirror: vi.fn().mockResolvedValue({})
+      setPackageMirror: vi.fn().mockResolvedValue({}),
+      getNotebookNetworkStatus: vi.fn().mockResolvedValue({ kind: 'ready', warnings: [] })
     },
     acp: {
       getState: vi.fn().mockResolvedValue({ promptInFlight: false, promptInFlightSessionIds: [] }),
@@ -313,6 +314,7 @@ const installApi = (): void => {
 }
 
 beforeEach(() => {
+  document.documentElement.removeAttribute('data-open-science-notebook-network-unavailable')
   installApi()
   useSettingsStore.setState(createInitialSettingsState())
   useProjectStore.setState(createInitialProjectState())
@@ -3305,6 +3307,107 @@ describe('SettingsPage layout', () => {
     ).toHaveBeenCalledWith(
       expect.objectContaining({ condaChannel: 'https://mirror.example/conda' })
     )
+  })
+
+  it('opens Notebook network access from the Runtimes protection banner', async () => {
+    useRuntimeSettingsStore.setState({
+      envs: { python: [], r: [] },
+      loaded: true,
+      checkedAt: Date.now()
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    await act(async () => {
+      navButton('Runtimes')?.click()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const banner = document.body.querySelector('[data-testid="notebook-network-protection-banner"]')
+    expect(banner?.textContent).toContain('Notebook network protection is active.')
+
+    const manage = Array.from(banner?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Network settings'
+    )
+    await act(async () => {
+      manage?.click()
+    })
+
+    expect(document.body.querySelector('[aria-label="Back to network"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Notebook network access')
+    expect(document.body.querySelector('[aria-label="Allowed domains"]')).not.toBeNull()
+  })
+
+  it('hides local-only Notebook network settings from remote Web', async () => {
+    document.documentElement.setAttribute('data-open-science-notebook-network-unavailable', '')
+    useRuntimeSettingsStore.setState({
+      envs: { python: [], r: [] },
+      loaded: true,
+      checkedAt: Date.now()
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      navButton('Runtimes')?.click()
+      await Promise.resolve()
+    })
+
+    expect(
+      document.body.querySelector('[data-testid="notebook-network-protection-banner"]')
+    ).toBeNull()
+    expect(window.api.settings.getNotebookNetworkStatus).not.toHaveBeenCalled()
+  })
+
+  it('hides Notebook network settings when compatibility bootstrap metadata omits the RPC', async () => {
+    ;(
+      window.api.settings as unknown as {
+        getNotebookNetworkStatus?: typeof window.api.settings.getNotebookNetworkStatus
+      }
+    ).getNotebookNetworkStatus = undefined
+    useRuntimeSettingsStore.setState({
+      envs: { python: [], r: [] },
+      loaded: true,
+      checkedAt: Date.now()
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      navButton('Runtimes')?.click()
+      await Promise.resolve()
+    })
+
+    expect(
+      document.body.querySelector('[data-testid="notebook-network-protection-banner"]')
+    ).toBeNull()
+  })
+
+  it('falls back from an unavailable remote Notebook domains route', async () => {
+    document.documentElement.setAttribute('data-open-science-notebook-network-unavailable', '')
+    useSettingsStore.setState({
+      pendingSettingsIntent: {
+        requestId: 1,
+        route: { panel: 'network', view: { kind: 'domains' } }
+      }
+    })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    expect(navButton('Network')?.getAttribute('aria-current')).toBe('page')
+    expect(document.body.querySelector('[aria-label="Back to network"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Allowed domains"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Notebook network access"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Network status"]')).not.toBeNull()
   })
 
   it('shows a breadcrumb in the header when a skill detail is open, and returns on breadcrumb click', async () => {

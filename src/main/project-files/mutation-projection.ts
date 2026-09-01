@@ -1,16 +1,18 @@
-import { realpath, stat } from 'node:fs/promises'
+import { open, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
 
 import { Prisma, type ManagedFile, type PrismaClient } from '@prisma/client'
 
 import type { ProjectFileSource } from '../../shared/project-files'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { DEFAULT_UPLOAD_PROJECT_ID, PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
+import type {
+  AdoptedLegacyArtifact,
+  AdoptLegacyArtifactRequest
+} from '../managed-file-versions/service'
+import { sha256 } from '../artifacts/provenance-canonical'
 import { createLogger } from '../logger'
-import {
-  DEFAULT_UPLOAD_PROJECT_ID,
-  getUploadedAttachmentName,
-  PENDING_UPLOAD_SESSION_ID
-} from '../../shared/uploads'
+import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget'
 
 const ARTIFACTS_DIR = 'artifacts'
 const UPLOADS_DIR = 'uploads'
@@ -26,11 +28,22 @@ type ProjectFilesClient = Pick<
   | 'uploadFile'
   | 'artifactVersion'
   | 'uploadVersion'
+  | 'project'
+  | 'projectDeletionIntent'
   | '$queryRaw'
   | '$transaction'
 >
 type ProjectFilesClientProvider = () => Promise<ProjectFilesClient>
 type ProjectFilesClientFactory = (configRoot: string) => Promise<ProjectFilesClient>
+type LegacyArtifactVersionAdopter = {
+  adoptLegacyArtifact(request: AdoptLegacyArtifactRequest): Promise<AdoptedLegacyArtifact>
+}
+type LegacyUploadVersionUpgrader = {
+  upgradeLegacySessionUploads(
+    session: PersistedChatSession,
+    options: { mode: 'project-files-sync' }
+  ): Promise<PersistedChatSession>
+}
 
 type IndexedFileInput = {
   source: ProjectFileSource
@@ -130,16 +143,14 @@ const isFileProjectionCurrent = async (
   projectId: string,
   sessionId: string
 ): Promise<boolean> => {
-  const [lineages, rows] = await Promise.all([
+  const [lineages, uploads, rows] = await Promise.all([
     client.artifactLineage.findMany({
       where: { projectId, sessionId },
-      include: {
-        versions: {
-          where: { state: 'finalized' },
-          orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
-          take: 1
-        }
-      }
+      include: { currentVersion: true }
+    }),
+    client.uploadFile.findMany({
+      where: { projectId, sessionId },
+      include: { currentVersion: true }
     }),
     client.managedFile.findMany({
       where: { projectId, sessionId, deletedAt: null },
@@ -152,10 +163,18 @@ const isFileProjectionCurrent = async (
       }
     })
   ])
+  if (
+    rows.some(
+      (row) =>
+        (row.source === 'artifact' || row.source === 'upload') && row.sourceVersionId === null
+    )
+  ) {
+    return false
+  }
   const expectedArtifacts = new Map(
     lineages.flatMap((lineage) => {
-      const version = lineage.versions[0]
-      return version ? [[lineage.id, version.id] as const] : []
+      const version = lineage.currentVersion
+      return version?.state === 'finalized' ? [[lineage.id, version.id] as const] : []
     })
   )
   const projectedArtifacts = rows.filter(
@@ -176,6 +195,24 @@ const isFileProjectionCurrent = async (
     return storageSessionId !== undefined && storageSessionId !== row.sessionId
   })
   if (hasMismatchedLegacyUploadOwner) return false
+
+  const expectedUploads = new Map(
+    uploads.flatMap((upload) => {
+      const version = upload.currentVersion
+      return version?.state === 'ready' ? [[upload.id, version.id] as const] : []
+    })
+  )
+  const projectedOwnedUploads = rows.filter(
+    (row) => row.source === 'upload' && row.sourceVersionId !== null && row.sessionId === sessionId
+  )
+  if (
+    projectedOwnedUploads.length !== expectedUploads.size ||
+    projectedOwnedUploads.some(
+      (row) => expectedUploads.get(row.sourceFileId) !== row.sourceVersionId
+    )
+  ) {
+    return false
+  }
 
   // A native Upload row is owned by its source Session, even when another Session references it.
   // Detect old derived rows that copied the referencing Session so one startup sync repairs their
@@ -198,6 +235,7 @@ const isFileProjectionCurrent = async (
 const extractSessionFiles = async (
   getClient: ProjectFilesClientProvider,
   dataRoot: string,
+  legacyArtifactVersionAdopter: LegacyArtifactVersionAdopter,
   session: PersistedChatSession
 ): Promise<{ files: IndexedFileInput[]; errors: string[] }> => {
   const files: IndexedFileInput[] = []
@@ -207,7 +245,7 @@ const extractSessionFiles = async (
   // the session. The caller keeps the ledger retryable and exposes the partial state in overview.
   const collectFile = async (candidate: IndexedFileCandidate): Promise<void> => {
     try {
-      const file = await toIndexedFile(dataRoot, candidate)
+      const file = await toIndexedFile(dataRoot, legacyArtifactVersionAdopter, candidate)
       if (file) files.push(file)
     } catch (error) {
       errors.push(describeError(error))
@@ -245,11 +283,13 @@ const extractSessionFiles = async (
               versions: {
                 where: { id: upload.versionId, state: 'ready' },
                 take: 1
-              }
+              },
+              currentVersion: true
             }
           })
-          const version = file?.versions[0]
-          if (!file || !version) {
+          const referencedVersion = file?.versions[0]
+          const version = file?.currentVersion
+          if (!file || !referencedVersion || !version || version.state !== 'ready') {
             throw new Error(`Upload Version is unavailable: ${upload.versionId}`)
           }
           files.push({
@@ -272,23 +312,7 @@ const extractSessionFiles = async (
         }
         continue
       }
-      if (!upload.path) {
-        errors.push(`Legacy upload identity is unavailable: ${upload.id}`)
-        continue
-      }
-      await collectFile({
-        source: 'upload',
-        sourceFileId: upload.id,
-        sourceVersionId: upload.versionId,
-        checksum: upload.sha256 ?? upload.checksum,
-        projectId: session.projectId,
-        sessionId: upload.sessionId,
-        messageId: message.id,
-        displayName: getUploadedAttachmentName(upload),
-        path: upload.path,
-        mimeType: upload.mimeType,
-        sortAtMs: BigInt(message.updatedAt || message.createdAt)
-      })
+      errors.push(`Legacy Upload must be upgraded before Project Files indexing: ${upload.id}`)
     }
   }
 
@@ -296,23 +320,25 @@ const extractSessionFiles = async (
   // compatibility projection and can lag a newly finalized Version or retain an older branch's
   // descriptor, so it must not choose the Files tile content for a provenance lineage.
   const authoritativeArtifactIds = new Set<string>()
+  const explicitlyVersionedArtifactIds = new Set(
+    (session.artifacts ?? [])
+      .map((artifact) => artifact.artifactId)
+      .filter((artifactId): artifactId is string => artifactId !== undefined)
+  )
   try {
     const client = await getClient()
     const lineages = await client.artifactLineage.findMany({
       where: { projectId: session.projectId, sessionId: session.id },
-      include: {
-        versions: {
-          where: { state: 'finalized' },
-          orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
-          take: 1
-        }
-      }
+      include: { currentVersion: true }
     })
 
     for (const lineage of lineages) {
       authoritativeArtifactIds.add(lineage.id)
-      const version = lineage.versions[0]
-      if (!version) continue
+      const version = lineage.currentVersion
+      if (!version || version.state !== 'finalized') continue
+      if (version.originKind === 'legacy' && !explicitlyVersionedArtifactIds.has(lineage.id)) {
+        continue
+      }
       const createdAtMs = BigInt(version.createdAt.getTime())
       files.push({
         source: 'artifact',
@@ -379,7 +405,7 @@ const extractSessionFiles = async (
 }
 
 /**
- * Validates and snapshots one managed file without moving its bytes.
+ * Adopts one legacy Artifact into immutable v1 storage before indexing it.
  *
  * Both the requested path and its canonical realpath must remain inside the source root, closing
  * absolute-path, traversal, and symlink escape cases. Missing or unreadable managed files make the
@@ -387,9 +413,13 @@ const extractSessionFiles = async (
  */
 const toIndexedFile = async (
   dataRoot: string,
+  legacyArtifactVersionAdopter: LegacyArtifactVersionAdopter,
   input: IndexedFileCandidate
 ): Promise<IndexedFileInput | undefined> => {
-  const managedRoot = resolve(dataRoot, input.source === 'artifact' ? ARTIFACTS_DIR : UPLOADS_DIR)
+  if (input.source !== 'artifact') {
+    throw new Error('Only legacy Artifacts can enter the Project Files adoption boundary.')
+  }
+  const managedRoot = resolve(dataRoot, ARTIFACTS_DIR)
   const requestedPath = resolve(input.path)
 
   if (!isPathInsideRoot(managedRoot, requestedPath)) {
@@ -423,27 +453,56 @@ const toIndexedFile = async (
     return undefined
   }
 
-  const fileStat = await stat(canonicalPath)
-  if (!fileStat.isFile()) {
-    throw new Error(`Managed ${input.source} path is not a file.`)
-  }
-
-  return {
-    source: input.source,
-    sourceFileId: input.sourceFileId,
-    sourceVersionId: input.sourceVersionId,
-    checksum: input.checksum,
-    projectId: input.projectId,
-    sessionId: input.sessionId,
-    messageId: input.messageId,
-    displayName: input.displayName,
-    // Canonical paths are only for trust checks. Persist the logical path relative to the data root so
-    // macOS /var -> /private/var aliases never introduce `..` segments into storageKey.
-    storageKey: relative(dataRoot, requestedPath).split(sep).join('/'),
-    mimeType: input.mimeType,
-    sizeBytes: BigInt(fileStat.size),
-    mtimeMs: BigInt(Math.trunc(fileStat.mtimeMs)),
-    sortAtMs: input.sortAtMs
+  const handle = await open(canonicalPath, 'r')
+  try {
+    const before = await handle.stat({ bigint: true })
+    if (!before.isFile()) throw new Error('Managed artifact path is not a file.')
+    const sizeBytes = Number(before.size)
+    assertWithinResourceBudget('file', sizeBytes, LOCAL_RESOURCE_BUDGETS.artifactFileBytes)
+    const content = await handle.readFile()
+    const after = await handle.stat({ bigint: true })
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      content.byteLength !== sizeBytes
+    ) {
+      throw new Error('Managed artifact changed during legacy Version adoption.')
+    }
+    const actualChecksum = sha256(content)
+    if (input.checksum && input.checksum !== actualChecksum) {
+      throw new Error('Managed artifact checksum changed before legacy Version adoption.')
+    }
+    const adopted = await legacyArtifactVersionAdopter.adoptLegacyArtifact({
+      projectId: input.projectId,
+      sessionId: input.sessionId,
+      sourceFileId: input.sourceFileId,
+      logicalFilename: input.displayName,
+      content,
+      contentType: input.mimeType,
+      messageId: input.messageId
+    })
+    if (adopted.checksum !== actualChecksum) {
+      throw new Error('Managed artifact Version checksum does not match the adopted source.')
+    }
+    return {
+      source: input.source,
+      sourceFileId: adopted.fileId,
+      sourceVersionId: adopted.versionId,
+      checksum: adopted.checksum,
+      projectId: input.projectId,
+      sessionId: input.sessionId,
+      messageId: input.messageId,
+      displayName: input.displayName,
+      storageKey: adopted.storageRef,
+      mimeType: adopted.contentType,
+      sizeBytes: BigInt(adopted.sizeBytes),
+      mtimeMs: BigInt(adopted.createdAt.getTime()),
+      sortAtMs: input.sortAtMs
+    }
+  } finally {
+    await handle.close()
   }
 }
 
@@ -474,6 +533,8 @@ export {
 }
 export type {
   IndexedFileInput,
+  LegacyArtifactVersionAdopter,
+  LegacyUploadVersionUpgrader,
   ProjectFilesClient,
   ProjectFilesClientFactory,
   ProjectFilesClientProvider

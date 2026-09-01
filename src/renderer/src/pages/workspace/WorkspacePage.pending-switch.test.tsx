@@ -18,13 +18,18 @@ import {
 import { useProjectStore } from '@/stores/project-store'
 import {
   createInitialSessionState,
+  toPersistedSession,
   useSessionStore,
   type ChatSession
 } from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 
 import { type ComposerDoc } from './composer/composer-doc'
-import { setDefaultWorkspaceAgentSettings } from './workspace-page-test-fixtures'
+import {
+  markWorkspaceReviewHistoryLoaded,
+  setDefaultWorkspaceAgentSettings
+} from './workspace-page-test-fixtures'
 import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
@@ -34,6 +39,7 @@ import type {
 
 // Capture all props WorkspacePage passes to ConversationPanel.
 let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
+let openNewConversation: (() => void) | undefined
 const panelSpecialistId = (): string | undefined =>
   conversationProps.view.activeSession?.specialistId ??
   conversationProps.specialist.view.specialist.newConversationId
@@ -73,7 +79,14 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
 }))
 
 vi.mock('./WorkspaceSidebar', () => ({
-  WorkspaceSidebar: (): React.JSX.Element => <aside />
+  WorkspaceSidebar: ({
+    onNewConversation
+  }: {
+    onNewConversation: () => void
+  }): React.JSX.Element => {
+    openNewConversation = onNewConversation
+    return <aside />
+  }
 }))
 
 vi.mock('./ConversationPanel', () => ({
@@ -201,6 +214,7 @@ const renderPage = async (r: Root): Promise<void> => {
 
 const setupBase = (): void => {
   setDefaultWorkspaceAgentSettings()
+  markWorkspaceReviewHistoryLoaded({ projectId: 'proj-1', sessionId: 'sess-a' })
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   useProjectStore.setState({ projects: [] })
   useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-1' })
@@ -208,6 +222,7 @@ const setupBase = (): void => {
   runtime.promptInFlightSessionIds = []
   runtime.nativeContextCompactionSessionIds = []
   runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'msg-1' })
+  openNewConversation = undefined
 }
 
 beforeEach(() => {
@@ -228,6 +243,112 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe('WorkspacePage pending-switch broadcast', () => {
+  it('keeps Delegation read-only while a selected Session is temporarily missing', async () => {
+    setupBase()
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportsDelegatedWork: true
+        }
+      ]
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      selectedSessionId: 'temporarily-missing-session'
+    })
+    useSpecialistStore.setState({ items: [], isLoaded: true, load: vi.fn() })
+    const setDelegationPolicy = vi.fn()
+    window.api = {
+      ...apiStub(),
+      sessions: { setDelegationPolicy }
+    } as never
+    await renderPage(root)
+
+    expect(conversationProps.agentControls.delegationEnabled).toBe(true)
+    expect(conversationProps.agentControls.canChangeDelegation).toBe(false)
+
+    await act(async () => conversationProps.agentControls.toggleDelegation?.(false))
+
+    expect(conversationProps.agentControls.delegationEnabled).toBe(true)
+    expect(setDelegationPolicy).not.toHaveBeenCalled()
+  })
+
+  it('edits a new draft but disables Delegation until a bound Session becomes authoritative', async () => {
+    setupBase()
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportsDelegatedWork: true
+        }
+      ]
+    })
+    useSessionStore.setState(createInitialSessionState())
+    useSpecialistStore.setState({ items: [], isLoaded: true, load: vi.fn() })
+    const setDelegationPolicy = vi.fn(async (_projectId, sessionId, policy) => {
+      const session = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)!
+      return {
+        ...toPersistedSession(session),
+        revision: (session.revision ?? 0) + 1,
+        delegationPolicy: policy,
+        updatedAt: session.updatedAt + 1
+      }
+    })
+    window.api = {
+      ...apiStub(),
+      sessions: { setDelegationPolicy }
+    } as never
+    await renderPage(root)
+
+    expect(conversationProps.agentControls.canChangeDelegation).toBe(true)
+    await act(async () => conversationProps.agentControls.toggleDelegation?.(false))
+    expect(setDelegationPolicy).not.toHaveBeenCalled()
+    expect(conversationProps.agentControls.delegationEnabled).toBe(false)
+
+    act(() => openNewConversation?.())
+    expect(conversationProps.agentControls.delegationEnabled).toBe(true)
+    await act(async () => conversationProps.agentControls.toggleDelegation?.(false))
+
+    let pending!: { sessionId: string; messageId: string }
+    act(() => {
+      pending = useSessionStore.getState().appendPendingUserMessage({
+        content: 'Start the Session',
+        projectId: 'proj-1',
+        agentFrameworkId: 'claude-code',
+        delegationPolicy: 'deny'
+      })!
+    })
+    expect(conversationProps.agentControls.canChangeDelegation).toBe(false)
+    await act(async () => conversationProps.agentControls.toggleDelegation?.(true))
+    expect(setDelegationPolicy).not.toHaveBeenCalled()
+
+    act(() => {
+      useSessionStore.getState().bindPendingSession({
+        pendingSessionId: pending.sessionId,
+        sessionId: 'bound-session',
+        agentFrameworkId: 'claude-code'
+      })
+    })
+    expect(conversationProps.agentControls.canChangeDelegation).toBe(false)
+
+    act(() => {
+      const source = useSessionStore.getState().sessions[0]
+      useSessionStore
+        .getState()
+        .applyDelegationPolicyAuthority({ ...toPersistedSession(source), revision: 1 })
+    })
+    expect(conversationProps.agentControls.canChangeDelegation).toBe(true)
+    await act(async () => conversationProps.agentControls.toggleDelegation?.(true))
+    expect(setDelegationPolicy).toHaveBeenCalledWith('proj-1', 'bound-session', 'allow')
+  })
+
   it('does not duplicate an approved handoff failure in the composer recovery banner', async () => {
     setupBase()
     useSessionStore.setState({

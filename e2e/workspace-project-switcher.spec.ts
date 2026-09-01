@@ -1,16 +1,7 @@
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 
-import { test } from './fixtures/electron-app'
-
-// Keep in sync with GitHubStarBadge. Workspace variant waits 5s, then opens above menus.
-const STAR_NUDGE_LAST_SHOWN_STORAGE_KEY = 'open-science:github-star-nudge-last-shown-at'
-
-const suppressStarNudge = async (page: Page): Promise<void> => {
-  await page.evaluate((storageKey) => {
-    window.localStorage.setItem(storageKey, String(Date.now()))
-  }, STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
-}
+import { suppressWorkspaceStarNudge, test } from './fixtures/electron-app'
 
 const createProject = async (
   page: Page,
@@ -38,44 +29,58 @@ const createProject = async (
   await expect(page.locator(`button[title="${name}"]`)).toBeVisible()
 }
 
-const seedWorkspaceProjects = async (page: Page, count: number): Promise<void> => {
+const seedProjects = async (page: Page, count: number): Promise<void> => {
   await page.evaluate(async (projectCount) => {
     const bridge = globalThis as unknown as {
       api: {
         projects: {
-          create: (request: { name: string; description: string }) => Promise<unknown>
+          create: (request: { name: string; description: string }) => Promise<{ updatedAt: number }>
         }
       }
     }
+
     for (let index = 1; index <= projectCount; index += 1) {
-      await bridge.api.projects.create({
+      const project = await bridge.api.projects.create({
         name: `Project ${index}`,
         description: `Description ${index}`
       })
+      // The menu sorts by updatedAt. Wait for the wall clock to advance so every seeded row has a
+      // deterministic order even on Windows clocks with a coarse timer resolution.
+      while (Date.now() <= project.updatedAt) {
+        await new Promise((resolve) => setTimeout(resolve, 1))
+      }
     }
   }, count)
+}
+
+const reloadAndOpenProject = async (page: Page, name: string): Promise<void> => {
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  const projectButton = page.getByRole('button', { name, exact: true })
+  await expect(projectButton).toBeVisible()
+  await projectButton.click()
+  await expect(page.locator(`button[title="${name}"]`)).toBeVisible()
 }
 
 test('switches projects from the Workspace project menu and expands remaining projects locally', async ({
   app
 }) => {
-  test.setTimeout(180_000)
   await app.completeOnboarding()
-  const page = await app.configureFakeAgent()
-  await suppressStarNudge(page)
+  let page = await app.configureFakeAgent()
+  await suppressWorkspaceStarNudge(page)
 
-  await seedWorkspaceProjects(page, 16)
-  const homeProjects = page.getByRole('region', { name: 'Projects' })
-  await expect(homeProjects.getByRole('button', { name: 'Project 16', exact: true })).toBeVisible({
-    timeout: 30_000
-  })
-  await homeProjects.getByRole('button', { name: 'Project 16', exact: true }).click()
-  await expect(page.locator('button[title="Project 16"]')).toBeVisible()
+  await seedProjects(page, 15)
+  page = await app.restart()
+  await expect(page.getByText('Project 15', { exact: true })).toBeVisible()
+  await createProject(page, 'Project 16', 'Description 16', false)
+  await reloadAndOpenProject(page, 'Project 16')
 
   await page.setViewportSize({ width: 1280, height: 600 })
   await page.locator('button[title="Project 16"]').click()
   const menu = page.locator('[aria-label="Project actions"]')
+  const search = menu.getByRole('searchbox', { name: 'Search projects' })
   const projectItems = menu.locator('[data-project-id]')
+  await expect(search).toBeVisible()
+  await expect(search).toBeFocused()
   await expect(projectItems).toHaveCount(5)
   await expect(projectItems).toHaveText([
     'Project 15Description 15',
@@ -129,7 +134,10 @@ test('switches projects from the Workspace project menu and expands remaining pr
   expect(showRemainingPresentation.height).toBeLessThan(showRemainingPresentation.newProjectHeight)
   expect(showRemainingPresentation.width).toBeLessThan(showRemainingPresentation.menuWidth)
 
+  await search.press('ArrowDown')
+  await expect(projectItems.first()).toBeFocused()
   await page.keyboard.press('End')
+  await expect(newProject).toBeFocused()
   await page.keyboard.press('ArrowUp')
   await expect(showRemaining).toBeFocused()
   const focusedPresentation = await showRemaining.evaluate((element) => {
@@ -177,20 +185,91 @@ test('switches projects from the Workspace project menu and expands remaining pr
   await newProject.scrollIntoViewIfNeeded()
   await expect(newProject).toBeVisible()
 
-  await projectItems.filter({ hasText: /^Project 1Description 1$/ }).click()
-  await expect(page.locator('button[title="Project 1"]')).toBeVisible()
+  await search.fill('  PROJECT 1  ')
+  await expect(projectItems).toHaveCount(5)
+  await expect(projectItems).toHaveText([
+    'Project 15Description 15',
+    'Project 14Description 14',
+    'Project 13Description 13',
+    'Project 12Description 12',
+    'Project 11Description 11'
+  ])
+  const clearSearch = menu.getByRole('button', { name: 'Clear search' })
+  await expect(clearSearch).toBeVisible()
+  const searchPresentation = await menu.evaluate((element) => {
+    const menuBounds = element.getBoundingClientRect()
+    const searchInput = element.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+    const clearButton = element.querySelector<HTMLButtonElement>('[aria-label="Clear search"]')
+    if (!searchInput || !clearButton) return null
 
-  await page.locator('button[title="Project 1"]').click()
+    const searchBounds = searchInput.getBoundingClientRect()
+    return {
+      clearButtonSize: clearButton.getBoundingClientRect().width,
+      leftInset: searchBounds.left - menuBounds.left,
+      rightInset: menuBounds.right - searchBounds.right
+    }
+  })
+  expect(searchPresentation).not.toBeNull()
+  expect(searchPresentation?.clearButtonSize).toBe(24)
+  expect(
+    Math.abs((searchPresentation?.leftInset ?? 0) - (searchPresentation?.rightInset ?? 0))
+  ).toBe(0)
+
+  await search.press('Tab')
+  await expect(clearSearch).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(search).toHaveValue('')
+  await expect(search).toBeFocused()
+  await expect(menu).toBeVisible()
+  await search.fill('  PROJECT 1  ')
+  const filteredShowRemaining = menu.getByRole('menuitem', {
+    name: 'Show remaining 2 projects',
+    exact: true
+  })
+  await expect(filteredShowRemaining).toBeVisible()
+
+  const titlePresentation = await projectItems.first().evaluate((item) => {
+    const title = item.querySelector<HTMLElement>('[data-project-title]')
+    const highlight = title?.querySelector<HTMLElement>('.text-primary')
+    if (!title || !highlight) return null
+    const titleStyle = getComputedStyle(title)
+    const highlightStyle = getComputedStyle(highlight)
+    return {
+      highlightColor: highlightStyle.color,
+      highlightFontSize: highlightStyle.fontSize,
+      highlightFontWeight: highlightStyle.fontWeight,
+      highlightText: highlight.textContent,
+      titleColor: titleStyle.color,
+      titleFontSize: titleStyle.fontSize,
+      titleFontWeight: titleStyle.fontWeight
+    }
+  })
+  expect(titlePresentation).not.toBeNull()
+  expect(titlePresentation?.highlightText).toBe('Project 1')
+  expect(titlePresentation?.highlightColor).not.toBe(titlePresentation?.titleColor)
+  expect(titlePresentation?.highlightFontSize).toBe(titlePresentation?.titleFontSize)
+  expect(titlePresentation?.highlightFontWeight).toBe(titlePresentation?.titleFontWeight)
+
+  await search.press('ArrowDown')
+  await expect(projectItems.first()).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page.locator('button[title="Project 15"]')).toBeVisible()
+
+  await page.locator('button[title="Project 15"]').click()
+  await expect(search).toHaveValue('')
   await expect(menu.locator('[data-project-id]')).toHaveCount(5)
 })
 
 test('closes mobile navigation when switching projects', async ({ app }) => {
   await app.completeOnboarding()
-  const page = await app.configureFakeAgent()
-  await suppressStarNudge(page)
+  let page = await app.configureFakeAgent()
+  await suppressWorkspaceStarNudge(page)
 
-  await createProject(page, 'Project 1', 'Description 1', false)
-  await createProject(page, 'Project 2', 'Description 2', true)
+  await seedProjects(page, 1)
+  page = await app.restart()
+  await expect(page.getByText('Project 1', { exact: true })).toBeVisible()
+  await createProject(page, 'Project 2', 'Description 2', false)
+  await reloadAndOpenProject(page, 'Project 2')
 
   await page.setViewportSize({ width: 700, height: 700 })
   await page.getByRole('button', { name: 'Open navigation' }).click()

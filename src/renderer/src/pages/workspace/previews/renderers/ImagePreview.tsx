@@ -65,6 +65,8 @@ export const PreviewImageContent = ({
   source = 'artifact',
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   mimeType,
   size,
   mtimeMs,
@@ -80,6 +82,8 @@ export const PreviewImageContent = ({
   source?: PreviewFileSource
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
   mimeType?: string
   size?: number
   mtimeMs?: number
@@ -96,6 +100,8 @@ export const PreviewImageContent = ({
     sessionId,
     source,
     path,
+    managedFileId,
+    selectedVersionId,
     mimeType,
     size,
     mtimeMs
@@ -104,7 +110,17 @@ export const PreviewImageContent = ({
   const hasFailed = failedRequestKey === requestKey
   // A decode failure disables the hook, which releases the protocol capability immediately.
   const state = useCachedPreviewImage(
-    { projectId, sessionId, path, source, mimeType, size, mtimeMs },
+    {
+      projectId,
+      sessionId,
+      managedFileId,
+      selectedVersionId,
+      path,
+      source,
+      mimeType,
+      size,
+      mtimeMs
+    },
     !hasFailed,
     hasFailed
   )
@@ -164,6 +180,8 @@ export const ImagePreviewRenderer = ({
     source={item.source}
     projectId={item.projectId}
     sessionId={item.sessionId}
+    managedFileId={item.managedFileId}
+    selectedVersionId={item.selectedVersionId}
     mimeType={item.mimeType}
     size={item.size}
     mtimeMs={item.mtimeMs}

@@ -27,6 +27,7 @@ import type {
   ReviewWithProvenanceEvidence
 } from '../../shared/reviewer'
 import { flagStaleReviews } from '../reviewer/stale-reviews'
+import type { ArtifactVersionContentResolver } from '../reviewer/host-sdk'
 import { selectReviewChainForArtifactVersion } from '../reviewer/artifact-version-review'
 import { toReview } from '../reviewer/repository'
 import { loadReviewSubmissionProjection } from '../reviewer/review-submission-read-model'
@@ -44,6 +45,8 @@ import {
 import { projectPublicArtifactExecutionSnapshot } from './provenance-execution-projection'
 import { readOptionalFile, resolveStorageKey } from './provenance-storage'
 import type { PersistedVersionFileRecord } from './provenance-version-writer'
+import { requireAgentArtifactVersion } from './provenance-version-kind'
+import { resolveArtifactContentStatus } from './provenance-content-status'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -130,9 +133,12 @@ const validateArtifactExecutionInputs = (
   }
 }
 
-type VersionDescriptorRecord = PersistedVersionFileRecord & {
+type VersionDescriptorRecord = Omit<PersistedVersionFileRecord, 'artifactRunId'> & {
+  artifactRunId: string | null
   state: string
   messageId: string | null
+  originKind: string
+  basedOnVersionId: string | null
 }
 
 type ResolvedArtifactExecutionSnapshot = Omit<PersistedArtifactExecutionSnapshot, 'inputFiles'> & {
@@ -158,12 +164,7 @@ type ArtifactProvenanceReadModelOptions = {
     projectId: string,
     appSessionId: string
   ) => Promise<ArtifactVersionDescriptor>
-  resolveVersionContent: (request: {
-    projectId: string
-    versionId: string
-    appSessionId?: string
-    artifactId?: string
-  }) => Promise<{ path: string; filename: string; contentType?: string; checksum?: string }>
+  resolveArtifactVersion?: ArtifactVersionContentResolver
   resolveVersionDerivedPath: (
     request: GetArtifactVersionProvenanceRequest,
     filename: string
@@ -195,7 +196,16 @@ class ArtifactProvenanceReadModel {
         include: {
           originSession: true,
           versions: {
-            where: { state: { in: ['pending', 'finalized'] } },
+            where: {
+              OR: [
+                {
+                  originKind: 'agent_generated',
+                  state: { in: ['pending', 'finalized'] }
+                },
+                { originKind: 'user_edit', state: 'finalized' },
+                { originKind: 'legacy', state: 'finalized' }
+              ]
+            },
             orderBy: [{ versionNumber: 'asc' as const }, { id: 'asc' as const }]
           }
         }
@@ -254,6 +264,7 @@ class ArtifactProvenanceReadModel {
         where: {
           id: versionId,
           artifactId,
+          originKind: 'agent_generated',
           state: { in: ['pending', 'finalized'] },
           artifact: { is: { projectId, sessionId: appSessionId } }
         },
@@ -269,33 +280,26 @@ class ArtifactProvenanceReadModel {
       version = await findVersion()
     }
     if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
+    const agentVersion = requireAgentArtifactVersion(version)
 
     const evidenceMirror = await this.readCanonicalMirror(
-      resolveStorageKey(this.options.storageRoot, version.evidenceStorageKey),
-      version.evidenceJson,
-      version.evidenceChecksum,
+      resolveStorageKey(this.options.storageRoot, agentVersion.evidenceStorageKey),
+      agentVersion.evidenceJson,
+      agentVersion.evidenceChecksum,
       `Artifact Version evidence is corrupt: ${versionId}`
     )
     const evidence = JSON.parse(evidenceMirror) as ArtifactVersionEvidence
     validateArtifactCoreEvidence(evidence, version)
-    const contentPath = resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
-    const contentStatus: ArtifactVersionProvenance['contentStatus'] = await readFile(contentPath)
-      .then((content) =>
-        sha256(content) === version.checksum
-          ? ({ state: 'available' } as const)
-          : ({ state: 'unavailable', reason: 'checksum-mismatch' } as const)
-      )
-      .catch((error: unknown) => {
-        if (
-          typeof error === 'object' &&
-          error !== null &&
-          'code' in error &&
-          (error as { code?: unknown }).code === 'ENOENT'
-        ) {
-          return { state: 'unavailable', reason: 'missing' } as const
-        }
-        throw error
-      })
+    const contentStatus = await resolveArtifactContentStatus({
+      storageRoot: this.options.storageRoot,
+      projectId,
+      sessionId: appSessionId,
+      fileId: artifactId,
+      versionId,
+      contentStorageKey: version.contentStorageKey,
+      checksum: version.checksum,
+      resolveVersion: this.options.resolveArtifactVersion
+    })
 
     let execution: ArtifactExecutionSnapshot | ResolvedArtifactExecutionSnapshot | undefined
     if (
@@ -312,10 +316,10 @@ class ArtifactProvenanceReadModel {
       )
       const persistedExecution = parseArtifactExecutionSnapshot(executionMirror)
       validateArtifactExecutionSnapshot(persistedExecution, {
-        rootFrameId: version.rootFrameId,
-        agentFrameId: version.agentFrameId,
-        messageBranchId: version.messageBranchId,
-        promptMessageId: version.promptMessageId,
+        rootFrameId: agentVersion.rootFrameId,
+        agentFrameId: agentVersion.agentFrameId,
+        messageBranchId: agentVersion.messageBranchId,
+        promptMessageId: agentVersion.promptMessageId,
         producerRunId: version.producerRunId,
         producerRunIndex: version.producerRunIndex,
         executionSnapshotChecksum: version.executionSnapshotChecksum,
@@ -493,7 +497,7 @@ class ArtifactProvenanceReadModel {
               provenanceReviews,
               session,
               this.options.storageRoot,
-              (request) => this.options.resolveVersionContent(request)
+              this.options.resolveArtifactVersion
             )
           ).map((candidate, index) => ({ ...provenanceReviews[index]!, stale: candidate.stale }))
         }
@@ -533,7 +537,7 @@ class ArtifactProvenanceReadModel {
 
     const result = {
       descriptor: await this.options.projectVersionDescriptor(
-        version,
+        agentVersion,
         projectId,
         version.artifact.sessionId
       ),

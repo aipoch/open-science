@@ -28,7 +28,12 @@ import {
   type ChatSession
 } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
-import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
+import {
+  selectProjectSessionReviewLoadError,
+  selectProjectSessionReviewSnapshot,
+  selectProjectSessionReviews,
+  useReviewStore
+} from '@/stores/review-store'
 import {
   assembleReviewRunRequest,
   suppressNextAutoReview,
@@ -72,6 +77,7 @@ import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-
 import { createWorkspaceComputeHostAccessController } from './workspace-compute-host-access-controller'
 import { useWorkspaceSessionAgentConfiguration } from './workspace-session-agent-configuration-controller'
 import { resolveWorkspaceAgentControlAvailability } from './workspace-agent-control-availability'
+import { useWorkspaceSessionDelegationControlOwner } from './workspace-session-delegation-control-owner'
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
 import { annotationRequiresImageInput } from '../../../../shared/annotations'
 
@@ -130,6 +136,8 @@ const WorkspacePage = ({
   const catalogSkills = useSettingsStore((state) => state.skills)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
+  const selectedAgentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const memoryGloballyEnabled = useMemoryStore((state) => state.enabled)
   const loadMemory = useMemoryStore((state) => state.load)
   const listenForMemoryChanges = useMemoryStore((state) => state.listen)
@@ -154,7 +162,6 @@ const WorkspacePage = ({
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
   const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
-  const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
   const togglePreviewPanel = usePreviewWorkbenchStore((state) => state.togglePanel)
   const projectFormDialog = useProjectFormDialog()
   const [projectFileCount, setProjectFileCount] = useState<{
@@ -263,7 +270,7 @@ const WorkspacePage = ({
   // The selected session is the only conversation rendered in the center panel. Selecting it by
   // id (instead of deriving it from the full list) keeps chunk commits for other sessions from
   // re-rendering the page; the active session's own per-chunk identity changes still do.
-  const activeSession = useSessionStore((state) => {
+  const storedActiveSession = useSessionStore((state) => {
     if (activeProject?.archivedAt !== undefined) return undefined
     const selected = state.sessions.find((session) => session.id === selectedSessionId)
     if (!selected || selected.projectId !== scopedProjectId || selected.archivedAt !== undefined) {
@@ -271,6 +278,44 @@ const WorkspacePage = ({
     }
     return selected
   })
+  const persistedReviewSnapshot = useReviewStore((state) => {
+    if (!storedActiveSession) return undefined
+    return selectProjectSessionReviewSnapshot(
+      state.reviewsBySession,
+      storedActiveSession.projectId,
+      storedActiveSession.id,
+      state.loadedReviewSessions
+    )
+  })
+  const reviewLoadError = useReviewStore((state) =>
+    selectProjectSessionReviewLoadError(
+      state.loadErrorsBySession,
+      storedActiveSession?.projectId,
+      storedActiveSession?.id
+    )
+  )
+  const hasPersistedActiveFixLoop = useReviewStore((state) => {
+    if (!storedActiveSession) return false
+    return selectProjectSessionReviews(
+      state.reviewsBySession,
+      storedActiveSession.projectId,
+      storedActiveSession.id
+    ).some(
+      (review) =>
+        review.lifecycle === 'running' &&
+        review.checks.some((check) => check.status === 'warn' || check.status === 'fail')
+    )
+  })
+  const activeSession = useMemo(
+    () =>
+      storedActiveSession && hasPersistedActiveFixLoop && !storedActiveSession.fixLoopActive
+        ? { ...storedActiveSession, fixLoopActive: true }
+        : storedActiveSession,
+    [hasPersistedActiveFixLoop, storedActiveSession]
+  )
+  const isReviewHistoryUnavailable =
+    storedActiveSession !== undefined &&
+    (persistedReviewSnapshot === undefined || reviewLoadError !== undefined)
   const {
     activeAgentConfiguration,
     agentConfigurationUnavailable,
@@ -405,6 +450,13 @@ const WorkspacePage = ({
   })
   const { doc: draftDoc, error: attachmentError } = composer.view
   const { changeDoc: changeComposerDraftDoc, setError: setAttachmentError } = composer.actions
+  const delegationControl = useWorkspaceSessionDelegationControlOwner({
+    activeSession,
+    selectedSessionId,
+    selectedFrameworkId: selectedAgentFrameworkId,
+    frameworks: agentFrameworks,
+    setError: setAttachmentError
+  })
   const previewAnnotations = {
     activeAnnotations: composer.view.annotations,
     onAddAnnotation: (annotation: Parameters<typeof composer.actions.addAnnotation>[0]) => {
@@ -516,6 +568,7 @@ const WorkspacePage = ({
     agentConfigurationReady: !agentConfigurationUnavailable,
     permissionProfile: activePermissionProfile,
     isReviewing: isReviewBusy,
+    isTurnAdmissionBlocked: isReviewHistoryUnavailable,
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds,
@@ -524,6 +577,7 @@ const WorkspacePage = ({
       pendingPermissions.some((request) => request.sessionId === sessionId),
     newConversationAutoReviewEnabled,
     newConversationMemoryEnabled,
+    newConversationDelegationPolicyOverride: delegationControl.newConversationPolicyOverride,
     newConversationEnabledComputeHosts,
     newConversationSelectedComputeHosts,
     composer,
@@ -535,6 +589,7 @@ const WorkspacePage = ({
     resetNewConversationSettings: () => {
       setNewConversationAutoReviewEnabled(false)
       setNewConversationMemoryPreference(undefined)
+      delegationControl.resetNewConversation()
       setNewConversationEnabledComputeHosts([])
       setNewConversationSelectedComputeHosts([])
       resetNewConversationConfiguration()
@@ -557,6 +612,7 @@ const WorkspacePage = ({
   const isRequestReviewDisabled = useReviewStore((state) => {
     if (!activeSessionId) return true
     if (!activeSession) return true
+    if (isReviewHistoryUnavailable) return true
     if (sessionAwaitsHistoryReplay(activeSession)) return true
     const lastAgentMessage = [...activeSession.messages].reverse().find((m) => m.role === 'agent')
     if (!lastAgentMessage) return true
@@ -601,6 +657,7 @@ const WorkspacePage = ({
     changeComposerDraftDoc(
       appendArtifactMention(draftDoc, {
         id: file.id,
+        sourceFileId: file.sourceFileId,
         name: file.name,
         path: file.path,
         source: file.source,
@@ -637,6 +694,7 @@ const WorkspacePage = ({
     !conversation.queue.hasPendingWork
   const canCompactContext =
     isSessionPersistenceReady &&
+    !isReviewHistoryUnavailable &&
     activeSessionSupportsNativeCompaction &&
     activeSession?.status === 'idle' &&
     !activeSessionHasRuntimeInteraction &&
@@ -814,6 +872,8 @@ const WorkspacePage = ({
     }
   }, [activeSessionId, activeSessionCwd, activeSessionProjectId])
 
+  const resetNewConversationDelegation = delegationControl.resetNewConversation
+
   // Keeps New as a local draft reset after persistence hydration has selected restored sessions.
   const openNewConversation = useCallback((): void => {
     if (!isSessionPersistenceReady) return
@@ -825,6 +885,7 @@ const WorkspacePage = ({
     setNewConversationMemoryPreference(undefined)
     setNewConversationEnabledComputeHosts([])
     setNewConversationSelectedComputeHosts([])
+    resetNewConversationDelegation()
     resetNewConversationConfiguration()
     useNavigationStore.getState().recordUserNavigation()
     sessionController.actions.resetNewConversationSpecialist()
@@ -834,6 +895,7 @@ const WorkspacePage = ({
     defaultPermissionProfile,
     isSessionPersistenceReady,
     resetNewConversationConfiguration,
+    resetNewConversationDelegation,
     sessionController.actions,
     setAttachmentError
   ])
@@ -913,7 +975,7 @@ const WorkspacePage = ({
   }
 
   const requestManualReview = (): void => {
-    if (!activeSession) return
+    if (!activeSession || isReviewHistoryUnavailable) return
 
     const request = assembleReviewRunRequest(activeSession.id)
 
@@ -1202,6 +1264,16 @@ const WorkspacePage = ({
               changeModelConfiguration: changeAgentConfiguration,
               autoReviewEnabled: activeAutoReviewEnabled,
               memoryEnabled: activeMemoryEnabled,
+              delegationEnabled: delegationControl.enabled,
+              delegationPending: delegationControl.pending,
+              delegationHasLiveAttempts: delegationControl.hasLiveDelegatedAttempts,
+              canChangeDelegation:
+                isSessionPersistenceReady &&
+                delegationControl.frameworkSupported &&
+                delegationControl.sessionAuthoritative,
+              delegationDisabledReason: delegationControl.frameworkSupported
+                ? undefined
+                : t('The selected agent framework does not support delegated work.'),
               memoryDisabledReason: isGlobalMemoryEnabled
                 ? undefined
                 : t('Memory is off in Settings. Turn it on to use Memory in this conversation.'),
@@ -1209,6 +1281,7 @@ const WorkspacePage = ({
               selectedComputeHosts: computeHostAccess.selectedProviderIds,
               toggleAutoReview: changeAutoReviewEnabled,
               toggleMemory: changeMemoryEnabled,
+              toggleDelegation: delegationControl.change,
               setComputeHostEnabled: computeHostAccess.setHostEnabled,
               setComputeHostSelected: computeHostAccess.setHostSelected
             }}
@@ -1237,7 +1310,7 @@ const WorkspacePage = ({
               openJobs: sessionController.actions.openJobList
             }}
             subagents={{
-              unavailableReason: activeSession
+              unavailable: activeSession
                 ? delegatedWorkUnavailableBySession[activeSession.id]
                 : undefined,
               stop: () => {
@@ -1290,7 +1363,8 @@ const WorkspacePage = ({
             ? fileDialogItem
             : undefined
         }
-        onClose={closeFileDialog}
+        onClose={usePreviewWorkbenchStore.getState().closeFileDialog}
+        onItemChange={usePreviewWorkbenchStore.getState().openFileDialog}
         {...previewAnnotations}
         onPdfContextError={setAttachmentError}
       />

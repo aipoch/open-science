@@ -80,11 +80,7 @@ class SessionDelegatedWorkPersistenceOwner implements DelegatedWorkRecordCommand
   ): Promise<readonly CreatedNamedChild[]> {
     return this.store.mutate(key, input.expectedRevision, (graph, records, session) => {
       if (session.delegationPolicy === 'deny') {
-        throw new DurableDelegatedWorkError(
-          'admission_rejection',
-          'delegation is disabled for this Session',
-          'Delegation is disabled for this Session. Enable delegation before creating a Subagent.'
-        )
+        throw DurableDelegatedWorkError.delegationDisabled()
       }
       if (input.children.length === 0)
         throw new Error('Child creation requires at least one child.')

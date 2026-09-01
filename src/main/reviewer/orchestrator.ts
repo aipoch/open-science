@@ -177,6 +177,7 @@ const runReviewWithSession = async (
     model,
     onReviewUpdate,
     onStarted,
+    keepFlaggedReviewRunning: mainSessionId !== undefined,
     reviewerTimeoutMs,
     reviewerMaxUpdates,
     abortSignal: fixLoopAbortSignal,
@@ -190,7 +191,9 @@ const runReviewWithSession = async (
   const hasWarnOrFail = finalReview.checks.some((c) => c.status === 'warn' || c.status === 'fail')
 
   if (mainSessionId && hasWarnOrFail) {
+    onReviewUpdate?.(finalReview)
     await onFixLoopStart?.()
+    let terminalReview: ReviewWithChecks | undefined
     try {
       await runReviewerFixLoop({
         sessionId,
@@ -219,10 +222,26 @@ const runReviewWithSession = async (
         recordUsage
       })
     } finally {
-      onFixLoopEnd?.()
+      try {
+        await runReviewMutation(runSessionMutation, () =>
+          reviewRepository.updateReview(finalReview.id, {
+            lifecycle: 'complete',
+            outcome: 'flagged',
+            errorMessage: null
+          })
+        )
+        const reviews = await reviewRepository.getReviewsForProjectSession(projectId, sessionId)
+        terminalReview = reviews.find((review) => review.id === finalReview.id)
+        if (terminalReview) onReviewUpdate?.(terminalReview)
+      } finally {
+        onFixLoopEnd?.()
+      }
     }
 
-    // Reload checks after the fix loop so the returned object reflects final resolutions.
+    if (terminalReview) return terminalReview
+
+    // Reload checks after the fix loop so the returned object reflects final resolutions if the
+    // terminal row disappeared between the update and the first reload.
     const reloadedReviews = await reviewRepository.getReviewsForProjectSession(projectId, sessionId)
     const reloadedReview = reloadedReviews.find((review) => review.id === finalReview.id)
     if (reloadedReview) {

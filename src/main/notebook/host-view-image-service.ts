@@ -3,7 +3,6 @@ import { isAbsolute, posix, relative, resolve, sep, win32 } from 'node:path'
 
 import { MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE } from '../../shared/acp'
 import type { HostArtifactCatalogItem } from '../../shared/project-files'
-import { createUploadVersionReference } from '../../shared/uploads'
 import {
   ImageContentError,
   MAX_IMAGE_LONG_EDGE,
@@ -54,31 +53,17 @@ type HostViewImageCatalog = Readonly<{
   }): Promise<HostArtifactCatalogItem[]>
 }>
 
-type HostViewImageResolvers = Readonly<{
-  artifact: {
-    resolveVersionDescriptors(request: {
-      projectId: string
-      appSessionId: string
-      versionIds: string[]
-    }): Promise<Array<{ artifactId: string; versionId: string; state: 'pending' | 'finalized' }>>
-    resolveVersionContent(request: {
-      projectId: string
-      appSessionId: string
-      artifactId: string
-      versionId: string
-    }): Promise<{ path: string }>
-  }
-  upload: {
-    resolveManagedUploadPath(
-      request: { path: string },
-      scope: { projectId: string; sessionId: string }
-    ): Promise<string>
-  }
+type HostViewImageManagedFileReader = Readonly<{
+  openLatest(request: {
+    source: 'artifact' | 'upload'
+    projectId: string
+    fileId: string
+  }): Promise<{ path: string; close(): Promise<void> }>
 }>
 
 type HostViewImageServiceOptions = Readonly<{
   catalog: HostViewImageCatalog
-  resolvers: HostViewImageResolvers
+  managedFileVersions: HostViewImageManagedFileReader
   captureBackend(sessionId: string): HostViewImageBackend | undefined
   prepareImage?: (
     filePath: string,
@@ -356,6 +341,8 @@ export class HostViewImageService {
       let filePath: string
       let sourceKind: HostViewImageResult['sourceKind']
       let expectedCanonicalPath: string | undefined
+      let managedLease:
+        Awaited<ReturnType<HostViewImageManagedFileReader['openLatest']>> | undefined
       if ('path' in source) {
         filePath = await resolveWorkspaceSource(context.executionCwd, source.path)
         expectedCanonicalPath = filePath
@@ -379,55 +366,23 @@ export class HostViewImageService {
         if (item.projectId !== context.projectId || item.versionId !== source.versionId) {
           throw new HostViewImageError('Version resolver returned an untrusted Project identity.')
         }
-        if (item.source === 'artifact') {
-          const descriptors = await this.options.resolvers.artifact.resolveVersionDescriptors({
-            projectId: context.projectId,
-            appSessionId: context.sessionId,
-            versionIds: [item.versionId]
-          })
-          const descriptor = descriptors[0]
-          if (
-            descriptors.length !== 1 ||
-            descriptor?.state !== 'finalized' ||
-            descriptor.versionId !== item.versionId ||
-            descriptor.artifactId !== item.sourceFileId
-          ) {
-            throw new HostViewImageError(
-              `Version is not a finalized Artifact in the current Project: ${item.versionId}`
-            )
-          }
-          filePath = (
-            await this.options.resolvers.artifact.resolveVersionContent({
-              projectId: context.projectId,
-              appSessionId: item.sessionId,
-              artifactId: item.sourceFileId,
-              versionId: item.versionId
-            })
-          ).path
-          sourceKind = 'artifactVersion'
-        } else {
-          filePath = await this.options.resolvers.upload.resolveManagedUploadPath(
-            {
-              path: createUploadVersionReference(item.versionId, {
-                projectId: context.projectId,
-                sessionId: item.sessionId
-              })
-            },
-            { projectId: context.projectId, sessionId: item.sessionId }
-          )
-          sourceKind = 'uploadVersion'
-        }
-        if (!isAbsolute(filePath)) {
-          throw new HostViewImageError('managed Version resolver returned a relative path.')
-        }
+        managedLease = await this.options.managedFileVersions.openLatest({
+          source: item.source,
+          projectId: context.projectId,
+          fileId: item.sourceFileId
+        })
+        filePath = managedLease.path
+        sourceKind = item.source === 'artifact' ? 'artifactVersion' : 'uploadVersion'
       }
 
-      const image = await this.prepareImage(
-        filePath,
-        options,
-        context.signal,
-        expectedCanonicalPath
-      )
+      let image: PreparedImageContentData
+      try {
+        image = await this.prepareImage(filePath, options, context.signal, expectedCanonicalPath)
+      } finally {
+        const lease = managedLease
+        managedLease = undefined
+        if (lease) await lease.close()
+      }
       context.signal.throwIfAborted()
       const currentBackend = this.options.captureBackend(context.sessionId)
       if (!currentBackend || backendIdentity(currentBackend) !== identity) {
@@ -509,4 +464,4 @@ export class HostViewImageService {
   }
 }
 
-export type { HostViewImageCatalog, HostViewImageResolvers, HostViewImageServiceOptions }
+export type { HostViewImageCatalog, HostViewImageManagedFileReader, HostViewImageServiceOptions }

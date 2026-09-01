@@ -8,6 +8,7 @@ vi.mock('electron', () => ({
 }))
 
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
+import { hasAnswerableDelegatedQuestion } from '../../shared/delegated-work-projection'
 import {
   createLinearConversationGraph,
   forkEditedConversationMessage,
@@ -151,6 +152,73 @@ const createIdleSessionWithRunningChild = (originMessageId = 'root-prompt'): Per
       }
     }
   })
+
+const createIdleSessionWithPendingDelegatedQuestion = (): PersistedChatSession => {
+  const session = createIdleSessionWithRunningChild()
+  const delegatedWork = session.runtimeContext?.delegatedWork
+  const attempt = delegatedWork?.records[0]?.attempts[0]
+  const child = session.conversationGraph?.frames.find((frame) => frame.id === 'child')
+  if (!delegatedWork || !attempt || !child) throw new Error('Invalid delegated Session fixture')
+
+  Object.assign(attempt, {
+    status: 'completed',
+    runtimeSegmentIds: ['runtime-1'],
+    endedAt: 3,
+    terminalMessageId: 'child-terminal'
+  })
+  Object.assign(child, { status: 'completed', delegateName: 'Researcher' })
+  const childBranch = session.conversationGraph?.branches.find(
+    (branch) => branch.id === 'child-branch'
+  )
+  if (!childBranch) throw new Error('Invalid delegated Session fixture')
+  childBranch.headMessageId = 'child-terminal'
+  session.conversationGraph?.messages.push({
+    id: 'child-terminal',
+    role: 'agent',
+    content: 'Waiting for an answer',
+    status: 'complete',
+    eventIds: [],
+    agentFrameId: child.id,
+    introducedOnBranchId: childBranch.id,
+    runtimeSegmentId: 'runtime-1',
+    createdAt: 3,
+    updatedAt: 3
+  })
+  session.conversationGraph?.runtimeSegments.push({
+    id: 'runtime-1',
+    agentFrameId: child.id,
+    frameworkId: 'codex',
+    startedAt: 2,
+    endedAt: 3
+  })
+  Object.assign(delegatedWork, {
+    questionRequests: [
+      {
+        requestId: 'question-1',
+        canonicalDigest: 'a'.repeat(64),
+        sourceFrameId: child.id,
+        sourceAttemptId: attempt.id,
+        sourceRuntimeSegmentId: 'runtime-1',
+        sourceName: 'Researcher',
+        rootBranchId: 'root-branch',
+        rootOriginMessageId: 'root-prompt',
+        sourceMessageBranchId: 'child-branch',
+        questions: [
+          {
+            question: 'Choose a source',
+            options: [{ label: 'Primary' }, { label: 'Secondary' }]
+          }
+        ],
+        sequence: 1,
+        askedAt: 3,
+        status: 'pending',
+        draftAnswers: [],
+        draftQuestionIndex: 0
+      }
+    ]
+  })
+  return session
+}
 
 const createRuntimePlan = (
   overrides: Partial<SessionPlanRuntimeContext> = {}
@@ -1679,7 +1747,20 @@ describe('SessionPersistenceCoordinator', () => {
         durable = structuredClone(session)
       })
     })
-    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const onDelegationPolicyUpdated = vi.fn()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onDelegationPolicyUpdated
+    )
 
     await expect(
       coordinator.setSessionDelegationPolicy('project-1', 'session-1', 'deny')
@@ -1687,6 +1768,9 @@ describe('SessionPersistenceCoordinator', () => {
 
     expect(durable.delegationPolicy).toBe('deny')
     expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
+    expect(onDelegationPolicyUpdated).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'session-1', delegationPolicy: 'deny' })
+    )
   })
 
   it('preserves main-owned delegation policy on an ordinary existing-Session save', async () => {
@@ -2060,6 +2144,45 @@ describe('SessionPersistenceCoordinator', () => {
         expectedArchivedAt: null
       })
     ).resolves.toMatchObject({ archivedAt: expect.any(Number) })
+  })
+
+  it('rejects archive while an idle Session has an answerable delegated question', async () => {
+    const delegated = createIdleSessionWithPendingDelegatedQuestion()
+    const root = await mkdtemp(join(tmpdir(), 'open-science-pending-question-archive-'))
+    const repository = new SessionRepository(root)
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    try {
+      await repository.saveSession(delegated)
+      const persisted = await repository.loadSession(delegated.projectId, delegated.id)
+      expect(hasAnswerableDelegatedQuestion(persisted)).toBe(true)
+
+      const [projectArchive] = await Promise.allSettled([
+        coordinator.assertProjectArchivable(delegated.projectId)
+      ])
+      const [sessionArchive] = await Promise.allSettled([
+        coordinator.updateArchive({
+          projectId: delegated.projectId,
+          sessionId: delegated.id,
+          archived: true,
+          expectedArchivedAt: null
+        })
+      ])
+
+      expect([projectArchive.status, sessionArchive.status]).toEqual(['rejected', 'rejected'])
+      expect(projectArchive).toMatchObject({
+        status: 'rejected',
+        reason: { message: 'Finish or stop active sessions before archiving this project.' }
+      })
+      expect(sessionArchive).toMatchObject({
+        status: 'rejected',
+        reason: { message: 'Finish or stop this session before archiving.' }
+      })
+      await expect(
+        repository.loadSession(delegated.projectId, delegated.id)
+      ).resolves.not.toHaveProperty('archivedAt')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('does not let a renderer whole-session save create runtime authority', async () => {

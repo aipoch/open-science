@@ -5,6 +5,7 @@ import { withPdfContext as withPdf } from '../../../../shared/session-pdf-contex
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import {
   collectSessionReferences,
+  type DelegationPolicy,
   type MessageAttribution,
   type MessagePdfContextSnapshot,
   type MessagePart,
@@ -25,7 +26,11 @@ import {
   type UploadedAttachment
 } from '../../../../shared/uploads'
 import { getActiveConversationContext } from '../../../../shared/conversation-graph'
-import { saveSessionInOrder } from '../session-persistence/session-persistence'
+import {
+  confirmPendingDelegationPolicyAuthority,
+  saveSessionInOrder,
+  toPersistedSessionForAuthorityMaterialization
+} from '../session-persistence/session-persistence'
 import { toPersistedSession, useSessionStore, type ChatMessage } from '../../stores/session-store'
 import {
   buildWorkspaceHistoryReplay,
@@ -77,6 +82,7 @@ type SendWorkspaceMessageIntent = {
   selectedComputeHosts?: string[]
   agentConfiguration?: SessionAgentConfiguration
   memoryEnabled?: boolean
+  delegationPolicy?: DelegationPolicy
   preserveSelection?: boolean
 }
 type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
@@ -92,6 +98,7 @@ type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
 }
 type SendWorkspaceMessageResult = { sessionId: string; messageId: string }
 type WorkspaceCommandLifecycle = {
+  awaitPendingPreparation?: boolean
   onSendPreparationStateChange?: (sessionId: string, inFlight: boolean) => void
   drainRuntimeEvents?: (sessionId?: string) => Promise<void>
   onSessionBound?: (pendingSessionId: string, sessionId: string) => void
@@ -297,7 +304,8 @@ const linkPdfContextForSend = async ({
   sources,
   pdfReadingPosition,
   excludeSinglePage = false,
-  persistSessionBeforeLink = false
+  persistSessionBeforeLink = false,
+  materializedRuntimeRevision
 }: {
   sessionId: string
   messageId?: string
@@ -306,17 +314,18 @@ const linkPdfContextForSend = async ({
   pdfReadingPosition?: PdfReadingPosition
   excludeSinglePage?: boolean
   persistSessionBeforeLink?: boolean
+  materializedRuntimeRevision?: number
 }): Promise<MessagePdfContextSnapshot | undefined> => {
   if (!projectId) throw new Error('The PDF Project is unavailable for Session context.')
   let source = useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
   if (!source) throw new Error(`Session not found: ${sessionId}`)
   const previousBindings = source.runtimeContext?.pdfContext?.bindings ?? []
-  let expectedRevision = source.runtimeContext?.revision ?? 0
+  let expectedRevision = materializedRuntimeRevision ?? source.runtimeContext?.revision ?? 0
 
   // A new Agent Session is bound in memory before its first durable save. Materialize that Session
   // before asking Main's PDF-context owner to patch its runtime context.
   if (persistSessionBeforeLink) {
-    const durable = await saveSessionInOrder(toPersistedSession(source))
+    const durable = await saveSessionInOrder(toPersistedSessionForAuthorityMaterialization(source))
     expectedRevision = durable.runtimeContext?.revision ?? 0
   }
 
@@ -371,7 +380,9 @@ const linkPdfContextForSend = async ({
     const linked = useSessionStore
       .getState()
       .sessions.find((candidate) => candidate.id === sessionId)
-    if (linked) await saveSessionInOrder(toPersistedSession(linked))
+    if (linked) {
+      await saveSessionInOrder(toPersistedSessionForAuthorityMaterialization(linked))
+    }
   }
   return messagePdfContext
 }
@@ -451,10 +462,10 @@ const startPendingPrompt = (
   request: PendingPromptRequest,
   onSessionBound?: (pendingSessionId: string, sessionId: string) => void,
   onPdfContextLinked?: (sessionId: string, pdfContext: MessagePdfContextSnapshot) => void
-): void => {
-  void (async () => {
+): Promise<boolean> => {
+  return (async () => {
     const pending = request.pending
-    if (!ownsPrompt(pending.sessionId, pending.messageId)) return
+    if (!ownsPrompt(pending.sessionId, pending.messageId)) return false
     let created
     let eligiblePendingPdfContext: Awaited<ReturnType<typeof filterPendingPdfContext>>
     try {
@@ -482,19 +493,19 @@ const startPendingPrompt = (
       if (ownsPrompt(pending.sessionId, pending.messageId)) {
         useSessionStore.getState().failRun(pending.sessionId, createSessionFailureMessage(error))
       }
-      return
+      return false
     }
-    if (!ownsPrompt(pending.sessionId, pending.messageId)) return
+    if (!ownsPrompt(pending.sessionId, pending.messageId)) return false
     if (!created?.sessionId) {
       useSessionStore.getState().failRun(pending.sessionId, 'Agent session could not be created.')
-      return
+      return false
     }
     const cwd = created.cwd ?? request.cwd
     if (!cwd) {
       useSessionStore
         .getState()
         .failRun(pending.sessionId, 'Agent session did not return a workspace.')
-      return
+      return false
     }
     const bound = useSessionStore.getState().bindPendingSession({
       pendingSessionId: pending.sessionId,
@@ -507,7 +518,47 @@ const startPendingPrompt = (
     })
     onSessionBound?.(pending.sessionId, created.sessionId)
     const boundMessageId = bound?.messageId
-    if (!boundMessageId || !ownsPrompt(created.sessionId, boundMessageId)) return
+    if (!boundMessageId || !ownsPrompt(created.sessionId, boundMessageId)) return false
+
+    const boundSession = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === created.sessionId)
+    let sessionMaterialized = false
+    let materializedRuntimeRevision: number | undefined
+    if (
+      boundSession &&
+      (boundSession.delegationPolicyAuthorityPending || boundSession.enabledComputeHosts?.length)
+    ) {
+      try {
+        if (boundSession.delegationPolicyAuthorityPending) {
+          const authoritative = await confirmPendingDelegationPolicyAuthority(boundSession)
+          materializedRuntimeRevision = authoritative?.runtimeContext?.revision ?? 0
+        } else {
+          const materialized = await saveSessionInOrder(
+            toPersistedSessionForAuthorityMaterialization(boundSession)
+          )
+          materializedRuntimeRevision = materialized.runtimeContext?.revision ?? 0
+        }
+        sessionMaterialized = true
+      } catch (error) {
+        try {
+          const snapshot = await runtime.deleteSession?.(created.sessionId)
+          if (
+            runtime.deleteSession &&
+            (!snapshot || snapshot.sessionIds.includes(created.sessionId))
+          ) {
+            console.warn('Agent Session cleanup after persistence failure did not complete')
+          }
+        } catch (cleanupError) {
+          console.warn('Agent Session cleanup after persistence failure failed', cleanupError)
+        }
+        if (ownsPrompt(created.sessionId, boundMessageId)) {
+          useSessionStore.getState().failRun(created.sessionId, errorMessage(error))
+        }
+        return false
+      }
+      if (!ownsPrompt(created.sessionId, boundMessageId)) return false
+    }
 
     let attachments = request.attachments
     let pdfContext = request.pdfContext
@@ -537,7 +588,8 @@ const startPendingPrompt = (
           sources: pdfContextSources,
           pdfReadingPosition: request.pdfReadingPosition,
           excludeSinglePage: true,
-          persistSessionBeforeLink: true
+          persistSessionBeforeLink: !sessionMaterialized,
+          materializedRuntimeRevision
         })
       }
       if (
@@ -549,35 +601,9 @@ const startPendingPrompt = (
       }
     } catch (error) {
       useSessionStore.getState().failRun(created.sessionId, errorMessage(error))
-      return
+      return false
     }
-    if (!ownsPrompt(created.sessionId, boundMessageId)) return
-
-    const boundSession = useSessionStore
-      .getState()
-      .sessions.find((session) => session.id === created.sessionId)
-    if (boundSession?.enabledComputeHosts?.length) {
-      try {
-        await saveSessionInOrder(toPersistedSession(boundSession))
-      } catch (error) {
-        try {
-          const snapshot = await runtime.deleteSession?.(created.sessionId)
-          if (
-            runtime.deleteSession &&
-            (!snapshot || snapshot.sessionIds.includes(created.sessionId))
-          ) {
-            console.warn('Agent Session cleanup after persistence failure did not complete')
-          }
-        } catch (cleanupError) {
-          console.warn('Agent Session cleanup after persistence failure failed', cleanupError)
-        }
-        if (ownsPrompt(created.sessionId, boundMessageId)) {
-          useSessionStore.getState().failRun(created.sessionId, errorMessage(error))
-        }
-        return
-      }
-      if (!ownsPrompt(created.sessionId, boundMessageId)) return
-    }
+    if (!ownsPrompt(created.sessionId, boundMessageId)) return false
 
     dispatchPrompt(runtime, {
       sessionId: created.sessionId,
@@ -593,6 +619,7 @@ const startPendingPrompt = (
       accepted: () =>
         useSessionStore.getState().clearPendingContextReplay(created.sessionId, boundMessageId)
     })
+    return true
   })()
 }
 
@@ -609,6 +636,7 @@ const sendWorkspaceMessage = async (
       agentBackendId: input.agentBackendId,
       agentModel: input.agentModel,
       agentConfiguration: input.agentConfiguration,
+      delegationPolicy: input.delegationPolicy,
       specialistId: input.specialistId
     })
   }
@@ -664,6 +692,7 @@ const sendWorkspaceMessage = async (
       agentModel: input.agentModel,
       agentConfiguration: input.agentConfiguration,
       agentTarget: resolveSendAgentTarget(input),
+      delegationPolicy: input.delegationPolicy,
       specialistId: input.specialistId
     })
     if (!pending?.messageId) return undefined
@@ -697,7 +726,7 @@ const sendWorkspaceMessage = async (
       useSessionStore.getState().failRun(pending.sessionId, errorMessage(error))
       return pendingPrompt
     }
-    startPendingPrompt(
+    const preparation = startPendingPrompt(
       runtime,
       {
         ...input,
@@ -723,6 +752,10 @@ const sendWorkspaceMessage = async (
       lifecycle.onSessionBound,
       lifecycle.onPdfContextLinked
     )
+    if (lifecycle.awaitPendingPreparation) {
+      return (await preparation) ? pendingPrompt : undefined
+    }
+    void preparation
     return pendingPrompt
   }
 
@@ -764,6 +797,15 @@ const sendWorkspaceMessage = async (
     }
     if (input.requireExistingSession && !session) return undefined
     if (!canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
+    if (session?.delegationPolicyAuthorityPending) {
+      try {
+        await confirmPendingDelegationPolicyAuthority(session)
+        session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+      } catch (error) {
+        useSessionStore.getState().failRun(sessionId, errorMessage(error))
+        return undefined
+      }
+    }
     const projectId = input.projectId ?? session?.projectId
     if (input.planContinuation && !projectId) return undefined
 
@@ -801,7 +843,7 @@ const sendWorkspaceMessage = async (
         preserveSelection: input.preserveSelection
       })
       if (!appended) return undefined
-      startPendingPrompt(
+      const preparation = startPendingPrompt(
         runtime,
         {
           ...input,
@@ -819,6 +861,10 @@ const sendWorkspaceMessage = async (
         lifecycle.onSessionBound,
         lifecycle.onPdfContextLinked
       )
+      if (lifecycle.awaitPendingPreparation) {
+        return (await preparation) ? appended : undefined
+      }
+      void preparation
       return appended
     }
 
@@ -986,11 +1032,12 @@ const sendWorkspaceMessage = async (
     memoryEnabled: input.memoryEnabled,
     agentTarget: resolveSendAgentTarget(input),
     specialistId: input.specialistId ?? undefined,
+    delegationPolicy: input.delegationPolicy,
     enabledComputeHosts: input.enabledComputeHosts,
     selectedComputeHosts: input.selectedComputeHosts
   })
   if (!pending) return undefined
-  startPendingPrompt(
+  const preparation = startPendingPrompt(
     runtime,
     {
       ...input,
@@ -1007,6 +1054,10 @@ const sendWorkspaceMessage = async (
     lifecycle.onSessionBound,
     lifecycle.onPdfContextLinked
   )
+  if (lifecycle.awaitPendingPreparation) {
+    return (await preparation) ? pending : undefined
+  }
+  void preparation
   return pending
 }
 

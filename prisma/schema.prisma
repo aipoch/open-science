@@ -385,12 +385,15 @@ model ArtifactLineage {
   sessionId          String
   normalizedFilename String
   filename           String
+  currentVersionId   String?           @unique
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
-  versions           ArtifactVersion[]
+  versions           ArtifactVersion[] @relation("ArtifactLineageVersions")
+  currentVersion     ArtifactVersion?  @relation("ArtifactLineageCurrentVersion", fields: [id, currentVersionId], references: [artifactId, id], onDelete: Restrict)
   originSession      FileOriginSession @relation(fields: [projectId, sessionId], references: [projectId, sessionId], onDelete: Restrict)
 
   @@unique([projectId, sessionId, normalizedFilename])
+  @@unique([id, currentVersionId])
   @@index([projectId, sessionId])
 }
 
@@ -400,11 +403,14 @@ model UploadFile {
   sessionId        String
   filename         String
   originalFilename String
+  currentVersionId String?           @unique
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
-  versions         UploadVersion[]
+  versions         UploadVersion[]   @relation("UploadFileVersions")
+  currentVersion   UploadVersion?    @relation("UploadFileCurrentVersion", fields: [id, currentVersionId], references: [uploadFileId, id], onDelete: Restrict)
   originSession    FileOriginSession @relation(fields: [projectId, sessionId], references: [projectId, sessionId], onDelete: Restrict)
 
+  @@unique([id, currentVersionId])
   @@index([projectId, sessionId])
 }
 
@@ -413,7 +419,12 @@ model UploadVersion {
   uploadFileId      String
   versionNumber     Int
   state             String                 @default("staging")
-  contentStorageKey String
+  originKind        String                 @default("user_upload")
+  basedOnVersionId  String?
+  storageTag        String?
+  storedFilename    String?
+  writeOperationId  String?                @unique
+  contentStorageKey String                 @unique
   filename          String
   originalFilename  String
   contentType       String?
@@ -422,11 +433,15 @@ model UploadVersion {
   createdAt         DateTime?
   registeredAt      DateTime               @default(now())
   updatedAt         DateTime               @updatedAt
-  uploadFile        UploadFile             @relation(fields: [uploadFileId], references: [id], onDelete: Cascade)
+  uploadFile        UploadFile             @relation("UploadFileVersions", fields: [uploadFileId], references: [id], onDelete: Cascade)
+  currentForFile    UploadFile?            @relation("UploadFileCurrentVersion")
+  basedOnVersion    UploadVersion?         @relation("UploadVersionDerivations", fields: [uploadFileId, basedOnVersionId], references: [uploadFileId, id], onDelete: Restrict)
+  derivedVersions   UploadVersion[]        @relation("UploadVersionDerivations")
   sourceInputs      ArtifactVersionInput[] @relation("UploadVersionSourceInputs")
   visionEvidence    VisionEvidence[]
 
   @@unique([uploadFileId, versionNumber])
+  @@unique([uploadFileId, id])
   @@index([uploadFileId, state, registeredAt])
 }
 
@@ -484,45 +499,79 @@ model ArtifactVersion {
   artifactId                     String
   versionNumber                  Int
   filename                       String
-  artifactRunId                  String
+  originKind                     String                   @default("agent_generated")
+  basedOnVersionId               String?
+  storageTag                     String?
+  storedFilename                 String?
+  artifactRunId                  String?
   writeOperationId               String?                  @unique
   writeRequestChecksum           String?
-  rootFrameId                    String
-  agentFrameId                   String
-  messageBranchId                String
-  runtimeSegmentId               String
-  promptMessageId                String
+  rootFrameId                    String?
+  agentFrameId                   String?
+  messageBranchId                String?
+  runtimeSegmentId               String?
+  promptMessageId                String?
   notebookSessionId              String?
   producerRunId                  String?
   producerRunIndex               Int?
   messageId                      String?
   messageSnapshotId              String?
   state                          String                   @default("staging")
-  contentStorageKey              String
-  evidenceStorageKey             String
+  managedVisibleAt               DateTime?
+  contentStorageKey              String                   @unique
+  evidenceStorageKey             String?
   contentType                    String?
   sizeBytes                      BigInt
   checksum                       String
-  evidenceJson                   String
-  evidenceChecksum               String
-  evidenceSchemaVersion          Int                      @default(1)
+  evidenceJson                   String?
+  evidenceChecksum               String?
+  evidenceSchemaVersion          Int?
   executionSnapshotJson          String?
   executionSnapshotChecksum      String?
   executionSnapshotStorageKey    String?
   executionSnapshotSchemaVersion Int?
   createdAt                      DateTime                 @default(now())
   updatedAt                      DateTime                 @updatedAt
-  artifact                       ArtifactLineage          @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  artifact                       ArtifactLineage          @relation("ArtifactLineageVersions", fields: [artifactId], references: [id], onDelete: Cascade)
+  currentForLineage              ArtifactLineage?         @relation("ArtifactLineageCurrentVersion")
+  basedOnVersion                 ArtifactVersion?         @relation("ArtifactVersionDerivations", fields: [artifactId, basedOnVersionId], references: [artifactId, id], onDelete: Restrict)
+  derivedVersions                ArtifactVersion[]        @relation("ArtifactVersionDerivations")
   messageSnapshot                ArtifactMessageSnapshot? @relation(fields: [messageSnapshotId], references: [id], onDelete: SetNull)
   inputs                         ArtifactVersionInput[]   @relation("ProducedArtifactInputs")
   sourceInputs                   ArtifactVersionInput[]   @relation("ArtifactVersionSourceInputs")
 
   @@unique([artifactId, versionNumber])
+  @@unique([artifactId, id])
   @@index([artifactId, createdAt])
   @@index([artifactRunId, state])
   @@index([rootFrameId, agentFrameId, messageBranchId, promptMessageId])
   @@index([messageId])
   @@index([messageSnapshotId])
+}
+
+// Recovery journal for cross-resource text edit publication. Staging operations do not allocate a
+// content version number and are invisible to normal version readers.
+model ManagedFileVersionWriteOperation {
+  operationId           String   @id
+  source                String
+  projectId             String
+  sourceFileId          String
+  basedOnVersionId      String
+  expectedHeadVersionId String
+  state                 String   @default("staging")
+  storageTag            String
+  storedFilename        String
+  contentStorageKey     String   @unique
+  checksum              String
+  sizeBytes             BigInt
+  textFormatJson        String
+  resultVersionId       String?  @unique
+  errorCode             String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([source, sourceFileId, state])
+  @@index([projectId, state, createdAt])
 }
 
 model ArtifactVersionInput {

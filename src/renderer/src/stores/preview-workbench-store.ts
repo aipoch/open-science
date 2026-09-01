@@ -8,7 +8,15 @@ import { getUploadedAttachmentPath } from '../../../shared/uploads'
 import type { PdfReadingPosition } from '../../../shared/session-persistence'
 
 import { resolvePlanFileProjection } from '../pages/workspace/session-plan/plan-file-projection'
+import {
+  dialogPreviewGuardScope,
+  previewLeaveGuards,
+  workbenchPreviewGuardScope
+} from './preview-leave-guard'
 import { useSessionStore } from './session-store'
+
+const activeWorkbenchGuardScope = (state: PreviewWorkbenchStoreData): string | undefined =>
+  workbenchPreviewGuardScope(state.activeProjectId, state.activeItemId)
 
 export type PreviewPanelState = 'open' | 'collapsed'
 export type PreviewFileFormat =
@@ -51,6 +59,7 @@ export type PreviewFileItem = PreviewItemBase & {
   size?: number
   mtimeMs?: number
   artifactId?: string
+  managedFileId?: string
   selectedVersionId?: string
   versionNumber?: number
   originSession?: ProjectFileOriginSession
@@ -134,7 +143,11 @@ type PreviewWorkbenchStoreData = PreviewSlice & {
 }
 
 type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
-  activateProject: (projectId: string, restored?: RestoredPreviewSlice) => void
+  activateProject: (
+    projectId: string,
+    restored?: RestoredPreviewSlice,
+    skipGuard?: boolean
+  ) => boolean
   reconcileFinalizedUploads: (uploads: UploadedAttachment[]) => void
   setPendingPdfContext: (
     projectId: string,
@@ -144,19 +157,19 @@ type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
   setDraftStagedUploadIds: (ids: string[]) => void
   setPdfReadingPosition: (bindingId: string, position: PdfReadingPosition) => void
   clearPdfReadingPosition: (bindingId: string) => void
-  upsertItem: (item: PreviewItem) => void
+  upsertItem: (item: PreviewItem, skipGuard?: boolean) => boolean
   upsertAndActivateItem: (item: PreviewItem) => void
   activateItem: (itemId: string) => void
-  removeItem: (itemId: string) => void
-  removeOtherItems: (keepItemId: string) => void
+  removeItem: (itemId: string) => boolean
+  removeOtherItems: (keepItemId: string) => boolean
   removeSessionItems: (sessionId: string) => void
   setToolItemExpanded: (itemId: string | null) => void
-  openFileDialog: (item: PreviewFileItem) => void
-  closeFileDialog: () => void
+  openFileDialog: (item: PreviewFileItem, skipGuard?: boolean) => boolean
+  closeFileDialog: (skipGuard?: boolean) => boolean
   openPanel: () => void
   collapsePanel: () => void
   togglePanel: () => void
-  syncPanelState: (panelState: PreviewPanelState) => void
+  syncPanelState: (panelState: PreviewPanelState) => boolean
 }
 
 // Creates a fresh transient preview workbench state for the app and isolated tests.
@@ -201,6 +214,44 @@ const createStoredPreviewItem = (
     createdAt: existingItem?.createdAt ?? now,
     updatedAt: now
   } as StoredPreviewItem
+}
+
+const changesActiveFileSelection = (
+  state: PreviewWorkbenchStoreData,
+  item: PreviewItem
+): boolean => {
+  if (item.type !== 'file' || item.id !== state.activeItemId) return false
+  const current = state.items.find(
+    (candidate): candidate is StoredPreviewItem & PreviewFileItem =>
+      candidate.id === item.id && candidate.type === 'file'
+  )
+  return Boolean(
+    current &&
+    (current.path !== item.path ||
+      current.selectedVersionId !== item.selectedVersionId ||
+      current.managedFileId !== item.managedFileId)
+  )
+}
+
+const upsertPreviewItem = (
+  state: PreviewWorkbenchStoreData,
+  item: PreviewItem
+): Pick<PreviewWorkbenchStoreData, 'items' | 'activeItemId'> => {
+  const scopedItem = withProjectScope(item, state.activeProjectId)
+  const existingIndex = state.items.findIndex((previewItem) => previewItem.id === scopedItem.id)
+  if (existingIndex === -1) {
+    const hasActiveItem = state.items.some((previewItem) => previewItem.id === state.activeItemId)
+    return {
+      items: [...state.items, createStoredPreviewItem(scopedItem)],
+      activeItemId: hasActiveItem ? state.activeItemId : (state.items[0]?.id ?? scopedItem.id)
+    }
+  }
+  return {
+    items: state.items.map((previewItem, index) =>
+      index === existingIndex ? createStoredPreviewItem(scopedItem, previewItem) : previewItem
+    ),
+    activeItemId: state.activeItemId
+  }
 }
 
 // Rebuilds a project's live slice from its persisted durable subset, repairing a dangling active tab.
@@ -371,9 +422,15 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   ...createInitialPreviewWorkbenchState(),
 
   // Switches the visible preview slice to a project's own tabs, stashing the outgoing project's slice
-  // so returning to it restores its tabs. `restored` replaces the target's durable subset with
-  // authoritative persistence while retaining runtime-owned tool tabs.
-  activateProject: (projectId, restored) => {
+  // so returning to it restores its tabs. `restored` replaces the durable subset with authoritative
+  // persistence while retaining runtime-owned tool tabs.
+  activateProject: (projectId, restored, skipGuard = false) => {
+    if (
+      get().activeProjectId !== projectId &&
+      !skipGuard &&
+      !previewLeaveGuards.request(activeWorkbenchGuardScope(get()), () => undefined)
+    )
+      return false
     set((state) => {
       if (state.activeProjectId === projectId) {
         if (!restored) return state
@@ -422,6 +479,7 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
           state.fileDialogItem?.projectId === projectId ? state.fileDialogItem : undefined
       }
     })
+    return true
   },
 
   // Repairs already-open upload tabs after staged files move into their permanent session folder.
@@ -430,6 +488,20 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 
     const uploadByPreviewId = new Map(uploads.map((upload) => [`upload:${upload.id}`, upload]))
     const updatedAt = Date.now()
+    const current = get()
+    const activeItem = current.items.find((item) => item.id === current.activeItemId)
+    const activeUpload =
+      activeItem?.type === 'file' && activeItem.source === 'upload'
+        ? uploadByPreviewId.get(activeItem.id)
+        : undefined
+    if (
+      activeItem?.type === 'file' &&
+      activeUpload &&
+      (getUploadedAttachmentPath(activeUpload, activeItem.projectId) !== activeItem.path ||
+        activeUpload.sessionId !== activeItem.sessionId) &&
+      !previewLeaveGuards.request(activeWorkbenchGuardScope(current), () => undefined)
+    )
+      uploadByPreviewId.delete(activeItem.id)
 
     set((state) => {
       const items = reconcileUploadPreviewItems(state.items, uploadByPreviewId, updatedAt)
@@ -510,38 +582,29 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   },
 
   // Inserts a preview item or refreshes the existing tab without changing focus.
-  upsertItem: (item) => {
-    set((state) => {
-      const scopedItem = withProjectScope(item, state.activeProjectId)
-      const existingIndex = state.items.findIndex((previewItem) => previewItem.id === scopedItem.id)
-
-      // New items append to the horizontal preview list in discovery order.
-      if (existingIndex === -1) {
-        const hasActiveItem = state.items.some(
-          (previewItem) => previewItem.id === state.activeItemId
-        )
-
-        return {
-          items: [...state.items, createStoredPreviewItem(scopedItem)],
-          // Passive discovery selects a fallback tab without opening the collapsed panel.
-          activeItemId: hasActiveItem ? state.activeItemId : (state.items[0]?.id ?? scopedItem.id)
-        }
-      }
-
-      // Existing items keep their original position and creation time.
-      return {
-        items: state.items.map((previewItem, index) =>
-          index === existingIndex ? createStoredPreviewItem(scopedItem, previewItem) : previewItem
-        )
-      }
-    })
+  upsertItem: (item, skipGuard = false) => {
+    if (
+      changesActiveFileSelection(get(), item) &&
+      !skipGuard &&
+      !previewLeaveGuards.request(activeWorkbenchGuardScope(get()), () => undefined)
+    )
+      return false
+    set((state) => upsertPreviewItem(state, item))
+    return true
   },
 
   // Opens the panel and activates the item for first-time preview requests.
   upsertAndActivateItem: (item) => {
     const activeItem = redirectPlanArtifactFileItem(item)
-    get().upsertItem(activeItem)
+    const current = get()
+    if (
+      (changesActiveFileSelection(current, activeItem) ||
+        (current.activeItemId !== undefined && current.activeItemId !== activeItem.id)) &&
+      !previewLeaveGuards.request(activeWorkbenchGuardScope(current), () => undefined)
+    )
+      return
     set((state) => ({
+      ...upsertPreviewItem(state, activeItem),
       activeItemId: activeItem.id,
       panelState: 'open',
       openRequestVersion: state.openRequestVersion + 1
@@ -551,16 +614,25 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   // Moves focus only to an item that is still present in the preview list.
   activateItem: (itemId) => {
     if (!get().items.some((item) => item.id === itemId)) return
-
-    set({ activeItemId: itemId })
+    if (get().activeItemId === itemId) return
+    previewLeaveGuards.request(activeWorkbenchGuardScope(get()), () =>
+      set({ activeItemId: itemId })
+    )
   },
 
   // Removes one preview tab and repairs focus if the active tab disappeared.
   removeItem: (itemId) => {
+    if (
+      get().activeItemId === itemId &&
+      !previewLeaveGuards.request(activeWorkbenchGuardScope(get()), () => undefined)
+    )
+      return false
+    let removed = false
     set((state) => {
       const removedIndex = state.items.findIndex((item) => item.id === itemId)
 
       if (removedIndex === -1) return state
+      removed = true
 
       const items = state.items.filter((item) => item.id !== itemId)
       const activeItemId =
@@ -576,17 +648,34 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
         fileDialogItem: itemId === PROJECT_FILES_PREVIEW_ID ? undefined : state.fileDialogItem
       }
     })
+    return removed
   },
 
   // Closes every preview tab except the kept one, which becomes the active tab. Owned here (not
   // composed from removeItem by callers) so expanded-surface and file-dialog teardown rules stay
   // in one place.
   removeOtherItems: (keepItemId) => {
-    set((state) => {
-      if (!state.items.some((item) => item.id === keepItemId)) return state
+    const state = get()
+    if (!state.items.some((item) => item.id === keepItemId)) return false
 
+    const workbenchScope =
+      state.activeItemId !== keepItemId ? activeWorkbenchGuardScope(state) : undefined
+    const removesProjectFilesTab =
+      keepItemId !== PROJECT_FILES_PREVIEW_ID &&
+      state.items.some((item) => item.id === PROJECT_FILES_PREVIEW_ID)
+    const dialogScope =
+      removesProjectFilesTab && state.fileDialogItem
+        ? dialogPreviewGuardScope(state.fileDialogItem.projectId, state.fileDialogItem.id)
+        : undefined
+    if (
+      !previewLeaveGuards.request(dialogScope, () => undefined) ||
+      !previewLeaveGuards.request(workbenchScope, () => undefined)
+    )
+      return false
+
+    set((state) => {
       const keepsProjectFilesTab = keepItemId === PROJECT_FILES_PREVIEW_ID
-      const removesProjectFilesTab =
+      const closesProjectFilesTab =
         !keepsProjectFilesTab && state.items.some((item) => item.id === PROJECT_FILES_PREVIEW_ID)
       const items = state.items.filter((item) => item.id === keepItemId)
 
@@ -596,35 +685,53 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
         expandedToolItemId: items.some((item) => item.id === state.expandedToolItemId)
           ? state.expandedToolItemId
           : null,
-        fileDialogItem: removesProjectFilesTab ? undefined : state.fileDialogItem
+        fileDialogItem: closesProjectFilesTab ? undefined : state.fileDialogItem
       }
     })
+    return true
   },
 
   // Drops all preview tabs owned by a deleted session and keeps focus on a valid tab.
   removeSessionItems: (sessionId) => {
-    set((state) => {
-      const firstRemovedIndex = state.items.findIndex((item) => item.sessionId === sessionId)
+    const state = get()
+    const activeItem = state.items.find((item) => item.id === state.activeItemId)
+    const workbenchScope =
+      activeItem?.sessionId === sessionId ? activeWorkbenchGuardScope(state) : undefined
+    const dialogScope =
+      state.fileDialogItem?.sessionId === sessionId
+        ? dialogPreviewGuardScope(state.fileDialogItem.projectId, state.fileDialogItem.id)
+        : undefined
+    previewLeaveGuards.request(dialogScope, () =>
+      previewLeaveGuards.request(workbenchScope, () =>
+        set((currentState) => {
+          const firstRemovedIndex = currentState.items.findIndex(
+            (item) => item.sessionId === sessionId
+          )
 
-      if (firstRemovedIndex === -1) return state
+          if (firstRemovedIndex === -1 && currentState.fileDialogItem?.sessionId !== sessionId)
+            return currentState
 
-      const items = state.items.filter((item) => item.sessionId !== sessionId)
-      const activeItemId = items.some((item) => item.id === state.activeItemId)
-        ? state.activeItemId
-        : getRepairedActiveItemId(items, firstRemovedIndex)
+          const items = currentState.items.filter((item) => item.sessionId !== sessionId)
+          const activeItemId = items.some((item) => item.id === currentState.activeItemId)
+            ? currentState.activeItemId
+            : getRepairedActiveItemId(items, Math.max(0, firstRemovedIndex))
 
-      return {
-        items,
-        activeItemId,
-        // A session-scoped tool tab could own the expanded surface; clear it when its tab is gone.
-        panelState: items.length > 0 ? state.panelState : 'collapsed',
-        expandedToolItemId: items.some((item) => item.id === state.expandedToolItemId)
-          ? state.expandedToolItemId
-          : null,
-        fileDialogItem:
-          state.fileDialogItem?.sessionId === sessionId ? undefined : state.fileDialogItem
-      }
-    })
+          return {
+            items,
+            activeItemId,
+            // A session-scoped tool tab could own the expanded surface; clear it when its tab is gone.
+            panelState: items.length > 0 ? currentState.panelState : 'collapsed',
+            expandedToolItemId: items.some((item) => item.id === currentState.expandedToolItemId)
+              ? currentState.expandedToolItemId
+              : null,
+            fileDialogItem:
+              currentState.fileDialogItem?.sessionId === sessionId
+                ? undefined
+                : currentState.fileDialogItem
+          }
+        })
+      )
+    )
   },
 
   // Expands a tool tab (files) into a large modal surface, or restores the inline panel layout.
@@ -632,9 +739,21 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
     set({ expandedToolItemId: itemId })
   },
 
-  openFileDialog: (item) => set({ fileDialogItem: item }),
+  openFileDialog: (item, skipGuard = false) => {
+    const current = get().fileDialogItem
+    return previewLeaveGuards.request(
+      skipGuard ? undefined : dialogPreviewGuardScope(current?.projectId, current?.id),
+      () => set({ fileDialogItem: item })
+    )
+  },
 
-  closeFileDialog: () => set({ fileDialogItem: undefined }),
+  closeFileDialog: (skipGuard = false) => {
+    const item = get().fileDialogItem
+    return previewLeaveGuards.request(
+      skipGuard ? undefined : dialogPreviewGuardScope(item?.projectId, item?.id),
+      () => set({ fileDialogItem: undefined })
+    )
+  },
 
   // Records an explicit open request so the resizable panel can expand even if it is already open.
   openPanel: () => {
@@ -648,7 +767,9 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 
   // Stores the manual collapsed state without changing preview item data.
   collapsePanel: () => {
-    set({ panelState: 'collapsed' })
+    previewLeaveGuards.request(activeWorkbenchGuardScope(get()), () =>
+      set({ panelState: 'collapsed' })
+    )
   },
 
   // Keeps the header toggle behavior centralized with the panel state.
@@ -663,9 +784,15 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 
   // Mirrors resize-library state into the store after drag or imperative panel changes.
   syncPanelState: (panelState) => {
+    if (
+      panelState === 'collapsed' &&
+      !previewLeaveGuards.request(activeWorkbenchGuardScope(get()), () => undefined)
+    )
+      return false
     set((state) => ({
       panelState: panelState === 'open' && state.items.length === 0 ? 'collapsed' : panelState
     }))
+    return true
   }
 }))
 

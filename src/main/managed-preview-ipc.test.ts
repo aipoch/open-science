@@ -112,7 +112,7 @@ describe('managed preview IPC handlers', () => {
     const owners = createManagedPreviewOwnerRegistry(resources)
 
     const acquire = owners.acquire(caller.lease, {
-      source: 'artifact',
+      source: 'local',
       path: '/managed/report.pdf'
     })
     const ownerId = (resources.acquire as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as number
@@ -131,7 +131,7 @@ describe('managed preview IPC handlers', () => {
     const owners = createManagedPreviewOwnerRegistry(resources)
 
     await expect(
-      owners.acquire(caller.lease, { source: 'artifact', path: '/managed/report.pdf' })
+      owners.acquire(caller.lease, { source: 'local', path: '/managed/report.pdf' })
     ).resolves.toEqual(resource)
     expect(resources.release).not.toHaveBeenCalled()
   })
@@ -153,7 +153,7 @@ describe('managed preview IPC handlers', () => {
     const owners = createManagedPreviewOwnerRegistry(resources)
 
     await expect(
-      owners.acquire(caller.lease, { source: 'artifact', path: '/managed/report.pdf' })
+      owners.acquire(caller.lease, { source: 'local', path: '/managed/report.pdf' })
     ).resolves.toEqual(resource)
     await expect(
       owners.readRange(caller.lease, { resourceId: resource.id, begin: 0, end: 1 })
@@ -181,12 +181,12 @@ describe('managed preview IPC handlers', () => {
     const owners = createManagedPreviewOwnerRegistry(resources)
 
     await owners.acquire(caller.lease, {
-      source: 'artifact',
+      source: 'local',
       path: '/managed/report.pdf',
       maxBytes: 1024
     })
 
-    const request = { source: 'artifact' as const, path: '/managed/report.pdf' }
+    const request = { source: 'local' as const, path: '/managed/report.pdf' }
     const ownerId = (resources.acquire as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as number
     expect(resources.inspect).toHaveBeenCalledWith(request)
     expect(resources.acquire).toHaveBeenCalledWith(ownerId, request, {
@@ -259,7 +259,7 @@ describe('managed preview IPC handlers', () => {
     const owners = createManagedPreviewOwnerRegistry(resources)
 
     const acquire = owners.acquire(caller.lease, {
-      source: 'artifact',
+      source: 'local',
       path: '/managed/report.pdf'
     })
     rejectAcquire?.(new Error('backend exploded'))
@@ -291,7 +291,7 @@ describe('managed preview IPC handlers', () => {
       payload: unknown
     ) => Promise<ManagedPreviewResource>
     await expect(
-      acquireHandler(event, { source: 'artifact', path: '/managed/report.html' })
+      acquireHandler(event, { source: 'local', path: '/managed/report.html' })
     ).resolves.toEqual(resource)
     const ownerId = (resources.acquire as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as number
     expect(ownerId).toBeLessThan(0)

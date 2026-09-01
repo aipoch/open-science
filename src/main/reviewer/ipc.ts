@@ -24,7 +24,7 @@ import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { SessionRepository } from '../session-persistence/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
-import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import { acquireDataRootWriter } from '../storage/migration-state'
 import { ReviewerProjectRuntimeOwner, type ReviewerProjectAdmission } from './project-runtime-owner'
 import {
@@ -33,8 +33,10 @@ import {
   type SessionAgentTargetResolver
 } from '../acp/session-agent-target'
 import type { SessionAgentConfiguration } from '../../shared/settings'
+import type { ArtifactVersionContentResolver } from './host-sdk'
 import { toErrorMessage } from '../error-message'
 import type { ReviewerPagedContentResolver } from './host-sdk'
+import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 
 const log = createLogger('reviewer:ipc')
 
@@ -90,12 +92,22 @@ type ReviewerIpcOptions = {
   storageRoot?: string
   // Optional override for the data root (artifacts) (for testing).
   dataRoot?: string
-  artifactProvenanceRepository?: Pick<
-    ArtifactProvenanceRepository,
-    | 'resolveVersionContent'
-    | 'resolveVersionContentForStreamingVerification'
-    | 'getReviewerVersionTrace'
-  > &
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'>
+  artifactCatalog?: {
+    readHostArtifactCatalog(request: {
+      projectId: string
+      versionId: string
+      finalizedArtifactsOnly: true
+    }): Promise<
+      Array<{
+        source: 'artifact' | 'upload'
+        sourceFileId: string
+        sessionId: string
+        versionId: string
+      }>
+    >
+  }
+  artifactProvenanceRepository?: Pick<ArtifactProvenanceRepository, 'getReviewerVersionTrace'> &
     Partial<Pick<ArtifactProvenanceRepository, 'resolveReviewerTurnFileEvidence'>>
   pagedContentResolver?: ReviewerPagedContentResolver
   withSessionMutation?: <Result>(
@@ -157,6 +169,7 @@ const createInFlightReviewStart = (): InFlightReviewStart => {
 const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerCommandOwner => {
   const storageRoot = options.storageRoot ?? resolveStorageRoot()
   const dataRoot = options.dataRoot ?? resolveDataRoot()
+  const artifactProvenanceRepository = options.artifactProvenanceRepository
   const reviewRepository = createDefaultReviewRepository(storageRoot, dataRoot)
   let recoveryGate: Promise<void> | undefined
   const ensureRecovery = (): Promise<void> => {
@@ -179,14 +192,54 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   }
   void ensureRecovery()
   const sessionRepository = new SessionRepository(storageRoot)
-  const artifactProvenanceRepository =
-    options.artifactProvenanceRepository ??
-    new ArtifactProvenanceRepository({
-      storageRoot: dataRoot,
-      getClient: () => getProjectDbClient(storageRoot),
-      loadSession: (projectId, appSessionId) =>
-        sessionRepository.loadSession(projectId, appSessionId)
-    })
+  const resolveArtifactVersion: ArtifactVersionContentResolver | undefined =
+    options.managedFileVersions
+      ? async (request) => {
+          const match = options.artifactCatalog
+            ? (
+                await options.artifactCatalog.readHostArtifactCatalog({
+                  projectId: request.projectId,
+                  versionId: request.versionId,
+                  finalizedArtifactsOnly: true
+                })
+              )[0]
+            : request.fileId && request.sessionId
+              ? {
+                  source: 'artifact' as const,
+                  sourceFileId: request.fileId,
+                  sessionId: request.sessionId,
+                  versionId: request.versionId
+                }
+              : undefined
+          if (!match) throw new Error(`Managed File Version not found: ${request.versionId}`)
+          const lease = await options.managedFileVersions!.openVersion(
+            {
+              source: match.source,
+              projectId: request.projectId,
+              fileId: match.sourceFileId
+            },
+            request.versionId
+          )
+          if (
+            request.sessionId &&
+            match.source === 'artifact' &&
+            match.sessionId !== request.sessionId
+          ) {
+            await lease.close()
+            throw new Error('Artifact Version belongs to a different Session.')
+          }
+          return {
+            path: lease.path,
+            filename: lease.version.filename,
+            ...(lease.version.contentType ? { contentType: lease.version.contentType } : {}),
+            checksum: lease.version.checksum,
+            size: lease.size,
+            readRange: lease.readRange,
+            verifyUnchanged: lease.verifyUnchanged,
+            close: lease.close
+          }
+        }
+      : undefined
   const projectRuntime = options.projectRuntime ?? new ReviewerProjectRuntimeOwner()
   // Per-session abort capabilities for active and queued fix loops. Keyed by the main session id
   // (not the reviewer session id). Project deletion owns the same signal, so user cancellation and
@@ -219,9 +272,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     } catch {
       return reviews
     }
-    return flagStaleReviews(reviews, session, dataRoot, (versionRequest) =>
-      artifactProvenanceRepository.resolveVersionContent(versionRequest)
-    )
+    return flagStaleReviews(reviews, session, dataRoot, resolveArtifactVersion)
   }
 
   const abortFixLoop = (request: ReviewSessionRequest): void => {
@@ -452,12 +503,16 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
         artifactStorageRoot: dataRoot,
         artifactVersionResolvers: {
-          content: (request) =>
-            artifactProvenanceRepository.resolveVersionContentForStreamingVerification(request),
-          trace: (request) => artifactProvenanceRepository.getReviewerVersionTrace(request),
+          ...(resolveArtifactVersion ? { content: resolveArtifactVersion } : {}),
+          ...(artifactProvenanceRepository
+            ? {
+                trace: (request: { projectId: string; versionId: string }) =>
+                  artifactProvenanceRepository.getReviewerVersionTrace(request)
+              }
+            : {}),
           ...(options.pagedContentResolver ? { pagedContent: options.pagedContentResolver } : {})
         },
-        ...(artifactProvenanceRepository.resolveReviewerTurnFileEvidence
+        ...(artifactProvenanceRepository?.resolveReviewerTurnFileEvidence
           ? {
               reviewerFileEvidenceResolver: (request) =>
                 artifactProvenanceRepository.resolveReviewerTurnFileEvidence!(request)

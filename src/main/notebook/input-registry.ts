@@ -3,7 +3,8 @@ import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../sh
 import { parseNotebookInputPreviewKey, type NotebookRunInputFile } from '../../shared/notebook'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
-import { readBoundedManagedFilePreview } from '../managed-file-preview'
+import type { ImmutableInputContentLease } from '../immutable-input-authority'
+import { readBoundedManagedFilePreviewLease } from '../managed-file-preview'
 
 type RegisterNotebookTurnInputsRequest = {
   projectId: string
@@ -21,6 +22,7 @@ type GetNotebookTurnInputsRequest = Pick<
 type ResolveNotebookInputPreviewRequest = {
   projectId: string
   sourceKind: NotebookRunInputFile['sourceKind']
+  sourceFileId: string
   inputFileVersionId: string
 }
 
@@ -40,14 +42,17 @@ type NotebookInputPreviewTarget = {
   contentType?: string
   sizeBytes: number
   checksum: string
-  absolutePath: string
 }
 
 type NotebookInputRegistryOptions = {
   inputAuthority: Pick<
     ImmutableInputAuthority,
-    'resolveContent' | 'resolveVersion' | 'stageContent' | 'validateVersion'
+    'openContent' | 'resolveVersion' | 'stageContent' | 'validateVersion'
   >
+  resolveArtifactVersionIdentity?: (
+    projectId: string,
+    versionId: string
+  ) => Promise<{ sourceFileId: string } | undefined>
 }
 
 type RegisteredTurn = {
@@ -94,7 +99,7 @@ class NotebookInputRunLease {
     return path
   }
 
-  close(): NotebookRunInputFile[] {
+  async close(): Promise<NotebookRunInputFile[]> {
     if (!this.closed) this.closed = true
     return this.inputFiles.map((input) => ({ ...input }))
   }
@@ -128,11 +133,15 @@ class NotebookInputRegistry {
         // immutable Notebook input edge until their storage identity is upgraded to a Version.
         continue
       }
+      if (!reference.sourceFileId) {
+        throw new Error(`Managed input has no logical file identity: ${reference.name}`)
+      }
       inputs.push(
         await this.resolveVersion({
           projectId: request.projectId,
           sourceKind: reference.source === 'upload' ? 'upload-version' : 'artifact-version',
-          inputFileVersionId: reference.versionId
+          inputFileVersionId: reference.versionId,
+          expectedSourceFileId: reference.sourceFileId
         })
       )
     }
@@ -156,13 +165,18 @@ class NotebookInputRegistry {
   async openRun(request: OpenNotebookInputRunRequest): Promise<NotebookInputRunLease> {
     const registered = this.turns.get(turnKey(request))?.inputs ?? []
     const workflowArtifacts = await Promise.all(
-      [...new Set(request.artifactVersionInputs ?? [])].map((inputFileVersionId) =>
-        this.resolveVersion({
+      [...new Set(request.artifactVersionInputs ?? [])].map(async (inputFileVersionId) => {
+        const identity = await this.options.resolveArtifactVersionIdentity?.(
+          request.projectId,
+          inputFileVersionId
+        )
+        return this.resolveVersion({
           projectId: request.projectId,
           sourceKind: 'artifact-version',
-          inputFileVersionId
+          inputFileVersionId,
+          expectedSourceFileId: identity?.sourceFileId
         })
-      )
+      })
     )
     const requested = [
       ...new Map(
@@ -198,16 +212,19 @@ class NotebookInputRegistry {
   async resolvePreview(
     request: ResolveNotebookInputPreviewRequest
   ): Promise<NotebookInputPreviewTarget> {
-    const input = await this.resolveVersion(request)
-    const absolutePath = await this.options.inputAuthority.resolveContent(input)
+    const input = await this.resolveVersion({
+      projectId: request.projectId,
+      sourceKind: request.sourceKind,
+      inputFileVersionId: request.inputFileVersionId,
+      expectedSourceFileId: request.sourceFileId
+    })
     return {
       sourceKind: input.sourceKind,
       inputFileVersionId: input.inputFileVersionId,
       filename: input.filename,
       contentType: input.contentType,
       sizeBytes: input.sizeBytes,
-      checksum: input.checksum,
-      absolutePath
+      checksum: input.checksum
     }
   }
 
@@ -215,13 +232,28 @@ class NotebookInputRegistry {
     return this.resolvePreview(parseNotebookInputPreviewKey(key))
   }
 
+  async openPreviewKey(key: string): Promise<ImmutableInputContentLease> {
+    const request = parseNotebookInputPreviewKey(key)
+    const input = await this.resolveVersion({
+      projectId: request.projectId,
+      sourceKind: request.sourceKind,
+      inputFileVersionId: request.inputFileVersionId,
+      expectedSourceFileId: request.sourceFileId
+    })
+    return this.options.inputAuthority.openContent(input)
+  }
+
   async readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult> {
-    const target = await this.resolvePreviewKey(request.path)
-    return readBoundedManagedFilePreview(
-      target.absolutePath,
-      request,
-      'Invalid Notebook input preview encoding.'
-    )
+    const lease = await this.openPreviewKey(request.path)
+    try {
+      return await readBoundedManagedFilePreviewLease(
+        lease,
+        request,
+        'Invalid Notebook input preview encoding.'
+      )
+    } finally {
+      await lease.close()
+    }
   }
 
   private async resolveVersion(

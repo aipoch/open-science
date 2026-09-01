@@ -1,5 +1,8 @@
 import type { ProjectFilesChangedEvent, ProjectFileSource } from '../../shared/project-files'
-import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
+import {
+  hasAnswerableDelegatedQuestion,
+  hasCurrentRunningDelegatedAttempt
+} from '../../shared/delegated-work-projection'
 import type {
   LoadAllSessionsResult,
   PersistedChatSession,
@@ -124,7 +127,9 @@ const isSessionArchiveBlocked = (session: PersistedChatSession): boolean =>
   ARCHIVE_BLOCKING_SESSION_STATUSES.has(session.status)
 
 const isSessionArchiveBlockedByPersistedWork = (session: PersistedChatSession): boolean =>
-  isSessionArchiveBlocked(session) || hasCurrentRunningDelegatedAttempt(session)
+  isSessionArchiveBlocked(session) ||
+  hasCurrentRunningDelegatedAttempt(session) ||
+  hasAnswerableDelegatedQuestion(session)
 
 class SessionPersistenceDeletionOwner {
   private readonly repository: SessionDeletionRepository

@@ -23,7 +23,11 @@ const actionButtonClassName =
 // Package-mirror list vs. configure form. The configure form is a settings-nav sub-view (not local
 // state) so the shared header shows a "Network / Package mirror" breadcrumb with back/forward.
 type NetworkView = { kind: 'list' | 'mirror' | 'proxy' | 'domains' }
-type NetworkPanelProps = { view: NetworkView; onNavigate: (view: NetworkView) => void }
+type NetworkPanelProps = {
+  view: NetworkView
+  onNavigate: (view: NetworkView) => void
+  notebookNetworkAvailable?: boolean
+}
 
 // Identity of the single check row this panel renders (and its pending placeholder). Only the id
 // lives here: the label travels to the row as *data* rather than as JSX, so holding it as a bare
@@ -44,7 +48,11 @@ const CONNECTION_TYPE_LABELS: Partial<Record<NetworkConnectionType, string>> = {
 // behind a firewall or on a slow route to the public conda-forge / pip hosts point package
 // fetches at a mirror instead. Notebook domains configures the application-owned egress policy used
 // by local Notebook and command-line processes.
-const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Element => {
+const NetworkPanel = ({
+  view,
+  onNavigate,
+  notebookNetworkAvailable = true
+}: NetworkPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const packageMirror = useSettingsStore((state) => state.packageMirror)
   const networkProxy = useSettingsStore((state) => state.networkProxy)
@@ -208,7 +216,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
         : Network
 
   if (view.kind === 'proxy') return <NetworkProxyForm onDone={() => onNavigate({ kind: 'list' })} />
-  if (view.kind === 'domains') return <NotebookNetworkDomainsForm />
+  if (view.kind === 'domains' && notebookNetworkAvailable) return <NotebookNetworkDomainsForm />
 
   return (
     <div className="space-y-6 p-5">
@@ -256,7 +264,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
         </section>
       ) : null}
 
-      {!isConfiguring ? (
+      {!isConfiguring && notebookNetworkAvailable ? (
         <section aria-label={t('Notebook network access')}>
           <h3 className="mb-1 text-sm font-semibold text-foreground">
             {t('Notebook network access')}

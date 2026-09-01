@@ -48,9 +48,8 @@ let root: string | undefined
 type HostViewImageTestHarness = {
   service: HostViewImageService
   readHostArtifactCatalog: ReturnType<typeof vi.fn>
-  resolveVersionDescriptors: ReturnType<typeof vi.fn>
-  resolveVersionContent: ReturnType<typeof vi.fn>
-  resolveManagedUploadPath: ReturnType<typeof vi.fn>
+  openLatest: ReturnType<typeof vi.fn>
+  closeLatest: ReturnType<typeof vi.fn>
   prepareImage: ReturnType<typeof vi.fn>
   setBackend(next: HostViewImageBackend): void
 }
@@ -65,11 +64,7 @@ const harness = (
     backend?: HostViewImageBackend
     items?: HostArtifactCatalogItem[]
     prepareImage?: ReturnType<typeof vi.fn>
-    resolveVersionDescriptors?: (request: {
-      projectId: string
-      appSessionId: string
-      versionIds: string[]
-    }) => Promise<Array<{ artifactId: string; versionId: string; state: 'pending' | 'finalized' }>>
+    openLatest?: HostViewImageServiceOptions['managedFileVersions']['openLatest']
   } = {}
 ): HostViewImageTestHarness => {
   let backend = options.backend ?? visualBackend()
@@ -79,17 +74,14 @@ const harness = (
         (item) => item.projectId === projectId && (!versionId || item.versionId === versionId)
       )
   )
-  const resolveVersionDescriptors = vi.fn(
-    options.resolveVersionDescriptors ??
-      (async ({ versionIds }: { versionIds: string[] }) =>
-        versionIds.map((versionId) => ({
-          artifactId: 'artifact-1',
-          versionId,
-          state: 'finalized' as const
-        })))
+  const closeLatest = vi.fn(async () => undefined)
+  const openLatest = vi.fn(
+    options.openLatest ??
+      (async ({ source }: { source: 'artifact' | 'upload' }) => ({
+        path: source === 'artifact' ? '/managed/artifact-v2.png' : '/managed/upload-v2.png',
+        close: closeLatest
+      }))
   )
-  const resolveVersionContent = vi.fn(async () => ({ path: '/managed/artifact.png' }))
-  const resolveManagedUploadPath = vi.fn(async () => '/managed/upload.png')
   const prepareImage =
     options.prepareImage ??
     vi.fn(async () => ({
@@ -100,19 +92,15 @@ const harness = (
     }))
   const service = new HostViewImageService({
     catalog: { readHostArtifactCatalog },
-    resolvers: {
-      artifact: { resolveVersionDescriptors, resolveVersionContent },
-      upload: { resolveManagedUploadPath }
-    },
+    managedFileVersions: { openLatest },
     captureBackend: () => backend,
     prepareImage: prepareImage as NonNullable<HostViewImageServiceOptions['prepareImage']>
   })
   return {
     service,
     readHostArtifactCatalog,
-    resolveVersionDescriptors,
-    resolveVersionContent,
-    resolveManagedUploadPath,
+    openLatest,
+    closeLatest,
     prepareImage,
     setBackend: (next: HostViewImageBackend) => {
       backend = next
@@ -189,7 +177,7 @@ describe('HostViewImageService', () => {
     ).resolves.toMatchObject({ attached: true, sourceKind: 'artifactVersion' })
   })
 
-  it('resolves Artifact and Upload versions across Sessions inside the trusted Project', async () => {
+  it('uses historical Version ids only to identify logical files, then opens latest', async () => {
     const artifact = catalogItem('artifact')
     const upload = catalogItem('upload')
     const h = harness({ items: [artifact, upload] })
@@ -205,32 +193,39 @@ describe('HostViewImageService', () => {
       projectId: 'project-a',
       versionId: artifact.versionId
     })
-    expect(h.resolveVersionContent).toHaveBeenCalledWith({
+    expect(h.openLatest).toHaveBeenNthCalledWith(1, {
+      source: 'artifact',
       projectId: 'project-a',
-      appSessionId: 'source-session',
-      artifactId: 'artifact-1',
-      versionId: artifact.versionId
+      fileId: 'artifact-1'
     })
-    expect(h.resolveVersionDescriptors).toHaveBeenCalledWith({
+    expect(h.openLatest).toHaveBeenNthCalledWith(2, {
+      source: 'upload',
       projectId: 'project-a',
-      appSessionId: 'calling-session',
-      versionIds: [artifact.versionId]
+      fileId: 'upload-1'
     })
-    expect(h.resolveManagedUploadPath).toHaveBeenCalledWith(
-      expect.objectContaining({ path: expect.stringContaining(upload.versionId) }),
-      { projectId: 'project-a', sessionId: 'source-session' }
+    expect(h.prepareImage).toHaveBeenNthCalledWith(
+      1,
+      '/managed/artifact-v2.png',
+      {},
+      expect.objectContaining({ aborted: false }),
+      undefined
     )
+    expect(h.closeLatest).toHaveBeenCalledTimes(2)
   })
 
-  it('rejects a pending Artifact version before resolving its content path', async () => {
+  it('closes the latest lease when image preparation fails', async () => {
     const artifact = catalogItem('artifact')
-    const resolveVersionDescriptors = vi.fn(async () => [])
-    const h = harness({ items: [artifact], resolveVersionDescriptors })
+    const h = harness({
+      items: [artifact],
+      prepareImage: vi.fn(async () => {
+        throw new Error('decode failed')
+      })
+    })
 
     await expect(h.service.stage({ versionId: artifact.versionId }, {}, context())).rejects.toThrow(
-      /not a finalized Artifact/u
+      /could not prepare/u
     )
-    expect(h.resolveVersionContent).not.toHaveBeenCalled()
+    expect(h.closeLatest).toHaveBeenCalledOnce()
   })
 
   it('rejects missing, ambiguous, malformed, and caller-forged source fields', async () => {

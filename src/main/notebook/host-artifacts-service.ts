@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { basename, isAbsolute } from 'node:path'
 
 import { fuzzyScore } from '../../shared/fuzzy-match'
@@ -19,7 +20,6 @@ type HostArtifactCatalog = {
 type HostArtifactReadContext = { projectId: string; sessionId: string }
 
 type NormalizedOptions = {
-  versionId?: string
   frameId?: string
   filename?: string
   exact: boolean
@@ -31,10 +31,24 @@ type NormalizedOptions = {
   limit: number
 }
 
-type Cursor = { version: 1; queryKey: string; offset: number }
+type Cursor = {
+  version: 2
+  queryKey: string
+  snapshotFingerprint: string
+  score: number
+  sortAtMs: number
+  identity: string
+}
+
+type RankedArtifact = {
+  item: HostArtifactCatalogItem
+  score: number
+  identity: string
+}
+
+const HOST_ARTIFACTS_CURSOR_SNAPSHOT_CHANGED = 'HOST_ARTIFACTS_CURSOR_SNAPSHOT_CHANGED'
 
 const OPTION_KEYS = new Set([
-  'version_id',
   'frame_id',
   'filename',
   'exact',
@@ -111,11 +125,6 @@ const normalizeOptions = (value: unknown): NormalizedOptions => {
   const unknown = Object.keys(value).filter((key) => !OPTION_KEYS.has(key))
   if (unknown.length > 0) throw new Error(`host.artifacts unknown option: ${unknown[0]}`)
 
-  const versionId = optionalString(value, 'version_id', 512)
-  if (versionId && Object.keys(value).length !== 1) {
-    throw new Error('host.artifacts version_id cannot be combined with other options.')
-  }
-
   const frameId = optionalString(value, 'frame_id', 512)
   const filename = optionalString(value, 'filename')
   const search = optionalString(value, 'search')
@@ -138,7 +147,6 @@ const normalizeOptions = (value: unknown): NormalizedOptions => {
   }
 
   return {
-    versionId,
     frameId,
     filename,
     exact,
@@ -161,16 +169,58 @@ const decodeCursor = (value: string, queryKey: string): Cursor => {
   } catch {
     throw new Error('host.artifacts cursor is invalid.')
   }
+  if (isRecord(cursor) && cursor.version === 1) {
+    throw new Error('host.artifacts cursor format is obsolete; restart from the first page.')
+  }
   if (
     !isRecord(cursor) ||
-    cursor.version !== 1 ||
+    cursor.version !== 2 ||
     cursor.queryKey !== queryKey ||
-    !Number.isInteger(cursor.offset) ||
-    (cursor.offset as number) < 0
+    typeof cursor.snapshotFingerprint !== 'string' ||
+    !/^[a-f0-9]{64}$/u.test(cursor.snapshotFingerprint) ||
+    typeof cursor.score !== 'number' ||
+    !Number.isFinite(cursor.score) ||
+    typeof cursor.sortAtMs !== 'number' ||
+    !Number.isFinite(cursor.sortAtMs) ||
+    typeof cursor.identity !== 'string' ||
+    cursor.identity.length === 0
   ) {
     throw new Error('host.artifacts cursor does not match the requested filters.')
   }
   return cursor as Cursor
+}
+
+const artifactIdentity = (item: HostArtifactCatalogItem): string =>
+  `${item.source}:${item.sourceFileId}`
+
+const compareRankedArtifacts = (
+  left: Pick<RankedArtifact, 'score' | 'identity'> & {
+    item: Pick<HostArtifactCatalogItem, 'sortAtMs'>
+  },
+  right: Pick<RankedArtifact, 'score' | 'identity'> & {
+    item: Pick<HostArtifactCatalogItem, 'sortAtMs'>
+  }
+): number =>
+  right.score - left.score ||
+  right.item.sortAtMs - left.item.sortAtMs ||
+  left.identity.localeCompare(right.identity)
+
+const catalogSnapshotFingerprint = (items: HostArtifactCatalogItem[]): string => {
+  const identities = items
+    .map((item) => ({
+      identity: artifactIdentity(item),
+      versionId: item.versionId,
+      checksum: item.checksum ?? '',
+      projectId: item.projectId,
+      sessionId: item.sessionId,
+      filename: item.filename,
+      contentType: item.contentType ?? '',
+      sizeBytes: item.sizeBytes,
+      sortAtMs: item.sortAtMs,
+      rootFrameId: item.rootFrameId
+    }))
+    .sort((left, right) => left.identity.localeCompare(right.identity))
+  return createHash('sha256').update(JSON.stringify(identities)).digest('hex')
 }
 
 const toHostArtifact = (item: HostArtifactCatalogItem): HostArtifact => {
@@ -206,16 +256,14 @@ const matchesContentType = (actual: string | undefined, requested: string): bool
 class HostArtifactsService {
   constructor(
     private readonly catalog: HostArtifactCatalog,
-    private readonly inputAuthority: Pick<ImmutableInputAuthority, 'stageVersion'>
+    private readonly inputAuthority: Pick<ImmutableInputAuthority, 'stageLatest'>
   ) {}
 
   async list(options: unknown, context: HostArtifactReadContext): Promise<HostArtifactsResult> {
     const normalized = normalizeOptions(options)
-    const candidates = await this.catalog.readHostArtifactCatalog({
-      projectId: context.projectId,
-      ...(normalized.versionId ? { versionId: normalized.versionId } : {})
-    })
-    const ranked = candidates.flatMap((item) => {
+    const candidates = await this.catalog.readHostArtifactCatalog({ projectId: context.projectId })
+    const snapshotFingerprint = catalogSnapshotFingerprint(candidates)
+    const ranked: RankedArtifact[] = candidates.flatMap((item) => {
       if (
         normalized.frameId &&
         (item.source !== 'artifact' || item.agentFrameId !== normalized.frameId)
@@ -235,19 +283,9 @@ class HostArtifactsService {
       if (normalized.beforeMs !== undefined && item.sortAtMs >= normalized.beforeMs) return []
       const match = normalized.search ? fuzzyScore(normalized.search, item.filename) : undefined
       if (normalized.search && !match) return []
-      return [{ item, score: match?.score ?? 0 }]
+      return [{ item, score: match?.score ?? 0, identity: artifactIdentity(item) }]
     })
-    if (normalized.search) {
-      ranked.sort(
-        (left, right) =>
-          right.score - left.score ||
-          right.item.sortAtMs - left.item.sortAtMs ||
-          (`${left.item.source}:${left.item.sourceFileId}` <
-          `${right.item.source}:${right.item.sourceFileId}`
-            ? -1
-            : 1)
-      )
-    }
+    ranked.sort(compareRankedArtifacts)
 
     const queryKey = JSON.stringify({
       projectId: context.projectId,
@@ -259,18 +297,41 @@ class HostArtifactsService {
       afterMs: normalized.afterMs,
       beforeMs: normalized.beforeMs
     })
-    const offset = normalized.cursor ? decodeCursor(normalized.cursor, queryKey).offset : 0
-    if (offset > ranked.length) throw new Error('host.artifacts cursor is no longer valid.')
-    const page = ranked.slice(offset, offset + normalized.limit)
-    const nextOffset = offset + page.length
-    const truncated = nextOffset < ranked.length
+    const cursor = normalized.cursor ? decodeCursor(normalized.cursor, queryKey) : undefined
+    if (cursor && cursor.snapshotFingerprint !== snapshotFingerprint) {
+      throw new Error(
+        `${HOST_ARTIFACTS_CURSOR_SNAPSHOT_CHANGED}: host.artifacts catalog changed; restart from the first page.`
+      )
+    }
+    const remaining = cursor
+      ? ranked.filter(
+          (candidate) =>
+            compareRankedArtifacts(candidate, {
+              score: cursor.score,
+              identity: cursor.identity,
+              item: { sortAtMs: cursor.sortAtMs }
+            }) > 0
+        )
+      : ranked
+    const page = remaining.slice(0, normalized.limit)
+    const truncated = page.length < remaining.length
     const artifacts = page.map(({ item }) => toHostArtifact(item))
+    const last = page.at(-1)
     return {
       count: ranked.length,
       projectId: context.projectId,
       truncated,
-      ...(truncated
-        ? { nextCursor: encodeCursor({ version: 1, queryKey, offset: nextOffset }) }
+      ...(truncated && last
+        ? {
+            nextCursor: encodeCursor({
+              version: 2,
+              queryKey,
+              snapshotFingerprint,
+              score: last.score,
+              sortAtMs: last.item.sortAtMs,
+              identity: last.identity
+            })
+          }
         : {}),
       artifacts
     }
@@ -287,11 +348,10 @@ class HostArtifactsService {
     if (!item)
       throw new Error(`Artifact Version not found in the current Project: ${versionIdValue}`)
 
-    const path = await this.inputAuthority.stageVersion({
+    const path = await this.inputAuthority.stageLatest({
       projectId: context.projectId,
       targetSessionId: context.sessionId,
       sourceKind: item.source === 'artifact' ? 'artifact-version' : 'upload-version',
-      inputFileVersionId: item.versionId,
       expectedSourceFileId: item.sourceFileId
     })
     if (!isAbsolute(path)) throw new Error('Notebook input stager returned a relative path.')
@@ -299,5 +359,5 @@ class HostArtifactsService {
   }
 }
 
-export { HostArtifactsService }
+export { HOST_ARTIFACTS_CURSOR_SNAPSHOT_CHANGED, HostArtifactsService }
 export type { HostArtifactCatalog, HostArtifactReadContext }

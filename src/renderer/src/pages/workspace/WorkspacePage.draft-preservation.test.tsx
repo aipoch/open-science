@@ -21,7 +21,10 @@ import { useSpecialistStore } from '@/stores/specialist-store'
 import type { TextAnnotation } from '../../../../shared/annotations'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
-import { setDefaultWorkspaceAgentSettings } from './workspace-page-test-fixtures'
+import {
+  markWorkspaceReviewHistoryLoaded,
+  setDefaultWorkspaceAgentSettings
+} from './workspace-page-test-fixtures'
 
 // Capture the props passed to the heavy child components so the test can drive selection and drafts.
 let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
@@ -213,6 +216,10 @@ describe('WorkspacePage draft preservation', () => {
       sessions: [createSession('sess-a', 'proj-1'), createSession('sess-b', 'proj-1')],
       selectedSessionId: 'sess-a'
     })
+    markWorkspaceReviewHistoryLoaded(
+      { projectId: 'proj-1', sessionId: 'sess-a' },
+      { projectId: 'proj-1', sessionId: 'sess-b' }
+    )
     useSettingsStore.setState({ skills: [], defaultPermissionProfile: 'ask' })
     useSpecialistStore.setState({ items: [], isLoaded: false })
     vi.clearAllMocks()

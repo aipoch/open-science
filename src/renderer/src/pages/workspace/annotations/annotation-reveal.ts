@@ -1,4 +1,8 @@
-import type { Annotation } from '../../../../../shared/annotations'
+import {
+  resolveManagedProjectFileAnnotationIdentity,
+  type Annotation,
+  type ManagedProjectFileAnnotationIdentity
+} from '../../../../../shared/annotations'
 import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
@@ -68,15 +72,60 @@ const retryPendingAnnotationReveal = (): void => {
   }
 }
 
+const managedAnnotationIdentity = (
+  source: NonNullable<ReturnType<typeof fileAnnotationSource>>
+): ManagedProjectFileAnnotationIdentity | null | undefined => {
+  if (source.kind === 'project-file') {
+    return resolveManagedProjectFileAnnotationIdentity(source)
+  }
+  if (source.kind === 'artifact-version') {
+    const artifact = parseArtifactVersionLocator(source.path)
+    if (
+      !artifact ||
+      artifact.projectId !== source.projectId ||
+      artifact.appSessionId !== source.sessionId ||
+      artifact.versionId !== source.versionId
+    ) {
+      return null
+    }
+    return {
+      fileSource: 'artifact',
+      fileId: artifact.artifactId,
+      versionId: artifact.versionId
+    }
+  }
+  const upload = parseUploadVersionReference(source.path)
+  if (
+    !upload ||
+    (upload.projectId !== undefined && upload.projectId !== source.projectId) ||
+    (upload.sessionId !== undefined && upload.sessionId !== source.sessionId) ||
+    upload.versionId !== source.versionId
+  ) {
+    return null
+  }
+  return upload.fileId
+    ? { fileSource: 'upload', fileId: upload.fileId, versionId: upload.versionId }
+    : undefined
+}
+
 const fileSourceMatchesItem = (annotation: Annotation, item: PreviewFileItem): boolean => {
   const source = fileAnnotationSource(annotation)
   if (!source) return false
-  if (item.projectId !== source.projectId || item.path !== source.path) return false
+  if (item.projectId !== source.projectId) return false
+  const managedIdentity = managedAnnotationIdentity(source)
+  if (managedIdentity === null) return false
+  const itemFileSource = item.source === 'upload' ? 'upload' : 'artifact'
+  const matchesManagedIdentity =
+    managedIdentity !== undefined &&
+    managedIdentity.fileId === item.managedFileId &&
+    managedIdentity.fileSource === itemFileSource
+  if (!matchesManagedIdentity && item.path !== source.path) return false
   const itemVersionId =
     item.selectedVersionId ??
     parseArtifactVersionLocator(item.path)?.versionId ??
     parseUploadVersionReference(item.path)?.versionId
-  if (source.versionId || itemVersionId) return source.versionId === itemVersionId
+  const sourceVersionId = managedIdentity?.versionId ?? source.versionId
+  if (sourceVersionId || itemVersionId) return sourceVersionId === itemVersionId
   return true
 }
 
@@ -89,16 +138,28 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
 
   const artifact = parseArtifactVersionLocator(source.path)
   const upload = parseUploadVersionReference(source.path)
+  const managedIdentity = managedAnnotationIdentity(source)
+  if (managedIdentity === null) return undefined
   const projectId = source.projectId
   const sessionId = source.sessionId ?? artifact?.appSessionId ?? upload?.sessionId
   if (!sessionId) return undefined
 
   const name = sourceName(source.path, source.name)
-  const versionId = source.versionId ?? artifact?.versionId ?? upload?.versionId
+  const versionId =
+    managedIdentity?.versionId ?? source.versionId ?? artifact?.versionId ?? upload?.versionId
+  // A reopened managed tab keeps the stable logical file identity separate from its exact Version.
+  const uploadFileId = managedIdentity?.fileSource === 'upload' ? managedIdentity.fileId : undefined
+  const artifactFileId =
+    managedIdentity?.fileSource === 'artifact' ? managedIdentity.fileId : undefined
+  const managedFileId = artifactFileId ?? uploadFileId
   return createPreviewFileItem({
     id:
-      artifact?.artifactId ??
-      (upload ? `upload:${upload.versionId}` : `file:${projectId}:${source.path}`),
+      artifactFileId ??
+      (uploadFileId
+        ? `upload:${uploadFileId}`
+        : upload
+          ? `upload:${upload.versionId}`
+          : `file:${projectId}:${source.path}`),
     projectId,
     sessionId,
     path: source.path,
@@ -109,9 +170,10 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
         : annotation.kind === 'pdf'
           ? 'application/pdf'
           : undefined,
-    source: upload ? 'upload' : undefined,
-    artifactId: artifact?.artifactId,
-    selectedVersionId: artifact ? versionId : undefined
+    source: uploadFileId ? 'upload' : undefined,
+    artifactId: artifactFileId,
+    managedFileId,
+    selectedVersionId: managedFileId ? versionId : undefined
   })
 }
 

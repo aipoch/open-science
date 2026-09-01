@@ -244,6 +244,7 @@ describe('preview persistence projections', () => {
           size: 4096,
           mtimeMs: 1710000001000,
           artifactId: 'artifact-1',
+          managedFileId: 'managed-file-1',
           selectedVersionId: 'artifact-version-2',
           versionNumber: 2,
           originSession: {
@@ -261,6 +262,7 @@ describe('preview persistence projections', () => {
       size: 4096,
       mtimeMs: 1710000001000,
       artifactId: 'artifact-1',
+      managedFileId: 'managed-file-1',
       selectedVersionId: 'artifact-version-2',
       versionNumber: 2,
       originSession: {

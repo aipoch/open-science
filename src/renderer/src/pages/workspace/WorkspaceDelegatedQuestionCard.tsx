@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
 
@@ -15,6 +15,7 @@ import type {
 // matter the UI language. Only the buttons' visible labels are translated.
 const AGENT_DECIDES_ANSWER = 'Let the agent decide'
 const SKIPPED_ANSWER = 'Skipped'
+const DRAFT_DEBOUNCE_MS = 300
 
 type Props = Readonly<{
   projectId: string
@@ -34,47 +35,120 @@ const WorkspaceDelegatedQuestionCard = ({
   const [questionIndex, setQuestionIndex] = useState(request.draftQuestionIndex)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
-  const responseQueue = useRef<Promise<void>>(Promise.resolve())
+  const mounted = useRef(true)
+  const draftInFlight = useRef(false)
+  const pendingDraft = useRef<ElicitationResponse | undefined>(undefined)
+  const scheduledDraft = useRef<ElicitationResponse | undefined>(undefined)
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const flushScheduledDraftRef = useRef<() => void>(() => undefined)
   const question = request.questions[questionIndex]
   const currentAnswer = answers.find((answer) => answer.questionIndex === questionIndex)?.value
+
+  const responseError = (caught: unknown): void => {
+    if (mounted.current) {
+      setError(caught instanceof Error ? caught.message : t('Could not save the response.'))
+    }
+  }
+
+  const drainDrafts = (): void => {
+    const response = pendingDraft.current
+    if (draftInFlight.current || !response) return
+    pendingDraft.current = undefined
+    draftInFlight.current = true
+    if (mounted.current) setError(undefined)
+    void Promise.resolve()
+      .then(() => onRespond(response))
+      .catch(responseError)
+      .finally(() => {
+        draftInFlight.current = false
+        drainDrafts()
+      })
+  }
+
+  const queueDraft = (response: ElicitationResponse): void => {
+    pendingDraft.current = response
+    drainDrafts()
+  }
+
+  const cancelScheduledDraft = (): void => {
+    if (draftTimer.current !== undefined) clearTimeout(draftTimer.current)
+    draftTimer.current = undefined
+    scheduledDraft.current = undefined
+  }
+
+  const flushScheduledDraft = (): void => {
+    if (draftTimer.current !== undefined) clearTimeout(draftTimer.current)
+    draftTimer.current = undefined
+    const response = scheduledDraft.current
+    scheduledDraft.current = undefined
+    if (response) queueDraft(response)
+  }
+
+  useEffect(() => {
+    flushScheduledDraftRef.current = flushScheduledDraft
+  })
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      flushScheduledDraftRef.current()
+    }
+  }, [])
+
+  const buildResponse = (
+    action: 'draft' | 'confirm',
+    nextAnswers: readonly DelegatedQuestionAnswer[],
+    nextQuestionIndex = questionIndex
+  ): ElicitationResponse => ({
+    requestId: request.requestId,
+    action: 'accept',
+    delegatedQuestion: {
+      projectId,
+      sessionId,
+      action,
+      answers: nextAnswers,
+      ...(action === 'draft' ? { questionIndex: nextQuestionIndex } : {})
+    }
+  })
 
   const send = async (
     action: 'draft' | 'confirm',
     nextAnswers: readonly DelegatedQuestionAnswer[],
     nextQuestionIndex = questionIndex
   ): Promise<void> => {
-    setError(undefined)
-    const response: ElicitationResponse = {
-      requestId: request.requestId,
-      action: 'accept',
-      delegatedQuestion: {
-        projectId,
-        sessionId,
-        action,
-        answers: nextAnswers,
-        ...(action === 'draft' ? { questionIndex: nextQuestionIndex } : {})
-      }
+    if (mounted.current) setError(undefined)
+    const response = buildResponse(action, nextAnswers, nextQuestionIndex)
+    if (action === 'draft') {
+      queueDraft(response)
+      return
     }
-    const operation = responseQueue.current.catch(() => undefined).then(() => onRespond(response))
-    responseQueue.current = operation
+    pendingDraft.current = undefined
     try {
-      await operation
+      await onRespond(response)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t('Could not save the response.'))
+      responseError(caught)
       throw caught
     }
   }
 
-  const choose = (value: string): void => {
+  const choose = (value: string, debounce = false): void => {
     const next = [
       ...answers.filter((answer) => answer.questionIndex !== questionIndex),
       ...(value.trim() ? [{ questionIndex, value }] : [])
     ].sort((left, right) => left.questionIndex - right.questionIndex)
     setAnswers(next)
+    cancelScheduledDraft()
+    if (debounce) {
+      scheduledDraft.current = buildResponse('draft', next)
+      draftTimer.current = setTimeout(flushScheduledDraft, DRAFT_DEBOUNCE_MS)
+      return
+    }
     void send('draft', next).catch(() => undefined)
   }
 
   const move = (nextIndex: number): void => {
+    cancelScheduledDraft()
     setQuestionIndex(nextIndex)
     void send('draft', answers, nextIndex).catch(() => undefined)
   }
@@ -82,6 +156,7 @@ const WorkspaceDelegatedQuestionCard = ({
   const confirm = async (): Promise<void> => {
     if (submitting || answers.length !== request.questions.length) return
     setSubmitting(true)
+    cancelScheduledDraft()
     try {
       await send('confirm', answers)
     } finally {
@@ -163,7 +238,8 @@ const WorkspaceDelegatedQuestionCard = ({
                 : ''
             }
             className="min-h-9 flex-1 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
-            onChange={(event) => choose(event.currentTarget.value)}
+            onChange={(event) => choose(event.currentTarget.value, true)}
+            onBlur={(event) => choose(event.currentTarget.value)}
           />
           <Button type="button" variant="ghost" onClick={() => choose(SKIPPED_ANSWER)}>
             {t('Skip')}

@@ -5,7 +5,12 @@ import { appendFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { classifyChanges, formatPlanSummary, parseNameStatus } from './classify-pr-changes.mjs'
+import {
+  classifyChanges,
+  formatPlanSummary,
+  parseNameStatus,
+  toGitHubOutputPlan
+} from './classify-pr-changes.mjs'
 import {
   createModuleImpactShadowReport,
   formatModuleImpactShadowSummary
@@ -61,10 +66,11 @@ export function runModuleImpactAuthorityCli(
   const report = createModuleImpactShadowReport(candidatePlan, modulePlan)
   const plan = report.resolved
   const planJson = JSON.stringify(plan)
+  const outputPlanJson = JSON.stringify(toGitHubOutputPlan(plan))
   const lanesJson = JSON.stringify(plan.lanes)
 
   if (environment.GITHUB_OUTPUT) {
-    append(environment.GITHUB_OUTPUT, `plan=${planJson}\nlanes=${lanesJson}\n`)
+    append(environment.GITHUB_OUTPUT, `plan=${outputPlanJson}\nlanes=${lanesJson}\n`)
   } else if (write) {
     write(`${planJson}\n`)
   } else {

@@ -18,6 +18,7 @@ import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../sh
 import {
   INTERRUPTED_TURN_ERROR,
   isHiddenControlMessage,
+  isReviewerCorrectionAttribution,
   sanitizeMessageAttribution,
   type PersistedChatSession
 } from '../../../../shared/session-persistence'
@@ -489,7 +490,8 @@ const triggerAutoReview = async (
     if (
       session.messages.some(
         (message) =>
-          message.id === reviewedMessage?.responseToMessageId && isHiddenControlMessage(message)
+          message.id === reviewedMessage?.responseToMessageId &&
+          (isHiddenControlMessage(message) || isReviewerCorrectionAttribution(message.attribution))
       )
     ) {
       return

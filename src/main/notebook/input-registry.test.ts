@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
+import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { NotebookInputRegistry } from './input-registry'
 import { createNotebookInputPreviewKey } from '../../shared/notebook'
 import { getNotebookInputRoot } from './input-staging'
@@ -77,6 +78,10 @@ const createUpload = async (input: {
       }
     }
   })
+  await client.uploadFile.update({
+    where: { id: input.uploadFileId },
+    data: { currentVersionId: input.versionId }
+  })
   return storageKey
 }
 
@@ -124,10 +129,16 @@ const createArtifact = async (input: {
           checksum: checksum(input.content),
           evidenceJson: '{}',
           evidenceChecksum: checksum('{}'),
+          evidenceSchemaVersion: 1,
+          managedVisibleAt: new Date('2026-07-27T10:05:00.000Z'),
           createdAt: new Date('2026-07-27T10:05:00.000Z')
         }
       }
     }
+  })
+  await client.artifactLineage.update({
+    where: { id: input.artifactId },
+    data: { currentVersionId: input.versionId }
   })
 }
 
@@ -135,11 +146,31 @@ const setup = async (): Promise<NotebookInputRegistry> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-input-registry-'))
   client = createProjectDbClient(storageRoot)
   await migrateApplicationDatabase(client)
+  await client.project.createMany({
+    data: [
+      { id: 'project-1', name: 'Project one' },
+      { id: 'project-2', name: 'Project two' }
+    ]
+  })
   return new NotebookInputRegistry({
     inputAuthority: new ImmutableInputAuthority({
       storageRoot,
-      getClient: () => Promise.resolve(client!)
-    })
+      managedFileVersions: new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client!)
+      })
+    }),
+    resolveArtifactVersionIdentity: async (projectId, versionId) => {
+      const version = await client!.artifactVersion.findFirst({
+        where: {
+          id: versionId,
+          state: 'finalized',
+          artifact: { is: { projectId } }
+        },
+        select: { artifactId: true }
+      })
+      return version ? { sourceFileId: version.artifactId } : undefined
+    }
   })
 }
 
@@ -182,6 +213,7 @@ describe('NotebookInputRegistry', () => {
       references: [
         {
           id: 'artifact-1',
+          sourceFileId: 'artifact-1',
           versionId: 'artifact-version-1',
           source: 'artifact',
           name: 'normalized.csv',
@@ -210,6 +242,7 @@ describe('NotebookInputRegistry', () => {
         path: createNotebookInputPreviewKey({
           projectId: 'project-1',
           sourceKind: 'upload-version',
+          sourceFileId: 'upload-1',
           inputFileVersionId: 'upload-version-1'
         }),
         encoding: 'utf8'
@@ -243,6 +276,7 @@ describe('NotebookInputRegistry', () => {
           },
           {
             id: 'artifact-1',
+            sourceFileId: 'artifact-1',
             versionId: 'artifact-version-1',
             source: 'artifact',
             name: 'normalized.csv',
@@ -316,6 +350,7 @@ describe('NotebookInputRegistry', () => {
     expect(stagedPath).not.toBe(await realpath(join(storageRoot!, ...storageKey.split('/'))))
     expect(stagedPath).toContain(getNotebookInputRoot(storageRoot!, 'project-1', 'active-session'))
     await expect(readFile(stagedPath, 'utf8')).resolves.toBe('group\nA\n')
+    if (process.platform !== 'win32') expect((await stat(stagedPath)).mode & 0o222).toBe(0)
     await chmod(stagedPath, 0o644)
     await writeFile(stagedPath, 'group\nB\n')
     const [repairedPath, concurrentPath] = await Promise.all([
@@ -331,7 +366,9 @@ describe('NotebookInputRegistry', () => {
     expect(repairedPath).toBe(stagedPath)
     expect(concurrentPath).toBe(stagedPath)
     await expect(readFile(stagedPath, 'utf8')).resolves.toBe('group\nA\n')
-    expect(lease.close()).toEqual([expect.objectContaining({ association: 'resolver-accessed' })])
+    await expect(lease.close()).resolves.toEqual([
+      expect.objectContaining({ association: 'resolver-accessed' })
+    ])
     expect(() => lease.getRunInputFiles()).toThrow(/closed/i)
   })
 
@@ -364,6 +401,7 @@ describe('NotebookInputRegistry', () => {
       references: [
         {
           id: 'panel-a',
+          sourceFileId: 'panel-a',
           versionId: 'panel-a-v1',
           source: 'artifact',
           name: 'panel_A.png',
@@ -494,7 +532,7 @@ describe('NotebookInputRegistry', () => {
         ],
         references: []
       })
-    ).rejects.toThrow(/checksum/i)
+    ).rejects.toThrow(/corrupt|checksum/i)
   })
 
   it('rejects cross-Project identities and conflicting registration for the same prompt', async () => {
@@ -517,6 +555,7 @@ describe('NotebookInputRegistry', () => {
         references: [
           {
             id: 'upload-2',
+            sourceFileId: 'upload-2',
             versionId: 'upload-version-2',
             source: 'upload',
             name: 'private.csv',

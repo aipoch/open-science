@@ -5,6 +5,7 @@ import type {
 } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
+import { sanitizeSessionPermissionRuntimeContext } from '../../shared/session-persistence'
 import { opencodeFramework } from '../agent-framework'
 import {
   AcpPermissionContext,
@@ -76,8 +77,11 @@ describe('ACP permission context', () => {
       title: 'mcp__open-science-notebook__notebook_execute',
       providerToolName: 'mcp__open-science-notebook__notebook_execute',
       toolKind: 'other' as const,
-      rawInput: { language: 'python', code: 'print(1)' },
-      notificationRawInput: { language: 'python', code: 'print(1)' },
+      rawInput: { language: 'python', code: 'token=test-notebook-secret\nprint(1)' },
+      notificationRawInput: {
+        language: 'python',
+        code: 'token=test-notebook-secret\nprint(1)'
+      },
       meta: { claudeCode: { toolName: 'mcp__open-science-notebook__notebook_execute' } }
     },
     {
@@ -86,8 +90,11 @@ describe('ACP permission context', () => {
       title: 'open_science_notebook_notebook_execute',
       providerToolName: 'open_science_notebook_notebook_execute',
       toolKind: 'other' as const,
-      rawInput: { language: 'python', code: 'print(1)' },
-      notificationRawInput: { language: 'python', code: 'print(1)' },
+      rawInput: { language: 'python', code: 'token=test-notebook-secret\nprint(1)' },
+      notificationRawInput: {
+        language: 'python',
+        code: 'token=test-notebook-secret\nprint(1)'
+      },
       meta: { toolName: 'open_science_notebook_notebook_execute' }
     },
     {
@@ -96,11 +103,11 @@ describe('ACP permission context', () => {
       title: 'mcp.open-science-notebook.notebook_execute',
       providerToolName: 'notebook_execute',
       toolKind: 'execute' as const,
-      rawInput: { language: 'python', code: 'print(1)' },
+      rawInput: { language: 'python', code: 'token=test-notebook-secret\nprint(1)' },
       notificationRawInput: {
         server: 'open-science-notebook',
         tool: 'notebook_execute',
-        arguments: { language: 'python', code: 'print(1)' }
+        arguments: { language: 'python', code: 'token=test-notebook-secret\nprint(1)' }
       },
       meta: { is_mcp_tool_call: true }
     }
@@ -139,14 +146,17 @@ describe('ACP permission context', () => {
       }
       const fingerprint = permissionRequestFingerprint(request)
       expect(fingerprint).toMatch(/^[a-f0-9]{64}$/)
+      const restoredPermission = sanitizeSessionPermissionRuntimeContext({
+        state: 'pending',
+        request,
+        originatingPromptMessageId: 'prompt-1',
+        fingerprint,
+        createdAt: 1
+      })
+      expect(restoredPermission).toBeDefined()
+      expect(JSON.stringify(restoredPermission)).not.toContain('test-notebook-secret')
       await context.prepareRestoredDecision(
-        {
-          state: 'pending',
-          request,
-          originatingPromptMessageId: 'prompt-1',
-          fingerprint: fingerprint!,
-          createdAt: 1
-        },
+        restoredPermission!,
         request.options[0],
         'default-project'
       )
@@ -175,6 +185,68 @@ describe('ACP permission context', () => {
       expect(context.presentationToolCallId('session-1', 'tool-replayed')).toBe('tool-replayed')
     }
   )
+
+  it('preserves a legacy restored Notebook fingerprint above the current preview limit', async () => {
+    const code = 'x'.repeat(7_600)
+    const title = 'mcp.open-science-notebook.notebook_execute'
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting({
+        sessionSnapshot: () => ({
+          cwd: '/workspace',
+          frameworkId: 'codex',
+          permissionProfile: { selectedProfile: 'ask' }
+        })
+      })
+    })
+    const request = {
+      requestId: 'permission-restored',
+      sessionId: 'session-1',
+      toolCallId: 'tool-original',
+      title,
+      providerToolName: 'notebook_execute',
+      isMcp: true,
+      mcpIdentity: 'open-science-notebook/notebook_execute',
+      toolKind: 'execute' as const,
+      rawInput: { language: 'python', code },
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' as const }]
+    }
+    const restoredPermission = sanitizeSessionPermissionRuntimeContext({
+      state: 'pending',
+      request,
+      originatingPromptMessageId: 'prompt-1',
+      fingerprint: permissionRequestFingerprint(request)!,
+      createdAt: 1
+    })
+
+    await context.prepareRestoredDecision(
+      restoredPermission!,
+      request.options[0],
+      'default-project'
+    )
+    observe(
+      context,
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-replayed',
+          title,
+          kind: 'execute',
+          status: 'pending',
+          rawInput: {
+            server: 'open-science-notebook',
+            tool: 'notebook_execute',
+            arguments: { language: 'python', code }
+          },
+          _meta: { is_mcp_tool_call: true }
+        }
+      },
+      'codex'
+    )
+
+    expect(context.presentationToolCallId('session-1', 'tool-replayed')).toBe('tool-original')
+  })
 
   it('keeps a non-matching restored Notebook replay on its provider toolCallId', async () => {
     const context = new AcpPermissionContext({

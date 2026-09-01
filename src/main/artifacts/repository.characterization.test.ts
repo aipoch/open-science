@@ -220,20 +220,8 @@ describe('ArtifactRepository storage compatibility contract', () => {
       messageId: 'message-1'
     })
 
-    await expect(
-      repository.readManagedFilePreview({
-        path: pending.path,
-        offset: 3,
-        maxBytes: 4,
-        encoding: 'utf8'
-      })
-    ).resolves.toMatchObject({
-      content: '3456',
-      encoding: 'utf8',
-      offset: 3,
-      nextOffset: 7,
-      truncated: true
-    })
+    const recoveredPath = await repository.resolveManagedFilePath({ path: pending.path })
+    await expect(readFile(recoveredPath, 'utf8')).resolves.toBe('0123456789')
     await expect(
       readFile(join(dirname(finalPath), '.metadata', 'notes.txt.json'), 'utf8').then(JSON.parse)
     ).resolves.toEqual({ mimeType: 'text/plain' })
@@ -271,13 +259,7 @@ describe('ArtifactRepository storage compatibility contract', () => {
     await expect(
       repository.resolveSessionArtifactFilePath('default-project', 'legacy-session', legacyPath)
     ).resolves.toBe(await realpath(legacyPath))
-    await expect(
-      repository.readManagedFilePreview({
-        path: legacyPath,
-        maxBytes: 6,
-        encoding: 'utf8'
-      })
-    ).resolves.toMatchObject({ content: 'legacy', truncated: true })
+    await expect(readFile(legacyPath, 'utf8')).resolves.toBe('legacy content')
     await expect(
       repository.findRunFinalizationMarker('default-project', 'legacy-run')
     ).resolves.toBeUndefined()

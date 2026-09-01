@@ -29,7 +29,11 @@ const CJK_CHARACTER = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{S
 
 type LiteratureDocumentReaderOptions = Readonly<{
   storageRoot: string
-  inputs: Pick<ImmutableInputAuthority, 'resolveVersion' | 'resolveContent'>
+  inputs: Pick<ImmutableInputAuthority, 'resolveVersion'> & {
+    openContent?: ImmutableInputAuthority['openContent']
+    // Test-only compatibility for fixtures that predate immutable read leases.
+    resolveContent?: (input: NotebookRunInputFile) => Promise<string>
+  }
   sessions: Pick<SessionPersistenceCoordinator, 'loadSessionForContinuation'>
 }>
 
@@ -281,12 +285,26 @@ class LiteratureDocumentReader {
   }
 
   private async extract(input: NotebookRunInputFile): Promise<Omit<ExtractedDocument, 'context'>> {
-    const path = await this.options.inputs.resolveContent(input)
-    // Literature serves bounded batches and builds a local index, so it needs the complete
-    // extracted text. The generic attachment route keeps its 1 MiB prompt-safety cap.
-    const extraction = await extractPdfText(path, undefined, {
-      maxChars: MAX_EXTRACTED_CACHE_CHARS
-    })
+    let extraction
+    if (this.options.inputs.openContent) {
+      const lease = await this.options.inputs.openContent(input)
+      try {
+        extraction = await extractPdfText(lease.path, undefined, {
+          maxChars: MAX_EXTRACTED_CACHE_CHARS
+        })
+        await lease.verifyUnchanged()
+      } finally {
+        await lease.close()
+      }
+    } else {
+      const path = await this.options.inputs.resolveContent?.(input)
+      if (!path) throw new Error('Immutable input content reader is unavailable.')
+      // Literature serves bounded batches and builds a local index, so it needs the complete
+      // extracted text. The generic attachment route keeps its 1 MiB prompt-safety cap.
+      extraction = await extractPdfText(path, undefined, {
+        maxChars: MAX_EXTRACTED_CACHE_CHARS
+      })
+    }
     if (extraction.truncated) {
       throw new Error(
         `PDF_TEXT_LIMIT_EXCEEDED: Extracted PDF text exceeds the ${MAX_EXTRACTED_CACHE_CHARS}-character Literature limit.`

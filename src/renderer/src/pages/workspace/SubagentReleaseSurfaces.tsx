@@ -2,8 +2,7 @@ import { AlertCircle, Bot, ChevronDown, ChevronRight, Loader2, X } from 'lucide-
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { AcpPermissionRequest } from '../../../../shared/acp'
-import type { AgentFrameworkId, AgentFrameworkView } from '../../../../shared/settings'
+import type { AcpPermissionRequest, DelegatedWorkUnavailableReason } from '../../../../shared/acp'
 import {
   Select,
   SelectContent,
@@ -26,7 +25,6 @@ import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-stat
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 import {
   projectSessionSubagents,
-  resolveDelegatedWorkAvailability,
   selectSubagentFrame,
   type SessionSubagentChild,
   type SubagentRawStatus
@@ -263,27 +261,21 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
   )
 }
 
+// The notice surfaces why a Session with no Subagents yet cannot admit them. The policy case
+// points at the composer agent controls menu — the one place the Delegation switch lives; the
+// configuration case keeps its Settings recovery, and its reason copy is already user-facing.
 const SubagentAvailabilityNotice = ({
-  frameworkId,
-  frameworks,
-  unavailableReason,
+  unavailable,
+  onTurnOnDelegation,
   onOpenSettings
 }: {
-  frameworkId: AgentFrameworkId
-  frameworks: readonly AgentFrameworkView[]
-  unavailableReason?: string
+  unavailable?: DelegatedWorkUnavailableReason
+  onTurnOnDelegation: () => void
   onOpenSettings: () => void
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
-  const availability = resolveDelegatedWorkAvailability(frameworkId, frameworks, t)
-  if (availability.available && !unavailableReason) return null
-  const framework = frameworks.find(({ id }) => id === frameworkId)
-  const title = unavailableReason
-    ? t('Subagents unavailable for this configuration')
-    : availability.available
-      ? t('Subagents unavailable for {{name}}', { name: framework?.displayName ?? frameworkId })
-      : availability.title
-  const description = unavailableReason ?? (availability.available ? '' : availability.description)
+  if (!unavailable) return null
+  const policyDisabled = unavailable.kind === 'delegation-disabled'
 
   return (
     <div
@@ -292,15 +284,23 @@ const SubagentAvailabilityNotice = ({
     >
       <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
       <span className="min-w-0 flex-1">
-        <strong className="block text-text-100">{title}</strong>
-        {description}
+        <strong className="block text-text-100">
+          {policyDisabled
+            ? t('Delegation is off for this conversation')
+            : t('Subagents unavailable for this configuration')}
+        </strong>
+        {policyDisabled
+          ? t(
+              'The agent cannot create new Subagents. Enable Delegation from the composer agent controls menu.'
+            )
+          : unavailable.reason}
       </span>
       <button
         type="button"
         className="shrink-0 rounded-md border border-border-200 bg-bg-000 px-2 py-1 text-text-100 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        onClick={onOpenSettings}
+        onClick={policyDisabled ? onTurnOnDelegation : onOpenSettings}
       >
-        {t('Open Settings')}
+        {policyDisabled ? t('Turn on Delegation') : t('Open Settings')}
       </button>
     </div>
   )

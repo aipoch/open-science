@@ -220,6 +220,7 @@ const registerWithFakes = (overrides?: {
     repository: {} as never,
     runRegistry: {} as never,
     uploadRepository: {} as never,
+    managedFileVersions: { openLatest: vi.fn() } as never,
     notebookRpcServer: {} as never,
     authorizeSkillImportReferencedUploads: vi.fn(async () => () => undefined),
     settingsService: {

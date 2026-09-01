@@ -1,4 +1,9 @@
 import type { ActiveSession, PromptResponse } from '@agentclientprotocol/sdk'
+import { rmSync } from 'node:fs'
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { AcpPromptRequest } from '../../shared/acp'
@@ -7,7 +12,7 @@ import { opencodeFramework } from '../agent-framework'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
-import type { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
+import { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
 import type { ReadyPreparedPromptHandle } from './prompt-preparation-owner'
 import { AcpPromptTurnWorkflow, type AcpPromptTurnWorkflowOptions } from './prompt-turn-workflow'
 import { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
@@ -382,6 +387,62 @@ const request = (sessionId = 's1'): AcpPromptRequest => ({
 })
 
 describe('AcpPromptTurnWorkflow', () => {
+  it('keeps a prepared resource snapshot through provider dispatch and removes it at terminal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acp-workflow-snapshot-'))
+    const snapshotPath = join(root, 'snapshot.txt')
+    await writeFile(snapshotPath, 'verified bytes')
+    const providerPrompt = vi.fn(async (content) => {
+      await expect(access(snapshotPath)).resolves.toBeUndefined()
+      expect(content).toEqual([
+        expect.objectContaining({ type: 'resource_link', uri: pathToFileURL(snapshotPath).href })
+      ])
+    })
+    const harness = createHarness({
+      execute: async (input) => {
+        expect(await input.beforeDispatch()).toBe('active')
+        await input.session.prompt(input.content)
+        await input.onAccepted()
+        input.captureStop()
+        return {
+          kind: 'stopped',
+          response: { stopReason: 'end_turn' },
+          facts: {}
+        }
+      },
+      finalize: (handles, outcome) => new AcpPromptOutcomeFinalizer().finalize(handles, outcome)
+    })
+    harness.setSession({
+      sessionId: 'provider-2',
+      prompt: providerPrompt,
+      nextUpdate: vi.fn()
+    } as unknown as ActiveSession)
+    Object.assign(harness.prepared, {
+      content: [
+        {
+          type: 'resource_link',
+          uri: pathToFileURL(snapshotPath).href,
+          name: 'notes.txt',
+          mimeType: 'text/plain'
+        }
+      ]
+    })
+    vi.mocked(harness.prepared.close).mockImplementation(() =>
+      rmSync(root, { recursive: true, force: true })
+    )
+    Object.assign(harness.context, { captureTerminal: vi.fn(() => undefined) })
+
+    try {
+      await expect(harness.workflow.run(request(), { kind: 'user' })).resolves.toEqual({
+        stopReason: 'end_turn'
+      })
+      expect(providerPrompt).toHaveBeenCalledOnce()
+      await expect(readFile(snapshotPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(harness.prepared.close).toHaveBeenCalledOnce()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('binds referenced Session ids to the prompt reservation', async () => {
     const harness = createHarness()
 

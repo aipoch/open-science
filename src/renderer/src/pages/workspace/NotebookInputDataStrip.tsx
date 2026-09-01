@@ -78,6 +78,7 @@ const NotebookInputDataStrip = ({
                 path: createNotebookInputPreviewKey({
                   projectId: input.sourceProjectId,
                   sourceKind: input.sourceKind,
+                  sourceFileId: input.sourceFileId,
                   inputFileVersionId: input.inputFileVersionId
                 }),
                 name: input.filename,

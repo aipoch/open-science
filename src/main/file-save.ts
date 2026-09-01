@@ -25,34 +25,42 @@ import { toErrorMessage } from './error-message'
 
 type RegisterFileSaveHandlersOptions = {
   resolveManagedFilePath?: (
-    source: SaveManagedFileRequest['source'],
-    request: { path: string; projectId?: string; sessionId?: string }
-  ) => Promise<string>
-  resolveSessionArtifactFilePath?: (
-    projectId: string,
-    sessionId: string,
-    path: string
-  ) => Promise<string>
+    source: 'local',
+    request: {
+      path: string
+      projectId?: string
+      sessionId?: string
+      fileId?: string
+      versionId?: string
+    }
+  ) => Promise<ManagedFilePathResolution>
   openManagedFile?: (sourcePath: string) => Promise<ManagedFileHandle>
-  openProjectArtifactFile?: (sourcePath: string) => Promise<ProjectArtifactFileHandle>
+  openNotebookInput?: (request: { path: string }) => Promise<ManagedFileHandle>
+  openLatestManagedFile?: (
+    source: 'artifact' | 'upload',
+    request: { projectId: string; fileId: string }
+  ) => Promise<ManagedFileVersionHandle>
+  openManagedFileVersion?: (
+    source: 'artifact' | 'upload',
+    request: { projectId: string; fileId: string; versionId: string }
+  ) => Promise<ManagedFileVersionHandle>
+  createProjectArtifactTemporaryRoot?: () => Promise<string>
   projectArtifactExportLimits?: ProjectArtifactExportLimits
   translate?: NativeTranslator
 }
+
+type ManagedFilePathResolution =
+  | string
+  | {
+      path: string
+      expectedSize: number
+      expectedChecksum: string
+    }
 
 type ProjectArtifactExportLimits = {
   maxFiles: number
   maxFileBytes: number
   maxTotalBytes: number
-}
-
-// Structural subset of fs FileHandle: the size check and stream must observe one open file.
-type ProjectArtifactFileHandle = {
-  stat: () => Promise<{ isFile: () => boolean; size: number; dev: number; ino: number }>
-  createReadStream: (options: {
-    autoClose: false
-    highWaterMark: number
-  }) => AsyncIterable<Uint8Array>
-  close: () => Promise<void>
 }
 
 const PROJECT_ARTIFACT_EXPORT_LIMITS: ProjectArtifactExportLimits = {
@@ -63,12 +71,13 @@ const PROJECT_ARTIFACT_EXPORT_LIMITS: ProjectArtifactExportLimits = {
 
 const PROJECT_ARTIFACT_STREAM_CHUNK_BYTES = 64 * 1024
 
-type ProjectArtifactExportCandidate = {
+type ProjectArtifactExportCandidateBase = {
   file: SaveProjectArtifactsRequest['files'][number]
-  sourcePath: string
   entryName: string
-  device: number
-  inode: number
+}
+
+type ProjectArtifactExportCandidate = ProjectArtifactExportCandidateBase & {
+  source: ManagedFileVersionHandle
 }
 
 type ManagedFileHandle = {
@@ -76,41 +85,80 @@ type ManagedFileHandle = {
   close: () => Promise<void>
 }
 
+// The verified Version lease exposes bounded reads from the inode selected by the DB lookup.
+type ManagedFileVersionHandle = ManagedFileHandle & {
+  size: number
+  readRange: (begin: number, end: number) => Promise<Uint8Array>
+  verifyUnchanged: () => Promise<void>
+}
+
 // IPC input is renderer-controlled; reject malformed sources and paths before any filesystem work.
-const assertSaveManagedFileRequest = (request: SaveManagedFileRequest): void => {
+const assertSaveManagedFileRequest: (
+  request: unknown
+) => asserts request is SaveManagedFileRequest = (request) => {
+  if (typeof request !== 'object' || request === null) {
+    throw new Error('Invalid managed file save request.')
+  }
+  const candidate = request as Record<string, unknown>
+  const source = candidate.source
   if (
-    typeof request !== 'object' ||
-    request === null ||
-    (request.source !== 'artifact' &&
-      request.source !== 'upload' &&
-      request.source !== 'notebook-input' &&
-      request.source !== 'local') ||
-    typeof request.path !== 'string' ||
-    request.path.trim().length === 0 ||
-    typeof request.suggestedName !== 'string'
+    (source !== 'artifact' &&
+      source !== 'upload' &&
+      source !== 'notebook-input' &&
+      source !== 'local') ||
+    typeof candidate.suggestedName !== 'string'
   ) {
+    throw new Error('Invalid managed file save request.')
+  }
+  if (source === 'artifact' || source === 'upload') {
+    if (
+      typeof candidate.projectId !== 'string' ||
+      candidate.projectId.trim().length === 0 ||
+      typeof candidate.fileId !== 'string' ||
+      candidate.fileId.trim().length === 0
+    ) {
+      throw new Error('Managed file save requires a logical identity.')
+    }
+    if (
+      candidate.versionId !== undefined &&
+      (typeof candidate.versionId !== 'string' || candidate.versionId.trim().length === 0)
+    ) {
+      throw new Error('Invalid managed file save request.')
+    }
+    return
+  }
+  if (typeof candidate.path !== 'string' || candidate.path.trim().length === 0) {
     throw new Error('Invalid managed file save request.')
   }
 }
 
-const assertSaveSessionArtifactsRequest = (request: SaveSessionArtifactsRequest): void => {
+const assertSaveSessionArtifactsRequest: (
+  request: unknown
+) => asserts request is SaveSessionArtifactsRequest = (request) => {
+  const candidate = request as Record<string, unknown> | null
   if (
-    typeof request !== 'object' ||
-    request === null ||
-    typeof request.projectId !== 'string' ||
-    request.projectId.trim().length === 0 ||
-    typeof request.sessionId !== 'string' ||
-    request.sessionId.trim().length === 0 ||
-    !Array.isArray(request.files) ||
-    request.files.length === 0 ||
-    request.files.some(
-      (file) =>
+    candidate === null ||
+    typeof candidate !== 'object' ||
+    typeof candidate.projectId !== 'string' ||
+    candidate.projectId.trim().length === 0 ||
+    typeof candidate.sessionId !== 'string' ||
+    candidate.sessionId.trim().length === 0 ||
+    !Array.isArray(candidate.files) ||
+    candidate.files.length === 0 ||
+    candidate.files.some((file) => {
+      if (
         typeof file !== 'object' ||
         file === null ||
-        typeof file.path !== 'string' ||
-        file.path.trim().length === 0 ||
+        typeof file.fileId !== 'string' ||
+        file.fileId.trim().length === 0 ||
         typeof file.suggestedName !== 'string'
-    )
+      ) {
+        return true
+      }
+      if ('path' in file && file.path !== undefined) return true
+      if ('versionId' in file && file.versionId !== undefined) return true
+      return false
+    })
   ) {
     throw new Error('Invalid Session Artifact save request.')
   }
@@ -126,17 +174,21 @@ const assertSaveProjectArtifactsRequest = (request: SaveProjectArtifactsRequest)
     !Array.isArray(request.files) ||
     request.files.length === 0 ||
     request.files.length > 10000 ||
-    request.files.some(
-      (file) =>
+    request.files.some((file) => {
+      if (
         typeof file !== 'object' ||
         file === null ||
         (file.source !== 'artifact' && file.source !== 'upload') ||
         typeof file.sessionId !== 'string' ||
         file.sessionId.trim().length === 0 ||
-        typeof file.path !== 'string' ||
-        file.path.trim().length === 0 ||
         typeof file.suggestedName !== 'string'
-    )
+      ) {
+        return true
+      }
+      if (typeof file.fileId !== 'string' || file.fileId.trim().length === 0) return true
+      if ('path' in file || ('versionId' in file && file.versionId !== undefined)) return true
+      return false
+    })
   ) {
     throw new Error('Invalid Project Artifact save request.')
   }
@@ -175,10 +227,8 @@ const openManagedFile = async (sourcePath: string): Promise<ManagedFileHandle> =
   }
 }
 
-// Pins the export source to one open handle so the size checks and the read observe the same
-// file, mirroring the inode-pinning approach of openManagedFile.
-const openProjectArtifactFile = (sourcePath: string): Promise<ProjectArtifactFileHandle> =>
-  open(sourcePath, 'r')
+const getManagedFilePath = (resolved: ManagedFilePathResolution): string =>
+  typeof resolved === 'string' ? resolved : resolved.path
 
 const appendArchiveChunk = async (handle: FileHandle, chunk: Uint8Array): Promise<void> => {
   let offset = 0
@@ -194,15 +244,17 @@ const writeProjectArtifactArchive = async (options: {
   candidates: ProjectArtifactExportCandidate[]
   failures: SaveProjectArtifactFailure[]
   limits: ProjectArtifactExportLimits
-  openSource: (sourcePath: string) => Promise<ProjectArtifactFileHandle>
+  createTemporaryRoot: () => Promise<string>
 }): Promise<boolean> => {
-  const temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-project-export-'))
-  const temporaryArchivePath = join(temporaryRoot, 'project-artifacts.zip')
+  let temporaryRoot: string | undefined
   let archiveHandle: FileHandle | undefined
   let archiveHandleClosed = false
   let zip: Zip | undefined
+  const pendingManagedSources = new Set(options.candidates.map((candidate) => candidate.source))
 
   try {
+    temporaryRoot = await options.createTemporaryRoot()
+    const temporaryArchivePath = join(temporaryRoot, 'project-artifacts.zip')
     archiveHandle = await open(temporaryArchivePath, 'wx', 0o600)
     let archiveFailure: Error | undefined
     let pendingArchiveWrite = Promise.resolve()
@@ -227,21 +279,28 @@ const writeProjectArtifactArchive = async (options: {
     }
 
     for (const candidate of options.candidates) {
-      let source: ProjectArtifactFileHandle | undefined
+      let closeSource: (() => Promise<void>) | undefined
       let entryStarted = false
       try {
-        source = await options.openSource(candidate.sourcePath)
-        const metadata = await source.stat()
-        if (!metadata.isFile()) {
-          throw new Error('Project export source is not a regular file.')
-        }
-        if (metadata.dev !== candidate.device || metadata.ino !== candidate.inode) {
-          throw new Error('Project export source changed after validation.')
-        }
-        if (metadata.size > options.limits.maxFileBytes) {
+        const managedSource = candidate.source
+        const sourceSize = managedSource.size
+        closeSource = () => managedSource.close()
+        const chunks = (async function* (): AsyncGenerator<Uint8Array> {
+          for (let begin = 0; begin < managedSource.size;) {
+            const end = Math.min(begin + PROJECT_ARTIFACT_STREAM_CHUNK_BYTES, managedSource.size)
+            const chunk = new Uint8Array(await managedSource.readRange(begin, end))
+            if (chunk.byteLength !== end - begin) {
+              throw new Error('Project export source changed while streaming.')
+            }
+            begin = end
+            yield chunk
+          }
+        })()
+
+        if (sourceSize > options.limits.maxFileBytes) {
           throw new Error('Project export file exceeds the per-file size limit.')
         }
-        if (streamedBytes + metadata.size > options.limits.maxTotalBytes) {
+        if (streamedBytes + sourceSize > options.limits.maxTotalBytes) {
           throw new Error('Project export exceeds the total size limit.')
         }
 
@@ -249,11 +308,7 @@ const writeProjectArtifactArchive = async (options: {
         zip.add(zipEntry)
         entryStarted = true
         let entryBytes = 0
-        const sourceStream = source.createReadStream({
-          autoClose: false,
-          highWaterMark: PROJECT_ARTIFACT_STREAM_CHUNK_BYTES
-        })
-        for await (const chunk of sourceStream) {
+        for await (const chunk of chunks) {
           entryBytes += chunk.byteLength
           if (entryBytes > options.limits.maxFileBytes) {
             throw new Error('Project export file exceeds the per-file size limit.')
@@ -269,6 +324,7 @@ const writeProjectArtifactArchive = async (options: {
           // window, and lifecycle events between source chunks.
           await yieldToEventLoop()
         }
+        await managedSource.verifyUnchanged()
         zipEntry.push(new Uint8Array(0), true)
         await pendingArchiveWrite
         throwIfArchiveFailed()
@@ -281,7 +337,8 @@ const writeProjectArtifactArchive = async (options: {
           message: toErrorMessage(error)
         })
       } finally {
-        await source?.close()
+        await closeSource?.()
+        pendingManagedSources.delete(candidate.source)
       }
     }
 
@@ -304,7 +361,12 @@ const writeProjectArtifactArchive = async (options: {
     if (archiveHandle && !archiveHandleClosed) {
       await archiveHandle.close().catch(() => undefined)
     }
-    await rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined)
+    await Promise.all(
+      [...pendingManagedSources].map((source) => source.close().catch(() => undefined))
+    )
+    if (temporaryRoot) {
+      await rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined)
+    }
   }
 }
 
@@ -339,14 +401,17 @@ const ZIP_FORBIDDEN_ENTRY_NAMES = new Set(['__proto__'])
 // Zip entry names must also be safe on Windows: normalize backslashes before basename so a
 // suggestedName like '..\..\evil.exe' collapses to a plain file name, then strip the characters
 // Windows rejects in file names.
-const getSafeZipEntryName = (suggestedName: string, sourcePath: string): string => {
-  const safeName = getSafeFilename(suggestedName.replaceAll('\\', '/'), sourcePath)
+const getSafeZipEntryName = (suggestedName: string): string => {
+  const safeName = basename(suggestedName.trim().replaceAll('\\', '/'))
     // Windows rejects these characters in file names; control characters are never valid.
     // eslint-disable-next-line no-control-regex
     .replaceAll(/[<>:"|?*\x00-\x1f]/g, '-')
-  if (!ZIP_FORBIDDEN_ENTRY_NAMES.has(safeName)) return safeName
-  const fallback = basename(sourcePath)
-  return ZIP_FORBIDDEN_ENTRY_NAMES.has(fallback) ? 'proto' : fallback
+  return safeName &&
+    safeName !== '.' &&
+    safeName !== '..' &&
+    !ZIP_FORBIDDEN_ENTRY_NAMES.has(safeName)
+    ? safeName
+    : 'file'
 }
 
 const getSafeZipBaseName = (suggestedArchiveName: string): string => {
@@ -413,24 +478,6 @@ const extensionForMime = (mimeType: string): string | undefined => {
 }
 
 const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {}): void => {
-  const resolveProjectArtifact = (
-    file: { sessionId: string; path: string },
-    projectId: string
-  ): Promise<string> => {
-    const resolver = options.resolveSessionArtifactFilePath
-    if (!resolver) throw new Error('Session Artifact file resolver is not configured.')
-    return resolver(projectId, file.sessionId, file.path)
-  }
-
-  const resolveManagedUpload = (
-    file: { sessionId: string; path: string },
-    projectId: string
-  ): Promise<string> => {
-    const resolver = options.resolveManagedFilePath
-    if (!resolver) throw new Error('Managed file resolver is not configured.')
-    return resolver('upload', { path: file.path, projectId, sessionId: file.sessionId })
-  }
-
   ipcMainHandle(
     'file:save-blob',
     async (event, request: SaveBlobFileRequest): Promise<SaveBlobFileResult> => {
@@ -459,37 +506,74 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
   ipcMainHandle(
     'file:save-managed',
     async (event, request: SaveManagedFileRequest): Promise<SaveManagedFileResult> => {
-      if (!options.resolveManagedFilePath) {
+      assertSaveManagedFileRequest(request)
+      const versionedRequest =
+        request.source === 'artifact' || request.source === 'upload' ? request : undefined
+      const notebookInputRequest = request.source === 'notebook-input' ? request : undefined
+      const localRequest = request.source === 'local' ? request : undefined
+      if (versionedRequest) {
+        if (
+          versionedRequest.versionId
+            ? !options.openManagedFileVersion
+            : !options.openLatestManagedFile
+        ) {
+          throw new Error('Managed file Version lease is not configured.')
+        }
+      } else if (
+        notebookInputRequest ? !options.openNotebookInput : !options.resolveManagedFilePath
+      ) {
         throw new Error('Managed file resolver is not configured.')
       }
 
-      assertSaveManagedFileRequest(request)
-      const sourcePath = await options.resolveManagedFilePath(request.source, {
-        path: request.path
-      })
+      const pathManagedFile = notebookInputRequest
+        ? await options.openNotebookInput!({ path: notebookInputRequest.path })
+        : localRequest
+          ? await (options.openManagedFile ?? openManagedFile)(
+              getManagedFilePath(
+                await options.resolveManagedFilePath!('local', { path: localRequest.path })
+              )
+            )
+          : undefined
       const requestedBaseName = basename(request.suggestedName.trim())
       const safeName =
         requestedBaseName && requestedBaseName !== '.' && requestedBaseName !== '..'
           ? requestedBaseName
-          : basename(sourcePath)
+          : versionedRequest
+            ? versionedRequest.fileId
+            : basename((notebookInputRequest ?? localRequest)!.path)
       const dialogOptions = {
         defaultPath: join(app.getPath('downloads'), safeName),
         title: (options.translate ?? englishNativeTranslator)('Save file')
       }
-      const managedFile = await (options.openManagedFile ?? openManagedFile)(sourcePath)
-
+      const parentWindow = BrowserWindow.fromWebContents(event.sender)
       try {
-        const parentWindow = BrowserWindow.fromWebContents(event.sender)
         const { canceled, filePath } = parentWindow
           ? await dialog.showSaveDialog(parentWindow, dialogOptions)
           : await dialog.showSaveDialog(dialogOptions)
 
         if (canceled || !filePath) return { saved: false }
 
-        await managedFile.copyTo(filePath)
-        return { saved: true, filePath }
+        // Resolve managed identities after confirmation so the default export observes the DB head.
+        const managedFile = versionedRequest
+          ? versionedRequest.versionId
+            ? await options.openManagedFileVersion!(versionedRequest.source, {
+                projectId: versionedRequest.projectId,
+                fileId: versionedRequest.fileId,
+                versionId: versionedRequest.versionId
+              })
+            : await options.openLatestManagedFile!(versionedRequest.source, {
+                projectId: versionedRequest.projectId,
+                fileId: versionedRequest.fileId
+              })
+          : pathManagedFile!
+        try {
+          await managedFile.copyTo(filePath)
+          return { saved: true, filePath }
+        } finally {
+          if (versionedRequest) await managedFile.close()
+        }
       } finally {
-        await managedFile.close()
+        await pathManagedFile?.close()
       }
     }
   )
@@ -497,35 +581,32 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
   ipcMainHandle(
     'file:save-session-artifacts',
     async (event, request: SaveSessionArtifactsRequest): Promise<SaveSessionArtifactsResult> => {
-      const resolveSessionArtifactFilePath = options.resolveSessionArtifactFilePath
-      if (!resolveSessionArtifactFilePath) {
-        throw new Error('Session Artifact file resolver is not configured.')
-      }
-
       assertSaveSessionArtifactsRequest(request)
+      const openLatestManagedFile = options.openLatestManagedFile
+      if (!openLatestManagedFile) {
+        throw new Error('Latest managed file resolver is not configured.')
+      }
       const parentWindow = BrowserWindow.fromWebContents(event.sender)
 
       if (request.files.length === 1) {
         const [file] = request.files
-        const sourcePath = await resolveSessionArtifactFilePath(
-          request.projectId,
-          request.sessionId,
-          file.path
-        )
-        const safeName = getSafeFilename(file.suggestedName, sourcePath)
+        const safeName = getSafeFilename(file.suggestedName, file.fileId)
         const dialogOptions = {
           defaultPath: join(app.getPath('downloads'), safeName),
           title: (options.translate ?? englishNativeTranslator)('Save artifact')
         }
-        const managedFile = await (options.openManagedFile ?? openManagedFile)(sourcePath)
+        const { canceled, filePath } = parentWindow
+          ? await dialog.showSaveDialog(parentWindow, dialogOptions)
+          : await dialog.showSaveDialog(dialogOptions)
+
+        if (canceled || !filePath) return { saved: false }
+
+        const managedFile = await openLatestManagedFile('artifact', {
+          projectId: request.projectId,
+          fileId: file.fileId
+        })
 
         try {
-          const { canceled, filePath } = parentWindow
-            ? await dialog.showSaveDialog(parentWindow, dialogOptions)
-            : await dialog.showSaveDialog(dialogOptions)
-
-          if (canceled || !filePath) return { saved: false }
-
           await managedFile.copyTo(filePath)
           return { saved: true, filePaths: [filePath] }
         } finally {
@@ -545,17 +626,17 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
       if (canceled || !destinationDirectory) return { saved: false }
 
       const savedPaths: string[] = []
-      const failures: Array<{ path: string; suggestedName: string; message: string }> = []
+      const failures: NonNullable<
+        Extract<SaveSessionArtifactsResult, { saved: true }>['failures']
+      > = []
       for (const file of request.files) {
         let managedFile: ManagedFileHandle | undefined
         try {
-          const sourcePath = await resolveSessionArtifactFilePath(
-            request.projectId,
-            request.sessionId,
-            file.path
-          )
-          const safeName = getSafeFilename(file.suggestedName, sourcePath)
-          managedFile = await (options.openManagedFile ?? openManagedFile)(sourcePath)
+          managedFile = await openLatestManagedFile('artifact', {
+            projectId: request.projectId,
+            fileId: file.fileId
+          })
+          const safeName = getSafeFilename(file.suggestedName, file.fileId)
           savedPaths.push(
             await copyToAvailableDestination(managedFile, destinationDirectory, safeName)
           )
@@ -582,6 +663,10 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
     'file:save-project-artifacts',
     async (event, request: SaveProjectArtifactsRequest): Promise<SaveProjectArtifactsResult> => {
       assertSaveProjectArtifactsRequest(request)
+      const openLatestManagedFile = options.openLatestManagedFile
+      if (!openLatestManagedFile) {
+        throw new Error('Latest managed file resolver is not configured.')
+      }
 
       const limits = options.projectArtifactExportLimits ?? PROJECT_ARTIFACT_EXPORT_LIMITS
       const candidates: ProjectArtifactExportCandidate[] = []
@@ -589,26 +674,24 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
       const failures: SaveProjectArtifactFailure[] = []
       let totalBytes = 0
       for (const file of request.files) {
-        let exportFile: ProjectArtifactFileHandle | undefined
+        let exportFile: ManagedFileVersionHandle | undefined
+        let retainedManagedVersion = false
         try {
           if (takenNames.size >= limits.maxFiles) {
             throw new Error('Project export exceeds the file-count limit.')
           }
-          const sourcePath =
-            file.source === 'upload'
-              ? await resolveManagedUpload(file, request.projectId)
-              : await resolveProjectArtifact(file, request.projectId)
-          exportFile = await (options.openProjectArtifactFile ?? openProjectArtifactFile)(
-            sourcePath
-          )
-          const metadata = await exportFile.stat()
-          if (!metadata.isFile()) {
-            throw new Error('Project export source is not a regular file.')
+          const managedVersion = await openLatestManagedFile(file.source, {
+            projectId: request.projectId,
+            fileId: file.fileId
+          })
+          exportFile = managedVersion
+          if (!Number.isSafeInteger(managedVersion.size) || managedVersion.size < 0) {
+            throw new Error('Project export source size is invalid.')
           }
-          if (metadata.size > limits.maxFileBytes) {
+          if (managedVersion.size > limits.maxFileBytes) {
             throw new Error('Project export file exceeds the per-file size limit.')
           }
-          if (totalBytes + metadata.size > limits.maxTotalBytes) {
+          if (totalBytes + managedVersion.size > limits.maxTotalBytes) {
             throw new Error('Project export exceeds the total size limit.')
           }
           // Entries are grouped by origin under constant directory prefixes; the file name part
@@ -616,25 +699,20 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
           const categoryDirectory = file.source === 'upload' ? 'uploads' : 'generated'
           const entryName = claimZipEntryName(
             takenNames,
-            `${categoryDirectory}/${getSafeZipEntryName(file.suggestedName, sourcePath)}`
+            `${categoryDirectory}/${getSafeZipEntryName(file.suggestedName)}`
           )
-          candidates.push({
-            file,
-            sourcePath,
-            entryName,
-            device: metadata.dev,
-            inode: metadata.ino
-          })
+          candidates.push({ file, entryName, source: managedVersion })
+          retainedManagedVersion = true
+          totalBytes += managedVersion.size
           // Claim checks are case-insensitive; the entry itself keeps its original casing.
           takenNames.add(entryName.toLowerCase())
-          totalBytes += metadata.size
         } catch (error) {
           failures.push({
             ...file,
             message: toErrorMessage(error)
           })
         } finally {
-          await exportFile?.close()
+          if (!retainedManagedVersion) await exportFile?.close()
         }
       }
       if (candidates.length === 0) {
@@ -655,17 +733,33 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
           }
         ]
       }
-      const { canceled, filePath } = parentWindow
-        ? await dialog.showSaveDialog(parentWindow, dialogOptions)
-        : await dialog.showSaveDialog(dialogOptions)
-      if (canceled || !filePath) return { saved: false }
+      let dialogResult: Awaited<ReturnType<typeof dialog.showSaveDialog>>
+      try {
+        dialogResult = parentWindow
+          ? await dialog.showSaveDialog(parentWindow, dialogOptions)
+          : await dialog.showSaveDialog(dialogOptions)
+      } catch (error) {
+        await Promise.all(
+          candidates.flatMap((candidate) => [candidate.source.close().catch(() => undefined)])
+        )
+        throw error
+      }
+      const { canceled, filePath } = dialogResult
+      if (canceled || !filePath) {
+        await Promise.all(
+          candidates.flatMap((candidate) => [candidate.source.close().catch(() => undefined)])
+        )
+        return { saved: false }
+      }
 
       const wroteArchive = await writeProjectArtifactArchive({
         destinationPath: filePath,
         candidates,
         failures,
         limits,
-        openSource: options.openProjectArtifactFile ?? openProjectArtifactFile
+        createTemporaryRoot:
+          options.createProjectArtifactTemporaryRoot ??
+          (() => mkdtemp(join(tmpdir(), 'open-science-project-export-')))
       })
       return {
         saved: true,

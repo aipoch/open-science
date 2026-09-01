@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 
 import type {
   ArtifactVersionEvidence,
@@ -15,6 +15,7 @@ import {
 } from './provenance-execution-evidence'
 import { connectorEvidenceIsValid } from './provenance-producer-capture'
 import type { PersistedVersionFileRecord } from './provenance-version-writer'
+import { requireAgentArtifactVersion } from './provenance-version-kind'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -34,6 +35,7 @@ type ArtifactFinalizationProofRequest = FinalizeArtifactVersionsRequest & {
 }
 
 type ArtifactFinalizationProofVersion = PersistedVersionFileRecord & {
+  state: string
   messageId: string | null
   rootFrameId: string
   agentFrameId: string
@@ -51,6 +53,7 @@ type ArtifactFinalizationProofVersion = PersistedVersionFileRecord & {
 
 type ArtifactProvenanceMessageFinalizerOptions = {
   getClient: () => Promise<PrismaClient>
+  now: () => Date
   loadSession?: (
     projectId: string,
     appSessionId: string
@@ -145,20 +148,23 @@ const loadArtifactFinalizationProofVersions = async (
   client: Pick<PrismaClient, 'artifactVersion'>,
   request: ArtifactFinalizationProofRequest
 ): Promise<ArtifactFinalizationProofVersion[]> =>
-  client.artifactVersion.findMany({
-    where: {
-      artifactRunId: request.artifactRunId,
-      rootFrameId: request.rootFrameId,
-      agentFrameId: request.agentFrameId,
-      messageBranchId: request.messageBranchId,
-      runtimeSegmentId: request.runtimeSegmentId,
-      promptMessageId: request.promptMessageId,
-      state: { in: ['pending', 'finalized'] },
-      artifact: { is: { projectId: request.projectId, sessionId: request.appSessionId } }
-    },
-    include: { artifact: true },
-    orderBy: [{ artifactId: 'asc' }, { versionNumber: 'asc' }]
-  })
+  (
+    await client.artifactVersion.findMany({
+      where: {
+        originKind: 'agent_generated',
+        artifactRunId: request.artifactRunId,
+        rootFrameId: request.rootFrameId,
+        agentFrameId: request.agentFrameId,
+        messageBranchId: request.messageBranchId,
+        runtimeSegmentId: request.runtimeSegmentId,
+        promptMessageId: request.promptMessageId,
+        state: { in: ['pending', 'finalized'] },
+        artifact: { is: { projectId: request.projectId, sessionId: request.appSessionId } }
+      },
+      include: { artifact: true },
+      orderBy: [{ artifactId: 'asc' }, { versionNumber: 'asc' }]
+    })
+  ).map(requireAgentArtifactVersion)
 
 const validateArtifactFinalizationProof = (
   matching: readonly ArtifactFinalizationProofVersion[],
@@ -410,6 +416,47 @@ export class ArtifactProvenanceMessageFinalizer {
     return this.finalizeVerifiedRun({ ...request, ...ancestry })
   }
 
+  async activateFinalizedRun(
+    request: FinalizeArtifactVersionsRequest
+  ): Promise<ArtifactVersionFile[]> {
+    const durableSession = await this.loadFinalizationSession(request)
+    return this.activateFinalizedRunWithDurableSession(request, durableSession)
+  }
+
+  async activateFinalizedRunWithDurableSession(
+    request: FinalizeArtifactVersionsRequest,
+    durableSession: PersistedChatSession
+  ): Promise<ArtifactVersionFile[]> {
+    const ancestry = validateDurableMessageOwnership(durableSession, request)
+    const normalizedRequest = normalizeArtifactFinalizationProofRequest({ ...request, ...ancestry })
+    const client = await this.options.getClient()
+    const versions = await client.$transaction(async (transaction) => {
+      const matching = await loadArtifactFinalizationProofVersions(transaction, normalizedRequest)
+      validateArtifactFinalizationProof(matching, normalizedRequest)
+      if (matching.some((version) => version.state !== 'finalized')) {
+        throw new ArtifactFinalizationProofError(
+          'version-not-eligible',
+          'Artifact Versions must be finalized before their visible head can advance.'
+        )
+      }
+      await transaction.artifactVersion.updateMany({
+        where: { id: { in: matching.map((version) => version.id) }, managedVisibleAt: null },
+        data: { managedVisibleAt: this.options.now() }
+      })
+      await this.activateLineageHeads(transaction, matching)
+      return matching
+    })
+    return Promise.all(
+      versions.map((version) =>
+        this.options.projectVersionFile(
+          version,
+          version.artifact.projectId,
+          version.artifact.sessionId
+        )
+      )
+    )
+  }
+
   private async finalizeVerifiedRun(
     request: ArtifactFinalizationProofRequest
   ): Promise<ArtifactVersionFile[]> {
@@ -429,14 +476,17 @@ export class ArtifactProvenanceMessageFinalizer {
         data: { state: 'finalized', messageId: normalizedRequest.messageId }
       })
 
-      return transaction.artifactVersion.findMany({
-        where: {
-          id: { in: matching.map((version) => version.id) },
-          state: 'finalized'
-        },
-        include: { artifact: true },
-        orderBy: [{ artifactId: 'asc' }, { versionNumber: 'asc' }]
-      })
+      return (
+        await transaction.artifactVersion.findMany({
+          where: {
+            id: { in: matching.map((version) => version.id) },
+            originKind: 'agent_generated',
+            state: 'finalized'
+          },
+          include: { artifact: true },
+          orderBy: [{ artifactId: 'asc' }, { versionNumber: 'asc' }]
+        })
+      ).map(requireAgentArtifactVersion)
     })
 
     return Promise.all(
@@ -448,5 +498,34 @@ export class ArtifactProvenanceMessageFinalizer {
         )
       )
     )
+  }
+
+  private async activateLineageHeads(
+    transaction: Prisma.TransactionClient,
+    matching: readonly ArtifactFinalizationProofVersion[]
+  ): Promise<void> {
+    for (const artifactId of new Set(matching.map((version) => version.artifactId))) {
+      const lineage = await transaction.artifactLineage.findUniqueOrThrow({
+        where: { id: artifactId },
+        include: { currentVersion: true }
+      })
+      const latestMatching = matching
+        .filter((version) => version.artifactId === artifactId)
+        .reduce<ArtifactFinalizationProofVersion | undefined>(
+          (latest, version) =>
+            !latest || version.versionNumber > latest.versionNumber ? version : latest,
+          undefined
+        )
+      if (!latestMatching) continue
+      if (
+        !lineage.currentVersion ||
+        lineage.currentVersion.versionNumber < latestMatching.versionNumber
+      ) {
+        await transaction.artifactLineage.update({
+          where: { id: artifactId },
+          data: { currentVersionId: latestMatching.id }
+        })
+      }
+    }
   }
 }

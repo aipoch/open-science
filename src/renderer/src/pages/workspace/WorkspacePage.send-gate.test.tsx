@@ -24,7 +24,10 @@ import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 
 import { type ComposerDoc } from './composer/composer-doc'
-import { setDefaultWorkspaceAgentSettings } from './workspace-page-test-fixtures'
+import {
+  markWorkspaceReviewHistoryLoaded,
+  setDefaultWorkspaceAgentSettings
+} from './workspace-page-test-fixtures'
 
 // Capture the ConversationPanel props the page computes, notably canSendMessage and the draft callback.
 let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
@@ -176,7 +179,7 @@ describe('WorkspacePage send gate while compacting', () => {
     setDefaultWorkspaceAgentSettings()
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useProjectStore.setState({ projects: [] })
-    useReviewStore.setState(createInitialReviewState())
+    markWorkspaceReviewHistoryLoaded({ projectId: 'proj-1', sessionId: 'sess-a' })
     useMemoryStore.setState(createInitialMemoryState())
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-1' })
     useSessionStore.setState({
@@ -715,6 +718,153 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(useSessionStore.getState().sessions[0]?.branchSwitchBlocked).not.toBe(true)
   })
 
+  it('restores the send lock from a persisted active Fix Loop review', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createReviewableSession()],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('do not race the correction'))
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+
+    const activeFixLoopReview: ReviewWithChecks = {
+      id: 'review-fix-loop',
+      projectId: 'proj-1',
+      sessionId: 'sess-a',
+      turnMessageId: 'agent-1',
+      scope: {
+        turnMessageId: 'agent-1',
+        blocks: [],
+        artifactVersionIds: []
+      },
+      lifecycle: 'running',
+      outcome: null,
+      model: 'test-model',
+      reviewerLog: [],
+      createdAt: 1_000,
+      updatedAt: 1_000,
+      checks: [
+        {
+          id: 'finding-1',
+          reviewId: 'review-fix-loop',
+          status: 'fail',
+          claim: 'The answer is incorrect.',
+          evidence: 'The persisted result still requires correction.',
+          resolution: 'open',
+          reflagCount: 0,
+          sortIndex: 0
+        }
+      ]
+    }
+
+    await act(async () => {
+      useReviewStore.getState().handleReviewUpdate({ review: activeFixLoopReview })
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(false)
+
+    await act(async () => {
+      useReviewStore.getState().handleReviewUpdate({
+        review: {
+          ...activeFixLoopReview,
+          lifecycle: 'complete',
+          outcome: 'flagged',
+          updatedAt: 2_000
+        }
+      })
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+  })
+
+  it('keeps idle turn mutations locked until review history hydration establishes no active Fix Loop', async () => {
+    useReviewStore.setState(createInitialReviewState())
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createReviewableSession()],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('wait for review history'))
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
+    expect(conversationProps.conversation.availability.branch).toBe(false)
+
+    await act(async () => {
+      useReviewStore.setState({ loadedReviewSessions: { 'proj-1\0sess-a': true } })
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
+    expect(conversationProps.conversation.availability.branch).toBe(true)
+  })
+
+  it('keeps running turn mutations locked until review history hydration establishes no active Fix Loop', async () => {
+    useReviewStore.setState(createInitialReviewState())
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [{ ...createReviewableSession(), status: 'running' }],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('do not queue before review history'))
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
+
+    await act(async () => {
+      useReviewStore.setState({ loadedReviewSessions: { 'proj-1\0sess-a': true } })
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
+  })
+
+  it('keeps sending locked when review history hydration fails', async () => {
+    useReviewStore.setState({
+      ...createInitialReviewState(),
+      loadedReviewSessions: { 'proj-1\0sess-a': true },
+      loadErrorsBySession: { 'proj-1\0sess-a': 'database unavailable' }
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createReviewableSession()],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('wait for review retry'))
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(false)
+  })
+
+  it('keeps manual review locked until review history hydration establishes no active Fix Loop', async () => {
+    useReviewStore.setState(createInitialReviewState())
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createReviewableSession()],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+
+    act(() => {
+      conversationProps.workflows.review.request()
+    })
+    expect(window.api.reviewer.run).not.toHaveBeenCalled()
+    expect(conversationProps.workflows.review.disabled).toBe(true)
+
+    await act(async () => {
+      useReviewStore.setState({ loadedReviewSessions: { 'proj-1\0sess-a': true } })
+    })
+    expect(conversationProps.workflows.review.disabled).toBe(false)
+  })
+
   it('disables sending while the runtime owns an otherwise idle session', async () => {
     await renderPage()
 
@@ -859,6 +1009,27 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.contextWindow.compactDisabledReason).toBe(
       'Resolve the current session error before compacting.'
     )
+  })
+
+  it('keeps context compaction locked until review history hydration establishes no active Fix Loop', async () => {
+    useReviewStore.setState(createInitialReviewState())
+    await renderPage()
+
+    act(() => {
+      conversationProps.contextWindow.compact()
+    })
+    expect(runtime.compactContext).not.toHaveBeenCalled()
+    expect(conversationProps.contextWindow.canCompact).toBe(false)
+
+    await act(async () => {
+      useReviewStore.setState({ loadedReviewSessions: { 'proj-1\0sess-a': true } })
+    })
+    expect(conversationProps.contextWindow.canCompact).toBe(true)
+
+    act(() => {
+      conversationProps.contextWindow.compact()
+    })
+    expect(runtime.compactContext).toHaveBeenCalledWith('sess-a')
   })
 
   it('surfaces restored permission retry errors without replacing the authorization card', async () => {

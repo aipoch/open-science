@@ -1,5 +1,3 @@
-import { join } from 'node:path'
-
 import { Prisma, type FileOriginSession, type ManagedFile } from '@prisma/client'
 
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
@@ -49,17 +47,28 @@ type NormalizedSearch = {
   queryKey: string
 }
 
-type SearchArtifactGroupRow = {
-  sessionId: string
-  groupSortAtMs: bigint
-  artifactCount: bigint
+type CatalogCursor = { sortAtMs: string; seq: number }
+
+type AuthoritativeCatalogQuery = {
+  projectIds: string[]
+  source?: ProjectFileSource
+  sessionId?: string
+  search?: NormalizedSearch
+  cursor?: CatalogCursor
+  limit?: number
 }
 
-type SearchOverviewRow = {
+type AuthoritativeOverviewCounts = {
   totalCount: bigint
   uploadCount: bigint
   artifactCount: bigint
   artifactGroupCount: bigint
+}
+
+type AuthoritativeArtifactGroupRow = {
+  sessionId: string
+  groupSortAtMs: bigint
+  artifactCount: bigint
 }
 
 const normalizeLimit = (limit: number): number => {
@@ -101,265 +110,362 @@ const normalizeExcludedSessionIds = (value: unknown): string[] => {
 const foldAsciiCase = (value: string): string =>
   value.replace(/[A-Z]/g, (character) => character.toLowerCase())
 
-const filenameContainsPredicate = (
-  displayNameColumn: Prisma.Sql,
-  search: NormalizedSearch | undefined
-): Prisma.Sql =>
-  search?.filenameContains
-    ? Prisma.sql`AND instr(lower(${displayNameColumn}), lower(${search.filenameContains})) > 0`
-    : Prisma.empty
-
-const excludedSessionIdsPredicate = (
-  sessionIdColumn: Prisma.Sql,
-  excludedSessionIds: string[]
-): Prisma.Sql =>
-  excludedSessionIds.length > 0
-    ? Prisma.sql`AND ${sessionIdColumn} NOT IN (${Prisma.join(excludedSessionIds)})`
-    : Prisma.empty
-
 const requireIdentifier = (value: string, field: string): void => {
   if (!value.trim()) throw new Error(`Project files ${field} is required.`)
 }
 
-const getMatchingOverviewCounts = async (
+// Native lineage/currentVersion rows are the catalog authority. ManagedFile remains a rebuildable
+// compatibility projection, so legacy rows participate only when no native logical identity exists.
+const authoritativeCatalogCte = (projectIds: string[]): Prisma.Sql => {
+  const projectScopeRows = Prisma.join(projectIds.map((projectId) => Prisma.sql`(${projectId})`))
+  return Prisma.sql`
+  WITH "CatalogProjectScope"("projectId") AS (
+    VALUES ${projectScopeRows}
+  ),
+  "BlockedCatalogProject" AS (
+    SELECT intent."projectId" AS "projectId"
+    FROM "ProjectDeletionIntent" AS intent
+    WHERE intent."projectId" IN (SELECT scope."projectId" FROM "CatalogProjectScope" AS scope)
+
+    UNION
+
+    SELECT project."id" AS "projectId"
+    FROM "Project" AS project
+    WHERE project."id" IN (SELECT scope."projectId" FROM "CatalogProjectScope" AS scope)
+      AND project."archivedAt" IS NOT NULL
+  ),
+  "BlockedCatalogSession" AS (
+    SELECT sync."projectId" AS "projectId", sync."sessionId" AS "sessionId"
+    FROM "ManagedFileSessionSync" AS sync
+    WHERE sync."projectId" IN (SELECT scope."projectId" FROM "CatalogProjectScope" AS scope)
+      AND (sync."deletedAt" IS NOT NULL OR sync."deleteOperationId" IS NOT NULL)
+
+    UNION
+
+    SELECT origin."projectId" AS "projectId", origin."sessionId" AS "sessionId"
+    FROM "FileOriginSession" AS origin
+    WHERE origin."projectId" IN (SELECT scope."projectId" FROM "CatalogProjectScope" AS scope)
+      AND (
+        origin."state" <> 'active'
+        OR origin."deletedAt" IS NOT NULL
+        OR origin."deletionOperationId" IS NOT NULL
+      )
+  ),
+  "BlockedCatalogFile" AS (
+    SELECT file."projectId" AS "projectId", file."source" AS "source",
+      file."sourceFileId" AS "sourceFileId"
+    FROM "ManagedFile" AS file
+    WHERE file."projectId" IN (SELECT scope."projectId" FROM "CatalogProjectScope" AS scope)
+      AND (file."deletedAt" IS NOT NULL OR file."deleteOperationId" IS NOT NULL)
+  ),
+  "AuthoritativeFile" AS (
+    SELECT
+      CAST(lineage.rowid * 2 AS INTEGER) AS "seq",
+      'artifact' AS "source",
+      lineage."id" AS "sourceFileId",
+      version."id" AS "sourceVersionId",
+      version."checksum" AS "checksum",
+      lineage."projectId" AS "projectId",
+      lineage."sessionId" AS "sessionId",
+      version."messageId" AS "messageId",
+      lineage."filename" AS "displayName",
+      version."contentStorageKey" AS "storageKey",
+      version."contentType" AS "mimeType",
+      version."sizeBytes" AS "sizeBytes",
+      CAST(version."createdAt" AS INTEGER) AS "mtimeMs",
+      CAST(version."createdAt" AS INTEGER) AS "sortAtMs",
+      lineage."createdAt" AS "createdAt",
+      lineage."updatedAt" AS "updatedAt",
+      NULL AS "deletedAt",
+      NULL AS "deleteOperationId"
+    FROM "ArtifactLineage" AS lineage
+    INNER JOIN "ArtifactVersion" AS version
+      ON version."artifactId" = lineage."id"
+      AND version."id" = lineage."currentVersionId"
+    WHERE lineage."projectId" IN (SELECT scope."projectId" FROM "CatalogProjectScope" AS scope)
+      AND version."state" IN ('pending', 'finalized')
+      AND (
+        version."originKind" <> 'legacy'
+        OR NOT EXISTS (
+          SELECT 1 FROM "ManagedFile" AS projected
+          WHERE projected."projectId" = lineage."projectId"
+            AND projected."source" = 'artifact'
+            AND projected."sourceFileId" = lineage."id"
+        )
+      )
+      AND (version."originKind" <> 'agent_generated' OR version."managedVisibleAt" IS NOT NULL)
+      AND NOT EXISTS (
+        SELECT 1 FROM "BlockedCatalogProject" AS blocked
+        WHERE blocked."projectId" = lineage."projectId"
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "BlockedCatalogSession" AS blocked
+        WHERE blocked."projectId" = lineage."projectId"
+          AND blocked."sessionId" = lineage."sessionId"
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "BlockedCatalogFile" AS blocked
+        WHERE blocked."projectId" = lineage."projectId"
+          AND blocked."source" = 'artifact'
+          AND blocked."sourceFileId" = lineage."id"
+      )
+
+    UNION ALL
+
+    SELECT
+      CAST(upload.rowid * 2 + 1 AS INTEGER) AS "seq",
+      'upload' AS "source",
+      upload."id" AS "sourceFileId",
+      version."id" AS "sourceVersionId",
+      version."checksum" AS "checksum",
+      upload."projectId" AS "projectId",
+      upload."sessionId" AS "sessionId",
+      NULL AS "messageId",
+      COALESCE(NULLIF(version."originalFilename", ''), version."filename") AS "displayName",
+      version."contentStorageKey" AS "storageKey",
+      version."contentType" AS "mimeType",
+      version."sizeBytes" AS "sizeBytes",
+      CAST(COALESCE(version."createdAt", version."registeredAt") AS INTEGER) AS "mtimeMs",
+      CAST(COALESCE(version."createdAt", version."registeredAt") AS INTEGER) AS "sortAtMs",
+      upload."createdAt" AS "createdAt",
+      upload."updatedAt" AS "updatedAt",
+      NULL AS "deletedAt",
+      NULL AS "deleteOperationId"
+    FROM "UploadFile" AS upload
+    INNER JOIN "UploadVersion" AS version
+      ON version."uploadFileId" = upload."id"
+      AND version."id" = upload."currentVersionId"
+    WHERE upload."projectId" IN (SELECT scope."projectId" FROM "CatalogProjectScope" AS scope)
+      AND version."state" = 'ready'
+      AND NOT EXISTS (
+        SELECT 1 FROM "BlockedCatalogProject" AS blocked
+        WHERE blocked."projectId" = upload."projectId"
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "BlockedCatalogSession" AS blocked
+        WHERE blocked."projectId" = upload."projectId"
+          AND blocked."sessionId" = upload."sessionId"
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "BlockedCatalogFile" AS blocked
+        WHERE blocked."projectId" = upload."projectId"
+          AND blocked."source" = 'upload'
+          AND blocked."sourceFileId" = upload."id"
+      )
+
+    UNION ALL
+
+    SELECT
+      -file."seq" AS "seq",
+      file."source", file."sourceFileId", file."sourceVersionId", file."checksum",
+      file."projectId", file."sessionId", file."messageId", file."displayName",
+      file."storageKey", file."mimeType", file."sizeBytes", file."mtimeMs", file."sortAtMs",
+      file."createdAt", file."updatedAt", file."deletedAt", file."deleteOperationId"
+    FROM "ManagedFile" AS file
+    WHERE file."projectId" IN (SELECT scope."projectId" FROM "CatalogProjectScope" AS scope)
+      AND file."sourceVersionId" IS NOT NULL
+      AND file."deletedAt" IS NULL
+      AND file."deleteOperationId" IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "BlockedCatalogProject" AS blocked
+        WHERE blocked."projectId" = file."projectId"
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "BlockedCatalogSession" AS blocked
+        WHERE blocked."projectId" = file."projectId"
+          AND blocked."sessionId" = file."sessionId"
+      )
+      AND (
+        (file."source" = 'artifact' AND NOT EXISTS (
+          SELECT 1 FROM "ArtifactLineage" AS lineage
+          INNER JOIN "ArtifactVersion" AS version
+            ON version."artifactId" = lineage."id"
+            AND version."id" = lineage."currentVersionId"
+          WHERE lineage."projectId" = file."projectId"
+            AND lineage."id" = file."sourceFileId"
+            AND lineage."currentVersionId" IS NOT NULL
+            AND version."originKind" <> 'legacy'
+        ))
+        OR
+        (file."source" = 'upload' AND NOT EXISTS (
+          SELECT 1 FROM "UploadFile" AS upload
+          WHERE upload."projectId" = file."projectId"
+            AND upload."id" = file."sourceFileId"
+            AND upload."currentVersionId" IS NOT NULL
+        ))
+      )
+  )
+`
+}
+
+const authoritativeCatalogPredicates = (
+  query: Omit<AuthoritativeCatalogQuery, 'projectIds' | 'limit'>
+): Prisma.Sql => {
+  const sourcePredicate = query.source
+    ? Prisma.sql`AND file."source" = ${query.source}`
+    : Prisma.empty
+  const sessionPredicate = query.sessionId
+    ? Prisma.sql`AND file."sessionId" = ${query.sessionId}`
+    : Prisma.empty
+  const filenamePredicate = query.search?.filenameContains
+    ? Prisma.sql`AND instr(lower(file."displayName"), lower(${query.search.filenameContains})) > 0`
+    : Prisma.empty
+  const excludedSessionsPredicate = query.search?.excludedSessionIds.length
+    ? Prisma.sql`AND file."sessionId" NOT IN (${Prisma.join(query.search.excludedSessionIds)})`
+    : Prisma.empty
+  const cursorPredicate = query.cursor
+    ? Prisma.sql`AND (
+        file."sortAtMs" < ${BigInt(query.cursor.sortAtMs)}
+        OR (file."sortAtMs" = ${BigInt(query.cursor.sortAtMs)} AND file."seq" < ${query.cursor.seq})
+      )`
+    : Prisma.empty
+  return Prisma.sql`
+    ${sourcePredicate}
+    ${sessionPredicate}
+    ${filenamePredicate}
+    ${excludedSessionsPredicate}
+    ${cursorPredicate}
+  `
+}
+
+const normalizeCatalogRows = (rows: Array<ManagedFile & { seq: number | bigint }>): ManagedFile[] =>
+  rows.map((row) => ({
+    ...row,
+    seq: typeof row.seq === 'bigint' ? toSafeNumber(row.seq, 'catalog sequence') : row.seq
+  }))
+
+const queryAuthoritativeFiles = async (
+  client: ProjectFilesClient,
+  query: AuthoritativeCatalogQuery
+): Promise<ManagedFile[]> => {
+  if (query.projectIds.length === 0) return []
+  const predicates = authoritativeCatalogPredicates(query)
+  const limit = query.limit === undefined ? Prisma.empty : Prisma.sql`LIMIT ${query.limit}`
+  const rows = await client.$queryRaw<Array<ManagedFile & { seq: number | bigint }>>(Prisma.sql`
+    ${authoritativeCatalogCte(query.projectIds)}
+    SELECT file.*
+    FROM "AuthoritativeFile" AS file
+    WHERE 1 = 1
+      ${predicates}
+    ORDER BY file."sortAtMs" DESC, file."seq" DESC
+    ${limit}
+  `)
+  return normalizeCatalogRows(rows)
+}
+
+const countAuthoritativeFiles = async (
+  client: ProjectFilesClient,
+  query: Omit<AuthoritativeCatalogQuery, 'cursor' | 'limit'>
+): Promise<number> => {
+  if (query.projectIds.length === 0) return 0
+  const predicates = authoritativeCatalogPredicates(query)
+  const rows = await client.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+    ${authoritativeCatalogCte(query.projectIds)}
+    SELECT COUNT(*) AS "count"
+    FROM "AuthoritativeFile" AS file
+    WHERE 1 = 1
+      ${predicates}
+  `)
+  return toSafeCount(rows[0]?.count ?? 0n, 'catalog count')
+}
+
+const getAuthoritativeOverviewCounts = async (
   client: ProjectFilesClient,
   projectId: string,
-  search: NormalizedSearch
+  search: NormalizedSearch | undefined
 ): Promise<[number, number, number, number]> => {
-  const rows = await client.$queryRaw<SearchOverviewRow[]>(Prisma.sql`
+  const predicates = authoritativeCatalogPredicates({ search })
+  const rows = await client.$queryRaw<AuthoritativeOverviewCounts[]>(Prisma.sql`
+    ${authoritativeCatalogCte([projectId])}
     SELECT
-      COUNT(file."seq") AS "totalCount",
+      COUNT(*) AS "totalCount",
       COALESCE(SUM(CASE WHEN file."source" = 'upload' THEN 1 ELSE 0 END), 0) AS "uploadCount",
       COALESCE(SUM(CASE WHEN file."source" = 'artifact' THEN 1 ELSE 0 END), 0) AS "artifactCount",
-      COUNT(DISTINCT CASE
-        WHEN file."source" = 'artifact' AND sync."sessionId" IS NOT NULL THEN file."sessionId"
-      END) AS "artifactGroupCount"
-    FROM "ManagedFile" AS file
-    LEFT JOIN "ManagedFileSessionSync" AS sync
-      ON sync."projectId" = file."projectId"
-      AND sync."sessionId" = file."sessionId"
-      AND sync."deletedAt" IS NULL
-    WHERE file."projectId" = ${projectId}
-      AND file."deletedAt" IS NULL
-      ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
-      ${excludedSessionIdsPredicate(Prisma.sql`file."sessionId"`, search.excludedSessionIds)}
+      COUNT(DISTINCT CASE WHEN file."source" = 'artifact' THEN file."sessionId" END)
+        AS "artifactGroupCount"
+    FROM "AuthoritativeFile" AS file
+    WHERE 1 = 1
+      ${predicates}
   `)
   const counts = rows[0]
-
   return [
-    toSafeCount(counts?.totalCount ?? 0n, 'search result count'),
-    toSafeCount(counts?.uploadCount ?? 0n, 'upload search result count'),
-    toSafeCount(counts?.artifactCount ?? 0n, 'artifact search result count'),
-    toSafeCount(counts?.artifactGroupCount ?? 0n, 'artifact group count')
+    toSafeCount(counts?.totalCount ?? 0n, 'catalog total count'),
+    toSafeCount(counts?.uploadCount ?? 0n, 'catalog upload count'),
+    toSafeCount(counts?.artifactCount ?? 0n, 'catalog artifact count'),
+    toSafeCount(counts?.artifactGroupCount ?? 0n, 'catalog artifact group count')
   ]
 }
 
-const countMatchingFiles = async (
+const listAuthoritativeFiles = async (
   client: ProjectFilesClient,
-  projectId: string,
-  search: NormalizedSearch,
-  source?: ProjectFileSource,
-  sessionId?: string
-): Promise<number> => {
-  const sourcePredicate = source === undefined ? Prisma.empty : Prisma.sql`AND "source" = ${source}`
-  const sessionPredicate =
-    sessionId === undefined ? Prisma.empty : Prisma.sql`AND "sessionId" = ${sessionId}`
-  const rows = await client.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
-    SELECT COUNT(*) AS "count"
-    FROM "ManagedFile"
-    WHERE "projectId" = ${projectId}
-      AND "deletedAt" IS NULL
-      ${sourcePredicate}
-      ${sessionPredicate}
-      ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}
-      ${excludedSessionIdsPredicate(Prisma.sql`"sessionId"`, search.excludedSessionIds)}
-  `)
-  return toSafeCount(rows[0]?.count ?? 0n, 'search result count')
-}
+  query: AuthoritativeCatalogQuery & { limit: number }
+): Promise<[ManagedFile[], number]> =>
+  Promise.all([
+    queryAuthoritativeFiles(client, query),
+    countAuthoritativeFiles(client, {
+      projectIds: query.projectIds,
+      source: query.source,
+      sessionId: query.sessionId,
+      search: query.search
+    })
+  ])
 
-const listMatchingFiles = async (
+const listAuthoritativeArtifactGroups = async (
   client: ProjectFilesClient,
-  projectId: string,
-  source: ProjectFileSource | undefined,
-  sessionId: string | undefined,
-  search: NormalizedSearch,
-  cursor: FileCursor | undefined,
-  limit: number
-): Promise<[ManagedFile[], number]> => {
-  const sourcePredicate = source === undefined ? Prisma.empty : Prisma.sql`AND "source" = ${source}`
-  const sessionPredicate =
-    sessionId === undefined ? Prisma.empty : Prisma.sql`AND "sessionId" = ${sessionId}`
-  const exclusionPredicate = excludedSessionIdsPredicate(
-    Prisma.sql`"sessionId"`,
-    search.excludedSessionIds
-  )
-  const cursorPredicate = cursor
-    ? Prisma.sql`AND ("sortAtMs" < ${BigInt(cursor.sortAtMs)} OR ("sortAtMs" = ${BigInt(cursor.sortAtMs)} AND "seq" < ${cursor.seq}))`
+  input: {
+    projectId: string
+    search: NormalizedSearch | undefined
+    cursor: GroupCursor | undefined
+    limit: number
+  }
+): Promise<[AuthoritativeArtifactGroupRow[], number]> => {
+  const predicates = authoritativeCatalogPredicates({ source: 'artifact', search: input.search })
+  const cursorPredicate = input.cursor
+    ? Prisma.sql`WHERE (
+        groups."groupSortAtMs" < ${BigInt(input.cursor.groupSortAtMs)}
+        OR (
+          groups."groupSortAtMs" = ${BigInt(input.cursor.groupSortAtMs)}
+          AND groups."sessionId" < ${input.cursor.sessionId}
+        )
+      )`
     : Prisma.empty
   const [rows, totalCount] = await Promise.all([
-    client.$queryRaw<ManagedFile[]>(Prisma.sql`
-      SELECT
-        "seq", "source", "sourceFileId", "sourceVersionId", "checksum",
-        "projectId", "sessionId", "messageId",
-        "displayName", "storageKey", "mimeType", "sizeBytes", "mtimeMs", "sortAtMs",
-        "createdAt", "updatedAt", "deletedAt", "deleteOperationId"
-      FROM "ManagedFile"
-      WHERE "projectId" = ${projectId}
-        ${sourcePredicate}
-        AND "deletedAt" IS NULL
-        ${sessionPredicate}
-        ${filenameContainsPredicate(Prisma.sql`"displayName"`, search)}
-        ${exclusionPredicate}
-        ${cursorPredicate}
-      ORDER BY "sortAtMs" DESC, "seq" DESC
-      LIMIT ${limit + 1}
+    client.$queryRaw<AuthoritativeArtifactGroupRow[]>(Prisma.sql`
+      ${authoritativeCatalogCte([input.projectId])},
+      "ArtifactGroup" AS (
+        SELECT
+          file."sessionId" AS "sessionId",
+          MAX(file."sortAtMs") AS "groupSortAtMs",
+          COUNT(*) AS "artifactCount"
+        FROM "AuthoritativeFile" AS file
+        WHERE 1 = 1
+          ${predicates}
+        GROUP BY file."sessionId"
+      )
+      SELECT groups.*
+      FROM "ArtifactGroup" AS groups
+      ${cursorPredicate}
+      ORDER BY groups."groupSortAtMs" DESC, groups."sessionId" DESC
+      LIMIT ${input.limit}
     `),
-    countMatchingFiles(client, projectId, search, source, sessionId)
+    (async () => {
+      const countRows = await client.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+        ${authoritativeCatalogCte([input.projectId])}
+        SELECT COUNT(DISTINCT file."sessionId") AS "count"
+        FROM "AuthoritativeFile" AS file
+        WHERE 1 = 1
+          ${predicates}
+      `)
+      return toSafeCount(countRows[0]?.count ?? 0n, 'catalog artifact group count')
+    })()
   ])
   return [rows, totalCount]
 }
 
-const listMatchingArtifacts = async (
+const listAuthoritativeManagedFiles = async (
   client: ProjectFilesClient,
-  projectId: string,
-  search: NormalizedSearch | undefined,
-  excludedSessionIds: string[],
-  cursor: SearchArtifactCursor | undefined,
-  limit: number
-): Promise<ManagedFile[]> => {
-  const filenamePredicate = filenameContainsPredicate(Prisma.sql`"displayName"`, search)
-  const exclusionPredicate = excludedSessionIdsPredicate(
-    Prisma.sql`"sessionId"`,
-    excludedSessionIds
-  )
-  const cursorPredicate = cursor
-    ? Prisma.sql`AND ("sortAtMs" < ${BigInt(cursor.sortAtMs)} OR ("sortAtMs" = ${BigInt(cursor.sortAtMs)} AND "seq" < ${cursor.seq}))`
-    : Prisma.empty
-
-  return client.$queryRaw<ManagedFile[]>(Prisma.sql`
-    SELECT
-      "seq", "source", "sourceFileId", "sourceVersionId", "checksum",
-      "projectId", "sessionId", "messageId",
-      "displayName", "storageKey", "mimeType", "sizeBytes", "mtimeMs", "sortAtMs",
-      "createdAt", "updatedAt", "deletedAt", "deleteOperationId"
-    FROM "ManagedFile"
-    WHERE "projectId" = ${projectId}
-      AND "source" = 'artifact'
-      AND "deletedAt" IS NULL
-      ${filenamePredicate}
-      ${exclusionPredicate}
-      ${cursorPredicate}
-    ORDER BY "sortAtMs" DESC, "seq" DESC
-    LIMIT ${limit + 1}
-  `)
-}
-
-const countMatchingArtifacts = async (
-  client: ProjectFilesClient,
-  projectId: string,
-  search: NormalizedSearch | undefined,
-  excludedSessionIds: string[]
-): Promise<number> => {
-  const filenamePredicate = filenameContainsPredicate(Prisma.sql`"displayName"`, search)
-  const exclusionPredicate = excludedSessionIdsPredicate(
-    Prisma.sql`"sessionId"`,
-    excludedSessionIds
-  )
-  const rows = await client.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
-    SELECT COUNT(*) AS "count"
-    FROM "ManagedFile"
-    WHERE "projectId" = ${projectId}
-      AND "source" = 'artifact'
-      AND "deletedAt" IS NULL
-      ${filenamePredicate}
-      ${exclusionPredicate}
-  `)
-  return toSafeCount(rows[0]?.count ?? 0n, 'artifact search result count')
-}
-
-const listOtherProjectArtifacts = async (
-  client: ProjectFilesClient,
-  projectIds: string[],
-  search: NormalizedSearch | undefined,
-  excludedSessionIds: string[],
-  limit: number
-): Promise<ManagedFile[]> => {
-  const filenamePredicate = filenameContainsPredicate(Prisma.sql`"displayName"`, search)
-  const exclusionPredicate = excludedSessionIdsPredicate(
-    Prisma.sql`"sessionId"`,
-    excludedSessionIds
-  )
-
-  return client.$queryRaw<ManagedFile[]>(Prisma.sql`
-    SELECT
-      "seq", "source", "sourceFileId", "sourceVersionId", "checksum",
-      "projectId", "sessionId", "messageId",
-      "displayName", "storageKey", "mimeType", "sizeBytes", "mtimeMs", "sortAtMs",
-      "createdAt", "updatedAt", "deletedAt", "deleteOperationId"
-    FROM "ManagedFile"
-    WHERE "projectId" IN (${Prisma.join(projectIds)})
-      AND "source" = 'artifact'
-      AND "deletedAt" IS NULL
-      ${filenamePredicate}
-      ${exclusionPredicate}
-    ORDER BY "sortAtMs" DESC, "seq" DESC
-    LIMIT ${limit}
-  `)
-}
-
-const countMatchingArtifactGroups = async (
-  client: ProjectFilesClient,
-  projectId: string,
-  search: NormalizedSearch
-): Promise<number> => {
-  const rows = await client.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
-    SELECT COUNT(DISTINCT sync."sessionId") AS "count"
-    FROM "ManagedFileSessionSync" AS sync
-    INNER JOIN "ManagedFile" AS file
-      ON file."projectId" = sync."projectId" AND file."sessionId" = sync."sessionId"
-    WHERE sync."projectId" = ${projectId}
-      AND sync."deletedAt" IS NULL
-      AND file."source" = 'artifact'
-      AND file."deletedAt" IS NULL
-      ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
-      ${excludedSessionIdsPredicate(Prisma.sql`sync."sessionId"`, search.excludedSessionIds)}
-  `)
-  return toSafeCount(rows[0]?.count ?? 0n, 'artifact group count')
-}
-
-const listMatchingArtifactGroups = async (
-  client: ProjectFilesClient,
-  projectId: string,
-  search: NormalizedSearch,
-  cursor: GroupCursor | undefined,
-  limit: number
-): Promise<[SearchArtifactGroupRow[], number]> => {
-  const cursorPredicate = cursor
-    ? Prisma.sql`AND (sync."groupSortAtMs" < ${BigInt(cursor.groupSortAtMs)} OR (sync."groupSortAtMs" = ${BigInt(cursor.groupSortAtMs)} AND sync."sessionId" < ${cursor.sessionId}))`
-    : Prisma.empty
-  return Promise.all([
-    client.$queryRaw<SearchArtifactGroupRow[]>(Prisma.sql`
-      SELECT
-        sync."sessionId" AS "sessionId",
-        sync."groupSortAtMs" AS "groupSortAtMs",
-        COUNT(file."seq") AS "artifactCount"
-      FROM "ManagedFileSessionSync" AS sync
-      INNER JOIN "ManagedFile" AS file
-        ON file."projectId" = sync."projectId" AND file."sessionId" = sync."sessionId"
-      WHERE sync."projectId" = ${projectId}
-        AND sync."deletedAt" IS NULL
-        AND file."source" = 'artifact'
-        AND file."deletedAt" IS NULL
-        ${filenameContainsPredicate(Prisma.sql`file."displayName"`, search)}
-        ${excludedSessionIdsPredicate(Prisma.sql`sync."sessionId"`, search.excludedSessionIds)}
-        ${cursorPredicate}
-      GROUP BY sync."sessionId", sync."groupSortAtMs"
-      ORDER BY sync."groupSortAtMs" DESC, sync."sessionId" DESC
-      LIMIT ${limit + 1}
-    `),
-    countMatchingArtifactGroups(client, projectId, search)
-  ])
-}
+  projectIds: string[]
+): Promise<ManagedFile[]> => queryAuthoritativeFiles(client, { projectIds })
 
 const encodeCursor = (cursor: FileCursor | GroupCursor | SearchArtifactCursor): string =>
   Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')
@@ -475,55 +581,54 @@ const toOriginProjection = (
       }
     : {}
 
-const toProjectFileItem = (
-  row: ManagedFile,
-  dataRoot: string,
-  origin?: FileOriginSession
-): ProjectFileItem => ({
-  id: row.source === 'upload' ? `upload:${row.sourceFileId}` : row.sourceFileId,
-  source: row.source as ProjectFileSource,
-  sourceFileId: row.sourceFileId,
-  sourceVersionId: row.sourceVersionId ?? undefined,
-  checksum: row.checksum ?? undefined,
-  projectId: row.projectId,
-  sessionId: row.sessionId,
-  messageId: row.messageId ?? undefined,
-  name: row.displayName,
-  path:
-    row.source === 'upload' && row.sourceVersionId
-      ? createUploadVersionReference(row.sourceVersionId, {
-          projectId: row.projectId,
-          sessionId: row.sessionId
-        })
-      : row.source === 'artifact' && row.sourceVersionId
-        ? createArtifactVersionLocator({
+const toProjectFileItem = (row: ManagedFile, origin?: FileOriginSession): ProjectFileItem => {
+  const versionId = row.sourceVersionId
+  if (!versionId) throw new Error('Managed file projection has no current Version identity.')
+  const source = row.source as ProjectFileSource
+  return {
+    id: source === 'upload' ? `upload:${row.sourceFileId}` : row.sourceFileId,
+    source,
+    sourceFileId: row.sourceFileId,
+    sourceVersionId: versionId,
+    checksum: row.checksum ?? undefined,
+    projectId: row.projectId,
+    sessionId: row.sessionId,
+    messageId: row.messageId ?? undefined,
+    name: row.displayName,
+    path:
+      source === 'upload'
+        ? createUploadVersionReference(versionId, {
+            projectId: row.projectId,
+            sessionId: row.sessionId,
+            fileId: row.sourceFileId
+          })
+        : createArtifactVersionLocator({
             projectId: row.projectId,
             appSessionId: row.sessionId,
             artifactId: row.sourceFileId,
-            versionId: row.sourceVersionId
-          })
-        : join(dataRoot, ...row.storageKey.split('/')),
-  mimeType: row.mimeType ?? undefined,
-  size: toSafeNumber(row.sizeBytes, 'size'),
-  mtimeMs: row.mtimeMs === null ? undefined : toSafeNumber(row.mtimeMs, 'mtime'),
-  sortAtMs: toSafeNumber(row.sortAtMs, 'sort time'),
-  ...toOriginProjection(origin)
-})
+            versionId
+          }),
+    mimeType: row.mimeType ?? undefined,
+    size: toSafeNumber(row.sizeBytes, 'size'),
+    mtimeMs: row.mtimeMs === null ? undefined : toSafeNumber(row.mtimeMs, 'mtime'),
+    sortAtMs: toSafeNumber(row.sortAtMs, 'sort time'),
+    ...toOriginProjection(origin)
+  }
+}
 
 export {
-  countMatchingArtifacts,
   decodeFileCursor,
   decodeGroupCursor,
   decodeSearchArtifactCursor,
   encodeCursor,
-  getMatchingOverviewCounts,
-  listMatchingArtifactGroups,
-  listMatchingArtifacts,
-  listMatchingFiles,
-  listOtherProjectArtifacts,
+  getAuthoritativeOverviewCounts,
+  listAuthoritativeArtifactGroups,
+  listAuthoritativeFiles,
+  listAuthoritativeManagedFiles,
   normalizeLimit,
   normalizeSearch,
   requireIdentifier,
+  queryAuthoritativeFiles,
   toOriginProjection,
   toProjectFileItem,
   toSafeCount

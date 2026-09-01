@@ -118,6 +118,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.resetModules()
   FakeWebSocket.instances = []
+  document.documentElement.removeAttribute('data-open-science-notebook-network-unavailable')
   document.body.innerHTML = `
     <div id=open-science-connection-state role=status>
       <div class=open-science-connection-panel>
@@ -153,6 +154,28 @@ afterEach(() => {
 })
 
 describe('Web bootstrap event connection', () => {
+  it('marks Notebook network settings unavailable when the RPC is remote-restricted', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...bootstrapPayload,
+              restrictedRpcChannels: ['settings:get-notebook-network-status']
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          )
+      )
+    )
+
+    await loadBootstrap()
+
+    expect(
+      document.documentElement.hasAttribute('data-open-science-notebook-network-unavailable')
+    ).toBe(true)
+  })
+
   // Bootstrap owns this pre-React connection surface, so its copy must use the initialized i18n.
   it('localizes the initial connection message with the initialized locale', async () => {
     localStorage.setItem('open-science-language', 'zh-Hans')

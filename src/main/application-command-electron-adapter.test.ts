@@ -37,6 +37,7 @@ const validatedChannels = [
   'sessions:delete-session',
   'sessions:filter-pdf-context-candidates',
   'sessions:link-pdf-context',
+  'sessions:set-delegation-policy',
   'sessions:unlink-pdf-context',
   'tags:create',
   'tags:delete',

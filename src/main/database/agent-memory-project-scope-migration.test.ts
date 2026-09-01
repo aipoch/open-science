@@ -16,7 +16,8 @@ const COMPUTE_ANALYSIS_STATE_MIGRATION_ID = '0020_compute_job_analysis_state'
 const COMPUTE_ANALYSIS_CONSTRAINTS_MIGRATION_ID = '0021_compute_job_analysis_constraints'
 const MEMORY_GLOBAL_CONTENT_UNIQUE_MIGRATION_ID = '0022_memory_global_content_unique'
 const COMPUTE_JOB_OPERATION_MIGRATION_ID = '0023_compute_job_operation'
-const CURRENT_MIGRATION_ID = '0024_compute_job_file_evidence'
+const COMPUTE_JOB_FILE_EVIDENCE_MIGRATION_ID = '0024_compute_job_file_evidence'
+const CURRENT_MIGRATION_ID = '0025_managed_file_version_foundation'
 const MEMORY_AUXILIARY_SCHEMA_NAMES = [
   'MemoryEntryFts',
   'MemoryEntry_fts_insert',
@@ -306,7 +307,7 @@ describe('agent memory project scope migration', () => {
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       CURRENT_AGENT_MEMORY_MIGRATION_ID,
       SESSION_AUXILIARY_USAGE_MIGRATION_ID,
       SESSION_USAGE_ATTRIBUTION_MIGRATION_ID,
@@ -314,6 +315,7 @@ describe('agent memory project scope migration', () => {
       COMPUTE_ANALYSIS_CONSTRAINTS_MIGRATION_ID,
       MEMORY_GLOBAL_CONTENT_UNIQUE_MIGRATION_ID,
       COMPUTE_JOB_OPERATION_MIGRATION_ID,
+      COMPUTE_JOB_FILE_EVIDENCE_MIGRATION_ID,
       CURRENT_MIGRATION_ID
     )
 
@@ -326,6 +328,7 @@ describe('agent memory project scope migration', () => {
         COMPUTE_ANALYSIS_CONSTRAINTS_MIGRATION_ID,
         MEMORY_GLOBAL_CONTENT_UNIQUE_MIGRATION_ID,
         COMPUTE_JOB_OPERATION_MIGRATION_ID,
+        COMPUTE_JOB_FILE_EVIDENCE_MIGRATION_ID,
         CURRENT_MIGRATION_ID
       ],
       to: CURRENT_MIGRATION_ID

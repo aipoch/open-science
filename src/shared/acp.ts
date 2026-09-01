@@ -734,6 +734,13 @@ export type AcpPermissionGrant = {
   scope: AcpPermissionGrantScope
 }
 
+// Why Subagents are unavailable for a Session that has none yet: the user's own Delegation policy,
+// recoverable from the composer agent controls menu, or a configuration problem whose recovery
+// lives in Settings. The kind routes the notice; the reason is user-facing copy.
+export type DelegatedWorkUnavailableReason =
+  | Readonly<{ kind: 'delegation-disabled'; reason: string }>
+  | Readonly<{ kind: 'unavailable'; reason: string }>
+
 export type AcpRuntimeState = {
   // Main-owned construction order lets the renderer reject delayed older IPC snapshots. It is
   // transient runtime state and is not persisted with Session data.
@@ -761,7 +768,8 @@ export type AcpRuntimeState = {
   // Monotonic process-local signal that durable delegated-work records changed. The renderer uses
   // it only to refresh the authoritative Session projection; the records remain persistence-owned.
   delegatedWorkRevision?: number
-  delegatedWorkUnavailableBySession?: Record<string, string>
+  // Why Subagents are unavailable for a Session with none yet; see DelegatedWorkUnavailableReason.
+  delegatedWorkUnavailableBySession?: Record<string, DelegatedWorkUnavailableReason>
   // Sessions whose attached framework exposes a native compaction control turn. Missing is accepted
   // from an older main process during a rolling dev reload.
   nativeContextCompactionSessionIds?: string[]

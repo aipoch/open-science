@@ -28,6 +28,29 @@ function surface<Electron, Web>(electron: Electron, web: Web): Surface<Electron,
 }
 
 describe('installWebRendererContracts', () => {
+  it('forwards the Session delegation mutation unchanged and returns the authoritative Session', async () => {
+    const api: Record<string, unknown> = {}
+    const authoritative = { id: 'session-1', projectId: 'project-1', delegationPolicy: 'deny' }
+    const invoke = vi.fn().mockResolvedValue(authoritative)
+
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['sessions:set-delegation-policy']),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+
+    await expect(
+      methodAt(api, 'sessions.setDelegationPolicy')?.('project-1', 'session-1', 'deny')
+    ).resolves.toBe(authoritative)
+    expect(invoke).toHaveBeenCalledWith('sessions:set-delegation-policy', [
+      'project-1',
+      'session-1',
+      'deny'
+    ])
+  })
+
   it('installs an available local Web RPC contract from the merged catalog', async () => {
     const api: Record<string, unknown> = {}
     const invoke = vi.fn().mockResolvedValue({ id: 'project-1' })
@@ -43,6 +66,22 @@ describe('installWebRendererContracts', () => {
     const list = (api.projects as { list: (...args: unknown[]) => Promise<unknown> }).list
     await expect(list({ includeArchived: false })).resolves.toEqual({ id: 'project-1' })
     expect(invoke).toHaveBeenCalledWith('projects:list', [{ includeArchived: false }])
+  })
+
+  it('keeps the host Save dialog Project ZIP action unavailable on Web', () => {
+    const api: Record<string, unknown> = {}
+    const invoke = vi.fn()
+
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['file:save-project-artifacts']),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+
+    expect(methodAt(api, 'saveProjectArtifacts')).toBeUndefined()
+    expect(invoke).not.toHaveBeenCalled()
   })
 
   it('does not mistake a pre-RPC Web flush for post-teardown durability', async () => {
@@ -107,10 +146,16 @@ describe('installWebRendererContracts', () => {
       restrictedRpcChannels: new Set(),
       invoke: vi.fn(),
       subscribe,
-      nativeAdapters: { 'window.close': close }
+      nativeAdapters: {
+        'window.close': close
+      }
     })
 
     expect(methodAt(api, 'window.close')).toBe(close)
+    expect(methodAt(api, 'managedFileVersions.getCapability')).toBeUndefined()
+    expect(methodAt(api, 'managedFileVersions.saveTextEdit')).toBeUndefined()
+    expect(methodAt(api, 'managedFileVersions.diffText')).toBeUndefined()
+    expect(methodAt(api, 'managedFileVersions.cancelDiff')).toBeUndefined()
     expect(methodAt(api, 'specialist.list')).toBeUndefined()
     expect(methodAt(api, 'uploads.stageLocalFile')).toBeUndefined()
     expect(methodAt(api, 'window.announceWindowFindReady')).toBeUndefined()

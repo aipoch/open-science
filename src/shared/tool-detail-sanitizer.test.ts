@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { capToolDetailText, sanitizeToolContent } from './tool-detail-sanitizer'
+import {
+  capToolDetailText,
+  sanitizeRawToolPayload,
+  sanitizeToolContent,
+  sanitizeToolDetailText
+} from './tool-detail-sanitizer'
 
 describe('capToolDetailText', () => {
   it('preserves bounded text and truncates oversized text at the shared limit', () => {
@@ -8,6 +13,48 @@ describe('capToolDetailText', () => {
 
     expect(capToolDetailText(bounded)).toBe(bounded)
     expect(capToolDetailText(`${bounded}tail`)).toBe(`${bounded}\n…`)
+  })
+
+  it('caps text again after redaction markers expand the result', () => {
+    const result = sanitizeToolDetailText('token=x;'.repeat(2_000))
+
+    expect(result).toHaveLength(16_002)
+    expect(result).toMatch(/\n…$/)
+    expect(result).not.toContain('token=x')
+  })
+})
+
+describe('sanitizeRawToolPayload', () => {
+  it('uses the shared credential-key policy without redacting token metrics', () => {
+    expect(
+      sanitizeRawToolPayload(
+        {
+          auth: 'test-auth-value',
+          privateKey: 'test-private-key-value',
+          pat: 'test-pat-value',
+          inputTokenCount: 42
+        },
+        8_000
+      )
+    ).toEqual({
+      auth: '[redacted]',
+      privateKey: '[redacted]',
+      pat: '[redacted]',
+      inputTokenCount: 42
+    })
+  })
+
+  it('redacts signed URLs whose separators are JSON-escaped', () => {
+    const result = sanitizeRawToolPayload(
+      {
+        command:
+          'curl "https:\\/\\/storage.example.test/private?sig=test-escaped-signature&version=7"'
+      },
+      8_000
+    )
+
+    expect(JSON.stringify(result)).not.toContain('test-escaped-signature')
+    expect(JSON.stringify(result)).toContain('[redacted]')
   })
 })
 
@@ -52,6 +99,14 @@ describe('sanitizeToolContent', () => {
         content: { type: 'resource', resource: { uri: 'file:///notes.txt', text: 'notes' } }
       }
     ])
+  })
+
+  it('preserves non-sensitive resource URI fragments', () => {
+    const uri = 'https://example.test/report#methods'
+
+    expect(
+      sanitizeToolContent([{ type: 'content', content: { type: 'resource_link', uri } }])
+    ).toEqual([{ type: 'content', content: { type: 'resource_link', uri } }])
   })
 
   it('normalizes diffs and caps each text field independently', () => {

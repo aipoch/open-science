@@ -327,14 +327,25 @@ describe('ProjectFilesView', () => {
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
       previewResources: {
-        acquire: vi.fn(({ path }: { path: string }) =>
-          Promise.resolve({
-            id: `resource:${path}`,
-            url: `open-science-preview://resource/${encodeURIComponent(path)}`,
-            size: 40 * 1024 * 1024,
-            mimeType: 'image/png',
-            version: 1
-          })
+        acquire: vi.fn(
+          ({
+            source,
+            projectId,
+            fileId
+          }: {
+            source: string
+            projectId: string
+            fileId: string
+          }) => {
+            const resourceId = `resource:${source}:${projectId}:${fileId}`
+            return Promise.resolve({
+              id: resourceId,
+              url: `open-science-preview://resource/${encodeURIComponent(resourceId)}`,
+              size: 40 * 1024 * 1024,
+              mimeType: 'image/png',
+              version: 1
+            })
+          }
         ),
         readRange: vi.fn(),
         release: vi.fn().mockResolvedValue(undefined)
@@ -392,6 +403,7 @@ describe('ProjectFilesView', () => {
       id: file.id,
       source: 'upload',
       sourceFileId: file.attachment.id,
+      sourceVersionId: file.attachment.id,
       projectId: 'default',
       sessionId: file.sessionId,
       name: file.name,
@@ -408,6 +420,7 @@ describe('ProjectFilesView', () => {
       id: file.id,
       source: 'artifact',
       sourceFileId: file.id,
+      sourceVersionId: file.id,
       projectId: 'default',
       sessionId,
       name: file.name,
@@ -1182,7 +1195,8 @@ describe('ProjectFilesView', () => {
 
     expect(window.api.saveManagedFile).toHaveBeenCalledWith({
       source: 'upload',
-      path: upload.path,
+      projectId: 'default',
+      fileId: 'upload-1',
       suggestedName: 'user upload.png'
     })
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBeUndefined()
@@ -1216,7 +1230,8 @@ describe('ProjectFilesView', () => {
 
     expect(window.api.saveManagedFile).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/workspace/report.pdf',
+      projectId: 'default',
+      fileId: 'artifact-download',
       suggestedName: 'report.pdf'
     })
   })
@@ -1227,6 +1242,7 @@ describe('ProjectFilesView', () => {
       id: source === 'upload' ? `upload:upload-${index}` : `artifact-${index}`,
       source,
       sourceFileId: `${source}-${index}`,
+      sourceVersionId: `${source}-${index}`,
       projectId: 'default',
       sessionId: 'session-1',
       name: `${source}-${index}.bin`,
@@ -1362,6 +1378,7 @@ describe('ProjectFilesView', () => {
       id: source === 'upload' ? `upload:upload-${index}` : `artifact-${index}`,
       source,
       sourceFileId: `${source}-${index}`,
+      sourceVersionId: `${source}-${index}`,
       projectId: 'default',
       sessionId: 'session-1',
       name: `${source}-${index}.bin`,
@@ -1481,6 +1498,7 @@ describe('ProjectFilesView', () => {
       id: `upload:upload-${index}`,
       source: 'upload',
       sourceFileId: `upload-${index}`,
+      sourceVersionId: `upload-${index}`,
       projectId: 'default',
       sessionId: 'session-1',
       name: `upload-${index}.bin`,
@@ -1618,6 +1636,7 @@ describe('ProjectFilesView', () => {
                   id: `artifact:${request.collection.sessionId}`,
                   source: 'artifact',
                   sourceFileId: `artifact:${request.collection.sessionId}`,
+                  sourceVersionId: `artifact:${request.collection.sessionId}`,
                   projectId: request.projectId,
                   sessionId: request.collection.sessionId,
                   name: `${request.collection.sessionId}.txt`,
@@ -1685,6 +1704,7 @@ describe('ProjectFilesView', () => {
       id: 'upload:retry-upload',
       source: 'upload',
       sourceFileId: 'retry-upload',
+      sourceVersionId: 'retry-upload',
       projectId: 'default',
       sessionId: 'session-1',
       name: 'retry.txt',
@@ -2083,6 +2103,7 @@ describe('ProjectFilesView', () => {
           id: `artifact-12-${index}`,
           source: 'artifact' as const,
           sourceFileId: `artifact-12-${index}`,
+          sourceVersionId: `artifact-12-${index}`,
           projectId: 'default',
           sessionId: 'session-12',
           name: `file-12-${index}.txt`,
@@ -2181,6 +2202,7 @@ describe('ProjectFilesView', () => {
       id: 'retained-artifact',
       source: 'artifact',
       sourceFileId: 'retained-artifact',
+      sourceVersionId: 'retained-artifact',
       projectId: 'default',
       sessionId,
       name: 'result.csv',
@@ -2460,6 +2482,7 @@ describe('ProjectFilesView', () => {
                 id: 'orphan-artifact',
                 source: 'artifact',
                 sourceFileId: 'orphan-artifact',
+                sourceVersionId: 'orphan-artifact',
                 projectId: 'default',
                 sessionId: 'orphan-session',
                 name: 'orphan.txt',
@@ -2530,6 +2553,7 @@ describe('ProjectFilesView', () => {
       id: 'orphan-artifact',
       source: 'artifact',
       sourceFileId: 'orphan-artifact',
+      sourceVersionId: 'orphan-artifact',
       projectId: 'default',
       sessionId: 'orphan-session',
       name: 'orphan.txt',
@@ -2712,6 +2736,7 @@ describe('ProjectFilesView', () => {
       id: 'new-upload',
       source: 'upload',
       sourceFileId: 'new-upload',
+      sourceVersionId: 'new-upload',
       projectId: 'other-project',
       sessionId: 'other-session',
       name: 'new.txt',
@@ -2845,16 +2870,14 @@ describe('ProjectFilesView', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/workspace/typhoon_tracks.png',
       projectId: 'default',
-      sessionId: 'session-1',
+      fileId: 'artifact-1',
       mimeType: 'image/png'
     })
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
-      path: '/uploads/uploaded_image.png',
       projectId: 'default',
-      sessionId: 'session-1',
+      fileId: 'upload-1',
       mimeType: 'image/png'
     })
     expect(
@@ -2913,7 +2936,7 @@ describe('ProjectFilesView', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
     expect(window.api.previewResources.release).toHaveBeenCalledWith({
-      resourceId: 'resource:/workspace/changing.png'
+      resourceId: 'resource:artifact:default:artifact-1'
     })
   })
 
@@ -2941,9 +2964,8 @@ describe('ProjectFilesView', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/workspace/generated-image',
       projectId: 'default',
-      sessionId: 'session-1',
+      fileId: 'artifact-1',
       mimeType: 'image/png'
     })
   })
@@ -2977,7 +2999,7 @@ describe('ProjectFilesView', () => {
 
     expect(container.querySelector('img[alt="Preview of broken.png"]')).toBeNull()
     expect(window.api.previewResources.release).toHaveBeenCalledWith({
-      resourceId: 'resource:/workspace/broken.png'
+      resourceId: 'resource:artifact:default:artifact-1'
     })
   })
 
@@ -3028,6 +3050,7 @@ describe('ProjectFilesView', () => {
       path: '/workspace/results.csv',
       projectId: 'default',
       sessionId: 'session-1',
+      fileId: 'artifact-csv',
       maxBytes: 32768,
       encoding: 'utf8'
     })
@@ -3077,6 +3100,7 @@ describe('ProjectFilesView', () => {
       id: `upload:upload-${index}`,
       source: 'upload',
       sourceFileId: `upload-${index}`,
+      sourceVersionId: `upload-${index}`,
       projectId: 'default',
       sessionId: 'session-1',
       name: `upload-${index}.png`,
@@ -3182,10 +3206,18 @@ describe('ProjectFilesView', () => {
     })
 
     expect(window.api.artifacts.readPreview).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/workspace/generated.treefile', encoding: 'utf8' })
+      expect.objectContaining({
+        path: '/workspace/generated.treefile',
+        fileId: 'artifact-tree',
+        encoding: 'utf8'
+      })
     )
     expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/uploads/uploaded.treefile', encoding: 'utf8' })
+      expect.objectContaining({
+        path: '/uploads/uploaded.treefile',
+        fileId: expect.any(String),
+        encoding: 'utf8'
+      })
     )
     expect(container.querySelectorAll('[data-testid="artifact-skeleton-preview"]')).toHaveLength(2)
   })
@@ -3272,7 +3304,7 @@ describe('ProjectFilesView', () => {
     await vi.waitFor(() =>
       expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
         expect.objectContaining({
-          path: 'upload-version:default/session-1/upload-version-1',
+          path: 'upload-version:default/session-1/upload-1/upload-version-1',
           encoding: 'utf8'
         })
       )
@@ -3285,7 +3317,8 @@ describe('ProjectFilesView', () => {
     const versionId = 'upload-version-cross-session'
     const path = createUploadVersionReference(versionId, {
       projectId: 'default',
-      sessionId: sourceSessionId
+      sessionId: sourceSessionId,
+      fileId: 'upload-cross-session'
     })
     await renderView([
       createSession({
@@ -3395,7 +3428,7 @@ describe('ProjectFilesView', () => {
     await vi.waitFor(() =>
       expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
         expect.objectContaining({
-          path: 'upload-version:default/session-1/upload-version-1',
+          path: 'upload-version:default/session-1/upload-1/upload-version-1',
           encoding: 'utf8'
         })
       )
@@ -3731,7 +3764,11 @@ describe('ProjectFilesView', () => {
 
     await vi.waitFor(() =>
       expect(window.api.previewResources.acquire).toHaveBeenCalledWith(
-        expect.objectContaining({ path: '/workspace/chart.tiff' })
+        expect.objectContaining({
+          source: 'artifact',
+          projectId: 'default',
+          fileId: 'artifact-tiff'
+        })
       )
     )
   })
@@ -4223,6 +4260,7 @@ describe('ProjectFilesView — granted local folders', () => {
     grantRoot = vi.fn().mockResolvedValue([grantedRoot])
     setGrantedRootAccess = vi.fn().mockResolvedValue([{ ...grantedRoot, access: 'rw' }])
     removeGrantedRoot = vi.fn().mockResolvedValue([])
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
       previewResources: {
@@ -4389,6 +4427,25 @@ describe('ProjectFilesView — granted local folders', () => {
     await clickElement(document.body.querySelector('[data-testid="granted-root-remove-root-1"]'))
     expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })
     expect(useGrantedFoldersStore.getState().roots).toEqual([])
+  })
+
+  it('keeps granted-root access unchanged when the kernel-stop confirmation is cancelled', async () => {
+    vi.mocked(window.confirm).mockReturnValue(false)
+    await renderFilesView()
+    await openFilterMenu()
+    await hoverElement(document.body.querySelector('[data-testid="granted-root-root-1"]'))
+
+    await vi.waitFor(() => {
+      expect(
+        document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
+      ).not.toBeNull()
+    })
+    await clickElement(
+      document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
+    )
+
+    expect(setGrantedRootAccess).not.toHaveBeenCalled()
+    expect(useGrantedFoldersStore.getState().roots[0]?.access).toBe('ro')
   })
 
   it('shows the failed access change and retries it from the toast', async () => {

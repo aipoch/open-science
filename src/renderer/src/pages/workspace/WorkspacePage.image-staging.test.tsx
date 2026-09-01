@@ -25,6 +25,7 @@ import {
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import { usePdfContextAction } from './use-pdf-context-action'
+import { markWorkspaceReviewHistoryLoaded } from './workspace-page-test-fixtures'
 
 // Capture the ConversationPanel props the page computes on each render.
 let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
@@ -149,6 +150,7 @@ describe('WorkspacePage image attachment gating', () => {
   }
 
   beforeEach(() => {
+    markWorkspaceReviewHistoryLoaded({ projectId: 'proj-1', sessionId: 'sess-a' })
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useProjectStore.setState({ projects: [] })
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-1' })

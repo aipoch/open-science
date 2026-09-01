@@ -19,6 +19,22 @@ const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.c
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 type E2eWindowMode = 'hidden' | 'normal'
 
+// Keep in sync with GitHubStarBadge. Workspace variant waits 5s, then opens a popover that can
+// swallow the next pointer click (revision navigation, project menus) on macOS and Windows CI.
+const STAR_NUDGE_LAST_SHOWN_STORAGE_KEY = 'open-science:github-star-nudge-last-shown-at'
+
+const recordStarNudgeCooldown = (storageKey: string): void => {
+  try {
+    window.localStorage.setItem(storageKey, String(Date.now()))
+  } catch {
+    // Isolated source-preview documents and opaque origins deny localStorage.
+  }
+}
+
+const suppressWorkspaceStarNudge = async (page: Pick<Page, 'evaluate'>): Promise<void> => {
+  await page.evaluate(recordStarNudgeCooldown, STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)
+}
+
 const electronLaunchTarget = (
   userDataRoot: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -245,16 +261,7 @@ const makeTreeWritable = async (root: string): Promise<void> => {
   )
 }
 
-const openMainWindow = async (
-  application: ElectronApplication,
-  rendererFailures: RendererFailureGate,
-  windowMode: E2eWindowMode
-): Promise<Page> => {
-  const page = await application.firstWindow()
-  // Hidden BrowserWindows do not produce animation frames reliably, so make
-  // presentation buffers commit immediately without changing normal-window tests.
-  if (windowMode === 'hidden') await page.emulateMedia({ reducedMotion: 'reduce' })
-  await rendererFailures.observe(page)
+const waitForRendererReady = async (page: Page): Promise<void> => {
   await page.waitForLoadState('domcontentloaded')
   // A fresh Windows profile can spend longer than the general assertion budget applying the real
   // schema manifest under runner I/O contention. Keep the startup gate aligned with settings load.
@@ -271,17 +278,32 @@ const openMainWindow = async (
     )
     .toBe('ready')
   await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
-  if (process.platform === 'win32') {
-    // The workspace GitHub star nudge opens after 5s in a visible Windows window and is not part
-    // of these journeys. Leave other platforms on the default cooldown so their layout timing
-    // matches the previously passing CI.
-    await page.evaluate(() => {
-      window.localStorage.setItem(
-        'open-science:github-star-nudge-last-shown-at',
-        String(Date.now())
-      )
-    })
-  }
+}
+
+const applyHiddenWindowPresentation = async (
+  page: Page,
+  windowMode: E2eWindowMode
+): Promise<void> => {
+  // Hidden BrowserWindows do not produce animation frames reliably, so make
+  // presentation buffers commit immediately without changing normal-window tests.
+  if (windowMode === 'hidden') await page.emulateMedia({ reducedMotion: 'reduce' })
+}
+
+const openMainWindow = async (
+  application: ElectronApplication,
+  rendererFailures: RendererFailureGate,
+  windowMode: E2eWindowMode
+): Promise<Page> => {
+  const page = await application.firstWindow()
+  await applyHiddenWindowPresentation(page, windowMode)
+  await rendererFailures.observe(page)
+  await waitForRendererReady(page)
+  // Writing the cooldown after first paint does not cancel a timer GitHubStarBadge already
+  // scheduled. Reload so the workspace variant remounts with the cooldown already set.
+  await suppressWorkspaceStarNudge(page)
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await applyHiddenWindowPresentation(page, windowMode)
+  await waitForRendererReady(page)
   return page
 }
 
@@ -859,5 +881,12 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
   }
 })
 
-export { closeElectronApplicationForCleanup, electronLaunchTarget, launchEnvironment, test }
+export {
+  closeElectronApplicationForCleanup,
+  electronLaunchTarget,
+  launchEnvironment,
+  STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
+  suppressWorkspaceStarNudge,
+  test
+}
 export type { ElectronApp }

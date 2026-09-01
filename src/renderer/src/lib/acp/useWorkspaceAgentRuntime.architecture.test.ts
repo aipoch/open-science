@@ -525,6 +525,7 @@ const sendIntentKeys = [
   'selectedComputeHosts',
   'agentConfiguration',
   'memoryEnabled',
+  'delegationPolicy',
   'preserveSelection'
 ] as const
 const ownerDependencyNames = (path: string): string[] => {

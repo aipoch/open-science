@@ -97,6 +97,9 @@ vi.mock('./ComposerAgentControlsMenu', () => ({
   ComposerAgentControlsMenu: (props: {
     readOnly?: boolean
     memoryReadOnly?: boolean
+    delegationReadOnly?: boolean
+    delegationHasLiveAttempts?: boolean
+    delegationDisabledReason?: string
     autoReviewReadOnly?: boolean
     permissionProfileReadOnly?: boolean
     grantActionsReadOnly?: boolean
@@ -109,6 +112,9 @@ vi.mock('./ComposerAgentControlsMenu', () => ({
       data-testid="mock-agent-controls"
       data-read-only={String(props.readOnly === true)}
       data-memory-read-only={String(props.memoryReadOnly)}
+      data-delegation-read-only={String(props.delegationReadOnly)}
+      data-delegation-live={String(props.delegationHasLiveAttempts)}
+      data-delegation-disabled-reason={props.delegationDisabledReason}
       data-auto-review-read-only={String(props.autoReviewReadOnly)}
       data-permission-read-only={String(props.permissionProfileReadOnly === true)}
       data-grants-read-only={String(props.grantActionsReadOnly === true)}
@@ -2406,7 +2412,9 @@ describe('ConversationPanel composer intake', () => {
         canChange: false,
         canChangeAutoReview: true,
         canChangeMemory: true,
-        canChangeSpecialist: true
+        canChangeSpecialist: true,
+        canChangeDelegation: true,
+        delegationHasLiveAttempts: true
       }
     })
 
@@ -2414,6 +2422,8 @@ describe('ConversationPanel composer intake', () => {
     expect(controls?.getAttribute('data-read-only')).toBe('true')
     expect(controls?.getAttribute('data-memory-read-only')).toBe('false')
     expect(controls?.getAttribute('data-auto-review-read-only')).toBe('false')
+    expect(controls?.getAttribute('data-delegation-read-only')).toBe('false')
+    expect(controls?.getAttribute('data-delegation-live')).toBe('true')
     expect(controls?.getAttribute('data-specialist-read-only')).toBe('false')
   })
 

@@ -42,6 +42,27 @@ const getMessageArtifacts = (
   return [...artifactsByLogicalId.values()]
 }
 
+const resolveMessageArtifactScope = (
+  artifact: NonNullable<ChatSession['artifacts']>[number],
+  projectId: string | undefined,
+  sessionId: string | undefined
+): MessageArtifact => {
+  const messageArtifact = artifact as MessageArtifact
+  const resolvedProjectId = messageArtifact.resolvedProjectId ?? projectId
+  const resolvedSessionId = messageArtifact.resolvedSessionId ?? sessionId
+  if (
+    resolvedProjectId === messageArtifact.resolvedProjectId &&
+    resolvedSessionId === messageArtifact.resolvedSessionId
+  ) {
+    return messageArtifact
+  }
+  return {
+    ...messageArtifact,
+    ...(resolvedProjectId ? { resolvedProjectId } : {}),
+    ...(resolvedSessionId ? { resolvedSessionId } : {})
+  }
+}
+
 const isSafeVersionId = (value: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value)
 
 const toResolvedMessageArtifact = (descriptor: ArtifactVersionDescriptor): MessageArtifact => ({
@@ -182,6 +203,10 @@ const useWorkspaceArtifactVisibility = (
   const messages = activeSession?.messages
   const artifacts = activeSession?.artifacts
   const graph = activeSession?.conversationGraph
+  const scopedArtifacts = useMemo(
+    () => artifacts?.map((artifact) => resolveMessageArtifactScope(artifact, projectId, sessionId)),
+    [artifacts, projectId, sessionId]
+  )
   const projection = useMemo(() => {
     if (!graph || graph.activeFrameId !== graph.rootFrameId) return undefined
     const rootFrame = graph.frames.find(({ id }) => id === graph.rootFrameId)
@@ -212,7 +237,7 @@ const useWorkspaceArtifactVisibility = (
     sessionId,
     projectId,
     messages,
-    artifacts,
+    scopedArtifacts,
     projectedVersionIds
   )
   const artifactsForMessage = useCallback(
@@ -225,10 +250,10 @@ const useWorkspaceArtifactVisibility = (
           ? projectedArtifactVersionIdsByRootMessageId.get(message.responseToMessageId)
           : undefined
       if (!projectedVersionIdsForTurn || projectedVersionIdsForTurn.length === 0) {
-        return getMessageArtifacts(artifacts, message, historicalArtifacts)
+        return getMessageArtifacts(scopedArtifacts, message, historicalArtifacts)
       }
       return getMessageArtifacts(
-        artifacts,
+        scopedArtifacts,
         {
           ...message,
           artifactIds: [...(message.artifactIds ?? []), ...projectedVersionIdsForTurn]
@@ -237,9 +262,9 @@ const useWorkspaceArtifactVisibility = (
       )
     },
     [
-      artifacts,
       historicalArtifacts,
       projectedArtifactVersionIdsByRootMessageId,
+      scopedArtifacts,
       sessionId,
       terminalAgentMessageIds
     ]

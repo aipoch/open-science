@@ -93,6 +93,42 @@ const sessionWithRunningChild = (): ChatSession => {
   })
 }
 
+const sessionWithPendingDelegatedQuestion = (): ChatSession => {
+  const pending = sessionWithRunningChild()
+  const graph = pending.conversationGraph
+  const delegatedWork = pending.runtimeContext?.delegatedWork
+  const child = graph?.frames.find(({ id }) => id === 'child-frame')
+  const root = graph?.frames.find(({ id }) => id === graph.rootFrameId)
+  const attempt = delegatedWork?.records[0]?.attempts[0]
+  if (!graph || !delegatedWork || !child || !root || !attempt) {
+    throw new Error('Invalid delegated Session fixture')
+  }
+
+  Object.assign(child, { status: 'completed', delegateName: 'Researcher' })
+  Object.assign(attempt, { status: 'completed', endedAt: 3 })
+  Object.assign(delegatedWork, {
+    questionRequests: [
+      {
+        requestId: 'question-1',
+        canonicalDigest: 'a'.repeat(64),
+        sourceFrameId: child.id,
+        sourceAttemptId: attempt.id,
+        sourceRuntimeSegmentId: 'runtime-1',
+        sourceMessageBranchId: child.activeBranchId,
+        rootOriginMessageId: 'root-prompt',
+        rootBranchId: root.activeBranchId,
+        sourceName: 'Researcher',
+        questions: [{ question: 'Choose a source' }],
+        askedAt: 3,
+        status: 'pending',
+        draftAnswers: [],
+        draftQuestionIndex: 0
+      }
+    ]
+  })
+  return pending
+}
+
 const specialist = (id: string, name: string): SpecialistListItem =>
   ({ kind: 'custom', id, name, enabled: true }) as SpecialistListItem
 
@@ -677,6 +713,18 @@ describe('workspace session controller', () => {
     mounted.push(hook)
 
     expect(hook.result.current.lifecycle.canArchive(active)).toBe(false)
+  })
+
+  it('does not archive an idle Session while a delegated question awaits an answer', () => {
+    const active = sessionWithPendingDelegatedQuestion()
+    const updateSessionArchive = vi.fn()
+    useSessionStore.setState({ sessions: [active], updateSessionArchive })
+    const hook = renderController({ activeSession: active })
+    mounted.push(hook)
+
+    expect(hook.result.current.lifecycle.canArchive(active)).toBe(false)
+    act(() => hook.result.current.actions.archive(active))
+    expect(updateSessionArchive).not.toHaveBeenCalled()
   })
 
   it('does not archive while Save as skill owns prompt admission', () => {

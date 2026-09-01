@@ -118,6 +118,29 @@ describe('electron renderer contract adapter', () => {
     expect(port.invoke).toHaveBeenCalledWith('preview:save', request)
   })
 
+  it('forwards Project ZIP logical file identities without narrowing the request', async () => {
+    const port = createPort()
+    const adapter = createElectronRendererContractAdapter(port)
+    const request = {
+      projectId: 'project-1',
+      projectName: 'Research',
+      files: [
+        {
+          source: 'artifact',
+          sessionId: 'session-1',
+          path: '/stale/report.md',
+          fileId: 'artifact-file-1',
+          versionId: 'artifact-version-2',
+          suggestedName: 'report.md'
+        }
+      ]
+    }
+
+    await adapter.invoke('saveProjectArtifacts', request)
+
+    expect(port.invoke).toHaveBeenCalledWith('file:save-project-artifacts', request)
+  })
+
   it('propagates request failures unchanged', async () => {
     const failure = new Error('main process unavailable')
     const port = createPort()

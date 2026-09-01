@@ -173,6 +173,7 @@ export const WEB_INVOKE_CHANNELS = {
   'sessions.openRecoveryFolder': 'sessions:open-recovery-folder',
   'sessions.saveManifest': 'sessions:save-manifest',
   'sessions.saveSession': 'sessions:save-session',
+  'sessions.setDelegationPolicy': 'sessions:set-delegation-policy',
   'sessions.unlinkPdfContext': 'sessions:unlink-pdf-context',
   'sessions.updateArchive': 'sessions:update-archive',
   'settings.addCustomServer': 'settings:add-custom-server',

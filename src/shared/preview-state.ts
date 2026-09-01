@@ -23,6 +23,7 @@ export type PersistedPreviewFileItem = {
   size?: number
   mtimeMs?: number
   artifactId?: string
+  managedFileId?: string
   selectedVersionId?: string
   versionNumber?: number
   originSession?: ProjectFileOriginSession
@@ -125,6 +126,7 @@ const sanitizePreviewFileItem = (value: unknown): PersistedPreviewFileItem | und
   const size = asNonNegativeNumber(value.size)
   const mtimeMs = asNonNegativeNumber(value.mtimeMs)
   const artifactId = asString(value.artifactId)
+  const managedFileId = asString(value.managedFileId)
   const selectedVersionId = asString(value.selectedVersionId)
   const versionNumber = asPositiveInteger(value.versionNumber)
   const originSession = sanitizeOriginSession(value.originSession)
@@ -134,6 +136,7 @@ const sanitizePreviewFileItem = (value: unknown): PersistedPreviewFileItem | und
   if (size !== undefined) item.size = size
   if (mtimeMs !== undefined) item.mtimeMs = mtimeMs
   if (artifactId) item.artifactId = artifactId
+  if (managedFileId) item.managedFileId = managedFileId
   if (selectedVersionId) item.selectedVersionId = selectedVersionId
   if (versionNumber !== undefined) item.versionNumber = versionNumber
   if (originSession) item.originSession = originSession

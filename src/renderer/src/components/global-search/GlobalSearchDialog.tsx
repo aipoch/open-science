@@ -4,7 +4,7 @@
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: inherited from the app's verified semantic tokens · slop: pass
  */
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowUpRight, AtSign, LoaderCircle, MessageCircle, Search, Zap } from 'lucide-react'
 import { Dialog } from 'radix-ui'
@@ -85,12 +85,12 @@ const artifactToPreviewItem = (
     size: artifact.size,
     mtimeMs: artifact.mtimeMs,
     artifactId: artifact.source === 'artifact' ? artifact.sourceFileId : undefined,
-    selectedVersionId: artifact.source === 'artifact' ? artifact.sourceVersionId : undefined,
+    managedFileId: artifact.sourceFileId,
     originSession: artifact.originSession
   })
 
 const artifactToThumbnailItem = (artifact: ProjectFileItem): MessageArtifact => ({
-  id: artifact.sourceVersionId ?? artifact.sourceFileId,
+  id: artifact.sourceVersionId,
   artifactId: artifact.source === 'artifact' ? artifact.sourceFileId : undefined,
   versionId: artifact.sourceVersionId,
   kind: 'managed-file',
@@ -137,6 +137,7 @@ export const GlobalSearchDialog = ({
   const inputRef = useRef<HTMLInputElement>(null)
   const requestVersionRef = useRef(0)
   const keyboardNavigationRef = useRef(false)
+  const mentionVersionRef = useRef(0)
   const listboxId = useId()
   const [query, setQuery] = useState('')
   const [visibleSessionCount, setVisibleSessionCount] = useState(GLOBAL_SEARCH_PAGE_SIZE)
@@ -146,6 +147,17 @@ export const GlobalSearchDialog = ({
   const [failedArtifactCursor, setFailedArtifactCursor] = useState<string | undefined>()
   const [actionError, setActionError] = useState<string | undefined>()
   const [activeIndex, setActiveIndex] = useState(0)
+
+  useLayoutEffect(() => {
+    if (!open) mentionVersionRef.current += 1
+  }, [open])
+
+  useLayoutEffect(
+    () => () => {
+      mentionVersionRef.current += 1
+    },
+    []
+  )
 
   const allProjects = useProjectStore((state) => state.projects)
   const allSessions = useSessionStore((state) => state.sessions)
@@ -208,16 +220,6 @@ export const GlobalSearchDialog = ({
       ),
     [sessions]
   )
-  const sessionMessageCreatedTimes = useMemo(() => {
-    const createdTimes = new Map<string, number>()
-    for (const session of sessions) {
-      const messages = [...(session.conversationGraph?.messages ?? []), ...session.messages]
-      for (const message of messages) {
-        createdTimes.set(`${session.projectId}:${session.id}:${message.id}`, message.createdAt)
-      }
-    }
-    return createdTimes
-  }, [sessions])
   const trimmedQuery = query.trim()
   const isSearchMode = trimmedQuery.length > 0
   const otherProjectIds = useMemo(
@@ -449,7 +451,14 @@ export const GlobalSearchDialog = ({
     document.getElementById(activeRowId)?.scrollIntoView?.({ block: 'nearest' })
   }, [activeRowId, open, selectableRows.length])
 
-  const close = useCallback(() => onOpenChange(false), [onOpenChange])
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean): void => {
+      if (!nextOpen) mentionVersionRef.current += 1
+      onOpenChange(nextOpen)
+    },
+    [onOpenChange]
+  )
+  const close = useCallback(() => handleOpenChange(false), [handleOpenChange])
   const isArtifactMentionTarget = useCallback(
     (artifact: ProjectFileItem): boolean =>
       view === 'workspace' &&
@@ -469,7 +478,7 @@ export const GlobalSearchDialog = ({
   const previewArtifact = useCallback(
     (artifact: ProjectFileItem): void => {
       if (activeProjectId !== artifact.projectId || view !== 'workspace') {
-        openProject(artifact.projectId, 'user')
+        if (!openProject(artifact.projectId, 'user')) return
       }
       openFileDialog(artifactToPreviewItem(artifact))
       close()
@@ -477,12 +486,50 @@ export const GlobalSearchDialog = ({
     [activeProjectId, close, openFileDialog, openProject, view]
   )
   const mentionArtifact = useCallback(
-    (artifact: ProjectFileItem): void => {
+    async (artifact: ProjectFileItem): Promise<void> => {
       if (!canMentionArtifact(artifact)) return
-      requestArtifactMention(artifact)
-      close()
+      const requestVersion = ++mentionVersionRef.current
+      setActionError(undefined)
+      const inspect = window.api.managedFileVersions?.inspect
+      if (!inspect) {
+        setActionError(t('File version resolution is unavailable.'))
+        return
+      }
+      try {
+        const result = await inspect({
+          source: artifact.source,
+          projectId: artifact.projectId,
+          fileId: artifact.sourceFileId
+        })
+        if (requestVersion !== mentionVersionRef.current) return
+        if (!result.ok) {
+          setActionError(t('Could not resolve file version.'))
+          return
+        }
+        const head = result.value.versions.find(
+          (version) => version.id === result.value.headVersionId
+        )
+        if (!head) {
+          setActionError(t('The current file version is unavailable.'))
+          return
+        }
+        requestArtifactMention({
+          ...artifact,
+          sourceVersionId: head.id,
+          checksum: head.checksum,
+          sessionId: result.value.sessionId,
+          name: result.value.displayName,
+          mimeType: head.contentType ?? artifact.mimeType,
+          size: head.sizeBytes,
+          sortAtMs: Date.parse(head.createdAt)
+        })
+        close()
+      } catch {
+        if (requestVersion !== mentionVersionRef.current) return
+        setActionError(t('Could not resolve file version.'))
+      }
     },
-    [canMentionArtifact, close, requestArtifactMention]
+    [canMentionArtifact, close, requestArtifactMention, t]
   )
   const activate = useCallback(
     (row: SelectableRow | undefined, action?: 'mention' | 'preview'): void => {
@@ -504,7 +551,7 @@ export const GlobalSearchDialog = ({
       }
       if (row.kind === 'artifact') {
         if (action === 'mention' && canMentionArtifact(row.artifact)) {
-          mentionArtifact(row.artifact)
+          void mentionArtifact(row.artifact)
         } else previewArtifact(row.artifact)
         return
       }
@@ -647,19 +694,13 @@ export const GlobalSearchDialog = ({
 
   const renderArtifactRow = (artifact: ProjectFileItem, rowIndex: number): React.JSX.Element => {
     const active = rowIndex === activeRowIndex
-    const createdAt = artifact.sourceVersionId
-      ? artifact.sortAtMs
-      : artifact.messageId
-        ? (sessionMessageCreatedTimes.get(
-            `${artifact.projectId}:${artifact.sessionId}:${artifact.messageId}`
-          ) ?? artifact.sortAtMs)
-        : artifact.sortAtMs
+    const createdAt = artifact.sortAtMs
     const isCurrentSessionArtifact = isArtifactMentionTarget(artifact)
     const canMention = canMentionArtifact(artifact)
     return (
       <div
         id={`global-search-option-${rowIndex}`}
-        key={`${artifact.projectId}:${artifact.id}:${artifact.sourceVersionId ?? ''}`}
+        key={`${artifact.projectId}:${artifact.id}:${artifact.sourceVersionId}`}
         role="option"
         tabIndex={-1}
         aria-selected={active}
@@ -677,6 +718,7 @@ export const GlobalSearchDialog = ({
             source={artifact.source}
             projectId={artifact.projectId}
             sessionId={artifact.sessionId}
+            managedFileId={artifact.sourceFileId}
           />
         </span>
         <span className="min-w-0 flex-1">
@@ -710,7 +752,7 @@ export const GlobalSearchDialog = ({
                         disabled={!canMention}
                         onClick={(event) => {
                           event.stopPropagation()
-                          mentionArtifact(artifact)
+                          void mentionArtifact(artifact)
                         }}
                       >
                         <AtSign className="size-4" aria-hidden="true" />
@@ -756,7 +798,7 @@ export const GlobalSearchDialog = ({
   const nextIndex = (): number => rowIndex++
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content

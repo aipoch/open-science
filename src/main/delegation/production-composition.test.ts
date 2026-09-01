@@ -19,6 +19,7 @@ import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
+import { DELEGATION_DISABLED_MESSAGE } from './durable-delegated-work-error'
 import { DelegateMessageParkedError } from './execution-port'
 import { createArtifactHandlers } from '../artifacts/ipc'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
@@ -1140,6 +1141,96 @@ describe('production delegated-work composition', () => {
   it('blocks only new child admission when the Session delegation policy is deny', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-policy-'))
     const harness = await createCompositionHarness(root, 'codex')
+    try {
+      harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'deny' })
+
+      await expect(
+        harness.composition.host.delegate(
+          harness.caller,
+          { task: 'blocked child', name: 'blocked child' },
+          { wait: false }
+        )
+      ).rejects.toMatchObject({
+        code: 'admission_rejection',
+        message: DELEGATION_DISABLED_MESSAGE
+      })
+      expect(harness.execution.reservationCounts()).toEqual([])
+      expect(harness.durable().runtimeContext?.delegatedWork?.records ?? []).toEqual([])
+
+      harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'allow' })
+      const admitted = await harness.composition.host.delegate(
+        harness.caller,
+        { task: 'existing child', name: 'existing child' },
+        { wait: false }
+      )
+      expect(admitted).toMatchObject({
+        kind: 'receipts',
+        children: [{ name: 'existing child' }]
+      })
+
+      harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'deny' })
+      await expect(harness.composition.host.children(harness.caller)).resolves.toEqual([
+        expect.objectContaining({ name: 'existing child' })
+      ])
+    } finally {
+      await harness.composition.root.stopAll()
+    }
+  })
+
+  it('waits for pending workspace preparation before stopAll resolves', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-pending-preparation-'))
+    const inputPath = join(root, 'input.txt')
+    await writeFile(inputPath, 'immutable input\n', 'utf8')
+    const inputResolutionStarted = Promise.withResolvers<void>()
+    const releaseInputResolution = Promise.withResolvers<void>()
+    let inputResolutionCount = 0
+    const harness = await createCompositionHarness(
+      root,
+      'codex',
+      undefined,
+      undefined,
+      {},
+      [],
+      undefined,
+      undefined,
+      async (identity) => {
+        if (identity !== 'upload-version:stopping-input') throw new Error('unknown input')
+        inputResolutionCount += 1
+        if (inputResolutionCount === 1) return { path: inputPath, filename: 'input.txt' }
+        inputResolutionStarted.resolve()
+        await releaseInputResolution.promise
+        return { path: inputPath, filename: 'input.txt' }
+      }
+    )
+    const delegated = harness.composition.host.delegate(
+      harness.caller,
+      {
+        task: 'pending workspace preparation',
+        name: 'pending workspace preparation',
+        inputs: ['upload-version:stopping-input']
+      },
+      { wait: true }
+    )
+    await inputResolutionStarted.promise
+
+    let stopped = false
+    const stopping = harness.composition.root.stopAll().then(() => {
+      stopped = true
+    })
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(stopped).toBe(false)
+    } finally {
+      releaseInputResolution.resolve()
+      await stopping
+      await delegated.catch(() => undefined)
+      await harness.composition.root.deleteSession(harness.session.id)
+    }
+  })
+
+  it('marks a policy rejection as delegation-disabled and clears it when Delegation is re-enabled', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-policy-notice-'))
+    const harness = await createCompositionHarness(root, 'codex')
     harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'deny' })
 
     await expect(
@@ -1148,27 +1239,90 @@ describe('production delegated-work composition', () => {
         { task: 'blocked child', name: 'blocked child' },
         { wait: false }
       )
-    ).rejects.toMatchObject({
-      code: 'admission_rejection',
-      message: expect.stringMatching(/delegation is disabled/i)
+    ).rejects.toMatchObject({ code: 'admission_rejection' })
+    expect(harness.composition.root.unavailableReasons?.()).toEqual({
+      [harness.session.id]: { kind: 'delegation-disabled', reason: DELEGATION_DISABLED_MESSAGE }
     })
-    expect(harness.execution.reservationCounts()).toEqual([])
 
-    harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'allow' })
-    const admitted = await harness.composition.host.delegate(
-      harness.caller,
-      { task: 'existing child', name: 'existing child' },
-      { wait: false }
+    const events: string[] = []
+    const unsubscribe = harness.composition.root.subscribe((event) => events.push(event.kind))
+    harness.composition.root.clearUnavailableReason?.(harness.session.id)
+    unsubscribe()
+    expect(harness.composition.root.unavailableReasons?.()).toEqual({})
+    expect(events).toEqual(['unavailable-reason-cleared'])
+    // Clearing again is a no-op: the cleared reason must not re-announce itself.
+    harness.composition.root.clearUnavailableReason?.(harness.session.id)
+    expect(harness.composition.root.unavailableReasons?.()).toEqual({})
+  })
+
+  it('projects and enforces the current authoritative policy through the Host SDK', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-host-policy-'))
+    const harness = await createCompositionHarness(root, 'codex')
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      delegatedWorkService: harness.composition.host
+    })
+    const graph = harness.durable().conversationGraph!
+    const connection = await server.issueControlConnection(
+      harness.session.id,
+      harness.session.projectId,
+      graph.rootFrameId
     )
-    expect(admitted).toMatchObject({
-      kind: 'receipts',
-      children: [{ name: 'existing child' }]
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'delegate-call',
+      originatingUserMessageId: harness.caller.originMessageId
+    })
+    const call = (method: string, params: Record<string, unknown> = {}): Promise<Response> =>
+      fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method, params })
+      })
+
+    await expect(
+      call('capabilitiesCall').then((response) => response.json())
+    ).resolves.toMatchObject({
+      result: { delegate: true, children: true, collect: true, stopChild: true }
     })
 
     harness.replaceDurable({ ...harness.durable(), delegationPolicy: 'deny' })
-    await expect(harness.composition.host.children(harness.caller)).resolves.toEqual([
-      expect.objectContaining({ name: 'existing child' })
-    ])
+    await expect(
+      call('capabilitiesCall').then((response) => response.json())
+    ).resolves.toMatchObject({
+      result: { delegate: false, children: true, collect: true, stopChild: true }
+    })
+    await expect(
+      call('hostSdkHelp', { query: 'delegate' }).then((response) => response.json())
+    ).resolves.toMatchObject({
+      result: {
+        id: 'host.delegate',
+        availability: {
+          status: 'unavailable',
+          reason: DELEGATION_DISABLED_MESSAGE
+        }
+      }
+    })
+    await expect(
+      call('delegatedWorkCall', {
+        request: { task: 'must not start', name: 'must not start' },
+        options: { wait: false }
+      }).then(async (response) => ({ status: response.status, payload: await response.json() }))
+    ).resolves.toEqual({
+      status: 500,
+      payload: {
+        error: DELEGATION_DISABLED_MESSAGE
+      }
+    })
+    expect(harness.execution.reservationCounts()).toEqual([])
+    expect(harness.durable().runtimeContext?.delegatedWork?.records ?? []).toEqual([])
+
+    endInvocation()
+    connection.release()
   })
 
   it('rechecks authoritative delegation policy inside durable child admission', async () => {
@@ -1211,7 +1365,7 @@ describe('production delegated-work composition', () => {
       )
     ).rejects.toMatchObject({
       code: 'admission_rejection',
-      message: expect.stringMatching(/delegation is disabled/i)
+      message: DELEGATION_DISABLED_MESSAGE
     })
     expect(harness.durable().runtimeContext?.delegatedWork?.records ?? []).toEqual([])
   })
@@ -2259,8 +2413,11 @@ describe('production delegated-work composition', () => {
     expect(execution.controls()).toEqual([])
     expect(harness.durable().runtimeContext?.delegatedWork).toBeUndefined()
     expect(harness.composition.root.unavailableReasons?.()).toEqual({
-      [harness.session.id]:
-        'Delegated work is unavailable for this Agent framework configuration. Open Settings and choose a certified configuration.'
+      [harness.session.id]: {
+        kind: 'unavailable',
+        reason:
+          'Delegated work is unavailable for this Agent framework configuration. Open Settings and choose a certified configuration.'
+      }
     })
   })
 
@@ -2710,6 +2867,12 @@ describe('production delegated-work composition', () => {
       provenance: {
         finalizeRun: async (
           request: Parameters<ArtifactProvenanceRepository['finalizeRun']>[0]
+        ) => {
+          await ownership.validateFinalizationOwnership(request)
+          return versionsByRun.get(request.artifactRunId) ?? []
+        },
+        activateFinalizedRun: async (
+          request: Parameters<ArtifactProvenanceRepository['activateFinalizedRun']>[0]
         ) => {
           await ownership.validateFinalizationOwnership(request)
           return versionsByRun.get(request.artifactRunId) ?? []

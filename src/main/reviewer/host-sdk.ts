@@ -234,8 +234,47 @@ export type ReviewerArtifactReadResult = ArtifactContent | ArtifactTraceResult
 
 export type ArtifactVersionContentResolver = (request: {
   projectId: string
+  sessionId?: string
+  fileId?: string
   versionId: string
-}) => Promise<{ path: string; filename: string; contentType?: string; checksum?: string }>
+}) => Promise<{
+  path?: string
+  filename: string
+  contentType?: string
+  checksum: string
+  size: number
+  readRange: (begin: number, end: number) => Promise<Uint8Array>
+  verifyUnchanged: () => Promise<void>
+  close: () => Promise<void>
+}>
+
+type LegacyArtifactVersionContentResolver = (request: {
+  projectId: string
+  sessionId?: string
+  fileId?: string
+  versionId: string
+}) => Promise<{
+  path: string
+  filename: string
+  contentType?: string
+  checksum?: string
+}>
+
+type ResolvedArtifactVersionContent = Awaited<
+  ReturnType<ArtifactVersionContentResolver | LegacyArtifactVersionContentResolver>
+>
+
+const isManagedArtifactVersionContent = (
+  value: ResolvedArtifactVersionContent | undefined
+): value is Awaited<ReturnType<ArtifactVersionContentResolver>> =>
+  Boolean(
+    value &&
+    typeof value.checksum === 'string' &&
+    typeof (value as { size?: unknown }).size === 'number' &&
+    typeof (value as { readRange?: unknown }).readRange === 'function' &&
+    typeof (value as { verifyUnchanged?: unknown }).verifyUnchanged === 'function' &&
+    typeof (value as { close?: unknown }).close === 'function'
+  )
 
 export type ArtifactVersionTraceResolver = (request: {
   projectId: string
@@ -375,7 +414,8 @@ export class ReviewerHostServer {
     private readonly session: PersistedChatSession,
     private readonly scope: TurnScope,
     private readonly artifactStorageRoot: string,
-    private readonly resolveArtifactVersion?: ArtifactVersionContentResolver,
+    private readonly resolveArtifactVersion?:
+      ArtifactVersionContentResolver | LegacyArtifactVersionContentResolver,
     frozenScopeSnapshot?: ReviewScopeSnapshotBlock[],
     resourceBudget: ReviewerResourceBudgetOptions = {},
     private readonly resolveArtifactVersionTrace?: ArtifactVersionTraceResolver,
@@ -607,123 +647,131 @@ export class ReviewerHostServer {
     // Read the artifact from managed storage. A read failure (missing/unreadable file) MUST surface
     // as an error, not degrade to empty content — otherwise the reviewer cannot distinguish "could
     // not read" from "the file is genuinely empty", which produces false "empty artifact" findings.
-    const resolvedVersion = this.resolveArtifactVersion
-      ? await this.resolveArtifactVersion({ projectId: this.session.projectId, versionId: id })
-      : undefined
-    const artifactPath =
-      resolvedVersion?.path ??
-      resolveArtifactPath(this.artifactStorageRoot, this.session.projectId, id)
-
     if (options.offset !== undefined && hasStructuredTargets(options)) {
       throw new Error(
         'Reviewer Artifact offset cannot be combined with structured content targets.'
       )
     }
 
-    const offset = options.offset ?? 0
-    const requestedBytes = options.maxBytes ?? this.resourceBudget.readBytes
-    if (!Number.isSafeInteger(offset) || offset < 0) {
-      throw new Error('Reviewer Artifact offset must be a non-negative integer.')
-    }
-    if (!Number.isSafeInteger(requestedBytes) || requestedBytes <= 0) {
-      throw new Error('Reviewer Artifact maxBytes must be a positive integer.')
-    }
-    const remainingSessionBytes = this.resourceBudget.sessionBytes - this.reviewerBytesReturned
-    if (remainingSessionBytes <= 0) {
-      throw new ResourceBudgetExceededError(
-        'reviewer-session',
-        this.reviewerBytesReturned + 1,
-        this.resourceBudget.sessionBytes
-      )
-    }
-    const returnedLimit = Math.min(
-      requestedBytes,
-      this.resourceBudget.readBytes,
-      remainingSessionBytes
-    )
-    let verification: ArtifactVerification
+    const resolvedVersion = this.resolveArtifactVersion
+      ? await this.resolveArtifactVersion({
+          projectId: this.session.projectId,
+          versionId: id,
+          ...(artifactMeta?.artifactId
+            ? { sessionId: this.session.id, fileId: artifactMeta.artifactId }
+            : {})
+        })
+      : undefined
+    const managedLease = isManagedArtifactVersionContent(resolvedVersion)
+      ? resolvedVersion
+      : undefined
+    const artifactPath =
+      resolvedVersion?.path ??
+      (resolvedVersion
+        ? undefined
+        : resolveArtifactPath(this.artifactStorageRoot, this.session.projectId, id))
+
     try {
-      verification = await this.verifyArtifact(id, artifactPath, resolvedVersion?.checksum, signal)
-    } catch (error) {
-      if (signal?.aborted) throw error
-      if (error instanceof ArtifactVersionChecksumMismatchError) throw error
-      throw new Error(
-        `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
-          `${toErrorMessage(error)}`
-      )
-    }
-
-    if (offset > verification.sizeBytes) {
-      throw new Error(
-        `Reviewer Artifact offset ${offset} exceeds file size ${verification.sizeBytes}.`
-      )
-    }
-
-    const filename = resolvedVersion?.filename ?? artifactMeta?.path ?? artifactMeta?.name ?? id
-    const structuredFormat = detectStructuredFormat(
-      resolvedVersion?.contentType ?? artifactMeta?.mimeType,
-      filename
-    )
-    if (structuredFormat) {
-      const targets: ArtifactReadTargets = {
-        pages: options.pages,
-        sheet: options.sheet,
-        rowStart: options.rowStart,
-        rowEnd: options.rowEnd,
-        columns: options.columns
+      const offset = options.offset ?? 0
+      const requestedBytes = options.maxBytes ?? this.resourceBudget.readBytes
+      if (!Number.isSafeInteger(offset) || offset < 0) {
+        throw new Error('Reviewer Artifact offset must be a non-negative integer.')
       }
-      let structured: StructuredArtifactContent
-      if (structuredFormat === 'xlsx') {
-        structured = await readBoundedSpreadsheet(id, artifactPath, targets, signal)
-      } else if (structuredFormat === 'docx') {
-        structured = await this.readPreviewPagedContent(
-          id,
-          artifactPath,
-          filename ?? id,
-          'docx',
-          options.pages ?? [1],
-          options.includePreview === true,
-          returnedLimit,
-          verification,
-          signal
+      if (!Number.isSafeInteger(requestedBytes) || requestedBytes <= 0) {
+        throw new Error('Reviewer Artifact maxBytes must be a positive integer.')
+      }
+      const remainingSessionBytes = this.resourceBudget.sessionBytes - this.reviewerBytesReturned
+      if (remainingSessionBytes <= 0) {
+        throw new ResourceBudgetExceededError(
+          'reviewer-session',
+          this.reviewerBytesReturned + 1,
+          this.resourceBudget.sessionBytes
         )
-      } else if (structuredFormat === 'pptx') {
-        structured = await readBoundedPptx(id, artifactPath, targets, signal)
-        if (options.includePreview && structured.kind === 'paged') {
-          structured = await this.mergePreviewContent(
-            structured,
+      }
+      const returnedLimit = Math.min(
+        requestedBytes,
+        this.resourceBudget.readBytes,
+        remainingSessionBytes
+      )
+      let verification: ArtifactVerification
+      try {
+        if (!artifactPath) {
+          const sample = Buffer.from(
+            await managedLease!.readRange(0, Math.min(managedLease!.size, 512))
+          )
+          await managedLease!.verifyUnchanged()
+          verification = {
+            path: '',
+            checksum: managedLease!.checksum,
+            sizeBytes: managedLease!.size,
+            sample,
+            observation: {
+              device: 0,
+              inode: 0,
+              sizeBytes: managedLease!.size,
+              modifiedAtMs: 0,
+              changedAtMs: 0
+            }
+          }
+        } else {
+          verification = await this.verifyArtifact(
+            id,
+            artifactPath,
+            resolvedVersion?.checksum,
+            signal
+          )
+        }
+      } catch (error) {
+        if (signal?.aborted) throw error
+        if (error instanceof ArtifactVersionChecksumMismatchError) throw error
+        throw new Error(
+          `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
+            `${toErrorMessage(error)}`
+        )
+      }
+
+      if (offset > verification.sizeBytes) {
+        throw new Error(
+          `Reviewer Artifact offset ${offset} exceeds file size ${verification.sizeBytes}.`
+        )
+      }
+
+      const filename = resolvedVersion?.filename ?? artifactMeta?.path ?? artifactMeta?.name ?? id
+      const structuredFormat = detectStructuredFormat(
+        resolvedVersion?.contentType ?? artifactMeta?.mimeType,
+        filename
+      )
+      if (structuredFormat) {
+        if (!artifactPath) {
+          throw new Error(
+            `Managed Artifact ${JSON.stringify(id)} does not expose a verified structured-content path.`
+          )
+        }
+        const targets: ArtifactReadTargets = {
+          pages: options.pages,
+          sheet: options.sheet,
+          rowStart: options.rowStart,
+          rowEnd: options.rowEnd,
+          columns: options.columns
+        }
+        let structured: StructuredArtifactContent
+        if (structuredFormat === 'xlsx') {
+          structured = await readBoundedSpreadsheet(id, artifactPath, targets, signal)
+        } else if (structuredFormat === 'docx') {
+          structured = await this.readPreviewPagedContent(
+            id,
             artifactPath,
             filename ?? id,
+            'docx',
+            options.pages ?? [1],
+            options.includePreview === true,
             returnedLimit,
             verification,
             signal
           )
-        }
-      } else {
-        try {
-          const pdf = await extractPdfTextPages(artifactPath, options.pages, returnedLimit, signal)
-          structured = {
-            id,
-            role: 'work_product',
-            kind: 'paged',
-            format: 'pdf',
-            targets: { pages: pdf.pages.map((page) => page.pageNumber) },
-            pageCount: pdf.pageCount,
-            pages: pdf.pages,
-            partial: pdf.pages.length < pdf.pageCount,
-            limitations: pdf.truncated
-              ? [
-                  {
-                    kind: 'truncated',
-                    subjectId: id,
-                    detail: 'Requested PDF page text was truncated.'
-                  }
-                ]
-              : []
-          }
-          const needsPreview =
-            options.includePreview === true || pdf.pages.some((page) => page.text.length === 0)
-          if (needsPreview) {
+        } else if (structuredFormat === 'pptx') {
+          structured = await readBoundedPptx(id, artifactPath, targets, signal)
+          if (options.includePreview && structured.kind === 'paged') {
             structured = await this.mergePreviewContent(
               structured,
               artifactPath,
@@ -733,157 +781,270 @@ export class ReviewerHostServer {
               signal
             )
           }
-        } catch (error) {
-          if (signal?.aborted) throw error
-          if (
-            error instanceof ArtifactTargetRangeError ||
-            (error instanceof Error && error.message.startsWith('Requested PDF page must'))
-          ) {
-            throw error
+        } else {
+          try {
+            const pdf = await extractPdfTextPages(
+              artifactPath,
+              options.pages,
+              returnedLimit,
+              signal
+            )
+            structured = {
+              id,
+              role: 'work_product',
+              kind: 'paged',
+              format: 'pdf',
+              targets: { pages: pdf.pages.map((page) => page.pageNumber) },
+              pageCount: pdf.pageCount,
+              pages: pdf.pages,
+              partial: pdf.pages.length < pdf.pageCount,
+              limitations: pdf.truncated
+                ? [
+                    {
+                      kind: 'truncated',
+                      subjectId: id,
+                      detail: 'Requested PDF page text was truncated.'
+                    }
+                  ]
+                : []
+            }
+            const needsPreview =
+              options.includePreview === true || pdf.pages.some((page) => page.text.length === 0)
+            if (needsPreview) {
+              structured = await this.mergePreviewContent(
+                structured,
+                artifactPath,
+                filename ?? id,
+                returnedLimit,
+                verification,
+                signal
+              )
+            }
+          } catch (error) {
+            if (signal?.aborted) throw error
+            if (
+              error instanceof ArtifactTargetRangeError ||
+              (error instanceof Error && error.message.startsWith('Requested PDF page must'))
+            ) {
+              throw error
+            }
+            structured = {
+              id,
+              role: 'work_product',
+              kind: 'paged',
+              format: 'pdf',
+              targets: { ...(options.pages ? { pages: [...new Set(options.pages)] } : {}) },
+              pageCount: 0,
+              pages: [],
+              partial: true,
+              limitations: [
+                {
+                  kind: 'corrupt-content',
+                  subjectId: id,
+                  detail: `PDF could not be parsed: ${toErrorMessage(error)}`
+                }
+              ]
+            }
           }
-          structured = {
+        }
+        return this.commitStructuredResponse({ ...structured, role }, returnedLimit)
+      }
+      if (hasStructuredTargets(options)) {
+        return this.commitStructuredResponse(
+          {
             id,
-            role: 'work_product',
-            kind: 'paged',
-            format: 'pdf',
-            targets: { ...(options.pages ? { pages: [...new Set(options.pages)] } : {}) },
-            pageCount: 0,
-            pages: [],
+            role,
+            kind: 'unsupported',
+            targets: {
+              ...(options.pages ? { pages: [...new Set(options.pages)] } : {}),
+              ...(options.sheet ? { sheet: options.sheet } : {}),
+              ...(options.rowStart !== undefined ? { rowStart: options.rowStart } : {}),
+              ...(options.rowEnd !== undefined ? { rowEnd: options.rowEnd } : {}),
+              ...(options.columns ? { columns: [...new Set(options.columns)] } : {})
+            },
             partial: true,
             limitations: [
               {
-                kind: 'corrupt-content',
+                kind: 'unsupported-format',
                 subjectId: id,
-                detail: `PDF could not be parsed: ${toErrorMessage(error)}`
+                detail: `Targeted structured content is not supported for ${filename ?? id}.`
               }
             ]
+          },
+          returnedLimit
+        )
+      }
+      let read: {
+        page: Buffer
+        offset: number
+        returnedBytes: number
+        truncated: boolean
+        sizeBytes: number
+        sample: Buffer
+      }
+      if (managedLease) {
+        try {
+          if (signal?.aborted) throw signal.reason
+          const end = Math.min(managedLease.size, offset + returnedLimit)
+          const page = Buffer.from(await managedLease.readRange(offset, end))
+          await managedLease.verifyUnchanged()
+          read = {
+            page,
+            offset,
+            returnedBytes: page.byteLength,
+            truncated: end < managedLease.size,
+            sizeBytes: managedLease.size,
+            sample: verification.sample
           }
+        } catch (error) {
+          throw new Error(
+            `Failed to read managed Artifact ${JSON.stringify(id)}: ${toErrorMessage(error)}`
+          )
+        }
+      } else {
+        try {
+          const page = await readVerifiedFilePage(
+            artifactPath!,
+            offset,
+            returnedLimit,
+            verification.observation,
+            signal
+          )
+          read = {
+            ...page,
+            sizeBytes: verification.sizeBytes,
+            sample: verification.sample
+          }
+        } catch (error) {
+          this.artifactVerifications.delete(id)
+          throw new Error(
+            `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
+              `${toErrorMessage(error)}`
+          )
         }
       }
-      return this.commitStructuredResponse({ ...structured, role }, returnedLimit)
-    }
-    if (hasStructuredTargets(options)) {
-      return this.commitStructuredResponse(
-        {
+      let result: ArtifactContent
+      const contentType = resolvedVersion?.contentType ?? artifactMeta?.mimeType
+      const imageMimeType = detectSupportedImageMimeType(read.sample)
+
+      if (imageMimeType) {
+        if (offset !== 0) {
+          throw new Error('Reviewer image content reads do not accept an offset.')
+        }
+        const sourceComplete = read.returnedBytes === read.sizeBytes
+        const baseMetadataBytes = Buffer.byteLength(
+          JSON.stringify({
+            id,
+            kind: 'media',
+            role: 'work_product',
+            delivery: 'delivered',
+            filename,
+            mimeType: imageMimeType,
+            checksum: verification.checksum,
+            sizeBytes: read.sizeBytes,
+            offset: 0,
+            returnedBytes: read.returnedBytes,
+            truncated: false,
+            limitations: []
+          }),
+          'utf8'
+        )
+        const encodedMediaBytes = 4 * Math.ceil(read.page.length / 3)
+        const complete =
+          sourceComplete && baseMetadataBytes + encodedMediaBytes <= remainingSessionBytes
+        const limitations: ReviewLimitation[] = complete
+          ? []
+          : [
+              {
+                kind: 'budget-exhausted',
+                subjectId: id,
+                detail: `Image content requires ${read.sizeBytes} source bytes and exceeds the bounded media transport budget.`
+              }
+            ]
+        const metadata: MediaArtifactBase = {
           id,
           role,
-          kind: 'unsupported',
-          targets: {
-            ...(options.pages ? { pages: [...new Set(options.pages)] } : {}),
-            ...(options.sheet ? { sheet: options.sheet } : {}),
-            ...(options.rowStart !== undefined ? { rowStart: options.rowStart } : {}),
-            ...(options.rowEnd !== undefined ? { rowEnd: options.rowEnd } : {}),
-            ...(options.columns ? { columns: [...new Set(options.columns)] } : {})
-          },
-          partial: true,
-          limitations: [
-            {
-              kind: 'unsupported-format',
-              subjectId: id,
-              detail: `Targeted structured content is not supported for ${filename ?? id}.`
-            }
-          ]
-        },
-        returnedLimit
-      )
-    }
-    let page: Awaited<ReturnType<typeof readVerifiedFilePage>>
-    try {
-      page = await readVerifiedFilePage(
-        artifactPath,
-        offset,
-        returnedLimit,
-        verification.observation,
-        signal
-      )
-    } catch (error) {
-      this.artifactVerifications.delete(id)
-      throw new Error(
-        `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
-          `${toErrorMessage(error)}`
-      )
-    }
-    const read = {
-      ...page,
-      sizeBytes: verification.sizeBytes,
-      sample: verification.sample
-    }
-    let result: ArtifactContent
-    const contentType = resolvedVersion?.contentType ?? artifactMeta?.mimeType
-    const imageMimeType = detectSupportedImageMimeType(read.sample)
-
-    if (imageMimeType) {
-      if (offset !== 0) {
-        throw new Error('Reviewer image content reads do not accept an offset.')
-      }
-      const sourceComplete = read.returnedBytes === read.sizeBytes
-      const baseMetadataBytes = Buffer.byteLength(
-        JSON.stringify({
-          id,
           kind: 'media',
-          role: 'work_product',
-          delivery: 'delivered',
           filename,
           mimeType: imageMimeType,
           checksum: verification.checksum,
-          sizeBytes: read.sizeBytes,
-          offset: 0,
-          returnedBytes: read.returnedBytes,
-          truncated: false,
-          limitations: []
-        }),
-        'utf8'
-      )
-      const encodedMediaBytes = 4 * Math.ceil(read.page.length / 3)
-      const complete =
-        sourceComplete && baseMetadataBytes + encodedMediaBytes <= remainingSessionBytes
-      const limitations: ReviewLimitation[] = complete
-        ? []
-        : [
-            {
-              kind: 'budget-exhausted',
-              subjectId: id,
-              detail: `Image content requires ${read.sizeBytes} source bytes and exceeds the bounded media transport budget.`
-            }
-          ]
-      const metadata: MediaArtifactBase = {
-        id,
-        role,
-        kind: 'media',
-        filename,
-        mimeType: imageMimeType,
-        checksum: verification.checksum,
-        limitations
-      }
-      if (complete) {
-        result = {
-          ...metadata,
-          delivery: 'delivered',
-          sizeBytes: read.sizeBytes,
-          offset: 0,
-          returnedBytes: read.returnedBytes,
-          truncated: false,
-          limitations: [],
-          data: read.page
-        }
-      } else {
-        result = {
-          ...metadata,
-          delivery: 'limited',
-          sizeBytes: read.sizeBytes,
-          offset: 0,
-          returnedBytes: 0,
-          truncated: true,
           limitations
         }
-      }
-    } else if (
-      isDeclaredTextContentType(contentType) ||
-      isTabularArtifact(contentType, filename) ||
-      (!contentType && isLikelyText(read.sample))
-    ) {
-      const safePage = decodeUtf8Page(read.page, offset)
-      if (read.returnedBytes > 0 && (safePage.offset !== offset || safePage.returnedBytes === 0)) {
+        if (complete) {
+          result = {
+            ...metadata,
+            delivery: 'delivered',
+            sizeBytes: read.sizeBytes,
+            offset: 0,
+            returnedBytes: read.returnedBytes,
+            truncated: false,
+            limitations: [],
+            data: read.page
+          }
+        } else {
+          result = {
+            ...metadata,
+            delivery: 'limited',
+            sizeBytes: read.sizeBytes,
+            offset: 0,
+            returnedBytes: 0,
+            truncated: true,
+            limitations
+          }
+        }
+      } else if (
+        isDeclaredTextContentType(contentType) ||
+        isTabularArtifact(contentType, filename) ||
+        (!contentType && isLikelyText(read.sample))
+      ) {
+        const safePage = decodeUtf8Page(read.page, offset)
+        if (
+          read.returnedBytes > 0 &&
+          (safePage.offset !== offset || safePage.returnedBytes === 0)
+        ) {
+          result = unsupportedArtifactContent({
+            id,
+            role,
+            filename,
+            contentType,
+            checksum: verification.checksum,
+            sizeBytes: read.sizeBytes
+          })
+        } else {
+          const text = safePage.content
+          const truncated = safePage.offset + safePage.returnedBytes < read.sizeBytes
+          const window = {
+            sizeBytes: read.sizeBytes,
+            offset: safePage.offset,
+            returnedBytes: safePage.returnedBytes,
+            truncated,
+            ...(truncated ? { nextOffset: safePage.offset + safePage.returnedBytes } : {})
+          }
+
+          // A byte page can split a quoted record, escaped quote, or header. Return incomplete tabular
+          // files as raw UTF-8 windows so following nextOffset reconstructs exact source bytes; only a
+          // complete table is safe to project into column-addressable data.
+          if (
+            isTabularArtifact(contentType, filename) &&
+            window.offset === 0 &&
+            !window.truncated
+          ) {
+            const parsed = parseTabular(text, detectDelimiter(contentType, filename))
+            result = {
+              id,
+              role,
+              kind: 'tabular',
+              columns: parsed.columns,
+              rowCount: parsed.rowCount,
+              rowsReturned: parsed.rowCount,
+              rowCountComplete: true,
+              ...window
+            }
+          } else {
+            result = { id, role, kind: 'raw', content: text, encoding: 'utf8', ...window }
+          }
+        }
+      } else {
         result = unsupportedArtifactContent({
           id,
           role,
@@ -892,62 +1053,26 @@ export class ReviewerHostServer {
           checksum: verification.checksum,
           sizeBytes: read.sizeBytes
         })
-      } else {
-        const text = safePage.content
-        const truncated = safePage.offset + safePage.returnedBytes < read.sizeBytes
-        const window = {
-          sizeBytes: read.sizeBytes,
-          offset: safePage.offset,
-          returnedBytes: safePage.returnedBytes,
-          truncated,
-          ...(truncated ? { nextOffset: safePage.offset + safePage.returnedBytes } : {})
-        }
-
-        // A byte page can split a quoted record, escaped quote, or header. Return incomplete tabular
-        // files as raw UTF-8 windows so following nextOffset reconstructs exact source bytes; only a
-        // complete table is safe to project into column-addressable data.
-        if (isTabularArtifact(contentType, filename) && window.offset === 0 && !window.truncated) {
-          const parsed = parseTabular(text, detectDelimiter(contentType, filename))
-          result = {
-            id,
-            role,
-            kind: 'tabular',
-            columns: parsed.columns,
-            rowCount: parsed.rowCount,
-            rowsReturned: parsed.rowCount,
-            rowCountComplete: true,
-            ...window
-          }
-        } else {
-          result = { id, role, kind: 'raw', content: text, encoding: 'utf8', ...window }
-        }
       }
-    } else {
-      result = unsupportedArtifactContent({
-        id,
-        role,
-        filename,
-        contentType,
-        checksum: verification.checksum,
-        sizeBytes: read.sizeBytes
-      })
-    }
 
-    const responseBytes =
-      Buffer.byteLength(
-        JSON.stringify(result.kind === 'media' ? toMediaArtifactMetadata(result) : result),
-        'utf8'
-      ) +
-      (result.kind === 'media' && result.delivery === 'delivered'
-        ? 4 * Math.ceil(result.data.length / 3)
-        : 0)
-    assertWithinResourceBudget(
-      'reviewer-session',
-      this.reviewerBytesReturned + responseBytes,
-      this.resourceBudget.sessionBytes
-    )
-    this.reviewerBytesReturned += responseBytes
-    return result
+      const responseBytes =
+        Buffer.byteLength(
+          JSON.stringify(result.kind === 'media' ? toMediaArtifactMetadata(result) : result),
+          'utf8'
+        ) +
+        (result.kind === 'media' && result.delivery === 'delivered'
+          ? 4 * Math.ceil(result.data.length / 3)
+          : 0)
+      assertWithinResourceBudget(
+        'reviewer-session',
+        this.reviewerBytesReturned + responseBytes,
+        this.resourceBudget.sessionBytes
+      )
+      this.reviewerBytesReturned += responseBytes
+      return result
+    } finally {
+      await managedLease?.close()
+    }
   }
 
   private async readArtifactTrace(

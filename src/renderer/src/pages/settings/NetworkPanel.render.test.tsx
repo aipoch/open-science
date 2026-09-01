@@ -33,6 +33,35 @@ const buttonWithText = (text: string): HTMLButtonElement =>
   ) as HTMLButtonElement
 
 describe('NetworkPanel offline retry', () => {
+  it('hides unavailable Notebook network controls and falls back from the domains view', async () => {
+    const onNavigate = vi.fn()
+    await act(async () => {
+      root.render(
+        <NetworkPanel
+          view={{ kind: 'list' }}
+          onNavigate={onNavigate}
+          notebookNetworkAvailable={false}
+        />
+      )
+    })
+
+    expect(container.querySelector('[aria-label="Notebook network access"]')).toBeNull()
+
+    await act(async () => {
+      root.render(
+        <NetworkPanel
+          view={{ kind: 'domains' }}
+          onNavigate={onNavigate}
+          notebookNetworkAvailable={false}
+        />
+      )
+    })
+
+    expect(container.querySelector('[aria-label="Allowed domains"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Network status"]')).not.toBeNull()
+    expect(onNavigate).not.toHaveBeenCalled()
+  })
+
   it('shows a retry action for a failed cold-start probe', async () => {
     Object.defineProperty(window.navigator, 'onLine', { value: true, configurable: true })
     useNetworkStore.setState({ isOnline: true, connectivity: 'probe-failed' })

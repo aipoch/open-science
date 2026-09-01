@@ -2,6 +2,8 @@
 
 [![ダウンロード](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
 [![バージョン](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
+[![🏆 BiomniBench-DA Public 50で第1位](https://img.shields.io/badge/%F0%9F%8F%86%20%231-BiomniBench--DA%20Public%2050-F9B000?style=for-the-badge)](https://huggingface.co/datasets/phylobio/BiomniBench-DA)
+[![対応プラットフォーム macOS Windows Linux](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-4dabf7?style=for-the-badge)](https://github.com/aipoch/open-science/releases/latest)
 [![ライセンス](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
 [![ウェブサイト](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
@@ -34,6 +36,7 @@ Open Science は、機械学習、統計学、生命科学、化学、材料科�
 
 - [クイックスタート](#-クイックスタート)
 - [製品ツアー](#製品ツアー)
+- [ベンチマーク性能](#ベンチマーク性能)
 - [Open Science を選ぶ理由](#open-science-を選ぶ理由)
 - [設計原則](#設計原則)
 - [主な機能](#主な機能)
@@ -143,6 +146,16 @@ Open Science には、増え続ける **18 個の注目**ファイルベース�
     <td align="center"><sub>権限付きエージェントツールとして公開される科学データベース</sub></td>
   </tr>
 </table>
+
+## ベンチマーク性能
+
+### 🏆 BiomniBench-DA Public 50 で第 1 位
+
+Open Science は、集計された BiomniBench-DA Public 50 の比較で最高のランキングスコアを達成し、**gpt-5.6-sol (xhigh)** で **79.05** を獲得しました。この結果は、Gemini 3.1 Pro の評価スコア **81.04** と DeepSeek v4-pro の評価スコア **77.06** を等加重平均したもので、収集された Public 50 の結果で Open Science を **第 1 位** に位置付けています。[BiomniBench-DA データセット](https://huggingface.co/datasets/phylobio/BiomniBench-DA)をご覧ください。
+
+<p align="center">
+  <img src="../images/readme/biomnibench-public50-leaderboard.jpg" alt="AIPOCH Open Science が 79.05 で第 1 位となった BiomniBench-DA Public 50 の比較" width="1200" />
+</p>
 
 ## Open Science を選ぶ理由
 

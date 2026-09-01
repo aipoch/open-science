@@ -34,8 +34,9 @@ const recordValue = (value: unknown): Record<string, unknown> | undefined =>
     : undefined
 
 const producerEvidence = (
-  evidenceJson: string
+  evidenceJson: string | null
 ): { available: boolean; connectorInvocationId?: string } => {
+  if (!evidenceJson) return { available: false }
   try {
     const producer = recordValue(recordValue(JSON.parse(evidenceJson))?.producer)
     return {

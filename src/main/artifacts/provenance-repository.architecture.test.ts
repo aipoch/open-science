@@ -28,6 +28,7 @@ import { describe, expect, it } from 'vitest'
 
 const productionFiles = [
   'provenance-canonical.ts',
+  'provenance-content-status.ts',
   'provenance-core-evidence.ts',
   'provenance-dependency-reader.ts',
   'provenance-execution-evidence.ts',
@@ -208,6 +209,7 @@ describe('Artifact Provenance repository architecture', () => {
   it('keeps the established public facade and private projection helpers', () => {
     expect(methods(facade, 'public')).toEqual(
       [
+        'activateFinalizedRun',
         'createVersion',
         'deleteProjectProvenance',
         'finalizeRun',
@@ -228,8 +230,6 @@ describe('Artifact Provenance repository architecture', () => {
         'releaseWriteReservation',
         'replayVersion',
         'reserveWrite',
-        'resolveVersionContent',
-        'resolveVersionContentForStreamingVerification',
         'resolveReviewerTurnFileEvidence',
         'resolveVersionDescriptors',
         'validateFinalizationOwnership',
@@ -238,12 +238,7 @@ describe('Artifact Provenance repository architecture', () => {
       ].sort()
     )
     expect(methods(facade, 'private')).toEqual(
-      [
-        'resolveVersionContentMetadata',
-        'resolveVersionDerivedPath',
-        'toArtifactVersionFile',
-        'toDescriptor'
-      ].sort()
+      ['resolveVersionDerivedPath', 'toArtifactVersionFile', 'toDescriptor'].sort()
     )
   })
 
@@ -278,6 +273,7 @@ describe('Artifact Provenance repository architecture', () => {
         'reviewerTurnFileEvidenceReader',
         'stagingRecovery',
         'unindexedRecovery',
+        'versionFileOperator',
         'versionWriter',
         'writeBudgetOwner'
       ].sort()
@@ -288,6 +284,7 @@ describe('Artifact Provenance repository architecture', () => {
         'SAFE_SEGMENT_PATTERN',
         'assertSafeSegment',
         'hasServerInferredProducer',
+        'journalRecoveryPlan',
         'recordValue'
       ].sort()
     )
@@ -297,6 +294,7 @@ describe('Artifact Provenance repository architecture', () => {
     expect(
       Object.fromEntries(
         [
+          'activateFinalizedRun',
           'createVersion',
           'finalizeRun',
           'getLineage',
@@ -316,6 +314,7 @@ describe('Artifact Provenance repository architecture', () => {
         ].map((method) => [method, delegationTarget(facade, facadeFile, method)])
       )
     ).toEqual({
+      activateFinalizedRun: 'this.messageFinalizer.activateFinalizedRun',
       createVersion: 'this.versionWriter.writeVersion',
       finalizeRun: 'this.messageFinalizer.finalizeRun',
       getLineage: 'this.readModel.getLineage',
@@ -425,7 +424,6 @@ describe('Artifact Provenance repository architecture', () => {
         'src/main/artifacts/code-reconstruction.test.ts',
         'src/main/notebook/local-rpc-server.test.ts',
         'src/main/reviewer/ipc.test.ts',
-        'src/main/session-artifact-file-resolver.test.ts',
         'src/main/session-persistence/artifact-finalization-recovery.integration.test.ts',
         'src/main/session-persistence/coordinator.test.ts',
         'src/main/session-persistence/deletion-integration.test.ts',

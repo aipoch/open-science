@@ -181,6 +181,10 @@ export const parseArtifactVersionLocator = (value: string): ArtifactVersionIdent
 export type ArtifactVersionDescriptor = Omit<ArtifactVersionFile, 'path' | 'fileUrl'> & {
   state: 'pending' | 'finalized'
   messageId?: string
+  // Optional for renderer state written before managed text editing shipped. New native lineage
+  // projections always classify the version so user edits are never presented as Agent output.
+  originKind?: 'agent_generated' | 'user_edit' | 'legacy'
+  basedOnVersionId?: string
 }
 
 export type ArtifactLineageProvenance = {

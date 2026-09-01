@@ -9,10 +9,11 @@ import type {
   TiffDecodeWorkerRequest,
   TiffDecodeWorkerResponse
 } from '../tiff-preview-worker-protocol'
-import { TiffPreviewContent } from './TiffPreview'
+import { TiffPreviewContent, TiffPreviewRenderer } from './TiffPreview'
 
 let workerResponseOverride:
   ((request: TiffDecodeWorkerRequest) => TiffDecodeWorkerResponse | undefined) | undefined
+const managedArtifactIdentity = { projectId: 'project-1', managedFileId: 'artifact-1' } as const
 
 class TestTiffWorker {
   private data: ArrayBuffer | undefined
@@ -116,7 +117,13 @@ describe('TiffPreviewContent', () => {
   it('renders an LZW TIFF page with the same zoom surface as other images', async () => {
     root = createRoot(container)
     await act(async () => {
-      root.render(<TiffPreviewContent path="/workspace/chart.tiff" name="chart.tiff" />)
+      root.render(
+        <TiffPreviewContent
+          {...managedArtifactIdentity}
+          path="/workspace/chart.tiff"
+          name="chart.tiff"
+        />
+      )
     })
 
     await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
@@ -139,11 +146,46 @@ describe('TiffPreviewContent', () => {
     expect(container.querySelector('[aria-label="Reset zoom"]')).not.toBeNull()
   })
 
+  it('acquires the exact managed Upload version selected by the preview item', async () => {
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <TiffPreviewRenderer
+          item={{
+            id: 'upload:upload-1',
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            title: 'chart.tiff',
+            type: 'file',
+            source: 'upload',
+            path: 'upload-version:stale-projection',
+            name: 'chart.tiff',
+            format: 'tiff',
+            managedFileId: 'upload-1',
+            selectedVersionId: 'upload-v3'
+          }}
+        />
+      )
+    })
+
+    await vi.waitFor(() =>
+      expect(window.api.previewResources.acquire).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'upload',
+          projectId: 'project-1',
+          fileId: 'upload-1',
+          versionId: 'upload-v3'
+        })
+      )
+    )
+  })
+
   it('renders a left-aligned intrinsic thumbnail without the full zoom frame', async () => {
     root = createRoot(container)
     await act(async () => {
       root.render(
         <TiffPreviewContent
+          {...managedArtifactIdentity}
           path="/workspace/chart.tiff"
           name="chart.tiff"
           variant="thumbnail"
@@ -185,7 +227,13 @@ describe('TiffPreviewContent', () => {
 
     root = createRoot(container)
     await act(async () => {
-      root.render(<TiffPreviewContent path="/workspace/stack.tiff" name="stack.tiff" />)
+      root.render(
+        <TiffPreviewContent
+          {...managedArtifactIdentity}
+          path="/workspace/stack.tiff"
+          name="stack.tiff"
+        />
+      )
     })
 
     await vi.waitFor(() => expect(container.textContent).toContain('Page 1 of 2'))
@@ -230,7 +278,13 @@ describe('TiffPreviewContent', () => {
 
     root = createRoot(container)
     await act(async () => {
-      root.render(<TiffPreviewContent path="/workspace/stack.tiff" name="stack.tiff" />)
+      root.render(
+        <TiffPreviewContent
+          {...managedArtifactIdentity}
+          path="/workspace/stack.tiff"
+          name="stack.tiff"
+        />
+      )
     })
 
     await vi.waitFor(() => expect(container.textContent).toContain('Page 1 of 2'))
@@ -266,7 +320,13 @@ describe('TiffPreviewContent', () => {
 
     root = createRoot(container)
     await act(async () => {
-      root.render(<TiffPreviewContent path="/workspace/broken.tiff" name="broken.tiff" />)
+      root.render(
+        <TiffPreviewContent
+          {...managedArtifactIdentity}
+          path="/workspace/broken.tiff"
+          name="broken.tiff"
+        />
+      )
     })
 
     await vi.waitFor(() =>
@@ -284,7 +344,13 @@ describe('TiffPreviewContent', () => {
     })
     root = createRoot(container)
     await act(async () => {
-      root.render(<TiffPreviewContent path="/workspace/chart.tiff" name="chart.tiff" />)
+      root.render(
+        <TiffPreviewContent
+          {...managedArtifactIdentity}
+          path="/workspace/chart.tiff"
+          name="chart.tiff"
+        />
+      )
     })
 
     await vi.waitFor(() =>

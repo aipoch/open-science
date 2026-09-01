@@ -9,7 +9,13 @@ import {
   type ArtifactLineageProvenance,
   type ArtifactVersionDescriptor
 } from '../../../../shared/artifact-provenance'
-import { getUploadedAttachmentName, getUploadedAttachmentPath } from '../../../../shared/uploads'
+import {
+  createUploadVersionReference,
+  getUploadedAttachmentName,
+  getUploadedAttachmentPath,
+  parseUploadVersionReference
+} from '../../../../shared/uploads'
+import type { ManagedFileVersionDescriptor } from '../../../../shared/managed-file-versions'
 
 import { getArtifactName } from './artifact-preview-utils'
 import { getPreviewFormatForFile } from './preview-support'
@@ -33,6 +39,7 @@ export const createPreviewFileItem = ({
   size,
   mtimeMs,
   artifactId,
+  managedFileId,
   selectedVersionId,
   versionNumber,
   originSession
@@ -47,6 +54,7 @@ export const createPreviewFileItem = ({
   size?: number
   mtimeMs?: number
   artifactId?: string
+  managedFileId?: string
   selectedVersionId?: string
   versionNumber?: number
   originSession?: PreviewFileItem['originSession']
@@ -68,6 +76,7 @@ export const createPreviewFileItem = ({
   if (typeof size === 'number') item.size = size
   if (typeof mtimeMs === 'number') item.mtimeMs = mtimeMs
   if (artifactId) item.artifactId = artifactId
+  if (managedFileId) item.managedFileId = managedFileId
   if (selectedVersionId) item.selectedVersionId = selectedVersionId
   if (typeof versionNumber === 'number') item.versionNumber = versionNumber
   if (originSession) item.originSession = originSession
@@ -104,7 +113,7 @@ export const createPreviewFileItemFromArtifact = (
     size: artifact.size,
     mtimeMs: artifact.mtimeMs,
     artifactId: artifact.artifactId,
-    selectedVersionId: artifact.versionId,
+    managedFileId: artifact.artifactId,
     versionNumber: artifact.versionNumber
   })
 }
@@ -122,6 +131,7 @@ export const createPreviewFileItemForArtifactVersion = ({
 }): PreviewFileItem => ({
   ...item,
   projectId,
+  managedFileId: version.artifactId,
   selectedVersionId: version.versionId,
   versionNumber: version.versionNumber,
   path: createArtifactVersionLocator({
@@ -134,6 +144,41 @@ export const createPreviewFileItemForArtifactVersion = ({
   title: version.name,
   size: version.size,
   mtimeMs: version.mtimeMs
+})
+
+export const createPreviewFileItemForManagedVersion = ({
+  item,
+  version,
+  projectId,
+  sessionId
+}: {
+  item: PreviewFileItem
+  version: ManagedFileVersionDescriptor
+  projectId: string
+  sessionId: string
+}): PreviewFileItem => ({
+  ...item,
+  projectId,
+  managedFileId: version.fileId,
+  artifactId: version.source === 'artifact' ? version.fileId : undefined,
+  selectedVersionId: version.id,
+  versionNumber: version.versionNumber,
+  path:
+    version.source === 'artifact'
+      ? createArtifactVersionLocator({
+          projectId,
+          appSessionId: sessionId,
+          artifactId: version.fileId,
+          versionId: version.id
+        })
+      : createUploadVersionReference(version.id, {
+          projectId,
+          sessionId,
+          fileId: version.fileId
+        }),
+  name: version.displayName,
+  title: version.displayName,
+  size: version.sizeBytes
 })
 
 // An omitted selection opens the newest finalized Version. An explicit selection is immutable
@@ -159,10 +204,12 @@ export const createPreviewFileItemFromUpload = (
     projectId,
     sessionId,
     source: 'upload',
+    managedFileId: attachment.id,
     path: getUploadedAttachmentPath(attachment, projectId),
     name: attachmentName,
     mimeType: attachment.mimeType,
-    size: attachment.size
+    size: attachment.size,
+    versionNumber: attachment.versionNumber
   })
 }
 
@@ -228,23 +275,28 @@ export const createPreviewFileItemFromMention = (
   sessionId: string,
   projectId?: string
 ): PreviewFileItem => {
-  const identity = part.source === 'artifact' ? parseArtifactVersionLocator(part.path) : undefined
+  const artifactIdentity =
+    part.source === 'artifact' ? parseArtifactVersionLocator(part.path) : undefined
+  const uploadIdentity =
+    part.source === 'upload' ? parseUploadVersionReference(part.path) : undefined
   const artifactId =
     part.source === 'artifact'
-      ? (identity?.artifactId ?? (part.versionId ? part.id : undefined))
+      ? (artifactIdentity?.artifactId ?? (part.versionId ? part.id : undefined))
       : undefined
-  const selectedVersionId =
-    part.source === 'artifact' ? (identity?.versionId ?? part.versionId) : undefined
-
+  const managedFileId =
+    part.source === 'artifact'
+      ? (part.sourceFileId ?? artifactId)
+      : (part.sourceFileId ??
+        (part.id.startsWith('upload:') ? part.id.slice('upload:'.length) || undefined : undefined))
   return createPreviewFileItem({
     id: artifactId ?? part.id,
-    projectId: identity?.projectId ?? projectId,
-    sessionId: identity?.appSessionId ?? sessionId,
+    projectId: artifactIdentity?.projectId ?? uploadIdentity?.projectId ?? projectId,
+    sessionId: artifactIdentity?.appSessionId ?? uploadIdentity?.sessionId ?? sessionId,
     path: part.path,
     name: part.name,
     mimeType: part.mimeType,
     source: part.source === 'upload' ? 'upload' : undefined,
     artifactId,
-    selectedVersionId
+    managedFileId
   })
 }

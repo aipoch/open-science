@@ -158,10 +158,17 @@ afterEach(() => {
 
 const render = async (
   title = 'Notebook runtimes',
-  description = 'Enable the environments each notebook language may run in.'
+  description = 'Enable the environments each notebook language may run in.',
+  onOpenNetworkProtection?: () => void
 ): Promise<void> => {
   await act(async () => {
-    root.render(<RuntimesPanel title={title} description={description} />)
+    root.render(
+      <RuntimesPanel
+        title={title}
+        description={description}
+        onOpenNetworkProtection={onOpenNetworkProtection}
+      />
+    )
   })
   // Flush the listEnvironments()/survey() microtasks.
   await act(async () => {})
@@ -175,6 +182,26 @@ const click = async (el: Element | null): Promise<void> => {
 }
 
 describe('RuntimesPanel', () => {
+  it('shows the network protection entry only when Settings provides its route', async () => {
+    const onOpenNetworkProtection = vi.fn()
+    ;(window.api as unknown as { settings: unknown }).settings = {
+      getNotebookNetworkStatus: vi.fn().mockResolvedValue({ kind: 'ready', warnings: [] })
+    }
+
+    await render(undefined, undefined, onOpenNetworkProtection)
+
+    const banner = container.querySelector('[data-testid="notebook-network-protection-banner"]')
+    expect(banner?.textContent).toContain('Notebook network protection is active.')
+    await click(banner?.querySelector('button') ?? null)
+    expect(onOpenNetworkProtection).toHaveBeenCalledOnce()
+  })
+
+  it('does not add the Settings network entry to the reused onboarding panel', async () => {
+    await render()
+
+    expect(container.querySelector('[data-testid="notebook-network-protection-banner"]')).toBeNull()
+  })
+
   it('renders caller-provided heading copy with Recheck in the same top section', async () => {
     await render('Custom runtime title', 'Custom runtime description')
 

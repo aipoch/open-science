@@ -145,6 +145,11 @@ export type PdfTextResult = {
   truncated: boolean
 }
 
+type AttachmentByteSource = {
+  size: number
+  readBytes: () => Promise<Uint8Array>
+}
+
 export const inspectPdfPageCount = async (filePath: string): Promise<number> => {
   const fileInfo = await stat(filePath)
   if (fileInfo.size > MAX_AUTO_EXTRACT_PDF_BYTES) {
@@ -545,7 +550,8 @@ export const prepareImageContentData = async (
 export const buildImageContentData = async (
   filePath: string,
   mimeType: string | undefined,
-  size: number
+  size: number,
+  readBytes?: () => Promise<Uint8Array>
 ): Promise<ImageContentData> => {
   const fallbackMimeType = mimeType ?? 'application/octet-stream'
 
@@ -558,11 +564,13 @@ export const buildImageContentData = async (
   }
 
   if (size <= MAX_INLINE_IMAGE_BYTES) {
-    return { data: (await readFile(filePath)).toString('base64'), mimeType: fallbackMimeType }
+    const source = readBytes ? Buffer.from(await readBytes()) : await readFile(filePath)
+    return { data: source.toString('base64'), mimeType: fallbackMimeType }
   }
 
   try {
-    const bytes = await readFile(filePath)
+    // Managed versions supply integrity-checked bytes; legacy callers still read the resolved path.
+    const bytes = readBytes ? Buffer.from(await readBytes()) : await readFile(filePath)
     if (bytes.byteLength > MAX_AUTO_PROCESS_IMAGE_BYTES) {
       throw new ImageContentError(
         'IMAGE_SOURCE_TOO_LARGE',
@@ -607,19 +615,19 @@ const resolvePdfjsAssetUrls = (): { cMapUrl: string; standardFontDataUrl: string
 // (base64) file, which would otherwise overflow the request size limit.
 export const extractPdfText = async (
   filePath: string,
-  targetPageNumber?: number,
+  targetPageOrSource?: number | AttachmentByteSource,
   options: Readonly<{ maxChars?: number }> = {}
 ): Promise<PdfTextResult> => {
-  const fileInfo = await stat(filePath)
-  if (fileInfo.size > MAX_AUTO_EXTRACT_PDF_BYTES) {
-    throw new Error(
-      `PDF source is ${fileInfo.size} bytes, exceeding the automatic extraction limit.`
-    )
+  const source = typeof targetPageOrSource === 'object' ? targetPageOrSource : undefined
+  const targetPageNumber = typeof targetPageOrSource === 'number' ? targetPageOrSource : undefined
+  const size = source?.size ?? (await stat(filePath)).size
+  if (size > MAX_AUTO_EXTRACT_PDF_BYTES) {
+    throw new Error(`PDF source is ${size} bytes, exceeding the automatic extraction limit.`)
   }
   return withPdfTextExtractionSlot(async () => {
     const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as typeof import('pdfjs-dist')
     const { cMapUrl, standardFontDataUrl } = resolvePdfjsAssetUrls()
-    const fileData = await readFile(filePath)
+    const fileData = source ? Buffer.from(await source.readBytes()) : await readFile(filePath)
     const maxChars = options.maxChars ?? MAX_PDF_TEXT_CHARS
 
     const loadingTask = pdfjs.getDocument({

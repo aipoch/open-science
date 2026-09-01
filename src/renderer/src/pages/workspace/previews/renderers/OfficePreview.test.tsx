@@ -10,6 +10,7 @@ import {
   OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
 } from '../../../../../../shared/office-preview'
 import { PreviewRuntimeBoundary } from '../preview-runtime'
+import type { PreviewDownloadVersionContext } from '../preview-runtime-context'
 import { OfficePreviewRenderer } from './OfficePreview'
 
 const OFFICE_PREVIEW_RUNTIME_ORIGIN = 'open-science-office-preview://runtime'
@@ -24,6 +25,8 @@ const createItem = (overrides: Partial<PreviewFileItem> = {}): PreviewFileItem =
   title: 'report.docx',
   type: 'file',
   source: 'artifact',
+  projectId: 'project-1',
+  managedFileId: 'artifact-1',
   path: '/artifacts/report.docx',
   name: 'report.docx',
   format: 'word',
@@ -63,11 +66,15 @@ describe('OfficePreviewRenderer', () => {
     stateListener?.({ ...state, requestId })
   }
 
-  const renderPreview = async (item = createItem(), withRuntimeBoundary = false): Promise<void> => {
+  const renderPreview = async (
+    item = createItem(),
+    withRuntimeBoundary = false,
+    downloadVersionContext?: PreviewDownloadVersionContext
+  ): Promise<void> => {
     await act(async () => {
       root.render(
         withRuntimeBoundary ? (
-          <PreviewRuntimeBoundary item={item}>
+          <PreviewRuntimeBoundary item={item} downloadVersionContext={downloadVersionContext}>
             <OfficePreviewRenderer item={item} />
           </PreviewRuntimeBoundary>
         ) : (
@@ -105,6 +112,7 @@ describe('OfficePreviewRenderer', () => {
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
+        saveManagedFile: vi.fn().mockResolvedValue({ saved: false }),
         officePreview: {
           open,
           attachFrame,
@@ -144,6 +152,26 @@ describe('OfficePreviewRenderer', () => {
     await renderPreview()
 
     expect(container.textContent).toContain('Checking the Office file')
+  })
+
+  it('opens the exact managed version selected by the preview item', async () => {
+    await renderPreview(
+      createItem({
+        projectId: 'project-1',
+        managedFileId: 'artifact-1',
+        selectedVersionId: 'artifact-v4',
+        path: 'artifact-version:stale-projection'
+      })
+    )
+
+    expect(open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: 'artifact-1',
+        versionId: 'artifact-v4'
+      })
+    )
   })
 
   it('embeds the Office runtime as a sandboxed cross-site iframe', async () => {
@@ -361,6 +389,54 @@ describe('OfficePreviewRenderer', () => {
     expect(container.textContent).toContain('This file is larger than 40 MB. Download it to view.')
     expect(container.textContent).toContain('Download')
     expect(container.textContent).not.toContain('Retry')
+  })
+
+  it('downloads the same exact managed version when Office preview is unavailable', async () => {
+    open.mockResolvedValue({
+      kind: 'unavailable',
+      reason: 'FILE_TOO_LARGE',
+      size: 40 * 1024 * 1024 + 1,
+      limit: 40 * 1024 * 1024
+    })
+    const item = createItem({
+      source: 'upload',
+      projectId: 'project-1',
+      managedFileId: 'upload-1',
+      selectedVersionId: 'upload-v2',
+      versionNumber: 2,
+      path: 'upload-version:stale-projection'
+    })
+
+    await renderPreview(item, true, {
+      versionId: 'upload-v2',
+      versionNumber: 2,
+      latestVersionId: 'upload-v4',
+      latestVersionNumber: 4
+    })
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Download options for report.docx"]')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await flushMicrotasks()
+    })
+    expect(window.api.saveManagedFile).not.toHaveBeenCalled()
+
+    const selectedVersion = [
+      ...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ].find((menuItem) => menuItem.textContent === 'Download version v2')
+    expect(selectedVersion).toBeDefined()
+    await act(async () => {
+      selectedVersion?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushMicrotasks()
+    })
+
+    expect(window.api.saveManagedFile).toHaveBeenCalledWith({
+      source: 'upload',
+      projectId: 'project-1',
+      fileId: 'upload-1',
+      versionId: 'upload-v2',
+      suggestedName: 'report.docx'
+    })
   })
 
   it.each([

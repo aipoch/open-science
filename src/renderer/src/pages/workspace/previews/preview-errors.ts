@@ -32,6 +32,14 @@ export const isOutsideStorageError = (error: unknown): boolean => {
   return /outside\s+\S+\s+storage/i.test(message)
 }
 
+// A generated artifact can render before its turn-level finalization publishes the first Version.
+// Keep thumbnails quiet until the Session projection replaces the pending artifact metadata.
+export const isManagedFilePublicationPendingError = (error: unknown): boolean => {
+  if (!error) return false
+  const message = error instanceof Error ? error.message : String(error)
+  return /Managed file has no published version/i.test(message)
+}
+
 // True when a file can't be shown because it's unavailable under the current storage root — either
 // missing (deleted/moved) or outside it. Used to badge tiles and to quiet expected read failures.
 export const isUnavailableFileError = (error: unknown): boolean =>

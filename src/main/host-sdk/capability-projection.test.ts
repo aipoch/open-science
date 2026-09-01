@@ -42,6 +42,7 @@ const project = (
     hasWorkspace: true,
     allowsMethod: () => true,
     delegatedWorkReady: true,
+    delegationAllowed: true,
     services: allServices,
     ...overrides
   })

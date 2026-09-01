@@ -1013,7 +1013,10 @@ describe('AcpRuntimeCoordinator', () => {
       requestId: 'delegated:permission-1',
       sessionId: 'session-1',
       toolCallId: 'child-frame',
-      title: 'Read evidence',
+      title: 'curl https://example.test/data?token=test-delegated-permission-secret',
+      rawInput: {
+        command: 'curl https://example.test/data?token=test-delegated-permission-secret'
+      },
       options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }],
       delegated: {
         frameId: 'child-frame',
@@ -1063,10 +1066,15 @@ describe('AcpRuntimeCoordinator', () => {
       delegated
     )
 
-    expect(coordinator.getSnapshot().pendingPermissions).toEqual([rootPermission])
+    const initialSnapshot = coordinator.getSnapshot()
     listener?.({ kind: 'permission-requested', request: rootPermission })
-    expect(permissionEvents).toEqual([rootPermission])
-    expect(stateChanges.at(-1)?.pendingPermissions).toEqual([rootPermission])
+    expect(initialSnapshot.pendingPermissions).toHaveLength(1)
+    expect(permissionEvents).toHaveLength(1)
+    expect(stateChanges.at(-1)?.pendingPermissions).toHaveLength(1)
+    expect(
+      JSON.stringify({ initialSnapshot, permissionEvents, latestState: stateChanges.at(-1) })
+    ).not.toContain('test-delegated-permission-secret')
+    expect(JSON.stringify(rootPermission)).toContain('test-delegated-permission-secret')
 
     await coordinator.respondToPermission({
       requestId: rootPermission.requestId,

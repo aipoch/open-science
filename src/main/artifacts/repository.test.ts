@@ -936,8 +936,7 @@ describe('artifact repository', () => {
     )
     expect(resolved).toBe(expected)
 
-    const preview = await repository.readManagedFilePreview({ path: pendingPath })
-    expect(preview.content).toContain('img-bytes')
+    await expect(readFile(resolved, 'utf8')).resolves.toContain('img-bytes')
   })
 
   it('recovers a same-named pending file to its own run, not the newest same-named file', async () => {
@@ -988,8 +987,7 @@ describe('artifact repository', () => {
         join(root, 'artifacts', 'default-project', 'session-1', 'message-a', 'report.csv')
       )
     )
-    const preview = await repository.readManagedFilePreview({ path: pendingPathA })
-    expect(preview.content).toContain('run-a-content')
+    await expect(readFile(resolved, 'utf8')).resolves.toContain('run-a-content')
   })
 
   it('never falls back to another run when a marker exists but its target file is gone', async () => {

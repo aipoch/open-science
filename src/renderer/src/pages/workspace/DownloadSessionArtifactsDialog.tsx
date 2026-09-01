@@ -135,17 +135,17 @@ const DownloadSessionArtifactsDialog = ({
         projectId: session.projectId,
         sessionId: session.id,
         files: selectedArtifacts.map((artifact) => ({
-          path: artifact.path,
+          fileId: artifact.sourceFileId,
           suggestedName: artifact.name
         }))
       })
       if (!result.saved) return
       if (result.failures?.length) {
-        const failedPaths = new Set(result.failures.map((failure) => failure.path))
+        const failedFileIds = new Set(result.failures.map((failure) => failure.fileId))
         setSelectedIds(
           new Set(
             artifacts
-              .filter((artifact) => failedPaths.has(artifact.path))
+              .filter((artifact) => failedFileIds.has(artifact.sourceFileId))
               .map((artifact) => artifact.id)
           )
         )

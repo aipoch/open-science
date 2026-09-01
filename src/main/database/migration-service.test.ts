@@ -6,7 +6,10 @@ import { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createProjectDbClient } from '../projects/prisma-client'
+import { adaptMigrationOperationsForCurrentSchema } from './legacy-baseline-adapter'
 import { RUNTIME_SCHEMA_TABLE_DDL_BY_NAME } from './migrations/0001-runtime-schema-baseline'
+import { databaseJsonConstraintsMigration } from './migrations/0008-database-json-constraints'
+import { applySqliteMigrationOperations } from './sqlite-schema-migrations'
 import {
   BASELINE_CHECKSUM,
   MIGRATION_MANIFEST,
@@ -20,7 +23,7 @@ import {
 } from './migration-service'
 
 const futureTestMigration = (): MigrationManifestEntry => {
-  const id = '0025_test_suffix'
+  const id = '0026_test_suffix'
   const statements = [`UPDATE "Project" SET "name" = "name" WHERE 0`] as const
   const verifiers = [{ kind: 'table-exists', version: 1, table: 'Project' }] as const
   return {
@@ -31,6 +34,73 @@ const futureTestMigration = (): MigrationManifestEntry => {
     backupOnApply: 'none',
     backupRetention: 'retain'
   }
+}
+
+// Keep historical fixtures anchored to migration identities instead of a moving manifest tail.
+const manifestBefore = (id: string): readonly MigrationManifestEntry[] => {
+  const index = MIGRATION_MANIFEST.findIndex((migration) => migration.id === id)
+  if (index < 0) throw new Error(`Migration ${id} is unavailable.`)
+  return MIGRATION_MANIFEST.slice(0, index)
+}
+
+const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID = '0009_managed_file_version_foundation'
+const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM =
+  '54d50c127428b47efcea83e18c30f1dd7b94bfe7f37a3b2aae29a1a7ac43a1f8'
+
+const legacyDraftMigrationManifest = (): readonly MigrationManifestEntry[] => {
+  const managedIndex = MIGRATION_MANIFEST.findIndex(
+    ({ id }) => id === '0025_managed_file_version_foundation'
+  )
+  const upstreamSuffixIndex = MIGRATION_MANIFEST.findIndex(
+    ({ id }) => id === '0009_vision_evidence'
+  )
+  const sessionProjectionIndex = MIGRATION_MANIFEST.findIndex(
+    ({ id }) => id === '0013_session_projection'
+  )
+  const managedMigration = MIGRATION_MANIFEST[managedIndex]
+  if (
+    managedIndex < 0 ||
+    upstreamSuffixIndex < 0 ||
+    sessionProjectionIndex < 0 ||
+    !managedMigration
+  ) {
+    throw new Error('Managed migration test fixture is unavailable.')
+  }
+  return [
+    ...MIGRATION_MANIFEST.slice(0, upstreamSuffixIndex),
+    {
+      ...managedMigration,
+      id: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID,
+      checksum: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
+    },
+    ...MIGRATION_MANIFEST.slice(upstreamSuffixIndex, sessionProjectionIndex)
+  ]
+}
+
+const createDatabaseAtReleasedManifest = async (
+  client: PrismaClient,
+  manifest: readonly MigrationManifestEntry[]
+): Promise<void> => {
+  await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
+  for (const migration of manifest) {
+    for (const statement of migration.statements) await client.$executeRawUnsafe(statement)
+    await applySqliteMigrationOperations(client, migration.operations ?? [])
+  }
+  await client.$executeRawUnsafe(`CREATE TABLE "_open_science_migrations" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "checksum" TEXT NOT NULL,
+    "appliedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "_open_science_migrations_checksum_check"
+      CHECK (length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*')
+  )`)
+  for (const migration of manifest) {
+    await client.$executeRawUnsafe(
+      `INSERT INTO "_open_science_migrations" ("id", "checksum") VALUES (?, ?)`,
+      migration.id,
+      migration.checksum
+    )
+  }
+  await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
 }
 
 const createDatabaseAtMigration0005 = async (client: PrismaClient): Promise<void> => {
@@ -322,10 +392,11 @@ describe('application database migrations', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ],
       from: null,
-      to: '0024_compute_job_file_evidence'
+      to: '0025_managed_file_version_foundation'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -338,8 +409,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0024_compute_job_file_evidence',
-      to: '0024_compute_job_file_evidence'
+      from: '0025_managed_file_version_foundation',
+      to: '0025_managed_file_version_foundation'
     })
   })
 
@@ -407,7 +478,7 @@ describe('application database migrations', () => {
       'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
     )
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence')`
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation')`
     )
     await removeComputeAnalysisSchema(client, true)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
@@ -430,7 +501,8 @@ describe('application database migrations', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ]
     })
     await expect(
@@ -508,7 +580,8 @@ describe('application database migrations', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -553,7 +626,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0024_compute_job_file_evidence'
+      to: '0025_managed_file_version_foundation'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -577,7 +650,7 @@ describe('application database migrations', () => {
     await removeComputeAnalysisSchema(client, true)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
     await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
-      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence')`)
+      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation')`)
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: [
@@ -599,10 +672,11 @@ describe('application database migrations', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0024_compute_job_file_evidence'
+      to: '0025_managed_file_version_foundation'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -677,10 +751,11 @@ describe('application database migrations', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0024_compute_job_file_evidence'
+      to: '0025_managed_file_version_foundation'
     })
     await expect(
       client.$queryRaw<
@@ -799,7 +874,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0024_compute_job_file_evidence'
+      migrationId: '0025_managed_file_version_foundation'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -815,9 +890,9 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0025_test_suffix'],
-      from: '0024_compute_job_file_evidence',
-      to: '0025_test_suffix'
+      applied: ['0026_test_suffix'],
+      from: '0025_managed_file_version_foundation',
+      to: '0026_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ id: string }>>`
@@ -848,7 +923,8 @@ describe('application database migrations', () => {
       { id: '0022_memory_global_content_unique' },
       { id: '0023_compute_job_operation' },
       { id: '0024_compute_job_file_evidence' },
-      { id: '0025_test_suffix' }
+      { id: '0025_managed_file_version_foundation' },
+      { id: '0026_test_suffix' }
     ])
   })
 
@@ -924,10 +1000,11 @@ describe('application database migrations', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0024_compute_job_file_evidence'
+      to: '0025_managed_file_version_foundation'
     })
     expect(backupEvents).toEqual([
       {
@@ -1044,7 +1121,12 @@ describe('application database migrations', () => {
         migrationId: '0024_compute_job_file_evidence',
         path: `${databasePath}.before-0024_compute_job_file_evidence.backup`,
         reused: false
-      }
+      },
+      expect.objectContaining({
+        migrationId: '0025_managed_file_version_foundation',
+        path: `${databasePath}.before-0025_managed_file_version_foundation.backup`,
+        reused: false
+      })
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).rejects.toMatchObject({
@@ -1079,9 +1161,12 @@ describe('application database migrations', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0023_compute_job_operation.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0024_compute_job_file_evidence.backup`)
+    ).resolves.toBeUndefined()
+    await expect(
+      access(`${databasePath}.before-0025_managed_file_version_foundation.backup`)
     ).resolves.toBeUndefined()
     await expect(
       client.$queryRaw<Array<{ agentContext: string; name: string }>>`
@@ -1112,7 +1197,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0025_test_suffix'
+      migrationId: '0026_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -1148,7 +1233,8 @@ describe('application database migrations', () => {
       { id: '0021_compute_job_analysis_constraints' },
       { id: '0022_memory_global_content_unique' },
       { id: '0023_compute_job_operation' },
-      { id: '0024_compute_job_file_evidence' }
+      { id: '0024_compute_job_file_evidence' },
+      { id: '0025_managed_file_version_foundation' }
     ])
   })
 
@@ -1192,7 +1278,10 @@ describe('application database migrations', () => {
       readdir(storageRoot).then((entries) =>
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
-    ).resolves.toEqual([`open-science.db.before-${future.id}.backup`])
+    ).resolves.toEqual([
+      'open-science.db.before-0011_cross_resource_tags.backup',
+      `open-science.db.before-${future.id}.backup`
+    ])
   })
 
   it('rejects a migration when its required column is missing', async () => {
@@ -1213,7 +1302,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0025_test_suffix'
+      migrationId: '0026_test_suffix'
     })
   })
 
@@ -1263,9 +1352,10 @@ describe('application database migrations', () => {
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
-        '0025_test_suffix'
+        '0025_managed_file_version_foundation',
+        '0026_test_suffix'
       ],
-      to: '0025_test_suffix'
+      to: '0026_test_suffix'
     })
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
@@ -1389,6 +1479,10 @@ describe('application database migrations', () => {
       (migration) => migration.id === '0010_compute_password_auth'
     )
     expect(computePasswordAuthIndex).toBeGreaterThan(0)
+    await client.$executeRawUnsafe('DROP TABLE "MemoryEntry"')
+    await client.$executeRawUnsafe('DROP TABLE "MemoryCategory"')
+    await client.$executeRawUnsafe('DROP TABLE "MemorySettings"')
+    await client.$executeRawUnsafe('DROP TABLE "SessionAuxiliaryTurnUsage"')
 
     await expect(
       migrateApplicationDatabaseWithManifest(
@@ -1514,7 +1608,8 @@ describe('application database migrations', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ]
     })
     await expect(
@@ -1635,7 +1730,8 @@ describe('application database migrations', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1708,7 +1804,8 @@ describe('application database migrations', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ]
     })
     await expect(
@@ -1784,7 +1881,8 @@ describe('application database migrations', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -1894,7 +1992,8 @@ describe('application database migrations', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ]
     })
     await expect(
@@ -1969,7 +2068,8 @@ describe('application database migrations', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation'
       ]
     })
     expect(backupEvents).toEqual([
@@ -2092,15 +2192,20 @@ describe('application database migrations', () => {
         migrationId: '0024_compute_job_file_evidence',
         path: `${databasePath}.before-0024_compute_job_file_evidence.backup`,
         reused: false
-      }
+      },
+      expect.objectContaining({
+        migrationId: '0025_managed_file_version_foundation',
+        path: `${databasePath}.before-0025_managed_file_version_foundation.backup`,
+        reused: false
+      })
     ])
     await expect(
       readdir(storageRoot).then((entries) =>
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0023_compute_job_operation.backup',
-      'open-science.db.before-0024_compute_job_file_evidence.backup'
+      'open-science.db.before-0024_compute_job_file_evidence.backup',
+      'open-science.db.before-0025_managed_file_version_foundation.backup'
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(agentContextBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -2124,16 +2229,19 @@ describe('application database migrations', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0023_compute_job_operation.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0024_compute_job_file_evidence.backup`)
+    ).resolves.toBeUndefined()
+    await expect(
+      access(`${databasePath}.before-0025_managed_file_version_foundation.backup`)
     ).resolves.toBeUndefined()
     await expect(client.project.count()).resolves.toBe(1)
 
     const backupClient = new PrismaClient({
       datasources: {
         db: {
-          url: `file:${`${databasePath}.before-0023_compute_job_operation.backup`.replaceAll('\\', '/')}`
+          url: `file:${`${databasePath}.before-0024_compute_job_file_evidence.backup`.replaceAll('\\', '/')}`
         }
       }
     })
@@ -2147,7 +2255,7 @@ describe('application database migrations', () => {
         backupClient.$queryRaw<Array<{ id: string }>>`
           SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
         `
-      ).resolves.toEqual([{ id: '0022_memory_global_content_unique' }])
+      ).resolves.toEqual([{ id: '0023_compute_job_operation' }])
     } finally {
       await backupClient.$disconnect()
     }
@@ -2615,6 +2723,11 @@ describe('application database migrations', () => {
         migrationId: '0024_compute_job_file_evidence',
         path: `${databasePath}.before-0024_compute_job_file_evidence.backup`,
         reused: false
+      }),
+      expect.objectContaining({
+        migrationId: '0025_managed_file_version_foundation',
+        path: `${databasePath}.before-0025_managed_file_version_foundation.backup`,
+        reused: false
       })
     ])
     expect(retired).toEqual([
@@ -2707,6 +2820,10 @@ describe('application database migrations', () => {
       {
         migrationId: '0024_compute_job_file_evidence',
         path: `${databasePath}.before-0024_compute_job_file_evidence.backup`
+      },
+      {
+        migrationId: '0025_managed_file_version_foundation',
+        path: `${databasePath}.before-0025_managed_file_version_foundation.backup`
       }
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -2740,8 +2857,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0023_compute_job_operation.backup',
       'open-science.db.before-0024_compute_job_file_evidence.backup',
+      'open-science.db.before-0025_managed_file_version_foundation.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
@@ -2785,6 +2902,16 @@ describe('application database migrations', () => {
     await migrateApplicationDatabase(client, { databasePath })
     await mkdir(backupPath)
     await writeFile(join(backupPath, 'keep'), 'occupied', 'utf8')
+    await writeFile(
+      `${databasePath}.before-0022_memory_global_content_unique.backup`,
+      'newer recovery snapshot',
+      'utf8'
+    )
+    await writeFile(
+      `${databasePath}.before-0025_managed_file_version_foundation.backup`,
+      'newest recovery snapshot',
+      'utf8'
+    )
     const failures: unknown[] = []
 
     await expect(
@@ -2960,5 +3087,259 @@ describe('application database migrations', () => {
         SELECT COUNT(*) AS "count" FROM "_open_science_migrations"
       `
     ).resolves.toEqual([{ count: 0n }])
+  })
+
+  it('refreshes stale heads and ManagedFile projections while adopting a current pre-ledger schema', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-current-adoption-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.$executeRawUnsafe(`INSERT INTO "Project" ("id", "name", "updatedAt")
+        VALUES ('project-1', 'Project', CURRENT_TIMESTAMP)`)
+    await client.$executeRawUnsafe(`INSERT INTO "FileOriginSession" (
+          "projectId", "sessionId", "updatedAt"
+        ) VALUES ('project-1', 'session-1', CURRENT_TIMESTAMP)`)
+    await client.$executeRawUnsafe(`INSERT INTO "ArtifactLineage" (
+          "id", "projectId", "sessionId", "normalizedFilename", "filename", "updatedAt"
+        ) VALUES (
+          'artifact-1', 'project-1', 'session-1', 'report.md', 'report.md', CURRENT_TIMESTAMP
+        )`)
+    await client.$executeRawUnsafe(`INSERT INTO "ArtifactVersion" (
+          "id", "artifactId", "versionNumber", "filename", "originKind", "state",
+          "contentStorageKey", "contentType", "sizeBytes", "checksum", "createdAt", "updatedAt"
+        ) VALUES
+          (
+            'artifact-version-1', 'artifact-1', 1, 'report-v1.md', 'legacy', 'finalized',
+            'artifacts/report-v1.md', 'text/markdown', 10, '${'a'.repeat(64)}',
+            '2026-08-18T00:00:00.000Z', CURRENT_TIMESTAMP
+          ),
+          (
+            'artifact-version-2', 'artifact-1', 2, 'report-v2.md', 'legacy', 'finalized',
+            'artifacts/report-v2.md', 'text/markdown', 20, '${'b'.repeat(64)}',
+            '2026-08-19T00:00:00.000Z', CURRENT_TIMESTAMP
+          )`)
+    await client.$executeRawUnsafe(`UPDATE "ArtifactLineage"
+        SET "currentVersionId" = 'artifact-version-1'
+        WHERE "id" = 'artifact-1'`)
+    await client.$executeRawUnsafe(`INSERT INTO "ManagedFile" (
+          "source", "sourceFileId", "sourceVersionId", "checksum", "projectId", "sessionId",
+          "displayName", "storageKey", "mimeType", "sizeBytes", "mtimeMs", "sortAtMs", "updatedAt"
+        ) VALUES (
+          'artifact', 'artifact-1', 'artifact-version-1', '${'a'.repeat(64)}',
+          'project-1', 'session-1', 'report-v1.md', 'artifacts/report-v1.md',
+          'text/markdown', 10, 1000, 1000, CURRENT_TIMESTAMP
+        )`)
+    await client.$executeRawUnsafe(`INSERT INTO "UploadFile" (
+          "id", "projectId", "sessionId", "filename", "originalFilename", "updatedAt"
+        ) VALUES (
+          'upload-1', 'project-1', 'session-1', 'upload-v1.csv', 'dataset.csv', CURRENT_TIMESTAMP
+        )`)
+    await client.$executeRawUnsafe(`INSERT INTO "UploadVersion" (
+          "id", "uploadFileId", "versionNumber", "state", "originKind", "contentStorageKey",
+          "filename", "originalFilename", "contentType", "sizeBytes", "checksum", "createdAt",
+          "updatedAt"
+        ) VALUES (
+          'upload-version-1', 'upload-1', 1, 'ready', 'user_upload', 'uploads/upload-v1.csv',
+          'upload-v1.csv', 'dataset.csv', 'text/csv', 30, '${'c'.repeat(64)}',
+          '2026-08-19T01:00:00.000Z', CURRENT_TIMESTAMP
+        )`)
+    await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: MIGRATION_MANIFEST.map((migration) => migration.id)
+    })
+    await expect(
+      client.$queryRawUnsafe<Array<{ currentVersionId: string | null }>>(
+        `SELECT "currentVersionId" FROM "ArtifactLineage" WHERE "id" = 'artifact-1'`
+      )
+    ).resolves.toEqual([{ currentVersionId: 'artifact-version-2' }])
+    await expect(
+      client.$queryRawUnsafe<Array<{ currentVersionId: string | null }>>(
+        `SELECT "currentVersionId" FROM "UploadFile" WHERE "id" = 'upload-1'`
+      )
+    ).resolves.toEqual([{ currentVersionId: 'upload-version-1' }])
+    await expect(
+      client.$queryRawUnsafe<
+        Array<{
+          source: string
+          sourceFileId: string
+          sourceVersionId: string | null
+          checksum: string | null
+          displayName: string
+          storageKey: string
+        }>
+      >(`SELECT "source", "sourceFileId", "sourceVersionId", "checksum", "displayName", "storageKey"
+           FROM "ManagedFile" WHERE "projectId" = 'project-1' ORDER BY "source"`)
+    ).resolves.toEqual([
+      {
+        source: 'artifact',
+        sourceFileId: 'artifact-1',
+        sourceVersionId: 'artifact-version-2',
+        checksum: 'b'.repeat(64),
+        displayName: 'report-v2.md',
+        storageKey: 'artifacts/report-v2.md'
+      },
+      {
+        source: 'upload',
+        sourceFileId: 'upload-1',
+        sourceVersionId: 'upload-version-1',
+        checksum: 'c'.repeat(64),
+        displayName: 'dataset.csv',
+        storageKey: 'uploads/upload-v1.csv'
+      }
+    ])
+  })
+
+  it('replays an upstream suffix before adopting the canonical managed migration', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-managed-prefix-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
+        WHERE "id" IN ('0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation')`)
+    await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
+    await removeComputePasswordAuthSchema(client)
+    await removeComputeAnalysisSchema(client, true)
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
+    await client.$executeRawUnsafe('DROP TABLE "TagAssignment"')
+    await client.$executeRawUnsafe('DROP TABLE "Tag"')
+
+    await expect(migrateApplicationDatabase(client)).resolves.toEqual({
+      adoptedLegacy: false,
+      applied: MIGRATION_MANIFEST.slice(
+        MIGRATION_MANIFEST.findIndex(({ id }) => id === '0009_vision_evidence')
+      ).map(({ id }) => id),
+      from: '0008_database_json_constraints',
+      to: '0025_managed_file_version_foundation'
+    })
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
+  })
+
+  it('upgrades the real upstream ledger and repairs VisionEvidence after the managed rebuild', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-upstream-ledger-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0025_managed_file_version_foundation.backup`
+    client = createProjectDbClient(storageRoot)
+    const upstreamManifest = manifestBefore('0025_managed_file_version_foundation')
+    await createDatabaseAtReleasedManifest(client, upstreamManifest)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Project" ("id", "name", "updatedAt")
+         VALUES ('project-1', 'Project', CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(`INSERT INTO "ComputeJob" (
+        "id", "providerId", "shape", "sessionId", "projectId", "status", "intent", "command",
+        "commandHash", "sensitiveDataEncrypted"
+      ) VALUES (
+        'compute-job-1', 'ssh:test', 'direct_ssh', 'session-1', 'project-1', 'queued',
+        'protected job', 'ciphertext', 'command-hash', true
+      )`)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "FileOriginSession" ("projectId", "sessionId", "updatedAt")
+         VALUES ('project-1', 'session-1', CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "UploadFile" (
+           "id", "projectId", "sessionId", "filename", "originalFilename", "updatedAt"
+         ) VALUES (
+           'upload-1', 'project-1', 'session-1', 'image.png', 'image.png', CURRENT_TIMESTAMP
+         )`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "UploadVersion" (
+           "id", "uploadFileId", "versionNumber", "state", "contentStorageKey", "filename",
+           "originalFilename", "contentType", "sizeBytes", "checksum", "updatedAt"
+         ) VALUES (
+           'upload-version-1', 'upload-1', 1, 'ready', 'uploads/image.png', 'image.png',
+           'image.png', 'image/png', 3, '${'a'.repeat(64)}', CURRENT_TIMESTAMP
+         )`
+    )
+    await client.$executeRaw`
+        INSERT INTO "VisionEvidence" (
+          "id", "projectId", "sessionId", "sourceKind", "uploadVersionId", "imageChecksum",
+          "mimeType", "extractorFingerprint", "evidenceSchemaVersion", "evidenceJson",
+          "evidenceChecksum", "updatedAt"
+        ) VALUES (
+          ${'vision-1'}, ${'project-1'}, ${'session-1'}, ${'upload-version'},
+          ${'upload-version-1'}, ${'b'.repeat(64)}, ${'image/png'}, ${'c'.repeat(64)},
+          ${1}, ${'{}'}, ${'d'.repeat(64)}, ${new Date('2026-08-19T00:00:00.000Z')}
+        )
+      `
+    await expect(migrateApplicationDatabase(client)).resolves.toEqual({
+      adoptedLegacy: false,
+      applied: ['0025_managed_file_version_foundation'],
+      from: '0024_compute_job_file_evidence',
+      to: '0025_managed_file_version_foundation'
+    })
+    await expect(
+      client.$queryRaw<Array<{ uploadVersionId: string }>>`
+          SELECT "uploadVersionId" FROM "VisionEvidence" WHERE "id" = 'vision-1'
+        `
+    ).resolves.toEqual([{ uploadVersionId: 'upload-version-1' }])
+    await expect(
+      client.$queryRaw<Array<{ sensitiveDataEncrypted: boolean | null }>>`
+          SELECT "sensitiveDataEncrypted" FROM "ComputeJob" WHERE "id" = 'compute-job-1'
+        `
+    ).resolves.toEqual([{ sensitiveDataEncrypted: true }])
+    await expect(
+      client.$queryRawUnsafe<Array<{ table: string }>>('PRAGMA foreign_key_check')
+    ).resolves.toEqual([])
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
+    await expect(
+      client.$queryRawUnsafe<Array<{ id: string }>>(
+        'SELECT "id" FROM "_open_science_migrations" ORDER BY "id"'
+      )
+    ).resolves.toEqual(MIGRATION_MANIFEST.map(({ id }) => ({ id })))
+    await expect(access(backupPath)).resolves.toBeUndefined()
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
+    await expect(access(backupPath)).resolves.toBeUndefined()
+  })
+
+  it('rejects the unpublished Draft managed ledger without rewriting it', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-draft-ledger-'))
+    client = createProjectDbClient(storageRoot)
+    const draftManifest = legacyDraftMigrationManifest()
+    await createDatabaseAtReleasedManifest(client, draftManifest)
+
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_history_invalid',
+      migrationId: LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID
+    })
+    await expect(
+      client.$queryRawUnsafe<Array<{ id: string; checksum: string }>>(
+        'SELECT "id", "checksum" FROM "_open_science_migrations" ORDER BY "id"'
+      )
+    ).resolves.toEqual(draftManifest.map(({ id, checksum }) => ({ id, checksum })))
+  })
+
+  it('adapts replayed tables independently from migrations that have not run yet', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-table-local-adapter-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await removeComputePasswordAuthSchema(client)
+
+    const adapted = await adaptMigrationOperationsForCurrentSchema(
+      client,
+      databaseJsonConstraintsMigration.operations
+    )
+    const table = (tableName: string): { columns: readonly string[] } => {
+      const descriptor = adapted.operations
+        .filter((operation) => operation.kind === 'rebuild-table-set')
+        .flatMap((operation) => operation.tables)
+        .find((candidate) => candidate.tableName === tableName)
+      if (!descriptor) throw new Error(`Expected a descriptor for ${tableName}.`)
+      return descriptor
+    }
+
+    expect(adapted.currentTableNames).toEqual(
+      expect.arrayContaining(['ArtifactVersion', 'UploadVersion'])
+    )
+    expect(adapted.currentTableNames).not.toContain('ComputeHost')
+    expect(table('ArtifactVersion').columns).toEqual(
+      expect.arrayContaining(['originKind', 'basedOnVersionId', 'storageTag', 'storedFilename'])
+    )
+    expect(table('UploadVersion').columns).toEqual(
+      expect.arrayContaining(['originKind', 'basedOnVersionId', 'storageTag', 'storedFilename'])
+    )
+    expect(table('ComputeHost').columns).not.toContain('authenticationMode')
   })
 })

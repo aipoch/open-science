@@ -343,10 +343,6 @@ describe('WorkspaceMessageItem missing artifact badge', () => {
       code: 'ENOENT'
     })
     ;(window as unknown as { api: unknown }).api = {
-      previewResources: {
-        acquire: vi.fn().mockRejectedValue(enoent),
-        release: vi.fn().mockResolvedValue(undefined)
-      },
       artifacts: { readPreview: vi.fn().mockRejectedValue(enoent) }
     }
 
@@ -354,13 +350,16 @@ describe('WorkspaceMessageItem missing artifact badge', () => {
     const artifacts = [
       {
         id: 'artifact-gone',
+        artifactId: 'logical-artifact-gone',
         kind: 'managed-file' as const,
         path: '/p/gone.png',
         fileUrl: 'file:///p/gone.png',
         name: 'gone.png',
         mimeType: 'image/png',
         size: 10,
-        mtimeMs: 1
+        mtimeMs: 1,
+        resolvedProjectId: 'default-project',
+        resolvedSessionId: 'session-1'
       }
     ]
 

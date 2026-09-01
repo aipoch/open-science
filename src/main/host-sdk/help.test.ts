@@ -306,7 +306,7 @@ describe('Host SDK help', () => {
       expect(serialized).not.toContain('"oneOf"')
       expect(serialized).not.toContain('"allOf"')
       expect(serialized).not.toContain('"properties"')
-      expect(serialized.length).toBeLessThanOrEqual(id === 'host.delegate' ? 3_200 : 3_600)
+      expect(serialized.length).toBeLessThanOrEqual(id === 'host.delegate' ? 3_400 : 3_600)
     }
   })
 

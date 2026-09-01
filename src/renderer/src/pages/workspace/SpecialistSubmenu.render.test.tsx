@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SpecialistSubmenu } from './SpecialistSubmenu'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import type { SpecialistListItem } from '../../../../shared/specialist'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -145,7 +146,11 @@ afterEach(() => {
 
 const renderSubmenu = (props: React.ComponentProps<typeof SpecialistSubmenu>): void => {
   act(() => {
-    root.render(<SpecialistSubmenu {...props} />)
+    root.render(
+      <TooltipProvider delayDuration={0}>
+        <SpecialistSubmenu {...props} />
+      </TooltipProvider>
+    )
   })
 }
 
@@ -170,6 +175,7 @@ describe('SpecialistSubmenu — trigger', () => {
     renderSubmenu({ selectedId: undefined, onChange: vi.fn() })
     const trigger = container.querySelector('[data-testid="specialist-submenu-trigger"]')!
     expect(trigger.textContent).toContain('None')
+    expect(trigger.textContent).not.toContain('Bind a personal specialist to this conversation.')
   })
 
   it('shows the specialist name in the capsule when one is selected', () => {
@@ -187,7 +193,7 @@ describe('SpecialistSubmenu — trigger', () => {
     expect(trigger.textContent).toContain('Unavailable')
   })
 
-  it('keeps a bound session specialist visible but disables the trigger and hides options', () => {
+  it('keeps a bound session specialist focusable but non-activating and hides options', () => {
     const sp = makeSpecialist('uuid-1', 'RNA-seq Reviewer')
     mockStore([sp])
     renderSubmenu({ selectedId: 'uuid-1', onChange: vi.fn(), readOnly: true })
@@ -195,7 +201,8 @@ describe('SpecialistSubmenu — trigger', () => {
       '[data-testid="specialist-submenu-trigger"]'
     )!
     expect(trigger.textContent).toContain('RNA-seq Reviewer')
-    expect(trigger.hasAttribute('disabled')).toBe(true)
+    expect(trigger.hasAttribute('disabled')).toBe(false)
+    expect(trigger.getAttribute('aria-disabled')).toBe('true')
     // No mutable submenu content is offered for a bound session.
     expect(container.querySelector('[data-testid="dd-subcontent"]')).toBeNull()
     expect(container.querySelector('[data-testid="specialist-option-none"]')).toBeNull()

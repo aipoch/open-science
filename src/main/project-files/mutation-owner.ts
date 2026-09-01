@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ProjectFileSource } from '../../shared/project-files'
+import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { createLogger } from '../logger'
 import {
   buildProjectCollisionFilters,
   describeError,
   extractSessionFiles,
+  type LegacyArtifactVersionAdopter,
+  type LegacyUploadVersionUpgrader,
   fileIdentity,
   getChangedSources,
   isFileProjectionCurrent,
@@ -34,20 +37,21 @@ class ProjectFilesMutationOwner {
 
   constructor(
     private readonly getClient: ProjectFilesClientProvider,
-    private readonly dataRoot: string
+    private readonly dataRoot: string,
+    private readonly legacyArtifactVersionAdopter: LegacyArtifactVersionAdopter,
+    private readonly legacyUploadVersionUpgrader: LegacyUploadVersionUpgrader
   ) {}
 
   async syncSession(
     session: PersistedChatSession,
     options: ManagedFileSyncOptions = {}
   ): Promise<ProjectFileSource[]> {
-    const revision = normalizeRevision(session.filesRevision)
     try {
       const client = await this.getClient()
+      const revision = normalizeRevision(session.filesRevision)
       const currentSync = await client.managedFileSessionSync.findUnique({
         where: { projectId_sessionId: { projectId: session.projectId, sessionId: session.id } }
       })
-
       if (
         !options.force &&
         currentSync?.filesRevision === revision &&
@@ -58,7 +62,31 @@ class ProjectFilesMutationOwner {
         return []
       }
 
-      const extraction = await extractSessionFiles(this.getClient, this.dataRoot, session)
+      const hasLegacyUploadReferences = [
+        ...session.messages,
+        ...(session.conversationGraph?.messages ?? [])
+      ].some((message) =>
+        message.uploads?.some(
+          (upload) => !upload.versionId && upload.sessionId !== PENDING_UPLOAD_SESSION_ID
+        )
+      )
+      const projectionBeforeUpgrade = hasLegacyUploadReferences
+        ? await client.managedFile.findMany({
+            where: { projectId: session.projectId, sessionId: session.id }
+          })
+        : undefined
+      if (hasLegacyUploadReferences) {
+        session = await this.legacyUploadVersionUpgrader.upgradeLegacySessionUploads(session, {
+          mode: 'project-files-sync'
+        })
+      }
+
+      const extraction = await extractSessionFiles(
+        this.getClient,
+        this.dataRoot,
+        this.legacyArtifactVersionAdopter,
+        session
+      )
       const { files } = extraction
       const hasIncompleteFiles = extraction.errors.length > 0
       const now = new Date()
@@ -127,15 +155,15 @@ class ProjectFilesMutationOwner {
                 where: { seq: existing.seq },
                 data: {
                   sourceFileId: file.sourceFileId,
-                  sourceVersionId: file.sourceVersionId,
-                  checksum: file.checksum,
+                  sourceVersionId: file.sourceVersionId ?? null,
+                  checksum: file.checksum ?? null,
                   sessionId: file.sessionId,
-                  messageId: file.messageId,
+                  messageId: file.messageId ?? null,
                   displayName: file.displayName,
                   storageKey: file.storageKey,
-                  mimeType: file.mimeType,
+                  mimeType: file.mimeType ?? null,
                   sizeBytes: file.sizeBytes,
-                  mtimeMs: file.mtimeMs,
+                  mtimeMs: file.mtimeMs ?? null,
                   sortAtMs: file.sortAtMs,
                   deletedAt: null,
                   deleteOperationId: null
@@ -164,10 +192,10 @@ class ProjectFilesMutationOwner {
           retainedSources.set(row.seq, row.source as ProjectFileSource)
         }
 
-        const transactionChangedSources = getChangedSources(existingRows, [
-          ...acceptedFiles,
-          ...preservedRows
-        ])
+        const transactionChangedSources = getChangedSources(
+          projectionBeforeUpgrade ?? existingRows,
+          [...acceptedFiles, ...preservedRows]
+        )
 
         await tx.managedFile.updateMany({
           where: {
@@ -388,28 +416,16 @@ class ProjectFilesMutationOwner {
     const [lineages, uploads] = await Promise.all([
       client.artifactLineage.findMany({
         where: { projectId, sessionId },
-        include: {
-          versions: {
-            where: { state: 'finalized' },
-            orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
-            take: 1
-          }
-        }
+        include: { currentVersion: true }
       }),
       client.uploadFile.findMany({
         where: { projectId, sessionId },
-        include: {
-          versions: {
-            where: { state: 'ready' },
-            orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
-            take: 1
-          }
-        }
+        include: { currentVersion: true }
       })
     ])
     const artifactFiles: IndexedFileInput[] = lineages.flatMap((lineage) => {
-      const version = lineage.versions[0]
-      return version
+      const version = lineage.currentVersion
+      return version?.state === 'finalized'
         ? [
             {
               source: 'artifact' as const,
@@ -430,9 +446,9 @@ class ProjectFilesMutationOwner {
         : []
     })
     const uploadFiles: IndexedFileInput[] = uploads.flatMap((upload) => {
-      const version = upload.versions[0]
+      const version = upload.currentVersion
       const createdAt = version?.createdAt ?? version?.registeredAt
-      return version && createdAt
+      return version?.state === 'ready' && createdAt
         ? [
             {
               source: 'upload' as const,

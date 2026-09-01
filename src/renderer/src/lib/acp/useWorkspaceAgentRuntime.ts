@@ -17,7 +17,8 @@ import {
   type AcpPermissionGrant,
   type AcpPermissionRequest,
   type AcpPermissionResponse,
-  type AcpSaveAsSkillRequest
+  type AcpSaveAsSkillRequest,
+  type DelegatedWorkUnavailableReason
 } from '../../../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -125,7 +126,7 @@ type WorkspaceAgentRuntime = {
   permissionProfiles: Record<string, SessionPermissionProfileState>
   permissionGrants: Record<string, AcpPermissionGrant[]>
   contextUsageBySession: Record<string, AcpContextUsage>
-  delegatedWorkUnavailableBySession: Record<string, string>
+  delegatedWorkUnavailableBySession: Record<string, DelegatedWorkUnavailableReason>
   promptInFlightSessionIds: string[]
   sendPreparationInFlightSessionIds: string[]
   saveAsSkillInFlightSessionIds: string[]
@@ -366,6 +367,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
           historyReplayDescriptor: selected.historyReplayDescriptor
         },
         {
+          awaitPendingPreparation: true,
           onSendPreparationStateChange: handleSendPreparationStateChange,
           drainRuntimeEvents,
           onSessionBound: (_pendingSessionId, sessionId) => {

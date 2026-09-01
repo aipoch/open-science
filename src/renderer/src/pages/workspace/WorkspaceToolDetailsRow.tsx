@@ -10,17 +10,11 @@ import {
 } from './notebook-run-figures'
 import { NotebookToolFigureOutputs } from './NotebookToolFigureOutputs'
 import { notebookRunStatusLabel } from './notebook-cell-utils'
-import { usePreviewFileContent } from './previews/usePreviewFileContent'
 import { useNearViewport } from './previews/useNearViewport'
-
-// Byte cap for inline tool-output image previews. Co-located here (rather than in preview-support,
-// which #147 refactored into format detection) since it's specific to this panel's base64 read.
-const PREVIEW_PANEL_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 import type {
   ToolActivityDetails,
   ToolCodeSection,
-  ToolDetailSection,
-  ToolImageSection
+  ToolDetailSection
 } from './workspace-tool-activity-details'
 import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
@@ -69,6 +63,7 @@ const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
   'Search memory',
   'Shell',
   'Skill',
+  'Tool output image',
   'Tool search',
   'Tools found',
   'Web Fetch',
@@ -113,56 +108,6 @@ const renderCodeBody = (
         <div className="text-[11px] text-text-300">{t('Output truncated')}</div>
       ) : null}
     </>
-  )
-}
-
-// Loads an image artifact's bytes through the same reader the artifact preview gallery uses and
-// renders it inline; falls back to filename/path text while loading or if the read fails.
-const WorkspaceToolImageOutput = ({
-  section
-}: {
-  section: ToolImageSection
-}): React.JSX.Element => {
-  const { t } = useTranslation()
-  const state = usePreviewFileContent({
-    path: section.path,
-    maxBytes: PREVIEW_PANEL_IMAGE_MAX_BYTES,
-    encoding: 'base64'
-  })
-  if (state.status === 'ready' && state.preview.encoding === 'base64' && !state.preview.truncated) {
-    return (
-      <div className="space-y-1">
-        <img
-          data-testid="tool-output-image"
-          src={`data:${section.mimeType};base64,${state.preview.content}`}
-          alt={section.name ?? t('Tool output image')}
-          className="max-h-64 max-w-full rounded-md border border-border-200 object-contain"
-          draggable={false}
-        />
-        {section.name || section.sizeLabel ? (
-          <div className="flex min-w-0 items-center gap-1 text-[11px] text-text-300">
-            {section.name ? <ExtensionPreservingFileName name={section.name} /> : null}
-            {section.name && section.sizeLabel ? <span className="shrink-0">·</span> : null}
-            {section.sizeLabel ? <span className="shrink-0">{section.sizeLabel}</span> : null}
-          </div>
-        ) : null}
-      </div>
-    )
-  }
-
-  const fallbackText =
-    state.status === 'loading'
-      ? t('Loading preview…')
-      : (section.name ?? (section.path.split(/[\\/]/u).at(-1) || section.path))
-
-  return (
-    <div className="text-[12px] text-text-300">
-      {state.status === 'loading' ? (
-        fallbackText
-      ) : (
-        <ExtensionPreservingFileName name={fallbackText} />
-      )}
-    </div>
   )
 }
 
@@ -256,15 +201,6 @@ const WorkspaceToolDetailsRow = ({
           ) : (
             diffBody
           )}
-        </div>
-      )
-    }
-
-    if (section.kind === 'image') {
-      return (
-        <div key={index} className="space-y-1">
-          <div className={sectionLabelClassName}>{translateKnownCopy(section.label)}</div>
-          <WorkspaceToolImageOutput section={section} />
         </div>
       )
     }

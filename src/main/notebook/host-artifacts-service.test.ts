@@ -44,22 +44,22 @@ const harness = (
 ): {
   service: HostArtifactsService
   readHostArtifactCatalog: ReturnType<typeof vi.fn>
-  stageVersion: ReturnType<typeof vi.fn>
+  stageLatest: ReturnType<typeof vi.fn>
 } => {
   const readHostArtifactCatalog = vi.fn(async ({ versionId }: { versionId?: string }) =>
     versionId ? items.filter((item) => item.versionId === versionId) : items
   )
-  const stageVersion = vi.fn(async (request: { sourceKind: string }) =>
+  const stageLatest = vi.fn(async (request: { sourceKind: string }) =>
     request.sourceKind === 'artifact-version'
       ? '/managed-inputs/artifact.csv'
       : '/managed-inputs/upload.pdf'
   )
   return {
     service: new HostArtifactsService({ readHostArtifactCatalog } as HostArtifactCatalog, {
-      stageVersion
+      stageLatest
     }),
     readHostArtifactCatalog,
-    stageVersion
+    stageLatest
   }
 }
 
@@ -192,7 +192,7 @@ describe('HostArtifactsService', () => {
     const readHostArtifactCatalog: HostArtifactCatalog['readHostArtifactCatalog'] = async ({
       versionId
     }) => (versionId === historical.versionId ? [historical] : [latest])
-    const service = new HostArtifactsService({ readHostArtifactCatalog }, { stageVersion: vi.fn() })
+    const service = new HostArtifactsService({ readHostArtifactCatalog }, { stageLatest: vi.fn() })
 
     await expect(service.list({ frame_id: 'frame-a' }, context)).resolves.toMatchObject({
       count: 0,
@@ -202,10 +202,9 @@ describe('HostArtifactsService', () => {
       count: 1,
       artifacts: [{ latestVersionId: 'shared-v2', agentFrameId: 'frame-b' }]
     })
-    await expect(service.list({ version_id: 'shared-v1' }, context)).resolves.toMatchObject({
-      count: 1,
-      artifacts: [{ latestVersionId: 'shared-v1', agentFrameId: 'frame-a' }]
-    })
+    await expect(service.list({ version_id: 'shared-v1' }, context)).rejects.toThrow(
+      'unknown option'
+    )
   })
 
   it('uses the shared fuzzy score for ordering without exposing scores', async () => {
@@ -245,21 +244,39 @@ describe('HostArtifactsService', () => {
     await expect(service.list({ limit: 101 }, context)).rejects.toThrow('between 1 and 100')
   })
 
-  it('supports direct Version lookup and rejects every mixed or malformed option', async () => {
-    const { service, readHostArtifactCatalog } = harness()
+  it('rejects an obsolete offset cursor and a changed catalog snapshot with stable errors', async () => {
+    let items = [
+      artifact({ sourceFileId: 'C', versionId: 'C-v1', sortAtMs: 3 }),
+      artifact({ sourceFileId: 'A', versionId: 'A-v1', sortAtMs: 2 }),
+      artifact({ sourceFileId: 'B', versionId: 'B-v1', sortAtMs: 1 })
+    ]
+    const catalog: HostArtifactCatalog = {
+      readHostArtifactCatalog: vi.fn(async () => items)
+    }
+    const service = new HostArtifactsService(catalog, { stageLatest: vi.fn() })
 
-    await expect(
-      service.list({ version_id: 'artifact-version-1' }, context)
-    ).resolves.toMatchObject({
-      count: 1,
-      artifacts: [{ latestVersionId: 'artifact-version-1' }]
-    })
-    expect(readHostArtifactCatalog).toHaveBeenLastCalledWith({
-      projectId: 'project-a',
-      versionId: 'artifact-version-1'
-    })
+    const first = await service.list({ limit: 2 }, context)
+    expect(first.artifacts.map((item) => item.id)).toEqual(['C', 'A'])
+    const unchangedSecond = await service.list({ limit: 2, cursor: first.nextCursor }, context)
+    expect(unchangedSecond.artifacts.map((item) => item.id)).toEqual(['B'])
+    items = [artifact({ sourceFileId: 'A', versionId: 'A-v2', sortAtMs: 4 }), items[0]!, items[2]!]
+    await expect(service.list({ limit: 2, cursor: first.nextCursor }, context)).rejects.toThrow(
+      /HOST_ARTIFACTS_CURSOR_SNAPSHOT_CHANGED/u
+    )
 
+    const obsolete = Buffer.from(
+      JSON.stringify({ version: 1, queryKey: 'obsolete', offset: 2 }),
+      'utf8'
+    ).toString('base64url')
+    await expect(service.list({ cursor: obsolete }, context)).rejects.toThrow(
+      /cursor format is obsolete.*first page/iu
+    )
+  })
+
+  it('rejects historical Version filtering and every mixed or malformed option', async () => {
+    const { service } = harness()
     for (const options of [
+      { version_id: 'artifact-version-1' },
       { version_id: 'v1', limit: 1 },
       { project_id: 'all' },
       { search: 'r', filename: 'r' },
@@ -286,27 +303,25 @@ describe('HostArtifactsService', () => {
     )
   })
 
-  it('stages exact Artifact and Upload Versions for the calling Session', async () => {
+  it('uses a historical Version id only to identify the logical file, then stages latest', async () => {
     const h = harness()
 
     await expect(h.service.resolvePath('artifact-version-1', context)).resolves.toBe(
       '/managed-inputs/artifact.csv'
     )
-    expect(h.stageVersion).toHaveBeenCalledWith({
+    expect(h.stageLatest).toHaveBeenCalledWith({
       projectId: 'project-a',
       targetSessionId: 'calling-session',
       sourceKind: 'artifact-version',
-      inputFileVersionId: 'artifact-version-1',
       expectedSourceFileId: 'artifact-1'
     })
     await expect(h.service.resolvePath('upload-version-1', context)).resolves.toBe(
       '/managed-inputs/upload.pdf'
     )
-    expect(h.stageVersion).toHaveBeenCalledWith({
+    expect(h.stageLatest).toHaveBeenCalledWith({
       projectId: 'project-a',
       targetSessionId: 'calling-session',
       sourceKind: 'upload-version',
-      inputFileVersionId: 'upload-version-1',
       expectedSourceFileId: 'upload-1'
     })
   })
@@ -322,17 +337,17 @@ describe('HostArtifactsService', () => {
         throw new Error('Artifact Version id is ambiguous across generated Artifacts and Uploads.')
       })
     }
-    const ambiguous = new HostArtifactsService(ambiguousCatalog, { stageVersion: vi.fn() })
+    const ambiguous = new HostArtifactsService(ambiguousCatalog, { stageLatest: vi.fn() })
     await expect(ambiguous.resolvePath('collision', context)).rejects.toThrow('ambiguous')
 
     const corrupt = harness()
-    corrupt.stageVersion.mockRejectedValueOnce(new Error('checksum mismatch'))
+    corrupt.stageLatest.mockRejectedValueOnce(new Error('checksum mismatch'))
     await expect(corrupt.service.resolvePath('artifact-version-1', context)).rejects.toThrow(
       'checksum mismatch'
     )
 
     const relative = harness()
-    relative.stageVersion.mockResolvedValueOnce('relative.csv')
+    relative.stageLatest.mockResolvedValueOnce('relative.csv')
     await expect(relative.service.resolvePath('artifact-version-1', context)).rejects.toThrow(
       'relative path'
     )

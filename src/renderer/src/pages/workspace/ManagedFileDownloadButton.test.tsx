@@ -29,6 +29,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="artifact"
           path="/managed/report.csv"
+          projectId="project-1"
+          fileId="artifact-1"
           suggestedName="report.csv"
         />
       )
@@ -36,6 +38,124 @@ describe('ManagedFileDownloadButton', () => {
 
     return container.querySelector('button')!
   }
+
+  it('offers the viewed and latest versions when downloading from history', async () => {
+    const saveManagedFile = vi.fn().mockResolvedValue({ saved: false })
+    window.api = { saveManagedFile } as unknown as Window['api']
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <ManagedFileDownloadButton
+          source="artifact"
+          path="artifact-version:project-1/session-1/file-1/version-1"
+          projectId="project-1"
+          fileId="file-1"
+          versionId="version-1"
+          versionNumber={1}
+          latestVersionId="version-3"
+          latestVersionNumber={3}
+          suggestedName="report.md"
+        />
+      )
+    })
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(saveManagedFile).not.toHaveBeenCalled()
+
+    const menuItems = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    const viewedVersion = menuItems.find((item) => item.textContent === 'Download version v1')
+    const latestVersion = menuItems.find(
+      (item) => item.textContent === 'Download latest version v3'
+    )
+    expect(viewedVersion).toBeDefined()
+    expect(latestVersion).toBeDefined()
+
+    await act(async () => {
+      viewedVersion?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(saveManagedFile).toHaveBeenCalledWith({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: 'file-1',
+      versionId: 'version-1',
+      suggestedName: 'report.md'
+    })
+
+    saveManagedFile.mockClear()
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await Promise.resolve()
+    })
+    const latestItem = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent === 'Download latest version v3'
+    )
+    await act(async () => {
+      latestItem?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(saveManagedFile).toHaveBeenCalledWith({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: 'file-1',
+      suggestedName: 'report.md'
+    })
+  })
+
+  it('does not fall back to latest while explicit version metadata is unresolved', async () => {
+    const saveManagedFile = vi.fn().mockResolvedValue({ saved: false })
+    window.api = { saveManagedFile } as unknown as Window['api']
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <ManagedFileDownloadButton
+          source="artifact"
+          path="artifact-version:project-1/session-1/file-1/version-1"
+          projectId="project-1"
+          fileId="file-1"
+          versionId="version-1"
+          suggestedName="report.md"
+        />
+      )
+    })
+
+    const button = container.querySelector<HTMLButtonElement>('button')!
+    expect(button.disabled).toBe(true)
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(saveManagedFile).not.toHaveBeenCalled()
+  })
+
+  it('disables managed downloads that have no logical identity', async () => {
+    const saveManagedFile = vi.fn().mockResolvedValue({ saved: false })
+    window.api = { saveManagedFile } as unknown as Window['api']
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <ManagedFileDownloadButton
+          source="upload"
+          path="/stale/notes.txt"
+          suggestedName="notes.txt"
+        />
+      )
+    })
+
+    const button = container.querySelector<HTMLButtonElement>('button')!
+    expect(button.disabled).toBe(true)
+    button.click()
+    expect(saveManagedFile).not.toHaveBeenCalled()
+  })
 
   it('disables duplicate saves while the first request is pending', async () => {
     let resolveSave: ((result: { saved: boolean }) => void) | undefined
@@ -94,6 +214,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="upload"
           path="/managed/notes.txt"
+          projectId="project-1"
+          fileId="upload-1"
           suggestedName="notes.txt"
         />
       )
@@ -127,6 +249,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="upload"
           path="/managed/notes.txt"
+          projectId="project-1"
+          fileId="upload-1"
           suggestedName="notes.txt"
         />
       )
@@ -137,6 +261,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="artifact"
           path="/managed/report.csv"
+          projectId="project-1"
+          fileId="artifact-1"
           suggestedName="report.csv"
         />
       )
@@ -157,6 +283,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="artifact"
           path="/managed/missing.csv"
+          projectId="project-1"
+          fileId="missing-artifact"
           suggestedName="missing.csv"
           disabled
         />
@@ -176,6 +304,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="artifact"
           path="/managed/report.csv"
+          projectId="project-1"
+          fileId="artifact-1"
           suggestedName="report.csv"
         />
       )
@@ -213,6 +343,37 @@ describe('ManagedFileDownloadButton', () => {
 
     await act(async () => vi.advanceTimersByTime(1600))
     expect(button.getAttribute('aria-label')).toBe('Download report.csv')
+  })
+
+  it('keeps the strong header tone at rest without overriding the successful-save color', async () => {
+    vi.useFakeTimers()
+    window.api = {
+      saveManagedFile: vi.fn().mockResolvedValue({ saved: true })
+    } as unknown as Window['api']
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <ManagedFileDownloadButton
+          source="artifact"
+          path="/managed/report.csv"
+          projectId="project-1"
+          fileId="artifact-1"
+          suggestedName="report.csv"
+          tone="strong"
+        />
+      )
+    })
+
+    const button = container.querySelector<HTMLButtonElement>('button')!
+    expect(button.className.split(/\s+/)).toContain('text-text-000')
+
+    await act(async () => {
+      button.click()
+      await Promise.resolve()
+    })
+
+    expect(button.className.split(/\s+/)).toContain('text-emerald-600')
+    expect(button.className.split(/\s+/)).not.toContain('text-text-000')
   })
 
   it('keeps a failed save visible and allows retrying', async () => {
@@ -289,6 +450,8 @@ describe('ManagedFileDownloadButton', () => {
         <ManagedFileDownloadButton
           source="artifact"
           path="/managed/report.csv"
+          projectId="project-1"
+          fileId="artifact-1"
           suggestedName="report.csv"
           appearance="primary"
         />

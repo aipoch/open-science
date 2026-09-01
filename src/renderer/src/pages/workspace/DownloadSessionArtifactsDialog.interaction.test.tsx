@@ -25,6 +25,7 @@ const artifacts: ProjectFileItem[] = [
     id: 'artifact-1',
     source: 'artifact',
     sourceFileId: 'artifact-1',
+    sourceVersionId: 'artifact-1',
     projectId: 'project-1',
     sessionId: 'session-1',
     name: 'report.csv',
@@ -37,6 +38,7 @@ const artifacts: ProjectFileItem[] = [
     id: 'artifact-2',
     source: 'artifact',
     sourceFileId: 'artifact-2',
+    sourceVersionId: 'artifact-2',
     projectId: 'project-1',
     sessionId: 'session-1',
     name: 'figure.png',
@@ -124,7 +126,7 @@ describe('DownloadSessionArtifactsDialog', () => {
     expect(saveSessionArtifacts).toHaveBeenCalledWith({
       projectId: 'project-1',
       sessionId: 'session-1',
-      files: [{ path: 'artifact://report', suggestedName: 'report.csv' }]
+      files: [{ fileId: 'artifact-1', suggestedName: 'report.csv' }]
     })
     expect(onClose).toHaveBeenCalledTimes(1)
   })
@@ -190,7 +192,7 @@ describe('DownloadSessionArtifactsDialog', () => {
     saveSessionArtifacts.mockResolvedValue({
       saved: true,
       filePaths: ['/downloads/report.csv'],
-      failures: [{ path: 'artifact://figure', suggestedName: 'figure.png', message: 'disk full' }]
+      failures: [{ fileId: 'artifact-2', suggestedName: 'figure.png', message: 'disk full' }]
     })
     await act(async () => {
       root.render(<DownloadSessionArtifactsDialog session={session} onClose={onClose} />)
