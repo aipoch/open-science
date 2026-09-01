@@ -987,6 +987,10 @@ const createApplicationModules = async (
   const delegatedActivity = createDelegatedActivityProjection()
   const getActiveDelegatedSessions = (): { projectId: string; sessionId: string }[] =>
     delegatedActivity.getActiveDelegatedSessions()
+  const getActiveSideChatSessions = (): { projectId: string; sessionId: string }[] =>
+    (sideChatOwnerRef.current?.list().chats ?? [])
+      .filter((chat) => chat.running)
+      .map((chat) => ({ projectId: chat.projectId, sessionId: chat.parentSessionId }))
 
   const sessionPersistenceCoordinator = new SessionPersistenceCoordinator(
     sessionRepository,
@@ -1151,6 +1155,7 @@ const createApplicationModules = async (
       runtime: {
         getActivePromptSessions: () => runtimeRef.current?.getActivePromptSessions() ?? []
       },
+      sideChat: { getActivePromptSessions: getActiveSideChatSessions },
       delegated: { getActiveDelegatedSessions },
       notebook: {
         getActiveNotebookSessions: () =>
@@ -3052,6 +3057,7 @@ const createApplicationModules = async (
   const detectResearchBlockers = (): UpdateBlocker[] => {
     const blockers: UpdateBlocker[] = detectActiveSessions({
       runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
+      sideChat: { getActivePromptSessions: getActiveSideChatSessions },
       delegated: { getActiveDelegatedSessions },
       notebook: notebookService
     }).map((session) => session.kind)
@@ -3579,6 +3585,7 @@ const createApplicationModules = async (
     runtime,
     notebook: notebookService,
     getActivePromptSessions: () => runtime.getActivePromptSessions(),
+    getActiveSideChatSessions,
     getActiveDelegatedSessions,
     hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
     settingsService,
@@ -3603,6 +3610,7 @@ const createApplicationModules = async (
         runtime,
         notebook: notebookService,
         getActivePromptSessions: () => runtime.getActivePromptSessions(),
+        getActiveSideChatSessions,
         getActiveDelegatedSessions,
         hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
         settingsService
@@ -4082,6 +4090,7 @@ const createApplicationModules = async (
     detectActiveSessions: () =>
       detectActiveSessions({
         runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
+        sideChat: { getActivePromptSessions: getActiveSideChatSessions },
         delegated: { getActiveDelegatedSessions },
         notebook: notebookService
       }),

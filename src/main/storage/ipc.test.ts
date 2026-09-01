@@ -120,6 +120,7 @@ const fakeDeps = (overrides: Partial<FakeDeps> = {}): FakeDeps => ({
     getActiveNotebookSessions: vi.fn().mockReturnValue([])
   },
   getActivePromptSessions: vi.fn().mockReturnValue([]),
+  getActiveSideChatSessions: vi.fn().mockReturnValue([]),
   getActiveDelegatedSessions: vi.fn().mockReturnValue([]),
   hasActiveReviewerWork: vi.fn().mockReturnValue(false),
   settingsService: {
@@ -689,9 +690,12 @@ describe('storage IPC handlers', () => {
     expect(info.dataRootMissing).toBe(true)
   })
 
-  it('detect-active maps runtime and notebook session sources into ActiveSessionInfo', async () => {
+  it('detect-active maps agent, Side Chat, delegated, and notebook sources', async () => {
     const deps = fakeDeps({
       getActivePromptSessions: vi.fn().mockReturnValue([{ projectId: 'p', sessionId: 'agent-1' }]),
+      getActiveSideChatSessions: vi
+        .fn()
+        .mockReturnValue([{ projectId: 'p', sessionId: 'side-chat-parent' }]),
       getActiveDelegatedSessions: vi
         .fn()
         .mockReturnValue([{ projectId: 'p', sessionId: 'delegated-1' }]),
@@ -706,6 +710,7 @@ describe('storage IPC handlers', () => {
     await expect(invoke('storage:detect-active')).resolves.toEqual([
       { projectId: 'p', sessionId: 'delegated-1', kind: 'delegated' },
       { projectId: 'p', sessionId: 'agent-1', kind: 'agent' },
+      { projectId: 'p', sessionId: 'side-chat-parent', kind: 'agent' },
       { projectId: 'p', sessionId: 'nb-1', kind: 'notebook' }
     ])
   })

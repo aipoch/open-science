@@ -95,6 +95,7 @@ describe('storage command owner onboarding persistence', () => {
         getActiveNotebookSessions: vi.fn().mockReturnValue([])
       },
       getActivePromptSessions: vi.fn().mockReturnValue([]),
+      getActiveSideChatSessions: vi.fn().mockReturnValue([]),
       getActiveDelegatedSessions: vi.fn().mockReturnValue([]),
       hasActiveReviewerWork: vi.fn().mockReturnValue(false),
       settingsService: {

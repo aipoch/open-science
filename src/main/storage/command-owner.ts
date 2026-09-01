@@ -78,6 +78,7 @@ type StorageCommandOwnerDeps = {
     getActiveNotebookSessions: () => NotebookSessionSource[]
   }
   getActivePromptSessions: () => LegacySessionSource[]
+  getActiveSideChatSessions: () => LegacySessionSource[]
   getActiveDelegatedSessions: () => LegacySessionSource[]
   hasActiveReviewerWork: () => boolean
   settingsService: {
@@ -342,6 +343,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   const detectActive = (): ActiveSessionInfo[] =>
     detectActiveSessions({
       runtime: { getActivePromptSessions: deps.getActivePromptSessions },
+      sideChat: { getActivePromptSessions: deps.getActiveSideChatSessions },
       delegated: { getActiveDelegatedSessions: deps.getActiveDelegatedSessions },
       // Call as a method (arrow wrapper), never a bare reference: the real notebook service is a
       // class whose getActiveNotebookSessions reads `this.sessions`, so extracting it loose would
