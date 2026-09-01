@@ -153,7 +153,7 @@ unpublished data, private paths, and other sensitive content before sharing it.
 Never attach the contents of either storage root, a provider profile, credential file,
 shell environment, or unreviewed log bundle to a public issue or pull request.
 
-## Verifying an official build
+## Verifying your download
 
 Installers are published on this repository's
 [GitHub Releases](https://github.com/aipoch/open-science/releases) page. The in-app updater
@@ -187,14 +187,18 @@ gh attestation verify <installer-path> --repo aipoch/open-science
 
 Platform signing currently differs:
 
-- stable macOS applications are Developer ID signed, notarized by Apple, and stapled;
+- stable macOS builds use Developer ID signing, Apple notarization, and stapling when
+  the release credentials are configured; the release workflow permits an ad-hoc-signed,
+  non-notarized fallback when those credentials are unavailable;
 - Windows installers are currently unsigned and may show an **Unknown publisher** or
   SmartScreen warning; and
 - Linux does not provide an equivalent platform code-signing prompt.
 
-Nightly macOS builds use an ad-hoc signature and Nightly installers do not receive the
-stable release provenance attestation. A platform warning can be expected for an unsigned
-build, but it is never evidence that the file is safe; verify the source and checksum.
+Nightly macOS builds always use an ad-hoc signature, and Nightly installers do not receive
+the stable release provenance attestation. A platform warning can be expected for an
+unsigned, ad-hoc-signed, or non-notarized build, but it is never evidence that the file is
+safe; verify the source, checksum, and provenance instead of inferring release identity
+from the warning.
 
 ## Dependencies and supply chain
 
