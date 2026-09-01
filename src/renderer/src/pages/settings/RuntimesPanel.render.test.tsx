@@ -331,17 +331,29 @@ describe('RuntimesPanel', () => {
     })
   })
 
-  it('offers uninstall only for Agent-created environments and confirms by env id', async () => {
+  it('offers uninstall only for receipt-owned Agent environments and confirms by env id', async () => {
     const agentCreated: DiscoveredInterpreter = {
       language: 'python',
       provenance: 'agent-created',
+      agentOwned: true,
       envId: '/data/runtime/envs/agent-analysis/bin/python',
       interpreterPath: '/data/runtime/envs/agent-analysis/bin/python',
       label: 'Agent analysis',
       condaEnv: 'agent-analysis',
       runnable: true
     }
-    listEnvironments.mockResolvedValue({ python: [...pythonEnvs, agentCreated], r: rEnvs })
+    const historicalNamed: DiscoveredInterpreter = {
+      ...agentCreated,
+      agentOwned: undefined,
+      envId: '/data/runtime/envs/historical/bin/python',
+      interpreterPath: '/data/runtime/envs/historical/bin/python',
+      label: 'Historical named environment',
+      condaEnv: 'historical'
+    }
+    listEnvironments.mockResolvedValue({
+      python: [...pythonEnvs, agentCreated, historicalNamed],
+      r: rEnvs
+    })
     await render()
 
     const uninstallButtons = container.querySelectorAll('[data-testid="runtime-uninstall-button"]')

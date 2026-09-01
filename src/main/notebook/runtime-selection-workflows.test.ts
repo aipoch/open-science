@@ -316,6 +316,7 @@ describe('runtime selection workflows', () => {
       {
         language: 'python',
         provenance: 'agent-created',
+        agentOwned: true,
         envId: runtimeId,
         interpreterPath: runtimeId,
         label: 'analysis',
@@ -365,6 +366,36 @@ describe('runtime selection workflows', () => {
       expect(removeAgentEnvironment).not.toHaveBeenCalled()
     }
   )
+
+  it('refuses a path-inferred named environment without an ownership receipt', async () => {
+    const settingsService = fakeSettingsService()
+    discoveryState.python = [
+      {
+        language: 'python',
+        provenance: 'agent-created',
+        envId: '/data/runtime/envs/historical/bin/python',
+        interpreterPath: '/data/runtime/envs/historical/bin/python',
+        label: 'Historical named environment',
+        condaEnv: 'historical',
+        runnable: true
+      }
+    ]
+    const removeAgentEnvironment = vi.fn(async () => undefined)
+    const workflows = createRuntimeSelectionWorkflows({
+      settingsService,
+      runtimeRoot: () => '/data/runtime',
+      registry: fakeRegistry(),
+      removeAgentEnvironment
+    })
+
+    await expect(
+      workflows.uninstallAgentEnvironment({
+        language: 'python',
+        envId: '/data/runtime/envs/historical/bin/python'
+      })
+    ).rejects.toThrow('Only a discovered Runtime Environment created by the Agent')
+    expect(removeAgentEnvironment).not.toHaveBeenCalled()
+  })
 
   it('discovers both languages from one manual-catalog and runtime-root snapshot', async () => {
     const settingsService = fakeSettingsService()

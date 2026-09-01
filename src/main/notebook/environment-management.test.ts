@@ -35,6 +35,20 @@ const session = (
 
 const managedPythonRuntimeId = (name: string): string => pythonBin(envPrefix('/runtime', name))
 
+const ownership = (): OwnerOptions['environmentOwnership'] => ({
+  record: vi.fn(),
+  owns: vi.fn(() => true),
+  consume: vi.fn((name) => ({
+    schema: 1,
+    kind: 'agent-created-runtime-environment',
+    name,
+    language: 'python',
+    canonicalPrefix: envPrefix('/runtime', name),
+    ownershipId: 'test-ownership-id'
+  })),
+  restore: vi.fn()
+})
+
 const runtimeBinding = (
   name: string,
   overrides: Partial<NotebookSessionRuntimeBinding> = {}
@@ -70,6 +84,7 @@ const harness = (
       completeRemovedManagedEnvironment: vi.fn()
     },
     isAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true),
+    environmentOwnership: ownership(),
     ...overrides
   }
   return {
@@ -167,6 +182,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
         workspaceCwd: '/workspace'
       })
     )
+    expect(options.environmentOwnership.record).toHaveBeenCalledWith('analysis', 'python')
     expect(options.assertPrefixRecoverable).toHaveBeenCalledWith(envPrefix('/runtime', 'analysis'))
   })
 
@@ -316,6 +332,22 @@ describe('NotebookEnvironmentManagementOwner', () => {
     expect(configured.removeEnvironment).toHaveBeenCalledWith('analysis')
   })
 
+  it('refuses removal without a durable Agent ownership receipt', async () => {
+    const configured = manager()
+    const environmentOwnership = ownership()
+    vi.mocked(environmentOwnership.consume).mockImplementation(() => {
+      throw new Error('ownership receipt is missing')
+    })
+    const { owner, options } = harness({ manager: configured, environmentOwnership })
+
+    await expect(owner.manage({ action: 'remove', name: 'analysis' })).rejects.toThrow(
+      'does not have a valid Agent creation receipt'
+    )
+
+    expect(configured.removeEnvironment).not.toHaveBeenCalled()
+    expect(options.runtimeRepair.completeRemovedManagedEnvironment).not.toHaveBeenCalled()
+  })
+
   it('removes an idle-free environment under recovery and clears its repair state', async () => {
     const order: string[] = []
     const configured = manager()
@@ -371,5 +403,8 @@ describe('NotebookEnvironmentManagementOwner', () => {
     )
 
     expect(options.runtimeRepair.completeRemovedManagedEnvironment).not.toHaveBeenCalled()
+    expect(options.environmentOwnership.restore).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'analysis' })
+    )
   })
 })

@@ -76,6 +76,7 @@ import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
 import { projectNotebookDependencies, type AnalyzedNotebookRun } from './dependency-analysis'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { NotebookEnvironmentManager } from './environment-management'
+import type { AgentEnvironmentOwnership } from './agent-environment-ownership'
 
 let storageRoot: string | undefined
 
@@ -131,6 +132,20 @@ const verifiedPackageMutationTracker = (): Pick<
   inspectPackages: vi.fn(),
   markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
   refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
+})
+
+const permissiveEnvironmentOwnership = (): AgentEnvironmentOwnership => ({
+  record: vi.fn(),
+  owns: vi.fn(() => true),
+  consume: vi.fn((name) => ({
+    schema: 1,
+    kind: 'agent-created-runtime-environment',
+    name,
+    language: 'python',
+    canonicalPrefix: name,
+    ownershipId: `test-${name}`
+  })),
+  restore: vi.fn()
 })
 
 const expectedManagedTarget = (
@@ -6931,6 +6946,7 @@ describe('notebook runtime service', () => {
         dataRoot: root,
         projectId: 'default-project',
         repository: new NotebookRunRepository(root),
+        environmentOwnership: permissiveEnvironmentOwnership(),
         environmentManager: {
           createNamedEnvironment: async (name, language, packages) => {
             created.push({ name, language, packages })
@@ -6998,6 +7014,7 @@ describe('notebook runtime service', () => {
         dataRoot: root,
         projectId: 'default-project',
         repository: new NotebookRunRepository(root),
+        environmentOwnership: permissiveEnvironmentOwnership(),
         environmentManager: {
           createNamedEnvironment: async (name, language) => {
             // The observable check: recovery MUST have settled before create touches the prefix.
@@ -7050,6 +7067,7 @@ describe('notebook runtime service', () => {
         dataRoot: root,
         projectId: 'default-project',
         repository: new NotebookRunRepository(root),
+        environmentOwnership: permissiveEnvironmentOwnership(),
         environmentManager: {
           createNamedEnvironment: async (name, language) => ({
             name,
@@ -7110,6 +7128,7 @@ describe('notebook runtime service', () => {
           }),
           shutdown: async () => ({ reaped: true })
         }),
+        environmentOwnership: permissiveEnvironmentOwnership(),
         environmentManager: {
           createNamedEnvironment: async (name, language) => ({
             name,
@@ -7160,6 +7179,7 @@ describe('notebook runtime service', () => {
           },
           shutdown: async () => ({ reaped: true })
         }),
+        environmentOwnership: permissiveEnvironmentOwnership(),
         environmentManager: {
           createNamedEnvironment: async (name, language) => {
             created.push(name)
@@ -7384,6 +7404,7 @@ describe('v4 runtime bindings & agent tools', () => {
       },
       platform: options.platform,
       environmentManager: options.environmentManager,
+      environmentOwnership: permissiveEnvironmentOwnership(),
       installPackagesImpl: options.installPackagesImpl,
       // A fake installer must have a fake inventory refresh too. Mixing the fake installer with a
       // scan of the host's real /usr/bin/python3 makes these tests depend on runner packages.
@@ -8316,6 +8337,7 @@ describe('v4 runtime bindings & agent tools', () => {
         shutdown: async () => ({ reaped: true }),
         terminate: async () => undefined
       }),
+      environmentOwnership: permissiveEnvironmentOwnership(),
       environmentManager: {
         createNamedEnvironment: async (name, language) => ({
           name,
@@ -8955,6 +8977,7 @@ describe('v4 runtime bindings & agent tools', () => {
       dataRoot: root,
       projectId: 'default-project',
       repository: new NotebookRunRepository(root),
+      environmentOwnership: permissiveEnvironmentOwnership(),
       environmentManager: {
         createNamedEnvironment: async (name, language) => ({
           name,
@@ -9546,6 +9569,7 @@ describe('v4 runtime bindings & agent tools', () => {
       projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       discoverRuntimes: async (language) => (language === 'r' ? [namedR] : []),
+      environmentOwnership: permissiveEnvironmentOwnership(),
       environmentManager: {
         createNamedEnvironment: async (name, language) => {
           present = true
@@ -10499,6 +10523,7 @@ describe('v4 runtime bindings & agent tools', () => {
       dataRoot: root,
       projectId: 'default-project',
       repository: new NotebookRunRepository(root),
+      environmentOwnership: permissiveEnvironmentOwnership(),
       environmentManager: {
         createNamedEnvironment: async (name, language) => ({
           name,

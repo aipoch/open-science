@@ -408,7 +408,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
           />
         </div>
 
-        {env.runnable || env.provenance === 'agent-created' ? (
+        {env.runnable || env.agentOwned === true ? (
           <div className="mt-2 flex flex-wrap gap-2">
             {env.runnable ? (
               <Button
@@ -432,7 +432,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                 ) : null}
               </Button>
             ) : null}
-            {env.provenance === 'agent-created' ? (
+            {env.agentOwned === true ? (
               <Button
                 type="button"
                 variant="destructive"

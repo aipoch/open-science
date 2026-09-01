@@ -44,6 +44,10 @@ import {
   NotebookEnvironmentManagementOwner,
   type NotebookEnvironmentManager
 } from './environment-management'
+import {
+  createAgentEnvironmentOwnership,
+  type AgentEnvironmentOwnership
+} from './agent-environment-ownership'
 import { NotebookExportReader } from './export-reader'
 import type { NotebookKernelExecutorOptions } from './kernel-executor'
 import { saveIpynbAll } from './save-ipynb-all'
@@ -225,6 +229,9 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   // fake; the production instance (the DefaultRuntimeProvisioner) is wired after construction in
   // main/ipc.ts via setEnvironmentManager, mirroring the mcp/mirror resolvers.
   environmentManager?: NotebookEnvironmentManager
+  // Durable Agent-created environment ownership. Production uses receipt files under runtimeRoot;
+  // tests may inject an in-memory port alongside a fake environment manager.
+  environmentOwnership?: AgentEnvironmentOwnership
   // Included in exported notebook provenance. Tests may omit it.
   appVersion?: string
   // Save-dialog seam for notebook export tests. Production falls back to Electron's native dialog.
@@ -490,7 +497,10 @@ class NotebookRuntimeService {
       assertPrefixRecoverable: (prefix) => this.assertPrefixRecoverable(prefix),
       environmentOperations: this.environmentOperations,
       runtimeRepair: this.runtimeRepair,
-      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled
+      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled,
+      environmentOwnership:
+        options.environmentOwnership ??
+        createAgentEnvironmentOwnership(runtimeRoot, options.platform)
     })
     this.environmentStateTracker =
       options.environmentStateTracker ??

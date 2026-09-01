@@ -108,12 +108,15 @@ const makeDeps = (
     versions?: Record<string, string>
     rRunnable?: Record<string, boolean>
     realpath?: Record<string, string>
+    agentOwned?: string[]
   } = {}
 ): DiscoveryDeps => ({
   candidatePaths: async () => paths,
   probeVersion: async (p) => opts.versions?.[p],
   rRunnable: async (p) => opts.rRunnable?.[p] ?? false,
   realpath: (p) => opts.realpath?.[p] ?? p,
+  ownsAgentEnvironment: (name, language) =>
+    opts.agentOwned?.includes(`${name}:${language}`) === true,
   runtimeRoot: '/rt',
   platform: 'linux'
 })
@@ -203,18 +206,31 @@ describe('discoverInterpreters', () => {
         '/rt/envs/my-analysis/bin/R': '4.4.1',
         '/opt/miniconda3/envs/bio/bin/R': '4.3.2'
       },
-      rRunnable: { '/rt/envs/my-analysis/bin/R': true } // the conda one lacks jsonlite
+      rRunnable: { '/rt/envs/my-analysis/bin/R': true }, // the conda one lacks jsonlite
+      agentOwned: ['my-analysis:r']
     })
     const found = await discoverInterpreters('r', deps)
     const byId = Object.fromEntries(found.map((f) => [f.envId, f]))
 
     expect(byId['/rt/envs/my-analysis/bin/R'].provenance).toBe('agent-created')
+    expect(byId['/rt/envs/my-analysis/bin/R'].agentOwned).toBe(true)
     expect(byId['/rt/envs/my-analysis/bin/R'].runnable).toBe(true)
     const condaR = byId['/opt/miniconda3/envs/bio/bin/R']
     expect(condaR.provenance).toBe('user-own')
     expect(condaR.condaEnv).toBe('bio')
     expect(condaR.runnable).toBe(false)
     expect(condaR.detail).toMatch(/jsonlite/)
+  })
+
+  it('does not grant deletion authority to a path-inferred historical named environment', async () => {
+    const path = '/rt/envs/historical/bin/python'
+    const [found] = await discoverInterpreters(
+      'python',
+      makeDeps([path], { versions: { [path]: '3.12.4' } })
+    )
+
+    expect(found.provenance).toBe('agent-created')
+    expect(found.agentOwned).toBeUndefined()
   })
 
   it('bounds probe concurrency with a worker pool yet discovers every env in input order', async () => {

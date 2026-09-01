@@ -309,7 +309,11 @@ const createRuntimeSelectionWorkflows = (
       const environment = (await discoverLanguageEnvs(request.language)).find(
         (candidate) => candidate.envId === request.envId
       )
-      if (environment?.provenance !== 'agent-created' || !environment.condaEnv) {
+      if (
+        environment?.provenance !== 'agent-created' ||
+        environment.agentOwned !== true ||
+        !environment.condaEnv
+      ) {
         throw new Error(
           'Only a discovered Runtime Environment created by the Agent can be uninstalled.'
         )

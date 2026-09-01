@@ -192,6 +192,7 @@ describe('runtime IPC adapter', () => {
       {
         language: 'python',
         provenance: 'agent-created',
+        agentOwned: true,
         envId: '/runtime/envs/analysis/bin/python',
         interpreterPath: '/runtime/envs/analysis/bin/python',
         label: 'analysis',

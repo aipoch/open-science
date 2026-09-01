@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { DiscoveredInterpreter, EnvProvenance } from '../../shared/notebook-runtime'
 import { createLogger } from '../logger'
+import { createAgentEnvironmentOwnership } from './agent-environment-ownership'
 import { isMacOSDeveloperToolsPythonStub, isPython3Version } from './python-command'
 import { parseRVersion, rHasJsonlite } from './r-command'
 import {
@@ -57,6 +58,9 @@ export type DiscoveryDeps = {
   // App runtime root (<storageRoot>/runtime); used to classify provenance of an interpreter by whether
   // it lives under runtime/envs and whether it is a default (app-managed) vs a named (agent-created) env.
   runtimeRoot: string
+  // Durable ownership evidence for named environments. Optional test doubles default to no deletion
+  // authority; production supplies the receipt-backed verifier below.
+  ownsAgentEnvironment?: (name: string, language: NotebookLanguage) => boolean
   // Platform policy used before probing OS-owned interpreter stubs.
   platform?: NodeJS.Platform
 }
@@ -436,6 +440,10 @@ export const discoverInterpreters = async (
     const version = await deps.probeVersion(path, language)
     const provenance = classify(path, deps.runtimeRoot, deps.platform ?? process.platform)
     const conda = condaEnvName(path)
+    const agentOwned =
+      provenance === 'agent-created' &&
+      conda !== undefined &&
+      deps.ownsAgentEnvironment?.(conda, language) === true
     let runnable: boolean
     let detail: string | undefined
     if (language === 'python') {
@@ -450,6 +458,7 @@ export const discoverInterpreters = async (
     return {
       language,
       provenance,
+      ...(agentOwned ? { agentOwned: true } : {}),
       envId,
       interpreterPath: path,
       label: conda ? `conda: ${conda}` : path,
@@ -502,6 +511,7 @@ export const defaultDiscoveryDeps = (
   runtimeDeps: DefaultDiscoveryRuntimeDeps = {}
 ): DiscoveryDeps => {
   const platform = runtimeDeps.platform ?? process.platform
+  const environmentOwnership = createAgentEnvironmentOwnership(runtimeRoot, platform)
   const env = runtimeDeps.env ?? process.env
   const exec: DiscoveryExec =
     runtimeDeps.exec ??
@@ -559,6 +569,7 @@ export const defaultDiscoveryDeps = (
       }),
     realpath: safeRealpath,
     runtimeRoot,
+    ownsAgentEnvironment: (name, language) => environmentOwnership.owns(name, language),
     platform
   }
 }

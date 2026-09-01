@@ -4,6 +4,7 @@ import type {
   ManageEnvironmentsRequest,
   ManageEnvironmentsResult
 } from '../../shared/notebook-env'
+import type { AgentEnvironmentOwnership } from './agent-environment-ownership'
 import type { NotebookEnvironmentOperations } from './environment-operations'
 import { assertSafeEnvName, DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix } from './runtime-paths'
 import type { NotebookRuntimeRepairOwner } from './runtime-repair'
@@ -36,6 +37,7 @@ type NotebookEnvironmentManagementOptions = {
   environmentOperations: Pick<NotebookEnvironmentOperations, 'runMutation'>
   runtimeRepair: Pick<NotebookRuntimeRepairOwner, 'completeRemovedManagedEnvironment'>
   isAgentEnvironmentCreationEnabled: () => Promise<boolean>
+  environmentOwnership: AgentEnvironmentOwnership
 }
 
 const isAppManagedEnvironment = (name: string): boolean =>
@@ -83,6 +85,7 @@ class NotebookEnvironmentManagementOwner {
             request.packages,
             request
           )
+          this.options.environmentOwnership.record(name, request.language)
           const { runtimeId } = managedRuntimeIdentity(
             this.options.runtimeRoot,
             request.language,
@@ -126,7 +129,25 @@ class NotebookEnvironmentManagementOwner {
         await this.options.ensureRecovered()
         this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
         return this.options.environmentOperations.runMutation(name, async () => {
-          manager.removeEnvironment(name)
+          let receipt: ReturnType<AgentEnvironmentOwnership['consume']>
+          try {
+            receipt = this.options.environmentOwnership.consume(name)
+          } catch {
+            throw new Error(
+              `Environment "${name}" does not have a valid Agent creation receipt and cannot be removed.`
+            )
+          }
+          try {
+            manager.removeEnvironment(name)
+          } catch (error) {
+            try {
+              this.options.environmentOwnership.restore(receipt)
+            } catch {
+              // The safe outcome is an existing environment without deletion authority. Preserve the
+              // physical-removal failure; a missing receipt keeps later retries fail-closed.
+            }
+            throw error
+          }
           this.options.runtimeRepair.completeRemovedManagedEnvironment(name)
           return { removed: { name } }
         })

@@ -84,8 +84,8 @@ export type RuntimeReadiness = {
   detail?: string
 }
 
-// v4 environment discovery (Settings cards). Where an interpreter came from — also gates the agent
-// remove-guard: only 'agent-created' envs may be removed by the agent.
+// v4 environment discovery (Settings cards). Where an interpreter appears to come from. This is
+// descriptive only: deletion additionally requires `agentOwned`, backed by durable ownership evidence.
 export type EnvProvenance = 'app-managed' | 'user-own' | 'agent-created'
 
 // One detected interpreter. `envId` (its real path) is the stable identity used to persist the
@@ -93,6 +93,9 @@ export type EnvProvenance = 'app-managed' | 'user-own' | 'agent-created'
 export type DiscoveredInterpreter = {
   language: NotebookLanguage
   provenance: EnvProvenance
+  // Durable deletion authority. Path-based provenance alone is descriptive and never sufficient:
+  // only Agent-created named environments with a matching main-process ownership receipt set this.
+  agentOwned?: boolean
   envId: string
   interpreterPath: string
   label: string
