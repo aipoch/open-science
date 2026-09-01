@@ -200,18 +200,25 @@ class ReviewRepository {
     })
 
     for (const fixLoopReview of interruptedFixLoops) {
-      const turnReviews = await client.review.findMany({
-        where: {
-          projectId: fixLoopReview.projectId,
-          sessionId: fixLoopReview.sessionId,
-          turnMessageId: fixLoopReview.turnMessageId,
-          createdAt: { gte: fixLoopReview.createdAt }
-        },
-        select: { id: true }
-      })
+      const chainReviewIds = new Set([fixLoopReview.id])
+      for (;;) {
+        const linkedReviews = await client.reviewFindingDisposition.findMany({
+          where: {
+            trigger: 'review_submission',
+            sourceFinding: { reviewId: { in: [...chainReviewIds] } },
+            causeReviewId: { not: null }
+          },
+          select: { causeReviewId: true }
+        })
+        const previousSize = chainReviewIds.size
+        for (const { causeReviewId } of linkedReviews) {
+          if (causeReviewId) chainReviewIds.add(causeReviewId)
+        }
+        if (chainReviewIds.size === previousSize) break
+      }
       const openFindings = await client.finding.findMany({
         where: {
-          reviewId: { in: turnReviews.map(({ id }) => id) },
+          reviewId: { in: [...chainReviewIds] },
           status: { in: ['warn', 'fail'] },
           resolution: 'open'
         },

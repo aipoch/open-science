@@ -779,7 +779,7 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.conversation.availability.submit).toBe(true)
   })
 
-  it('keeps sending locked until review history hydration establishes no active Fix Loop', async () => {
+  it('keeps idle turn mutations locked until review history hydration establishes no active Fix Loop', async () => {
     useReviewStore.setState(createInitialReviewState())
     useSessionStore.setState({
       ...createInitialSessionState(),
@@ -792,14 +792,18 @@ describe('WorkspacePage send gate while compacting', () => {
       conversationProps.composer.actions.changeDoc(textDoc('wait for review history'))
     })
     expect(conversationProps.conversation.availability.submit).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
+    expect(conversationProps.conversation.availability.branch).toBe(false)
 
     await act(async () => {
       useReviewStore.setState({ loadedReviewSessions: { 'proj-1\0sess-a': true } })
     })
     expect(conversationProps.conversation.availability.submit).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
+    expect(conversationProps.conversation.availability.branch).toBe(true)
   })
 
-  it('keeps queueing locked until review history hydration establishes no active Fix Loop', async () => {
+  it('keeps running turn mutations locked until review history hydration establishes no active Fix Loop', async () => {
     useReviewStore.setState(createInitialReviewState())
     useSessionStore.setState({
       ...createInitialSessionState(),
@@ -812,11 +816,13 @@ describe('WorkspacePage send gate while compacting', () => {
       conversationProps.composer.actions.changeDoc(textDoc('do not queue before review history'))
     })
     expect(conversationProps.conversation.availability.submit).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
 
     await act(async () => {
       useReviewStore.setState({ loadedReviewSessions: { 'proj-1\0sess-a': true } })
     })
     expect(conversationProps.conversation.availability.submit).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
   })
 
   it('keeps sending locked when review history hydration fails', async () => {

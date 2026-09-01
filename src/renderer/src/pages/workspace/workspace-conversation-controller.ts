@@ -283,6 +283,7 @@ const canRevise = (options: WorkspaceConversationControllerOptions): boolean => 
     (options.actionability?.actions.revise.allowed ?? true) &&
     !hasRuntimeInteraction(options) &&
     !options.isReviewing &&
+    !options.isTurnAdmissionBlocked &&
     !activeSession?.fixLoopActive &&
     !activeSession?.conversationGraphSyncBlocked &&
     !activeSession?.compacting &&
@@ -301,6 +302,7 @@ const canQueueRevision = (options: WorkspaceConversationControllerOptions): bool
     !options.isReviewing &&
     !options.sendPreparationInFlightSessionIds.includes(activeSession.id) &&
     !options.saveAsSkillInFlightSessionIds.includes(activeSession.id) &&
+    !options.isTurnAdmissionBlocked &&
     !activeSession.fixLoopActive &&
     !activeSession.conversationGraphSyncBlocked &&
     !activeSession.compacting &&
@@ -316,6 +318,7 @@ const canBranch = (options: WorkspaceConversationControllerOptions): boolean =>
     options.activeSession &&
     !options.activeSession.activeRun &&
     options.actionability?.actions.branchFromMessage.allowed !== false &&
+    !options.isTurnAdmissionBlocked &&
     !options.activeSession.fixLoopActive &&
     !options.activeSession.compacting &&
     !options.activeSession.branchSwitchBlocked &&

@@ -92,7 +92,7 @@ describe('Reviewer resilience', () => {
     })
   })
 
-  it('does not abort findings from an older review chain for the same turn', async () => {
+  it('recovers only the causally linked Fix Loop chain when Reviews share a timestamp', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-reviewer-fix-loop-history-'))
     const database = await getProjectDbClient(storageRoot)
     const repository = new ReviewRepository(() => Promise.resolve(database))
@@ -106,11 +106,6 @@ describe('Reviewer resilience', () => {
       { status: 'fail', claim: 'Old issue', evidence: 'Still part of review history.' }
     ])
     await repository.updateReview(oldReview.id, { lifecycle: 'complete', outcome: 'flagged' })
-    await database.review.update({
-      where: { id: oldReview.id },
-      data: { createdAt: new Date('2020-01-01T00:00:00.000Z') }
-    })
-
     const activeReview = await repository.createReview({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -120,6 +115,40 @@ describe('Reviewer resilience', () => {
     await repository.addChecks(activeReview.id, [
       { status: 'fail', claim: 'Current issue', evidence: 'Belongs to the interrupted Fix Loop.' }
     ])
+    const activeFinding = (
+      await repository.getReviewsForProjectSession('project-1', 'session-1')
+    ).find((review) => review.id === activeReview.id)?.checks[0]
+    expect(activeFinding).toBeDefined()
+
+    const reReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      turnMessageId: 'turn-1',
+      scope: { turnMessageId: 'correction-1', blocks: [], artifactVersionIds: [] }
+    })
+    await repository.commitScopedSubmission({
+      mode: 'tracked',
+      reviewId: reReview.id,
+      expectedSourceFindingIds: [activeFinding!.id],
+      checks: [
+        {
+          sourceFindingId: activeFinding!.id,
+          status: 'fail',
+          claim: 'Current issue',
+          evidence: 'The correction did not resolve it.'
+        },
+        {
+          status: 'warn',
+          claim: 'New issue',
+          evidence: 'The correction introduced another issue.'
+        }
+      ]
+    })
+
+    await database.review.updateMany({
+      where: { id: { in: [oldReview.id, activeReview.id, reReview.id] } },
+      data: { createdAt: new Date('2020-01-01T00:00:00.000Z') }
+    })
 
     expect(await repository.recoverInterruptedReviews()).toBe(1)
     const reviews = await repository.getReviewsForProjectSession('project-1', 'session-1')
@@ -127,6 +156,10 @@ describe('Reviewer resilience', () => {
       resolution: 'open'
     })
     expect(reviews.find((review) => review.id === activeReview.id)?.checks[0]).toMatchObject({
+      resolution: 'unaddressed',
+      unaddressedTrigger: 'aborted'
+    })
+    expect(reviews.find((review) => review.id === reReview.id)?.checks[0]).toMatchObject({
       resolution: 'unaddressed',
       unaddressedTrigger: 'aborted'
     })
