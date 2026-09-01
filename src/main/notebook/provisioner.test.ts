@@ -115,7 +115,20 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     writeReadyMarker(root, DEFAULT_ENV_VERSION, 'ready')
     writeRReadyMarker(root, DEFAULT_ENV_VERSION, 'ready')
 
-    await new DefaultRuntimeProvisioner(makeDeps(root)).removeManagedEnvironment('python')
+    const order: string[] = []
+    await new DefaultRuntimeProvisioner(
+      makeDeps(root, {
+        withPrefixLock: async (environment, operation) => {
+          order.push(`lock:${environment}`)
+          const result = await operation()
+          order.push('unlock')
+          return result
+        }
+      })
+    ).removeManagedEnvironment('python', async () => {
+      order.push('sessions')
+      expect(existsSync(managedPython)).toBe(true)
+    })
 
     expect(existsSync(managedPython)).toBe(false)
     expect(readReadyMarker(root)).toBeUndefined()
@@ -124,6 +137,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     expect(existsSync(named)).toBe(true)
     expect(existsSync(userOwned)).toBe(true)
     expect(await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()).toEqual([])
+    expect(order).toEqual(['lock:default-python', 'sessions', 'unlock'])
   })
 
   it('maintains the package cache under the materialize journal after fetching the runtime', async () => {

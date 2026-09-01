@@ -21,7 +21,7 @@ const manager = (): NotebookEnvironmentManager => ({
   })),
   listEnvironments: vi.fn(() => []),
   removeEnvironment: vi.fn(() => []),
-  removeManagedEnvironment: vi.fn()
+  removeManagedEnvironment: vi.fn(async (_language, beforeRemove) => beforeRemove())
 })
 
 const session = (
@@ -374,12 +374,15 @@ describe('NotebookEnvironmentManagementOwner', () => {
     expect(options.runtimeRepair.completeRemovedManagedEnvironment).not.toHaveBeenCalled()
   })
 
-  it('uninstalls only the exact managed default under recovery and mutation ownership', async () => {
+  it('uninstalls only the exact managed default after recovery and session teardown', async () => {
     const order: string[] = []
     const configured = manager()
-    vi.mocked(configured.removeManagedEnvironment!).mockImplementation((language) => {
-      order.push(`remove-managed:${language}`)
-    })
+    vi.mocked(configured.removeManagedEnvironment!).mockImplementation(
+      async (language, beforeRemove) => {
+        order.push(`remove-managed:${language}`)
+        await beforeRemove()
+      }
+    )
     const { owner } = harness({
       manager: configured,
       ensureRecovered: vi.fn(async () => {
@@ -408,9 +411,8 @@ describe('NotebookEnvironmentManagementOwner', () => {
     expect(order).toEqual([
       'recovery',
       'recoverable',
-      'mutation:default-python',
-      'sessions:default-python',
       'remove-managed:python',
+      'sessions:default-python',
       'repair:default-python'
     ])
   })

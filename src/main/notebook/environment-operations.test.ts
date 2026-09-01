@@ -250,6 +250,62 @@ describe('NotebookEnvironmentOperations', () => {
     expect(notifyChanged).toHaveBeenCalledTimes(2)
   })
 
+  it('holds the environment mutation lease until a background revocation drain closes the executor', async () => {
+    let releaseDrain!: () => void
+    const order: string[] = []
+    const session: TestSession = {
+      projectId: 'project',
+      sessionId: 'session-1',
+      lane: createRootNotebookLane('project', 'session-1', 'root-frame-session-1'),
+      bindings: {
+        python: {
+          language: 'python',
+          runtimeId: '/env/python',
+          source: 'external',
+          provenance: 'user-own',
+          interpreterPath: '/env/python',
+          label: 'Python',
+          status: 'active'
+        }
+      },
+      statuses: new Map([['python:default-python', 'running']]),
+      runtimeBinding(language) {
+        return this.bindings[language]
+      },
+      setRuntimeBinding(language, binding) {
+        this.bindings[language] = binding
+      },
+      kernelStatus(processKey) {
+        return this.statuses.get(processKey)
+      },
+      markForceStopped: vi.fn(),
+      drainExecution: async () =>
+        new Promise<void>((resolve) => {
+          order.push('drain')
+          releaseDrain = resolve
+        }),
+      terminateExecutor: async () => {
+        order.push('terminate')
+      },
+      clearProcessState(processKey) {
+        this.statuses.delete(processKey)
+      }
+    }
+    const { owner } = await createOwner([session])
+
+    await owner.revokeRuntime('python', '/env/python')
+    await vi.waitFor(() => expect(releaseDrain).toBeTypeOf('function'))
+    const remove = owner.runMutation('default-python', async () => {
+      order.push('remove')
+    })
+    await Promise.resolve()
+
+    expect(order).toEqual(['drain'])
+    releaseDrain()
+    await remove
+    expect(order).toEqual(['drain', 'terminate', 'remove'])
+  })
+
   it('keeps restart, repair, recovery, and redacted diagnostics in one snapshot', async () => {
     const { owner } = await createOwner()
 

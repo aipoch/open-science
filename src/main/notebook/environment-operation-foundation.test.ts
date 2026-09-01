@@ -84,6 +84,36 @@ describe('serializeProvisioner', () => {
     provisioner.cancel('r')
     expect(base.cancel).not.toHaveBeenCalled()
   })
+
+  it('serializes managed uninstall behind already-admitted startup provisioning', async () => {
+    const order: string[] = []
+    let releaseStartup!: () => void
+    const base = fakeProvisioner({
+      restoreRelocatedEnvs: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            order.push('startup')
+            releaseStartup = resolve
+          })
+      ),
+      removeManagedEnvironment: vi.fn(async (_language, beforeRemove) => {
+        await beforeRemove?.()
+        order.push('remove')
+      })
+    })
+    const provisioner = serializeProvisioner(base)
+
+    const startup = provisioner.restoreRelocatedEnvs(vi.fn())
+    const remove = provisioner.removeManagedEnvironment!('python', async () => {
+      order.push('sessions')
+    })
+    await vi.waitFor(() => expect(releaseStartup).toBeTypeOf('function'))
+
+    expect(order).toEqual(['startup'])
+    releaseStartup()
+    await Promise.all([startup, remove])
+    expect(order).toEqual(['startup', 'sessions', 'remove'])
+  })
 })
 
 describe('runLoggedRuntimeOperation', () => {

@@ -284,7 +284,10 @@ export class NotebookEnvironmentOperations {
             continue
           }
 
-          const drain = this.track('revocation', environment, async () => {
+          // Revocation teardown and every prefix mutation share the environment's exclusive lease.
+          // Whichever request arrives first completes its executor teardown/remove before the other
+          // can proceed, so uninstall never deletes a prefix while this drain still owns a process.
+          const drain = this.withLease('revocation', environment, 'exclusive', async () => {
             try {
               await session.drainExecution(revokedProcessKey)
               await session.terminateExecutor(language === 'r' ? 'r' : 'python', environment)

@@ -3493,7 +3493,15 @@ const createApplicationModules = async (
     // Back the notebook service's manage_environments tool with the same provisioner that owns the env
     // gate (it is a DefaultRuntimeProvisioner, which implements createNamedEnvironment/listEnvironments/
     // removeEnvironment). Wired after construction like the mcp/mirror resolvers above.
-    notebookService.setEnvironmentManager(provisioner)
+    notebookService.setEnvironmentManager({
+      createNamedEnvironment: (...args) => provisioner.createNamedEnvironment(...args),
+      listEnvironments: () => provisioner.listEnvironments(),
+      removeEnvironment: (name) => provisioner.removeEnvironment(name),
+      // Use the shared mutation queue: an already-admitted startup restore/upgrade/repair finishes
+      // before removal instead of waking after deletion and recreating the managed default.
+      removeManagedEnvironment: (language, beforeRemove) =>
+        serialized.removeManagedEnvironment!(language, beforeRemove)
+    })
     // On first agent use of a not-yet-built default env, build it from the offline bundle (via the
     // shared serialized provisioner) instead of erroring — keeps R lazy but avoids the agent creating
     // a redundant named env.

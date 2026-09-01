@@ -10265,7 +10265,9 @@ describe('v4 runtime bindings & agent tools', () => {
       interpreterPath: runtimeId
     }
     const terminations: string[] = []
-    const removeManagedEnvironment = vi.fn()
+    const removeManagedEnvironment = vi.fn(async (_language, beforeRemove: () => Promise<void>) =>
+      beforeRemove()
+    )
     const service = bindingService(root, {
       discovered: [managedRuntime],
       terminations,
@@ -10282,7 +10284,7 @@ describe('v4 runtime bindings & agent tools', () => {
 
     await service.uninstallManagedEnvironment('python')
 
-    expect(removeManagedEnvironment).toHaveBeenCalledWith('python')
+    expect(removeManagedEnvironment).toHaveBeenCalledWith('python', expect.any(Function))
     expect(terminations).toEqual([`python:${DEFAULT_PY_ENV}`])
     expect((await service.state(session)).runtimeBindings.python).toMatchObject({
       status: 'unavailable',

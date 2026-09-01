@@ -322,6 +322,12 @@ export interface RuntimeProvisioner {
   provisionPython(onProgress: (p: ProvisionProgress) => void): Promise<void>
   provisionR(onProgress: (p: ProvisionProgress) => void): Promise<void>
   upgradeIfNeeded(onProgress: (p: ProvisionProgress) => void): Promise<void>
+  // Optional because unavailable/test provisioners may expose only setup operations. Production uses
+  // this hook through the same serialized mutation queue as startup, UI setup, and lazy provisioning.
+  removeManagedEnvironment?(
+    language: NotebookLanguage,
+    beforeRemove?: () => Promise<void>
+  ): Promise<void>
   // `force` = explicit user recovery: clears a recovery quarantine (block + retained journal record +
   // sidecar) before rebuilding, so a stuck/uncertain runtime can be reset. Auto/startup repair omits it
   // and stays gated by the block.
@@ -1388,35 +1394,42 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     rmSync(envPrefix(this.deps.root, name, this.platform), { recursive: true, force: true })
   }
 
-  // Removes exactly one app-managed default plus its readiness receipt. Session teardown and the
-  // per-env mutation lock are owned by NotebookRuntimeService/EnvironmentManagementOwner; keeping
-  // this filesystem primitive narrow prevents renderer input from becoming deletion authority.
-  async removeManagedEnvironment(language: NotebookLanguage): Promise<void> {
+  // Removes exactly one app-managed default plus its readiness receipt. The serialized provisioner
+  // queue enters this method before it takes the per-env mutation lock, preserving one lock order for
+  // startup writes, session teardown, and deletion. The callback lets the service close sessions while
+  // the lock is held without giving renderer input filesystem deletion authority.
+  async removeManagedEnvironment(
+    language: NotebookLanguage,
+    beforeRemove?: () => Promise<void>
+  ): Promise<void> {
     const name = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
     const prefix = envPrefix(this.deps.root, name, this.platform)
     const targets = [
       prefix,
       language === 'r' ? rReadyMarkerPath(this.deps.root) : readyMarkerPath(this.deps.root)
     ]
-    const journal = RuntimeOperationJournal.forPath(operationJournalPath(this.deps.root))
-    const operationId = randomUUID()
-    await journal.begin({
-      operationId,
-      kind: 'remove',
-      runtimeId: name,
-      phase: `remove-${language}`,
-      startedAt: Date.now(),
-      targetPaths: targets
+    await this.withEnvPrefixLock(name, async () => {
+      await beforeRemove?.()
+      const journal = RuntimeOperationJournal.forPath(operationJournalPath(this.deps.root))
+      const operationId = randomUUID()
+      await journal.begin({
+        operationId,
+        kind: 'remove',
+        runtimeId: name,
+        phase: `remove-${language}`,
+        startedAt: Date.now(),
+        targetPaths: targets
+      })
+      try {
+        for (const target of targets) rmSync(target, { recursive: true, force: true })
+        await journal.complete(operationId)
+      } catch (error) {
+        // Keep the durable intent for startup retry and prevent this provisioner from recreating the
+        // prefix before that retry has cleared it.
+        this.pendingRemovalPrefixes.add(prefix)
+        throw error
+      }
     })
-    try {
-      for (const target of targets) rmSync(target, { recursive: true, force: true })
-      await journal.complete(operationId)
-    } catch (error) {
-      // Keep the durable intent for startup retry and prevent this provisioner from recreating the
-      // prefix before that retry has cleared it.
-      this.pendingRemovalPrefixes.add(prefix)
-      throw error
-    }
   }
 
   // Keeps a healthy legacy R prefix additive, but replaces an invalid partial prefix from the lock.

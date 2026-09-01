@@ -19,7 +19,10 @@ type NotebookEnvironmentManager = {
   ) => Promise<EnvironmentInfo>
   listEnvironments: () => EnvironmentInfo[]
   removeEnvironment: (name: string) => void
-  removeManagedEnvironment?: (language: NotebookLanguage) => void | Promise<void>
+  removeManagedEnvironment?: (
+    language: NotebookLanguage,
+    beforeRemove: () => Promise<void>
+  ) => void | Promise<void>
 }
 
 type EnvironmentManagementSession = {
@@ -146,11 +149,10 @@ class NotebookEnvironmentManagementOwner {
     const environmentName = language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
     await this.options.ensureRecovered()
     this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, environmentName))
-    await this.options.environmentOperations.runMutation(environmentName, async () => {
-      await beforeRemove(environmentName)
-      await manager.removeManagedEnvironment?.(language)
-      this.options.runtimeRepair.completeRemovedManagedEnvironment(environmentName)
-    })
+    // The production manager enters the shared provisioner queue before taking the environment lease;
+    // `beforeRemove` then tears down sessions inside that lease immediately before filesystem removal.
+    await manager.removeManagedEnvironment(language, () => beforeRemove(environmentName))
+    this.options.runtimeRepair.completeRemovedManagedEnvironment(environmentName)
   }
 
   private isLive(name: string): boolean {
