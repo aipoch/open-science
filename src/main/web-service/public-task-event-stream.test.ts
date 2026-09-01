@@ -96,7 +96,14 @@ describe('PublicTaskEventStream', () => {
       sessionId: 'session-1',
       projectId: 'project-1',
       type: 'run.event' as const,
-      data: { id: 'event-1', timestamp: 1, kind: 'message' as const, level: 'info' as const }
+      data: {
+        id: 'event-1',
+        timestamp: 1,
+        kind: 'message' as const,
+        level: 'info' as const,
+        role: 'assistant' as const,
+        text: 'done'
+      }
     }
     stream.publish(event)
     stream.publish(event)

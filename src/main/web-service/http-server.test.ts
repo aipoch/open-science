@@ -1665,6 +1665,7 @@ describe('startWebHttpServer', () => {
         level: 'info',
         sessionId: 'task-session',
         kind: 'message',
+        role: 'assistant',
         text: 'Authorized-principal-only history'
       }
     ])
