@@ -5,6 +5,7 @@ import type {
   AcpStateSnapshot,
   AcpStateUpdate
 } from '../../shared/acp'
+import { sanitizeRawToolPayload } from '../../shared/tool-detail-sanitizer'
 import { createLogger } from '../logger'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import {
@@ -51,6 +52,7 @@ type AcpRuntimePublicationOwnerOptions = Readonly<{
 }>
 
 const STATE_PUBLICATION_INTERVAL_MS = 33
+const MAX_PERMISSION_RAW_INPUT_CHARS = 8_000
 // A fast provider can emit more than one retained window before the 33 ms timer runs. Publish
 // midway through that window so every prefix chunk reaches subscribers before bounded history can
 // evict it, while ordinary streams still receive the same frame-level coalescing.
@@ -162,17 +164,27 @@ class AcpRuntimePublicationOwner {
   }
 
   publishPermissionRequest(request: AcpPermissionRequest): void {
+    const { rawInput, ...requestProjection } = request
+    const sanitizedRawInput =
+      rawInput === null ? null : sanitizeRawToolPayload(rawInput, MAX_PERMISSION_RAW_INPUT_CHARS)
+    const publishedRequest: AcpPermissionRequest =
+      rawInput === undefined
+        ? request
+        : sanitizedRawInput === undefined
+          ? requestProjection
+          : { ...requestProjection, rawInput: sanitizedRawInput }
+
     this.pushEvent({
       kind: 'permission',
       level: 'warning',
-      sessionId: request.sessionId,
-      permissionRequestId: request.requestId,
-      toolCallId: request.toolCallId,
+      sessionId: publishedRequest.sessionId,
+      permissionRequestId: publishedRequest.requestId,
+      toolCallId: publishedRequest.toolCallId,
       title: 'Permission requested',
-      text: request.title,
-      raw: request
+      text: publishedRequest.title,
+      raw: publishedRequest
     })
-    this.options.callbacks.onPermissionRequest?.(request)
+    this.options.callbacks.onPermissionRequest?.(publishedRequest)
     this.emitState()
   }
 

@@ -67,9 +67,9 @@ import {
 import { SIDE_CHAT_MESSAGE_LIMIT, type SideChatEntry } from './side-chat'
 import { sanitizeAgentUserChoiceRequest, type AgentUserChoicePrompt } from './elicitation'
 import {
-  capToolDetailText,
   sanitizeRawToolPayload,
-  sanitizeToolContent
+  sanitizeToolContent,
+  sanitizeToolDetailText
 } from './tool-detail-sanitizer'
 
 // One JSON file per session (sessions/<projectId>/<sessionId>.json) carries this envelope version.
@@ -3021,7 +3021,7 @@ const MAX_PERSISTED_RAW_CHARS = 8_000
 const asCappedString = (value: unknown): string | undefined => {
   const text = asString(value)
 
-  return text ? capToolDetailText(text) : undefined
+  return text ? sanitizeToolDetailText(text) : undefined
 }
 
 // Rebuilds tool file locations from path/line fields only.

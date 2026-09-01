@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { capToolDetailText, sanitizeToolContent } from './tool-detail-sanitizer'
+import {
+  capToolDetailText,
+  sanitizeRawToolPayload,
+  sanitizeToolContent
+} from './tool-detail-sanitizer'
 
 describe('capToolDetailText', () => {
   it('preserves bounded text and truncates oversized text at the shared limit', () => {
@@ -8,6 +12,27 @@ describe('capToolDetailText', () => {
 
     expect(capToolDetailText(bounded)).toBe(bounded)
     expect(capToolDetailText(`${bounded}tail`)).toBe(`${bounded}\n…`)
+  })
+})
+
+describe('sanitizeRawToolPayload', () => {
+  it('uses the shared credential-key policy without redacting token metrics', () => {
+    expect(
+      sanitizeRawToolPayload(
+        {
+          auth: 'test-auth-value',
+          privateKey: 'test-private-key-value',
+          pat: 'test-pat-value',
+          inputTokenCount: 42
+        },
+        8_000
+      )
+    ).toEqual({
+      auth: '[redacted]',
+      privateKey: '[redacted]',
+      pat: '[redacted]',
+      inputTokenCount: 42
+    })
   })
 })
 

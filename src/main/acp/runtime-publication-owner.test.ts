@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { AcpPermissionRequest } from '../../shared/acp'
+import type { AcpPermissionRequest, AcpRuntimeEvent } from '../../shared/acp'
 import { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import { AcpRuntimeSnapshotOwner, type RuntimeSnapshotProjection } from './runtime-snapshot-owner'
 import { AcpSessionInteractionOwner } from './session-interaction-owner'
@@ -374,6 +374,62 @@ describe('AcpRuntimePublicationOwner', () => {
       toolCallId: 'tool-1',
       raw: request
     })
+  })
+
+  it('publishes a sanitized permission projection without mutating the broker request', () => {
+    const publishedRequests: AcpPermissionRequest[] = []
+    const request: AcpPermissionRequest = {
+      requestId: 'request-secret',
+      sessionId: 'session-1',
+      toolCallId: 'tool-secret',
+      title: 'Run command',
+      rawInput: {
+        command: 'curl "https://example.test/data?token=test-permission-secret"'
+      },
+      options: []
+    }
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+      interactions: new AcpSessionInteractionOwner(),
+      snapshotProjection: createProjection,
+      callbacks: {
+        onPermissionRequest: (published) => publishedRequests.push(published)
+      }
+    })
+
+    owner.publishPermissionRequest(request)
+
+    expect(JSON.stringify(publishedRequests)).not.toContain('test-permission-secret')
+    expect(JSON.stringify(owner.getSnapshot().events)).not.toContain('test-permission-secret')
+    expect(JSON.stringify(request)).toContain('test-permission-secret')
+  })
+
+  it('publishes sanitized synthesized tool events without mutating the source event', () => {
+    const publishedEvents: AcpRuntimeEvent[] = []
+    const event = {
+      kind: 'tool' as const,
+      level: 'info' as const,
+      sessionId: 'session-1',
+      toolCallId: 'tool-synthesized',
+      title: 'Permission declined',
+      rawInput: {
+        command: 'curl "https://example.test/data?token=test-synthesized-secret"'
+      }
+    }
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+      interactions: new AcpSessionInteractionOwner(),
+      snapshotProjection: createProjection,
+      callbacks: {
+        onEvent: (published) => publishedEvents.push(published)
+      }
+    })
+
+    owner.pushEvent(event)
+
+    expect(JSON.stringify(publishedEvents)).not.toContain('test-synthesized-secret')
+    expect(JSON.stringify(owner.getSnapshot().events)).not.toContain('test-synthesized-secret')
+    expect(JSON.stringify(event)).toContain('test-synthesized-secret')
   })
 
   it('attaches only the active prompt id and preserves an explicit event id', () => {

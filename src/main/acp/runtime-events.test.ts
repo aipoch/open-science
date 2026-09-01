@@ -369,6 +369,47 @@ describe('ACP runtime event normalization', () => {
     expect(JSON.stringify(persisted)).not.toContain('test-json-secret')
   })
 
+  it('redacts credentials in published tool content and terminal output', () => {
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'tool-output-secret',
+        kind: 'execute',
+        status: 'completed',
+        content: [
+          {
+            type: 'content',
+            content: {
+              type: 'text',
+              text: 'Authorization: Bearer test-content-secret'
+            }
+          }
+        ],
+        _meta: {
+          terminal_output: { data: 'token=test-terminal-secret' }
+        }
+      }
+    }
+
+    const event = new AcpRuntimeSnapshotOwner('/workspace').appendEvent(
+      toAcpRuntimeEvent(notification, 'event-output-secret', 1710000000007)
+    )
+    const persisted = sanitizeToolActivity({
+      ...event,
+      sortIndex: 1,
+      eventIds: [event.id],
+      createdAt: event.timestamp,
+      updatedAt: event.timestamp
+    })
+
+    expect(JSON.stringify(event)).not.toContain('test-content-secret')
+    expect(JSON.stringify(event)).not.toContain('test-terminal-secret')
+    expect(JSON.stringify(event)).toContain('[redacted]')
+    expect(JSON.stringify(persisted)).not.toContain('test-content-secret')
+    expect(JSON.stringify(persisted)).not.toContain('test-terminal-secret')
+  })
+
   it('bounds large tool detail fields before they enter runtime snapshots', () => {
     const event = new AcpRuntimeSnapshotOwner('/workspace').appendEvent(
       toAcpRuntimeEvent(
