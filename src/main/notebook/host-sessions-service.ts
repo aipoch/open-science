@@ -4,7 +4,7 @@ import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import { resolveMessageBranchPath } from '../../shared/conversation-graph'
 import { fuzzyScore } from '../../shared/fuzzy-match'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 type HostSessionReadContext = Readonly<{
   projectId: string

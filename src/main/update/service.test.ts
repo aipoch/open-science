@@ -884,8 +884,19 @@ describe('UpdateService.download', () => {
     vi.mocked(log.info).mockClear()
     const downloading = service.download()
     await fetched
+    await vi.waitFor(() => {
+      expect(service.getStatus()).toMatchObject({
+        state: 'downloading',
+        downloadedBytes: 3,
+        totalBytes: 100
+      })
+    })
     const cancelled = await service.cancel()
     expect(cancelled.state).toBe('available')
+    expect(cancelled).not.toHaveProperty('progress')
+    expect(cancelled).not.toHaveProperty('downloadedBytes')
+    expect(cancelled).not.toHaveProperty('downloadProgress')
+    expect(cancelled.totalBytes).toBe(100)
 
     const final = await downloading
     expect(final.state).toBe('available')

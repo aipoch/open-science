@@ -41,6 +41,17 @@ const createProject = async (page: Page): Promise<void> => {
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
 
+const allowCitationPreviewDomain = async (page: Page): Promise<void> => {
+  await page.evaluate(async () => {
+    await window.api.settings.setNotebookNetwork({
+      allowedDomains: ['citation.example'],
+      disabledOpenScienceDomainGroups: [],
+      disabledOpenScienceDomains: []
+    })
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+}
+
 const clickPermissionDecision = async (page: Page, decision: 'allow' | 'deny'): Promise<void> => {
   const button = page
     .getByTestId('permission-actions')
@@ -272,6 +283,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
+  await allowCitationPreviewDomain(page)
   let sourceDocumentRequestCount = 0
   let releaseSourceDocument: (() => void) | undefined
   const sourceDocumentGate = new Promise<void>((resolve) => {
@@ -560,6 +572,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
 test('shows the Electron failure reason when a source request fails', async ({ app }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
+  await allowCitationPreviewDomain(page)
   app.allowRendererConsoleError('Failed to load resource: net::ERR_CONNECTION_REFUSED')
   let sourceDocumentRequestCount = 0
   await page.route('https://citation.example/paper', async (route) => {

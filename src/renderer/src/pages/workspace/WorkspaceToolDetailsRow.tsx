@@ -63,6 +63,7 @@ const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
   'Search memory',
   'Shell',
   'Skill',
+  'Tool output image',
   'Tool search',
   'Tools found',
   'Web Fetch',

@@ -79,7 +79,9 @@ describe('working-file evidence', () => {
         win32.sep
       )
     ).toBe('data/plot.png')
-    expect(toPortableNotebookRelativePath('data/literal\\name.png')).toBe('data/literal\\name.png')
+    expect(toPortableNotebookRelativePath('data/literal\\name.png', '/')).toBe(
+      'data/literal\\name.png'
+    )
   })
 
   it('freezes Compute inputs before dispatch and publishes harvested outputs as one Activity', async () => {

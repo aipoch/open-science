@@ -705,6 +705,7 @@ describe('HeadlessTaskApi adapter', () => {
           kind: 'artifact',
           level: 'info',
           sessionId: existing.id,
+          runId: 'attached-run',
           artifactClaimId: 'artifact-claim',
           artifacts: []
         })

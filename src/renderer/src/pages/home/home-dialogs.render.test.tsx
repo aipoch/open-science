@@ -254,6 +254,9 @@ describe('home dialogs shared chrome', () => {
     )
     expect(text).toContain('Deleting this project will stop its running tasks and notebooks.')
     expect(text).toContain("Files in the project's working folder are not deleted.")
+    expect(text).toContain(
+      'Retained managed Session workspaces remain available in Settings → Storage.'
+    )
     expect(text).not.toContain('Generated artifacts remain on disk')
   })
 

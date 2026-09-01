@@ -530,24 +530,28 @@ const registerDataContentApplicationCommands = (
         dependencies.projectFiles.searchArtifacts(args[0])
     })
     scope.registerGroup(dataContentApplicationCommandGroups[5], {
-      'projects:create': async ({ args }) => {
-        const project = await dependencies.projects.create(args[0])
-        publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectCreated, project)
-        return project
-      },
+      'projects:create': ({ args }) =>
+        dependencies.withDataRootWrite(async () => {
+          const project = await dependencies.projects.create(args[0])
+          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectCreated, project)
+          return project
+        }),
       'projects:delete': ({ args }) => dependencies.projects.delete(args[0].id),
-      'projects:get': ({ args }) => dependencies.projects.get(args[0]),
-      'projects:list': () => dependencies.projects.list(),
-      'projects:update-archive': async ({ args }) => {
-        const project = await dependencies.projects.updateArchive(args[0])
-        publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectUpdated, project)
-        return project
-      },
-      'projects:update': async ({ args }) => {
-        const project = await dependencies.projects.update(args[0])
-        publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectUpdated, project)
-        return project
-      }
+      'projects:get': ({ args }) =>
+        dependencies.withDataRootWrite(() => dependencies.projects.get(args[0])),
+      'projects:list': () => dependencies.withDataRootWrite(() => dependencies.projects.list()),
+      'projects:update-archive': ({ args }) =>
+        dependencies.withDataRootWrite(async () => {
+          const project = await dependencies.projects.updateArchive(args[0])
+          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectUpdated, project)
+          return project
+        }),
+      'projects:update': ({ args }) =>
+        dependencies.withDataRootWrite(async () => {
+          const project = await dependencies.projects.update(args[0])
+          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectUpdated, project)
+          return project
+        })
     })
     scope.registerGroup(dataContentApplicationCommandGroups[6], {
       'sessions:delete-session': async ({ args }) => {

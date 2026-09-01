@@ -12,6 +12,7 @@ import {
   ensureCodexAuthHome,
   importCodexAuthentication,
   projectSafeCodexProviderRoute,
+  resolveEffectiveCodexSubscriptionTransport,
   type CodexAuthSession
 } from './codex-auth'
 
@@ -29,28 +30,75 @@ const session = (overrides: Partial<CodexAuthSession> = {}): CodexAuthSession =>
   ...overrides
 })
 
+const autoTransportConfig = (prefix: string[] = []): string =>
+  [...prefix, 'cli_auth_credentials_store = "file"', ''].join('\n')
+
+describe('resolveEffectiveCodexSubscriptionTransport', () => {
+  it('retains learned HTTPS only while the preference is Auto', () => {
+    expect(
+      resolveEffectiveCodexSubscriptionTransport({
+        codexTransport: 'auto',
+        codexAutoUseHttps: true
+      })
+    ).toBe('https')
+    expect(
+      resolveEffectiveCodexSubscriptionTransport({
+        codexTransport: 'websocket',
+        codexAutoUseHttps: true
+      })
+    ).toBe('websocket')
+    expect(resolveEffectiveCodexSubscriptionTransport({})).toBe('auto')
+  })
+})
+
 describe('ensureCodexAuthHome', () => {
-  it('creates the same app-owned home with file-only credentials for both auth modes', async () => {
+  it('projects Auto, HTTPS, and WebSocket as distinct public profile configurations', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-transports-'))
+    const configPath = join(codexSubscriptionStorageDir(root), 'config.toml')
+    try {
+      await ensureCodexAuthHome('isolated', root, 'auto')
+      expect(await readFile(configPath, 'utf8')).toBe('cli_auth_credentials_store = "file"\n')
+
+      await ensureCodexAuthHome('isolated', root, 'https')
+      let configToml = await readFile(configPath, 'utf8')
+      expect(configToml).toContain('model_provider = "open-science-chatgpt-https"')
+      expect(configToml).toContain('supports_websockets = false')
+
+      await ensureCodexAuthHome('isolated', root, 'websocket')
+      configToml = await readFile(configPath, 'utf8')
+      expect(configToml).toContain('model_provider = "open-science-chatgpt-websocket"')
+      expect(configToml).toContain('supports_websockets = true')
+      expect(configToml).not.toContain('open-science-chatgpt-https')
+
+      await ensureCodexAuthHome('isolated', root, 'auto')
+      expect(await readFile(configPath, 'utf8')).toBe('cli_auth_credentials_store = "file"\n')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('creates the same app-owned home with file-only credentials and Auto transport for both auth modes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-auth-home-'))
+    const expectedConfig = autoTransportConfig()
     try {
       await ensureCodexAuthHome('shared', root)
       expect(existsSync(codexSubscriptionStorageDir(root))).toBe(true)
       expect(await readFile(join(codexSubscriptionStorageDir(root), 'config.toml'), 'utf8')).toBe(
-        'cli_auth_credentials_store = "file"\n'
+        expectedConfig
       )
 
       await rm(codexSubscriptionStorageDir(root), { recursive: true, force: true })
       await ensureCodexAuthHome('isolated', root)
       expect(existsSync(codexSubscriptionStorageDir(root))).toBe(true)
       expect(await readFile(join(codexSubscriptionStorageDir(root), 'config.toml'), 'utf8')).toBe(
-        'cli_auth_credentials_store = "file"\n'
+        expectedConfig
       )
     } finally {
       await rm(root, { recursive: true, force: true })
     }
   })
 
-  it('replaces a global-capable credential store without changing other profile config', async () => {
+  it('replaces a global-capable credential store and preserves other profile config idempotently', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-auth-home-'))
     const home = codexSubscriptionStorageDir(root)
     try {
@@ -68,17 +116,12 @@ describe('ensureCodexAuthHome', () => {
       )
 
       await ensureCodexAuthHome('isolated', root)
+      await ensureCodexAuthHome('isolated', root)
 
-      expect(await readFile(join(home, 'config.toml'), 'utf8')).toBe(
-        [
-          'model = "account-default"',
-          '',
-          'cli_auth_credentials_store = "file"',
-          '[model_providers.local]',
-          'base_url = "http://127.0.0.1:1087/v1"',
-          ''
-        ].join('\n')
-      )
+      const configToml = await readFile(join(home, 'config.toml'), 'utf8')
+      expect(configToml).toContain('cli_auth_credentials_store = "file"')
+      expect(configToml).not.toContain('open-science-chatgpt-')
+      expect(configToml).toContain('[model_providers.local]\nbase_url = "http://127.0.0.1:1087/v1"')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -160,6 +203,38 @@ describe('createCodexAuthEnvironment', () => {
 })
 
 describe('importCodexAuthentication', () => {
+  it('keeps an explicitly imported safe route ahead of the transport preference', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-import-priority-'))
+    const source = join(root, 'source')
+    const destination = codexSubscriptionStorageDir(root)
+    try {
+      await mkdir(source, { recursive: true })
+      await writeFile(join(source, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+      await writeFile(
+        join(source, 'config.toml'),
+        [
+          'model_provider = "subscription-route"',
+          '[model_providers.subscription-route]',
+          'base_url = "http://127.0.0.1:1087/v1"',
+          'wire_api = "responses"',
+          'requires_openai_auth = true',
+          ''
+        ].join('\n')
+      )
+
+      await importCodexAuthentication(source, destination)
+      await ensureCodexAuthHome('shared', root, 'websocket')
+
+      const configToml = await readFile(join(destination, 'config.toml'), 'utf8')
+      expect(configToml).toContain('model_provider = "subscription-route"')
+      expect(configToml).toContain('base_url = "http://127.0.0.1:1087/v1"')
+      expect(configToml).not.toContain('open-science-chatgpt-websocket')
+      expect(configToml).not.toContain('open-science-chatgpt-https')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('projects only a validated provider route from app-owned configuration', () => {
     expect(
       projectSafeCodexProviderRoute(
@@ -215,10 +290,26 @@ describe('importCodexAuthentication', () => {
         expect((await stat(join(destination, 'auth.json'))).mode & 0o777).toBe(0o600)
       }
       expect(await readFile(join(destination, 'config.toml'), 'utf8')).toBe(
-        'model = "app-default"\n'
+        autoTransportConfig(['model = "app-default"'])
       )
       expect(existsSync(join(destination, 'skills'))).toBe(false)
       expect(existsSync(join(destination, 'sessions'))).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('creates the Auto transport default when importing auth without a provider route', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-import-default-route-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'destination')
+    try {
+      await mkdir(source, { recursive: true })
+      await writeFile(join(source, 'auth.json'), '{"tokens":{"access_token":"secret"}}')
+
+      await importCodexAuthentication(source, destination)
+
+      expect(await readFile(join(destination, 'config.toml'), 'utf8')).toBe(autoTransportConfig())
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -257,6 +348,7 @@ describe('importCodexAuthentication', () => {
       expect(await readFile(join(destination, 'config.toml'), 'utf8')).toBe(
         [
           'model = "app-default"',
+          'cli_auth_credentials_store = "file"',
           '# Open Science: begin imported Codex route selection',
           'model_provider = "subscription-route"',
           '# Open Science: end imported Codex route selection',
@@ -279,7 +371,7 @@ describe('importCodexAuthentication', () => {
       await importCodexAuthentication(source, destination)
 
       expect(await readFile(join(destination, 'config.toml'), 'utf8')).toBe(
-        'model = "app-default"\n'
+        autoTransportConfig(['model = "app-default"'])
       )
     } finally {
       await rm(root, { recursive: true, force: true })
@@ -321,7 +413,10 @@ describe('importCodexAuthentication', () => {
 
       await importCodexAuthentication(source, destination)
 
-      expect(existsSync(join(destination, 'config.toml'))).toBe(false)
+      const configToml = await readFile(join(destination, 'config.toml'), 'utf8')
+      expect(configToml).toContain('cli_auth_credentials_store = "file"')
+      expect(configToml).not.toContain('open-science-chatgpt-')
+      expect(configToml).not.toContain('subscription-route')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -425,7 +520,10 @@ describe('importCodexAuthentication', () => {
 
       await importCodexAuthentication(source, destination)
 
-      expect(existsSync(join(destination, 'config.toml'))).toBe(false)
+      const configToml = await readFile(join(destination, 'config.toml'), 'utf8')
+      expect(configToml).toContain('cli_auth_credentials_store = "file"')
+      expect(configToml).not.toContain('open-science-chatgpt-')
+      expect(configToml).not.toContain('private-gateway')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -456,7 +554,10 @@ describe('importCodexAuthentication', () => {
 
         await importCodexAuthentication(source, destination)
 
-        expect(existsSync(join(destination, 'config.toml'))).toBe(false)
+        const configToml = await readFile(join(destination, 'config.toml'), 'utf8')
+        expect(configToml).toContain('cli_auth_credentials_store = "file"')
+        expect(configToml).not.toContain('open-science-chatgpt-')
+        expect(configToml).not.toContain('remote-route')
       } finally {
         await rm(root, { recursive: true, force: true })
       }
@@ -488,7 +589,10 @@ describe('importCodexAuthentication', () => {
 
         await importCodexAuthentication(source, destination)
 
-        expect(existsSync(join(destination, 'config.toml'))).toBe(false)
+        const configToml = await readFile(join(destination, 'config.toml'), 'utf8')
+        expect(configToml).toContain('cli_auth_credentials_store = "file"')
+        expect(configToml).not.toContain('open-science-chatgpt-')
+        expect(configToml).not.toContain('subscription-route')
       } finally {
         await rm(root, { recursive: true, force: true })
       }

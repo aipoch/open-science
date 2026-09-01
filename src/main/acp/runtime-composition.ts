@@ -3,9 +3,10 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import { app } from 'electron'
 
-import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
+import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { imageAttachmentMimeType } from '../../shared/uploads'
 import {
@@ -34,6 +35,7 @@ import { ProjectRepository } from '../projects/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { createAcpRuntimeEventBroadcastCoalescer } from './runtime-event-broadcast-coalescer'
 import type { AcpSettingsCapabilities } from '../settings/service-capabilities'
+import { CodexTransportFallbackLogObserver } from '../settings/codex-transport-fallback-log'
 import {
   buildSpecialistIdentityAppend,
   buildSpecialistIdentityPrefix
@@ -219,8 +221,8 @@ const createAcpRuntime = ({
   const eventBroadcast = createAcpRuntimeEventBroadcastCoalescer({
     publish: (events) => broadcastToRenderers('acp:event', events)
   })
-  const callbacks: AcpRuntimeCallbacks = runtimeCallbacks ?? {
-    onStateChanged: (state: AcpStateSnapshot) => broadcastToRenderers('acp:state', state),
+  const defaultCallbacks: AcpRuntimeCallbacks = {
+    onStateChanged: (state: AcpStateUpdate) => broadcastToRenderers('acp:state', state),
     onEvent: (event: AcpRuntimeEvent) => {
       const projectId = event.sessionId
         ? runtimeCoordinatorRef.current?.liveSessionProjectId(event.sessionId)
@@ -251,6 +253,42 @@ const createAcpRuntime = ({
         () => notificationInbox.settleAuthorization('agent-tool', requestId, state),
         (error) => log.warn('permission inbox settlement failed', errorLogFields(error))
       )
+    }
+  }
+  const clientCallbacks = runtimeCallbacks ?? defaultCallbacks
+  const codexTransportFallbackLog = new CodexTransportFallbackLogObserver()
+  const rememberCodexHttps = (): void => {
+    void settingsService
+      .rememberCodexAutoHttpsFallback()
+      .then((remembered) =>
+        remembered
+          ? runtimeCoordinatorRef.current?.requestProviderReconnect(
+              [CODEX_SUBSCRIPTION_PROVIDER_ID],
+              true
+            )
+          : undefined
+      )
+      .catch((error) =>
+        log.warn('Codex automatic transport memory update failed', errorLogFields(error))
+      )
+  }
+  const callbacks: AcpRuntimeCallbacks = {
+    ...clientCallbacks,
+    onPromptStarted: (sessionId, turnToken, promptAttemptId) => {
+      codexTransportFallbackLog.begin(
+        sessionId,
+        runtimeCoordinatorRef.current?.captureSessionBackend(sessionId)
+      )
+      clientCallbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId)
+    },
+    onPromptEnded: (sessionId, turnToken) => {
+      if (codexTransportFallbackLog.end(sessionId)) rememberCodexHttps()
+      clientCallbacks.onPromptEnded?.(sessionId, turnToken)
+    },
+    // Retain compatibility with adapters that explicitly publish this diagnostic on stderr.
+    onCodexWebSocketFallback: () => {
+      rememberCodexHttps()
+      clientCallbacks.onCodexWebSocketFallback?.()
     }
   }
 

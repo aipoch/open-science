@@ -7,6 +7,7 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
+import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 import { SessionMessageMarkdown } from './SessionMessageMarkdown'
 
@@ -16,6 +17,15 @@ describe('SessionMessageMarkdown integration', () => {
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      isLoaded: true,
+      notebookNetwork: {
+        allowedDomains: ['example.com'],
+        disabledOpenScienceDomainGroups: [],
+        disabledOpenScienceDomains: []
+      }
+    })
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)

@@ -1776,7 +1776,7 @@ const createApplicationModules = async (
       },
       localToolHandlers: { 'molecule/preview_molecule': moleculePreviewHandler },
       onSkillsChanged: requestSkillCatalogRefresh
-    },
+    } satisfies Parameters<typeof createConnectorApplicationModule>[0],
     createConnectorApplicationModule
   )
   const {
@@ -2674,7 +2674,7 @@ const createApplicationModules = async (
         record: recordAuxiliaryUsage
       },
       resolveComputeExecutionTargetIds: (sessionId) => hostsRegistry.getSelected(sessionId)
-    },
+    } satisfies Parameters<typeof createAcpRuntime>[0],
     (options) => {
       const runtime = createAcpRuntime(options)
       return {
@@ -2704,7 +2704,7 @@ const createApplicationModules = async (
         broadcastToRenderers('skills:catalog-changed', undefined)
         await runtime.requestSkillsReload()
       }
-    },
+    } satisfies ConstructorParameters<typeof UserSkillCatalogObserver>[0],
     (options) => {
       const observer = new UserSkillCatalogObserver(options)
       return {
@@ -2754,7 +2754,7 @@ const createApplicationModules = async (
         approvalBroker.resumeSession(sessionId)
         computeIpcModule.handlers.approvalResumeSession(sessionId)
       }
-    },
+    } satisfies ConstructorParameters<typeof SideChatRuntimeOwner>[0],
     (options) => {
       const owner = new SideChatRuntimeOwner(options)
       return {
@@ -2866,7 +2866,7 @@ const createApplicationModules = async (
       resolveTarget: (target, context) =>
         settingsService.resolveExplicitAgentBackend(target, context),
       recordUsage: recordAuxiliaryUsage
-    },
+    } satisfies ConstructorParameters<typeof ArtifactCodeReconstructionRunner>[0],
     (options) => {
       const runner = new ArtifactCodeReconstructionRunner(options)
       return {
@@ -3736,7 +3736,7 @@ const createApplicationModules = async (
       captureModel: () => settingsService.admitReviewerExecutionModel(),
       resolveTarget: (target, context) =>
         settingsService.resolveExplicitAgentBackend(target, context)
-    },
+    } satisfies ConstructorParameters<typeof ReviewerModelRuntimeOwner>[0],
     (options) => {
       const owner = new ReviewerModelRuntimeOwner(options)
       reviewerModelRuntimeShutdown = owner

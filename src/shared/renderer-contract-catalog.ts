@@ -18,7 +18,9 @@ import type {
   AcpSaveAsSkillRequest,
   AcpRevokePermissionGrantRequest,
   AcpSetPermissionProfileRequest,
-  AcpStateSnapshot
+  AcpStateCommandResponse,
+  AcpStateSnapshot,
+  AcpStateUpdate
 } from './acp'
 import type { ActivePlanProjection, PlanResponseCommand } from './session-plan/contract'
 import type {
@@ -707,29 +709,27 @@ export type RendererApiFromContract<
 }
 
 export const RENDERER_API_CONTRACT = Object.freeze({
-  'acp.cancel': callable<(request: AcpCancelPromptRequest) => Promise<AcpStateSnapshot>>()('acp', [
-    'acp:cancel'
-  ]),
+  'acp.cancel': callable<(request: AcpCancelPromptRequest) => Promise<AcpStateCommandResponse>>()(
+    'acp',
+    ['acp:cancel']
+  ),
   'acp.compactSession': callable<
-    (request: AcpCompactSessionRequest) => Promise<AcpStateSnapshot>
+    (request: AcpCompactSessionRequest) => Promise<AcpStateCommandResponse>
   >()('acp', ['acp:compact-session']),
-  'acp.connect': callable<(request?: AcpConnectRequest) => Promise<AcpStateSnapshot>>()('acp', [
-    'acp:connect',
-    WEB,
-    DEFAULT_EMPTY,
-    DEFAULT_EMPTY_ABSENT_ONLY
-  ]),
+  'acp.connect': callable<(request?: AcpConnectRequest) => Promise<AcpStateCommandResponse>>()(
+    'acp',
+    ['acp:connect', WEB, DEFAULT_EMPTY, DEFAULT_EMPTY_ABSENT_ONLY]
+  ),
   'acp.continueInterruptedTurn': callable<
-    (request: AcpContinueInterruptedTurnRequest) => Promise<AcpStateSnapshot>
+    (request: AcpContinueInterruptedTurnRequest) => Promise<AcpStateCommandResponse>
   >()('acp', ['acp:continue-interrupted-turn']),
   'acp.createSession': callable<
     (request?: AcpCreateSessionRequest) => Promise<AcpCreateSessionResponse>
   >()('acp', ['acp:create-session', WEB, DEFAULT_EMPTY, DEFAULT_EMPTY_ABSENT_ONLY]),
-  'acp.deleteSession': callable<(request: AcpDeleteSessionRequest) => Promise<AcpStateSnapshot>>()(
-    'acp',
-    ['acp:delete-session']
-  ),
-  'acp.disconnect': callable<() => Promise<AcpStateSnapshot>>()('acp', ['acp:disconnect']),
+  'acp.deleteSession': callable<
+    (request: AcpDeleteSessionRequest) => Promise<AcpStateCommandResponse>
+  >()('acp', ['acp:delete-session']),
+  'acp.disconnect': callable<() => Promise<AcpStateCommandResponse>>()('acp', ['acp:disconnect']),
   'acp.getPlanProjection': callable<
     (projectId: string, sessionId: string) => Promise<ActivePlanProjection | null>
   >()('acp', ['acp:get-plan-projection']),
@@ -744,7 +744,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'acp.onPermissionRequest': callable<
     (listener: AcpListener<AcpPermissionRequest>) => RemoveListener
   >()('acp', ['acp:permission-request', EVENT]),
-  'acp.onState': callable<(listener: AcpListener<AcpStateSnapshot>) => RemoveListener>()('acp', [
+  'acp.onState': callable<(listener: AcpListener<AcpStateUpdate>) => RemoveListener>()('acp', [
     'acp:state',
     EVENT
   ]),
@@ -755,26 +755,26 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'acp:respond-plan'
   ]),
   'acp.respondToElicitation': callable<
-    (response: ElicitationResponse) => Promise<AcpStateSnapshot>
+    (response: ElicitationResponse) => Promise<AcpStateCommandResponse>
   >()('acp', ['acp:respond-elicitation']),
   'acp.respondToPermission': callable<
-    (response: AcpPermissionResponse) => Promise<AcpStateSnapshot>
+    (response: AcpPermissionResponse) => Promise<AcpStateCommandResponse>
   >()('acp', ['acp:respond-permission']),
   'acp.resumeSession': callable<
     (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
   >()('acp', ['acp:resume-session']),
   'acp.revokePermissionGrant': callable<
-    (request: AcpRevokePermissionGrantRequest) => Promise<AcpStateSnapshot>
+    (request: AcpRevokePermissionGrantRequest) => Promise<AcpStateCommandResponse>
   >()('acp', ['acp:revoke-permission-grant']),
-  'acp.saveAsSkill': callable<(request: AcpSaveAsSkillRequest) => Promise<AcpStateSnapshot>>()(
+  'acp.saveAsSkill': callable<
+    (request: AcpSaveAsSkillRequest) => Promise<AcpStateCommandResponse>
+  >()('acp', ['acp:save-as-skill']),
+  'acp.sendPrompt': callable<(request: AcpPromptRequest) => Promise<AcpStateCommandResponse>>()(
     'acp',
-    ['acp:save-as-skill']
+    ['acp:send-prompt']
   ),
-  'acp.sendPrompt': callable<(request: AcpPromptRequest) => Promise<AcpStateSnapshot>>()('acp', [
-    'acp:send-prompt'
-  ]),
   'acp.setPermissionProfile': callable<
-    (request: AcpSetPermissionProfileRequest) => Promise<AcpStateSnapshot>
+    (request: AcpSetPermissionProfileRequest) => Promise<AcpStateCommandResponse>
   >()('acp', ['acp:set-permission-profile']),
   'acp.steerFollowUp': callable<
     (request: AcpSteerFollowUpRequest) => Promise<AcpSteerFollowUpResult>

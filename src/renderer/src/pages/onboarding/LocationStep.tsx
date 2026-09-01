@@ -68,6 +68,7 @@ const LocationStep = ({
 }: LocationStepProps): React.JSX.Element => {
   const { t } = useTranslation()
   const { chosenParent, chosenDataRoot, chosenKind } = locationDraft
+  const isLoadingDefaultLocation = isResolvingDefaultLocation && dataRootInfo === null
   const [locationError, setLocationError] = useState<string | undefined>(undefined)
   const [confirmRestart, setConfirmRestart] = useState(false)
   const requestInFlightRef = useRef(false)
@@ -283,7 +284,7 @@ const LocationStep = ({
         <Button
           type="button"
           onClick={handleContinueLocation}
-          disabled={requestInFlight || isResolvingDefaultLocation}
+          disabled={requestInFlight || isLoadingDefaultLocation}
           className="px-4"
         >
           {t('Continue')}

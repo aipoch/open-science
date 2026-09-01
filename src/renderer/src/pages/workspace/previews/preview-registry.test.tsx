@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { Annotation } from '../../../../../shared/annotations'
 
 import { OfficePreviewRenderer } from './renderers/OfficePreview'
 import { PlanJsonPreview } from './renderers/PlanJsonPreview'
@@ -55,7 +56,7 @@ describe('preview registry Office routing', () => {
   })
 
   it('forwards annotation ports to the PDF renderer', () => {
-    const activeAnnotations = []
+    const activeAnnotations: Annotation[] = []
     const onAddAnnotation = vi.fn()
 
     const rendered = renderPreviewFile({

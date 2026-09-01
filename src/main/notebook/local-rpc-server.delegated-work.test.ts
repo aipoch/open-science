@@ -634,6 +634,11 @@ describe('authenticated delegatedWorkCall route', () => {
         })
       })
       expect(response.status).toBe(500)
+      if (identity === 'artifact-1') {
+        await expect(response.json()).resolves.toEqual({
+          error: expect.stringMatching(/version_id\/versionId.*not artifact_id.*omit inputs/i)
+        })
+      }
     }
 
     expect(delegate).not.toHaveBeenCalled()
@@ -661,6 +666,15 @@ describe('authenticated delegatedWorkCall route', () => {
       { request: [], error: shapeError },
       { request: [null], error: shapeError },
       { request: ['not-an-object'], error: shapeError },
+      {
+        request: {
+          task: 'Reject mutable input shape',
+          name: 'Reject input object',
+          inputs: [{ versionId: 'artifact-version-1' }]
+        },
+        error:
+          'delegation inputs must be a string[] of exact finalized Artifact version_id/versionId or upload-version: references; do not pass objects, artifact_id, filenames, or paths; omit inputs when no file handoff is needed'
+      },
       {
         request: Array.from({ length: 5 }, (_, index) => ({
           task: `Task ${index + 1}`,

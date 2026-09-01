@@ -2118,6 +2118,55 @@ describe('SettingsPage layout', () => {
     expect(remoteAccess.detect).not.toHaveBeenCalled()
   })
 
+  it('shows retained trusted-browser expiry and revocation controls while access is off', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            probe: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const snapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled',
+      remoteIt: { installed: true, loggedIn: true, registered: true },
+      pendingRequests: [],
+      trustedBrowsers: [
+        {
+          id: 'trusted-browser',
+          browser: 'Safari',
+          platform: 'macOS',
+          createdAt: Date.now() - 1_000,
+          lastSeenAt: Date.now(),
+          expiresAt: Date.now() + 180 * 24 * 60 * 60 * 1_000
+        }
+      ]
+    }
+    remoteAccess.getSnapshot.mockResolvedValue(snapshot)
+    remoteAccess.probe.mockResolvedValue(snapshot)
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote')?.click())
+
+    expect(document.body.textContent).toContain('Trusted browsers')
+    expect(document.body.textContent).toContain('Safari · macOS')
+    expect(document.body.textContent).toContain('Expires')
+    expect(document.body.textContent).toContain(
+      'Remote access is paused. Provider setup and trusted browsers are kept for reuse.'
+    )
+    expect(document.body.textContent).not.toContain('permanent access')
+    expect(document.body.querySelector('button[aria-label="Revoke Safari"]')).not.toBeNull()
+    expect(document.body.textContent).not.toContain('Pairing requests')
+  })
+
   it('exits loading when the initial remote access snapshot fails', async () => {
     const remoteAccess = (
       window as unknown as {
@@ -2681,7 +2730,8 @@ describe('SettingsPage layout', () => {
             browser: 'Chrome on iOS',
             platform: 'iOS/iPadOS',
             createdAt: Date.now(),
-            lastSeenAt: Date.now()
+            lastSeenAt: Date.now(),
+            expiresAt: Date.now() + 180 * 24 * 60 * 60 * 1_000
           }
         ]
       })
@@ -2696,6 +2746,7 @@ describe('SettingsPage layout', () => {
       expect(document.body.textContent).toContain('123456')
       expect(document.body.textContent).toContain('Allow for up to 12 hours')
       expect(document.body.textContent).not.toContain('Allow once')
+      expect(document.body.textContent).not.toContain('Invalid Date')
       expect(document.body.textContent).toContain(
         'Two-step verification requests and trusted browsers can be managed below'
       )

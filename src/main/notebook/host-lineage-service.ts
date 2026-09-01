@@ -14,7 +14,7 @@ import type {
   HostLineageVersion
 } from '../../shared/host-lineage'
 import type { HostArtifactCatalogItem } from '../../shared/project-files'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 type HostLineageReadContext = { projectId: string; sessionId: string }
 

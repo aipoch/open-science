@@ -8297,7 +8297,7 @@ describe('ACP runtime session management', () => {
 
     expect(agent.resumedSessions.at(-1)).toMatchObject({
       sessionId: 'codebuddy-session-1',
-      cwd: '/workspace/first'
+      cwd: resolve('/workspace/first')
     })
     expect(agent.prompts.at(-1)).toEqual({
       sessionId: 'codebuddy-session-1',
@@ -19426,7 +19426,7 @@ describe('ACP runtime session management', () => {
         contextWindow: 128_000
       }),
       framework: opencodeFramework,
-      callbacks: { onStateChanged: (snapshot) => snapshots.push(snapshot) }
+      callbacks: { onStateChanged: (snapshot) => snapshots.push(snapshot as AcpStateSnapshot) }
     })
 
     await runtime.createSession({ cwd: '/workspace' })
@@ -23571,17 +23571,19 @@ describe('ACP runtime — agent process lifecycle logging', () => {
       modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
     })
     const events: AcpRuntimeEvent[] = []
+    const onCodexWebSocketFallback = vi.fn()
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       resolveBackend: () => ({
         framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
-        backendId: 'codex:provider-a',
+        providerId: 'builtin-codex-subscription',
+        backendId: 'codex:builtin-codex-subscription',
         modelRoute: 'codex-responses',
         executablePath: '/bin/codex',
         env: {}
       }),
-      callbacks: { onEvent: (event) => events.push(event) }
+      callbacks: { onEvent: (event) => events.push(event), onCodexWebSocketFallback }
     })
 
     const session = await runtime.createSession({ cwd: '/workspace' })
@@ -23597,16 +23599,18 @@ describe('ACP runtime — agent process lifecycle logging', () => {
             'Warning: Skill descriptions were shortened to fit the 2% skills context budget.',
             'Codex can still see every skill, but some descriptions are shorter.',
             'Disable unused skills or plugins to leave more room for the rest.',
-            'Warning: Falling back from WebSockets to HTTPS transport. request timed out'
+            'Warning: Falling back from WebSock'
           ].join('\n')
         )
       )
+      process.stderr.emit('data', Buffer.from('ets to HTTPS transport. request timed out'))
       await vi.advanceTimersByTimeAsync(1000)
 
       expect(warnLogSpy.mock.calls.some(([message]) => message === 'agent stderr summary')).toBe(
         true
       )
       expect(events.some((event) => event.kind === 'system' && event.title === 'agent')).toBe(false)
+      expect(onCodexWebSocketFallback).toHaveBeenCalledOnce()
     } finally {
       vi.useRealTimers()
       promptResponse.resolve({ stopReason: 'end_turn' })

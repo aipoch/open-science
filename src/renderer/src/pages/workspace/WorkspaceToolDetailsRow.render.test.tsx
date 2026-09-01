@@ -200,6 +200,7 @@ describe('WorkspaceToolDetailsRow', () => {
 
     expect(acquire).not.toHaveBeenCalled()
     expect(container.querySelector('[data-testid="tool-output-image"]')).toBeNull()
+    expect(container.textContent).toContain('Tool output image')
     expect(container.textContent).toContain('sin_curve.png')
     expect(container.textContent).toContain('56 KB')
   })

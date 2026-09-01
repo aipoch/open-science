@@ -531,7 +531,7 @@ const getRecordNumber = (
   return undefined
 }
 
-// Summarizes a saved artifact file (name/type/size/path) without echoing its raw content payload.
+// Summarizes a saved artifact file (name/type/size/path) without reading or echoing its raw bytes.
 const buildArtifactDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
   const rawInput = isRecord(activity.rawInput) ? activity.rawInput : undefined
   const output = extractArtifactOutput(activity)
@@ -556,7 +556,11 @@ const buildArtifactDetails = (activity: ToolActivity): ToolActivityDetails | und
   if (sizeLabel) summary.size = sizeLabel
   if (path) summary.path = path
 
-  const summarySection = createCodeSection('File', JSON.stringify(summary, null, 2), 'json')
+  const summarySection = createCodeSection(
+    mimeType?.startsWith('image/') ? 'Tool output image' : 'File',
+    JSON.stringify(summary, null, 2),
+    'json'
+  )
 
   return {
     displayName: 'Write file',

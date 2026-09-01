@@ -355,6 +355,7 @@ describe('Settings backend ownership architecture', () => {
       'markLegacyDataMovePromptDismissed',
       'markOnboardingComplete',
       'markPathsNormalized',
+      'rememberCodexAutoHttpsFallback',
       'removeCustomServer',
       'setActiveProvider',
       'setAgentFramework',
@@ -486,7 +487,7 @@ describe('Settings backend ownership architecture', () => {
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
         markPathsNormalized migrateAgentHomeSkillIdentities previewAgentHomeSkill previewCustomServerTemplateExport
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
-        provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog removeCustomServer removeDeviceCredential removeGitHubToken removeNotebookNetwork
+        provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog rememberCodexAutoHttpsFallback removeCustomServer removeDeviceCredential removeGitHubToken removeNotebookNetwork
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort
         resolveAdmittedSubagentBackend resolveAgentBackend resolveDeviceOAuthCredential resolveExplicitAgentBackend resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken
         scanRepoSkills setActiveProvider setAgentFramework setAppIconVariant setClosePreference
@@ -708,6 +709,8 @@ describe('Settings backend ownership architecture', () => {
       'apiEndpoints',
       'baseUrl',
       'codexAuthMode',
+      'codexAutoUseHttps',
+      'codexTransport',
       'contextWindow',
       'disconnectedAt',
       'expiresAt',

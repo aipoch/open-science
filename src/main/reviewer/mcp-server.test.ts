@@ -19,7 +19,7 @@ import {
 } from './mcp-server'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from './bridge-tools'
 import { createReviewerMcpStdioProxy } from './mcp-stdio-proxy'
-import type { TurnScope } from '../../shared/reviewer'
+import type { ReviewCheck, TurnScope } from '../../shared/reviewer'
 import type {
   ArtifactContent,
   ExecRecord,
@@ -1286,7 +1286,9 @@ describe('ReviewerMcpServer HTTP transport', () => {
         ]
       })
       expect(
-        onSubmit.mock.calls[0]?.[0]?.some((check) => check.evidence.includes('source-unavailable'))
+        onSubmit.mock.calls[0]?.[0]?.some((check: ReviewCheck) =>
+          check.evidence.includes('source-unavailable')
+        )
       ).toBe(false)
     } finally {
       await server.stop()

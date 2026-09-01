@@ -6,7 +6,7 @@ import {
   sanitizeAcpMessageImage,
   type AcpRuntimeEvent
 } from '../../shared/acp'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 // Bounds how much of a failed tool's result text reaches the log, so large or sensitive tool output
 // cannot flood it. Tuned to fit a typical error message (e.g. WebFetch's domain-safety preflight).
@@ -174,7 +174,7 @@ const contentToText = (content: ContentBlock): string => {
 const normalizeMessageContent = (
   content: ContentBlock,
   normalizeClaudeCodeRefusal = false
-): Pick<AcpRuntimeEvent, 'text' | 'image'> => {
+): Pick<Extract<AcpRuntimeEvent, { kind: 'message' }>, 'text' | 'image'> => {
   if (content.type !== 'image') {
     const text = contentToText(content)
     return {
@@ -262,7 +262,10 @@ const isContextCompactionUpdate = (update: ToolCallUpdate): boolean => {
 
 const projectContextCompactionUpdate = (
   update: ToolCallUpdate
-): Pick<AcpRuntimeEvent, 'kind' | 'status' | 'title' | 'toolCallId'> => {
+): Pick<
+  Extract<AcpRuntimeEvent, { kind: 'compaction' }>,
+  'kind' | 'status' | 'title' | 'toolCallId'
+> => {
   const status =
     update.status ?? (update.sessionUpdate === 'tool_call_update' ? 'completed' : 'in_progress')
   const title =
@@ -484,7 +487,12 @@ const hasToolImageContent = (content: ToolCallContent[] | null | undefined): boo
   content?.some((item) => item.type === 'content' && item.content.type === 'image') === true
 
 // Projects activity detail fields only for tools whose payload is safe and useful to show.
-const projectToolDetailPayload = (update: ToolCallUpdate): Partial<AcpRuntimeEvent> => {
+type ToolDetailProjection = Pick<
+  Extract<AcpRuntimeEvent, { kind: 'tool' }>,
+  'toolContent' | 'toolLocations' | 'rawInput' | 'rawOutput' | 'terminalOutput' | 'terminalExitCode'
+>
+
+const projectToolDetailPayload = (update: ToolCallUpdate): ToolDetailProjection => {
   if (isNativeSkillToolUpdate(update)) return {}
 
   const containsStructuredImage = hasToolImageContent(update.content)

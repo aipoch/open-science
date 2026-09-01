@@ -50,6 +50,7 @@ const createLifecycle = (
   provisioner: RuntimeProvisioner | undefined,
   options: {
     root?: string
+    platform?: NodeJS.Platform
     projectProgress?: (progress: ProvisionProgress) => void
     waitForRecovery?: () => Promise<void>
     assertProvisionAllowed?: (language: 'python' | 'r') => void
@@ -59,6 +60,7 @@ const createLifecycle = (
   createNotebookEnvironmentLifecycle({
     provisioner,
     root: options.root ?? '/runtime',
+    platform: options.platform,
     projectProgress: options.projectProgress ?? (() => undefined),
     waitForRecovery: options.waitForRecovery,
     assertProvisionAllowed: options.assertProvisionAllowed,
@@ -662,6 +664,22 @@ describe('environment lifecycle startup', () => {
     const provisioner = fakeProvisioner()
     await startLifecycle(provisioner, dir)
     expect(provisioner.provisionPython).not.toHaveBeenCalled()
+    expect(provisioner.upgradeIfNeeded).not.toHaveBeenCalled()
+    expect(provisioner.repair).not.toHaveBeenCalled()
+  })
+
+  it('uses the injected platform when checking startup readiness', async () => {
+    const { writeReadyMarker, envPrefix, pythonBin, DEFAULT_ENV_VERSION, DEFAULT_PY_ENV } =
+      await import('./runtime-paths')
+    const dir = mkdtempSync(join(tmpdir(), 'os-gate-win32-'))
+    const bin = pythonBin(envPrefix(dir, DEFAULT_PY_ENV, 'win32'), 'win32')
+    mkdirSync(join(bin, '..'), { recursive: true })
+    writeFileSync(bin, 'x')
+    writeReadyMarker(dir, DEFAULT_ENV_VERSION, 't', '.p')
+    const provisioner = fakeProvisioner()
+
+    await createLifecycle(provisioner, { root: dir, platform: 'win32' }).startup()
+
     expect(provisioner.upgradeIfNeeded).not.toHaveBeenCalled()
     expect(provisioner.repair).not.toHaveBeenCalled()
   })

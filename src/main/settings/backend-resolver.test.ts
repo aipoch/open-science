@@ -515,6 +515,87 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     expectRuntimeNotStarted(harness.runtime)
   })
 
+  it('keeps projecting learned HTTPS while the Codex subscription preference remains Auto', async () => {
+    const provider: StoredProvider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      codexAuthMode: 'isolated',
+      codexTransport: 'auto',
+      codexAutoUseHttps: true,
+      name: 'Codex subscription',
+      model: 'gpt-5.4'
+    }
+    const harness = makeHarness({
+      settings: makeSettings({
+        providers: [provider],
+        activeProviderId: provider.id,
+        activeModel: provider.model,
+        agentFrameworkId: 'codex'
+      }),
+      targetOverride: () => ({
+        apiEndpoints: ['responses'],
+        provider: {
+          type: 'codex-isolated',
+          codexAuthMode: 'isolated',
+          codexTransport: 'auto',
+          codexAutoUseHttps: true,
+          apiEndpoints: ['responses']
+        }
+      })
+    })
+
+    await harness.resolver.resolveExplicitTarget({
+      frameworkId: 'codex',
+      providerId: provider.id,
+      model: { kind: 'required', id: 'gpt-5.4' },
+      reasoningEffort: 'high'
+    })
+
+    expect(harness.ensureCodexSubscriptionHome).toHaveBeenCalledWith('https')
+  })
+
+  it.each(['https', 'websocket'] as const)(
+    'ignores automatic transport memory for the manual %s preference',
+    async (codexTransport) => {
+      const provider: StoredProvider = {
+        id: 'builtin-codex-subscription',
+        type: 'codex-isolated',
+        codexAuthMode: 'isolated',
+        codexTransport,
+        codexAutoUseHttps: true,
+        name: 'Codex subscription',
+        model: 'gpt-5.4'
+      }
+      const harness = makeHarness({
+        settings: makeSettings({
+          providers: [provider],
+          activeProviderId: provider.id,
+          activeModel: provider.model,
+          agentFrameworkId: 'codex'
+        }),
+        targetOverride: () => ({
+          apiEndpoints: ['responses'],
+          provider: {
+            type: 'codex-isolated',
+            codexAuthMode: 'isolated',
+            codexTransport,
+            codexAutoUseHttps: true,
+            apiEndpoints: ['responses']
+          }
+        })
+      })
+
+      await harness.resolver.resolveExplicitTarget({
+        frameworkId: 'codex',
+        providerId: provider.id,
+        model: { kind: 'required', id: 'gpt-5.4' },
+        reasoningEffort: 'high'
+      })
+
+      expect(harness.ensureCodexSubscriptionHome).toHaveBeenCalledWith(codexTransport)
+    }
+  )
+
   it('registers third-party Claude model ids through canonical override lanes', async () => {
     const provider: StoredProvider = {
       ...makeStoredProvider('provider-a', 'third-party/model-a'),

@@ -361,8 +361,9 @@ const recoverContextOverflowWorkspaceSession = async (
 
   if (supportsNativeCompaction) {
     try {
-      postRecoveryState = await runtime.compactSession?.(sessionId, 'overflow-recovery')
-      nativeCompacted = Boolean(postRecoveryState)
+      const compactedState = await runtime.compactSession?.(sessionId, 'overflow-recovery')
+      postRecoveryState = compactedState ? { ...runtime.state, ...compactedState } : undefined
+      nativeCompacted = Boolean(compactedState)
     } catch {
       // Fall through to the replacement+replay safety net below.
     }

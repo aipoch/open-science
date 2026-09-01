@@ -116,6 +116,7 @@ const staticCredential = {
   displayName: 'Example API token',
   kind: 'token' as const,
   status: 'stored' as const,
+  needsSecret: false,
   consumerCount: 0,
   consumerNames: [],
   createdAt: 1,
@@ -127,6 +128,7 @@ const oauthCredential = {
   displayName: 'Example OAuth',
   kind: 'oauth' as const,
   status: 'connected' as const,
+  needsSecret: false,
   resourceUri: 'https://mcp.example.test/',
   transport: 'streamable_http' as const,
   oauth: {
@@ -506,6 +508,40 @@ describe('ConnectorAddForm (local command)', () => {
         envCredentialIds: { API_TOKEN: 'credential-static' }
       })
     )
+  })
+
+  it('does not offer an unreadable static credential binding', () => {
+    useSettingsStore.setState({
+      deviceCredentials: [{ ...staticCredential, needsSecret: true }]
+    })
+    act(() => {
+      root.render(
+        <ConnectorAddForm
+          initialTemplate={{
+            schemaVersion: 1,
+            kind: 'open-science.connector',
+            name: 'example-research',
+            displayName: 'Example Research',
+            transport: 'stdio',
+            command: 'npx',
+            requiredSecrets: { environment: ['API_TOKEN'] }
+          }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+
+    const trigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Credential for API_TOKEN"]'
+    )
+    act(() => {
+      trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(document.body.textContent).not.toContain('Example API token')
+    expect(document.body.textContent).toContain('No matching credentials')
   })
 
   it('binds a newly created static Credential to the active environment row', async () => {
@@ -928,10 +964,13 @@ describe('ConnectorAddForm (remote server)', () => {
     expect(request).not.toHaveProperty('oauth')
   })
 
-  it('does not offer a shared OAuth credential without a required client secret', () => {
+  it.each([
+    ['without a required client secret', { hasClientSecret: false }],
+    ['when its stored secret is unreadable', { needsSecret: true }]
+  ])('does not offer a shared OAuth credential %s', (_case, credentialOverrides) => {
     useSettingsStore.setState({
       encryptionAvailable: true,
-      deviceCredentials: [{ ...oauthCredential, hasClientSecret: false }]
+      deviceCredentials: [{ ...oauthCredential, ...credentialOverrides }]
     })
     act(() => {
       root.render(

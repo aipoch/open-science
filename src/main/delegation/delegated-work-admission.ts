@@ -13,6 +13,10 @@ import type {
 type DurableResolvedAgent = DurableSnapshot['records'][number]['attempts'][number]['resolvedAgent']
 
 const MAX_DELEGATE_NAME_CODE_POINTS = 48
+const DELEGATION_INPUT_SHAPE_MESSAGE =
+  'delegation inputs must be a string[] of exact finalized Artifact version_id/versionId or upload-version: references; do not pass objects, artifact_id, filenames, or paths; omit inputs when no file handoff is needed'
+const DELEGATION_INPUT_UNAVAILABLE_MESSAGE =
+  'delegation input is unavailable in this Session; pass the exact Artifact version_id/versionId returned by the artifact tool (not artifact_id, filename, or path), or an immutable upload-version: reference; omit inputs when no file handoff is needed'
 
 const codePoints = (value: string): string[] => Array.from(value)
 
@@ -151,10 +155,7 @@ const assertDelegateInputShape = (requests: readonly DurableDelegateRequest[]): 
           request.inputs.some((input) => typeof input !== 'string' || !input.trim()))
     )
   ) {
-    throw new DurableDelegatedWorkError(
-      'admission_rejection',
-      'delegation inputs must be immutable Version identities'
-    )
+    throw new DurableDelegatedWorkError('admission_rejection', DELEGATION_INPUT_SHAPE_MESSAGE)
   }
 }
 
@@ -214,7 +215,7 @@ class DelegatedWorkAdmissionPolicy {
       if (validInputs.some((valid) => !valid)) {
         throw new DurableDelegatedWorkError(
           'admission_rejection',
-          'delegation inputs must be immutable Upload or Artifact Version identities'
+          DELEGATION_INPUT_UNAVAILABLE_MESSAGE
         )
       }
     }
@@ -338,6 +339,8 @@ class DelegatedWorkAdmissionPolicy {
 }
 
 export {
+  DELEGATION_INPUT_SHAPE_MESSAGE,
+  DELEGATION_INPUT_UNAVAILABLE_MESSAGE,
   MAX_DELEGATE_NAME_CODE_POINTS,
   allocateDelegateNames,
   assertDelegateInputShape,

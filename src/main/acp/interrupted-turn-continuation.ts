@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util'
 import type {
   AcpContinueInterruptedTurnRequest,
   AcpPromptRequest,
-  AcpStateSnapshot
+  AcpRuntimeState
 } from '../../shared/acp'
 import { prepareAnnotationsForAgent } from '../../shared/annotations'
 import {
@@ -39,7 +39,7 @@ const buildContinuationPrompt = (
       : `${INTERRUPTED_TURN_CONTINUATION_PROMPT}\n\nOriginal user request:\n${prompt.content}`
 
 type InterruptedTurnContinuationRuntime = {
-  getSnapshot(): AcpStateSnapshot
+  getState(): AcpRuntimeState
   getLatestUserPrompt(sessionId: string, promptMessageId: string): AcpPromptRequest | undefined
   startContinuation(request: AcpPromptRequest): Promise<void>
 }
@@ -249,7 +249,7 @@ const buildContinuationRequest = (
 export const continueInterruptedTurn = async (
   dependencies: InterruptedTurnContinuationDependencies,
   request: AcpContinueInterruptedTurnRequest
-): Promise<AcpStateSnapshot> => {
+): Promise<AcpRuntimeState> => {
   const session = await dependencies.loadSession(request.projectId, request.sessionId)
   if (!session) throw new Error('Interrupted Session could not be loaded.')
   const prompt = requireInterruptedTurn(session, request)
@@ -257,7 +257,7 @@ export const continueInterruptedTurn = async (
     request.sessionId,
     request.promptMessageId
   )
-  const snapshot = dependencies.runtime.getSnapshot()
+  const snapshot = dependencies.runtime.getState()
   if (
     livePrompt &&
     (snapshot.agentPromptInFlightSessionIds ?? snapshot.promptInFlightSessionIds).includes(
@@ -299,7 +299,7 @@ export const continueInterruptedTurn = async (
     if (tracked) dependencies.notifications?.untrackPrompt(request.sessionId, tracked)
     throw error
   }
-  return dependencies.runtime.getSnapshot()
+  return dependencies.runtime.getState()
 }
 
 export type { InterruptedTurnContinuationDependencies, InterruptedTurnContinuationRuntime }

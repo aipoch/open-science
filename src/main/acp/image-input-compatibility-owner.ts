@@ -23,7 +23,7 @@ import {
   type RestrictedInferenceRunInput
 } from './restricted-inference-runner'
 import type { VisionEvidencePersistence, VisionEvidenceSource } from './vision-evidence-repository'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 const EVIDENCE_SCHEMA_VERSION = 2
 const MAX_CACHE_ENTRIES = 64

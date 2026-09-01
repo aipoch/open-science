@@ -171,14 +171,18 @@ const brokerFromRunners = (
   sshRunner: SshRunner,
   scpRunner: ScpRunner
 ): ComputeConnectionBrokerAcquirer => ({
-  acquire: vi.fn(async () => ({
-    run: (command, options) => sshRunner.run({} as never, command, options),
-    upload: vi.fn(async () => undefined),
-    download: async (remotePath, localPath, maxBytes) => {
-      if (!scpRunner.copyFromRemoteBounded) throw new Error('bounded remote copy is unavailable')
-      return scpRunner.copyFromRemoteBounded({} as never, remotePath, localPath, maxBytes)
-    }
-  }))
+  acquire: vi.fn(
+    async () =>
+      ({
+        run: (command, options) => sshRunner.run({} as never, command, options),
+        upload: vi.fn(async () => undefined),
+        download: async (remotePath, localPath, maxBytes) => {
+          if (!scpRunner.copyFromRemoteBounded)
+            throw new Error('bounded remote copy is unavailable')
+          return scpRunner.copyFromRemoteBounded({} as never, remotePath, localPath, maxBytes)
+        }
+      }) satisfies ComputeConnectionLease
+  )
 })
 
 const makeHostRepo = (host: ReturnType<typeof sampleHost> | null): ComputeHostRepository =>

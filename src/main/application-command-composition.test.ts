@@ -232,7 +232,10 @@ describe('application command composition', () => {
     const composition = createApplicationCommandComposition(
       {
         ...dependencies(),
-        dataContent: { projects: { list: listProjects } } as never
+        dataContent: {
+          projects: { list: listProjects },
+          withDataRootWrite: async (operation: () => Promise<unknown>) => operation()
+        } as never
       },
       onDiagnostic
     )
@@ -520,7 +523,10 @@ describe('application command composition', () => {
       .mockResolvedValueOnce([project('from-task')])
     const composition = createApplicationCommandComposition({
       ...dependencies(),
-      dataContent: { projects: { list: listProjects } } as never
+      dataContent: {
+        projects: { list: listProjects },
+        withDataRootWrite: async (operation: () => Promise<unknown>) => operation()
+      } as never
     })
 
     await expect(composition.localWeb.invoke('projects:list', invocation())).resolves.toEqual([

@@ -68,7 +68,7 @@ describe('AcpRuntimePublicationOwner', () => {
       snapshotProjection: createProjection,
       callbacks: {
         onEvent: (event) => order.push(`event:${event.text}`),
-        onStateChanged: (snapshot) => order.push(`state:${snapshot.events.length}`)
+        onStateChanged: (snapshot) => order.push(`state:${snapshot.events?.length ?? 0}`)
       },
       scheduleStatePublication: (publish) => {
         releaseScheduledState = publish
@@ -112,7 +112,7 @@ describe('AcpRuntimePublicationOwner', () => {
 
     owner.emitState()
     expect(onStateChanged).toHaveBeenCalledOnce()
-    expect(onStateChanged.mock.calls[0]?.[0].events).toHaveLength(6)
+    expect(onStateChanged.mock.calls[0]?.[0]).not.toHaveProperty('events')
   })
 
   it('coalesces streamed assistant thought state', () => {
@@ -146,7 +146,7 @@ describe('AcpRuntimePublicationOwner', () => {
       snapshotProjection: createProjection,
       callbacks: {
         onStateChanged: (snapshot) => {
-          for (const event of snapshot.events) {
+          for (const event of snapshot.events ?? []) {
             if (event.kind === 'message' && event.role === 'assistant' && event.text) {
               visibleChunks.set(event.id, event.text)
             }
@@ -178,7 +178,7 @@ describe('AcpRuntimePublicationOwner', () => {
       snapshotProjection: createProjection,
       callbacks: {
         onEvent: (event) => order.push(`event:${event.kind}`),
-        onStateChanged: (snapshot) => order.push(`state:${snapshot.events.length}`)
+        onStateChanged: (snapshot) => order.push(`state:${snapshot.events?.length ?? 0}`)
       },
       scheduleStatePublication: () => () => undefined
     })
@@ -197,7 +197,7 @@ describe('AcpRuntimePublicationOwner', () => {
       snapshotProjection: createProjection,
       callbacks: {
         onStateChanged: (snapshot) =>
-          snapshots.push(snapshot.events.map((event) => event.status ?? 'updating'))
+          snapshots.push((snapshot.events ?? []).map((event) => event.status ?? 'updating'))
       },
       scheduleStatePublication: () => () => undefined
     })
@@ -237,7 +237,7 @@ describe('AcpRuntimePublicationOwner', () => {
       snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
       interactions: new AcpSessionInteractionOwner(),
       snapshotProjection: createProjection,
-      callbacks: { onStateChanged: (snapshot) => snapshots.push(snapshot.events.length) },
+      callbacks: { onStateChanged: (snapshot) => snapshots.push(snapshot.events?.length ?? 0) },
       scheduleStatePublication: () => () => undefined
     })
 
@@ -333,7 +333,9 @@ describe('AcpRuntimePublicationOwner', () => {
       }
     })
 
-    owner.pushEvent({ kind: 'message', level: 'info', text: 'hello' }, () => order.push('appended'))
+    owner.pushEvent({ kind: 'message', level: 'info', role: 'assistant', text: 'hello' }, () =>
+      order.push('appended')
+    )
 
     expect(order).toEqual(['appended', 'event'])
     owner.emitState()
@@ -392,6 +394,7 @@ describe('AcpRuntimePublicationOwner', () => {
       kind: 'message',
       level: 'info',
       sessionId: 'session-1',
+      role: 'assistant',
       text: 'inherited'
     })
     owner.pushEvent({
@@ -399,6 +402,7 @@ describe('AcpRuntimePublicationOwner', () => {
       level: 'info',
       sessionId: 'session-1',
       promptMessageId: 'explicit-prompt',
+      role: 'assistant',
       text: 'explicit'
     })
     interactions.release(prompt)
@@ -407,6 +411,7 @@ describe('AcpRuntimePublicationOwner', () => {
       kind: 'message',
       level: 'info',
       sessionId: 'session-1',
+      role: 'assistant',
       text: 'compaction'
     })
     interactions.release(compaction)
@@ -438,6 +443,7 @@ describe('AcpRuntimePublicationOwner', () => {
         kind: 'message' as const,
         level: 'info' as const,
         sessionId: 'session-1',
+        role: 'assistant' as const,
         text: 'frozen-chunk'
       })
     )
@@ -464,7 +470,12 @@ describe('AcpRuntimePublicationOwner', () => {
 
     expect(owner.getSnapshot().sessionIds).toEqual(['session-1'])
     expect(owner.nextEventId()).toBe('acp-event-1')
-    owner.pushEvent({ kind: 'message', level: 'info', text: 'after reservation' })
+    owner.pushEvent({
+      kind: 'message',
+      level: 'info',
+      role: 'assistant',
+      text: 'after reservation'
+    })
 
     expect(owner.getSnapshot().sessionIds).toEqual(['session-2'])
     expect(owner.getSnapshot().events[0]?.id).toBe('acp-event-2')

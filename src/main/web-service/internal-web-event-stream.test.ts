@@ -128,4 +128,18 @@ describe('InternalWebEventStream', () => {
       }
     ])
   })
+
+  it('refuses to replay frames older than an authorization floor', () => {
+    const stream = new InternalWebEventStream({ streamId: 'stream-1' })
+    stream.publish({ channel: 'settings:changed', payload: { revision: 1 } })
+    stream.publish({ channel: 'settings:changed', payload: { revision: 2 } })
+
+    expect(parseFrames(stream.resume({ streamId: 'stream-1', after: 0 }, 1))).toEqual([
+      expect.objectContaining({ kind: 'resync-required', reason: 'cursor-expired' })
+    ])
+    expect(parseFrames(stream.resume({ streamId: 'stream-1', after: 1 }, 1))).toEqual([
+      expect.objectContaining({ kind: 'event', sequence: 2 }),
+      expect.objectContaining({ kind: 'ready', latestSequence: 2 })
+    ])
+  })
 })

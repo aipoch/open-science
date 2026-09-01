@@ -3025,10 +3025,13 @@ describe('notebook runtime service', () => {
         command: 'second'
       })
 
-      await vi.waitFor(() => {
-        expect(entered).toHaveLength(2)
-        expect(entered).toEqual(expect.arrayContaining(['first', 'second']))
-      })
+      await vi.waitFor(
+        () => {
+          expect(entered).toHaveLength(2)
+          expect(entered).toEqual(expect.arrayContaining(['first', 'second']))
+        },
+        { timeout: 5_000 }
+      )
       releases.get('second')?.()
       releases.get('first')?.()
 

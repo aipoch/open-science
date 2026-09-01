@@ -533,7 +533,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     state.mockResolvedValue({
       ...idleState,
       activeRunId: 'p1',
-      environments: idleState.environments.map((environment) => ({
+      environments: idleState.environments.map((environment: NotebookEnvironmentStatus) => ({
         ...environment,
         status: 'running'
       }))
@@ -620,7 +620,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     state.mockResolvedValue({
       ...liveState,
       kernelStatus: 'terminated',
-      environments: liveState.environments.map((environment) => ({
+      environments: liveState.environments.map((environment: NotebookEnvironmentStatus) => ({
         ...environment,
         status: 'terminated'
       }))
@@ -659,7 +659,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     const liveState = await state.mock.results[0]?.value
     vi.mocked(window.api.notebook.restart).mockResolvedValue({
       ...liveState,
-      environments: liveState.environments.map((environment) => ({
+      environments: liveState.environments.map((environment: NotebookEnvironmentStatus) => ({
         ...environment,
         restartRecommended: false
       }))

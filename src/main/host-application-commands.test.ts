@@ -41,7 +41,16 @@ const remoteSnapshot: RemoteAccessSnapshot = {
   lifecycle: 'disabled',
   remoteIt: { installed: false, loggedIn: false, registered: false },
   pendingRequests: [],
-  trustedBrowsers: []
+  trustedBrowsers: [
+    {
+      id: 'trusted-browser',
+      browser: 'Safari',
+      platform: 'macOS',
+      createdAt: 1,
+      lastSeenAt: 2,
+      expiresAt: 3
+    }
+  ]
 }
 
 const updateStatus: UpdateStatus = { state: 'idle', current: '1.0.0' }
@@ -546,6 +555,7 @@ describe('Host application commands', () => {
         invocation([], localCaller)
       )
     ).resolves.toBe(remoteSnapshot)
+    expect(remoteSnapshot.trustedBrowsers[0]).toMatchObject({ expiresAt: 3 })
     await expect(
       router.dispatcher.invoke(
         hostApplicationCommands.remoteAccess.probe,

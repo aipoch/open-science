@@ -100,9 +100,32 @@ describe('computeStorageUsage', () => {
       },
       { key: 'notebooks', bytes: 0 },
       { key: 'execution-file-evidence', bytes: 125 },
-      { key: 'workspaces', bytes: 25 }
+      {
+        key: 'workspaces',
+        bytes: 25,
+        children: [{ name: 'session-1', bytes: 25 }]
+      }
     ])
     expect(usage.totalBytes).toBe(875)
+  })
+
+  it('lists retained Session workspace directories by size, including empty ones', async () => {
+    await writeSized(join(dataRoot, 'workspaces', 'smaller', 'data.bin'), 10)
+    await writeSized(join(dataRoot, 'workspaces', 'larger', 'data.bin'), 20)
+    await mkdir(join(dataRoot, 'workspaces', 'empty'), { recursive: true })
+
+    const usage = await computeStorageUsage(dataRoot)
+    const workspaces = usage.categories.find((category) => category.key === 'workspaces')
+
+    expect(workspaces).toEqual({
+      key: 'workspaces',
+      bytes: 30,
+      children: [
+        { name: 'larger', bytes: 20 },
+        { name: 'smaller', bytes: 10 },
+        { name: 'empty', bytes: 0 }
+      ]
+    })
   })
 
   it('accounts for every relocatable data directory', () => {

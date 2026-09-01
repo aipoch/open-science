@@ -87,20 +87,20 @@ const DeleteProjectDialog = ({
               {dialogHasCompleteSessionCatalog
                 ? dialogSessionCount > 0
                   ? t(
-                      'This will permanently delete "{{name}}" and its {{count}} sessions. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+                      'This will permanently delete "{{name}}" and its {{count}} sessions. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. Retained managed Session workspaces remain available in Settings → Storage. This action cannot be undone.',
                       {
                         defaultValue_one:
-                          'This will permanently delete "{{name}}" and its {{count}} session. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+                          'This will permanently delete "{{name}}" and its {{count}} session. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. Retained managed Session workspaces remain available in Settings → Storage. This action cannot be undone.',
                         name: dialogProject?.name,
                         count: dialogSessionCount
                       }
                     )
                   : t(
-                      'This will permanently delete "{{name}}". Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+                      'This will permanently delete "{{name}}". Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. Retained managed Session workspaces remain available in Settings → Storage. This action cannot be undone.',
                       { name: dialogProject?.name }
                     )
                 : t(
-                    'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+                    'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. Retained managed Session workspaces remain available in Settings → Storage. This action cannot be undone.',
                     {
                       name: dialogProject?.name
                     }

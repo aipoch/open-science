@@ -389,17 +389,18 @@ jobs:
           exit "$failed"
 
   unit_shard:
-    name: Full Module tests (macOS, shard ${{ matrix.shard }}/2)
+    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/3)
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     env:
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
+      VITEST_PORTABLE_CI: '1'
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -415,12 +416,21 @@ jobs:
       - name: Test complete suite shard
         id: unit_macos_shard
         continue-on-error: true
-        run: npx vitest run --coverage --coverage.reporter=text-summary --shard=${{ matrix.shard }}/2 --reporter=blob --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
+        # The static lane owns the i18n catalog guard. Real Linux and macOS sandbox behavior runs
+        # in platform jobs with the required native dependencies, so do not duplicate those files.
+        run: >-
+          npx vitest run
+          --coverage
+          --coverage.reporter=text-summary
+          --testTimeout=30000
+          --shard=${{ matrix.shard }}/3
+          --reporter=blob
+          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
       - name: Upload full-suite blob report
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: unit-macos-blob-${{ matrix.shard }}
+          name: unit-portable-blob-${{ matrix.shard }}
           path: vitest-reports/
           retention-days: 1
           if-no-files-found: error
@@ -442,8 +452,8 @@ jobs:
     name: Module tests and coverage
     needs: [preflight, unit_shard]
     if: ${{ always() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-    # Full plans merge macOS shard reports on Ubuntu so coverage enforcement does not wait for a
-    # scarce fifth macOS slot. Selective plans still execute affected Modules on real macOS.
+    # Full plans merge Ubuntu shard reports on Ubuntu. Selective plans still execute affected
+    # Modules on real macOS so native platform behavior remains covered for focused changes.
     runs-on: ${{ needs.unit_shard.result != 'skipped' && 'ubuntu-latest' || 'macos-14' }}
     timeout-minutes: 15
     steps:
@@ -458,7 +468,11 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install dependencies
+        if: ${{ needs.unit_shard.result == 'skipped' }}
         run: node scripts/ci/npm-ci.mjs
+      - name: Install report merge dependencies
+        if: ${{ needs.unit_shard.result != 'skipped' }}
+        run: node scripts/ci/npm-ci.mjs --ignore-scripts --prefer-offline --no-audit --fund=false
       - name: Test affected Modules
         id: unit_macos_related
         if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
@@ -473,7 +487,7 @@ jobs:
         if: ${{ needs.unit_shard.result != 'skipped' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: unit-macos-blob-*
+          pattern: unit-portable-blob-*
           path: vitest-reports
           merge-multiple: true
       - name: Merge full-suite reports and coverage
@@ -482,8 +496,8 @@ jobs:
         # the unit bundle without unit_macos. Merge once so thresholds see the complete suite.
         if: ${{ needs.unit_shard.result != 'skipped' }}
         continue-on-error: true
-        # macOS blob reports retain their source test paths. Ubuntu can merge their results and
-        # coverage, but local discovery finds no tests; keep coverage thresholds authoritative.
+        # Blob reports retain their source test paths. The merge reconstructs coverage without
+        # discovering or executing tests again, so coverage thresholds remain authoritative.
         run: npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests
       - name: Upload Module coverage report
         if: ${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped') }}
@@ -522,9 +536,7 @@ jobs:
   linux_runtime:
     name: Linux Notebook isolation
     needs: preflight
-    # The full-plan fallback covers the introducing PR, whose trusted base classifier does not yet
-    # know this bundle. Once the classifier is on main, only the dedicated bundle selects this job.
-    if: ${{ needs.preflight.result == 'success' && (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') || (fromJSON(needs.preflight.outputs.plan).mode == 'full' && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'linux_runtime'))) }}
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -742,6 +754,18 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Test macOS-native behavior
+        id: unit_macos_native
+        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
+        continue-on-error: true
+        run: |
+          npx vitest run \
+            packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts \
+            packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts \
+            src/main/net/network-info.test.ts \
+            src/main/notebook/managed-runtime-guard.test.ts
+          npx vitest run src/main/notebook/kernel-executor.test.ts \
+            -t 'executes the repl loop through the production network sandbox'
       - name: Build Electron application
         id: build_electron
         continue-on-error: true
@@ -825,6 +849,7 @@ jobs:
           E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_macos.outcome }}
           E2E_VISUAL_OUTCOME: ${{ steps.e2e_visual_macos.outcome }}
           E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_macos.outcome }}
+          UNIT_MACOS_NATIVE_OUTCOME: ${{ steps.unit_macos_native.outcome }}
         run: |
           set -euo pipefail
           failed=0
@@ -840,6 +865,7 @@ jobs:
           check e2e_workspace_macos "$E2E_WORKSPACE_OUTCOME"
           check e2e_accessibility_macos "$E2E_ACCESSIBILITY_OUTCOME"
           check e2e_visual_macos "$E2E_VISUAL_OUTCOME"
+          check unit_macos_native "$UNIT_MACOS_NATIVE_OUTCOME"
           exit "$failed"
 
   windows_e2e:
@@ -868,7 +894,8 @@ jobs:
         id: e2e_functional_windows
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
         continue-on-error: true
-        run: npm run test:e2e:journey -- --workers=2 --fail-on-flaky-tests
+        # Balance tests inside slow spec files without increasing the two-worker concurrency cap.
+        run: npm run test:e2e:journey -- --workers=2 --fully-parallel --fail-on-flaky-tests
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true
@@ -884,7 +911,7 @@ jobs:
         id: e2e_workspace_windows
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') }}
         continue-on-error: true
-        run: npm run test:e2e:workspace -- --workers=2 --fail-on-flaky-tests
+        run: npm run test:e2e:workspace -- --workers=2 --fully-parallel --fail-on-flaky-tests
       - name: Upload workspace failure artifacts
         if: ${{ steps.e2e_workspace_windows.outcome == 'failure' }}
         continue-on-error: true

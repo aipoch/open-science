@@ -1090,7 +1090,7 @@ describe('mandatory product glossary', () => {
   it('uses concise infinitive labels for representative German interface actions', () => {
     expect({
       addSshHost: de.renderer['Add SSH host'],
-      alwaysTrustBrowser: de.renderer['Always trust this browser'],
+      trustBrowserFor180Days: de.renderer['Trust this browser for 180 days'],
       askEveryTime: de.renderer['Ask every time'],
       askForApproval: de.renderer['Ask for approval'],
       attachSkill: de.renderer['Attach skill'],
@@ -1117,7 +1117,7 @@ describe('mandatory product glossary', () => {
       uncheckAll: de.renderer['Uncheck all']
     }).toEqual({
       addSshHost: 'SSH-Host hinzufügen',
-      alwaysTrustBrowser: 'Diesem Browser immer vertrauen',
+      trustBrowserFor180Days: 'Diesem Browser 180 Tage vertrauen',
       askEveryTime: 'Jedes Mal nachfragen',
       askForApproval: 'Freigabe anfordern',
       attachSkill: 'Fähigkeit anhängen',
@@ -1745,7 +1745,11 @@ describe('mandatory product glossary', () => {
     expect(readme).toContain('Sitzungsnummern in der globalen Suche')
     expect(readme).toContain('Tastaturkürzel für eine neue Konversation')
     expect(readme).toContain('Schlüssel- oder Passwortauthentifizierung')
-    expect(readme).toContain('Open Science v0.23.0 veröffentlicht')
+    const rootPackage = JSON.parse(
+      readFileSync(join(__dirname, '..', '..', '..', '..', 'package.json'), 'utf8')
+    ) as { version: string }
+    // The banner assertion tracks the repo version instead of a hardcoded bump target.
+    expect(readme).toContain(`Open Science v${rootPackage.version} veröffentlicht`)
     expect(readme).toContain('CodeBuddy')
     expect(readme).toContain('Text-, Bild- und PDF-Anmerkungen')
     expect(readme).toContain('persistente Agentenerinnerungen')
@@ -2290,11 +2294,11 @@ describe('mandatory product glossary', () => {
     /\bKEY=VALUE\b/g,
     /<code>[^<]*<\/code>/gi
   ]
-  const additionalRequiredIdentifiers = {
+  const additionalRequiredIdentifiers: Record<string, string[]> = {
     'The ZIP contains app metadata, the specialist.json you fill in, and a README.txt guide. Skills placed in the skills folder are discovered automatically.':
       ['skills/']
-  } satisfies Record<string, string[]>
-  const spanishRequiredIdentifiers = {
+  }
+  const spanishRequiredIdentifiers: Record<string, string[]> = {
     'Leave empty for 22 or Port from ~/.ssh/config.': ['Port'],
     'Leave empty to use User from ~/.ssh/config.': ['User'],
     'Password authentication requires a User and Port and never uses keys or ssh-agent.': [
@@ -2307,7 +2311,7 @@ describe('mandatory product glossary', () => {
     'Star {{app}} on GitHub, {{count}} stars': ['Star'],
     "It's free and open source. Star it on GitHub to help others find it, and come build in public with us on Discord and X. Thanks for being here.":
       ['Star']
-  } satisfies Record<string, string[]>
+  }
   const exactTechnicalIdentifiers = (text: string): string[] =>
     exactTechnicalIdentifierPatterns
       .flatMap((identifier) => text.match(identifier) ?? [])
@@ -3208,7 +3212,7 @@ describe('Russian catalog quality', () => {
     expect(catalog('ru').Approve).toBe('Утвердить')
     expect(
       catalog('ru')[
-        'Choose "Always trust this browser" to skip approval on future visits to the same remote address.'
+        'Choose "Trust this browser for 180 days" to skip approval on future visits to the same remote address.'
       ]
     ).toContain('разрешение на доступ')
   })
@@ -3349,16 +3353,16 @@ describe('Korean safety copy', () => {
       '손상된 대화 {{count}}개를 별도 위치로 옮겼습니다. 상태를 확인할 수 없어 프로젝트 보관 기능은 계속 사용할 수 없습니다. 그래도 프로젝트를 영구 삭제할 수는 있습니다.'
     ],
     [
-      'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
-      '이 작업을 실행하면 복구 중에 로드하지 못한 대화를 포함하여 “{{name}}”과 저장된 모든 대화가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+      'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. Retained managed Session workspaces remain available in Settings → Storage. This action cannot be undone.',
+      '이 작업을 실행하면 복구 중에 로드하지 못한 대화를 포함하여 “{{name}}”과 저장된 모든 대화가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 보존된 관리형 세션 워크스페이스는 설정 → 저장 공간에서 계속 사용할 수 있습니다. 이 작업은 실행 취소할 수 없습니다.'
     ],
     [
-      'This will permanently delete "{{name}}" and its {{count}} sessions. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone._other',
-      '이 작업을 실행하면 “{{name}}”과 세션 {{count}}개가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+      'This will permanently delete "{{name}}" and its {{count}} sessions. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. Retained managed Session workspaces remain available in Settings → Storage. This action cannot be undone._other',
+      '이 작업을 실행하면 “{{name}}”과 세션 {{count}}개가 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 보존된 관리형 세션 워크스페이스는 설정 → 저장 공간에서 계속 사용할 수 있습니다. 이 작업은 실행 취소할 수 없습니다.'
     ],
     [
-      'This will permanently delete "{{name}}". Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
-      '이 작업을 실행하면 “{{name}}”이 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 이 작업은 실행 취소할 수 없습니다.'
+      'This will permanently delete "{{name}}". Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. Retained managed Session workspaces remain available in Settings → Storage. This action cannot be undone.',
+      '이 작업을 실행하면 “{{name}}”이 영구적으로 삭제됩니다. Open Science가 저장한 생성 아티팩트와 업로드 파일도 삭제됩니다. 프로젝트 작업 폴더의 파일은 삭제되지 않습니다. 보존된 관리형 세션 워크스페이스는 설정 → 저장 공간에서 계속 사용할 수 있습니다. 이 작업은 실행 취소할 수 없습니다.'
     ],
     [
       'Individual grants remain revocable; Revoke all is disabled until the complete set is known.',

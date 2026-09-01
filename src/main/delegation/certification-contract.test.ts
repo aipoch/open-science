@@ -86,7 +86,7 @@ const createModuleHarness = (execution: DelegateExecution): ModuleHarness => {
     rootFrameId: caller.frameId,
     originMessageId: caller.originMessageId
   })
-  const counters = { frame: 0, attempt: 0, message: 0, runtime: 0 }
+  const counters = { frame: 0, attempt: 0, message: 0, runtime: 0, question: 0 }
   const parentDeliveries: ModuleHarness['parentDeliveries'] = []
   const artifactScopes: DelegatedArtifactScope[] = []
   const artifacts = new Map<string, ArtifactFile>()

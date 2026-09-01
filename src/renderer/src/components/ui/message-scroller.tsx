@@ -14,7 +14,7 @@ import { ArrowDownIcon } from 'lucide-react'
 function MessageScrollerProvider(
   props: React.ComponentProps<typeof MessageScrollerPrimitive.Provider>
 ) {
-  return <MessageScrollerPrimitive.Provider {...props} />
+  return <MessageScrollerPrimitive.Provider scrollEdgeThreshold={0} {...props} />
 }
 
 function MessageScroller({

@@ -1087,7 +1087,11 @@ describe('workspace tool activity details', () => {
 
     const section = details?.sections[0]
 
-    expect(section).toMatchObject({ kind: 'code', label: 'File', language: 'json' })
+    expect(section).toMatchObject({
+      kind: 'code',
+      label: 'Tool output image',
+      language: 'json'
+    })
     if (section?.kind !== 'code') throw new Error('Expected an artifact summary.')
     expect(JSON.parse(section.text)).toEqual({
       file: 'report.png',
@@ -1205,7 +1209,7 @@ describe('workspace tool activity details', () => {
     expect(details?.subtitle).toBe('sin.png')
     expect(details?.metaLabel).toBe('41 KB')
     expect(details?.sections.map((section) => 'label' in section && section.label)).toEqual([
-      'File'
+      'Tool output image'
     ])
     expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).toContain('sin.png')
     expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).not.toContain(

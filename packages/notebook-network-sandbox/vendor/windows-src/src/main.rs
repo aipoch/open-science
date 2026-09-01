@@ -1292,6 +1292,24 @@ mod windows_host {
         if !Path::new(&snapshot.path).exists() {
             return Ok(());
         }
+        let current = capture_acl_snapshot(&snapshot.path)?;
+        restore_acl_snapshot_if_needed(snapshot, &current, || {
+            restore_acl_snapshot_unchecked(snapshot)
+        })
+    }
+
+    fn restore_acl_snapshot_if_needed(
+        snapshot: &AclSnapshot,
+        current: &AclSnapshot,
+        restore: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        if current == snapshot {
+            return Ok(());
+        }
+        restore()
+    }
+
+    fn restore_acl_snapshot_unchecked(snapshot: &AclSnapshot) -> Result<()> {
         let sddl = wide(&snapshot.dacl_sddl);
         let mut descriptor = PSECURITY_DESCRIPTOR::default();
         unsafe {
@@ -1972,6 +1990,38 @@ mod windows_host {
             fs::remove_dir_all(&root).unwrap();
 
             assert_eq!(restored, original);
+        }
+
+        #[test]
+        fn acl_snapshot_restore_skips_only_unchanged_acl() {
+            let snapshot = AclSnapshot {
+                path: r"C:\Program Files\GitHub CLI".to_owned(),
+                dacl_sddl: "D:".to_owned(),
+                dacl_protected: false,
+                dacl_auto_inherited: true,
+                dacl_auto_inherit_requested: false,
+            };
+            let mut restore_called = false;
+
+            restore_acl_snapshot_if_needed(&snapshot, &snapshot, || {
+                restore_called = true;
+                Ok(())
+            })
+            .unwrap();
+
+            assert!(!restore_called);
+
+            let changed = AclSnapshot {
+                dacl_sddl: "D:(A;;GA;;;WD)".to_owned(),
+                ..snapshot.clone()
+            };
+            restore_acl_snapshot_if_needed(&snapshot, &changed, || {
+                restore_called = true;
+                Ok(())
+            })
+            .unwrap();
+
+            assert!(restore_called);
         }
     }
 }

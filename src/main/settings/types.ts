@@ -4,6 +4,7 @@ import type {
   ClaudeSubscriptionProviderId,
   ClaudeInfo,
   CodexSubscriptionAuthMode,
+  CodexSubscriptionTransport,
   CodexInfo,
   ProjectFilesFilterPreference,
   ProviderType,
@@ -48,6 +49,10 @@ export type StoredProvider = {
   // Records whether the app-owned Codex profile came from an import or an in-app sign-in. Runtime
   // behavior still keys on the normalized codex-isolated provider type.
   codexAuthMode?: CodexSubscriptionAuthMode
+  // Transport preference for the app-owned Codex subscription profile. Absence is Auto.
+  codexTransport?: CodexSubscriptionTransport
+  // Main-only learned Auto fallback. Never projected to ProviderView or renderer drafts.
+  codexAutoUseHttps?: boolean
   name: string
   // Which chat APIs a custom gateway speaks. Official providers derive it from the registry; absent
   // means ['anthropic'] (all pre-existing providers). Legacy records may carry the removed scalar

@@ -98,10 +98,10 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       })
     }
   })
-  const sessionRegistry = new AcpSessionRegistry({
+  const sessionRegistry: AcpSessionRegistry = new AcpSessionRegistry({
     addStartupBlocker: (token) => base.generationActivity.acquireStartup(token),
-    foreignIdentityCollision: (sessionIds) => {
-      const pendingReviewerCollision = sessionIds.find((sessionId) =>
+    foreignIdentityCollision: (sessionIds): Error | undefined => {
+      const pendingReviewerCollision: string | undefined = sessionIds.find((sessionId) =>
         reviewerSessions.hasPendingSessionId(sessionId)
       )
       if (pendingReviewerCollision) {
@@ -152,9 +152,16 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
         const snapshot = sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
         return snapshot
           ? {
-              cwd: snapshot.cwd,
-              frameworkId: snapshot.frameworkId,
-              permissionProfile: snapshot.permissionProfile
+              ...(snapshot.cwd === undefined ? {} : { cwd: snapshot.cwd }),
+              ...(snapshot.frameworkId === undefined ? {} : { frameworkId: snapshot.frameworkId }),
+              ...(snapshot.permissionProfile === undefined
+                ? {}
+                : {
+                    permissionProfile: {
+                      ...snapshot.permissionProfile,
+                      availableModeIds: [...snapshot.permissionProfile.availableModeIds]
+                    }
+                  })
             }
           : undefined
       },
@@ -245,7 +252,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       log.warn('OpenCode permission context wait timed out', { sessionId, toolCallId, waitMs })
     }
   })
-  const reviewerSessions = new ReviewerSessionOwner({
+  const reviewerSessions: ReviewerSessionOwner = new ReviewerSessionOwner({
     addStartupBlocker: (token) => base.generationActivity.acquireStartup(token),
     assertCurrentConnection: (connection) => {
       if (

@@ -510,7 +510,8 @@ class NotebookExecutionOwner {
       source: request.code,
       surface: 'repl',
       runtimeRoot: session.runtimeRoot,
-      cwd: session.cwd
+      cwd: session.cwd,
+      platform: this.options.platform
     })
     const replWasTerminated =
       !blockedMutation &&
@@ -651,7 +652,8 @@ class NotebookExecutionOwner {
           source: request.command,
           surface: this.options.platform === 'win32' ? 'powershell' : 'bash',
           runtimeRoot: session.runtimeRoot,
-          cwd: session.cwd
+          cwd: session.cwd,
+          platform: this.options.platform
         })
         let shellResult: NotebookShellResult | undefined
         try {

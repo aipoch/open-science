@@ -18,6 +18,7 @@ export type AcpSettingsCapabilities = Pick<
   | 'getConnectors'
   | 'listSpecialistSkillCatalog'
   | 'provisionedConnectorSkillNames'
+  | 'rememberCodexAutoHttpsFallback'
 > &
   Partial<Pick<SettingsService, 'resolveAdmittedSubagentBackend'>>
 

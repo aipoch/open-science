@@ -20,6 +20,7 @@ import {
   type AcpCreateSessionRequest,
   type AcpCreateSessionResponse,
   type AcpRuntimeEvent,
+  type AcpRuntimeEventInput,
   type AcpDeleteSessionRequest,
   type AcpPermissionRequest,
   type AcpPermissionResponse,
@@ -30,11 +31,13 @@ import {
   type AcpSteerFollowUpResult,
   type AcpResumeSessionRequest,
   type AcpRevokePermissionGrantRequest,
+  type AcpRuntimeState,
   type AcpSetPermissionProfileRequest,
-  type AcpStateSnapshot
+  type AcpStateSnapshot,
+  type AcpStateUpdate
 } from '../../shared/acp'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import { type AgentFrameworkId } from '../../shared/settings'
+import { isCodexSubscriptionProviderId, type AgentFrameworkId } from '../../shared/settings'
 import {
   sanitizeSessionReferences,
   type MessageAttribution
@@ -158,7 +161,7 @@ import {
 } from './runtime-plan-composition'
 
 export type AcpRuntimeCallbacks = {
-  onStateChanged?: (state: AcpStateSnapshot) => void
+  onStateChanged?: (state: AcpStateUpdate) => void
   onEvent?: (event: AcpRuntimeEvent) => void
   onPermissionRequest?: (request: AcpPermissionRequest) => void
   onPermissionSettled?: (requestId: string, state: AcpPermissionSettlementState) => void
@@ -166,6 +169,7 @@ export type AcpRuntimeCallbacks = {
   // Fires after the provider prompt yields its first update/terminal response. Reaching this point
   // proves startup did not reject before the provider accepted the request.
   onProviderPromptAccepted?: (sessionId: string, promptAttemptId?: string) => void
+  onCodexWebSocketFallback?: () => void
   onPromptEnded?: (sessionId: string, turnToken: string) => void
   onSkillImportAttachmentEligible?: (
     sessionId: string,
@@ -436,6 +440,7 @@ const PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS = 3
 const PLAN_CONTINUATION_CLAIM_RETRY_BASE_DELAY_MS = 25
 const AGENT_STDERR_REPORT_WINDOW_MS = 1000
 const MAX_RAW_AGENT_STDERR_SAMPLE_BYTES = 4096
+const CODEX_TRANSPORT_SIGNAL_SAMPLE_CHARACTERS = 512
 // Support-only opt-in. Raw agent stderr can contain research data, local paths, and tool output.
 const RAW_AGENT_STDERR_ENV = 'OPEN_SCIENCE_AGENT_STDERR'
 
@@ -448,12 +453,17 @@ const isNonActionableCodexStderr = (text: string): boolean => {
     ''
   )
   const withoutTransportFallback = withoutSkillBudgetNotice.replace(
-    /Warning:\s*Falling back from WebSockets to HTTPS transport\.\s*request timed out\s*/gi,
+    /Warning:\s*Falling\s*back\s*from\s*WebSockets\s*to\s*HTTPS\s*transport\.\s*request\s*timed\s*out\s*/gi,
     ''
   )
 
   return withoutTransportFallback.trim().length === 0
 }
+
+const hasCodexWebSocketFallback = (text: string): boolean =>
+  /Warning:\s*Falling\s*back\s*from\s*WebSockets\s*to\s*HTTPS\s*transport\.\s*request\s*timed\s*out\s*/i.test(
+    text
+  )
 
 const utf8PrefixWithinBytes = (value: string, maxBytes: number): string => {
   if (maxBytes <= 0) return ''
@@ -487,6 +497,8 @@ type AgentStderrWindow = {
   interactionSequence?: number
   sessionAttributionConsistent: boolean
   nonActionableCodexOnly: boolean
+  codexTransportSignalSample: string
+  codexWebSocketFallbackObserved: boolean
   eventEligible: boolean
   timer: ReturnType<typeof setTimeout>
 }
@@ -733,6 +745,10 @@ class AcpRuntime {
   // Returns an immutable renderer-facing view of connection and session state.
   getSnapshot(): AcpStateSnapshot {
     return this.publication.getSnapshot()
+  }
+
+  getState(): AcpRuntimeState {
+    return this.publication.getState()
   }
 
   captureBackend(): AcpBackendGenerationView {
@@ -1530,7 +1546,7 @@ class AcpRuntime {
         }
       } catch (error) {
         this.pushEvent({
-          kind: 'permission',
+          kind: 'system',
           level: 'error',
           sessionId: request.sessionId,
           title: ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
@@ -1646,6 +1662,7 @@ class AcpRuntime {
       this.pushEvent({
         kind: 'permission',
         level: handled ? 'info' : 'warning',
+        permissionRequestId: response.requestId,
         title: handled ? 'Permission response sent' : 'Permission request not found',
         text: response.cancelled ? 'cancelled' : response.optionId
       })
@@ -1656,6 +1673,7 @@ class AcpRuntime {
       this.pushEvent({
         kind: 'permission',
         level: 'error',
+        permissionRequestId: response.requestId,
         title: 'Permission approval could not be saved',
         text: error instanceof Error ? error.message : 'The tool call was cancelled.'
       })
@@ -1805,6 +1823,7 @@ class AcpRuntime {
       kind: 'permission',
       level: 'info',
       sessionId: restored.sessionId,
+      permissionRequestId: response.requestId,
       promptMessageId: decision.permission.originatingPromptMessageId,
       title: 'Restored permission response accepted',
       text: response.cancelled ? 'cancelled' : response.optionId
@@ -2675,6 +2694,7 @@ class AcpRuntime {
         existing.sessionAttributionConsistent = false
       }
       this.appendAgentStderrSample(existing, text)
+      this.observeCodexTransportSignal(existing, text)
       return
     }
 
@@ -2697,11 +2717,39 @@ class AcpRuntime {
       interactionSequence,
       sessionAttributionConsistent: true,
       nonActionableCodexOnly: context.framework === 'codex' && isNonActionableCodexStderr(text),
+      codexTransportSignalSample: '',
+      codexWebSocketFallbackObserved: false,
       eventEligible: disposition === 'current',
       timer
     }
     this.appendAgentStderrSample(window, text)
+    this.observeCodexTransportSignal(window, text)
     this.agentStderrWindows.set(context.process, window)
+  }
+
+  // Codex diagnostics can cross Node stderr chunk boundaries. Retain only a short ephemeral suffix
+  // for this exact operational signal; it is never logged or persisted as user-visible output.
+  private observeCodexTransportSignal(window: AgentStderrWindow, text: string): void {
+    if (window.framework !== 'codex' || window.codexWebSocketFallbackObserved) return
+    window.codexTransportSignalSample = `${window.codexTransportSignalSample}${text}`.slice(
+      -CODEX_TRANSPORT_SIGNAL_SAMPLE_CHARACTERS
+    )
+    if (!hasCodexWebSocketFallback(window.codexTransportSignalSample)) return
+    window.codexWebSocketFallbackObserved = true
+    window.nonActionableCodexOnly = isNonActionableCodexStderr(window.codexTransportSignalSample)
+    if (
+      !window.eventEligible ||
+      this.processEventDisposition(window.process, window.epoch) !== 'current' ||
+      this.backend.providerId === undefined ||
+      !isCodexSubscriptionProviderId(this.backend.providerId)
+    ) {
+      return
+    }
+    try {
+      this.options.callbacks?.onCodexWebSocketFallback?.()
+    } catch (error) {
+      safeLogError('Codex WebSocket fallback observation failed', errorLogFields(error))
+    }
   }
 
   private includeRawAgentStderr(): boolean {
@@ -2836,10 +2884,7 @@ class AcpRuntime {
   }
 
   // Adds a bounded event entry and notifies all renderer listeners.
-  private pushEvent(
-    event: Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>,
-    onAppended?: () => void
-  ): void {
+  private pushEvent(event: AcpRuntimeEventInput, onAppended?: () => void): void {
     this.publication.pushEvent(event, onAppended)
   }
 

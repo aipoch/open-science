@@ -365,7 +365,102 @@ describe('OnboardingWizard flow', () => {
     expect(container.textContent).not.toContain('D:\\OpenScience')
   })
 
-  it('waits for the Windows default probe before allowing Continue', async () => {
+  it('keeps Continue available while the Windows default recommendation is pending', async () => {
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockResolvedValue(
+      storageInfo({
+        dataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultParent: 'C:\\Users\\researcher',
+        canAutoSelectDataDrive: true
+      })
+    )
+    window.api.localFs.listDrives = vi.fn().mockReturnValue(new Promise(() => undefined))
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+
+    expect(container.textContent).toContain('C:\\Users\\researcher\\OpenScience')
+    expect(findButton(/^continue$/i)?.disabled).toBe(false)
+
+    await clickButton(/^continue$/i)
+    expect(currentSection('Set up the agent runtime')).not.toBeNull()
+  })
+
+  it('stops a pending Windows recommendation when the user leaves Location', async () => {
+    let resolveDrives: ((drives: Array<{ path: string; label: string }>) => void) | undefined
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockResolvedValue(
+      storageInfo({
+        dataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultParent: 'C:\\Users\\researcher',
+        canAutoSelectDataDrive: true
+      })
+    )
+    window.api.localFs.listDrives = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveDrives = resolve
+        })
+    )
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+    expect(window.api.localFs.listDrives).toHaveBeenCalledOnce()
+
+    await clickButton(/back/i)
+    await act(async () => {
+      resolveDrives?.([
+        { path: 'C:\\', label: 'C:' },
+        { path: 'D:\\', label: 'D:' }
+      ])
+    })
+    expect(window.api.storage.inspectDataRoot).not.toHaveBeenCalled()
+
+    await goToLocationStep()
+    expect(window.api.localFs.listDrives).toHaveBeenCalledOnce()
+    expect(currentSection('Choose data location')?.getAttribute('aria-busy')).toBe('false')
+  })
+
+  it('ends a pending Windows recommendation and keeps the default after its deadline', async () => {
+    window.api.platform = 'win32'
+    window.api.storage.getInfo = vi.fn().mockResolvedValue(
+      storageInfo({
+        dataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultDataRoot: 'C:\\Users\\researcher\\OpenScience',
+        defaultParent: 'C:\\Users\\researcher',
+        canAutoSelectDataDrive: true
+      })
+    )
+    window.api.localFs.listDrives = vi.fn().mockResolvedValue([
+      { path: 'C:\\', label: 'C:' },
+      { path: 'D:\\', label: 'D:' }
+    ])
+    window.api.storage.inspectDataRoot = vi.fn().mockReturnValue(new Promise(() => undefined))
+    readyClaudeState()
+
+    await renderWizard()
+    vi.useFakeTimers()
+    try {
+      await goToLocationStep()
+      expect(currentSection('Choose data location')?.getAttribute('aria-busy')).toBe('true')
+      expect(window.api.storage.inspectDataRoot).toHaveBeenCalledWith('D:\\')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000)
+      })
+
+      expect(currentSection('Choose data location')?.getAttribute('aria-busy')).toBe('false')
+      expect(container.textContent).toContain('C:\\Users\\researcher\\OpenScience')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('applies the Windows default recommendation when the user waits for the probe', async () => {
     let releaseDefaultProbe: (() => void) | undefined
     window.api.platform = 'win32'
     window.api.storage.getInfo = vi.fn().mockResolvedValue(
@@ -392,7 +487,7 @@ describe('OnboardingWizard flow', () => {
     await renderWizard()
     await goToLocationStep()
     expect(container.textContent).toContain('C:\\Users\\researcher\\OpenScience')
-    expect(findButton(/^continue$/i)?.disabled).toBe(true)
+    expect(findButton(/^continue$/i)?.disabled).toBe(false)
 
     await act(async () => releaseDefaultProbe?.())
 
@@ -420,6 +515,19 @@ describe('OnboardingWizard flow', () => {
       resolveStorageInfo?.(storageInfo({ canAutoSelectDataDrive: false }))
     })
     expect(findButton(/^continue$/i)?.disabled).toBe(false)
+  })
+
+  it('allows non-Windows onboarding to continue while storage info is pending', async () => {
+    window.api.platform = 'darwin'
+    window.api.storage.getInfo = vi.fn().mockReturnValue(new Promise(() => undefined))
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+
+    expect(findButton(/^continue$/i)?.disabled).toBe(false)
+    await clickButton(/^continue$/i)
+    expect(currentSection('Set up the agent runtime')).not.toBeNull()
   })
 
   it('does not let a late storage resume override a Browse interaction in flight', async () => {

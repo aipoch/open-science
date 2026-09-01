@@ -23,7 +23,7 @@ import type {
   StoredCustomMcpServer,
   StoredProvider
 } from './types'
-import { isRecord } from './value-guards'
+import { isRecord } from '../value-guards'
 
 const log = createLogger('settings.repository')
 
@@ -158,6 +158,8 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   const expiresAt = asNumber(value.expiresAt)
   const disconnectedAt = asNumber(value.disconnectedAt)
   const codexAuthMode = asString(value.codexAuthMode)
+  const codexTransport = asString(value.codexTransport)
+  const codexAutoUseHttps = asBoolean(value.codexAutoUseHttps)
   // Keep only non-empty model ids from persisted discovery results.
   const fetchedModels = Array.isArray(value.fetchedModels)
     ? value.fetchedModels.filter(
@@ -215,6 +217,15 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     (codexAuthMode === 'imported' || codexAuthMode === 'isolated')
   ) {
     provider.codexAuthMode = codexAuthMode
+  }
+  if (
+    isCodexSubscriptionProvider(type) &&
+    (codexTransport === 'auto' || codexTransport === 'https' || codexTransport === 'websocket')
+  ) {
+    provider.codexTransport = codexTransport
+  }
+  if (isCodexSubscriptionProvider(type) && codexAutoUseHttps !== undefined) {
+    provider.codexAutoUseHttps = codexAutoUseHttps
   }
   return provider
 }

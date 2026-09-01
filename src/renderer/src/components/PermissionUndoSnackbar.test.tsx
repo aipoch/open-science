@@ -42,7 +42,7 @@ describe('PermissionUndoSnackbar', () => {
   const updateProjectArchive = vi.fn()
 
   beforeEach(async () => {
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     await i18next.changeLanguage('en')
     vi.useFakeTimers()
     container = document.createElement('div')

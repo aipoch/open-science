@@ -89,7 +89,7 @@ describe('continueInterruptedTurn', () => {
     await continueInterruptedTurn(
       {
         runtime: {
-          getSnapshot: vi.fn(() => snapshot()),
+          getState: vi.fn(() => snapshot()),
           getLatestUserPrompt: vi.fn(() => undefined),
           startContinuation
         },
@@ -141,7 +141,7 @@ describe('continueInterruptedTurn', () => {
     await continueInterruptedTurn(
       {
         runtime: {
-          getSnapshot: vi.fn(() => snapshot()),
+          getState: vi.fn(() => snapshot()),
           getLatestUserPrompt: vi.fn(() => undefined),
           startContinuation
         },
@@ -166,7 +166,7 @@ describe('continueInterruptedTurn', () => {
     await continueInterruptedTurn(
       {
         runtime: {
-          getSnapshot: vi.fn(() => snapshot()),
+          getState: vi.fn(() => snapshot()),
           getLatestUserPrompt: vi.fn(() => undefined),
           startContinuation
         },
@@ -212,7 +212,7 @@ describe('continueInterruptedTurn', () => {
     const trackPrompt = vi.fn(() => ({ token: 1 }))
     const untrackPrompt = vi.fn()
     const runtime = {
-      getSnapshot: vi.fn(() => snapshot()),
+      getState: vi.fn(() => snapshot()),
       getLatestUserPrompt: vi.fn(() => undefined),
       startContinuation
     }
@@ -264,7 +264,7 @@ describe('continueInterruptedTurn', () => {
       continueInterruptedTurn(
         {
           runtime: {
-            getSnapshot: () => snapshot(),
+            getState: () => snapshot(),
             getLatestUserPrompt: () => undefined,
             startContinuation: vi.fn(async () => {
               throw failure
@@ -301,7 +301,7 @@ describe('continueInterruptedTurn', () => {
     await continueInterruptedTurn(
       {
         runtime: {
-          getSnapshot: () => snapshot(),
+          getState: () => snapshot(),
           getLatestUserPrompt: () => undefined,
           startContinuation
         },
@@ -357,7 +357,7 @@ describe('continueInterruptedTurn', () => {
       await continueInterruptedTurn(
         {
           runtime: {
-            getSnapshot: () => snapshot(),
+            getState: () => snapshot(),
             getLatestUserPrompt: () => undefined,
             startContinuation
           },
@@ -427,7 +427,7 @@ describe('continueInterruptedTurn', () => {
     await continueInterruptedTurn(
       {
         runtime: {
-          getSnapshot: () => snapshot(),
+          getState: () => snapshot(),
           getLatestUserPrompt: () => undefined,
           startContinuation
         },
@@ -470,7 +470,7 @@ describe('continueInterruptedTurn', () => {
       continueInterruptedTurn(
         {
           runtime: {
-            getSnapshot: () => snapshot(),
+            getState: () => snapshot(),
             getLatestUserPrompt: () => undefined,
             startContinuation
           },
@@ -503,7 +503,7 @@ describe('continueInterruptedTurn', () => {
       continueInterruptedTurn(
         {
           runtime: {
-            getSnapshot: () => current,
+            getState: () => current,
             getLatestUserPrompt: () => ({
               sessionId: 'session-1',
               text: 'Keep going',
@@ -537,7 +537,7 @@ describe('continueInterruptedTurn', () => {
       continueInterruptedTurn(
         {
           runtime: {
-            getSnapshot: () => snapshot(),
+            getState: () => snapshot(),
             getLatestUserPrompt: () => undefined,
             startContinuation
           },
@@ -559,7 +559,7 @@ describe('continueInterruptedTurn', () => {
       continueInterruptedTurn(
         {
           runtime: {
-            getSnapshot: () => snapshot(),
+            getState: () => snapshot(),
             getLatestUserPrompt: () => undefined,
             startContinuation: vi.fn()
           },

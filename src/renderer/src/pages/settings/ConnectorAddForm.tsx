@@ -353,7 +353,9 @@ export function ConnectorAddForm({
   const parsedHeaders = parseNamedCredentialText(headersText, 'header')
   const headerErrors = headerUpdateMode === 'replace' ? parsedHeaders.invalidLines : []
   const headerDuplicateErrors = headerUpdateMode === 'replace' ? parsedHeaders.duplicateLines : []
-  const staticCredentials = deviceCredentials.filter((credential) => credential.kind !== 'oauth')
+  const staticCredentials = deviceCredentials.filter(
+    (credential) => credential.kind !== 'oauth' && !credential.needsSecret
+  )
   const requiresOAuthClientSecret = initialTemplate?.requiredSecrets?.oauthClientSecret === true
   const editingLegacyOAuth =
     isEdit && Boolean(editServer?.oauth) && editServer?.oauth?.sharedCredential !== true
@@ -361,6 +363,7 @@ export function ConnectorAddForm({
   const oauthCredentials = deviceCredentials.filter((credential) => {
     if (
       credential.kind !== 'oauth' ||
+      credential.needsSecret ||
       (requiresOAuthClientSecret && !credential.hasClientSecret) ||
       !satisfiesOAuthRegistration(credential, initialTemplate?.oauth) ||
       credential.transport !== remoteTransport ||

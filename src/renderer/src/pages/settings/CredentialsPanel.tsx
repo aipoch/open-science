@@ -499,13 +499,27 @@ export function CredentialsPanel({
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{credential.displayName}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {credential.kind === 'api_key'
-                        ? t('API key · Stored')
-                        : credential.kind === 'token'
-                          ? t('Access token · Stored')
-                          : credential.status === 'connected'
-                            ? t('OAuth · Connected')
-                            : t('OAuth · Sign-in required')}
+                      {credential.needsSecret ? (
+                        <>
+                          {credential.kind === 'api_key'
+                            ? t('API key')
+                            : credential.kind === 'token'
+                              ? t('Access token')
+                              : t('OAuth')}
+                          {' · '}
+                          {encryptionAvailable
+                            ? t('Replacement required')
+                            : t('Temporarily unavailable')}
+                        </>
+                      ) : credential.kind === 'api_key' ? (
+                        t('API key · Stored')
+                      ) : credential.kind === 'token' ? (
+                        t('Access token · Stored')
+                      ) : credential.status === 'connected' ? (
+                        t('OAuth · Connected')
+                      ) : (
+                        t('OAuth · Sign-in required')
+                      )}
                       {' · '}
                       {t('{{count}} Connectors', {
                         count: credential.consumerCount,

@@ -350,6 +350,33 @@ describe('ProviderForm field switching', () => {
     const trigger = container.querySelector('[aria-label="Codex authentication"]')
     expect(trigger).not.toBeNull()
     expect(trigger?.textContent).toContain('Import existing Codex sign-in')
+    expect(container.querySelector('[aria-label="Transport"]')).toBeNull()
+
+    act(() => {
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent === 'Advanced settings')
+        ?.click()
+    })
+
+    expect(container.querySelector('[aria-label="Transport"]')?.textContent).toContain(
+      'Auto (recommended)'
+    )
+  })
+
+  it('opens Codex Advanced settings when a manual transport would otherwise be hidden', () => {
+    render(
+      createEmptyProviderFormValue({
+        type: 'codex-isolated',
+        codexTransport: 'https'
+      }),
+      { showCodexSubscriptions: true }
+    )
+
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      'button[aria-controls="provider-advanced-settings"]'
+    )
+    expect(disclosure?.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelector('[aria-label="Transport"]')?.textContent).toContain('HTTPS')
   })
 
   it('shows a fixed Claude subscription without an editable name or API key', () => {

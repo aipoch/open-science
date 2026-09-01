@@ -394,6 +394,88 @@ describe('ProviderAccountsModule', () => {
     })
   })
 
+  it('persists and projects the Codex subscription transport preference', async () => {
+    await module.upsertProvider({ type: 'codex-isolated', codexTransport: 'https' })
+
+    let stored = (await repository.getSettings()).providers[0]
+    expect(stored.codexTransport).toBe('https')
+    expect(module.toProviderView(stored).codexTransport).toBe('https')
+
+    await module.upsertProvider({
+      id: stored.id,
+      type: 'codex-isolated',
+      codexTransport: 'websocket',
+      requireExisting: true
+    })
+    stored = (await repository.getSettings()).providers[0]
+    expect(stored.codexTransport).toBe('websocket')
+  })
+
+  it.each([
+    ['auto', 'https'],
+    ['auto', 'websocket'],
+    ['https', 'auto'],
+    ['websocket', 'auto']
+  ] as const)(
+    'clears learned transport state when the preference changes from %s to %s',
+    async (initialTransport, nextTransport) => {
+      await module.upsertProvider({
+        type: 'codex-isolated',
+        codexTransport: initialTransport
+      })
+      const initial = (await repository.getSettings()).providers[0]
+      await repository.upsertProvider({
+        ...initial,
+        codexAutoUseHttps: true
+      })
+
+      await module.upsertProvider({
+        id: 'builtin-codex-subscription',
+        type: 'codex-isolated',
+        codexTransport: nextTransport,
+        requireExisting: true
+      })
+
+      expect((await repository.getSettings()).providers[0].codexAutoUseHttps).toBeUndefined()
+    }
+  )
+
+  it('does not retain learned transport state while a manual preference is resaved', async () => {
+    await module.upsertProvider({ type: 'codex-isolated', codexTransport: 'https' })
+    const manual = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({
+      ...manual,
+      codexAutoUseHttps: true
+    })
+
+    await module.upsertProvider({
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      codexTransport: 'https',
+      requireExisting: true
+    })
+
+    expect((await repository.getSettings()).providers[0].codexAutoUseHttps).toBeUndefined()
+  })
+
+  it('preserves learned HTTPS while an Auto preference is resaved', async () => {
+    await module.upsertProvider({ type: 'codex-isolated', codexTransport: 'auto' })
+    const stored = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({
+      ...stored,
+      codexAutoUseHttps: true
+    })
+
+    await module.upsertProvider({
+      id: stored.id,
+      type: 'codex-isolated',
+      codexTransport: 'auto',
+      requireExisting: true
+    })
+
+    expect((await repository.getSettings()).providers[0].codexAutoUseHttps).toBe(true)
+  })
+
   it.each([
     {
       sourceType: 'claude-isolated',

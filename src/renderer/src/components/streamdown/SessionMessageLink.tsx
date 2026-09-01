@@ -17,6 +17,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import { createSourcePreviewItem } from '@/lib/source-preview'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { notebookNetworkSettingsAllowDomain } from '../../../../shared/notebook-network'
 
 import { LinkSafetyModal } from './LinkSafetyModal'
 
@@ -25,20 +27,20 @@ type SessionMessageLinkProps = ComponentProps<'a'> & {
   'data-incomplete'?: boolean
 }
 
-type FaviconState = 'loading' | 'success' | 'error'
+type FaviconState = 'local' | 'loading' | 'success' | 'error'
 
 const SOURCE_PREVIEW_OPEN_DELAY_MS = 350
 const SOURCE_PREVIEW_CLOSE_DELAY_MS = 150
 const TOUCH_ACTIVATION_RESET_MS = 1000
 
-const getSessionLinkFaviconUrl = (href: string | undefined): string | undefined => {
+const getSessionLinkHostname = (href: string | undefined): string | undefined => {
   if (!href) return undefined
 
   try {
     const url = new URL(href)
     if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname) return undefined
 
-    return `https://${url.hostname.toLowerCase()}/favicon.ico`
+    return url.hostname.toLowerCase()
   } catch {
     return undefined
   }
@@ -63,10 +65,10 @@ const SessionLinkFavicon = ({
   src,
   className
 }: {
-  src: string
+  src?: string
   className?: string
 }): React.JSX.Element => {
-  const [state, setState] = useState<FaviconState>('loading')
+  const [state, setState] = useState<FaviconState>(src ? 'loading' : 'local')
 
   return (
     <span
@@ -85,7 +87,7 @@ const SessionLinkFavicon = ({
           state === 'success' ? 'opacity-0' : state === 'loading' ? 'opacity-50' : 'opacity-75'
         )}
       />
-      {state !== 'error' ? (
+      {src && state !== 'error' ? (
         <img
           src={src}
           alt=""
@@ -128,7 +130,13 @@ const SessionMessageLink = ({
   const isSourcePreviewPointerWithinRef = useRef(false)
   const suppressNextFocusOpenRef = useRef(false)
   const upsertAndActivateItem = usePreviewWorkbenchStore((state) => state.upsertAndActivateItem)
-  const faviconUrl = getSessionLinkFaviconUrl(href)
+  const notebookNetwork = useSettingsStore((state) => state.notebookNetwork)
+  const linkHostname = getSessionLinkHostname(href)
+  const isRemoteDomainAllowed = Boolean(
+    linkHostname && notebookNetworkSettingsAllowDomain(notebookNetwork, linkHostname)
+  )
+  const faviconUrl =
+    linkHostname && isRemoteDomainAllowed ? `https://${linkHostname}/favicon.ico` : undefined
   const sourceItem = href
     ? createSourcePreviewItem({
         href,
@@ -182,6 +190,15 @@ const SessionMessageLink = ({
     }, 0)
   }
 
+  const activateSource = (restoreFocus = false): void => {
+    dismissSourcePreview(restoreFocus)
+    if (sourceItem && isRemoteDomainAllowed) {
+      upsertAndActivateItem(sourceItem)
+      return
+    }
+    setIsSafetyModalOpen(true)
+  }
+
   useEffect(
     () => () => {
       clearSourcePreviewTimers()
@@ -191,7 +208,7 @@ const SessionMessageLink = ({
   )
 
   if (sourceItem) {
-    const hostname = new URL(sourceItem.url).hostname
+    const hostname = linkHostname ?? new URL(sourceItem.url).hostname
 
     return (
       <Popover
@@ -266,17 +283,15 @@ const SessionMessageLink = ({
                 openSourcePreview()
                 return
               }
-              dismissSourcePreview()
-              upsertAndActivateItem(sourceItem)
+              activateSource()
             }}
             onAuxClick={(event) => {
               if (event.button !== 1) return
               event.preventDefault()
-              dismissSourcePreview()
-              upsertAndActivateItem(sourceItem)
+              activateSource()
             }}
           >
-            {faviconUrl ? <SessionLinkFavicon key={faviconUrl} src={faviconUrl} /> : null}
+            <SessionLinkFavicon key={faviconUrl ?? 'local'} src={faviconUrl} />
             {children}
           </a>
         </PopoverTrigger>
@@ -323,12 +338,16 @@ const SessionMessageLink = ({
             data-source-preview-hover-layout=""
             className={cn(
               'grid min-w-0 items-stretch',
-              faviconUrl ? 'grid-cols-[auto_minmax(0,1fr)] gap-x-2.5' : 'grid-cols-1'
+              linkHostname ? 'grid-cols-[auto_minmax(0,1fr)] gap-x-2.5' : 'grid-cols-1'
             )}
           >
-            {faviconUrl ? (
+            {linkHostname ? (
               <div data-source-preview-hover-icon-column="" className="flex items-start">
-                <SessionLinkFavicon className="mt-0.5 me-0 size-5 shrink-0" src={faviconUrl} />
+                <SessionLinkFavicon
+                  key={faviconUrl ?? 'local'}
+                  className="mt-0.5 me-0 size-5 shrink-0"
+                  src={faviconUrl}
+                />
               </div>
             ) : null}
             <div data-source-preview-hover-content-column="" className="min-w-0">
@@ -358,8 +377,7 @@ const SessionMessageLink = ({
                   className="min-w-0 flex-1 break-all text-xs leading-4 text-text-000 underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
                   onClick={(event) => {
                     event.preventDefault()
-                    dismissSourcePreview(true)
-                    upsertAndActivateItem(sourceItem)
+                    activateSource(true)
                   }}
                 >
                   {sourceItem.url}
@@ -390,6 +408,12 @@ const SessionMessageLink = ({
             </div>
           </div>
         </PopoverContent>
+        <LinkSafetyModal
+          url={sourceItem.url}
+          isOpen={isSafetyModalOpen}
+          onClose={() => setIsSafetyModalOpen(false)}
+          onConfirm={() => window.open(sourceItem.url, '_blank', 'noreferrer')}
+        />
       </Popover>
     )
   }
@@ -406,7 +430,7 @@ const SessionMessageLink = ({
         disabled={!href}
         onClick={() => setIsSafetyModalOpen(true)}
       >
-        {faviconUrl ? <SessionLinkFavicon key={faviconUrl} src={faviconUrl} /> : null}
+        {linkHostname ? <SessionLinkFavicon key={faviconUrl ?? 'local'} src={faviconUrl} /> : null}
         {children}
       </button>
       {href ? (

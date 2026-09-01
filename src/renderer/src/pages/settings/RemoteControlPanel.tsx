@@ -124,7 +124,9 @@ const getAccessModes = (
   {
     mode: 'off',
     title: t('Off'),
-    description: t('Only this computer can open the workspace.'),
+    description: t(
+      'Remote access is paused. Provider setup and trusted browsers are kept for reuse.'
+    ),
     icon: CircleOff
   },
   {
@@ -196,7 +198,7 @@ const BrowserAccessSteps = ({ t }: { t: TFunction }): React.JSX.Element => (
       <li>
         <span className="font-medium">3.</span>{' '}
         {t(
-          'Choose "Always trust this browser" for direct access on future visits while Browser access is on.'
+          'Choose "Trust this browser for 180 days" for direct access on future visits while Browser access is on.'
         )}
       </li>
     </ol>
@@ -386,6 +388,8 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   const accessIsApp = snapshot.mode === 'remoteit'
   const accessIsBrowser = snapshot.mode === 'remoteit-public'
   const accessUsesPairing = snapshot.mode === 'remoteit' || snapshot.mode === 'remoteit-public'
+  const showTrustedBrowsers =
+    snapshot.canManagePairing && (accessUsesPairing || snapshot.trustedBrowsers.length > 0)
   const statusLabel = providerStatus(snapshot, t)
   const statusClassName =
     snapshot.enabled && snapshot.lifecycle === 'running'
@@ -607,7 +611,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                 <li>
                   <span className="font-medium">4.</span>{' '}
                   {t(
-                    'Choose "Always trust this browser" to skip approval on future visits to the same remote address.'
+                    'Choose "Trust this browser for 180 days" to skip approval on future visits to the same remote address.'
                   )}
                 </li>
               </ol>
@@ -725,16 +729,16 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
         </SettingsSection>
       ) : null}
 
-      {snapshot.canManagePairing && accessUsesPairing ? (
+      {showTrustedBrowsers ? (
         <SettingsSection
           title={t('Trusted browsers')}
           description={t(
-            'Always-trusted browsers can reconnect while the same remote address remains available. Revoking one takes effect on its next request or WebSocket reconnect.'
+            'Trusted browsers can reconnect until their listed expiration while the same remote address remains available. They remain stored but inactive while remote access is off. Revoking one takes effect on its next request or WebSocket reconnect.'
           )}
         >
           {snapshot.trustedBrowsers.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
-              {t('No browser has permanent access.')}
+              {t('No browser is trusted for 180 days.')}
             </div>
           ) : (
             <div className="divide-y divide-border rounded-xl border border-border">
@@ -748,6 +752,11 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                     <div className="text-xs text-muted-foreground">
                       {t('Last used {{time}}', {
                         time: formatDate(browser.lastSeenAt, 'dateTime')
+                      })}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {t('Expires {{time}}', {
+                        time: formatDate(browser.expiresAt, 'dateTime')
                       })}
                     </div>
                   </div>
@@ -832,7 +841,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                       disabled={busy !== null}
                       onClick={() => approve(request.id, 'always')}
                     >
-                      {t('Always trust this browser')}
+                      {t('Trust this browser for 180 days')}
                     </Button>
                   </div>
                 </div>

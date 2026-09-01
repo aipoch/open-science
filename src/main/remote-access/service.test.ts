@@ -209,6 +209,62 @@ describe('RemoteAccessService', () => {
     })
   })
 
+  it('falls back to an ephemeral Web port only when automatic port 44100 is occupied', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    const addressInUse = Object.assign(new Error('listen EADDRINUSE: 127.0.0.1:44100'), {
+      code: 'EADDRINUSE'
+    })
+    const ensureStarted = vi
+      .fn<WebServiceController['ensureStarted']>()
+      .mockRejectedValueOnce(addressInUse)
+      .mockResolvedValueOnce({
+        port: 54321,
+        url: 'http://127.0.0.1:54321/?token=local-only'
+      })
+    const service = await RemoteAccessService.create({
+      repository,
+      ...deps,
+      broadcast: vi.fn()
+    })
+    service.attachWebController({ ...webController(), ensureStarted })
+
+    await expect(service.setMode('remoteit')).resolves.toMatchObject({
+      enabled: true,
+      lifecycle: 'running'
+    })
+    expect(ensureStarted).toHaveBeenNthCalledWith(1, 44100, { attached: true })
+    expect(ensureStarted).toHaveBeenNthCalledWith(2, 0, { attached: true })
+    expect(deps.enableRemoteIt).toHaveBeenCalledWith(
+      '/usr/local/bin/remoteit',
+      54321,
+      expect.any(Object)
+    )
+  })
+
+  it('does not retry an automatic Web start failure other than EADDRINUSE', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    const ensureStarted = vi
+      .fn<WebServiceController['ensureStarted']>()
+      .mockRejectedValue(Object.assign(new Error('listen EACCES'), { code: 'EACCES' }))
+    const service = await RemoteAccessService.create({
+      repository,
+      ...deps,
+      broadcast: vi.fn()
+    })
+    service.attachWebController({ ...webController(), ensureStarted })
+
+    await expect(service.setMode('remoteit')).resolves.toMatchObject({
+      enabled: false,
+      lifecycle: 'error',
+      error: 'listen EACCES'
+    })
+    expect(ensureStarted).toHaveBeenCalledOnce()
+    expect(ensureStarted).toHaveBeenCalledWith(44100, { attached: true })
+    expect(deps.enableRemoteIt).not.toHaveBeenCalled()
+  })
+
   it('creates an isolated Browser service and enables its verified Persistent Public URL', async () => {
     const repository = await createRepository()
     const deps = createReadyDeps()
@@ -670,6 +726,46 @@ describe('RemoteAccessService', () => {
     expect(deps.enableRemoteIt).toHaveBeenCalledTimes(1)
     expect(controller.closeExternalConnections).toHaveBeenCalledWith()
     expect((await repository.load()).mode).toBe('off')
+  })
+
+  it('keeps persisted trusted browsers visible and revocable while access is off', async () => {
+    const repository = await createRepository()
+    const expiresAt = Date.now() + 60_000
+    await repository.save({
+      version: 5,
+      mode: 'off',
+      trustedBrowsers: [
+        {
+          id: 'trusted-browser',
+          browser: 'Safari',
+          platform: 'macOS',
+          tokenHash: '00',
+          createdAt: 1,
+          lastSeenAt: 2,
+          expiresAt
+        }
+      ]
+    })
+    const service = await RemoteAccessService.create({
+      repository,
+      ...createReadyDeps(),
+      broadcast: vi.fn()
+    })
+
+    expect(service.snapshot(true)).toMatchObject({
+      mode: 'off',
+      pendingRequests: [],
+      trustedBrowsers: [
+        {
+          id: 'trusted-browser',
+          expiresAt
+        }
+      ]
+    })
+    await expect(service.revoke('trusted-browser')).resolves.toMatchObject({
+      mode: 'off',
+      trustedBrowsers: []
+    })
   })
 
   it('marks remote access unavailable when the attached Web service stops and repairs on detect', async () => {

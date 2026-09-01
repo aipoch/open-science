@@ -46,6 +46,21 @@ describe('Notebook process environment', () => {
     expect(env.TEMP).toBeUndefined()
   })
 
+  it('preserves Windows system-directory metadata required by the protected launcher', () => {
+    expect(
+      buildNotebookKernelEnvironment('win32', {
+        ...source,
+        ProgramFiles: 'C:\\Program Files',
+        'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+        ProgramW6432: 'C:\\Program Files'
+      })
+    ).toMatchObject({
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      ProgramW6432: 'C:\\Program Files'
+    })
+  })
+
   it('projects a custom trust bundle to native Notebook clients', () => {
     expect(notebookTrustBundleEnvironment('/certs/complete.pem')).toEqual({
       CONDA_SSL_VERIFY: '/certs/complete.pem',

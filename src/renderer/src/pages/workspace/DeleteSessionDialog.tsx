@@ -75,7 +75,7 @@ const DeleteSessionDialog = ({
           <div className={dialogBodyClassName}>
             <AlertDialog.Description className={dialogDescriptionClassName}>
               {t(
-                'This will permanently delete "{{title}}". Artifacts created in this session will remain in the project. This action cannot be undone.',
+                'This will permanently delete "{{title}}". Artifacts created in this session will remain in the project. Files in its working folder are not deleted. This action cannot be undone.',
                 { title: dialogSession?.title ?? '' }
               )}
             </AlertDialog.Description>

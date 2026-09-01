@@ -7,14 +7,15 @@ import {
   createRuntimePresentationContext
 } from './runtime-event-presentation'
 
-const event = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
-  id: 'event-1',
-  timestamp: 1_710_000_000_000,
-  kind: 'message',
-  level: 'info',
-  sessionId: 'session-1',
-  ...overrides
-})
+const event = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent =>
+  ({
+    id: 'event-1',
+    timestamp: 1_710_000_000_000,
+    kind: 'message',
+    level: 'info',
+    sessionId: 'session-1',
+    ...overrides
+  }) as unknown as AcpRuntimeEvent
 
 describe('runtime event presentation reducer', () => {
   it('projects rich assistant messages and grouped tool updates through an injected store', () => {

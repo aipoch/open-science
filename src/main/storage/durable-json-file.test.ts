@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
   writeDurableJsonFile,
   type DurableJsonFileDependencies
@@ -169,6 +170,27 @@ describe('durable JSON file recovery', () => {
     await expect(readdir(root)).resolves.toEqual(['settings.json'])
   })
 
+  it('preserves a recovery-barrier temp when a valid primary exists', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'durable-json-primary-barrier-'))
+    roots.push(root)
+    const filePath = join(root, 'settings.json')
+    const temporaryPath = `${filePath}.1700000000000-1.tmp`
+    const primaryContents = '{"version":2}\n'
+    const futureContents = '{"version":3}\n'
+    await writeFile(filePath, primaryContents, 'utf8')
+    await writeFile(temporaryPath, futureContents, 'utf8')
+
+    const decode = (contents: string): { version: number } => {
+      const value = JSON.parse(contents) as { version: number }
+      if (value.version > 2) throw new DurableJsonRecoveryBarrierError('future version')
+      return value
+    }
+
+    await expect(readDurableJsonFile(filePath, decode)).rejects.toThrow('future version')
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(primaryContents)
+    await expect(readFile(temporaryPath, 'utf8')).resolves.toBe(futureContents)
+  })
+
   it('does not treat an unrelated tmp file as publication residue', async () => {
     const root = await mkdtemp(join(tmpdir(), 'durable-json-unrelated-temp-'))
     roots.push(root)
@@ -213,6 +235,43 @@ describe('durable JSON file recovery', () => {
     })
     await expect(readFile(filePath, 'utf8')).resolves.toBe('{"source":"recovered"}\n')
     await expect(readdir(root)).resolves.toEqual(['settings.json'])
+  })
+
+  it('preserves a recovery-barrier temp before promoting another candidate', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'durable-json-mixed-barrier-'))
+    roots.push(root)
+    const filePath = join(root, 'settings.json')
+    const currentTemporaryPath = `${filePath}.1700000001000-2.tmp`
+    const futureTemporaryPath = `${filePath}.1700000000000-1.tmp`
+    const currentContents = '{"version":2}\n'
+    const futureContents = '{"version":3}\n'
+    await writeFile(currentTemporaryPath, currentContents, 'utf8')
+    await writeFile(futureTemporaryPath, futureContents, 'utf8')
+    const now = new Date()
+    await utimes(
+      futureTemporaryPath,
+      new Date(now.getTime() - 2_000),
+      new Date(now.getTime() - 2_000)
+    )
+    await utimes(
+      currentTemporaryPath,
+      new Date(now.getTime() - 1_000),
+      new Date(now.getTime() - 1_000)
+    )
+
+    const decode = (contents: string): { version: number } => {
+      const value = JSON.parse(contents) as { version: number }
+      if (value.version > 2) throw new DurableJsonRecoveryBarrierError('future version')
+      return value
+    }
+
+    await expect(readDurableJsonFile(filePath, decode)).rejects.toThrow('future version')
+    await expect(readFile(currentTemporaryPath, 'utf8')).resolves.toBe(currentContents)
+    await expect(readFile(futureTemporaryPath, 'utf8')).resolves.toBe(futureContents)
+    await expect(readdir(root)).resolves.toEqual([
+      'settings.json.1700000000000-1.tmp',
+      'settings.json.1700000001000-2.tmp'
+    ])
   })
 
   it('does not mask a corrupt committed primary with a valid temp', async () => {

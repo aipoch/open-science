@@ -8,7 +8,7 @@ import { promisify } from 'node:util'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { DiscoveredInterpreter, EnvProvenance } from '../../shared/notebook-runtime'
 import { createLogger } from '../logger'
-import { isMacOSDeveloperToolsPythonStub, probeInterpreterVersion } from './python-command'
+import { isMacOSDeveloperToolsPythonStub, isPython3Version } from './python-command'
 import { parseRVersion, rHasJsonlite } from './r-command'
 import {
   condaActivatedPath,
@@ -34,7 +34,12 @@ const PROBE_EXEC_OPTS = { timeout: PROBE_TIMEOUT_MS, windowsHide: true } as cons
 // Upper bound on concurrent interpreter probes so a machine with many envs doesn't spawn a burst of
 // subprocesses / exhaust file descriptors; fast enough to keep discovery responsive.
 const PROBE_CONCURRENCY = 8
-const isWin = (): boolean => process.platform === 'win32'
+
+type DiscoveryEnvironmentDeps = {
+  platform?: NodeJS.Platform
+  env?: NodeJS.ProcessEnv
+  home?: string
+}
 
 // Injectable so discovery is unit-testable without a real machine. The real defaults enumerate PATH,
 // common install dirs, pyenv, conda/mamba envs, and the app's own runtime/envs.
@@ -65,17 +70,24 @@ const safeRealpath = (p: string): string => {
 }
 
 // Interpreter basenames per language and platform.
-const interpreterNames = (language: NotebookLanguage): string[] => {
-  if (language === 'python') return isWin() ? ['python.exe', 'python3.exe'] : ['python3', 'python']
-  return isWin() ? ['R.exe', 'Rscript.exe'] : ['R', 'Rscript']
+const interpreterNames = (language: NotebookLanguage, platform: NodeJS.Platform): string[] => {
+  if (language === 'python')
+    return platform === 'win32' ? ['python.exe', 'python3.exe'] : ['python3', 'python']
+  return platform === 'win32' ? ['R.exe', 'Rscript.exe'] : ['R', 'Rscript']
 }
 
 // `which -a <name>` (POSIX) / `where <name>` (Windows) → existing absolute paths, best-effort.
-const whichAll = async (name: string): Promise<string[]> => {
+const whichAll = async (
+  name: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv
+): Promise<string[]> => {
+  const options = { ...PROBE_EXEC_OPTS, env }
   try {
-    const { stdout } = isWin()
-      ? await execFileAsync('where', [name], PROBE_EXEC_OPTS)
-      : await execFileAsync('which', ['-a', name], PROBE_EXEC_OPTS)
+    const { stdout } =
+      platform === 'win32'
+        ? await execFileAsync('where', [name], options)
+        : await execFileAsync('which', ['-a', name], options)
     return stdout
       .split('\n')
       .map((line) => line.trim())
@@ -86,11 +98,18 @@ const whichAll = async (name: string): Promise<string[]> => {
 }
 
 // conda/mamba env prefixes, best-effort: `conda env list --json`, else scan common install roots.
-const listCondaPrefixes = async (): Promise<string[]> => {
+const listCondaPrefixes = async (
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+  home: string
+): Promise<string[]> => {
   const prefixes = new Set<string>()
   for (const bin of ['conda', 'mamba', 'micromamba']) {
     try {
-      const { stdout } = await execFileAsync(bin, ['env', 'list', '--json'], PROBE_EXEC_OPTS)
+      const { stdout } = await execFileAsync(bin, ['env', 'list', '--json'], {
+        ...PROBE_EXEC_OPTS,
+        env
+      })
       const parsed = JSON.parse(stdout) as { envs?: unknown }
       if (Array.isArray(parsed.envs)) {
         for (const env of parsed.envs) if (typeof env === 'string') prefixes.add(env)
@@ -103,37 +122,37 @@ const listCondaPrefixes = async (): Promise<string[]> => {
   // Scan known conda/mamba/micromamba install ROOTS directly — essential in a packaged GUI app where
   // conda itself isn't on PATH (so `env list` above found nothing). Each root's base prefix + every
   // dir under its envs/ is a candidate; a non-existent root is simply skipped.
-  const home = homedir()
   // Home-based roots exist on every platform (installers default to the user profile).
   const homeRoots = ['miniconda3', 'anaconda3', 'miniforge3', 'mambaforge', 'micromamba'].map((d) =>
     join(home, d)
   )
   // Plus per-platform SYSTEM install locations.
-  const systemRoots = isWin()
-    ? [
-        'C:\\ProgramData\\miniconda3',
-        'C:\\ProgramData\\anaconda3',
-        'C:\\ProgramData\\miniforge3',
-        'C:\\miniconda3',
-        'C:\\anaconda3',
-        join(process.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'), 'miniconda3'),
-        join(process.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'), 'anaconda3')
-      ]
-    : process.platform === 'darwin'
+  const systemRoots =
+    platform === 'win32'
       ? [
-          '/opt/miniconda3',
-          '/opt/anaconda3',
-          '/opt/homebrew/anaconda3',
-          '/opt/homebrew/Caskroom/miniconda/base',
-          '/opt/homebrew/Caskroom/miniforge/base'
+          'C:\\ProgramData\\miniconda3',
+          'C:\\ProgramData\\anaconda3',
+          'C:\\ProgramData\\miniforge3',
+          'C:\\miniconda3',
+          'C:\\anaconda3',
+          join(env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'), 'miniconda3'),
+          join(env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'), 'anaconda3')
         ]
-      : [
-          '/opt/conda', // common in Linux/Docker images
-          '/opt/miniconda3',
-          '/opt/anaconda3',
-          '/usr/local/miniconda3',
-          '/usr/local/anaconda3'
-        ]
+      : platform === 'darwin'
+        ? [
+            '/opt/miniconda3',
+            '/opt/anaconda3',
+            '/opt/homebrew/anaconda3',
+            '/opt/homebrew/Caskroom/miniconda/base',
+            '/opt/homebrew/Caskroom/miniforge/base'
+          ]
+        : [
+            '/opt/conda', // common in Linux/Docker images
+            '/opt/miniconda3',
+            '/opt/anaconda3',
+            '/usr/local/miniconda3',
+            '/usr/local/anaconda3'
+          ]
   const roots = [...homeRoots, ...systemRoots]
   for (const root of roots) {
     if (existsSync(root)) prefixes.add(root)
@@ -149,9 +168,9 @@ const listCondaPrefixes = async (): Promise<string[]> => {
 
 // Windows `py -0p`: the launcher lists installed pythons; each line ends with the interpreter path.
 // Best-effort (parsing is loose; on-device verification pending).
-const pyLauncherPaths = async (): Promise<string[]> => {
+const pyLauncherPaths = async (env: NodeJS.ProcessEnv): Promise<string[]> => {
   try {
-    const { stdout } = await execFileAsync('py', ['-0p'], PROBE_EXEC_OPTS)
+    const { stdout } = await execFileAsync('py', ['-0p'], { ...PROBE_EXEC_OPTS, env })
     return stdout
       .split('\n')
       .map((line) => {
@@ -165,12 +184,16 @@ const pyLauncherPaths = async (): Promise<string[]> => {
 }
 
 // The interpreter path for a language inside a conda-style env prefix.
-const prefixInterpreter = (prefix: string, language: NotebookLanguage): string =>
+const prefixInterpreter = (
+  prefix: string,
+  language: NotebookLanguage,
+  platform: NodeJS.Platform
+): string =>
   language === 'python'
-    ? isWin()
+    ? platform === 'win32'
       ? join(prefix, 'python.exe')
       : join(prefix, 'bin', 'python')
-    : rBin(prefix)
+    : rBin(prefix, platform)
 
 // A conda-forge Windows R interpreter lives at <prefix>\Lib\R\bin\R[script].exe and depends on
 // DLLs in <prefix>\Library\bin. Return only that interpreter's own prefix: external CRAN R paths do
@@ -190,9 +213,16 @@ export const windowsCondaPrefixForR = (
 // on PATH / in a conda root still surfaces as a card). `manualPaths` is a sync getter over a settings
 // snapshot; a missing/failed lookup contributes nothing.
 export const defaultCandidatePaths =
-  (runtimeRoot: string, manualPaths?: (language: NotebookLanguage) => string[]) =>
+  (
+    runtimeRoot: string,
+    manualPaths?: (language: NotebookLanguage) => string[],
+    runtimeDeps: DiscoveryEnvironmentDeps = {}
+  ) =>
   async (language: NotebookLanguage): Promise<string[]> => {
-    const names = interpreterNames(language)
+    const platform = runtimeDeps.platform ?? process.platform
+    const env = runtimeDeps.env ?? process.env
+    const home = runtimeDeps.home ?? homedir()
+    const names = interpreterNames(language, platform)
     const found = new Set<string>()
 
     // Targeted probes of KNOWN interpreter locations — never a recursive filesystem walk. A packaged
@@ -204,7 +234,7 @@ export const defaultCandidatePaths =
     for (const p of manualPaths?.(language) ?? []) found.add(p)
 
     // On PATH (`which -a` / `where`) — the happy path when launched from a shell.
-    for (const name of names) for (const p of await whichAll(name)) found.add(p)
+    for (const name of names) for (const p of await whichAll(name, platform, env)) found.add(p)
 
     // Well-known install bin dirs (Homebrew, /usr/local, /usr/bin) — reached even without a shell PATH.
     const commonBinDirs = ['/usr/bin', '/usr/local/bin', '/opt/homebrew/bin']
@@ -223,7 +253,8 @@ export const defaultCandidatePaths =
       for (const ver of readdirSync(frameworkGlobs)) {
         const p = prefixInterpreter(
           join(frameworkGlobs, ver, language === 'r' ? 'Resources' : ''),
-          language
+          language,
+          platform
         )
         if (existsSync(p)) found.add(p)
       }
@@ -233,7 +264,7 @@ export const defaultCandidatePaths =
 
     // pyenv versions (python only): pyenv shims are rarely on a GUI app's PATH.
     if (language === 'python') {
-      const versionsDir = join(homedir(), '.pyenv', 'versions')
+      const versionsDir = join(home, '.pyenv', 'versions')
       try {
         for (const ver of readdirSync(versionsDir)) {
           const p = join(versionsDir, ver, 'bin', 'python')
@@ -246,24 +277,24 @@ export const defaultCandidatePaths =
 
     // conda / mamba / micromamba envs: `env list --json` when a tool is reachable, else the conda-root
     // scan inside listCondaPrefixes (so envs are found even when conda itself is off the GUI PATH).
-    for (const prefix of await listCondaPrefixes()) {
-      const p = prefixInterpreter(prefix, language)
+    for (const prefix of await listCondaPrefixes(platform, env, home)) {
+      const p = prefixInterpreter(prefix, language, platform)
       if (existsSync(p)) found.add(p)
     }
 
     // Windows Python launcher: `py -0p` lists installed interpreters' paths.
-    if (language === 'python' && isWin()) for (const p of await pyLauncherPaths()) found.add(p)
+    if (language === 'python' && platform === 'win32')
+      for (const p of await pyLauncherPaths(env)) found.add(p)
 
     // Windows CRAN R standard installations: check Program Files and user-local directories for versioned
     // R installs (R-x.y.z). CRAN R doesn't register with a launcher like Python's `py`, so we enumerate
     // the standard install roots directly. Each version may have 64-bit (bin/x64/R.exe, most common) or
     // fallback (bin/R.exe) layouts.
-    if (language === 'r' && isWin()) {
-      const home = homedir()
+    if (language === 'r' && platform === 'win32') {
       const programFiles = [
-        process.env.ProgramFiles ?? 'C:\\Program Files',
-        process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)',
-        join(process.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'), 'Programs')
+        env.ProgramFiles ?? 'C:\\Program Files',
+        env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)',
+        join(env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'), 'Programs')
       ]
       for (const installRoot of programFiles) {
         const rRoot = join(installRoot, 'R')
@@ -313,8 +344,8 @@ export const defaultCandidatePaths =
       for (const directory of readdirSync(appEnvsDir)) {
         const name = logicalEnvNameFromDirectory(directory)
         const prefix = join(appEnvsDir, directory)
-        if (prefix !== envPrefix(runtimeRoot, name)) continue
-        const p = language === 'python' ? pythonBin(prefix) : rBin(prefix)
+        if (prefix !== envPrefix(runtimeRoot, name, platform)) continue
+        const p = language === 'python' ? pythonBin(prefix, platform) : rBin(prefix, platform)
         if (existsSync(p)) found.add(p)
       }
     } catch {
@@ -344,10 +375,14 @@ export const collapseRscript = (paths: string[]): string[] => {
 
 // Classifies an interpreter by whether it lives under runtime/envs (app-owned) and, if so, whether it
 // is a default (app-managed) or a named env (agent-created); anything else is the user's own.
-const classify = (interpreterPath: string, runtimeRoot: string): EnvProvenance => {
+const classify = (
+  interpreterPath: string,
+  runtimeRoot: string,
+  platform: NodeJS.Platform
+): EnvProvenance => {
   const comparisonKey = (path: string): string => {
     const normalized = safeRealpath(path).replaceAll('\\', '/').replace(/\/+$/, '')
-    return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+    return platform === 'win32' ? normalized.toLowerCase() : normalized
   }
   const envsRoot = comparisonKey(join(runtimeRoot, 'envs'))
   const real = comparisonKey(interpreterPath)
@@ -399,7 +434,7 @@ export const discoverInterpreters = async (
     envId: string
   }): Promise<DiscoveredInterpreter> => {
     const version = await deps.probeVersion(path, language)
-    const provenance = classify(path, deps.runtimeRoot)
+    const provenance = classify(path, deps.runtimeRoot, deps.platform ?? process.platform)
     const conda = condaEnvName(path)
     let runnable: boolean
     let detail: string | undefined
@@ -449,11 +484,15 @@ export const rscriptFor = (rInterpreterPath: string): string =>
 type DiscoveryExec = (
   file: string,
   args: readonly string[],
-  options: { timeout: number; windowsHide: boolean; env?: NodeJS.ProcessEnv }
+  options: {
+    timeout: number
+    windowsHide: boolean
+    env?: NodeJS.ProcessEnv
+    shell?: boolean
+  }
 ) => Promise<{ stdout: string; stderr: string }>
 
-type DefaultDiscoveryRuntimeDeps = {
-  platform?: NodeJS.Platform
+type DefaultDiscoveryRuntimeDeps = DiscoveryEnvironmentDeps & {
   exec?: DiscoveryExec
 }
 
@@ -463,6 +502,7 @@ export const defaultDiscoveryDeps = (
   runtimeDeps: DefaultDiscoveryRuntimeDeps = {}
 ): DiscoveryDeps => {
   const platform = runtimeDeps.platform ?? process.platform
+  const env = runtimeDeps.env ?? process.env
   const exec: DiscoveryExec =
     runtimeDeps.exec ??
     (async (file, args, options) => {
@@ -479,17 +519,24 @@ export const defaultDiscoveryDeps = (
           timeout,
           windowsHide: true,
           env: {
-            ...process.env,
-            PATH: condaActivatedPath(prefix, process.env.PATH, platform)
+            ...env,
+            PATH: condaActivatedPath(prefix, env.PATH, platform)
           }
         }
-      : { timeout, windowsHide: true }
+      : { timeout, windowsHide: true, env }
   }
   return {
-    candidatePaths: defaultCandidatePaths(runtimeRoot, manualPaths),
+    candidatePaths: defaultCandidatePaths(runtimeRoot, manualPaths, runtimeDeps),
     probeVersion: async (interpreterPath, language) => {
-      if (language === 'python') return probeInterpreterVersion(interpreterPath)
       try {
+        if (language === 'python') {
+          const { stdout, stderr } = await exec(interpreterPath, ['--version'], {
+            ...probeOptions(interpreterPath),
+            shell: platform === 'win32'
+          })
+          const output = `${stdout}\n${stderr}`
+          return isPython3Version(output) ? output.trim().replace(/^Python\s+/i, '') : undefined
+        }
         // No shell: execFile runs the interpreter directly, so a path with spaces/metacharacters is
         // handled safely (shell:true would break "C:\Program Files\…" and allow injection).
         const { stdout, stderr } = await exec(

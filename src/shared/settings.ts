@@ -37,6 +37,7 @@ export type ProviderType =
 // which setup choice produced it so editing an imported profile does not masquerade as an isolated
 // sign-in and accidentally discard its imported loopback route.
 export type CodexSubscriptionAuthMode = 'imported' | 'isolated'
+export type CodexSubscriptionTransport = 'auto' | 'https' | 'websocket'
 
 // Stored Codex subscriptions share one runtime type, while renderer surfaces still need the setup
 // choice. Legacy codex-shared views have no discriminator, so their type remains the fallback.
@@ -211,16 +212,21 @@ export const isProviderUsableByFramework = (
 // The endpoint to actually use for a (provider, framework) pair. When both sides support OpenAI
 // /v1/chat/completions it wins (per product decision); otherwise the shared Anthropic endpoint; else
 // undefined when the pair is incompatible.
-export const preferredEndpoint = (
+export const preferredEndpoint = <const FrameworkEndpoints extends readonly ChatApiEndpoint[]>(
   endpoints: readonly ChatApiEndpoint[],
-  frameworkEndpoints: readonly ChatApiEndpoint[]
-): ChatApiEndpoint | undefined => {
-  const shared = endpoints.filter((endpoint) => frameworkEndpoints.includes(endpoint))
+  frameworkEndpoints: FrameworkEndpoints
+): FrameworkEndpoints[number] | undefined => {
+  const shared: FrameworkEndpoints[number][] = frameworkEndpoints.filter((endpoint) =>
+    endpoints.includes(endpoint)
+  )
 
   if (shared.length === 0) return undefined
 
-  if (shared.includes('responses')) return 'responses'
-  return shared.includes('openai') ? 'openai' : 'anthropic'
+  return (
+    shared.find((endpoint) => endpoint === 'responses') ??
+    shared.find((endpoint) => endpoint === 'openai') ??
+    shared.find((endpoint) => endpoint === 'anthropic')
+  )
 }
 
 // Detected claude executable metadata, persisted so later spawns skip re-detection.
@@ -287,6 +293,7 @@ export type ProviderView = {
   id: string
   type: ProviderType
   codexAuthMode?: CodexSubscriptionAuthMode
+  codexTransport?: CodexSubscriptionTransport
   name: string
   // Which chat APIs this provider's endpoint speaks; drives per-framework availability. Absent ⇒
   // treat as ['anthropic'] (every legacy provider).
@@ -637,6 +644,7 @@ export type Preflight = {
 // typed a new one; leaving it undefined on edit keeps the previously stored key.
 export type ProviderDraft = {
   type: ProviderType
+  codexTransport?: CodexSubscriptionTransport
   name?: string
   baseUrl?: string
   model?: string
@@ -1469,6 +1477,7 @@ export type DeviceCredentialView = {
   displayName: string
   kind: DeviceCredentialKind
   status: 'stored' | 'connected' | 'disconnected'
+  needsSecret: boolean
   resourceUri?: string
   transport?: DeviceOAuthTransport
   oauth?: DeviceOAuthRegistration

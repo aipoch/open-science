@@ -67,7 +67,8 @@ export const exportRuntimeLocks = async (
     if (seen.has(name)) continue
     seen.add(name)
     // Skip mid-creation leftovers with no interpreter — nothing to reconstruct.
-    if (!existsSync(pythonBin(prefix)) && !existsSync(rBin(prefix))) continue
+    if (!existsSync(pythonBin(prefix, deps.platform)) && !existsSync(rBin(prefix, deps.platform)))
+      continue
     try {
       const raw = await deps.capture([
         deps.mm,

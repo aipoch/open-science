@@ -643,6 +643,24 @@ describe('workspace session controller', () => {
     expect(hook.result.current.lifecycle.canArchive(active)).toBe(true)
   })
 
+  it('does not archive while context compaction owns the Session', () => {
+    const active = session()
+    const updateSessionArchive = vi.fn()
+    useSessionStore.setState({
+      sessions: [active],
+      selectedSessionId: active.id,
+      updateSessionArchive
+    })
+    useSessionStore.getState().beginCompaction(active.id)
+    const compacting = useSessionStore.getState().sessions[0]
+    const hook = renderController({ activeSession: compacting })
+    mounted.push(hook)
+
+    expect(hook.result.current.lifecycle.canArchive(compacting)).toBe(false)
+    act(() => hook.result.current.actions.archive(compacting))
+    expect(updateSessionArchive).not.toHaveBeenCalled()
+  })
+
   it('does not archive an idle Session while a current child Attempt is running on any branch', () => {
     const active = sessionWithRunningChild()
     const graph = active.conversationGraph

@@ -39,14 +39,16 @@ import {
 } from './workspace-runtime-event-owner'
 
 // Creates a runtime event with stable defaults for store adapter tests.
-const createEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
-  id: 'event-1',
-  timestamp: 1710000000000,
-  kind: 'message',
-  level: 'info',
-  sessionId: 'transport-session-1',
-  ...overrides
-})
+// Runtime boundary tests deliberately feed incomplete provider/IPC events through defensive guards.
+const createEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent =>
+  ({
+    id: 'event-1',
+    timestamp: 1710000000000,
+    kind: 'message',
+    level: 'info',
+    sessionId: 'transport-session-1',
+    ...overrides
+  }) as unknown as AcpRuntimeEvent
 
 type SessionSaveBoundary = (
   session: Parameters<typeof saveSessionInOrder>[0]
@@ -1530,7 +1532,7 @@ describe('workspace runtime events', () => {
       }),
       mcpServerId: 'python',
       previewToolKind: 'mcp-component'
-    } as AcpRuntimeEvent)
+    } as unknown as AcpRuntimeEvent)
 
     expect(wasApplied).toBe(true)
     expect(useSessionStore.getState().sessions[0].activities).toEqual([

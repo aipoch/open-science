@@ -4,6 +4,16 @@ pnpm-lock.yaml
 LICENSE.md
 tsconfig.json
 tsconfig.*.json
+
+# Local caches, scratch trees, and linked worktrees are not repository source.
+.pnpm-store
+tmp
+.claude
+.worktree
+.codex
+.scratch
+.superpowers
+
 # Auditable upstream snapshot and native sources retain their original formatting.
 packages/notebook-network-sandbox/upstream
 packages/notebook-network-sandbox/vendor

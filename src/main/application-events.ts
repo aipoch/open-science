@@ -2,7 +2,7 @@ import type {
   AcpAgentRuntimeUpdate,
   AcpPermissionRequest,
   AcpRuntimeEvent,
-  AcpStateSnapshot
+  AcpStateUpdate
 } from '../shared/acp'
 import type { CompletionGateLifecycleEvent } from './agents/completion-gate'
 import type { ComputeApprovalRequest, JobSummary } from '../shared/compute'
@@ -49,7 +49,7 @@ const log = createLogger('application-events')
 // signals and generated Web-only channels stay on their existing transports until their owner moves
 // them deliberately.
 export type ApplicationEventMap = {
-  'acp:state': AcpStateSnapshot
+  'acp:state': AcpStateUpdate
   'acp:event': readonly AcpRuntimeEvent[]
   'acp:agent-runtime-update': AcpAgentRuntimeUpdate
   'acp:permission-request': AcpPermissionRequest

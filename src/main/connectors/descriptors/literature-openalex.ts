@@ -446,7 +446,7 @@ const worksSortParam = (sort: string): string | null =>
 
 // ---- the 7 tools ----------------------------------------------------------------------------
 
-export const OPENALEX_LITERATURE_TOOLS: ToolDescriptor[] = [
+const OPENALEX_LITERATURE_TOOL_DEFINITIONS: ToolDescriptor[] = [
   {
     id: 'openalex_search_works',
     connector: 'literature',
@@ -820,4 +820,11 @@ export const OPENALEX_LITERATURE_TOOLS: ToolDescriptor[] = [
       }
     }
   }
-].map((descriptor) => ({ ...descriptor, requiredCredential: 'openalex' }))
+]
+
+export const OPENALEX_LITERATURE_TOOLS: ToolDescriptor[] = OPENALEX_LITERATURE_TOOL_DEFINITIONS.map(
+  (descriptor) => ({
+    ...descriptor,
+    requiredCredential: 'openalex'
+  })
+)

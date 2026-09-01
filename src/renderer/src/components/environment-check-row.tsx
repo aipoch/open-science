@@ -16,12 +16,12 @@ import { cn } from '@/lib/utils'
 // Shared check-row rendering: the onboarding environment step and the settings Network panel
 // present the same "one requirement, one row" shape (status-tinted icon tile, label, status
 // pill, summary, optional detail).
-const CHECK_ICONS = {
+const CHECK_ICONS: Partial<Record<EnvironmentCheckId, typeof MonitorCog>> = {
   system: MonitorCog,
   storage: HardDrive,
   'secure-storage': KeyRound,
   'install-network': Wifi
-} satisfies Partial<Record<EnvironmentCheckId, typeof MonitorCog>>
+}
 
 const STATUS_COPY = {
   passed: 'Ready',

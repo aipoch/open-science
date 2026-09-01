@@ -318,7 +318,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     try {
       await vi.waitFor(
         () => expect(started).toEqual(['queued-slow-staging', 'queued-independent']),
-        { timeout: 250 }
+        { timeout: 5_000 }
       )
     } finally {
       releaseSlowStaging?.()

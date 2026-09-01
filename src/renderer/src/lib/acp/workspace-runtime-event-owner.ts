@@ -57,6 +57,8 @@ type WorkspaceRuntimeEventSnapshot = Pick<
   'agentPromptInFlightSessionIds' | 'events' | 'revision'
 >
 
+const WORKSPACE_RUNTIME_EVENT_RETRY_DELAYS_MS = [250, 1_000] as const
+
 const processVisibleWorkspaceRuntimeEvents = async (
   events: AcpRuntimeEvent[],
   processedEventIds: Set<string>,
@@ -121,12 +123,15 @@ const createWorkspaceRuntimeEventProcessor = (
 ): WorkspaceRuntimeEventProcessor => {
   type EventLane = {
     acceptedEvents: Map<string, AcpRuntimeEvent>
+    failedEventAttempts: Map<string, number>
     failedEventIds: Set<string>
     processedEventIds: Set<string>
     processingEventIds: Set<string>
     drainInFlight?: Promise<void>
     drainAgain: boolean
+    drainRetriesImmediately: boolean
     presentation: WorkspacePresentationLane
+    retryTimer?: ReturnType<typeof setTimeout>
   }
 
   const unscopedEventLane = Symbol('unscoped-workspace-runtime-events')
@@ -143,10 +148,12 @@ const createWorkspaceRuntimeEventProcessor = (
     if (!lane) {
       lane = {
         acceptedEvents: new Map<string, AcpRuntimeEvent>(),
+        failedEventAttempts: new Map<string, number>(),
         failedEventIds: new Set<string>(),
         processedEventIds: new Set<string>(),
         processingEventIds: new Set<string>(),
         drainAgain: false,
+        drainRetriesImmediately: false,
         presentation: presentationBuffer.createLane()
       }
       eventLanes.set(laneKey, lane)
@@ -158,6 +165,7 @@ const createWorkspaceRuntimeEventProcessor = (
   const releaseProcessedEvent = (lane: EventLane, eventId: string): void => {
     if (latestEventsById.has(eventId) || !lane.processedEventIds.has(eventId)) return
     lane.acceptedEvents.delete(eventId)
+    lane.failedEventAttempts.delete(eventId)
     lane.failedEventIds.delete(eventId)
     lane.processedEventIds.delete(eventId)
     lane.processingEventIds.delete(eventId)
@@ -165,7 +173,9 @@ const createWorkspaceRuntimeEventProcessor = (
 
   const cleanEventLane = (laneKey: string | symbol, lane: EventLane): void => {
     for (const eventId of lane.acceptedEvents.keys()) releaseProcessedEvent(lane, eventId)
-    if (lane.acceptedEvents.size === 0 && !lane.drainInFlight) eventLanes.delete(laneKey)
+    if (lane.acceptedEvents.size === 0 && !lane.drainInFlight && !lane.retryTimer) {
+      eventLanes.delete(laneKey)
+    }
   }
 
   const releaseEvictedEvent = (event: AcpRuntimeEvent): void => {
@@ -173,16 +183,43 @@ const createWorkspaceRuntimeEventProcessor = (
     const lane = eventLanes.get(laneKey)
     if (!lane) return
     releaseProcessedEvent(lane, event.id)
-    if (lane.acceptedEvents.size === 0 && !lane.drainInFlight) eventLanes.delete(laneKey)
+    if (lane.acceptedEvents.size === 0 && !lane.drainInFlight && !lane.retryTimer) {
+      eventLanes.delete(laneKey)
+    }
   }
 
   const pendingLaneEvents = (lane: EventLane): AcpRuntimeEvent[] =>
-    [...lane.acceptedEvents.values()].filter(
-      (event) => !lane.processedEventIds.has(event.id) && !lane.processingEventIds.has(event.id)
-    )
+    lane.retryTimer
+      ? []
+      : [...lane.acceptedEvents.values()].filter(
+          (event) => !lane.processedEventIds.has(event.id) && !lane.processingEventIds.has(event.id)
+        )
 
-  const drainLane = async (laneKey: string | symbol): Promise<void> => {
+  const cancelLaneRetry = (lane: EventLane): void => {
+    if (!lane.retryTimer) return
+    clearTimeout(lane.retryTimer)
+    lane.retryTimer = undefined
+  }
+
+  const scheduleLaneRetry = (laneKey: string | symbol, lane: EventLane, attempt: number): void => {
+    if (lane.retryTimer) return
+    const delay = WORKSPACE_RUNTIME_EVENT_RETRY_DELAYS_MS[attempt - 1]
+    if (delay === undefined) return
+    lane.retryTimer = setTimeout(() => {
+      lane.retryTimer = undefined
+      void drainLane(laneKey)
+    }, delay)
+  }
+
+  const drainLane = async (
+    laneKey: string | symbol,
+    drainRetriesImmediately = false
+  ): Promise<void> => {
     const lane = getEventLane(laneKey)
+    if (drainRetriesImmediately) {
+      lane.drainRetriesImmediately = true
+      cancelLaneRetry(lane)
+    }
 
     if (lane.drainInFlight) {
       lane.drainAgain = true
@@ -192,43 +229,85 @@ const createWorkspaceRuntimeEventProcessor = (
     lane.drainInFlight = (async () => {
       do {
         lane.drainAgain = false
+        if (lane.drainRetriesImmediately) cancelLaneRetry(lane)
         const pendingBeforeWait = pendingLaneEvents(lane)
         await presentationBuffer.prepare(lane.presentation, pendingBeforeWait)
         const selectedEvents = presentationBuffer.select(lane.presentation, pendingLaneEvents(lane))
         if (selectedEvents.length === 0) continue
+        let releasedFailedEvictedEvent = false
+
+        const applyAcceptedEvents = async (
+          events: AcpRuntimeEvent[],
+          apply: () => Promise<boolean>
+        ): Promise<boolean> => {
+          const previouslyFailedEventIds = new Set(
+            events.filter((event) => lane.failedEventIds.has(event.id)).map((event) => event.id)
+          )
+          try {
+            const applied = await apply()
+            for (const event of events) {
+              lane.failedEventAttempts.delete(event.id)
+              lane.failedEventIds.delete(event.id)
+            }
+            if (lane.failedEventAttempts.size === 0) cancelLaneRetry(lane)
+            return applied
+          } catch (error) {
+            let retryAttempt: number | undefined
+            let releasedInThisApply = false
+            for (const event of events) {
+              const attempt = (lane.failedEventAttempts.get(event.id) ?? 0) + 1
+              lane.failedEventAttempts.set(event.id, attempt)
+              const isVisible = latestEventsById.has(event.id)
+              if (previouslyFailedEventIds.has(event.id) && !isVisible) {
+                lane.acceptedEvents.delete(event.id)
+                lane.failedEventAttempts.delete(event.id)
+                lane.failedEventIds.delete(event.id)
+                releasedFailedEvictedEvent = true
+                releasedInThisApply = true
+              } else if (attempt > WORKSPACE_RUNTIME_EVENT_RETRY_DELAYS_MS.length) {
+                lane.failedEventAttempts.delete(event.id)
+                lane.failedEventIds.delete(event.id)
+                // Quarantine terminal ids even if another member of this batch remains retryable.
+                lane.processedEventIds.add(event.id)
+              } else {
+                lane.failedEventIds.add(event.id)
+                retryAttempt = Math.min(retryAttempt ?? attempt, attempt)
+              }
+            }
+
+            if (retryAttempt !== undefined) {
+              scheduleLaneRetry(laneKey, lane, retryAttempt)
+            } else if (lane.failedEventAttempts.size === 0) {
+              cancelLaneRetry(lane)
+            }
+            if (retryAttempt !== undefined || releasedInThisApply) throw error
+            return false
+          }
+        }
 
         await processVisibleWorkspaceRuntimeEvents(
           selectedEvents,
           lane.processedEventIds,
-          async (event) => {
-            const hadFailed = lane.failedEventIds.has(event.id)
-            try {
-              const applied = await applyEvent(event)
-              lane.failedEventIds.delete(event.id)
-              return applied
-            } catch (error) {
-              const isVisible = latestEventsById.has(event.id)
-              if (hadFailed && !isVisible) {
-                lane.acceptedEvents.delete(event.id)
-                lane.failedEventIds.delete(event.id)
-              } else {
-                lane.failedEventIds.add(event.id)
-              }
-              throw error
-            }
-          },
+          (event) => applyAcceptedEvents([event], () => applyEvent(event)),
           lane.processingEventIds,
           {
-            applyEventBatch: options.applyEventBatch,
+            applyEventBatch: options.applyEventBatch
+              ? (events) => applyAcceptedEvents(events, () => options.applyEventBatch!(events))
+              : undefined,
             retainedEvents: [...lane.acceptedEvents.values()]
           }
         )
         const madeProgress = selectedEvents.some((event) => lane.processedEventIds.has(event.id))
         for (const event of selectedEvents) releaseProcessedEvent(lane, event.id)
         const hasPending = pendingLaneEvents(lane).length > 0
-        if (madeProgress) {
+        if (lane.drainRetriesImmediately && lane.retryTimer) {
+          cancelLaneRetry(lane)
+          lane.drainAgain = true
+        } else if (madeProgress) {
           presentationBuffer.recordProgress(lane.presentation, selectedEvents, hasPending)
           if (hasPending) lane.drainAgain = true
+        } else if (releasedFailedEvictedEvent && hasPending) {
+          lane.drainAgain = true
         }
       } while (lane.drainAgain)
     })()
@@ -237,7 +316,11 @@ const createWorkspaceRuntimeEventProcessor = (
       await lane.drainInFlight
     } finally {
       lane.drainInFlight = undefined
-      if (lane.acceptedEvents.size === 0) eventLanes.delete(laneKey)
+      lane.drainRetriesImmediately = false
+      if (lane.acceptedEvents.size === 0) {
+        cancelLaneRetry(lane)
+        eventLanes.delete(laneKey)
+      }
     }
   }
 
@@ -306,7 +389,7 @@ const createWorkspaceRuntimeEventProcessor = (
         const lane = eventLanes.get(sessionId)
         if (lane) {
           presentationBuffer.force(lane.presentation)
-          await drainLane(sessionId)
+          await drainLane(sessionId, true)
         }
         return
       }
@@ -317,7 +400,7 @@ const createWorkspaceRuntimeEventProcessor = (
         for (const lane of eventLanes.values()) {
           presentationBuffer.force(lane.presentation)
         }
-        await Promise.all([...eventLanes.keys()].map((laneKey) => drainLane(laneKey)))
+        await Promise.all([...eventLanes.keys()].map((laneKey) => drainLane(laneKey, true)))
       } while (drainedVersion !== acceptedEventVersion)
     }
   }
