@@ -4,7 +4,8 @@
 // standalone SpecialistPicker, and ComputeHostSelector. A primary-color dot on the trigger
 // marks any deviation from the defaults (profile 'ask', auto-review off); session grants
 // keep their own count pill. The first-level menu shows the current permission level as a
-// borderless colored capsule (ask = neutral, auto = blue, full = warning amber); picking a
+// borderless colored capsule (ask = neutral, auto = blue, full = warning amber); Delegation Off
+// also marks the trigger as non-default. Picking a
 // level lives in a submenu. Specialist and Compute are hover-expanded submenus below
 // auto-review: Specialist offers None / personal specialists / Create new…; Compute folds
 // the SSH host list and "Manage compute…" together. Both read from global stores.
@@ -22,6 +23,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  GitFork,
   ScanEye,
   Server,
   Settings,
@@ -78,12 +80,17 @@ type ComposerAgentControlsMenuProps = {
   grants?: AcpPermissionGrant[]
   autoReviewEnabled: boolean
   memoryEnabled?: boolean
+  delegationEnabled?: boolean
+  delegationPending?: boolean
+  delegationHasLiveAttempts?: boolean
   // Read-only while a session is running: the menu stays openable and the permission
   // submenu still expands on hover, but profiles, auto-review, and compute stay immutable.
   readOnly?: boolean
   // Memory may be reconfigured again after context replacement while transcript replay is pending.
   memoryReadOnly?: boolean
   memoryDisabledReason?: string
+  delegationReadOnly?: boolean
+  delegationDisabledReason?: string
   // Auto-review is a durable preference and does not depend on the provider transcript state.
   autoReviewReadOnly?: boolean
   // Permission mode remains independently editable during a running prompt.
@@ -94,6 +101,7 @@ type ComposerAgentControlsMenuProps = {
   onProfileChange: (profile: PermissionProfileId) => void
   onAutoReviewChange: (enabled: boolean) => void
   onMemoryChange?: (enabled: boolean) => void
+  onDelegationChange?: (enabled: boolean) => void
   onRevokeGrant?: (categoryKey: string) => void
   onClearGrants?: () => void
   // Compute hosts: the SSH section is appended below auto-review. Optional so the menu still
@@ -160,9 +168,14 @@ const ComposerAgentControlsMenu = ({
   grants,
   autoReviewEnabled,
   memoryEnabled = true,
+  delegationEnabled = true,
+  delegationPending = false,
+  delegationHasLiveAttempts = false,
   readOnly = false,
   memoryReadOnly = readOnly,
   memoryDisabledReason,
+  delegationReadOnly = readOnly,
+  delegationDisabledReason,
   autoReviewReadOnly = readOnly,
   permissionProfileReadOnly = readOnly,
   grantActionsReadOnly = readOnly,
@@ -170,6 +183,7 @@ const ComposerAgentControlsMenu = ({
   onProfileChange,
   onAutoReviewChange,
   onMemoryChange = () => undefined,
+  onDelegationChange = () => undefined,
   onRevokeGrant,
   onClearGrants,
   enabledComputeHosts,
@@ -203,7 +217,8 @@ const ComposerAgentControlsMenu = ({
   const isNonDefault =
     profile !== DEFAULT_PERMISSION_PROFILE ||
     autoReviewEnabled ||
-    (!memoryEnabled && !memoryDisabledReason)
+    (!memoryEnabled && !memoryDisabledReason) ||
+    !delegationEnabled
   const autoReviewItemDisabled = autoReviewReadOnly || autoReviewDisabled
 
   useEffect(() => {
@@ -342,6 +357,42 @@ const ComposerAgentControlsMenu = ({
     </>
   )
 
+  const delegationDescription =
+    delegationDisabledReason ??
+    (delegationHasLiveAttempts
+      ? t(
+          'Turning Delegation off only blocks new Subagents. Existing Subagents continue running and remain available.'
+        )
+      : delegationEnabled
+        ? t('Allow the Main Agent to create new Subagents.')
+        : t('Block new Subagents. Existing Subagents are unaffected.'))
+
+  const delegationItem = (
+    <DropdownMenuItem
+      disabled={delegationPending}
+      aria-disabled={delegationPending ? undefined : delegationReadOnly}
+      className="items-center gap-2 px-2 py-1.5 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+      onSelect={(event) => {
+        event.preventDefault()
+        if (!delegationPending && !delegationReadOnly) {
+          onDelegationChange(!delegationEnabled)
+        }
+      }}
+    >
+      <GitFork className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
+        {t('Delegation')}
+      </span>
+      <Switch
+        size="sm"
+        checked={delegationEnabled}
+        tabIndex={-1}
+        aria-hidden="true"
+        className="pointer-events-none"
+      />
+    </DropdownMenuItem>
+  )
+
   return (
     <>
       <DropdownMenu open={menuOpen} onOpenChange={handleOpenChange}>
@@ -352,10 +403,14 @@ const ComposerAgentControlsMenu = ({
             ref={controlsTriggerRef}
             type="button"
             className={triggerButtonClassName}
-            aria-label={t('Agent controls: {{profile}}, auto-review {{autoReview}}', {
-              profile: t(selectedProfile.labelKey),
-              autoReview: autoReviewEnabled ? 'on' : 'off'
-            })}
+            aria-label={t(
+              'Agent controls: {{profile}}, auto-review {{autoReview}}, Delegation {{delegation}}',
+              {
+                profile: t(selectedProfile.labelKey),
+                autoReview: autoReviewEnabled ? t('On') : t('Off'),
+                delegation: delegationEnabled ? t('On') : t('Off')
+              }
+            )}
             data-testid="composer-controls-trigger"
           >
             <SlidersHorizontal className="size-4 shrink-0" strokeWidth={2} aria-hidden="true" />
@@ -555,6 +610,14 @@ const ComposerAgentControlsMenu = ({
                   />
                 </DropdownMenuItem>
               </AgentControlMenuItemTooltip>
+
+              {delegationPending ? (
+                delegationItem
+              ) : (
+                <AgentControlMenuItemTooltip description={delegationDescription}>
+                  {delegationItem}
+                </AgentControlMenuItemTooltip>
+              )}
 
               {/* Specialist + Compute are one resource-selection group: a single divider leads
                   the group (above Specialist when present, above Compute otherwise), so the two

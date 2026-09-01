@@ -490,7 +490,8 @@ describe('Session persistence coordinator architecture', () => {
       'permissionGrants:optional',
       'log:defaulted',
       'computeJobs:optional',
-      'onDelegatedWorkSessionUpdated:optional'
+      'onDelegatedWorkSessionUpdated:optional',
+      'onDelegationPolicyUpdated:optional'
     ])
     expect(exportedNames(facadeFile, 'value')).toEqual(
       ['SessionPersistenceCoordinator', 'SessionRuntimeContextRevisionConflictError'].sort()

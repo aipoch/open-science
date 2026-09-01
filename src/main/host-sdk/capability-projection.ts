@@ -41,6 +41,7 @@ type HostCapabilityProjectionContext = Readonly<{
   hasWorkspace: boolean
   allowsMethod(method: string): boolean
   delegatedWorkReady: boolean
+  delegationAllowed: boolean
   services: Readonly<{
     mcp: boolean
     compute: boolean
@@ -99,7 +100,8 @@ const projectHostCapabilities = (
       context.hasWorkspace &&
       allows('viewImageCall') &&
       context.services.viewImage,
-    delegate: routeReady && rootOnly(context, context.services.delegate),
+    delegate:
+      context.delegationAllowed && routeReady && rootOnly(context, context.services.delegate),
     children: routeReady && rootOnly(context, context.services.children),
     collect: routeReady && rootOnly(context, context.services.collect),
     stopChild: routeReady && rootOnly(context, context.services.stopChild),

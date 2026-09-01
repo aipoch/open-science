@@ -13,6 +13,7 @@ import type { PermissionProfileId } from '../../../shared/permission-profiles'
 import {
   INTERRUPTED_SESSION_ERROR,
   materializeSessionConversationGraph,
+  normalizeDelegationPolicy,
   sanitizeActivityGroup,
   sanitizePlanHistoryProjections,
   sessionRevision,
@@ -82,6 +83,9 @@ export type ChatSession = Omit<
   activePlanProjection?: ActivePlanProjection
   planHistoryProjections?: ActivePlanProjection[]
   isPending?: boolean
+  // Transient: the first send has captured Delegation, but Main has not acknowledged the new
+  // Session policy yet. Binding an Agent Session does not make this policy authoritative.
+  delegationPolicyAuthorityPending?: true
   // Transient: renameSession wrote a title that disk has not acknowledged.
   unsavedTitle?: true
   interrupted?: boolean
@@ -131,6 +135,8 @@ export type ApplyDurableSessionProjectionInput = {
 }
 
 export type SessionPersistenceActions = {
+  applyDelegationPolicyAuthority: (session: PersistedChatSession) => void
+  applyDurableSessionProjection: (input: ApplyDurableSessionProjectionInput) => void
   hydrateSessions: (
     sessions: PersistedChatSession[],
     manifest?: PersistedSessionManifest,
@@ -143,7 +149,6 @@ export type SessionPersistenceActions = {
     selection?: SessionHydrationSelection
   ) => void
   upsertPersistedSession: (session: PersistedChatSession) => void
-  applyDurableSessionProjection: (input: ApplyDurableSessionProjectionInput) => void
 }
 
 const externallyHydratedSessionAuthorities = new WeakMap<ChatSession, PersistedChatSession>()
@@ -183,6 +188,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     activities,
     activityGroups,
     isPending,
+    delegationPolicyAuthorityPending,
     unsavedTitle,
     interrupted,
     fixLoopActive,
@@ -210,6 +216,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
   } = session
 
   void isPending
+  void delegationPolicyAuthorityPending
   void unsavedTitle
   void interrupted
   void fixLoopActive
@@ -389,9 +396,49 @@ const projectDurablePlanAuthority = (
   }
 }
 
+const projectDelegationPolicyAuthority = (
+  current: ChatSession,
+  authority: PersistedChatSession
+): ChatSession | undefined => {
+  if (sessionRevision(authority) < sessionRevision(current)) return undefined
+
+  return {
+    ...current,
+    revision: sessionRevision(authority),
+    delegationPolicy: normalizeDelegationPolicy(authority.delegationPolicy),
+    delegationPolicyAuthorityPending: undefined,
+    updatedAt: Math.max(current.updatedAt, authority.updatedAt)
+  }
+}
+
 export const createSessionPersistenceOwner = <State extends SessionStoreData>(
   set: StoreApi<State>['setState']
 ): SessionPersistenceActions => ({
+  applyDelegationPolicyAuthority: (session) => {
+    set((state) => {
+      const current = state.sessions.find((candidate) => candidate.id === session.id)
+      if (!current) {
+        const hydrated = hydrateSession(session)
+        markExternallyHydratedSession(hydrated, session)
+        return {
+          sessions: [hydrated, ...state.sessions].sort(
+            (left, right) => right.updatedAt - left.updatedAt
+          )
+        } as Partial<State>
+      }
+
+      const projected = projectDelegationPolicyAuthority(current, session)
+      if (!projected) return state
+
+      markExternallyHydratedSession(projected, session)
+      return {
+        sessions: state.sessions.map((candidate) =>
+          candidate.id === session.id ? projected : candidate
+        )
+      } as Partial<State>
+    })
+  },
+
   hydrateSessions: (sessions, manifest, selection) => {
     const hydrated = [...sessions]
       .sort((left, right) => right.updatedAt - left.updatedAt)
@@ -766,6 +813,11 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       projected = sessionDetails.withAcknowledgedUnsavedTitle(
         {
           ...projected,
+          // Whole-Session saves and continuation acknowledgements do not own Delegation policy.
+          // Keep the last dedicated mutation result even when a later ordinary projection carries
+          // a newer Session revision from unrelated running activity.
+          delegationPolicy: current.delegationPolicy,
+          delegationPolicyAuthorityPending: current.delegationPolicyAuthorityPending,
           revision: Math.max(sessionRevision(projected), sessionRevision(session))
         },
         session

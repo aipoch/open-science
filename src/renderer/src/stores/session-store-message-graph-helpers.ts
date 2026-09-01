@@ -10,6 +10,7 @@ import type { Annotation } from '../../../shared/annotations'
 import {
   sanitizeActivityGroup,
   sanitizeToolActivity,
+  type DelegationPolicy,
   type PersistedActivityGroup,
   type PersistedChatMessage,
   type PersistedChatSession,
@@ -48,6 +49,7 @@ export type AppendUserMessageInput = {
   agentModel?: string
   agentConfiguration?: PersistedChatSession['agentConfiguration']
   memoryEnabled?: boolean
+  delegationPolicy?: DelegationPolicy
   // Resolved send target stamped onto the user Message; drives config-change timeline markers.
   agentTarget?: PersistedChatMessage['agentTarget']
   isPending?: boolean
@@ -73,6 +75,7 @@ export type BranchInNewSessionInput = {
   agentModel?: string
   agentConfiguration?: PersistedChatSession['agentConfiguration']
   memoryEnabled?: boolean
+  delegationPolicy?: DelegationPolicy
   agentTarget?: PersistedChatMessage['agentTarget']
   specialistId?: string | null
 }

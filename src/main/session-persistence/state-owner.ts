@@ -5,6 +5,7 @@ import type { PersistedConversationGraph } from '../../shared/conversation-graph
 import type { ProjectFilesChangedEvent, ProjectFileSource } from '../../shared/project-files'
 import {
   materializeSessionConversationGraph,
+  normalizeDelegationPolicy,
   sanitizeSessionRuntimeContext,
   sessionRevision,
   type DelegationPolicy,
@@ -94,6 +95,7 @@ type SessionPersistenceStateOwnerOptions = {
   assertMutable(projectId: string, sessionId: string, operation: 'save' | 'mutate'): void
   notifyFilesChanged(event: ProjectFilesChangedEvent): void
   notifyRuntimeContextSessionUpdated(session: PersistedChatSession): void
+  notifyDelegationPolicyUpdated?(session: PersistedChatSession): void
   provenance?: SessionStateProvenance
   uploads?: SessionStateUploads
   log: Logger
@@ -459,6 +461,7 @@ class SessionPersistenceStateOwner {
     }
     const persisted = await saveSessionWithRevision(this.options.repository, durableSession)
     this.recordSession(persisted)
+    this.options.notifyDelegationPolicyUpdated?.(persisted)
     return persisted
   }
 
@@ -646,7 +649,7 @@ class SessionPersistenceStateOwner {
         : {}),
       ...(authority ? { branchSource: authority.branchSource } : {}),
       ...(authority
-        ? { delegationPolicy: authority.delegationPolicy === 'deny' ? 'deny' : 'allow' }
+        ? { delegationPolicy: normalizeDelegationPolicy(authority.delegationPolicy) }
         : {}),
       ...(authority
         ? {

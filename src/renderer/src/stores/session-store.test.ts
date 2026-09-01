@@ -765,6 +765,57 @@ describe('session store', () => {
     expect(toPersistedSession(projection)).not.toHaveProperty('runtimeContext')
   })
 
+  it('applies only newer Delegation policy authority without replacing live Session state', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-delegation',
+        projectId: 'project-1',
+        revision: 4,
+        title: 'Live delegation',
+        cwd: '/workspace',
+        status: 'idle',
+        delegationPolicy: 'allow',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 4
+      }
+    ])
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-delegation',
+      content: 'Keep this live prompt'
+    })
+    const source = useSessionStore.getState().sessions[0]
+    const liveMessages = source.messages
+    const liveStatus = source.status
+
+    useSessionStore.getState().applyDelegationPolicyAuthority({
+      ...toPersistedSession(source),
+      revision: 6,
+      delegationPolicy: 'deny',
+      messages: [],
+      status: 'idle',
+      updatedAt: source.updatedAt + 10
+    })
+
+    const denied = useSessionStore.getState().sessions[0]
+    expect(denied).toMatchObject({
+      revision: 6,
+      delegationPolicy: 'deny',
+      updatedAt: source.updatedAt + 10
+    })
+    expect(denied.messages).toBe(liveMessages)
+    expect(denied.status).toBe(liveStatus)
+
+    useSessionStore.getState().applyDelegationPolicyAuthority({
+      ...toPersistedSession(denied),
+      revision: 5,
+      delegationPolicy: 'allow',
+      updatedAt: denied.updatedAt + 10
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toBe(denied)
+  })
+
   it('converges a newer durable Plan authority when message content is unchanged', () => {
     useSessionStore.getState().hydrateSessions([
       {
@@ -2689,6 +2740,7 @@ describe('session store', () => {
     const result = useSessionStore.getState().appendPendingUserMessage({
       content: 'Help me inspect this notebook',
       cwd: '/workspace/project',
+      delegationPolicy: 'deny',
       enabledComputeHosts: ['ssh:lab', 'ssh:available'],
       selectedComputeHosts: ['ssh:lab']
     })
@@ -2700,6 +2752,7 @@ describe('session store', () => {
         id: result?.sessionId,
         isPending: true,
         cwd: '/workspace/project',
+        delegationPolicy: 'deny',
         enabledComputeHosts: ['ssh:lab', 'ssh:available'],
         selectedComputeHosts: ['ssh:lab'],
         title: 'Help me inspect this notebook',
@@ -2843,7 +2896,8 @@ describe('session store', () => {
   it('binds a pending session to the runtime session id without rewriting the prompt', () => {
     const pending = useSessionStore.getState().appendPendingUserMessage({
       content: 'Help me inspect this notebook',
-      cwd: '/workspace/project'
+      cwd: '/workspace/project',
+      delegationPolicy: 'deny'
     })
 
     const bound = useSessionStore.getState().bindPendingSession({
@@ -2866,6 +2920,7 @@ describe('session store', () => {
         cwd: '/workspace/project',
         agentFrameworkId: 'codex',
         agentBackendId: 'codex:codex-shared',
+        delegationPolicy: 'deny',
         status: 'running',
         activeRun: {
           promptMessageId: pending?.messageId,
@@ -4946,7 +5001,8 @@ describe('session store', () => {
     const pending = useSessionStore.getState().appendPendingUserMessage({
       content: 'Save after ACP creates the session',
       cwd: '/workspace/project',
-      projectId: 'project-abc'
+      projectId: 'project-abc',
+      delegationPolicy: 'allow'
     })
 
     useSessionStore.getState().bindPendingSession({
@@ -4958,6 +5014,7 @@ describe('session store', () => {
     const boundSession = useSessionStore.getState().sessions[0]
 
     expect(boundSession.isPending).toBe(false)
+    expect(boundSession.delegationPolicyAuthorityPending).toBe(true)
 
     const persisted = toPersistedSession(boundSession)
 
@@ -4973,6 +5030,7 @@ describe('session store', () => {
       ]
     })
     expect(persisted).not.toHaveProperty('isPending')
+    expect(persisted).not.toHaveProperty('delegationPolicyAuthorityPending')
   })
 
   it('keeps a staged upload path until the main process publishes its immutable Version', () => {
@@ -5545,6 +5603,7 @@ describe('session store public contract', () => {
         'appendPendingUserMessage',
         'appendRoutedUserMessage',
         'appendUserMessage',
+        'applyDelegationPolicyAuthority',
         'applyDurableSessionProjection',
         'attachRunArtifacts',
         'beginActivityGroup',
@@ -5705,6 +5764,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-run-marks.ts',
       'src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.ts',
       'src/renderer/src/pages/workspace/workspace-session-controller.ts',
+      'src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts',
       'src/renderer/src/pages/workspace/workspace-session-details-controller.ts',
       'src/renderer/src/pages/workspace/workspace-skill-load.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-details.ts',
@@ -5973,6 +6033,7 @@ describe('branchInNewSession', () => {
               specialistSwitchResetRequired: true,
               contextUsage: { used: 500, size: 1_000 },
               pinned: true,
+              delegationPolicy: 'deny' as const,
               autoReviewEnabled: true,
               memoryEnabled: false,
               enabledComputeHosts: ['ssh:build'],
@@ -6038,6 +6099,7 @@ describe('branchInNewSession', () => {
       agentBackendId: 'codex:shared',
       agentModel: 'gpt-5.4',
       autoReviewEnabled: true,
+      delegationPolicy: 'deny',
       memoryEnabled: false,
       enabledComputeHosts: ['ssh:build'],
       branchSource: {

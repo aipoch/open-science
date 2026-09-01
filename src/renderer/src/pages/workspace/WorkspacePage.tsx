@@ -77,6 +77,7 @@ import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-
 import { createWorkspaceComputeHostAccessController } from './workspace-compute-host-access-controller'
 import { useWorkspaceSessionAgentConfiguration } from './workspace-session-agent-configuration-controller'
 import { resolveWorkspaceAgentControlAvailability } from './workspace-agent-control-availability'
+import { useWorkspaceSessionDelegationControlOwner } from './workspace-session-delegation-control-owner'
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
 import { annotationRequiresImageInput } from '../../../../shared/annotations'
 
@@ -135,6 +136,8 @@ const WorkspacePage = ({
   const catalogSkills = useSettingsStore((state) => state.skills)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
+  const selectedAgentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const memoryGloballyEnabled = useMemoryStore((state) => state.enabled)
   const loadMemory = useMemoryStore((state) => state.load)
   const listenForMemoryChanges = useMemoryStore((state) => state.listen)
@@ -447,6 +450,13 @@ const WorkspacePage = ({
   })
   const { doc: draftDoc, error: attachmentError } = composer.view
   const { changeDoc: changeComposerDraftDoc, setError: setAttachmentError } = composer.actions
+  const delegationControl = useWorkspaceSessionDelegationControlOwner({
+    activeSession,
+    selectedSessionId,
+    selectedFrameworkId: selectedAgentFrameworkId,
+    frameworks: agentFrameworks,
+    setError: setAttachmentError
+  })
   const previewAnnotations = {
     activeAnnotations: composer.view.annotations,
     onAddAnnotation: (annotation: Parameters<typeof composer.actions.addAnnotation>[0]) => {
@@ -567,6 +577,7 @@ const WorkspacePage = ({
       pendingPermissions.some((request) => request.sessionId === sessionId),
     newConversationAutoReviewEnabled,
     newConversationMemoryEnabled,
+    newConversationDelegationPolicyOverride: delegationControl.newConversationPolicyOverride,
     newConversationEnabledComputeHosts,
     newConversationSelectedComputeHosts,
     composer,
@@ -578,6 +589,7 @@ const WorkspacePage = ({
     resetNewConversationSettings: () => {
       setNewConversationAutoReviewEnabled(false)
       setNewConversationMemoryPreference(undefined)
+      delegationControl.resetNewConversation()
       setNewConversationEnabledComputeHosts([])
       setNewConversationSelectedComputeHosts([])
       resetNewConversationConfiguration()
@@ -860,6 +872,8 @@ const WorkspacePage = ({
     }
   }, [activeSessionId, activeSessionCwd, activeSessionProjectId])
 
+  const resetNewConversationDelegation = delegationControl.resetNewConversation
+
   // Keeps New as a local draft reset after persistence hydration has selected restored sessions.
   const openNewConversation = useCallback((): void => {
     if (!isSessionPersistenceReady) return
@@ -871,6 +885,7 @@ const WorkspacePage = ({
     setNewConversationMemoryPreference(undefined)
     setNewConversationEnabledComputeHosts([])
     setNewConversationSelectedComputeHosts([])
+    resetNewConversationDelegation()
     resetNewConversationConfiguration()
     useNavigationStore.getState().recordUserNavigation()
     sessionController.actions.resetNewConversationSpecialist()
@@ -880,6 +895,7 @@ const WorkspacePage = ({
     defaultPermissionProfile,
     isSessionPersistenceReady,
     resetNewConversationConfiguration,
+    resetNewConversationDelegation,
     sessionController.actions,
     setAttachmentError
   ])
@@ -1248,6 +1264,16 @@ const WorkspacePage = ({
               changeModelConfiguration: changeAgentConfiguration,
               autoReviewEnabled: activeAutoReviewEnabled,
               memoryEnabled: activeMemoryEnabled,
+              delegationEnabled: delegationControl.enabled,
+              delegationPending: delegationControl.pending,
+              delegationHasLiveAttempts: delegationControl.hasLiveDelegatedAttempts,
+              canChangeDelegation:
+                isSessionPersistenceReady &&
+                delegationControl.frameworkSupported &&
+                delegationControl.sessionAuthoritative,
+              delegationDisabledReason: delegationControl.frameworkSupported
+                ? undefined
+                : t('The selected agent framework does not support delegated work.'),
               memoryDisabledReason: isGlobalMemoryEnabled
                 ? undefined
                 : t('Memory is off in Settings. Turn it on to use Memory in this conversation.'),
@@ -1255,6 +1281,7 @@ const WorkspacePage = ({
               selectedComputeHosts: computeHostAccess.selectedProviderIds,
               toggleAutoReview: changeAutoReviewEnabled,
               toggleMemory: changeMemoryEnabled,
+              toggleDelegation: delegationControl.change,
               setComputeHostEnabled: computeHostAccess.setHostEnabled,
               setComputeHostSelected: computeHostAccess.setHostSelected
             }}
@@ -1283,7 +1310,7 @@ const WorkspacePage = ({
               openJobs: sessionController.actions.openJobList
             }}
             subagents={{
-              unavailableReason: activeSession
+              unavailable: activeSession
                 ? delegatedWorkUnavailableBySession[activeSession.id]
                 : undefined,
               stop: () => {

@@ -13,6 +13,7 @@ import {
   isSessionRevisionConflictError,
   sessionRevision,
   type DeleteSessionRequest,
+  type DelegationPolicy,
   type LoadAllSessionsResult,
   type ListSessionSummariesResult,
   type LoadSessionRequest,
@@ -77,6 +78,25 @@ const hydratePersistedSessionIfPresent = (
 
 const deleteSession = (request: DeleteSessionRequest): Promise<SessionDeletionResult> =>
   window.api.sessions.deleteSession(request)
+
+const toPersistedSessionForAuthorityMaterialization = (
+  session: ChatSession
+): PersistedChatSession => {
+  const persisted = toPersistedSession(session)
+  return session.delegationPolicyAuthorityPending
+    ? { ...persisted, delegationPolicy: 'allow' }
+    : persisted
+}
+
+const setDelegationPolicyAuthority = async (
+  projectId: string,
+  sessionId: string,
+  policy: DelegationPolicy
+): Promise<PersistedChatSession> => {
+  const authoritative = await window.api.sessions.setDelegationPolicy(projectId, sessionId, policy)
+  useSessionStore.getState().applyDelegationPolicyAuthority(authoritative)
+  return authoritative
+}
 
 type LatestSessionSaveTask = (options?: SaveSessionOptions) => Promise<PersistedChatSession>
 type OrderedSessionSaveRecovery = (
@@ -808,6 +828,20 @@ const saveSessionInOrder = async (
     if (isSessionRevisionConflictError(error)) unresolvedSessionRevisionConflictTargets.add(target)
     throw error
   }
+}
+
+const confirmPendingDelegationPolicyAuthority = async (
+  session: ChatSession
+): Promise<PersistedChatSession | undefined> => {
+  if (!session.delegationPolicyAuthorityPending) return undefined
+  const materialized = await saveSessionInOrder(
+    toPersistedSessionForAuthorityMaterialization(session)
+  )
+  return setDelegationPolicyAuthority(
+    materialized.projectId,
+    materialized.id,
+    session.delegationPolicy ?? 'allow'
+  )
 }
 
 class SessionPersistenceFlushConflictError extends Error {
@@ -1743,6 +1777,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
 
 export {
   MAX_SESSION_REVISION_REBASE_ATTEMPTS,
+  confirmPendingDelegationPolicyAuthority,
   createOrderedSessionPersistence,
   createStoreSaver,
   flushSessionPersistence,
@@ -1753,6 +1788,8 @@ export {
   deriveSessionCatalogRecovery,
   deleteSession,
   saveSessionInOrder,
+  setDelegationPolicyAuthority,
+  toPersistedSessionForAuthorityMaterialization,
   useSessionPersistence
 }
 export type {

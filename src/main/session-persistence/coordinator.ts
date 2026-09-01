@@ -191,7 +191,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     permissionGrants?: SessionPermissionGrantReconciliation,
     private readonly log: Logger = createLogger('session-persistence'),
     private readonly computeJobs?: ComputeJobDeletionParticipant,
-    onDelegatedWorkSessionUpdated?: SessionUpdatePublisher
+    onDelegatedWorkSessionUpdated?: SessionUpdatePublisher,
+    onDelegationPolicyUpdated?: (session: PersistedChatSession) => void
   ) {
     const publishSessionUpdate = safeSessionUpdates(onDelegatedWorkSessionUpdated, log)
     this.stateOwner = new SessionPersistenceStateOwner({
@@ -204,7 +205,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         this.assertMutable(projectId, sessionId, operation),
       notifyFilesChanged: (event) => this.notifyFilesChanged(event),
       notifyRuntimeContextSessionUpdated: (session) =>
-        publishSessionUpdate(session, 'runtime-context')
+        publishSessionUpdate(session, 'runtime-context'),
+      notifyDelegationPolicyUpdated: (session) => onDelegationPolicyUpdated?.(session)
     })
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
       repository,

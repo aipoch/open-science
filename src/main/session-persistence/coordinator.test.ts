@@ -1747,7 +1747,20 @@ describe('SessionPersistenceCoordinator', () => {
         durable = structuredClone(session)
       })
     })
-    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const onDelegationPolicyUpdated = vi.fn()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onDelegationPolicyUpdated
+    )
 
     await expect(
       coordinator.setSessionDelegationPolicy('project-1', 'session-1', 'deny')
@@ -1755,6 +1768,9 @@ describe('SessionPersistenceCoordinator', () => {
 
     expect(durable.delegationPolicy).toBe('deny')
     expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
+    expect(onDelegationPolicyUpdated).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'session-1', delegationPolicy: 'deny' })
+    )
   })
 
   it('preserves main-owned delegation policy on an ordinary existing-Session save', async () => {

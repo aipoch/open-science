@@ -3,7 +3,8 @@ import { join } from 'node:path'
 import type {
   AcpAgentRuntimeUpdate,
   AcpPermissionRequest,
-  AcpPermissionResponse
+  AcpPermissionResponse,
+  DelegatedWorkUnavailableReason
 } from '../../shared/acp'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
@@ -35,6 +36,7 @@ import {
   type RootDelegatePermissionEvent,
   type RootDelegatePermissionRequest
 } from './durable-delegated-work'
+
 import { createProductionFrameWorkspace, type ResolvedImmutableInput } from './frame-workspace'
 import { createSessionDelegatedWorkRecords } from './session-record-adapter'
 import {
@@ -83,10 +85,12 @@ type RootDelegatedWorkEvent =
   | Readonly<{ kind: 'permission-settled'; requestId: string }>
   | Readonly<{ kind: 'records-changed'; sessionId: string }>
   | Readonly<{ kind: 'admission-rejected'; sessionId: string; reason: string }>
+  | Readonly<{ kind: 'unavailable-reason-cleared'; sessionId: string }>
 
 type RootDelegatedWorkControl = Readonly<{
   pendingPermissions(): readonly AcpPermissionRequest[]
-  unavailableReasons?(): Readonly<Record<string, string>>
+  unavailableReasons?(): Readonly<Record<string, DelegatedWorkUnavailableReason>>
+  clearUnavailableReason?(sessionId: string): void
   subscribe(listener: (event: RootDelegatedWorkEvent) => void): () => void
   respondToPermission(response: AcpPermissionResponse): Promise<boolean>
   setPermissionProfile(sessionId: string, profile: PermissionProfileId): Promise<void>
@@ -137,7 +141,8 @@ type ProductionDelegatedWorkComposition = Readonly<{
     | 'submitOutput'
     | 'requestUserInput'
     | 'readAgentFrame'
-  >
+  > &
+    Readonly<{ isDelegationAllowed(session: SessionKey): Promise<boolean> }>
   root: RootDelegatedWorkControl
 }>
 
@@ -214,7 +219,7 @@ const createProductionDelegatedWorkComposition = (
     Readonly<{ key: SessionKey; request: RootDelegatePermissionRequest }>
   >()
   const listeners = new Set<(event: RootDelegatedWorkEvent) => void>()
-  const unavailableReasons = new Map<string, string>()
+  const unavailableReasons = new Map<string, DelegatedWorkUnavailableReason>()
   const cancelledTurns = new Set<string>()
   const cancelledSessionTurns = new Set<string>()
   const cancelledTurnKey = (key: SessionKey, messageId: string): string =>
@@ -354,15 +359,14 @@ const createProductionDelegatedWorkComposition = (
     )
 
   const host: ProductionDelegatedWorkComposition['host'] = Object.freeze({
+    async isDelegationAllowed(session) {
+      return (await options.sessions.readSession(session))?.delegationPolicy !== 'deny'
+    },
     async delegate(caller, request, delegateOptions) {
       try {
         const policySession = await options.sessions.readSession(caller.session)
         if (policySession?.delegationPolicy === 'deny') {
-          throw new DurableDelegatedWorkError(
-            'admission_rejection',
-            'delegation is disabled for this Session',
-            'Delegation is disabled for this Session. Enable delegation before creating a Subagent.'
-          )
+          throw DurableDelegatedWorkError.delegationDisabled()
         }
         const result = await (
           await workFor(caller.session)
@@ -392,7 +396,10 @@ const createProductionDelegatedWorkComposition = (
           (session?.runtimeContext?.delegatedWork?.records.length ?? 0) === 0
         ) {
           const reason = error.userFacingUnavailableReason
-          unavailableReasons.set(caller.session.sessionId, reason)
+          unavailableReasons.set(caller.session.sessionId, {
+            kind: error.unavailableKind ?? 'unavailable',
+            reason
+          })
           publish({
             kind: 'admission-rejected',
             sessionId: caller.session.sessionId,
@@ -455,6 +462,12 @@ const createProductionDelegatedWorkComposition = (
         [...permissions.values()].map(({ key, request }) => projectPermission(key, request))
       ),
     unavailableReasons: () => Object.freeze(Object.fromEntries(unavailableReasons)),
+    // Re-enabling Delegation for a Session invalidates the last admission rejection; clearing it
+    // unpublishes the stale notice in the next runtime state snapshot.
+    clearUnavailableReason(sessionId: string) {
+      if (!unavailableReasons.delete(sessionId)) return
+      publish({ kind: 'unavailable-reason-cleared', sessionId })
+    },
     subscribe(listener) {
       listeners.add(listener)
       return () => listeners.delete(listener)

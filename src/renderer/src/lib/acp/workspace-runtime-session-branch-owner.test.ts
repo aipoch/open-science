@@ -6,6 +6,7 @@ import {
   type FinalizeUploadSessionRequest,
   type UploadedAttachment
 } from '../../../../shared/uploads'
+import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import {
   createInitialSessionState,
   useSessionStore,
@@ -170,9 +171,16 @@ describe('branchWorkspaceSessionFromMessage', () => {
         bindings: [{ ...pdfContext.bindings[0], bindingId: 'child-binding' }]
       }
     }
-    const saveSession = vi.fn(async (session) => session)
+    let materialized!: PersistedChatSession
+    const saveSession = vi.fn(async (session: PersistedChatSession) => {
+      materialized = session
+      return session
+    })
+    const setDelegationPolicy = vi.fn(async () => materialized)
     const linkPdfContext = vi.fn().mockResolvedValue(linkedRuntimeContext)
-    vi.stubGlobal('window', { api: { sessions: { saveSession, linkPdfContext } } })
+    vi.stubGlobal('window', {
+      api: { sessions: { saveSession, setDelegationPolicy, linkPdfContext } }
+    })
     const createSession = vi.fn().mockResolvedValue({
       sessionId: 'branched-session',
       cwd: '/workspace/project'

@@ -10,6 +10,7 @@ import type {
   AcpPermissionGrant,
   AcpPermissionRequest,
   AcpContextUsage,
+  DelegatedWorkUnavailableReason,
   ElicitationAnswer,
   ElicitationProjection,
   ElicitationResponse,
@@ -332,11 +333,17 @@ type ConversationPanelAgentControls = {
   changeModelConfiguration?: (configuration: SessionAgentConfiguration) => void
   autoReviewEnabled: boolean
   memoryEnabled?: boolean
+  delegationEnabled?: boolean
+  delegationPending?: boolean
+  delegationHasLiveAttempts?: boolean
+  canChangeDelegation?: boolean
+  delegationDisabledReason?: string
   memoryDisabledReason?: string
   enabledComputeHosts: string[]
   selectedComputeHosts?: string[]
   toggleAutoReview: (enabled: boolean) => void
   toggleMemory?: (enabled: boolean) => void
+  toggleDelegation?: (enabled: boolean) => void | Promise<void>
   setComputeHostEnabled?: (providerId: string, enabled: boolean) => void
   setComputeHostSelected?: (providerId: string, selected: boolean) => void
 }
@@ -373,7 +380,7 @@ type ConversationPanelSessionTools = {
 }
 
 type ConversationPanelSubagents = {
-  unavailableReason?: string
+  unavailable?: DelegatedWorkUnavailableReason
   stop: () => void | Promise<void>
 }
 
@@ -538,11 +545,17 @@ const ConversationPanel = ({
     changeModelConfiguration = () => undefined,
     autoReviewEnabled,
     memoryEnabled = true,
+    delegationEnabled = true,
+    delegationPending = false,
+    delegationHasLiveAttempts = false,
+    canChangeDelegation = false,
+    delegationDisabledReason,
     memoryDisabledReason,
     enabledComputeHosts,
     selectedComputeHosts = [],
     toggleAutoReview: onAutoReviewToggle,
     toggleMemory: onMemoryToggle = () => undefined,
+    toggleDelegation: onDelegationToggle = () => undefined,
     setComputeHostEnabled: onComputeHostEnabledChange = () => undefined,
     setComputeHostSelected: onComputeHostSelectedChange = () => undefined
   } = agentControls
@@ -565,7 +578,7 @@ const ConversationPanel = ({
     request: onSaveAsSkill
   } = saveAsSkill
   const { notebookReference, openNotebook: onOpenNotebook, openJobs: onOpenJobList } = sessionTools
-  const { unavailableReason: subagentUnavailableReason, stop: onStopSubagents } = subagents
+  const { unavailable: subagentUnavailable, stop: onStopSubagents } = subagents
   const specialistId = activeSession
     ? specialist.view.specialist.barrierInFlight
       ? (specialist.view.specialist.historyId ?? activeSession.specialistId)
@@ -590,8 +603,6 @@ const ConversationPanel = ({
 
   const specialistItems = useSpecialistStore((state) => state.items)
   const catalogSkills = useSettingsStore((state) => state.skills)
-  const selectedFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
-  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const settingsLoaded = useSettingsStore((state) => state.isLoaded)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const openSettingsToComputeHost = useSettingsStore((state) => state.openSettingsToComputeHost)
@@ -1150,9 +1161,8 @@ const ConversationPanel = ({
 
                 {settingsLoaded ? (
                   <SubagentAvailabilityNotice
-                    frameworkId={activeSession?.agentFrameworkId ?? selectedFrameworkId}
-                    frameworks={agentFrameworks}
-                    unavailableReason={subagentUnavailableReason}
+                    unavailable={subagentUnavailable}
+                    onTurnOnDelegation={() => setAgentControlsOpenRequest((request) => request + 1)}
                     onOpenSettings={openSettings}
                   />
                 ) : null}
@@ -1384,6 +1394,11 @@ const ConversationPanel = ({
                               grants={permissionGrants}
                               autoReviewEnabled={autoReviewEnabled}
                               memoryEnabled={memoryEnabled}
+                              delegationEnabled={delegationEnabled}
+                              delegationPending={delegationPending}
+                              delegationHasLiveAttempts={delegationHasLiveAttempts}
+                              delegationReadOnly={!canChangeDelegation}
+                              delegationDisabledReason={delegationDisabledReason}
                               memoryDisabledReason={memoryDisabledReason}
                               readOnly
                               permissionProfileReadOnly
@@ -1396,6 +1411,7 @@ const ConversationPanel = ({
                               onProfileChange={onPermissionProfileChange}
                               onAutoReviewChange={onAutoReviewToggle}
                               onMemoryChange={onMemoryToggle}
+                              onDelegationChange={onDelegationToggle}
                               onRevokeGrant={onRevokePermissionGrant}
                               onClearGrants={onClearPermissionGrants}
                               showSpecialist={activeSession !== undefined}
@@ -2114,10 +2130,15 @@ const ConversationPanel = ({
                           grants={permissionGrants}
                           autoReviewEnabled={autoReviewEnabled}
                           memoryEnabled={memoryEnabled}
+                          delegationEnabled={delegationEnabled}
+                          delegationPending={delegationPending}
+                          delegationHasLiveAttempts={delegationHasLiveAttempts}
+                          delegationDisabledReason={delegationDisabledReason}
                           memoryDisabledReason={memoryDisabledReason}
                           readOnly={!canChangeAgentControls}
                           autoReviewReadOnly={!canChangeAutoReview}
                           memoryReadOnly={!canChangeMemory}
+                          delegationReadOnly={!canChangeDelegation}
                           permissionProfileReadOnly={!canChangePermissionProfile}
                           grantActionsReadOnly={false}
                           autoReviewDisabled={!canEditDraft}
@@ -2128,6 +2149,7 @@ const ConversationPanel = ({
                           onProfileChange={onPermissionProfileChange}
                           onAutoReviewChange={onAutoReviewToggle}
                           onMemoryChange={onMemoryToggle}
+                          onDelegationChange={onDelegationToggle}
                           onRevokeGrant={onRevokePermissionGrant}
                           onClearGrants={onClearPermissionGrants}
                           showSpecialist={

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 
 import type { ComputeHost } from '../../../../shared/compute'
+import { i18next } from '@/i18n'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
@@ -287,12 +288,36 @@ describe('ComposerAgentControlsMenu', () => {
     })
     const trigger = container.querySelector('[data-testid="composer-controls-trigger"]')
     expect(trigger?.getAttribute('aria-label')).toBe(
-      'Agent controls: Ask for approval, auto-review off'
+      'Agent controls: Ask for approval, auto-review Off, Delegation On'
     )
     act(() => findButton('Auto-approve edits').click())
 
     expect(onProfileChange).toHaveBeenCalledWith('auto')
     expect(container.textContent).not.toContain('Enable Full access?')
+  })
+
+  it('localizes auto-review and Delegation states in the trigger accessible label', async () => {
+    await act(() => i18next.changeLanguage('ja'))
+    try {
+      act(() => {
+        root.render(
+          <ComposerAgentControlsMenu
+            profile="ask"
+            autoReviewEnabled={false}
+            onProfileChange={vi.fn()}
+            onAutoReviewChange={vi.fn()}
+          />
+        )
+      })
+
+      expect(
+        container
+          .querySelector('[data-testid="composer-controls-trigger"]')
+          ?.getAttribute('aria-label')
+      ).toBe('エージェントコントロール：承認を求める、自動レビュー オフ、委任 オン')
+    } finally {
+      await act(() => i18next.changeLanguage('en'))
+    }
   })
 
   it('toggles Memory for the conversation without closing the menu', () => {
@@ -315,6 +340,132 @@ describe('ComposerAgentControlsMenu', () => {
 
     expect(onMemoryChange).toHaveBeenCalledWith(false)
     expect(selectEvents.at(-1)?.prevented).toBe(true)
+  })
+
+  it('shows Delegation after Memory, exposes the saved state, and treats Off as non-default', () => {
+    const onDelegationChange = vi.fn()
+
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          memoryEnabled
+          delegationEnabled={false}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onDelegationChange={onDelegationChange}
+        />
+      )
+    })
+
+    const row = findButton('Delegation')
+    expectStandingDisabled(row, false)
+    expect(container.textContent).toContain(
+      'Block new Subagents. Existing Subagents are unaffected.'
+    )
+    expect(container.querySelector('[data-testid="controls-nondefault-dot"]')).not.toBeNull()
+    expect(
+      container
+        .querySelector('[data-testid="composer-controls-trigger"]')
+        ?.getAttribute('aria-label')
+    ).toBe('Agent controls: Ask for approval, auto-review Off, Delegation Off')
+    expect(container.textContent!.indexOf('Memory')).toBeLessThan(
+      container.textContent!.indexOf('Delegation')
+    )
+    expect(container.textContent!.indexOf('Delegation')).toBeLessThan(
+      container.textContent!.indexOf('Compute')
+    )
+
+    act(() => row.click())
+
+    expect(onDelegationChange).toHaveBeenCalledWith(true)
+    expect(selectEvents.at(-1)?.prevented).toBe(true)
+  })
+
+  it('disables Delegation while its authoritative mutation is pending', () => {
+    const onDelegationChange = vi.fn()
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          delegationEnabled
+          delegationPending
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onDelegationChange={onDelegationChange}
+        />
+      )
+    })
+
+    const row = findButton('Delegation')
+    expect(row.disabled).toBe(true)
+    expect(row.hasAttribute('aria-disabled')).toBe(false)
+    expect(container.textContent).not.toContain('Allow the Main Agent to create new Subagents.')
+    act(() => row.click())
+    expect(onDelegationChange).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])(
+    'keeps Delegation independently editable while the rest of Agent controls are read-only (mobile=%s)',
+    (mobile) => {
+      mediaState.mobile = mobile
+      const onDelegationChange = vi.fn()
+      act(() => {
+        root.render(
+          <ComposerAgentControlsMenu
+            profile="ask"
+            autoReviewEnabled={false}
+            delegationEnabled
+            readOnly
+            delegationReadOnly={false}
+            delegationHasLiveAttempts
+            onProfileChange={vi.fn()}
+            onAutoReviewChange={vi.fn()}
+            onDelegationChange={onDelegationChange}
+          />
+        )
+      })
+
+      const row = findButton('Delegation')
+      expectStandingDisabled(row, false)
+      expect(container.textContent).toContain(
+        'Turning Delegation off only blocks new Subagents. Existing Subagents continue running and remain available.'
+      )
+      act(() => row.click())
+      expect(onDelegationChange).toHaveBeenCalledWith(false)
+    }
+  )
+
+  it('shows the saved value and framework reason without mutating when unavailable', () => {
+    const onDelegationChange = vi.fn()
+    const reason = 'The selected agent framework does not support delegated work.'
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          delegationEnabled={false}
+          delegationReadOnly
+          delegationDisabledReason={reason}
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onDelegationChange={onDelegationChange}
+        />
+      )
+    })
+
+    const row = findButton('Delegation')
+    expectStandingDisabled(row, true)
+    expect(container.textContent).toContain(reason)
+    expect(
+      container
+        .querySelector('[data-testid="composer-controls-trigger"]')
+        ?.getAttribute('aria-label')
+    ).toContain('Delegation Off')
+    act(() => row.click())
+    expect(onDelegationChange).not.toHaveBeenCalled()
   })
 
   it('shows why Memory is unavailable when the global setting is off', () => {
@@ -359,6 +510,7 @@ describe('ComposerAgentControlsMenu', () => {
     expect(findButton('Ask for approval').textContent).toBe('Ask for approval')
     expect(findButton('Auto-review').textContent).toBe('Auto-review')
     expect(findButton('Memory').textContent).toBe('Memory')
+    expect(findButton('Delegation').textContent).toBe('Delegation')
   })
 
   it('opens permission choices inside the same menu on mobile and can return', () => {

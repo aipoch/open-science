@@ -386,9 +386,69 @@ describe('workspace conversation controller', () => {
       branchSourceMessageId: 'agent-message-a',
       text: '',
       agentConfiguration: input.agentConfiguration,
+      delegationPolicy: 'allow',
       specialistId: undefined
     })
     expect(input.composer.lifecycle.captureSend).not.toHaveBeenCalled()
+    expect(input.resetNewConversationSettings).toHaveBeenCalledOnce()
+    expect(input.session.actions.resetNewConversationSpecialist).toHaveBeenCalledOnce()
+  })
+
+  it('retains new-Session settings when Agent Message branching fails', async () => {
+    const input = options({ newConversationDelegationPolicyOverride: 'deny' })
+    input.runtime.sendMessage = vi.fn().mockRejectedValue(new Error('Branch unavailable'))
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    await vi.waitFor(() =>
+      expect(input.composer.actions.setError).toHaveBeenCalledWith('Branch unavailable')
+    )
+
+    expect(input.resetNewConversationSettings).not.toHaveBeenCalled()
+    expect(input.session.actions.resetNewConversationSpecialist).not.toHaveBeenCalled()
+  })
+
+  it('inherits a denied source policy when branching the current draft', async () => {
+    const source = session({ delegationPolicy: 'deny' })
+    const input = options({
+      activeSession: source,
+      actionability: projectSessionActionability(source)
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [], mode: 'branch' }))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: undefined,
+        branchSourceSessionId: 'session-a',
+        delegationPolicy: 'deny'
+      })
+    )
+  })
+
+  it('uses an explicit new-Session Delegation override when branching', async () => {
+    const source = session({ delegationPolicy: 'allow' })
+    const input = options({
+      activeSession: source,
+      actionability: projectSessionActionability(source),
+      newConversationDelegationPolicyOverride: 'deny'
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [], mode: 'branch' }))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branchSourceSessionId: 'session-a',
+        delegationPolicy: 'deny'
+      })
+    )
   })
 
   it('uses the pending Specialist intent for the branched child Session', async () => {
@@ -1069,6 +1129,7 @@ describe('workspace conversation controller', () => {
       currentDraftKey: 'new:project-a',
       newConversationAutoReviewEnabled: true,
       newConversationMemoryEnabled: false,
+      newConversationDelegationPolicyOverride: 'deny',
       newConversationEnabledComputeHosts: ['ssh:lab', 'ssh:available'],
       newConversationSelectedComputeHosts: ['ssh:lab']
     })
@@ -1093,6 +1154,7 @@ describe('workspace conversation controller', () => {
       expect.objectContaining({
         agentConfiguration: input.agentConfiguration,
         memoryEnabled: false,
+        delegationPolicy: 'deny',
         enabledComputeHosts: ['ssh:lab', 'ssh:available'],
         selectedComputeHosts: ['ssh:lab']
       })

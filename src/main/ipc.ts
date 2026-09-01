@@ -1015,6 +1015,13 @@ const createApplicationModules = async (
         session,
         originClientId: MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID
       })
+    },
+    (session) => {
+      // Re-enabling Delegation invalidates the last admission rejection, so the Subagent
+      // availability notice disappears instead of waiting for the next successful delegation.
+      if (session.delegationPolicy === 'allow') {
+        delegatedWorkRef.current?.root.clearUnavailableReason?.(session.id)
+      }
     }
   )
   const sessionPdfContextOwner = new SessionPdfContextOwner({

@@ -245,6 +245,7 @@ import type {
 } from './project-files'
 import type {
   DeleteSessionRequest,
+  DelegationPolicy,
   EditSessionDetailsRequest,
   FilterSessionPdfContextCandidatesRequest,
   FilterSessionPdfContextCandidatesResult,
@@ -1533,6 +1534,13 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.saveSession': callable<
     (session: PersistedChatSession, options?: SaveSessionOptions) => Promise<PersistedChatSession>
   >()('sessions', ['sessions:save-session', WEB, SESSION_SAVE, SESSION_SAVE_JSON]),
+  'sessions.setDelegationPolicy': callable<
+    (
+      projectId: string,
+      sessionId: string,
+      policy: DelegationPolicy
+    ) => Promise<PersistedChatSession>
+  >()('sessions', ['sessions:set-delegation-policy', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.sendFlushResponse': callable<(response: SessionPersistenceFlushResponse) => void>()(
     'sessions',
     ['sessions:flush-response', SEND],

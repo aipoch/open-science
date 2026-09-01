@@ -145,6 +145,30 @@ const projectThroughRendererAdapters = (
 }
 
 describe('renderer surface compatibility matrix', () => {
+  it('publishes the authoritative Session delegation mutation on Electron and both Web locations', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(
+        ({ publicPath }) => publicPath === 'sessions.setDelegationPolicy'
+      )
+    ).toMatchObject({
+      channel: 'sessions:set-delegation-policy',
+      applicationCommand: 'runtime-validated',
+      surfaceInstallation: {
+        electron: 'preload',
+        localWeb: 'web-rpc',
+        remoteWeb: 'web-rpc'
+      },
+      authorityFlow: {
+        electron: 'electron-sender',
+        localWeb: 'caller-context',
+        remoteWeb: 'caller-context'
+      }
+    })
+    expect(WEB_INVOKE_CHANNELS['sessions.setDelegationPolicy']).toBe(
+      'sessions:set-delegation-policy'
+    )
+  })
+
   it('derives remote Web rejecting channels from the renderer catalog', () => {
     const expected = RENDERER_CONTRACT_CATALOG.flatMap(({ channel, surfaceInstallation }) =>
       channel !== null &&
