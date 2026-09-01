@@ -175,9 +175,12 @@ const STAGED_OPENCODE_RUNTIME_PATTERN =
 const RUNTIME_OWNER_MARKER = '.open-science-managed-runtime'
 const OPENCODE_RUNTIME_OWNER = 'open-science:opencode:v1\n'
 
-const isOwnedOpencodeRuntime = async (root: string): Promise<boolean> =>
-  (await readFile(join(root, RUNTIME_OWNER_MARKER), 'utf8').catch(() => undefined)) ===
-  OPENCODE_RUNTIME_OWNER
+const isOwnedOpencodeRuntime = async (root: string): Promise<boolean> => {
+  const markerPath = join(root, RUNTIME_OWNER_MARKER)
+  const markerStats = await lstat(markerPath).catch(() => undefined)
+  if (!markerStats?.isFile()) return false
+  return (await readFile(markerPath, 'utf8').catch(() => undefined)) === OPENCODE_RUNTIME_OWNER
+}
 
 const findOwnedOpencodeRuntimeSiblings = async (
   dataRoot: string,

@@ -19,6 +19,23 @@ import { gzipSync } from 'node:zlib'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const { nonRegularMarkerPaths } = vi.hoisted(() => ({
+  nonRegularMarkerPaths: new Set<string>()
+}))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    lstat: async (path: string) =>
+      nonRegularMarkerPaths.has(String(path))
+        ? ({ isFile: () => false } as Awaited<ReturnType<typeof actual.lstat>>)
+        : actual.lstat(path)
+  }
+})
+
+afterEach(() => nonRegularMarkerPaths.clear())
+
 import {
   classifyVerifyResult,
   defaultVerifyBinary,
@@ -859,6 +876,23 @@ describe('isManagedOpencodePath / uninstallManagedOpencode', () => {
     await expect(readFile(backupMarker)).rejects.toThrow()
     await expect(readFile(unownedMarker, 'utf8')).resolves.toBe('present')
     await expect(readFile(lookalikeMarker, 'utf8')).resolves.toBe('present')
+  })
+
+  it('preserves an orphan whose ownership marker is a symbolic link', async () => {
+    const uuid = '12345678-1234-1234-1234-123456789abc'
+    const orphanRoot = join(root, `opencode-managed.backup-${uuid}`)
+    const orphanPayload = join(orphanRoot, 'user-data')
+    const ownerMarker = join(orphanRoot, '.open-science-managed-runtime')
+    await mkdir(orphanRoot, { recursive: true })
+    await writeFile(orphanPayload, 'present')
+    await writeFile(ownerMarker, 'open-science:opencode:v1\n')
+    // Windows CI cannot create file symlinks without extra privileges. Model the no-follow lstat
+    // result at the filesystem boundary while retaining real directory and read/remove behavior.
+    nonRegularMarkerPaths.add(ownerMarker)
+
+    await uninstallManagedOpencode(root)
+
+    await expect(readFile(orphanPayload, 'utf8')).resolves.toBe('present')
   })
 
   it('is a no-op (never rejects) when nothing is installed', async () => {

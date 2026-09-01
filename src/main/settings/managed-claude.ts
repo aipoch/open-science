@@ -119,9 +119,12 @@ const STAGED_CLAUDE_RUNTIME_PATTERN =
 const RUNTIME_OWNER_MARKER = '.open-science-managed-runtime'
 const CLAUDE_RUNTIME_OWNER = 'open-science:claude-code:v1\n'
 
-const isOwnedClaudeRuntime = async (root: string): Promise<boolean> =>
-  (await readFile(join(root, RUNTIME_OWNER_MARKER), 'utf8').catch(() => undefined)) ===
-  CLAUDE_RUNTIME_OWNER
+const isOwnedClaudeRuntime = async (root: string): Promise<boolean> => {
+  const markerPath = join(root, RUNTIME_OWNER_MARKER)
+  const markerStats = await lstat(markerPath).catch(() => undefined)
+  if (!markerStats?.isFile()) return false
+  return (await readFile(markerPath, 'utf8').catch(() => undefined)) === CLAUDE_RUNTIME_OWNER
+}
 
 const findOwnedClaudeRuntimeSiblings = async (
   dataRoot: string,
