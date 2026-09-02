@@ -109,6 +109,16 @@ describe('Windows installer smoke plan', () => {
     }
   })
 
+  it('accepts only the orphaned-uninstaller lock scenario', () => {
+    expect(
+      parseArguments(['--installer-dir', 'dist', '--scenario', 'orphaned-uninstaller-lock'])
+        .scenario
+    ).toBe('orphaned-uninstaller-lock')
+    expect(() => parseArguments(['--installer-dir', 'dist', '--scenario', 'unsupported'])).toThrow(
+      /Unsupported Windows installer smoke scenario/
+    )
+  })
+
   it('accepts only explicit packaged Artifact RPC contracts', () => {
     expect(
       parseArguments(['--installer-dir', 'dist', '--artifact-rpc-contract', 'legacy'])

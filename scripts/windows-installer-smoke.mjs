@@ -2,7 +2,16 @@
 
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  access,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { basename, join, resolve, win32 } from 'node:path'
@@ -35,6 +44,7 @@ const RPC_SMOKE_ROOT_PREFIX = 'open-science-rpc-smoke-'
 const UPGRADE_SENTINEL_PREFIX = 'installer-smoke-upgrade-sentinel-'
 const UPGRADE_SENTINEL_CONTENT = 'previous-version-profile-preserved\n'
 const RPC_SMOKE_CONTENT = 'windows-rpc-smoke\n'
+const ORPHANED_UNINSTALLER_LOCK_SCENARIO = 'orphaned-uninstaller-lock'
 const RPC_SMOKE_RESERVATION_ID = 'installer-smoke-reservation'
 const RPC_SMOKE_ARTIFACT_SCOPE = {
   projectId: 'installer-smoke-project',
@@ -1048,6 +1058,103 @@ const findUninstaller = async (installDirectory) => {
   return join(installDirectory, uninstallers[0])
 }
 
+const launchUninstallerLockHolder = async (installDirectory, env) => {
+  const uninstaller = await findUninstaller(installDirectory)
+  const ready = join(env.TEMP, 'installer-smoke-lock-holder.ready')
+  const child = spawn(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      "$stream = [System.IO.File]::Open($env:OPEN_SCIENCE_LOCK_PATH, 'Open', 'Read', 'None'); [System.IO.File]::WriteAllText($env:OPEN_SCIENCE_LOCK_READY, 'ready'); [System.Threading.Thread]::Sleep([System.Threading.Timeout]::Infinite)"
+    ],
+    {
+      env: {
+        ...env,
+        OPEN_SCIENCE_LOCK_PATH: uninstaller,
+        OPEN_SCIENCE_LOCK_READY: ready
+      },
+      windowsHide: true
+    }
+  )
+  const exit = observeChildExit(child)
+  await Promise.race([
+    waitFor('the old uninstaller to be exclusively locked', async () =>
+      (await pathExists(ready)) ? true : undefined
+    ),
+    exit.then((code) => {
+      throw new Error(`Uninstaller lock holder exited before becoming ready (${code}).`)
+    })
+  ])
+  return { child, uninstaller }
+}
+
+const drillOrphanedUninstallerLock = async ({ installer, installDirectory, env }) => {
+  await mkdir(installDirectory, { recursive: true })
+  const staleUninstaller = join(installDirectory, 'Uninstall open-science.exe')
+  await copyFile(installer, staleUninstaller)
+  const staleUninstallerHash = createHash('sha256')
+    .update(await readFile(staleUninstaller))
+    .digest('hex')
+  const lock = await launchUninstallerLockHolder(installDirectory, env)
+  const writeProbe = await runProcess(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      "try { $stream = [System.IO.File]::Open($env:OPEN_SCIENCE_LOCK_PROBE_PATH, 'Open', 'Write', 'None'); $stream.Dispose(); exit 0 } catch { exit 1 }"
+    ],
+    {
+      allowNonZero: true,
+      env: { ...env, OPEN_SCIENCE_LOCK_PROBE_PATH: lock.uninstaller }
+    }
+  )
+  if (writeProbe.code !== 1) {
+    throw new Error('Uninstaller lock fixture did not block an independent write handle.')
+  }
+
+  let installResult
+  try {
+    installResult = await runProcess(installer, ['/S', `/D=${installDirectory}`], {
+      allowNonZero: true,
+      env,
+      timeoutMs: 30_000
+    })
+    await delay(250)
+    if (lock.child.exitCode !== null) {
+      throw new Error(`Installer terminated the external lock holder with ${lock.child.exitCode}.`)
+    }
+  } catch (error) {
+    throw new Error(
+      `Installer could not recover the orphaned locked uninstaller at ${lock.uninstaller}.`,
+      { cause: error }
+    )
+  } finally {
+    await terminateProcessTree(lock.child)
+  }
+
+  const appInstalled = await pathExists(join(installDirectory, APP_EXECUTABLE))
+  if (installResult.code !== 0) {
+    if (appInstalled) {
+      throw new Error('Installer failed after partially extracting the new application.')
+    }
+    return
+  }
+  const installedUninstaller = await findUninstaller(installDirectory)
+  const installedUninstallerHash = createHash('sha256')
+    .update(await readFile(installedUninstaller))
+    .digest('hex')
+  if (installedUninstallerHash === staleUninstallerHash) {
+    throw new Error(
+      `Installer reported success without replacing the locked uninstaller at ${installedUninstaller}.`
+    )
+  }
+  if (!appInstalled)
+    throw new Error('Installer reported success without installing the application.')
+}
+
 const terminateDirectoryProcesses = async (directory, run = runProcess) => {
   const root = `${directory.replace(/[\\/]+$/u, '')}\\`
   await run(
@@ -1113,13 +1220,18 @@ const parseArguments = (argv) => {
   if (expectedMigrationCount !== undefined && !Number.isSafeInteger(expectedMigrationCount)) {
     throw new Error('Expected migration count must be a positive safe integer.')
   }
+  const scenario = valueFor('--scenario')
+  if (scenario !== undefined && scenario !== ORPHANED_UNINSTALLER_LOCK_SCENARIO) {
+    throw new Error(`Unsupported Windows installer smoke scenario: ${scenario}`)
+  }
   return {
     installerDirectory: resolve(installerDirectory),
     previousInstallerDirectory: valueFor('--previous-installer-dir')
       ? resolve(valueFor('--previous-installer-dir'))
       : undefined,
     artifactRpcContract,
-    expectedMigrationCount
+    expectedMigrationCount,
+    scenario
   }
 }
 
@@ -1140,15 +1252,42 @@ const cleanupSmokeRoot = async (root, primaryError, remove = removeSmokeRoot) =>
   }
 }
 
+const runOrphanedUninstallerLockSmoke = async (installer) => {
+  const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
+  const installDirectory = join(root, 'installed app 程序')
+  const profileDirectory = join(root, 'profile 数据 with spaces')
+  const env = windowsProfileEnvironment(profileDirectory)
+  await Promise.all([
+    mkdir(env.APPDATA, { recursive: true }),
+    mkdir(env.LOCALAPPDATA, { recursive: true }),
+    mkdir(env.TEMP, { recursive: true })
+  ])
+
+  let primaryError
+  try {
+    await drillOrphanedUninstallerLock({ installer, installDirectory, env })
+  } catch (error) {
+    primaryError = error
+  }
+  await cleanupSmokeRoot(root, primaryError)
+  if (primaryError) throw primaryError
+  console.log('Windows orphaned-uninstaller lock smoke completed successfully.')
+}
+
 const main = async () => {
   if (process.platform !== 'win32') throw new Error('Windows installer smoke requires Windows.')
   const options = parseArguments(process.argv.slice(2))
   const currentInstaller = await findSetupInstaller(options.installerDirectory)
+  if (options.scenario === ORPHANED_UNINSTALLER_LOCK_SCENARIO) {
+    await runOrphanedUninstallerLockSmoke(currentInstaller)
+    return
+  }
   const previousInstaller = options.previousInstallerDirectory
     ? await findSetupInstaller(options.previousInstallerDirectory)
     : undefined
   const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
   const installDirectory = join(root, 'installed app 程序')
+  const lockedInstallDirectory = join(root, 'locked uninstaller 程序')
   const profileDirectory = join(root, 'profile 数据 with spaces')
   const freshStorageRoot = join(root, 'fresh database 数据 with spaces')
   const legacyStorageRoot = join(root, 'legacy database 数据 with spaces')
@@ -1168,6 +1307,11 @@ const main = async () => {
 
   let primaryError
   try {
+    await drillOrphanedUninstallerLock({
+      installer: currentInstaller,
+      installDirectory: lockedInstallDirectory,
+      env
+    })
     await executeSmokePlan(
       buildSmokePlan({ currentInstaller, previousInstaller }),
       async (cycle) => {
@@ -1266,6 +1410,7 @@ export {
   buildSmokePlan,
   cleanupSmokeRoot,
   createUpgradeProfileGuard,
+  drillOrphanedUninstallerLock,
   executeSmokePlan,
   fetchWithTimeout,
   findSetupInstaller,
