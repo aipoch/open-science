@@ -38,7 +38,9 @@ const contentBlocks = (content: string | ContentBlock[]): ContentBlock[] => {
 describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
   'ACP attachment access from Notebook',
   () => {
-    it('lets Notebook copy the exact managed upload snapshot advertised to the Agent', async () => {
+    it('lets Notebook copy the exact managed upload snapshot advertised to the Agent', async ({
+      skip
+    }) => {
       const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-attachment-sandbox-'))
       roots.push(storageRoot)
       const projectId = 'project-1'
@@ -148,6 +150,10 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
       })
 
       try {
+        const status = await sandbox.status()
+        if (status.kind !== 'ready') {
+          skip(`Notebook network sandbox is unavailable: ${status.kind}`)
+        }
         await sandbox.initialize()
         const wrapped = await sandbox.wrap({
           command: `/bin/cp ${JSON.stringify(advertisedPath)} ${JSON.stringify(destination)}`,
