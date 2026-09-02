@@ -796,6 +796,28 @@ describe('ConversationPanel composer errors', () => {
     act(() => retry?.click())
     expect(request).toHaveBeenCalledOnce()
   })
+
+  it('does not offer retry when Artifact provenance proof is invalid', () => {
+    const activeSession: ChatSession = {
+      id: 'session-artifact-invalid-proof',
+      projectId: 'project-a',
+      title: 'Artifact proof failure',
+      cwd: '/workspace',
+      status: 'error',
+      error:
+        'Generated file finalization cannot be retried: Artifact run claim is missing complete provenance context.',
+      errorReportable: true,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    renderPanel({ view: { activeSession } })
+
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Retry Artifact publication"]')
+    ).toBeNull()
+  })
 })
 
 describe('ConversationPanel session loading presentation', () => {

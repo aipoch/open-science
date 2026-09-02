@@ -340,6 +340,73 @@ describe('reconcilePendingArtifacts', () => {
     })
   })
 
+  it('retries a native provenance Artifact by its durable Version identity', async () => {
+    const nativePath =
+      '/data/artifacts/proj-1/.provenance/artifacts/artifact-1/versions/version-1/chart.png'
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        status: 'error',
+        error: 'Generated file finalization failed: disk temporarily unavailable',
+        errorReportable: true,
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'done',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['version-1'],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        artifacts: [
+          {
+            id: 'version-1',
+            artifactId: 'artifact-1',
+            versionId: 'version-1',
+            kind: 'managed-file',
+            path: nativePath,
+            name: 'chart.png'
+          }
+        ]
+      })
+    ])
+    const finalized = {
+      id: 'version-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1',
+      runId: 'run-1',
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      name: 'chart.png',
+      path: nativePath,
+      fileUrl: `file://${nativePath}`,
+      size: 3,
+      mtimeMs: 2
+    }
+    const api = { reconcilePendingArtifacts: vi.fn().mockResolvedValue([finalized]) }
+
+    await retryPendingArtifactFinalization('session-1', api)
+
+    expect(api.reconcilePendingArtifacts).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      pendingPaths: [],
+      artifactVersionIds: ['version-1']
+    })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      error: undefined,
+      errorReportable: undefined,
+      messages: [{ artifactIds: ['version-1'] }]
+    })
+  })
+
   it('re-finalizes pending artifacts referenced only by an inactive conversation Branch', async () => {
     const pendingPath = '/data/artifacts/proj-1/session-1/.pending/run-1/report.md'
     const originalPrompt = {

@@ -4,6 +4,7 @@ import { basename, dirname } from 'node:path'
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import {
+  ARTIFACT_FINALIZATION_INVALID_PROOF,
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
   type ArtifactPreviewResult,
@@ -489,10 +490,18 @@ const registerArtifactIpcHandlers = (
       try {
         return { ok: true, artifacts: await handlers.finalizeRunArtifacts(request) }
       } catch (error) {
-        if (!(error instanceof ArtifactOwnershipPersistenceRaceError)) throw error
+        if (
+          !(error instanceof ArtifactOwnershipPersistenceRaceError) &&
+          !(error instanceof ArtifactFinalizationProofError)
+        ) {
+          throw error
+        }
         return {
           ok: false,
-          code: ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+          code:
+            error instanceof ArtifactOwnershipPersistenceRaceError
+              ? ARTIFACT_OWNERSHIP_PERSISTENCE_RACE
+              : ARTIFACT_FINALIZATION_INVALID_PROOF,
           message: error.message
         }
       }

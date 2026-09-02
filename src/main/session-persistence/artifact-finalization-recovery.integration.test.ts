@@ -71,17 +71,8 @@ describe('artifact finalization startup recovery', () => {
       projectId: PROJECT_ID,
       sessionId: SESSION_ID,
       messageId: 'message-1',
-      pendingPaths: [
-        join(
-          storageRoot,
-          'artifacts',
-          PROJECT_ID,
-          STORAGE_SESSION_ID,
-          '.pending',
-          RUN_ID,
-          'result.png'
-        )
-      ]
+      pendingPaths: [],
+      artifactVersionIds: [version.versionId]
     }
 
     const recovery = await coordinator.retryArtifactFinalization(request)

@@ -385,5 +385,8 @@ export const createSessionStore = (): SessionStoreApi =>
 
 export const useSessionStore = create<SessionStore>(createSessionStoreInitializer())
 
-export { isArtifactFinalizationError } from './session-store-run-terminal-helpers'
+export {
+  isArtifactFinalizationError,
+  isRetryableArtifactFinalizationError
+} from './session-store-run-terminal-helpers'
 export type { SessionStore, SessionStoreApi }

@@ -146,7 +146,8 @@ class ArtifactProvenanceFinalizationRecovery {
     appSessionId: string,
     durableSession?: PersistedChatSession,
     snapshot?: ArtifactProjectReconciliationSnapshot,
-    artifactRunIds?: readonly string[]
+    artifactRunIds?: readonly string[],
+    artifactVersionIds?: readonly string[]
   ): Promise<ArtifactFinalizationRecoveryResult> {
     this.validateProjectReconciliation(projectId, snapshot)
     const result: ArtifactFinalizationRecoveryResult = {
@@ -176,9 +177,13 @@ class ArtifactProvenanceFinalizationRecovery {
       })
     ).map(requireAgentArtifactVersion)
     const requestedRunIds = artifactRunIds ? new Set(artifactRunIds) : undefined
+    const requestedVersionIds = artifactVersionIds ? new Set(artifactVersionIds) : undefined
+    const isScopedRetry = requestedRunIds !== undefined || requestedVersionIds !== undefined
     const candidateVersions = allFinalizationVersions.filter(
       (version) =>
-        (!requestedRunIds || requestedRunIds.has(version.artifactRunId)) &&
+        (!isScopedRetry ||
+          requestedRunIds?.has(version.artifactRunId) ||
+          requestedVersionIds?.has(version.id)) &&
         (version.state === 'pending' ||
           (version.messageId !== null &&
             !isArtifactLinkedToDurableMessage(durableSession, version.messageId, version.id)))
@@ -193,7 +198,7 @@ class ArtifactProvenanceFinalizationRecovery {
     // Direct callers deliberately get a fresh scan. Startup supplies one opaque Project snapshot
     // to every Session, avoiding repeated scans without persisting stale repository state.
     const prepared = snapshot?.[artifactProjectReconciliationState]
-    const unfinishedCompatibilityPublications = requestedRunIds
+    const unfinishedCompatibilityPublications = isScopedRetry
       ? []
       : (prepared?.unfinishedCompatibilityPublications ??
         (await compatibilityRepository.listPendingRunPublications(projectId)))

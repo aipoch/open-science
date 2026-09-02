@@ -5,6 +5,7 @@ import {
   type AcpPermissionRequest
 } from '../../../../shared/acp'
 import {
+  ARTIFACT_FINALIZATION_INVALID_PROOF,
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile
 } from '../../../../shared/artifacts'
@@ -2731,7 +2732,10 @@ describe('workspace runtime events', () => {
     })
     const finalizeRunArtifacts = vi.fn().mockImplementation(async () => {
       operationOrder.push('finalize')
-      throw new Error('Artifact finalization message is not a Branch descendant of its prompt.')
+      throw Object.assign(
+        new Error('Artifact finalization message is not a Branch descendant of its prompt.'),
+        { code: ARTIFACT_FINALIZATION_INVALID_PROOF }
+      )
     })
 
     await applyWorkspaceRuntimeEvent(
@@ -2753,6 +2757,9 @@ describe('workspace runtime events', () => {
 
     expect(operationOrder).toEqual(['save', 'finalize'])
     expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].error).toMatch(
+      /^Generated file finalization cannot be retried:/u
+    )
   })
 
   it('attempts the recoverable ownership persistence race at most twice', async () => {

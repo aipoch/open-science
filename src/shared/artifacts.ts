@@ -107,11 +107,13 @@ export type FinalizeRunArtifactsRequest = {
   messageId: string
 }
 
-// The only finalization failure the renderer may recover inside one event delivery. Other failures
-// remain rejected IPC calls so proof and compatibility errors cannot accidentally become retryable.
+// Ownership races may retry inside one event delivery. Invalid proof is returned only so the
+// renderer can keep that terminal failure from offering a manual retry; operational failures reject.
 export const ARTIFACT_OWNERSHIP_PERSISTENCE_RACE = 'ownership-persistence-race' as const
+export const ARTIFACT_FINALIZATION_INVALID_PROOF = 'invalid-proof' as const
 
-export type ArtifactFinalizationErrorCode = typeof ARTIFACT_OWNERSHIP_PERSISTENCE_RACE
+export type ArtifactFinalizationErrorCode =
+  typeof ARTIFACT_OWNERSHIP_PERSISTENCE_RACE | typeof ARTIFACT_FINALIZATION_INVALID_PROOF
 
 export type FinalizeRunArtifactsResult =
   | { ok: true; artifacts: ArtifactFile[] }
@@ -186,13 +188,14 @@ export type ResolveArtifactVersionDescriptorsRequest = {
   versionIds: string[]
 }
 
-// Renderer request to re-finalize pending artifacts after an operational failure or crash: the
-// persisted message still references `.pending/<run>/<file>` paths. Returns the message's finalized
-// files so the renderer can replace the stale pending references.
+// Renderer request to re-finalize artifacts after an operational failure or crash. Compatibility
+// files retain `.pending/<run>/<file>` paths; native provenance files retain immutable Version ids.
+// Returns the message's finalized files so the renderer can replace stale pending references.
 export type ReconcilePendingArtifactsRequest = ProjectIdScope & {
   sessionId: string
   messageId: string
   pendingPaths: string[]
+  artifactVersionIds?: string[]
 }
 
 // Internal repository list request after the app has resolved the logical project bucket.

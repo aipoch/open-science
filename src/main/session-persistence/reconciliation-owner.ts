@@ -54,6 +54,7 @@ type ArtifactStorageReconciler = {
       removeOrphanStaging?: boolean
       projectReconciliation?: ArtifactProjectReconciliationSnapshot
       artifactRunIds?: string[]
+      artifactVersionIds?: string[]
     }
   ): Promise<
     | {
@@ -223,7 +224,7 @@ class SessionPersistenceReconciliationOwner {
 
   async retryArtifactFinalization(
     session: PersistedChatSession,
-    request: { messageId: string; pendingPaths: string[] }
+    request: { messageId: string; pendingPaths: string[]; artifactVersionIds?: string[] }
   ): Promise<PendingArtifactFinalizationRecovery | undefined> {
     if (!this.artifactStorage) return undefined
 
@@ -236,7 +237,8 @@ class SessionPersistenceReconciliationOwner {
       session,
       {
         removeOrphanStaging: false,
-        artifactRunIds: requestedRunIds
+        artifactRunIds: requestedRunIds,
+        artifactVersionIds: request.artifactVersionIds
       }
     )
     const artifacts = (artifactRecovery?.recoveredMessageArtifacts ?? []).flatMap((recovery) =>
@@ -247,8 +249,7 @@ class SessionPersistenceReconciliationOwner {
       return artifacts.length > 0 ? { artifacts, nativeRunIds: [] } : undefined
     }
 
-    const requestedRunIdSet = new Set(requestedRunIds)
-    const nativeRunIds = nativeFinalizationRunIds.filter((runId) => requestedRunIdSet.has(runId))
+    const nativeRunIds = nativeFinalizationRunIds
     if (nativeRunIds.length === 0) return undefined
 
     const unresolvedRunIds = new Set(artifactRecovery?.unresolvedNativeFinalizationRunIds ?? [])

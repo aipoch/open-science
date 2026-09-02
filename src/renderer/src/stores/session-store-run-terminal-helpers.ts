@@ -20,7 +20,11 @@ import { projectSessionInteractionState } from './session-store-interaction-stat
 import type { ChatMessage, ChatSession, ToolActivity } from './session-store-persistence-owner'
 
 const ARTIFACT_ERROR_PREFIX = 'Generated file finalization failed'
+const TERMINAL_ARTIFACT_ERROR_PREFIX = 'Generated file finalization cannot be retried'
 export const isArtifactFinalizationError = (error: string | undefined): boolean =>
+  error?.startsWith(ARTIFACT_ERROR_PREFIX) === true ||
+  error?.startsWith(TERMINAL_ARTIFACT_ERROR_PREFIX) === true
+export const isRetryableArtifactFinalizationError = (error: string | undefined): boolean =>
   error?.startsWith(ARTIFACT_ERROR_PREFIX) ?? false
 const CONVERSATION_GRAPH_SYNC_ERROR =
   'Conversation history could not be finalized safely. Restart the app to restore the last saved conversation state, then report this issue.'
@@ -261,10 +265,14 @@ export const projectPermissionCleared = (
   )
 }
 
-export const projectArtifactError = (session: ChatSession, error: string): ChatSession => ({
+export const projectArtifactError = (
+  session: ChatSession,
+  error: string,
+  retryable = true
+): ChatSession => ({
   ...session,
   status: 'error',
-  error: `${ARTIFACT_ERROR_PREFIX}: ${error}`,
+  error: `${retryable ? ARTIFACT_ERROR_PREFIX : TERMINAL_ARTIFACT_ERROR_PREFIX}: ${error}`,
   errorReportable: true,
   updatedAt: Date.now()
 })

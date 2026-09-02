@@ -8,6 +8,7 @@ import {
   type ArtifactVersionFile
 } from '../../shared/artifact-provenance'
 import {
+  ARTIFACT_FINALIZATION_INVALID_PROOF,
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
   type ArtifactWriteSource
@@ -1307,6 +1308,46 @@ describe('artifact IPC handler registration', () => {
         artifactVersionCount: 1
       })
     )
+  })
+
+  it('returns invalid provenance proof as a terminal IPC failure result', async () => {
+    const repository = { finalizeRunArtifacts: vi.fn() } as unknown as ArtifactRepository
+    const provenance = {
+      finalizeRun: vi
+        .fn()
+        .mockRejectedValue(
+          new ArtifactFinalizationProofError(
+            'execution-snapshot-corrupt',
+            'Artifact Version provenance proof is invalid.'
+          )
+        )
+    }
+    const runRegistry = new ArtifactRunRegistry()
+    const claimId = runRegistry.register({
+      projectId: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'prompt-1',
+      artifactVersionIds: ['version-1']
+    })
+    const handlers = createArtifactHandlers(repository, runRegistry, {
+      provenance: provenance as never
+    })
+    registerArtifactIpcHandlers(repository, runRegistry, provenance as never, undefined, handlers)
+
+    await expect(
+      ipcHandlers.get('artifacts:finalize-run')?.({}, { claimId, messageId: 'message-1' })
+    ).resolves.toEqual({
+      ok: false,
+      code: ARTIFACT_FINALIZATION_INVALID_PROOF,
+      message: 'Artifact Version provenance proof is invalid.'
+    })
+    expect(repository.finalizeRunArtifacts).not.toHaveBeenCalled()
   })
 
   it('uses a legacy Version locator only to open the latest logical Artifact preview', async () => {

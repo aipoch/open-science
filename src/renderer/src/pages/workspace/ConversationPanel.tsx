@@ -78,7 +78,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
 import {
-  isArtifactFinalizationError,
+  isRetryableArtifactFinalizationError,
   projectSessionActionability,
   useSessionStore,
   type ChatSession
@@ -738,7 +738,7 @@ const ConversationPanel = ({
   const isRunErrorReportable =
     !hasUnsupportedCodexAcpRunError &&
     (activeSession?.errorReportable ?? isReportableRunFailure(activeSession?.error))
-  const canRetryArtifactFinalization = isArtifactFinalizationError(activeSession?.error)
+  const canRetryArtifactFinalization = isRetryableArtifactFinalizationError(activeSession?.error)
 
   const activeSpecialist = specialistId
     ? specialistItems.find((item) => item.kind === 'custom' && item.id === specialistId)

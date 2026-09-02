@@ -910,28 +910,47 @@ const isPendingArtifactPath = (path: string | undefined): path is string =>
   typeof path === 'string' && path.split(/[\\/]/).includes('.pending')
 
 const pendingArtifactRequests = (
-  session: ChatSession
-): Array<{ messageId: string; pendingPaths: string[] }> => {
+  session: ChatSession,
+  includeNativeVersions = false
+): Array<{ messageId: string; pendingPaths: string[]; artifactVersionIds?: string[] }> => {
   const artifactsById = new Map(
     (session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
   )
   const messages = session.conversationGraph?.messages ?? session.messages
   return messages.flatMap((message) => {
-    const pendingPaths = (message.artifactIds ?? [])
-      .map((id) => artifactsById.get(id)?.path)
-      .filter(isPendingArtifactPath)
-    return pendingPaths.length > 0 ? [{ messageId: message.id, pendingPaths }] : []
+    const artifacts = (message.artifactIds ?? []).flatMap((id) => {
+      const artifact = artifactsById.get(id)
+      return artifact ? [artifact] : []
+    })
+    const pendingPaths = artifacts.map((artifact) => artifact.path).filter(isPendingArtifactPath)
+    const artifactVersionIds = includeNativeVersions
+      ? [
+          ...new Set(
+            artifacts.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
+          )
+        ]
+      : []
+    return pendingPaths.length > 0 || artifactVersionIds.length > 0
+      ? [
+          {
+            messageId: message.id,
+            pendingPaths,
+            ...(artifactVersionIds.length > 0 ? { artifactVersionIds } : {})
+          }
+        ]
+      : []
   })
 }
 
 const reconcileSessionPendingArtifacts = async (
   session: ChatSession,
-  api: ArtifactReconcileApi
+  api: ArtifactReconcileApi,
+  includeNativeVersions = false
 ): Promise<void> => {
   if (session.isPending || !session.projectId) return
 
   let firstFailure: unknown
-  for (const request of pendingArtifactRequests(session)) {
+  for (const request of pendingArtifactRequests(session, includeNativeVersions)) {
     try {
       const finalized = await api.reconcilePendingArtifacts({
         projectId: session.projectId,
@@ -975,10 +994,10 @@ const retryPendingArtifactFinalization = async (
   if (!session) throw new Error('Session not found.')
 
   try {
-    if (pendingArtifactRequests(session).length === 0) {
+    if (pendingArtifactRequests(session, true).length === 0) {
       throw new Error('No pending Artifact references are available to retry.')
     }
-    await reconcileSessionPendingArtifacts(session, api)
+    await reconcileSessionPendingArtifacts(session, api, true)
     const current = useSessionStore
       .getState()
       .sessions.find((candidate) => candidate.id === sessionId)
@@ -1003,7 +1022,11 @@ const retryPendingArtifactFinalization = async (
 const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<void> => {
   for (const session of useSessionStore.getState().sessions) {
     try {
-      await reconcileSessionPendingArtifacts(session, api)
+      await reconcileSessionPendingArtifacts(
+        session,
+        api,
+        isArtifactFinalizationError(session.error)
+      )
       const current = useSessionStore
         .getState()
         .sessions.find((candidate) => candidate.id === session.id)

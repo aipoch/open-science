@@ -10,6 +10,7 @@ import {
   type AcpTurnTokenUsage
 } from '../../../../shared/acp'
 import {
+  ARTIFACT_FINALIZATION_INVALID_PROOF,
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
   type FinalizeRunArtifactsRequest
@@ -248,6 +249,12 @@ const finalizeRunArtifacts = async (
   throw error
 }
 
+const isArtifactFinalizationProofError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  error.code === ARTIFACT_FINALIZATION_INVALID_PROOF
+
 // Artifact finalization and auto-review both require the latest renderer-selected Message graph to be
 // durable before Main reads it. Persist explicitly instead of racing the asynchronous store saver.
 const saveSessionInRuntimeOrder = (session: PersistedChatSession): Promise<PersistedChatSession> =>
@@ -344,7 +351,13 @@ const finalizeArtifactEvent = async (
     await persistLatestSession()
     return true
   } catch (error) {
-    if (!artifactsFinalized) store.recordArtifactError(event.sessionId, getErrorText(error))
+    if (!artifactsFinalized) {
+      store.recordArtifactError(
+        event.sessionId,
+        getErrorText(error),
+        !isArtifactFinalizationProofError(error)
+      )
+    }
     throw error
   }
 }
