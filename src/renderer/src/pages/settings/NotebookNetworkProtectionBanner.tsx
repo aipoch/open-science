@@ -30,7 +30,7 @@ type BannerPresentation = Readonly<{
   Icon: LucideIcon
   title: string
   description: string
-  tone: 'info' | 'success' | 'warning' | 'failure' | 'neutral'
+  tone: 'info' | 'warning' | 'failure' | 'neutral'
 }>
 
 const previewStatus = (
@@ -89,11 +89,11 @@ const NotebookNetworkProtectionBanner = ({
       case 'ready':
         return {
           Icon: ShieldCheck,
-          title: t('Notebook network protection is active.'),
+          title: t('Network protection on'),
           description: t(
-            'Notebook Python, R, REPL, Bash, and package downloads are limited to approved domains.'
+            'Notebook sessions and package downloads can access only approved domains.'
           ),
-          tone: 'success'
+          tone: 'neutral'
         }
       case 'setupRequired':
         return {
@@ -133,8 +133,6 @@ const NotebookNetworkProtectionBanner = ({
 
   const toneClassName: Record<BannerPresentation['tone'], string> = {
     info: 'border-status-info-foreground/25 bg-status-info-surface/45 dark:border-status-info-dark-foreground/25 dark:bg-status-info-dark-surface/25',
-    success:
-      'border-status-success-accent/30 bg-status-success-surface/55 dark:border-status-success-dark-foreground/25 dark:bg-status-success-dark-surface/30',
     warning:
       'border-status-warning-foreground/30 bg-status-warning-surface/45 dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/25',
     failure:
@@ -144,8 +142,6 @@ const NotebookNetworkProtectionBanner = ({
 
   const iconClassName: Record<BannerPresentation['tone'], string> = {
     info: 'bg-status-info-surface text-status-info-foreground dark:bg-status-info-dark-surface dark:text-status-info-dark-foreground',
-    success:
-      'bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface dark:text-status-success-dark-foreground',
     warning:
       'bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground',
     failure:
@@ -169,7 +165,7 @@ const NotebookNetworkProtectionBanner = ({
       role={status.kind === 'error' ? 'alert' : 'status'}
       data-testid="notebook-network-protection-banner"
       className={cn(
-        'rounded-xl border p-3 sm:p-4',
+        'rounded-lg border p-3',
         toneClassName[presentation.tone],
         previewState === 'disabled' && 'opacity-50'
       )}
@@ -178,23 +174,21 @@ const NotebookNetworkProtectionBanner = ({
         <div className="flex min-w-0 flex-1 items-start gap-3">
           <span
             className={cn(
-              'flex size-9 shrink-0 items-center justify-center rounded-lg',
+              'flex size-8 shrink-0 items-center justify-center rounded-md',
               iconClassName[presentation.tone]
             )}
             aria-hidden="true"
           >
             <presentation.Icon
               className={cn(
-                'size-5',
+                'size-4.5',
                 status.kind === 'checking' && 'animate-spin motion-reduce:animate-none'
               )}
             />
           </span>
           <div className="min-w-0">
-            <p className="break-words text-sm font-semibold text-foreground">
-              {presentation.title}
-            </p>
-            <p className="mt-0.5 max-w-2xl break-words text-[13px] leading-5 text-foreground/80">
+            <p className="break-words text-sm font-medium text-foreground">{presentation.title}</p>
+            <p className="mt-0.5 max-w-2xl break-words text-[13px] leading-5 text-muted-foreground">
               {presentation.description}
             </p>
           </div>

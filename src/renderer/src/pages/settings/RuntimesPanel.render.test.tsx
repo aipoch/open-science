@@ -195,7 +195,7 @@ describe('RuntimesPanel', () => {
     await render(undefined, undefined, onOpenNetworkProtection)
 
     const banner = container.querySelector('[data-testid="notebook-network-protection-banner"]')
-    expect(banner?.textContent).toContain('Notebook network protection is active.')
+    expect(banner?.textContent).toContain('Network protection on')
     await click(banner?.querySelector('button') ?? null)
     expect(onOpenNetworkProtection).toHaveBeenCalledOnce()
   })
@@ -212,12 +212,12 @@ describe('RuntimesPanel', () => {
     const section = container.querySelector('section[aria-label="Custom runtime title"]')
     expect(section?.querySelector('h3')?.textContent).toBe('Custom runtime title')
     expect(section?.textContent).toContain('Custom runtime description')
-    const recheck = section?.querySelector<HTMLButtonElement>('button')
+    const recheck = section?.querySelector<HTMLButtonElement>('[data-testid="runtimes-recheck"]')
+    const checkedAt = section?.querySelector('[data-testid="runtimes-checked-at"]')
     expect(recheck?.textContent).toContain('Recheck')
     expect(recheck?.parentElement?.parentElement?.className).toContain('ml-auto')
-    expect(section?.querySelector('[data-testid="runtimes-checked-at"]')?.textContent).toContain(
-      'Last checked'
-    )
+    expect(checkedAt?.textContent).toContain('Last checked')
+    expect(recheck?.nextElementSibling).toBe(checkedAt)
   })
 
   it('disables Recheck until the initial registry load settles', async () => {
@@ -348,7 +348,7 @@ describe('RuntimesPanel', () => {
 
   it('persists the Agent environment-creation toggle', async () => {
     await render()
-    const toggle = container.querySelector('[aria-label="Allow Agent to create environments"]')
+    const toggle = container.querySelector('[aria-label="Let the Agent create environments"]')
 
     expect(toggle?.getAttribute('data-state')).toBe('checked')
     await click(toggle)
@@ -381,7 +381,12 @@ describe('RuntimesPanel', () => {
 
     await render()
 
-    expect(container.querySelector('[data-testid="runtime-reinstall-python"]')).not.toBeNull()
+    const reinstall = container.querySelector('[data-testid="runtime-reinstall-python"]')
+    const packages = container.querySelector('[data-testid="runtime-packages-button"]')
+    expect(reinstall).not.toBeNull()
+    expect(reinstall?.getAttribute('data-variant')).toBe('outline')
+    expect(reinstall?.textContent).toBe('Reinstall')
+    expect(reinstall?.parentElement).toBe(packages?.parentElement)
     for (const label of ['Legacy managed Python', 'Agent analysis', 'System Python']) {
       const card = Array.from(container.querySelectorAll('[data-testid="runtime-card"]')).find(
         (candidate) => candidate.textContent?.includes(label)

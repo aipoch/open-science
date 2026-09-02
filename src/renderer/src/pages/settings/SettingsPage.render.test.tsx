@@ -3328,7 +3328,7 @@ describe('SettingsPage layout', () => {
     })
 
     const banner = document.body.querySelector('[data-testid="notebook-network-protection-banner"]')
-    expect(banner?.textContent).toContain('Notebook network protection is active.')
+    expect(banner?.textContent).toContain('Network protection on')
 
     const manage = Array.from(banner?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
       (button) => button.textContent?.trim() === 'Network settings'

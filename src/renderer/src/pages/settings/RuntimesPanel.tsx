@@ -1,3 +1,7 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
+/* Hallmark · macrostructure: Workbench · genre: modern-minimal · tone: technical/austere
+ * theme: existing Open Science Settings tokens · enrichment: none · motion: existing controls only
+ */
 import { CheckCircle2, FolderInput, Package, RefreshCw, Search, X } from 'lucide-react'
 import { AlertDialog, Dialog } from 'radix-ui'
 import { useEffect, useRef, useState } from 'react'
@@ -480,61 +484,63 @@ const RuntimesPanel = ({
           />
         </div>
 
-        {env.runnable ? (
-          <div className="mt-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="runtime-packages-button"
-              disabled={busy || languageOperationActive(language)}
-              onClick={() => {
-                setPackages(null)
-                setPackagesError(null)
-                setPackagesFilter('')
-                setPackagesEnv(env)
-              }}
-            >
-              <Package aria-hidden="true" />
-              {t('Packages')}
-              {typeof packageCounts[env.envId] === 'number' ? (
-                <Badge variant="secondary" data-testid="runtime-packages-count">
-                  {packageCounts[env.envId]}
-                </Badge>
-              ) : null}
-            </Button>
-          </div>
-        ) : null}
-
-        {defaultManaged ? (
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {operationActive ? (
-              <Button type="button" variant="outline" size="sm" disabled>
-                {t('Reinstalling…')}
-              </Button>
-            ) : recoveryBlocked ? (
+        {env.runnable || defaultManaged ? (
+          <div
+            className="mt-2 flex flex-wrap items-center gap-2"
+            data-testid="runtime-card-actions"
+          >
+            {env.runnable ? (
               <Button
                 type="button"
-                variant="default"
+                variant="outline"
                 size="sm"
-                data-testid={`runtime-reset-${language}`}
-                disabled={busy || Boolean(statusError)}
-                onClick={() => requestManagedRepair(language, env.envId, env.label, 'reset')}
+                data-testid="runtime-packages-button"
+                disabled={busy || languageOperationActive(language)}
+                onClick={() => {
+                  setPackages(null)
+                  setPackagesError(null)
+                  setPackagesFilter('')
+                  setPackagesEnv(env)
+                }}
               >
-                {t('Reset runtime')}
+                <Package aria-hidden="true" />
+                {t('Packages')}
+                {typeof packageCounts[env.envId] === 'number' ? (
+                  <Badge variant="secondary" data-testid="runtime-packages-count">
+                    {packageCounts[env.envId]}
+                  </Badge>
+                ) : null}
               </Button>
-            ) : (
-              <Button
-                type="button"
-                variant="default"
-                size="sm"
-                data-testid={`runtime-reinstall-${language}`}
-                disabled={busy || Boolean(statusError)}
-                onClick={() => requestManagedRepair(language, env.envId, env.label, 'reinstall')}
-              >
-                {t('Reinstall runtime')}
-              </Button>
-            )}
+            ) : null}
+            {defaultManaged ? (
+              operationActive ? (
+                <Button type="button" variant="outline" size="sm" disabled>
+                  {t('Reinstalling…')}
+                </Button>
+              ) : recoveryBlocked ? (
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  data-testid={`runtime-reset-${language}`}
+                  disabled={busy || Boolean(statusError)}
+                  onClick={() => requestManagedRepair(language, env.envId, env.label, 'reset')}
+                >
+                  {t('Reset runtime')}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid={`runtime-reinstall-${language}`}
+                  disabled={busy || Boolean(statusError)}
+                  onClick={() => requestManagedRepair(language, env.envId, env.label, 'reinstall')}
+                >
+                  {t('Reinstall')}
+                </Button>
+              )
+            ) : null}
           </div>
         ) : null}
 
@@ -591,24 +597,28 @@ const RuntimesPanel = ({
         contentClassName="space-y-5"
         actionClassName="ml-auto"
         action={
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            {checkedAt !== null ? (
-              <span className="text-xs text-muted-foreground" data-testid="runtimes-checked-at">
-                {t('Last checked {{time}}', {
-                  time: formatDate(checkedAt, 'dateTime')
-                })}
-              </span>
-            ) : null}
+          <div className="flex flex-col items-end gap-1.5">
             <Button
               type="button"
               variant="outline"
               size="sm"
+              data-testid="runtimes-recheck"
               onClick={() => void recheck()}
               disabled={busy || loading || LANGUAGES.some(({ id }) => languageOperationActive(id))}
             >
               <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
               {t('Recheck')}
             </Button>
+            {checkedAt !== null ? (
+              <span
+                className="whitespace-nowrap text-xs tabular-nums text-muted-foreground"
+                data-testid="runtimes-checked-at"
+              >
+                {t('Last checked {{time}}', {
+                  time: formatDate(checkedAt, 'dateTime')
+                })}
+              </span>
+            ) : null}
           </div>
         }
       >
@@ -622,17 +632,15 @@ const RuntimesPanel = ({
         )}
         {!loading && envs !== null ? (
           <SettingsRow
-            label={t('Allow Agent to create environments')}
-            description={t(
-              'Lets the Agent create named environments and prepare missing app-managed runtimes. Disable this to require setup from Settings.'
-            )}
+            label={t('Let the Agent create environments')}
+            description={t('Creates environments and sets up missing runtimes.')}
           >
             <div className="flex justify-end">
               <SettingsToggle
                 enabled={agentEnvironmentCreationEnabled}
                 onToggle={() => void toggleAgentEnvironmentCreation()}
                 disabled={busy}
-                aria-label={t('Allow Agent to create environments')}
+                aria-label={t('Let the Agent create environments')}
               />
             </div>
           </SettingsRow>

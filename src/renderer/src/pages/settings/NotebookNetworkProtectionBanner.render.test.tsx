@@ -37,10 +37,13 @@ describe('NotebookNetworkProtectionBanner', () => {
     await act(async () => root.render(<NotebookNetworkProtectionBanner onOpen={onOpen} />))
     await flush()
 
-    expect(container.textContent).toContain('Notebook network protection is active.')
+    expect(container.textContent).toContain('Network protection on')
     expect(container.textContent).toContain(
-      'Notebook Python, R, REPL, Bash, and package downloads are limited to approved domains.'
+      'Notebook sessions and package downloads can access only approved domains.'
     )
+    expect(
+      container.querySelector('[data-testid="notebook-network-protection-banner"]')?.className
+    ).toContain('bg-bg-10')
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button')?.click()
@@ -107,7 +110,7 @@ describe('NotebookNetworkProtectionBanner', () => {
     })
 
     expect(getStatus).toHaveBeenCalledTimes(2)
-    expect(container.textContent).toContain('Notebook network protection is active.')
+    expect(container.textContent).toContain('Network protection on')
     vi.useRealTimers()
   })
 })
