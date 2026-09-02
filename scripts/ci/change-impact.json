@@ -161,6 +161,7 @@
         "src/main/notebook/package-manager.ts",
         "src/main/notebook/package-process-sandbox.ts",
         "src/main/notebook/process-environment.ts",
+        "src/main/notebook/prompt-input-materialization.ts",
         "src/main/notebook/provisioner-runtime.ts",
         "src/main/notebook/provisioner.ts",
         "src/main/notebook/python-command.ts",
