@@ -145,7 +145,8 @@ class ArtifactProvenanceFinalizationRecovery {
     projectId: string,
     appSessionId: string,
     durableSession?: PersistedChatSession,
-    snapshot?: ArtifactProjectReconciliationSnapshot
+    snapshot?: ArtifactProjectReconciliationSnapshot,
+    artifactRunIds?: readonly string[]
   ): Promise<ArtifactFinalizationRecoveryResult> {
     this.validateProjectReconciliation(projectId, snapshot)
     const result: ArtifactFinalizationRecoveryResult = {
@@ -174,11 +175,13 @@ class ArtifactProvenanceFinalizationRecovery {
         }
       })
     ).map(requireAgentArtifactVersion)
+    const requestedRunIds = artifactRunIds ? new Set(artifactRunIds) : undefined
     const candidateVersions = allFinalizationVersions.filter(
       (version) =>
-        version.state === 'pending' ||
-        (version.messageId !== null &&
-          !isArtifactLinkedToDurableMessage(durableSession, version.messageId, version.id))
+        (!requestedRunIds || requestedRunIds.has(version.artifactRunId)) &&
+        (version.state === 'pending' ||
+          (version.messageId !== null &&
+            !isArtifactLinkedToDurableMessage(durableSession, version.messageId, version.id)))
     )
     result.nativeFinalizationRunIds = [
       ...new Set(candidateVersions.map((version) => version.artifactRunId))
@@ -190,9 +193,10 @@ class ArtifactProvenanceFinalizationRecovery {
     // Direct callers deliberately get a fresh scan. Startup supplies one opaque Project snapshot
     // to every Session, avoiding repeated scans without persisting stale repository state.
     const prepared = snapshot?.[artifactProjectReconciliationState]
-    const unfinishedCompatibilityPublications =
-      prepared?.unfinishedCompatibilityPublications ??
-      (await compatibilityRepository.listPendingRunPublications(projectId))
+    const unfinishedCompatibilityPublications = requestedRunIds
+      ? []
+      : (prepared?.unfinishedCompatibilityPublications ??
+        (await compatibilityRepository.listPendingRunPublications(projectId)))
     const publicationByRunId = new Map(
       unfinishedCompatibilityPublications.map((publication) => [publication.runId, publication])
     )

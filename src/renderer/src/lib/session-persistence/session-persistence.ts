@@ -938,10 +938,23 @@ const reconcileSessionPendingArtifacts = async (
         ...request
       })
       if (finalized.length > 0) {
+        const current = useSessionStore
+          .getState()
+          .sessions.find((candidate) => candidate.id === session.id)
+        const message = (current?.conversationGraph?.messages ?? current?.messages ?? []).find(
+          (candidate) => candidate.id === request.messageId
+        )
+        const artifactsById = new Map(
+          (current?.artifacts ?? []).map((artifact) => [artifact.id, artifact])
+        )
+        const preserveArtifactIds = (message?.artifactIds ?? []).filter(
+          (artifactId) => !isPendingArtifactPath(artifactsById.get(artifactId)?.path)
+        )
         useSessionStore.getState().replaceMessageArtifacts({
           sessionId: session.id,
           messageId: request.messageId,
-          artifacts: finalized
+          artifacts: finalized,
+          preserveArtifactIds
         })
       }
     } catch (error) {

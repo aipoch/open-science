@@ -643,6 +643,7 @@ class ArtifactProvenanceRepository {
     options?: {
       removeOrphanStaging?: boolean
       projectReconciliation?: ArtifactProjectReconciliationSnapshot
+      artifactRunIds?: string[]
     }
   ): Promise<ArtifactStorageReconciliationResult> {
     const projectId = assertSafeSegment(projectIdInput, 'project id')
@@ -670,7 +671,8 @@ class ArtifactProvenanceRepository {
       projectId,
       appSessionId,
       durableSession,
-      options?.projectReconciliation
+      options?.projectReconciliation,
+      options?.artifactRunIds
     )
     result.recoveredVersionIds.push(...finalizationResult.recoveredVersionIds)
     result.recoveredMessageArtifacts.push(...finalizationResult.recoveredMessageArtifacts)

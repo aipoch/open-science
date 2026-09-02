@@ -176,6 +176,57 @@ describe('reconcilePendingArtifacts', () => {
     expect(api.reconcilePendingArtifacts).not.toHaveBeenCalled()
   })
 
+  it('preserves already-published message artifacts when native recovery returns only new files', async () => {
+    const pendingPath = '/data/artifacts/proj-1/session-1/.pending/run-1/new.txt'
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'done',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['published-artifact', 'pending-artifact'],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        artifacts: [
+          {
+            id: 'published-artifact',
+            kind: 'managed-file',
+            path: '/data/artifacts/proj-1/session-1/message-1/published.txt',
+            name: 'published.txt'
+          },
+          { id: 'pending-artifact', kind: 'managed-file', path: pendingPath, name: 'new.txt' }
+        ]
+      })
+    ])
+    const finalized = {
+      id: 'version-1',
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      name: 'new.txt',
+      path: '/data/artifacts/proj-1/session-1/version-1/new.txt',
+      fileUrl: 'file:///data/artifacts/proj-1/session-1/version-1/new.txt',
+      size: 3,
+      mtimeMs: 2
+    }
+
+    await reconcilePendingArtifacts({
+      reconcilePendingArtifacts: vi.fn().mockResolvedValue([finalized])
+    })
+
+    expect(useSessionStore.getState().sessions[0].messages[0].artifactIds).toEqual([
+      'published-artifact',
+      'version-1'
+    ])
+  })
+
   it('continues recovering later Messages when an earlier pending Artifact fails', async () => {
     const firstPath = '/data/artifacts/proj-1/session-1/.pending/run-1/first.txt'
     const secondPath = '/data/artifacts/proj-1/session-1/.pending/run-2/second.txt'

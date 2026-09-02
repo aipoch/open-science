@@ -53,6 +53,7 @@ type ArtifactStorageReconciler = {
     options?: {
       removeOrphanStaging?: boolean
       projectReconciliation?: ArtifactProjectReconciliationSnapshot
+      artifactRunIds?: string[]
     }
   ): Promise<
     | {
@@ -226,16 +227,16 @@ class SessionPersistenceReconciliationOwner {
   ): Promise<PendingArtifactFinalizationRecovery | undefined> {
     if (!this.artifactStorage) return undefined
 
-    const projectReconciliation = await this.artifactStorage.prepareProjectReconciliation(
-      session.projectId
-    )
+    const requestedRunIds = [
+      ...new Set(request.pendingPaths.map((pendingPath) => basename(dirname(pendingPath))))
+    ]
     const artifactRecovery = await this.artifactStorage.reconcileSession(
       session.projectId,
       session.id,
       session,
       {
         removeOrphanStaging: false,
-        projectReconciliation
+        artifactRunIds: requestedRunIds
       }
     )
     const artifacts = (artifactRecovery?.recoveredMessageArtifacts ?? []).flatMap((recovery) =>
@@ -246,10 +247,8 @@ class SessionPersistenceReconciliationOwner {
       return artifacts.length > 0 ? { artifacts, nativeRunIds: [] } : undefined
     }
 
-    const requestedRunIds = new Set(
-      request.pendingPaths.map((pendingPath) => basename(dirname(pendingPath)))
-    )
-    const nativeRunIds = nativeFinalizationRunIds.filter((runId) => requestedRunIds.has(runId))
+    const requestedRunIdSet = new Set(requestedRunIds)
+    const nativeRunIds = nativeFinalizationRunIds.filter((runId) => requestedRunIdSet.has(runId))
     if (nativeRunIds.length === 0) return undefined
 
     const unresolvedRunIds = new Set(artifactRecovery?.unresolvedNativeFinalizationRunIds ?? [])
