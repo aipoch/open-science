@@ -689,7 +689,9 @@ class AcpRuntime {
       lifecycle,
       {
         clearUserChoiceProvenanceForSession: (sessionId) =>
-          this.clearUserChoiceProvenanceForSession(sessionId)
+          this.clearUserChoiceProvenanceForSession(sessionId),
+        releasePromptResourcesForSession: (sessionId) =>
+          this.nativeFollowUp.releaseSession(sessionId)
       }
     )
     this.providerSessionCreator = providerSessions.providerSessionCreator

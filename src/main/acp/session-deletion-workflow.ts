@@ -29,6 +29,7 @@ type AcpSessionDeletionWorkflowDependencies = Readonly<{
   interactions: Pick<AcpSessionInteractionOwner, 'supersedeCurrent'>
   capabilities: Pick<AcpSessionCapabilityOwner, 'revokeSession'>
   promptContent: Pick<AcpPromptContentOwner, 'resetSession'>
+  releasePromptResourcesForSession: (sessionId: string) => void
   handoff: Pick<AcpHandoffContinuityOwner, 'clearSession'>
   contextUsage: Pick<ContextUsageTracker, 'deleteSession'>
   projector: Pick<AcpSessionUpdateProjector, 'clearSession'>
@@ -83,6 +84,7 @@ class AcpSessionDeletionWorkflow {
     this.deps.capabilities.revokeSession(appSessionId)
     const removal = deletion.finish(target)
     this.deps.promptContent.resetSession(appSessionId)
+    this.deps.releasePromptResourcesForSession(appSessionId)
     this.deps.handoff.clearSession(appSessionId)
     this.deps.contextUsage.deleteSession(appSessionId)
     this.deps.projector.clearSession(appSessionId)

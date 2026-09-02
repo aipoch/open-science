@@ -181,14 +181,15 @@ const injected = (transport: NativeFollowUpTransport, messageId: string): AcpSte
   Object.freeze({ injected: true, transport, messageId })
 
 class AcpNativeFollowUpWorkflow {
-  private readonly preparedByTurn = new Map<string, Set<() => void>>()
+  private readonly preparedBySession = new Map<string, Map<string, Set<() => void>>>()
 
   constructor(private readonly options: NativeFollowUpWorkflowOptions) {}
 
   releaseTurn(sessionId: string, turnToken: string): void {
-    const key = this.turnKey(sessionId, turnToken)
-    const prepared = this.preparedByTurn.get(key)
-    this.preparedByTurn.delete(key)
+    const turns = this.preparedBySession.get(sessionId)
+    const prepared = turns?.get(turnToken)
+    turns?.delete(turnToken)
+    if (turns?.size === 0) this.preparedBySession.delete(sessionId)
     for (const close of prepared ?? []) {
       try {
         close()
@@ -201,18 +202,23 @@ class AcpNativeFollowUpWorkflow {
     }
   }
 
-  clear(): void {
-    const retained = [...this.preparedByTurn.values()].flatMap((prepared) => [...prepared])
-    this.preparedByTurn.clear()
-    for (const close of retained) {
+  releaseSession(sessionId: string): void {
+    const turns = this.preparedBySession.get(sessionId)
+    this.preparedBySession.delete(sessionId)
+    for (const close of [...(turns?.values() ?? [])].flatMap((prepared) => [...prepared])) {
       try {
         close()
       } catch (error) {
         log.info('native follow-up resource cleanup failed', {
+          sessionId,
           reason: error instanceof Error ? error.message : String(error)
         })
       }
     }
+  }
+
+  clear(): void {
+    for (const sessionId of [...this.preparedBySession.keys()]) this.releaseSession(sessionId)
   }
 
   async steerSideChatAdvisory(
@@ -466,18 +472,15 @@ class AcpNativeFollowUpWorkflow {
     })
     const retainedTurn = this.options.livePrompt?.(request.sessionId)
     if (closePrepared && retainedTurn) {
-      const key = this.turnKey(request.sessionId, retainedTurn.turnToken)
-      const prepared = this.preparedByTurn.get(key) ?? new Set<() => void>()
+      const turns = this.preparedBySession.get(request.sessionId) ?? new Map()
+      const prepared = turns.get(retainedTurn.turnToken) ?? new Set<() => void>()
       prepared.add(closePrepared)
-      this.preparedByTurn.set(key, prepared)
+      turns.set(retainedTurn.turnToken, prepared)
+      this.preparedBySession.set(request.sessionId, turns)
       closePrepared = undefined
     }
     closePreparedNow()
     return injected(route.transport, messageId)
-  }
-
-  private turnKey(sessionId: string, turnToken: string): string {
-    return `${sessionId.length}:${sessionId}${turnToken}`
   }
 
   private sameLivePrompt(sessionId: string, live: NativeFollowUpLivePrompt | undefined): boolean {
