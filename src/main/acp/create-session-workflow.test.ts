@@ -110,6 +110,44 @@ describe('ACP create-Session workflow', () => {
     expect(admissionActive).toBe(false)
   })
 
+  it.each([
+    { requestedProjectId: '  project-1  ', expectedProjectId: 'project-1' },
+    { requestedProjectId: '   ', expectedProjectId: undefined }
+  ])(
+    'normalizes "$requestedProjectId" before Project admission',
+    async ({ requestedProjectId, expectedProjectId }) => {
+      const createSession = vi.fn(async (request: AcpCreateSessionRequest) => ({
+        sessionId: 'session-1',
+        cwd: request.cwd
+      }))
+      const admittedProjectIds: (string | undefined)[] = []
+      const withProjectAvailable = async <Result>(
+        projectId: string | undefined,
+        operation: () => Promise<Result>
+      ): Promise<Result> => {
+        admittedProjectIds.push(projectId)
+        return operation()
+      }
+      const workflow = createAcpCreateSessionWorkflow(
+        { createSession, deleteSession: vi.fn() },
+        { withProjectAvailable }
+      )
+
+      await workflow.create({
+        cwd: '/workspace',
+        projectId: requestedProjectId,
+        permissionProfile: 'ask'
+      })
+
+      expect(admittedProjectIds).toEqual([expectedProjectId])
+      expect(createSession).toHaveBeenCalledWith({
+        cwd: '/workspace',
+        projectId: expectedProjectId,
+        permissionProfile: 'ask'
+      })
+    }
+  )
+
   it('trims and uses an explicit workspace without acquiring managed storage', async () => {
     const harness = createHarness()
     const request = {

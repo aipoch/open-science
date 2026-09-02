@@ -387,10 +387,12 @@ const reconcileProvisionalManagedWorkspaces = async (
   for (const location of await listManagedWorkspaceOwnershipLocations(dataRoot)) {
     try {
       const ownership = await readOwnershipForUpdate(location)
-      if (!ownership || ownership.sessionId || ownership.retainedAfterDelete) continue
+      if (!ownership || ownership.retainedAfterDelete) continue
 
       const matchingSessions = sessionsByDirectory.get(location.directory) ?? []
-      if (matchingSessions.length > 0) {
+      if (ownership.sessionId) {
+        if (matchingSessions.length > 0 || ownership.lastUsedAt >= createdBefore) continue
+      } else if (matchingSessions.length > 0) {
         if (
           matchingSessions.length === 1 &&
           matchingSessions[0].projectId === ownership.projectId
@@ -403,8 +405,7 @@ const reconcileProvisionalManagedWorkspaces = async (
           )
         }
         continue
-      }
-      if (ownership.createdAt >= createdBefore) continue
+      } else if (ownership.createdAt >= createdBefore) continue
 
       const workspace = await assertManagedWorkspaceDirectory(location.directory, dataRoot)
       if (workspace) await rm(workspace.directory, { recursive: true, force: true })

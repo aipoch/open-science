@@ -360,6 +360,44 @@ describe('managed workspace ownership', () => {
     await expect(readdir(join(workspacesRoot, '.ownership'))).resolves.toEqual([])
   })
 
+  it('removes a finalized workspace with no authoritative Session', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-finalized-orphan-'))
+    roots.push(dataRoot)
+    const workspacesRoot = join(dataRoot, 'workspaces')
+    const cwd = join(workspacesRoot, 'workspace-1')
+    await mkdir(cwd, { recursive: true })
+    await writeFile(join(cwd, 'partial-output.txt'), 'orphaned')
+    await initializeManagedWorkspaceOwnership(cwd, 'project-1', 10, dataRoot)
+    await finalizeManagedWorkspaceOwnership(cwd, 'session-1', 15, dataRoot)
+
+    await reconcileProvisionalManagedWorkspaces([], 20, dataRoot)
+
+    await expect(readdir(workspacesRoot)).resolves.toEqual(['.ownership'])
+    await expect(readdir(join(workspacesRoot, '.ownership'))).resolves.toEqual([])
+  })
+
+  it('preserves a finalized workspace referenced by another Session', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-finalized-shared-'))
+    roots.push(dataRoot)
+    const cwd = join(dataRoot, 'workspaces', 'workspace-1')
+    await mkdir(cwd, { recursive: true })
+    await initializeManagedWorkspaceOwnership(cwd, 'project-1', 10, dataRoot)
+    await finalizeManagedWorkspaceOwnership(cwd, 'source-session', 15, dataRoot)
+    const branch = {
+      id: 'branch-session',
+      projectId: 'project-1',
+      cwd,
+      updatedAt: 30
+    }
+
+    await reconcileProvisionalManagedWorkspaces([branch], 20, dataRoot)
+
+    await expect(readManagedWorkspaceOwnership(cwd, dataRoot)).resolves.toMatchObject({
+      sessionId: 'source-session',
+      retainedAfterDelete: false
+    })
+  })
+
   it('recovers a provisional durable temp receipt before startup cleanup', async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-provisional-temp-'))
     roots.push(dataRoot)

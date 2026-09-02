@@ -42,19 +42,24 @@ const createAcpCreateSessionWorkflow = (
 
   return {
     async create(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse> {
+      const requestedProjectId = request.projectId?.trim() || undefined
+      const normalizedRequest =
+        requestedProjectId === request.projectId
+          ? request
+          : { ...request, projectId: requestedProjectId }
       const createAvailableSession = async (): Promise<AcpCreateSessionResponse> => {
         const explicitCwd = request.cwd?.trim()
         if (explicitCwd) {
-          return sessions.createSession({ ...request, cwd: explicitCwd })
+          return sessions.createSession({ ...normalizedRequest, cwd: explicitCwd })
         }
 
         return runDataRootWrite(async () => {
-          const projectId = request.projectId?.trim() || DEFAULT_ARTIFACT_PROJECT_ID
+          const projectId = requestedProjectId ?? DEFAULT_ARTIFACT_PROJECT_ID
           const workspace = await workspaces.acquire({ projectId })
           let releaseWorkspace = true
           try {
             const response = await sessions.createSession({
-              ...request,
+              ...normalizedRequest,
               projectId,
               cwd: workspace.cwd
             })
@@ -79,7 +84,7 @@ const createAcpCreateSessionWorkflow = (
         })
       }
       return dependencies.withProjectAvailable
-        ? dependencies.withProjectAvailable(request.projectId, createAvailableSession)
+        ? dependencies.withProjectAvailable(requestedProjectId, createAvailableSession)
         : createAvailableSession()
     }
   }
