@@ -538,6 +538,58 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   })
 
+  it('annotates crash stderr before releasing its sandbox context', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-startup-sandbox-exit-'))
+    const crashingLoop = join(cwdDir, 'crashing_sandbox_loop.py')
+    await writeFile(
+      crashingLoop,
+      [
+        'import sys',
+        'sys.stderr.write("Permission denied: C:/hidden/credentials.txt\\n")',
+        'sys.stderr.flush()',
+        'raise SystemExit(25)'
+      ].join('\n')
+    )
+    let cleaned = false
+    const cleanup = vi.fn(() => {
+      cleaned = true
+    })
+    const annotateStderr = vi.fn((stderr: string) =>
+      cleaned ? stderr : `${stderr}<sandbox_violations>hidden path</sandbox_violations>`
+    )
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: invocation.env,
+        beginExecution: () => () => undefined,
+        annotateStderr,
+        cleanup
+      }))
+    }
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: crashingLoop,
+      processSandbox
+    })
+
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'kernel exits in sandbox',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        resolvedInterpreter: { command: python3 as string }
+      })
+
+      expect(result).toMatchObject({ status: 'failed' })
+      expect(result.stderr).toContain('<sandbox_violations>hidden path</sandbox_violations>')
+      expect(annotateStderr).toHaveBeenCalled()
+    } finally {
+      await executor.shutdown()
+    }
+    expect(cleanup).toHaveBeenCalledOnce()
+  })
+
   it('settles when a dead kernel descendant keeps its stdio pipes open', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-descendant-stdio-'))
     const releaseFile = join(cwdDir, 'release-descendant')

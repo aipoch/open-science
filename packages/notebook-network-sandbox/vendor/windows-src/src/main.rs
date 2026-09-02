@@ -13,6 +13,8 @@ mod wfp;
 struct LaunchSpec {
     executable: String,
     arguments: Vec<String>,
+    #[serde(default)]
+    verbatim_arguments: bool,
     cwd: String,
     read_only_roots: Vec<String>,
     read_write_roots: Vec<String>,
@@ -53,6 +55,12 @@ fn quote_windows_argument(value: &str) -> String {
 }
 
 fn command_line(spec: &LaunchSpec) -> String {
+    if spec.verbatim_arguments {
+        return std::iter::once(quote_windows_argument(&spec.executable))
+            .chain(spec.arguments.iter().cloned())
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
     std::iter::once(&spec.executable)
         .chain(spec.arguments.iter())
         .map(|argument| quote_windows_argument(argument))
@@ -2257,6 +2265,7 @@ mod tests {
         let spec = LaunchSpec {
             executable: "C:\\Program Files\\PowerShell\\pwsh.exe".into(),
             arguments: vec!["-Command".into(), "Write-Output \"hello\"\\".into()],
+            verbatim_arguments: false,
             cwd: "C:\\workspace".into(),
             read_only_roots: Vec::new(),
             read_write_roots: Vec::new(),
@@ -2266,6 +2275,29 @@ mod tests {
         assert_eq!(
             command_line(&spec),
             "\"C:\\Program Files\\PowerShell\\pwsh.exe\" -Command \"Write-Output \\\"hello\\\"\\\\\""
+        );
+    }
+
+    #[test]
+    fn windows_command_line_preserves_pre_escaped_batch_arguments() {
+        let spec = LaunchSpec {
+            executable: "C:\\Windows\\System32\\cmd.exe".into(),
+            arguments: vec![
+                "/d".into(),
+                "/s".into(),
+                "/c".into(),
+                "\"C:\\runtime^ path\\python.cmd ^\"C:\\app^ path\\loop.py^\"\"".into(),
+            ],
+            verbatim_arguments: true,
+            cwd: "C:\\workspace".into(),
+            read_only_roots: Vec::new(),
+            read_write_roots: Vec::new(),
+            denied_read_roots: Vec::new(),
+            denied_write_roots: Vec::new(),
+        };
+        assert_eq!(
+            command_line(&spec),
+            "C:\\Windows\\System32\\cmd.exe /d /s /c \"C:\\runtime^ path\\python.cmd ^\"C:\\app^ path\\loop.py^\"\""
         );
     }
 
@@ -2319,6 +2351,7 @@ mod tests {
         let spec = LaunchSpec {
             executable: "cmd.exe".into(),
             arguments: Vec::new(),
+            verbatim_arguments: false,
             cwd: workspace.to_string_lossy().into_owned(),
             read_only_roots: Vec::new(),
             read_write_roots: vec![workspace.to_string_lossy().into_owned()],

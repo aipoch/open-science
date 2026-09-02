@@ -747,34 +747,44 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // Process liveness follows exit, not close: a descendant may inherit stdio and keep those pipes
     // open after the kernel itself is dead. stderrTail is therefore the bounded data drained so far.
     child.on('exit', (code, signal) => {
-      // Stale exit: this proc was already replaced (dropped after a hard kill, or a respawn) before
-      // the event fired, so it must not touch the live proc or its pending run.
-      if (this.procs.get(key) !== proc) return
-      proc.alive = false
-      this.disarmIdleTimer(proc)
-      this.procs.delete(key)
-      proc.readline.close()
-      const pending = proc.pending
-      const terminationError =
-        pending?.timeout?.timedOut && pending.timeoutMs !== undefined
-          ? new NotebookExecutionTimeoutError(
-              `Notebook execution timed out after ${pending.timeoutMs}ms.`
-            )
-          : (() => {
-              const reason =
-                code !== null ? ` with exit code ${code}` : signal ? ` after signal ${signal}` : ''
-              const stderr = proc.annotateStderr(proc.stderrTail).trim()
-              return new Error(
-                `Notebook kernel process exited${reason}.` + (stderr ? `\n${stderr}` : '')
+      try {
+        // Stale exit: this proc was already replaced (dropped after a hard kill, or a respawn) before
+        // the event fired, so it must not touch the live proc or its pending run.
+        if (this.procs.get(key) !== proc) return
+        proc.alive = false
+        this.disarmIdleTimer(proc)
+        this.procs.delete(key)
+        proc.readline.close()
+        const pending = proc.pending
+        const terminationError =
+          pending?.timeout?.timedOut && pending.timeoutMs !== undefined
+            ? new NotebookExecutionTimeoutError(
+                `Notebook execution timed out after ${pending.timeoutMs}ms.`
               )
-            })()
-      proc.terminationError = terminationError
-      this.rejectPending(proc, terminationError)
-      // Unexpected exit of a still-live proc is a crash; surface it as a 'terminated' kernel status.
-      // Intentional teardown (shutdown/restart) and hard-timeout/idle drops clear the map first, so
-      // this only fires for a genuine crash (the stale-proc guard above returns early otherwise).
-      this.onTerminated?.(kind, env)
+            : (() => {
+                const reason =
+                  code !== null
+                    ? ` with exit code ${code}`
+                    : signal
+                      ? ` after signal ${signal}`
+                      : ''
+                const stderr = proc.annotateStderr(proc.stderrTail).trim()
+                return new Error(
+                  `Notebook kernel process exited${reason}.` + (stderr ? `\n${stderr}` : '')
+                )
+              })()
+        proc.terminationError = terminationError
+        this.rejectPending(proc, terminationError)
+        // Unexpected exit of a still-live proc is a crash; surface it as a 'terminated' kernel status.
+        // Intentional teardown (shutdown/restart) and hard-timeout/idle drops clear the map first, so
+        // this only fires for a genuine crash (the stale-proc guard above returns early otherwise).
+        this.onTerminated?.(kind, env)
+      } finally {
+        // Crash annotation above still needs the live filesystem policy and recorded violations.
+        spawned.cleanupSandbox()
+      }
     })
+    child.once('error', spawned.cleanupSandbox)
 
     // Register before piping buffered stdout: pipe() can synchronously flush data that already arrived
     // after spawn, and the overflow callback must be able to identify and drop this proc.
@@ -794,6 +804,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     child: ChildProcessWithoutNullStreams
     beginSandboxExecution: () => () => void
     annotateStderr: (stderr: string) => string
+    cleanupSandbox: () => void
   }> {
     const figuresDir = this.ensureFiguresDir()
     // Control-plane REPL may omit a runtime root; package cache belongs to a managed runtime directory.
@@ -896,18 +907,20 @@ class NotebookKernelExecutor implements NotebookExecutor {
       tokenPipe.on('error', () => undefined)
       tokenPipe.end(request.mcpRpcToken)
     }
-    if (sandboxed) {
-      child.once('exit', sandboxed.cleanup)
-      child.once('error', sandboxed.cleanup)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.once('spawn', resolve)
+        child.once('error', reject)
+      })
+    } catch (error) {
+      sandboxed?.cleanup()
+      throw error
     }
-    await new Promise<void>((resolve, reject) => {
-      child.once('spawn', resolve)
-      child.once('error', reject)
-    })
     return {
       child,
       beginSandboxExecution: sandboxed?.beginExecution ?? (() => () => undefined),
-      annotateStderr: sandboxed?.annotateStderr ?? ((stderr) => stderr)
+      annotateStderr: sandboxed?.annotateStderr ?? ((stderr) => stderr),
+      cleanupSandbox: sandboxed?.cleanup ?? (() => undefined)
     }
   }
 
