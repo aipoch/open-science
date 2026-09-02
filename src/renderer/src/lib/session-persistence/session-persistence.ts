@@ -929,20 +929,26 @@ const reconcileSessionPendingArtifacts = async (
 ): Promise<void> => {
   if (session.isPending || !session.projectId) return
 
+  let firstFailure: unknown
   for (const request of pendingArtifactRequests(session)) {
-    const finalized = await api.reconcilePendingArtifacts({
-      projectId: session.projectId,
-      sessionId: session.id,
-      ...request
-    })
-    if (finalized.length > 0) {
-      useSessionStore.getState().replaceMessageArtifacts({
+    try {
+      const finalized = await api.reconcilePendingArtifacts({
+        projectId: session.projectId,
         sessionId: session.id,
-        messageId: request.messageId,
-        artifacts: finalized
+        ...request
       })
+      if (finalized.length > 0) {
+        useSessionStore.getState().replaceMessageArtifacts({
+          sessionId: session.id,
+          messageId: request.messageId,
+          artifacts: finalized
+        })
+      }
+    } catch (error) {
+      firstFailure ??= error
     }
   }
+  if (firstFailure) throw firstFailure
 }
 
 const retryPendingArtifactFinalization = async (

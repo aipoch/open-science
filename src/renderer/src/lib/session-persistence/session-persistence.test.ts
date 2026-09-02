@@ -168,6 +168,65 @@ describe('reconcilePendingArtifacts', () => {
     expect(api.reconcilePendingArtifacts).not.toHaveBeenCalled()
   })
 
+  it('continues recovering later Messages when an earlier pending Artifact fails', async () => {
+    const firstPath = '/data/artifacts/proj-1/session-1/.pending/run-1/first.txt'
+    const secondPath = '/data/artifacts/proj-1/session-1/.pending/run-2/second.txt'
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'first',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['pending-first'],
+            createdAt: 1,
+            updatedAt: 1
+          },
+          {
+            id: 'message-2',
+            role: 'agent',
+            content: 'second',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['pending-second'],
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ],
+        artifacts: [
+          { id: 'pending-first', kind: 'managed-file', path: firstPath, name: 'first.txt' },
+          { id: 'pending-second', kind: 'managed-file', path: secondPath, name: 'second.txt' }
+        ]
+      })
+    ])
+    const finalized = {
+      id: 'version-2',
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: 'message-2',
+      name: 'second.txt',
+      path: '/data/artifacts/proj-1/session-1/version-2/second.txt',
+      fileUrl: 'file:///data/artifacts/proj-1/session-1/version-2/second.txt',
+      size: 3,
+      mtimeMs: 3
+    }
+    const api = {
+      reconcilePendingArtifacts: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('first recovery failed'))
+        .mockResolvedValueOnce([finalized])
+    }
+
+    await reconcilePendingArtifacts(api)
+
+    expect(api.reconcilePendingArtifacts).toHaveBeenCalledTimes(2)
+    expect(useSessionStore.getState().sessions[0].messages[1].artifactIds).toEqual(['version-2'])
+  })
+
   it('clears the Artifact error after an explicit retry replaces every pending reference', async () => {
     const pendingPath = '/data/artifacts/proj-1/session-1/.pending/run-1/chart.png'
     useSessionStore.getState().hydrateSessions([
