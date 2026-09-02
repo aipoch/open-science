@@ -538,7 +538,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   // usable throughout (D6 — see lazy-r.ts). R-kernel execution routing is wired later in E5.
   const onSelectLanguage = (lang: NotebookLanguage): void => {
     setShowVariables(false)
-    if (shouldProvisionR(envStatus, lang)) void provision('r')
+    const binding = notebookState?.runtimeBindings?.[lang]
+    if (!hasActiveRuntimeTarget(binding) && shouldProvisionR(envStatus, lang)) void provision('r')
   }
 
   // Keeps state assignment isolated so load paths and event paths share the same update hook.

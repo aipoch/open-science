@@ -1569,6 +1569,15 @@ describe('NotebookPreview per-environment selector', () => {
         (container.querySelector('[data-testid="kernel-terminal-input"]') as HTMLTextAreaElement)
           .disabled
       ).toBe(false)
+
+      if (language === 'r') {
+        await act(async () => {
+          fireEvent.click(
+            container.querySelector('[data-testid="kernel-switcher-r"]') as HTMLElement
+          )
+        })
+        expect(window.api.notebookEnv.provision).not.toHaveBeenCalled()
+      }
     }
   )
 
