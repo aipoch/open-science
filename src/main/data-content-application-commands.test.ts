@@ -1156,6 +1156,57 @@ describe('Data and content application commands', () => {
     })
   })
 
+  it('preserves legacy upload paths through live save and archive command boundaries', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    const legacyPath = '/data/uploads/project-1/session-1/legacy.csv'
+    const legacySession = materializeSessionConversationGraph({
+      ...deps.session,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Analyze this upload',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'upload-1',
+              sessionId: 'session-1',
+              name: 'legacy.csv',
+              originalName: 'legacy.csv',
+              path: legacyPath,
+              size: 12
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    } as PersistedChatSession)
+    deps.sessions.updateArchive.mockResolvedValueOnce(legacySession as never)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await dispatchCommand(router, 'sessionSave', [legacySession]).result
+    const submitted = (
+      deps.sessions.saveSession.mock.calls as unknown as Array<readonly [PersistedChatSession]>
+    )[0]?.[0]
+    expect(submitted?.messages[0]?.uploads?.[0]).toMatchObject({ path: legacyPath })
+
+    const archived = await router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionUpdateArchive,
+      invocation([
+        {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          archived: true,
+          expectedArchivedAt: null
+        }
+      ] as const)
+    )
+    expect(archived.messages[0]?.uploads?.[0]).toMatchObject({ path: legacyPath })
+  })
+
   it('dispatches every remaining Project and Session wrapper to its existing owner', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()

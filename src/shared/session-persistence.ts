@@ -4433,7 +4433,10 @@ const hasRequiredSessionFields = (value: unknown): value is PersistedChatSession
 // nested message, graph, activity and runtime-context field while upgrading historical shapes.
 export const persistedChatSessionCodec: RuntimeCodec<PersistedChatSession> = Object.freeze({
   parse: (value): PersistedChatSession => {
-    const decoded = decodeSessionFile(value, { preserveRuntimeState: true })
+    const decoded = decodeSessionFile(value, {
+      preserveLegacyUploadPaths: true,
+      preserveRuntimeState: true
+    })
     if (decoded.status !== 'ok' || decoded.session.projectId.length === 0) {
       throw new Error('Invalid Session payload.')
     }
