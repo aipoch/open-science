@@ -3580,7 +3580,7 @@ describe('notebook runtime service', () => {
 
         const result = await execution
 
-        // The RPC promise settles at the timeout, well before either the grace period or the sleep.
+        // The RPC promise must not settle until the whole command tree has finished teardown.
         expect(result.exitCode).toBeNull()
 
         // Probe the exact descendant instead of searching the process table. The former pgrep fixture
@@ -3595,12 +3595,7 @@ describe('notebook runtime service', () => {
           }
         }
 
-        let stillRunning = descendantIsRunning()
-        const deadline = Date.now() + 10_000
-        while (stillRunning && Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 500))
-          stillRunning = descendantIsRunning()
-        }
+        const stillRunning = descendantIsRunning()
 
         try {
           expect(stillRunning).toBe(false)
