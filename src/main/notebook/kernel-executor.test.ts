@@ -538,6 +538,52 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   })
 
+  it('settles when a dead kernel descendant keeps its stdio pipes open', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-descendant-stdio-'))
+    const releaseFile = join(cwdDir, 'release-descendant')
+    const finishedFile = join(cwdDir, 'descendant-finished')
+    const descendantCode = [
+      'import os, time',
+      `release_file = ${JSON.stringify(releaseFile)}`,
+      `finished_file = ${JSON.stringify(finishedFile)}`,
+      'while not os.path.exists(release_file): time.sleep(0.01)',
+      `os.chdir(${JSON.stringify(tmpdir())})`,
+      'with open(finished_file, "w", encoding="utf-8") as marker: marker.write("done")'
+    ].join('\n')
+    const crashingLoop = join(cwdDir, 'crashing_loop_with_descendant.py')
+    await writeFile(
+      crashingLoop,
+      [
+        'import subprocess, sys',
+        `subprocess.Popen([sys.executable, "-c", ${JSON.stringify(descendantCode)}], stdout=sys.stdout, stderr=sys.stderr, close_fds=False)`,
+        'raise SystemExit(24)'
+      ].join('\n')
+    )
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: crashingLoop })
+    const execution = executor.execute({
+      ...baseRequest(cwdDir),
+      code: 'kernel exits',
+      resolvedInterpreter: { command: python3 as string }
+    })
+
+    try {
+      const settledBeforeDescendant = await Promise.race([
+        execution.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 1_500))
+      ])
+
+      expect(settledBeforeDescendant).toBe(true)
+      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+    } finally {
+      await writeFile(releaseFile, 'release')
+      await execution
+      await executor.shutdown()
+      for (let attempt = 0; attempt < 200 && !existsSync(finishedFile); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+    }
+  })
+
   it('drops a kernel whose stdout exceeds the bounded protocol line', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-protocol-line-limit-')
     const terminated: string[] = []

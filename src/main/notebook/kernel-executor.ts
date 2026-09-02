@@ -744,8 +744,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
       if (this.procs.get(key) !== proc) return
       this.rejectPending(proc, new Error('Notebook kernel stdin pipe failed.'))
     })
-    child.on('close', (code, signal) => {
-      // Stale close: this proc was already replaced (dropped after a hard kill, or a respawn) before
+    // Process liveness follows exit, not close: a descendant may inherit stdio and keep those pipes
+    // open after the kernel itself is dead. stderrTail is therefore the bounded data drained so far.
+    child.on('exit', (code, signal) => {
+      // Stale exit: this proc was already replaced (dropped after a hard kill, or a respawn) before
       // the event fired, so it must not touch the live proc or its pending run.
       if (this.procs.get(key) !== proc) return
       proc.alive = false
