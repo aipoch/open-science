@@ -103,7 +103,9 @@ describe('SpecialistPackageTransaction imported setup lifecycle', () => {
       }
     )
 
-    await expect(transaction.deleteSpecialist('imported-specialist', 1, [])).resolves.toBeUndefined()
+    await expect(
+      transaction.deleteSpecialist('imported-specialist', 1, [])
+    ).resolves.toBeUndefined()
     expect(calls).toEqual(['lock', 'unlock', 'cleanup'])
   })
 
