@@ -41,12 +41,17 @@ vi.mock('./ArtifactProvenancePanel', () => ({
   }
 }))
 
-vi.mock('./ManagedFileDownloadButton', () => ({
-  ManagedFileDownloadButton: (props: Record<string, unknown>) => {
-    downloadButtonSpy(props)
-    return <button type="button">Download file</button>
+vi.mock('./ManagedFileDownloadButton', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./ManagedFileDownloadButton')>()
+  return {
+    ManagedFileDownloadButton: (
+      props: React.ComponentProps<typeof actual.ManagedFileDownloadButton>
+    ) => {
+      downloadButtonSpy(props)
+      return <actual.ManagedFileDownloadButton {...props} />
+    }
   }
-}))
+})
 
 vi.mock('./previews/PreviewFileContent', () => ({
   PreviewFileContent: (props: {
@@ -228,6 +233,7 @@ beforeEach(() => {
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: {
+      saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
       artifacts: {
         getLineage: vi.fn().mockResolvedValue({
           artifactId: 'artifact-1',
@@ -1869,7 +1875,7 @@ describe('PreviewFileSurface Provenance entry', () => {
     ).toBeNull()
     expect(container.querySelector('[data-testid="managed-preview-version-navigation"]')).toBeNull()
     expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
-    expect(container.textContent).toContain('Download file')
+    expect(container.querySelector('[aria-label="Download options for sin.png"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Close preview of sin.png"]')).not.toBeNull()
   })
 
@@ -1884,7 +1890,7 @@ describe('PreviewFileSurface Provenance entry', () => {
       container.querySelector('[data-testid="artifact-preview-version-navigation"]')
     ).toBeNull()
     expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
-    expect(container.textContent).toContain('Download file')
+    expect(container.querySelector('[aria-label="Download sin.png"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Close preview of sin.png"]')).not.toBeNull()
   })
 
@@ -2200,12 +2206,15 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     expect(direct.unlinkPdfContext).not.toHaveBeenCalled()
   })
 
-  it('offers the PDF context action from a right-click inside the preview', async () => {
+  it('puts the PDF-only action above the ordered shared preview actions', async () => {
     selectPdfContextSession()
     const { linkPdfContext } = installPdfContextApi()
+    const onOpenFullScreen = vi.fn()
 
     await act(async () => {
-      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+      root.render(
+        <PreviewFileSurface item={pdfItem} onClose={vi.fn()} onOpenFullScreen={onOpenFullScreen} />
+      )
       await Promise.resolve()
     })
     const surface = container.querySelector('[data-testid="preview-file-content-surface"]')
@@ -2216,9 +2225,19 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     })
     await act(async () => Promise.resolve())
 
-    const menu = document.body.querySelector('[data-testid="pdf-preview-context-menu"]')
-    expect(menu?.textContent).toContain('Read with agent')
-    expect(menu?.textContent).toContain('Download')
+    const menu = document.body.querySelector('[data-testid="preview-content-context-menu"]')
+    const labels = [...(menu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])].map(
+      (entry) => entry.textContent
+    )
+    expect(labels).toEqual([
+      'Read with agent',
+      'Provenance',
+      'View in context',
+      'Open full screen preview',
+      'Download',
+      'Close'
+    ])
+    expect(menu?.querySelectorAll('[role="separator"]')).toHaveLength(1)
     expect(menu?.className).toContain('min-w-[9.5rem]')
     expect(menu?.querySelector('[role="menuitem"]')?.className).toContain('h-6')
     await clickMenuItem('Read with agent')
@@ -2229,6 +2248,69 @@ describe('PreviewFileSurface PDF context action matrix', () => {
       expectedRevision: 3,
       sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
     })
+  })
+
+  it('does not restore preview focus after linking a PDF from the content menu', async () => {
+    selectPdfContextSession()
+    installPdfContextApi()
+    const previousFocusTarget = document.createElement('button')
+    document.body.appendChild(previousFocusTarget)
+    const focusComposer = vi.fn()
+    window.addEventListener(FOCUS_COMPOSER_EVENT, focusComposer)
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    previousFocusTarget.focus()
+    await act(async () => {
+      container
+        .querySelector('[data-testid="preview-content"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+
+    await clickMenuItem('Read with agent')
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const activeElement = document.activeElement
+    window.removeEventListener(FOCUS_COMPOSER_EVENT, focusComposer)
+    previousFocusTarget.remove()
+    expect(focusComposer).toHaveBeenCalledOnce()
+    expect(activeElement).not.toBe(previousFocusTarget)
+  })
+
+  it('opens the large preview and closes the surface from the PDF context menu', async () => {
+    selectPdfContextSession()
+    installPdfContextApi()
+    const onOpenFullScreen = vi.fn()
+    const onClose = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface item={pdfItem} onClose={onClose} onOpenFullScreen={onOpenFullScreen} />
+      )
+      await Promise.resolve()
+    })
+    const surface = container.querySelector('[data-testid="preview-file-content-surface"]')
+    const openContextMenu = async (): Promise<void> => {
+      act(() => {
+        surface?.dispatchEvent(
+          new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 120 })
+        )
+      })
+      await act(async () => Promise.resolve())
+    }
+
+    await openContextMenu()
+    await clickMenuItem('Open full screen preview')
+    expect(onOpenFullScreen).toHaveBeenCalledOnce()
+
+    await openContextMenu()
+    await clickMenuItem('Close')
+    expect(onClose).toHaveBeenCalledOnce()
   })
 
   it('downloads the PDF from its preview context menu', async () => {
@@ -2254,7 +2336,6 @@ describe('PreviewFileSurface PDF context action matrix', () => {
       projectId: 'project-1',
       fileId: 'artifact-1',
       versionId: 'version-1',
-      path: 'artifact-version:project-1/session-1/artifact-1/version-1',
       suggestedName: 'paper.pdf'
     })
   })
@@ -2269,10 +2350,12 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     })
     await openMenu(container.querySelector('[aria-label^="File actions for"]'))
 
-    const menuText = document.body.querySelector('[role="menu"]')?.textContent
-    expect(menuText).toContain('Provenance')
-    expect(menuText).not.toContain('Read with agent')
-    expect(menuText).not.toContain('PDF')
+    const menu = document.body.querySelector('[role="menu"]')
+    expect(
+      [...(menu?.querySelectorAll<HTMLElement>('[role="menuitem"], [role="separator"]') ?? [])].map(
+        (entry) => (entry.getAttribute('role') === 'separator' ? 'separator' : entry.textContent)
+      )
+    ).toEqual(['Provenance', 'separator', 'View in context'])
   })
 
   it('keeps the Session context action visible but disabled when an Upload PDF has no immutable Version', async () => {
@@ -2601,6 +2684,10 @@ const localItem: PreviewFileItem = {
 }
 
 const setupLocalApi = (): void => {
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: vi.fn().mockResolvedValue(undefined) }
+  })
   window.api.localFs = {
     reveal: vi.fn(),
     openPath: vi.fn()
@@ -2698,6 +2785,92 @@ describe('PreviewFileSurface local file header', () => {
       path: '/Users/example/logs/proxy.log',
       suggestedName: 'proxy.log'
     })
+  })
+
+  it('opens the local file capabilities from the preview content context menu', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 80,
+      clientY: 96
+    })
+
+    await act(async () => {
+      container.querySelector('[data-testid="preview-content"]')?.dispatchEvent(event)
+      await Promise.resolve()
+    })
+
+    expect(event.defaultPrevented).toBe(true)
+    const menu = document.body.querySelector('[data-testid="preview-content-context-menu"]')
+    expect(menu?.textContent).toContain('Copy path')
+    expect(menu?.textContent).toContain('Download')
+    expect(menu?.textContent).toContain('Save as artifact')
+    expect(menu?.textContent).not.toContain('On this machine')
+  })
+
+  it('shares Save as artifact execution and state between the context menu and header', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      container
+        .querySelector('[data-testid="preview-content"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+
+    await clickMenuItem('Save as artifact')
+
+    expect(window.api.uploads.stageLocalPath).toHaveBeenCalledWith({
+      transferId: expect.any(String),
+      name: 'proxy.log',
+      sourcePath: '/Users/example/logs/proxy.log'
+    })
+    expect(container.querySelector('[data-testid="saved-as-artifact"]')).not.toBeNull()
+  })
+
+  it('shares Copy path execution and transient presentation with the header menu', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      container
+        .querySelector('[data-testid="preview-content"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+
+    await clickMenuItem('Copy path')
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/Users/example/logs/proxy.log')
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+    expect(document.body.querySelector('[role="menu"]')?.textContent).toContain('Copied')
+  })
+
+  it('restores focus after dismissing the content context menu', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+    const closeButton = container.querySelector<HTMLButtonElement>('[aria-label^="Close preview"]')!
+    closeButton.focus()
+    await act(async () => {
+      container
+        .querySelector('[data-testid="preview-content"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      document.body
+        .querySelector('[role="menu"]')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(document.activeElement).toBe(closeButton)
   })
 
   it('opens its menu above an expanded preview modal', async () => {
@@ -2896,6 +3069,122 @@ const seedWorkspaceStores = (): void => {
 }
 
 describe('PreviewFileSurface View in context entry', () => {
+  it('opens managed Artifact capabilities from the preview content context menu', async () => {
+    seedWorkspaceStores()
+    const onOpenFullScreen = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface item={item} onClose={vi.fn()} onOpenFullScreen={onOpenFullScreen} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 48,
+      clientY: 64
+    })
+    await act(async () => {
+      container.querySelector('[data-testid="preview-content"]')?.dispatchEvent(event)
+      await Promise.resolve()
+    })
+
+    expect(event.defaultPrevented).toBe(true)
+    const menu = document.body.querySelector('[data-testid="preview-content-context-menu"]')
+    expect(
+      [...(menu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])].map(
+        (entry) => entry.textContent
+      )
+    ).toEqual(['Provenance', 'View in context', 'Open full screen preview', 'Download', 'Close'])
+  })
+
+  it('shares managed download execution, pending protection, and failure state across actions', async () => {
+    seedWorkspaceStores()
+    let rejectSave: ((error: Error) => void) | undefined
+    const error = new Error('destination denied')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const saveManagedFile = vi.fn(
+      () =>
+        new Promise<{ saved: boolean }>((_resolve, reject) => {
+          rejectSave = reject
+        })
+    )
+    window.api.saveManagedFile = saveManagedFile
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      container
+        .querySelector('[data-testid="preview-content"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+    await clickMenuItem('Download')
+
+    const headerDownload = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Saving sin.png"]'
+    )
+    expect(headerDownload?.disabled).toBe(true)
+
+    await act(async () => {
+      container
+        .querySelector('[data-testid="preview-content"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+    await clickMenuItem('Download')
+    expect(saveManagedFile).toHaveBeenCalledOnce()
+
+    await act(async () => rejectSave?.(error))
+    await vi.waitFor(() => {
+      expect(container.querySelector('[aria-label="Download failed for sin.png"]')).not.toBeNull()
+    })
+    expect(consoleError).toHaveBeenCalledWith('Failed to download managed file: sin.png', error)
+  })
+
+  it('opens Provenance from the preview content context menu', async () => {
+    seedWorkspaceStores()
+    await act(async () => {
+      root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      container
+        .querySelector('[data-testid="preview-content"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+
+    await clickMenuItem('Provenance')
+
+    expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
+  })
+
+  it('switches conversation from View in context in the preview content context menu', async () => {
+    seedWorkspaceStores()
+    await act(async () => {
+      root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      container
+        .querySelector('[data-testid="preview-content"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+
+    await clickMenuItem('View in context')
+
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
+  })
+
   it('switches the conversation to the artifact origin session from the panel menu', async () => {
     seedWorkspaceStores()
 
@@ -2911,7 +3200,7 @@ describe('PreviewFileSurface View in context entry', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
   })
 
-  it('does not offer View in context for uploaded inputs', async () => {
+  it('keeps shared actions but does not offer View in context for uploaded inputs', async () => {
     seedWorkspaceStores()
 
     await act(async () => {
@@ -2926,6 +3215,17 @@ describe('PreviewFileSurface View in context entry', () => {
     })
 
     expect(container.querySelector('[aria-label^="File actions for"]')).toBeNull()
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+    await act(async () => {
+      container.querySelector('[data-testid="preview-content"]')?.dispatchEvent(event)
+      await Promise.resolve()
+    })
+    expect(event.defaultPrevented).toBe(true)
+    const menu = document.body.querySelector('[data-testid="preview-content-context-menu"]')
+    expect(menu?.textContent).toContain('Download')
+    expect(menu?.textContent).toContain('Close')
+    expect(menu?.textContent).not.toContain('Provenance')
+    expect(menu?.textContent).not.toContain('View in context')
   })
 
   it('hides View in context but keeps Provenance when the origin session is deleted', async () => {

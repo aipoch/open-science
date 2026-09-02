@@ -11,6 +11,12 @@ import { PreviewFileContent } from './PreviewFileContent'
 import type { PreviewDownloadVersionContext } from './preview-runtime-context'
 
 const highlightSpy = vi.hoisted(() => vi.fn())
+const registerPreviewFrameSpy = vi.hoisted(() => vi.fn())
+
+vi.mock('../preview-actions/preview-action-context', () => ({
+  useRegisterPreviewContextMenuFrame: registerPreviewFrameSpy
+}))
+
 const addModel = vi.fn()
 const setStyle = vi.fn()
 const addSurface = vi.fn()
@@ -187,6 +193,7 @@ describe('PreviewFileContent', () => {
     vi.stubGlobal('fetch', vi.fn(transport.fetch))
     vi.clearAllMocks()
     highlightSpy.mockClear()
+    registerPreviewFrameSpy.mockClear()
   })
 
   it('downloads the selected historical version from the unsupported-preview fallback menu', async () => {
@@ -798,6 +805,13 @@ describe('PreviewFileContent', () => {
     expect(iframe?.getAttribute('src')).toBe('open-science-preview://resource-1/file-1')
     expect(iframe?.hasAttribute('srcdoc')).toBe(false)
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+    expect(registerPreviewFrameSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        frameUrl: 'open-science-preview://resource-1/file-1',
+        enabled: true,
+        frameRef: expect.objectContaining({ current: iframe })
+      })
+    )
   })
 
   it('falls back when the managed HTML URL cannot be loaded', async () => {
@@ -848,6 +862,9 @@ describe('PreviewFileContent', () => {
     expect(container.querySelector('[data-testid="source-line-number"]')?.textContent).toBe('1')
     expect(container.textContent).toContain('<h1>Report</h1>')
     expect(window.api.artifacts.readPreview).toHaveBeenCalledTimes(1)
+    expect(registerPreviewFrameSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ frameUrl: '', enabled: false })
+    )
   })
 
   it('renders FASTA previews as plain text with line numbers', async () => {

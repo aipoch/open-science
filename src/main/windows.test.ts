@@ -12,6 +12,7 @@ import {
   type KeyChordInput
 } from '../shared/window-controls'
 import { SOURCE_PREVIEW_RELEASE_CHANNEL } from '../shared/source-preview'
+import { PREVIEW_CONTEXT_MENU_REQUESTED_CHANNEL } from '../shared/preview-context-menu'
 
 // Hoisted so the electron mock and the test body share the same spies.
 const {
@@ -124,7 +125,11 @@ class FakeBrowserWindow {
     on: (event: string, handler: WebContentsHandler): void => {
       this.webContentsHandlers.set(event, handler)
     },
+    removeListener: (event: string, handler: WebContentsHandler): void => {
+      if (this.webContentsHandlers.get(event) === handler) this.webContentsHandlers.delete(event)
+    },
     send: (...args: unknown[]): void => this.sendMock(...args),
+    getZoomFactor: (): number => 1,
     getURL: (): string => 'file:///app/index.html',
     mainFrame: this.mainFrame,
     session: {
@@ -301,6 +306,43 @@ describe('window presentation', () => {
     }
 
     expect(headersReceivedHandler).toBeUndefined()
+  })
+
+  it('forwards trusted preview frame context menus only while the window is alive', async () => {
+    createMainWindow()
+    const window = lastWindow!
+    const contextMenuHandler = window.webContentsHandlers.get('context-menu')
+    const frame = {
+      url: 'open-science-preview://resource-1/report.html',
+      parent: window.mainFrame,
+      detached: false,
+      isDestroyed: () => false,
+      executeJavaScript: async () => false
+    }
+
+    contextMenuHandler?.(
+      {},
+      {
+        x: 12,
+        y: 24,
+        frame,
+        isEditable: false,
+        formControlType: 'none'
+      }
+    )
+
+    await vi.waitFor(() =>
+      expect(window.sendMock).toHaveBeenCalledWith(PREVIEW_CONTEXT_MENU_REQUESTED_CHANNEL, {
+        x: 12,
+        y: 24,
+        frameUrl: 'open-science-preview://resource-1/report.html'
+      })
+    )
+
+    for (const closedHandler of window.handlers.get('closed') ?? []) {
+      closedHandler({ preventDefault: vi.fn(), defaultPrevented: false })
+    }
+    expect(window.webContentsHandlers.has('context-menu')).toBe(false)
   })
 })
 

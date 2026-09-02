@@ -205,6 +205,10 @@ import type {
   ReadManagedPreviewRangeRequest,
   ReleaseManagedPreviewRequest
 } from './preview-resources'
+import {
+  PREVIEW_CONTEXT_MENU_REQUESTED_CHANNEL,
+  type PreviewContextMenuRequest
+} from './preview-context-menu'
 import type {
   CreateProjectRequest,
   DeleteProjectRequest,
@@ -1287,6 +1291,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'preview',
     ['preview:save']
   ),
+  'previewContextMenu.onRequested': callable<
+    (listener: AcpListener<PreviewContextMenuRequest>) => RemoveListener
+  >()('preview-context-menu', [PREVIEW_CONTEXT_MENU_REQUESTED_CHANNEL, ELECTRON_EVENT]),
   'previewResources.acquire': callable<
     (request: AcquireManagedPreviewRequest) => Promise<ManagedPreviewResource>
   >()('preview-resources', ['preview-resources:acquire']),
@@ -2362,6 +2369,7 @@ const RENDERER_CAPABILITY_ORDER = Object.freeze([
   'permissions',
   'platform-file-save',
   'preview',
+  'preview-context-menu',
   'preview-resources',
   'project-files',
   'projects',

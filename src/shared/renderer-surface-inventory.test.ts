@@ -79,6 +79,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'officePreview.onState',
   'officePreview.open',
   'officePreview.reportState',
+  'previewContextMenu.onRequested',
   'remoteAccess.detect',
   'remoteAccess.disable',
   'remoteAccess.setMode',

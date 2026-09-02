@@ -14,8 +14,14 @@ type OfficePreviewFrameParent = {
 
 type OfficePreviewFrameWindow = {
   parent: OfficePreviewFrameParent
-  addEventListener: (type: 'message', listener: (event: MessageEvent) => void) => void
-  removeEventListener: (type: 'message', listener: (event: MessageEvent) => void) => void
+  addEventListener: {
+    (type: 'message', listener: (event: MessageEvent) => void): void
+    (type: 'contextmenu', listener: (event: MouseEvent) => void, capture: boolean): void
+  }
+  removeEventListener: {
+    (type: 'message', listener: (event: MessageEvent) => void): void
+    (type: 'contextmenu', listener: (event: MouseEvent) => void, capture: boolean): void
+  }
 }
 
 type CreateOfficePreviewFrameBridgeOptions = {
@@ -49,6 +55,29 @@ const createOfficePreviewFrameBridge = (
   }
   options.runtimeWindow.addEventListener('message', handleMessage)
 
+  const handleContextMenu = (event: MouseEvent): void => {
+    if (
+      disposed ||
+      !(event.target instanceof Element) ||
+      event.target.closest(
+        'input, textarea, select, button, iframe, [contenteditable]:not([contenteditable="false"]), [data-preview-context-menu-passthrough]'
+      )
+    ) {
+      return
+    }
+    event.preventDefault()
+    options.runtimeWindow.parent.postMessage(
+      {
+        channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
+        version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
+        type: 'context-menu',
+        contextMenu: { sessionId: options.sessionId, x: event.clientX, y: event.clientY }
+      },
+      '*'
+    )
+  }
+  options.runtimeWindow.addEventListener('contextmenu', handleContextMenu, true)
+
   return {
     onStart: (listener) => {
       listeners.add(listener)
@@ -71,6 +100,7 @@ const createOfficePreviewFrameBridge = (
       disposed = true
       listeners.clear()
       options.runtimeWindow.removeEventListener('message', handleMessage)
+      options.runtimeWindow.removeEventListener('contextmenu', handleContextMenu, true)
     }
   }
 }

@@ -11,6 +11,7 @@ import { useManagedPreviewResource } from '../useManagedPreviewResource'
 import { usePreviewFileContent } from '../usePreviewFileContent'
 import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { SourcePreviewContent } from './SourcePreview'
+import { useRegisterPreviewContextMenuFrame } from '../../preview-actions/preview-action-context'
 
 type HtmlPreviewMode = 'render' | 'source'
 
@@ -59,6 +60,14 @@ export const HtmlPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.
   const hasFailed = failedRequestKey === requestKey
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const resourceState = useManagedPreviewResource(item, mode === 'render' && !hasFailed)
+  const renderedFrameUrl =
+    mode === 'render' && resourceState.status === 'ready' ? resourceState.resource.url : ''
+  useRegisterPreviewContextMenuFrame({
+    id: `html-preview:${requestKey}`,
+    frameUrl: renderedFrameUrl,
+    frameRef: iframeRef,
+    enabled: renderedFrameUrl !== ''
+  })
 
   useEffect(() => {
     if (resourceState.status !== 'ready') return

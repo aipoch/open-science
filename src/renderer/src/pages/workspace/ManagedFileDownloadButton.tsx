@@ -1,5 +1,4 @@
 import { Check, CircleAlert, Download, LoaderCircle } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -11,21 +10,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import {
-  WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME,
-  type SaveManagedFileRequest
-} from '../../../../shared/file-save'
 
-type ManagedFileDownloadButtonProps = {
-  source: SaveManagedFileRequest['source']
-  path: string
-  projectId?: string
-  fileId?: string
-  versionId?: string
-  versionNumber?: number
-  latestVersionId?: string
-  latestVersionNumber?: number
-  suggestedName: string
+import {
+  useManagedFileDownload,
+  type ManagedFileDownloadController,
+  type ManagedFileDownloadInput
+} from './use-managed-file-download'
+
+type ManagedFileDownloadButtonProps = ManagedFileDownloadInput & {
   appearance?: 'icon' | 'primary'
   tone?: 'default' | 'strong'
   className?: string
@@ -33,14 +25,11 @@ type ManagedFileDownloadButtonProps = {
   iconSize?: 'icon-xs' | 'icon-sm' | 'icon'
   revealOnParentHover?: boolean
   wrapperClassName?: string
+  download?: ManagedFileDownloadController
 }
 
-type DownloadStatus = 'idle' | 'saving' | 'saved' | 'error'
-
-// Owns one file identity's transient save state; the wrapper remounts it when that identity changes.
 const ManagedFileDownloadButtonState = ({
   source,
-  path,
   projectId,
   fileId,
   versionId,
@@ -54,81 +43,13 @@ const ManagedFileDownloadButtonState = ({
   disabled = false,
   iconSize = 'icon-xs',
   revealOnParentHover = false,
-  wrapperClassName
-}: ManagedFileDownloadButtonProps): React.JSX.Element => {
+  wrapperClassName,
+  download
+}: ManagedFileDownloadButtonProps & {
+  download: ManagedFileDownloadController
+}): React.JSX.Element => {
   const { t } = useTranslation()
-  const [status, setStatus] = useState<DownloadStatus>('idle')
-  const [sizeLimitError, setSizeLimitError] = useState(false)
-  const activeSaveRef = useRef<symbol | undefined>(undefined)
-  const resetTimerRef = useRef<number | undefined>(undefined)
-  const mountedRef = useRef(true)
-
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-      if (resetTimerRef.current !== undefined) window.clearTimeout(resetTimerRef.current)
-    }
-  }, [])
-
-  const downloadFile = (requestedVersionId?: string): void => {
-    if (activeSaveRef.current) return
-
-    let request: SaveManagedFileRequest
-    if (source === 'artifact' || source === 'upload') {
-      if (!projectId || !fileId) {
-        console.error(
-          `Failed to download managed file: ${suggestedName}`,
-          new Error('Managed file download requires a logical identity.')
-        )
-        setStatus('error')
-        return
-      }
-      request = {
-        source,
-        projectId,
-        fileId,
-        ...(requestedVersionId ? { versionId: requestedVersionId } : {}),
-        suggestedName
-      }
-    } else {
-      request = { source, path, suggestedName }
-    }
-
-    const attempt = Symbol('managed-file-save')
-    activeSaveRef.current = attempt
-    if (resetTimerRef.current !== undefined) window.clearTimeout(resetTimerRef.current)
-    setSizeLimitError(false)
-    setStatus('saving')
-    void window.api
-      .saveManagedFile(request)
-      .then((result) => {
-        if (!mountedRef.current || activeSaveRef.current !== attempt) return
-
-        if (!result.saved) {
-          setStatus('idle')
-          return
-        }
-
-        setStatus('saved')
-        resetTimerRef.current = window.setTimeout(() => {
-          resetTimerRef.current = undefined
-          if (mountedRef.current) setStatus('idle')
-        }, 1600)
-      })
-      .catch((error) => {
-        if (mountedRef.current && activeSaveRef.current === attempt) {
-          console.error(`Failed to download managed file: ${suggestedName}`, error)
-          setSizeLimitError(
-            error instanceof Error && error.name === WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME
-          )
-          setStatus('error')
-        }
-      })
-      .finally(() => {
-        if (activeSaveRef.current === attempt) activeSaveRef.current = undefined
-      })
-  }
+  const { status, sizeLimitError } = download
 
   const hasExplicitManagedVersion = Boolean(projectId && fileId && versionId)
   const hasResolvedVersionContext =
@@ -203,7 +124,7 @@ const ManagedFileDownloadButtonState = ({
       )}
       aria-label={label}
       disabled={effectiveDisabled || status === 'saving'}
-      onClick={isHistoricalVersion ? undefined : () => downloadFile()}
+      onClick={isHistoricalVersion ? undefined : () => void download.execute(null)}
     >
       {status === 'saving' ? (
         <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
@@ -238,10 +159,10 @@ const ManagedFileDownloadButtonState = ({
               <TooltipContent>{tooltip}</TooltipContent>
             </Tooltip>
             <DropdownMenuContent align="end" className="z-[70] min-w-52">
-              <DropdownMenuItem onSelect={() => downloadFile(versionId)}>
+              <DropdownMenuItem onSelect={() => void download.execute(versionId)}>
                 {t('Download version v{{version}}', { version: versionNumber })}
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => downloadFile()}>
+              <DropdownMenuItem onSelect={() => void download.execute(null)}>
                 {t('Download latest version v{{version}}', { version: latestVersionNumber })}
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -269,20 +190,20 @@ const ManagedFileDownloadButtonState = ({
   )
 }
 
-// Keeps managed-file export behind one source-neutral renderer control.
+const ManagedFileDownloadButtonWithState = (
+  props: ManagedFileDownloadButtonProps
+): React.JSX.Element => {
+  const download = useManagedFileDownload(props)
+  return <ManagedFileDownloadButtonState {...props} download={download} />
+}
+
+// Keeps standalone consumers self-contained while a preview surface can provide shared state.
 const ManagedFileDownloadButton = (props: ManagedFileDownloadButtonProps): React.JSX.Element => {
-  const requestKey = JSON.stringify([
-    props.source,
-    props.path,
-    'projectId' in props ? props.projectId : undefined,
-    'fileId' in props ? props.fileId : undefined,
-    'versionId' in props ? props.versionId : undefined,
-    props.versionNumber,
-    props.latestVersionId,
-    props.latestVersionNumber,
-    props.suggestedName
-  ])
-  return <ManagedFileDownloadButtonState key={requestKey} {...props} />
+  return props.download ? (
+    <ManagedFileDownloadButtonState {...props} download={props.download} />
+  ) : (
+    <ManagedFileDownloadButtonWithState {...props} />
+  )
 }
 
 export { ManagedFileDownloadButton }

@@ -22,6 +22,10 @@ import { createLogger, diagnosticErrorFields } from './logger'
 import { createSourcePreviewLoadMonitor } from './source-preview-load-monitor'
 import { createSourcePreviewEmbedPolicy } from './source-preview-embed-policy'
 import { registerSourcePreviewWebRequestOwner } from './source-preview-web-request-owner'
+import {
+  installPreviewContextMenuBridge,
+  type PreviewContextMenuWebContents
+} from './preview-context-menu'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import {
   SOURCE_PREVIEW_LOAD_STATE_CHANNEL,
@@ -151,9 +155,13 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     sourcePreviewLoadMonitor,
     sourcePreviewEmbedPolicy
   )
+  const unregisterPreviewContextMenuBridge = installPreviewContextMenuBridge(
+    window.webContents as unknown as PreviewContextMenuWebContents
+  )
   window.on('closed', () => {
     clearSourcePreviewState(window)
     unregisterSourcePreviewWebRequestOwner()
+    unregisterPreviewContextMenuBridge()
   })
   sourcePreviewLoadMonitors.set(window, sourcePreviewLoadMonitor)
   sourcePreviewEmbedPolicies.set(window, sourcePreviewEmbedPolicy)

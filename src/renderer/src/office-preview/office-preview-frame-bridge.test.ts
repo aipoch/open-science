@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 
 import type { OfficePreviewRuntimeStart } from '../../../shared/office-preview'
@@ -6,11 +7,13 @@ import { createOfficePreviewFrameBridge } from './office-preview-frame-bridge'
 describe('Office preview frame bridge', () => {
   it('routes only parent messages for the active session', async () => {
     let messageListener: ((event: MessageEvent) => void) | undefined
+    let contextMenuListener: ((event: MouseEvent) => void) | undefined
     const parent = { postMessage: vi.fn() }
     const runtimeWindow = {
       parent,
-      addEventListener: vi.fn((_type: 'message', listener: (event: MessageEvent) => void) => {
-        messageListener = listener
+      addEventListener: vi.fn((type: string, listener: (event: never) => void) => {
+        if (type === 'message') messageListener = listener as (event: MessageEvent) => void
+        if (type === 'contextmenu') contextMenuListener = listener as (event: MouseEvent) => void
       }),
       removeEventListener: vi.fn()
     }
@@ -60,7 +63,31 @@ describe('Office preview frame bridge', () => {
       '*'
     )
 
+    const canvas = document.createElement('canvas')
+    const contextMenuEvent = {
+      clientX: 17,
+      clientY: 29,
+      preventDefault: vi.fn(),
+      target: canvas
+    } as unknown as MouseEvent
+    contextMenuListener?.(contextMenuEvent)
+    expect(contextMenuEvent.preventDefault).toHaveBeenCalledOnce()
+    expect(parent.postMessage).toHaveBeenLastCalledWith(
+      {
+        channel: 'open-science-office-preview',
+        version: 1,
+        type: 'context-menu',
+        contextMenu: { sessionId: 'session-1', x: 17, y: 29 }
+      },
+      '*'
+    )
+
     bridge.dispose()
     expect(runtimeWindow.removeEventListener).toHaveBeenCalledWith('message', expect.any(Function))
+    expect(runtimeWindow.removeEventListener).toHaveBeenCalledWith(
+      'contextmenu',
+      expect.any(Function),
+      true
+    )
   })
 })

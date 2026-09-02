@@ -3,6 +3,7 @@
 import * as acp from '@agentclientprotocol/sdk'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import JSZip from 'jszip'
 import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
@@ -15,6 +16,34 @@ const PROVIDER_BRIDGE_PROMPT = 'Verify the provider bridge.'
 const NOTEBOOK_LIFECYCLE_PROMPT = 'Verify the notebook lifecycle.'
 const PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT = 'Profile the notebook lifecycle.'
 const ARTIFACT_PROVENANCE_PROMPT = 'Create a provenance artifact.'
+const PREVIEW_CONTEXT_MENU_ARTIFACTS_PROMPT = 'Create preview context menu artifacts.'
+const PREVIEW_CONTEXT_MENU_DOCX_BASE64 =
+  'UEsDBAoAAAAIABQ7HF15bjPX6AAAAK0BAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbH1QyU7DMBD9FWuuKHHggBCK0wPLETiUDxjZk8SqN3nc0v49Tlt6QIXjzFv1+tXeO7GjzDYGBbdtB4KCjsaGScHn+rV5AMEFg0EXAyk4EMNq6NeHRCyqNrCCuZT0KCXrmTxyGxOFiowxeyz1zJNMqDc4kbzrunupYygUSlMWDxj6Zxpx64p42df3qUcmxyCeTsQlSwGm5KzGUnG5C+ZXSnNOaKvyyOHZJr6pBJBXExbk74Cz7r0Ok60h8YG5vKGvLPkVs5Em6q2vyvZ/mys94zhaTRf94pZy1MRcF/euvSAebfjpL49zD99QSwMECgAAAAAAFDscXQAAAAAAAAAAAAAAAAYAAABfcmVscy9QSwMECgAAAAgAFDscXZv9N+qtAAAAKQEAAAsAAABfcmVscy8ucmVsc43POw7CMAwG4KtE3mlaBoRQ0y4IqSsqB7ASN61oHkrCo7cnAwNFDIy2f3+W6/ZpZnanECdnBVRFCYysdGqyWsClP232wGJCq3B2lgQsFKFt6jPNmPJKHCcfWTZsFDCm5A+cRzmSwVg4TzZPBhcMplwGzT3KK2ri27Lc8fBpwNpknRIQOlUB6xdP/9huGCZJRydvhmz6ceIrkWUMmpKAhwuKq3e7yCzwpuarF5sXUEsDBAoAAAAAABQ7HF0AAAAAAAAAAAAAAAAFAAAAd29yZC9QSwMECgAAAAgAFDscXX5QYG+1AAAA9wAAABEAAAB3b3JkL2RvY3VtZW50LnhtbEWOO27DMAxAryJob+R2KALDdraszdAeQJHoRIBFGiQdO7ev5AxZHsHfI7vTlifzAJZE2NvPQ2MNYKCY8Nbbv9/zx9EaUY/RT4TQ2yeIPQ3d2kYKSwZUUwQo7drbu+rcOifhDtnLgWbA0huJs9eS8s2txHFmCiBS/HlyX03z7bJPaKvySvFZ41zBFTpcGB4JVhMIFTY15eRifsYxBTBj2nRh6FwdrOSd+7pA0Au7vfDyuvfPwz9QSwECFAAKAAAACAAUOxxdeW4z1+gAAACtAQAAEwAAAAAAAAAAAAAAAAAAAAAAW0NvbnRlbnRfVHlwZXNdLnhtbFBLAQIUAAoAAAAAABQ7HF0AAAAAAAAAAAAAAAAGAAAAAAAAAAAAEAAAABkBAABfcmVscy9QSwECFAAKAAAACAAUOxxdm/036q0AAAApAQAACwAAAAAAAAAAAAAAAAA9AQAAX3JlbHMvLnJlbHNQSwECFAAKAAAAAAAUOxxdAAAAAAAAAAAAAAAABQAAAAAAAAAAABAAAAATAgAAd29yZC9QSwECFAAKAAAACAAUOxxdflBgb7UAAAD3AAAAEQAAAAAAAAAAAAAAAAA2AgAAd29yZC9kb2N1bWVudC54bWxQSwUGAAAAAAUABQAgAQAAGgMAAAAA'
+
+const createPreviewContextMenuXlsxBase64 = async () => {
+  const archive = new JSZip()
+  archive.file(
+    '[Content_Types].xml',
+    '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'
+  )
+  archive.file(
+    '_rels/.rels',
+    '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'
+  )
+  archive.file(
+    'xl/workbook.xml',
+    '<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Results" sheetId="1" r:id="rId1"/></sheets></workbook>'
+  )
+  archive.file(
+    'xl/_rels/workbook.xml.rels',
+    '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'
+  )
+  archive.file(
+    'xl/worksheets/sheet1.xml',
+    '<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:B2"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Gene</t></is></c><c r="B1" t="inlineStr"><is><t>log2FC</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>GENE0001</t></is></c><c r="B2"><v>-1.25</v></c></row></sheetData></worksheet>'
+  )
+  return archive.generateAsync({ type: 'base64', compression: 'DEFLATE' })
+}
 const DELEGATION_TERMINAL_PROMPT = 'Run the production delegation terminal journey.'
 const DELEGATION_ARTIFACT_VERSION_INPUT_PROMPT =
   'Run the production Artifact Version input delegation journey.'
@@ -449,6 +478,57 @@ const createProvenanceArtifact = async (sessionId) => {
   return `Artifact provenance verified for session ${sessionId}, artifact ${stored.artifact.artifact_id}, version ${stored.artifact.version_id}.`
 }
 
+const createPreviewContextMenuArtifacts = async (sessionId) => {
+  const stored = await withMcpClient(sessionId, 'open-science-artifacts', async (client) => {
+    const html = toolResult(
+      'write_artifact_file',
+      await client.callTool({
+        name: 'write_artifact_file',
+        arguments: {
+          filename: 'context-menu.html',
+          mimeType: 'text/html',
+          content:
+            '<!doctype html><html><body><main><h1>HTML context menu fixture</h1><p data-preview-context-menu-passthrough>Managed native context area</p><p>Managed frame content.</p></main></body></html>',
+          encoding: 'utf8'
+        }
+      })
+    )
+    const office = toolResult(
+      'write_artifact_file',
+      await client.callTool({
+        name: 'write_artifact_file',
+        arguments: {
+          filename: 'context-menu.docx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          content: PREVIEW_CONTEXT_MENU_DOCX_BASE64,
+          encoding: 'base64'
+        }
+      })
+    )
+    const spreadsheet = toolResult(
+      'write_artifact_file',
+      await client.callTool({
+        name: 'write_artifact_file',
+        arguments: {
+          filename: 'context-menu.xlsx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          content: await createPreviewContextMenuXlsxBase64(),
+          encoding: 'base64'
+        }
+      })
+    )
+    return { html, office, spreadsheet }
+  })
+  if (
+    !stored.html.artifact?.version_id ||
+    !stored.office.artifact?.version_id ||
+    !stored.spreadsheet.artifact?.version_id
+  ) {
+    throw new Error('Preview context menu artifacts were not finalized.')
+  }
+  return 'Preview context menu artifacts created.'
+}
+
 const runArtifactVersionInputDelegation = async (sessionId) => {
   const produced = controlResultValue(
     await runProductionDelegationRequest(
@@ -842,6 +922,8 @@ if (process.argv.includes('--version')) {
           reply = await verifyNotebookLifecycle(context.params.sessionId, 1_500)
         } else if (prompt.includes(ARTIFACT_PROVENANCE_PROMPT)) {
           reply = await createProvenanceArtifact(context.params.sessionId)
+        } else if (prompt.includes(PREVIEW_CONTEXT_MENU_ARTIFACTS_PROMPT)) {
+          reply = await createPreviewContextMenuArtifacts(context.params.sessionId)
         } else if (prompt.includes(DELEGATION_TERMINAL_PROMPT)) {
           const delegated = await runProductionDelegation(
             context.params.sessionId,

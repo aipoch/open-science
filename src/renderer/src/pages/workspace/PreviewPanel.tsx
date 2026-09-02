@@ -4,13 +4,6 @@ import { useTranslation } from 'react-i18next'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
 import { ResizablePanel } from '@/components/ui/resizable'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -25,6 +18,7 @@ import { workbenchPreviewGuardScope } from '@/stores/preview-leave-guard'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { PreviewFileSurface, type PreviewFileSurfaceHandle } from './PreviewFileSurface'
+import { PreviewPointerMenu } from './preview-actions/PreviewActionMenus'
 import {
   getPreviewTabActionGroups,
   runPreviewTabAction,
@@ -338,70 +332,35 @@ const PreviewTabContextMenu = ({
   onSelect: (command: PreviewTabActionCommand) => void
   onClose: () => void
 }): React.JSX.Element => {
-  const { t } = useTranslation()
   const { pdfContext, shared, specific } = getPreviewTabActionGroups(item, {
     tabCount,
     pdfContext: pdfContextState
   })
-
-  const renderItem = (action: PreviewTabAction): React.JSX.Element => {
-    const Icon = action.icon
-    return (
-      <DropdownMenuItem
-        key={action.command}
-        disabled={action.disabled}
-        data-command={action.command}
-        // Compact sizing: the menu sits inside the tab strip's visual rhythm, so it uses a fixed
-        // item height at the tab text scale instead of the standard form-menu sizing. Vertical
-        // spacing comes from the height alone — this file's workspace spacing guard forbids py-*
-        // utilities.
-        className={cn(
-          'min-h-0 h-6 gap-2 rounded-md px-2 py-0 text-[12px]',
-          action.danger &&
-            'text-danger-000 data-[highlighted]:bg-danger-000/10 data-[highlighted]:text-danger-000'
-        )}
-        onSelect={() => onSelect(action.command)}
-      >
-        <Icon className="size-3.5 shrink-0" aria-hidden="true" />
-        {t(action.label)}
-      </DropdownMenuItem>
-    )
-  }
+  type PreviewTabMenuAction = PreviewTabAction & { kind: 'action'; labelKey: string }
+  const actionGroups = [pdfContext, shared, specific].filter((group) => group.length > 0)
+  const entries: Array<PreviewTabMenuAction | { kind: 'separator' }> = actionGroups.flatMap(
+    (group, groupIndex) => [
+      ...(groupIndex > 0 ? [{ kind: 'separator' as const }] : []),
+      ...group.map((action) => ({ ...action, kind: 'action' as const, labelKey: action.label }))
+    ]
+  )
 
   return (
-    <DropdownMenu
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose()
+    <PreviewPointerMenu<PreviewTabMenuAction, PreviewTabActionCommand>
+      entries={entries}
+      getActionId={(action) => action.command}
+      pointer={pointer}
+      testId="preview-tab-context-menu"
+      onSelect={onSelect}
+      onClose={onClose}
+      onRestoreFocus={() => {
+        // Focus returns to the tab that opened the menu instead of the hidden anchor — unless the
+        // executed command handed focus to the composer.
+        if (composerFocusRequestedRef.current) return
+        document.getElementById(getPreviewTabId(item.id))?.focus()
       }}
-    >
-      <DropdownMenuTrigger asChild>
-        <span
-          aria-hidden="true"
-          data-testid="preview-tab-context-anchor"
-          className="pointer-events-none fixed size-0"
-          style={{ left: pointer.x, top: pointer.y }}
-        />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="start"
-        className="min-w-[9.5rem] p-1"
-        data-testid="preview-tab-context-menu"
-        onCloseAutoFocus={(event) => {
-          // Focus returns to the tab that opened the menu instead of the hidden anchor — unless
-          // the executed command handed focus to the composer.
-          event.preventDefault()
-          if (composerFocusRequestedRef.current) return
-          document.getElementById(getPreviewTabId(item.id))?.focus()
-        }}
-      >
-        {pdfContext.map(renderItem)}
-        {pdfContext.length > 0 ? <DropdownMenuSeparator /> : null}
-        {shared.map(renderItem)}
-        {specific.length > 0 ? <DropdownMenuSeparator /> : null}
-        {specific.map(renderItem)}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      dataAttribute="command"
+    />
   )
 }
 
