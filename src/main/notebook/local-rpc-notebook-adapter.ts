@@ -9,6 +9,7 @@ import {
   type ExecuteShellRequest,
   type FinishNotebookCodeCellRequest,
   type NotebookLanguage,
+  type NotebookRestartRequest,
   type NotebookSessionRequest,
   type RequestNotebookNetworkAccessRequest,
   type RunNotebookCellRequest
@@ -116,7 +117,13 @@ const notebookLocalRpcRequestSchemas = {
     command: z.string().min(1).optional()
   }),
   state: notebookSessionRequestSchema,
-  restart: notebookSessionRequestSchema,
+  restart: z.union([
+    notebookSessionRequestSchema,
+    notebookSessionRequestSchema.extend({
+      language: notebookLanguageSchema,
+      environment: z.string().min(1)
+    })
+  ]),
   shutdown: notebookSessionRequestSchema,
   inspectPackages: notebookSessionRequestSchema.extend({
     language: notebookLanguageSchema,
@@ -199,7 +206,7 @@ type NotebookLocalRpcCapability = {
     signal?: AbortSignal
   ): Promise<unknown>
   state(request: NotebookSessionRequest): Promise<unknown>
-  restart(request: NotebookSessionRequest): Promise<unknown>
+  restart(request: NotebookRestartRequest): Promise<unknown>
   shutdown(request: NotebookSessionRequest): Promise<unknown>
   inspectPackages(request: InspectPackagesRequest): Promise<unknown>
   managePackages(request: InstallRequest): Promise<InstallResult>

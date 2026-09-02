@@ -4048,6 +4048,63 @@ describe('notebook runtime service', () => {
     expect(shutdowns).toBe(0)
   })
 
+  it('restarts only the requested R environment without restarting the session executor', async () => {
+    const root = await createStorageRoot()
+    let restarts = 0
+    const terminated: Array<['python' | 'r' | 'repl', string]> = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true }),
+        restart: async () => {
+          restarts += 1
+        },
+        terminate: async (kind, environment) => {
+          terminated.push([kind, environment])
+        }
+      })
+    })
+    const request = { sessionId: 'session-1', workspaceCwd: root }
+    await service.execute({ ...request, language: 'python', code: 'python_state = 1' })
+    await service.execute({ ...request, language: 'r', code: 'r_state <- 1' })
+
+    const restarted = await service.restart({
+      ...request,
+      language: 'r',
+      environment: DEFAULT_R_ENV
+    })
+
+    expect(restarts).toBe(0)
+    expect(terminated).toEqual([['r', DEFAULT_R_ENV]])
+    expect(restarted.environments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ processKey: `python:${DEFAULT_PY_ENV}`, status: 'idle' }),
+        expect.objectContaining({ processKey: `r:${DEFAULT_R_ENV}`, status: 'idle' })
+      ])
+    )
+    for (const malformedTarget of [{ language: 'r' as const }, { environment: DEFAULT_R_ENV }]) {
+      await expect(
+        service.restart({
+          ...request,
+          ...malformedTarget
+        } as never)
+      ).rejects.toThrow('language and environment must be provided together')
+    }
+    expect(restarts).toBe(0)
+    expect(terminated).toEqual([['r', DEFAULT_R_ENV]])
+  })
+
   it('reports a restarting kernel status while restart() is in flight, then settles to idle', async () => {
     const root = await createStorageRoot()
     let releaseRestart: (() => void) | undefined

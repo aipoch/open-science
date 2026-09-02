@@ -163,6 +163,7 @@ describe('notebook IPC handlers', () => {
     ])
 
     const session = { sessionId: 'session-1', workspaceCwd: '/workspace' }
+    const restartTarget = { ...session, language: 'r' as const, environment: 'default-r' }
     const namespace = { ...session, language: 'python' as const, environment: 'default-python' }
     const begin = { ...session }
     const append = { ...session, cellId: 'cell-1', writeId: 'write-1', delta: 'hello' }
@@ -194,7 +195,7 @@ describe('notebook IPC handlers', () => {
     await ipcHandlers.get('notebook:execute')?.(undefined, execute)
     await ipcHandlers.get('notebook:export-ipynb')?.(undefined, session)
     await ipcHandlers.get('notebook:export-ipynb-all')?.(undefined, session)
-    await ipcHandlers.get('notebook:restart')?.(undefined, session)
+    await ipcHandlers.get('notebook:restart')?.(undefined, restartTarget)
     await ipcHandlers.get('notebook:shutdown')?.(undefined, session)
 
     expect(service.state).toHaveBeenCalledWith(session)
@@ -207,7 +208,7 @@ describe('notebook IPC handlers', () => {
     expect(service.execute).toHaveBeenCalledWith(publicExecute)
     expect(service.exportIpynb).toHaveBeenCalledWith(session)
     expect(service.exportIpynbAll).toHaveBeenCalledWith(session)
-    expect(service.restart).toHaveBeenCalledWith(session)
+    expect(service.restart).toHaveBeenCalledWith(restartTarget)
     expect(service.shutdown).toHaveBeenCalledWith(session)
   })
 

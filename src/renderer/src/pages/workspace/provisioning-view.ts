@@ -5,6 +5,7 @@ import type {
   ProvisionScope,
   ProvisionStatus
 } from '../../../../shared/notebook-env'
+import type { NotebookRuntimeBinding } from '../../../../shared/notebook-runtime'
 
 // Preparing scope can arrive explicitly on progress events. Older main-process senders omit it, so
 // the reducer retains the legacy `(provisioning && pythonReady)` upgrade inference as a fallback.
@@ -24,6 +25,10 @@ export type ProvisionUiState =
       download?: DownloadProgress
     }
   | { kind: 'error'; message: string; scope?: PreparingScope; sessionId?: string }
+
+export const hasActiveRuntimeTarget = (
+  binding: Pick<NotebookRuntimeBinding, 'status'> | undefined
+): boolean => binding !== undefined && (binding.status ?? 'active') === 'active'
 
 // Pure mapping from the mirrored main-process state to the UI state. `scope` is the renderer's last
 // explicit provision request (undefined for an auto upgrade); `error` is the last failed attempt.
@@ -60,16 +65,20 @@ export function deriveProvisionUi(
   return { kind: 'ready' }
 }
 
-// The notebook pane is greyed while python is unavailable or while an additive upgrade is running.
-// An R-only preparation never gates the pane — Python stays interactive (spec §6.5).
+// The notebook pane is greyed while its implicit managed Python target is unavailable or while an
+// additive upgrade is running. An active explicit runtime binding bypasses managed provisioning.
 export function notebookGated(
   status: ProvisionStatus,
   ui: ProvisionUiState,
-  sessionId?: string
+  sessionId?: string,
+  binding?: Pick<NotebookRuntimeBinding, 'status'>
 ): boolean {
   if (ui.kind !== 'ready' && ui.sessionId && sessionId && ui.sessionId !== sessionId) {
     return false
   }
+  // Explicit Session bindings have already been validated by the runtime registry. Only the absent
+  // binding (the implicit app-managed default) depends on global provisioning readiness.
+  if (hasActiveRuntimeTarget(binding)) return false
   // A progress event can identify Python/upgrade work before its follow-up status refresh observes
   // provisioning=true. Fail closed from either signal so a refresh failure never opens the gate;
   // R-only work stays additive, and the error overlay still exposes Retry.

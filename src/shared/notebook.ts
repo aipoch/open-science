@@ -678,6 +678,12 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
   inputRunLeaseId?: string
 }
 
+// Restarts either every kernel in the Session (target omitted, preserving the historical behavior)
+// or one exact data-kernel target. Runtime boundaries reject half-specified targets.
+export type NotebookRestartRequest =
+  | (NotebookSessionRequest & { language: NotebookLanguage; environment: string })
+  | (NotebookSessionRequest & { language?: never; environment?: never })
+
 // A normal state read returns the latest renderer window. Transcript hydration may additionally
 // request immutable historical Runs by id without changing or widening that default window.
 export const NOTEBOOK_STATE_TARGET_RUN_LIMIT = 20

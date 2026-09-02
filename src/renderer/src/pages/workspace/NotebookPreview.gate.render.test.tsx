@@ -670,6 +670,9 @@ describe('NotebookPreview per-kernel tabs', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
+    expect(window.api.notebook.restart).toHaveBeenCalledWith(
+      expect.objectContaining({ language: 'r', environment: 'default-r' })
+    )
     expect(window.api.notebook.inspectNamespace).toHaveBeenCalledTimes(2)
     expect(window.api.notebook.inspectNamespace).toHaveBeenLastCalledWith(
       expect.objectContaining({ language: 'r', environment: 'default-r' })
@@ -1514,6 +1517,60 @@ describe('NotebookPreview per-environment selector', () => {
       'pandas-demo2'
     )
   })
+
+  it.each([
+    {
+      language: 'python' as const,
+      environment: 'external-python',
+      runtimeId: '/usr/local/bin/python3',
+      label: 'External Python'
+    },
+    {
+      language: 'r' as const,
+      environment: 'external-r',
+      runtimeId: '/usr/local/bin/R',
+      label: 'External R'
+    }
+  ])(
+    'keeps an externally bound $language runtime usable when managed runtimes are unavailable',
+    async ({ language, environment, runtimeId, label }) => {
+      await mountWithRuns(
+        [makeRun({ runId: `${language}-1`, kernelKind: language, environment })],
+        [],
+        { [language]: environment },
+        {
+          [language]: {
+            runtimeId,
+            language,
+            label,
+            source: 'external',
+            provenance: 'user-own',
+            interpreterPath: runtimeId,
+            ...(language === 'r' ? { status: 'active' as const } : {})
+          }
+        }
+      )
+
+      const unavailableManagedStatus: ProvisionStatus = {
+        pythonReady: false,
+        rReady: false,
+        version: 1,
+        provisioning: false
+      }
+      act(() => {
+        useNotebookEnvStore.setState({
+          status: unavailableManagedStatus,
+          ui: deriveProvisionUi(unavailableManagedStatus, undefined, undefined, undefined)
+        })
+      })
+
+      expect(container.querySelector('[data-testid="notebook-env-gate"]')).toBeNull()
+      expect(
+        (container.querySelector('[data-testid="kernel-terminal-input"]') as HTMLTextAreaElement)
+          .disabled
+      ).toBe(false)
+    }
+  )
 
   it('shows the current R runtime binding on the R kernel tab', async () => {
     await mountWithRuns(

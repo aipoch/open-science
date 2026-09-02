@@ -65,7 +65,7 @@ const requestByMethod = {
     reason: 'Download the requested public dataset.'
   },
   state: request,
-  restart: request,
+  restart: { ...request, language: 'r', environment: 'default-r' },
   shutdown: request,
   inspectPackages: { ...request, language: 'python', packages: ['numpy'] },
   managePackages: { ...request, language: 'python', packages: ['numpy'] },
@@ -252,6 +252,17 @@ describe('notebook local RPC adapter', () => {
       })
     ).not.toThrow()
   })
+
+  it.each([{ language: 'r' }, { environment: 'default-r' }])(
+    'rejects a half-specified restart target',
+    (target) => {
+      const capability = createCapability()
+
+      expect(() =>
+        resolveNotebookLocalRpcHandler(capability, 'restart', { ...request, ...target })
+      ).toThrow('Invalid notebook RPC params for restart')
+    }
+  )
 
   it('rejects unknown methods after validating common routing fields', () => {
     const capability = createCapability()
