@@ -2828,9 +2828,12 @@ const createApplicationModules = async (
         createLogger('compute-job-deletion').error(
           'background deletion recovery failed; retry scheduled',
           diagnosticErrorFields(error)
-        )
+        ),
+      onStatusChanged: () =>
+        applicationEvents.publish(LIFECYCLE_CHANNELS.projectDeletionCleanupChanged, undefined)
     }
   )
+  projectDeletionCoordinator.setRecoveryLoop(projectDeletionRecovery)
   const removeProjectDeletionRecoveryWake = applicationEvents.subscribe((event) => {
     if (event.channel === 'project:deleted' && event.payload.status === 'cleanup-pending') {
       projectDeletionRecovery.wake()

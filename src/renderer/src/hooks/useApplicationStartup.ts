@@ -54,6 +54,7 @@ const useApplicationStartup = (): ApplicationStartupProjection => {
   useDeepLinkNavigation({ isHydrated: sessions.isHydrated, isReady: sessions.isReady })
 
   const loadProjects = useProjectStore((state) => state.loadProjects)
+  const loadDeletionCleanup = useProjectStore((state) => state.loadDeletionCleanup)
   const isSettingsLoaded = useSettingsStore((state) => state.isLoaded)
   const isSettingsLoading = useSettingsStore((state) => state.isLoading)
   const settingsLoadError = useSettingsStore((state) => state.loadError)
@@ -113,7 +114,8 @@ const useApplicationStartup = (): ApplicationStartupProjection => {
   useEffect(() => {
     if (!isSettingsLoaded || !sessions.isHydrated || sessions.isLoading) return
     void loadProjects()
-  }, [isSettingsLoaded, loadProjects, sessions.isHydrated, sessions.isLoading])
+    void loadDeletionCleanup()
+  }, [isSettingsLoaded, loadDeletionCleanup, loadProjects, sessions.isHydrated, sessions.isLoading])
 
   // Hydrate the persisted framework before checking it so the launch probe uses the selected runtime.
   useEffect(() => {

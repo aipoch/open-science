@@ -45,6 +45,7 @@ import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { LanguagePreferenceMenu } from '@/components/LanguageControls'
 import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { NotificationBell } from '@/components/NotificationBell'
+import { ProjectDeletionCleanupNotice } from '@/components/ProjectDeletionCleanupNotice'
 import { ThemePreferenceMenu } from '@/components/ThemeControls'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
 import { sessionWaitReasonLabelKeys } from '@/lib/session-wait-reason-labels'
@@ -176,9 +177,6 @@ const HomePage = ({
 }: HomePageProps): React.JSX.Element => {
   const { t } = useTranslation()
   const projects = useProjectStore((state) => state.projects)
-  const hasPendingProjectCleanup = useProjectStore(
-    (state) => state.pendingDeletionCleanupProjectIds.size > 0
-  )
   const loadError = useProjectStore((state) => state.loadError)
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const updateProject = useProjectStore((state) => state.updateProject)
@@ -879,14 +877,7 @@ const HomePage = ({
                 {projectActionError}
               </div>
             ) : null}
-            {hasPendingProjectCleanup ? (
-              <div
-                className="mb-3 rounded-2xl border border-status-warning-foreground/30 bg-status-warning-surface/40 px-4 py-3 text-sm text-status-warning-foreground dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20 dark:text-status-warning-dark-foreground"
-                role="status"
-              >
-                {t('Project deleted. Cleanup will continue in the background.')}
-              </div>
-            ) : null}
+            <ProjectDeletionCleanupNotice className="mb-3 rounded-2xl px-4 py-3" />
             {loadError ? (
               <div
                 className="rounded-2xl border border-danger-000/30 px-4 py-6 text-center text-sm text-danger-000"

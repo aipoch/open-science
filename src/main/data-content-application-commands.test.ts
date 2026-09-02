@@ -139,6 +139,8 @@ const createDependencies = () => {
     delete: vi.fn(async () => ({ status: 'cleanup-pending' as const })),
     get: vi.fn(async () => project),
     list: vi.fn(async () => [project]),
+    listDeletionCleanup: vi.fn(async () => []),
+    retryDeletionCleanup: vi.fn(async () => undefined),
     updateArchive: vi.fn(async () => project),
     update: vi.fn(async () => project)
   }
@@ -308,6 +310,8 @@ describe('Data and content application commands', () => {
         'projects:delete',
         'projects:get',
         'projects:list',
+        'projects:list-deletion-cleanup',
+        'projects:retry-deletion-cleanup',
         'projects:update',
         'sessions:delete-session',
         'sessions:edit-details',
@@ -467,6 +471,16 @@ describe('Data and content application commands', () => {
       },
       { key: 'projectGet', args: ['project-1'], owner: deps.projects.get },
       { key: 'projectList', args: [], owner: deps.projects.list },
+      {
+        key: 'projectListDeletionCleanup',
+        args: [],
+        owner: deps.projects.listDeletionCleanup
+      },
+      {
+        key: 'projectRetryDeletionCleanup',
+        args: [],
+        owner: deps.projects.retryDeletionCleanup
+      },
       {
         key: 'projectUpdateArchive',
         args: [{ id: 'project-1', archived: true, expectedArchivedAt: null }],
@@ -1003,7 +1017,7 @@ describe('Data and content application commands', () => {
     registerDataContentApplicationCommands(router.registrar, deps.dependencies)
     const updateRequest = { id: 'project-1', name: 'Updated project', expectedUpdatedAt: 1 }
     const deleteProjectRequest = { id: 'project-1' }
-    const manifestRequest = { lastProjectId: 'project-1', lastSessionId: 'session-1' }
+    const manifestRequest = { lastSessionId: 'session-1' }
     const deleteSessionRequest = { projectId: 'project-1', sessionId: 'session-1' }
     const editDetailsRequest = {
       projectId: 'project-1',

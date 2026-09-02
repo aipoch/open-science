@@ -30,6 +30,7 @@ const LIFECYCLE_CHANNELS = {
   projectCreated: 'project:created',
   projectUpdated: 'project:updated',
   projectDeleted: 'project:deleted',
+  projectDeletionCleanupChanged: 'project:deletion-cleanup-changed',
   sessionCreated: 'session:created',
   sessionUpdated: 'session:updated',
   sessionDeleted: 'session:deleted'

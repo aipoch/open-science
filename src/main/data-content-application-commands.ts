@@ -266,6 +266,16 @@ const dataContentApplicationCommands = Object.freeze({
     'list',
     Projects.projectApplicationCommandContracts.list
   ),
+  projectListDeletionCleanup: projectCommand(
+    'projects:list-deletion-cleanup',
+    'listDeletionCleanup',
+    Projects.projectApplicationCommandContracts.listDeletionCleanup
+  ),
+  projectRetryDeletionCleanup: projectCommand(
+    'projects:retry-deletion-cleanup',
+    'retryDeletionCleanup',
+    Projects.projectApplicationCommandContracts.retryDeletionCleanup
+  ),
   projectUpdate: projectCommand(
     'projects:update',
     'update',
@@ -381,6 +391,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.projectDelete,
     dataContentApplicationCommands.projectGet,
     dataContentApplicationCommands.projectList,
+    dataContentApplicationCommands.projectListDeletionCleanup,
+    dataContentApplicationCommands.projectRetryDeletionCleanup,
     dataContentApplicationCommands.projectUpdate
   ] as const),
   defineApplicationCommandGroup('sessions', [
@@ -542,6 +554,9 @@ const registerDataContentApplicationCommands = (
       'projects:get': ({ args }) =>
         dependencies.withDataRootWrite(() => dependencies.projects.get(args[0])),
       'projects:list': () => dependencies.withDataRootWrite(() => dependencies.projects.list()),
+      'projects:list-deletion-cleanup': () =>
+        dependencies.withDataRootWrite(() => dependencies.projects.listDeletionCleanup()),
+      'projects:retry-deletion-cleanup': () => dependencies.projects.retryDeletionCleanup(),
       'projects:update-archive': ({ args }) =>
         dependencies.withDataRootWrite(async () => {
           const project = await dependencies.projects.updateArchive(args[0])

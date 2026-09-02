@@ -154,6 +154,9 @@ const useLifecycleSync = ({
         { isDeletion: true }
       )
     })
+    const removeProjectDeletionCleanupChanged = window.api.projects.onDeletionCleanupChanged(() => {
+      void useProjectStore.getState().loadDeletionCleanup()
+    })
     const removeSessionCreated = window.api.sessions.onCreated(
       ({ session, originClientId }: SessionUpsertEvent) => {
         applyOrQueue(
@@ -286,6 +289,7 @@ const useLifecycleSync = ({
       removeProjectCreated()
       removeProjectUpdated()
       removeProjectDeleted()
+      removeProjectDeletionCleanupChanged()
       removeSessionCreated()
       removeSessionUpdated()
       removeSessionDeleted()

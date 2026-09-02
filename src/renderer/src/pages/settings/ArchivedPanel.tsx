@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { ProjectDeletionCleanupNotice } from '@/components/ProjectDeletionCleanupNotice'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { DeleteProjectDialog } from '@/pages/home/DeleteProjectDialog'
@@ -40,16 +41,13 @@ const ArchivedPanel = ({
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
   const projects = useProjectStore((state) => state.projects)
-  const hasPendingProjectCleanup = useProjectStore(
-    (state) => state.pendingDeletionCleanupProjectIds.size > 0
-  )
   const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
   const sessions = useSessionStore((state) => state.sessions)
   const updateSessionArchive = useSessionStore((state) => state.updateSessionArchive)
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>()
   const [sessionToDelete, setSessionToDelete] = useState<ChatSession | undefined>()
-  const [busyKey, setBusyKey] = useState<string | undefined>()
+  const [busyKeys, setBusyKeys] = useState<Set<string>>(() => new Set())
   const [panelError, setPanelError] = useState<string | undefined>()
   const [projectDeleteError, setProjectDeleteError] = useState<string | undefined>()
   const [sessionDeleteError, setSessionDeleteError] = useState<
@@ -80,9 +78,19 @@ const ArchivedPanel = ({
     [projects, sessions]
   )
 
+  const beginOperation = (key: string): void => setBusyKeys((current) => new Set(current).add(key))
+  const finishOperation = (key: string): void =>
+    setBusyKeys((current) => {
+      const next = new Set(current)
+      next.delete(key)
+      return next
+    })
+
   const restoreProject = (project: Project): void => {
     if (project.archivedAt === undefined) return
-    setBusyKey(`project:${project.id}`)
+    const key = `project:${project.id}`
+    if (busyKeys.has(key)) return
+    beginOperation(key)
     setPanelError(undefined)
     void updateProjectArchive({
       id: project.id,
@@ -93,12 +101,14 @@ const ArchivedPanel = ({
       .catch((restoreError: unknown) =>
         setPanelError(describeError(restoreError, t('Could not restore project.')))
       )
-      .finally(() => setBusyKey(undefined))
+      .finally(() => finishOperation(key))
   }
 
   const restoreSession = (session: ChatSession): void => {
     if (session.archivedAt === undefined) return
-    setBusyKey(`session:${session.id}`)
+    const key = `session:${session.id}`
+    if (busyKeys.has(key)) return
+    beginOperation(key)
     setPanelError(undefined)
     void updateSessionArchive({
       projectId: session.projectId,
@@ -109,14 +119,15 @@ const ArchivedPanel = ({
       .catch((restoreError: unknown) =>
         setPanelError(describeError(restoreError, t('Could not restore session.')))
       )
-      .finally(() => setBusyKey(undefined))
+      .finally(() => finishOperation(key))
   }
 
   const deleteArchivedSession = (): void => {
     const session = sessionToDelete
-    if (!session || !canDeleteProjects || busyKey === `session:${session.id}`) return
+    const key = `session:${session?.id}`
+    if (!session || !canDeleteProjects || busyKeys.has(key)) return
 
-    setBusyKey(`session:${session.id}`)
+    beginOperation(key)
     setPanelError(undefined)
     setSessionDeleteError(undefined)
     void window.api.sessions
@@ -135,7 +146,7 @@ const ArchivedPanel = ({
       .catch((deleteError: unknown) =>
         setPanelError(describeError(deleteError, t('Could not delete session.')))
       )
-      .finally(() => setBusyKey(undefined))
+      .finally(() => finishOperation(key))
   }
 
   const openProjectDeleteDialog = (project: Project): void => {
@@ -145,7 +156,7 @@ const ArchivedPanel = ({
   }
 
   const closeProjectDeleteDialog = (): void => {
-    if (busyKey === `project:${projectToDelete?.id}`) return
+    if (busyKeys.has(`project:${projectToDelete?.id}`)) return
 
     setProjectToDelete(undefined)
     setProjectDeleteError(undefined)
@@ -155,7 +166,9 @@ const ArchivedPanel = ({
     const project = projectToDelete
     if (!project || !canDeleteProjects) return
 
-    setBusyKey(`project:${project.id}`)
+    const key = `project:${project.id}`
+    if (busyKeys.has(key)) return
+    beginOperation(key)
     setProjectDeleteError(undefined)
     void (async () => {
       await deleteProject(project.id)
@@ -168,7 +181,7 @@ const ArchivedPanel = ({
         console.warn('Project deletion failed', deleteError)
         setProjectDeleteError(t('Could not delete project.'))
       })
-      .finally(() => setBusyKey(undefined))
+      .finally(() => finishOperation(key))
   }
 
   const sessionRow = (session: ChatSession, projectArchived: boolean): React.JSX.Element => (
@@ -186,7 +199,7 @@ const ArchivedPanel = ({
           type="button"
           variant="outline"
           size="sm"
-          disabled={projectArchived || busyKey === `session:${session.id}`}
+          disabled={projectArchived || busyKeys.has(`session:${session.id}`)}
           title={projectArchived ? t('Restore the project first.') : undefined}
           onClick={() => restoreSession(session)}
         >
@@ -199,7 +212,7 @@ const ArchivedPanel = ({
         variant="outline"
         size="sm"
         className="text-danger-000 hover:text-danger-000"
-        disabled={!canDeleteProjects || busyKey === `session:${session.id}`}
+        disabled={!canDeleteProjects || busyKeys.has(`session:${session.id}`)}
         title={
           canDeleteProjects ? undefined : t('Retry project recovery before deleting projects.')
         }
@@ -228,14 +241,7 @@ const ArchivedPanel = ({
           {panelError}
         </p>
       ) : null}
-      {hasPendingProjectCleanup ? (
-        <p
-          role="status"
-          className="rounded-md border border-status-warning-foreground/30 bg-status-warning-surface/40 px-3 py-2 text-sm text-status-warning-foreground dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20 dark:text-status-warning-dark-foreground"
-        >
-          {t('Project deleted. Cleanup will continue in the background.')}
-        </p>
-      ) : null}
+      <ProjectDeletionCleanupNotice />
       {selectedProject ? (
         <>
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -254,7 +260,7 @@ const ArchivedPanel = ({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={busyKey === `project:${selectedProject.id}`}
+                disabled={busyKeys.has(`project:${selectedProject.id}`)}
                 onClick={() => restoreProject(selectedProject)}
               >
                 <RotateCcw className="size-3.5" aria-hidden="true" />
@@ -265,7 +271,7 @@ const ArchivedPanel = ({
                 variant="outline"
                 size="sm"
                 className="text-danger-000 hover:text-danger-000"
-                disabled={!canDeleteProjects || busyKey === `project:${selectedProject.id}`}
+                disabled={!canDeleteProjects || busyKeys.has(`project:${selectedProject.id}`)}
                 title={
                   canDeleteProjects
                     ? undefined
@@ -347,7 +353,7 @@ const ArchivedPanel = ({
         }
         hasCompleteSessionCatalog={hasCompleteSessionCatalog}
         canDelete={canDeleteProjects}
-        isDeleting={busyKey === `project:${projectToDelete?.id}`}
+        isDeleting={busyKeys.has(`project:${projectToDelete?.id}`)}
         error={projectDeleteError}
         onCancel={closeProjectDeleteDialog}
         onConfirmDelete={deleteArchivedProject}
@@ -355,7 +361,7 @@ const ArchivedPanel = ({
       <DeleteSessionDialog
         session={sessionToDelete}
         canDelete={canDeleteProjects}
-        isDeleting={busyKey === `session:${sessionToDelete?.id}`}
+        isDeleting={busyKeys.has(`session:${sessionToDelete?.id}`)}
         error={sessionDeleteError}
         onCancel={() => {
           setSessionToDelete(undefined)

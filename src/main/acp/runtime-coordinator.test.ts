@@ -3084,6 +3084,8 @@ describe('AcpRuntimeCoordinator', () => {
       repository,
       {
         deleteProject: vi.fn(),
+        listDeletionCleanup: vi.fn().mockResolvedValue([]),
+        retryDeletionCleanup: vi.fn(),
         waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
       },
       {

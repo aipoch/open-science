@@ -12,7 +12,7 @@ const project = {
 }
 
 describe('project application command contracts', () => {
-  it('decodes the six Project command argument and result shapes', () => {
+  it('decodes the eight Project command argument and result shapes', () => {
     const listArgs: [] = []
     const listResult = [project]
     expect(projectApplicationCommandContracts.list.args.parse(listArgs)).toBe(listArgs)
@@ -62,6 +62,23 @@ describe('project application command contracts', () => {
     expect(
       projectApplicationCommandContracts.delete.result.parse({ status: 'cleanup-pending' })
     ).toEqual({ status: 'cleanup-pending' })
+    const cleanup = [
+      {
+        projectId: 'project-1',
+        projectName: 'Project',
+        phase: 'retry-scheduled',
+        failureCount: 2,
+        nextRetryAt: 6_000
+      }
+    ]
+    expect(projectApplicationCommandContracts.listDeletionCleanup.args.parse([])).toEqual([])
+    expect(projectApplicationCommandContracts.listDeletionCleanup.result.parse(cleanup)).toEqual(
+      cleanup
+    )
+    expect(projectApplicationCommandContracts.retryDeletionCleanup.args.parse([])).toEqual([])
+    expect(
+      projectApplicationCommandContracts.retryDeletionCleanup.result.parse(undefined)
+    ).toBeUndefined()
   })
 
   it('rejects malformed and surplus public fields', () => {
@@ -73,6 +90,17 @@ describe('project application command contracts', () => {
     ).toThrow()
     expect(() =>
       projectApplicationCommandContracts.list.result.parse([{ ...project, createdAt: 'today' }])
+    ).toThrow()
+    expect(() =>
+      projectApplicationCommandContracts.listDeletionCleanup.result.parse([
+        {
+          projectId: 'project-1',
+          phase: 'retry-scheduled',
+          failureCount: 1,
+          nextRetryAt: 6_000,
+          error: '/private/research.db'
+        }
+      ])
     ).toThrow()
   })
 

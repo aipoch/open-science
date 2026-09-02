@@ -487,6 +487,53 @@ describe('ProjectDeletionCoordinator', () => {
     await recovery.stop()
   })
 
+  it('projects retry timing without exposing the cleanup error', async () => {
+    vi.useFakeTimers()
+    const onStatusChanged = vi.fn()
+    const recovery = new ProjectDeletionRecoveryLoop(
+      vi.fn().mockRejectedValueOnce(new Error('/Users/private/project cleanup failed')),
+      { retryDelayMs: 1_000, now: () => 5_000, onStatusChanged }
+    )
+
+    recovery.start()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(recovery.projectCleanup([{ projectId: 'project-1', projectName: 'Research' }])).toEqual([
+      {
+        projectId: 'project-1',
+        projectName: 'Research',
+        phase: 'retry-scheduled',
+        failureCount: 1,
+        nextRetryAt: 6_000
+      }
+    ])
+    expect(onStatusChanged).toHaveBeenCalledTimes(2)
+
+    await recovery.stop()
+  })
+
+  it('lists pending cleanup and wakes the bound recovery loop on demand', async () => {
+    const projects = createProjects()
+    projects.listDeletionCleanupProjects = vi
+      .fn()
+      .mockResolvedValue([
+        { projectId: 'project-1', projectName: 'Research' },
+        { projectId: 'project-orphan' }
+      ])
+    const coordinator = new ProjectDeletionCoordinator(projects, createSessions())
+    const recovery = new ProjectDeletionRecoveryLoop(vi.fn())
+    const wake = vi.spyOn(recovery, 'wake')
+    coordinator.setRecoveryLoop(recovery)
+
+    await expect(coordinator.listDeletionCleanup()).resolves.toEqual([
+      { projectId: 'project-1', projectName: 'Research', phase: 'running', failureCount: 0 },
+      { projectId: 'project-orphan', phase: 'running', failureCount: 0 }
+    ])
+    coordinator.retryDeletionCleanup()
+
+    expect(wake).toHaveBeenCalledOnce()
+  })
+
   it('wakes background recovery after its successful startup run has completed', async () => {
     const recover = vi.fn().mockResolvedValue(undefined)
     const recovery = new ProjectDeletionRecoveryLoop(recover)
@@ -1015,7 +1062,8 @@ const createProjects = (): ProjectDeletionRepository => ({
   delete: vi.fn().mockResolvedValue(undefined),
   createDeletionIntent: vi.fn().mockResolvedValue(undefined),
   deleteDeletionIntent: vi.fn().mockResolvedValue(undefined),
-  listDeletionIntents: vi.fn().mockResolvedValue([])
+  listDeletionIntents: vi.fn().mockResolvedValue([]),
+  listDeletionCleanupProjects: vi.fn().mockResolvedValue([])
 })
 
 const createSessions = (

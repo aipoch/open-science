@@ -62,6 +62,7 @@ export type ApplicationEventMap = {
   'project:created': Project
   'project:updated': Project
   'project:deleted': ProjectDeletedEvent
+  'project:deletion-cleanup-changed': undefined
   'session:created': SessionUpsertEvent
   'session:updated': SessionUpsertEvent
   'session:deleted': SessionDeletedEvent

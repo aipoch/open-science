@@ -85,6 +85,45 @@ describe('ArchivedPanel', () => {
     expect(useSessionStore.getState().sessions[0]?.archivedAt).toBeUndefined()
   })
 
+  it('keeps each concurrent restore busy until that operation finishes', async () => {
+    const secondSession = { ...session, id: 'session-2', title: 'Second archived session' }
+    const firstRestore = createDeferred<ChatSession>()
+    const secondRestore = createDeferred<ChatSession>()
+    updateArchive.mockImplementation(({ sessionId }: { sessionId: string }) =>
+      sessionId === session.id ? firstRestore.promise : secondRestore.promise
+    )
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [session, secondSession]
+    })
+    await act(async () =>
+      root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    )
+
+    const restoreButtons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button')
+    ).filter((button) => button.textContent?.includes('Restore'))
+    await act(async () => restoreButtons[0]?.click())
+    await act(async () => restoreButtons[1]?.click())
+
+    expect(restoreButtons.map((button) => button.disabled)).toEqual([true, true])
+
+    await act(async () => {
+      firstRestore.resolve({ ...session, archivedAt: undefined })
+      await firstRestore.promise
+    })
+
+    const remainingRestore = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.includes('Restore'))
+    expect(remainingRestore?.disabled).toBe(true)
+
+    await act(async () => {
+      secondRestore.resolve({ ...secondSession, archivedAt: undefined })
+      await secondRestore.promise
+    })
+  })
+
   it('delegates archived project selection to Settings navigation', async () => {
     const onNavigate = vi.fn()
     useProjectStore.setState({
@@ -102,6 +141,33 @@ describe('ArchivedPanel', () => {
     await act(async () => manage?.click())
 
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'project', projectId: project.id })
+  })
+
+  it('shows retry detail and offers immediate cleanup recovery', async () => {
+    const retryDeletionCleanup = vi.fn().mockResolvedValue(undefined)
+    useProjectStore.setState({
+      deletionCleanup: [
+        {
+          projectId: project.id,
+          projectName: project.name,
+          phase: 'retry-scheduled',
+          failureCount: 2,
+          nextRetryAt: 6_000
+        }
+      ],
+      retryDeletionCleanup
+    })
+    await act(async () =>
+      root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    )
+
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('Failed attempts: 2')
+    const retry = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Retry now'
+    )
+    await act(async () => retry?.click())
+
+    expect(retryDeletionCleanup).toHaveBeenCalledOnce()
   })
 
   it('removes a stale Undo notice after permanently deleting its session', async () => {
@@ -250,7 +316,14 @@ describe('ArchivedPanel', () => {
     const archivedProject = { ...project, archivedAt: 2 }
     deleteProject.mockImplementationOnce(async () => {
       useProjectStore.setState({
-        pendingDeletionCleanupProjectIds: new Set([project.id])
+        deletionCleanup: [
+          {
+            projectId: project.id,
+            projectName: project.name,
+            phase: 'running',
+            failureCount: 0
+          }
+        ]
       } as never)
       return { status: 'cleanup-pending' }
     })
@@ -281,8 +354,8 @@ describe('ArchivedPanel', () => {
     await act(async () => confirmDelete?.click())
 
     expect(useSessionStore.getState().sessions).toEqual([])
-    expect(container.querySelector('[role="status"]')?.textContent).toBe(
-      'Project deleted. Cleanup will continue in the background.'
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      `Cleaning up ${project.name}…`
     )
     expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
@@ -364,3 +437,11 @@ describe('ArchivedPanel', () => {
     )
   })
 })
+
+const createDeferred = <T,>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve
+  })
+  return { promise, resolve }
+}

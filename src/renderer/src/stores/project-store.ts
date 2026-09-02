@@ -1,8 +1,10 @@
 import { create } from 'zustand'
 
+import { PROJECT_NAME_MAX_LENGTH } from '../../../shared/projects'
 import type {
   CreateProjectRequest,
   Project,
+  ProjectDeletionCleanup,
   ProjectDeletionOutcome,
   UpdateProjectArchiveRequest,
   UpdateProjectRequest
@@ -10,7 +12,7 @@ import type {
 
 type ProjectStoreData = {
   projects: Project[]
-  pendingDeletionCleanupProjectIds: Set<string>
+  deletionCleanup: ProjectDeletionCleanup[]
   projectDeletionRequests: Map<
     string,
     { generation: number; lifecycleStatus?: ProjectDeletionOutcome['status'] }
@@ -21,6 +23,8 @@ type ProjectStoreData = {
 
 type ProjectStore = ProjectStoreData & {
   loadProjects: () => Promise<void>
+  loadDeletionCleanup: () => Promise<void>
+  retryDeletionCleanup: () => Promise<void>
   createProject: (request: CreateProjectRequest) => Promise<Project | undefined>
   updateProject: (request: UpdateProjectRequest) => Promise<Project | undefined>
   updateProjectArchive: (request: UpdateProjectArchiveRequest) => Promise<Project>
@@ -47,7 +51,31 @@ const upsertProjectList = (projects: Project[], project: Project): Project[] => 
   return sortByUpdatedDesc([project, ...withoutProject])
 }
 
+const projectDeletionCleanupAfter = (
+  state: Pick<ProjectStoreData, 'projects' | 'deletionCleanup'>,
+  id: string,
+  status: ProjectDeletionOutcome['status']
+): ProjectDeletionCleanup[] => {
+  const deletionCleanup = state.deletionCleanup.filter((cleanup) => cleanup.projectId !== id)
+  if (status === 'deleted') return deletionCleanup
+
+  const existing = state.deletionCleanup.find((cleanup) => cleanup.projectId === id)
+  const projectName = state.projects
+    .find((project) => project.id === id)
+    ?.name.slice(0, PROJECT_NAME_MAX_LENGTH)
+  deletionCleanup.push(
+    existing ?? {
+      projectId: id,
+      ...(projectName ? { projectName } : {}),
+      phase: 'running',
+      failureCount: 0
+    }
+  )
+  return deletionCleanup
+}
+
 let projectLoadSequence = 0
+let projectCleanupLoadSequence = 0
 let projectMutationSequence = 0
 let projectOperationGeneration = 0
 const projectProjectionGenerations = new Map<string, number>()
@@ -66,7 +94,7 @@ const supersedeProjectProjection = (id: string): void => {
 
 export const createInitialProjectState = (): ProjectStoreData => ({
   projects: [],
-  pendingDeletionCleanupProjectIds: new Set(),
+  deletionCleanup: [],
   projectDeletionRequests: new Map(),
   isLoaded: false,
   loadError: undefined
@@ -100,6 +128,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       reportProjectLoadError(error)
       set({ isLoaded: true, loadError: SAFE_PROJECT_LOAD_ERROR })
     }
+  },
+
+  loadDeletionCleanup: async () => {
+    const loadSequence = ++projectCleanupLoadSequence
+    try {
+      const deletionCleanup = await window.api.projects.listDeletionCleanup()
+      if (loadSequence === projectCleanupLoadSequence) set({ deletionCleanup })
+    } catch (error) {
+      if (loadSequence === projectCleanupLoadSequence) {
+        console.warn('Project deletion cleanup loading failed', error)
+      }
+    }
+  },
+
+  retryDeletionCleanup: async () => {
+    await window.api.projects.retryDeletionCleanup()
+    await get().loadDeletionCleanup()
   },
 
   // Creates a project and merges the returned row into the local cache. Rejections propagate so the
@@ -192,13 +237,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         return { projectDeletionRequests }
       }
 
-      const pendingDeletionCleanupProjectIds = new Set(state.pendingDeletionCleanupProjectIds)
-      if (outcome.status === 'cleanup-pending') pendingDeletionCleanupProjectIds.add(id)
-      else pendingDeletionCleanupProjectIds.delete(id)
-
       return {
         projects: state.projects.filter((project) => project.id !== id),
-        pendingDeletionCleanupProjectIds,
+        deletionCleanup: projectDeletionCleanupAfter(state, id, outcome.status),
         projectDeletionRequests
       }
     })
@@ -215,18 +256,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     supersedeProjectProjection(id)
     projectMutationSequence += 1
     set((state) => {
-      const pendingDeletionCleanupProjectIds = new Set(state.pendingDeletionCleanupProjectIds)
       const projectDeletionRequests = new Map(state.projectDeletionRequests)
       const request = projectDeletionRequests.get(id)
       const lifecycleStatus = request?.lifecycleStatus === 'deleted' ? 'deleted' : outcome.status
       if (request) projectDeletionRequests.set(id, { ...request, lifecycleStatus })
 
-      if (lifecycleStatus === 'cleanup-pending') pendingDeletionCleanupProjectIds.add(id)
-      else pendingDeletionCleanupProjectIds.delete(id)
-
       return {
         projects: state.projects.filter((project) => project.id !== id),
-        pendingDeletionCleanupProjectIds,
+        deletionCleanup: projectDeletionCleanupAfter(state, id, lifecycleStatus),
         projectDeletionRequests
       }
     })

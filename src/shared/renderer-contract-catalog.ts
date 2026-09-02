@@ -208,6 +208,7 @@ import type {
   CreateProjectRequest,
   DeleteProjectRequest,
   Project,
+  ProjectDeletionCleanup,
   ProjectDeletionOutcome,
   UpdateProjectArchiveRequest,
   UpdateProjectRequest
@@ -1339,6 +1340,13 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     undefined,
     RUNTIME_VALIDATED
   ]),
+  'projects.listDeletionCleanup': callable<() => Promise<ProjectDeletionCleanup[]>>()('projects', [
+    'projects:list-deletion-cleanup',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
   'projects.onCreated': callable<(listener: AcpListener<Project>) => RemoveListener>()('projects', [
     'project:created',
     EVENT
@@ -1347,12 +1355,22 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'projects',
     ['project:deleted', EVENT]
   ),
+  'projects.onDeletionCleanupChanged': callable<
+    (listener: AcpListener<undefined>) => RemoveListener
+  >()('projects', ['project:deletion-cleanup-changed', EVENT]),
   'projects.onUpdated': callable<(listener: AcpListener<Project>) => RemoveListener>()('projects', [
     'project:updated',
     EVENT
   ]),
   'projects.update': callable<(request: UpdateProjectRequest) => Promise<Project>>()('projects', [
     'projects:update',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'projects.retryDeletionCleanup': callable<() => Promise<void>>()('projects', [
+    'projects:retry-deletion-cleanup',
     WEB,
     undefined,
     undefined,

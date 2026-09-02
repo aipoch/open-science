@@ -1,5 +1,5 @@
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
-import type { Project, ProjectDeletionOutcome } from '../../shared/projects'
+import type { Project, ProjectDeletionCleanup, ProjectDeletionOutcome } from '../../shared/projects'
 import type { ProjectSessionDeletionResult } from '../session-persistence/coordinator'
 import type { ProjectSessionDeletionState } from '../session-persistence/repository'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -12,6 +12,9 @@ type ProjectDeletionRepository = {
   createDeletionIntent(projectId: string): Promise<void>
   deleteDeletionIntent(projectId: string): Promise<void>
   listDeletionIntents(): Promise<string[]>
+  listDeletionCleanupProjects(): Promise<
+    Array<Pick<ProjectDeletionCleanup, 'projectId' | 'projectName'>>
+  >
 }
 
 type ProjectSessionDeletion = {
@@ -50,6 +53,8 @@ type ProjectDeletionLifecycle = {
 type ProjectDeletionRecoveryLoopOptions = {
   retryDelayMs?: number
   onError?: (error: unknown) => void
+  onStatusChanged?: () => void
+  now?: () => number
 }
 
 type ProjectDeletionFailure = {
@@ -82,11 +87,15 @@ class ProjectDeletionRecoveryError extends AggregateError {
 class ProjectDeletionRecoveryLoop {
   private readonly retryDelayMs: number
   private readonly onError: (error: unknown) => void
+  private readonly onStatusChanged: () => void
+  private readonly now: () => number
   private timer: ReturnType<typeof setTimeout> | undefined
   private started = false
   private running = false
   private rerunRequested = false
   private activeRun: Promise<void> | undefined
+  private failureCount = 0
+  private nextRetryAt: number | undefined
 
   constructor(
     private readonly recover: () => Promise<void>,
@@ -94,6 +103,28 @@ class ProjectDeletionRecoveryLoop {
   ) {
     this.retryDelayMs = options.retryDelayMs ?? 30_000
     this.onError = options.onError ?? (() => undefined)
+    this.onStatusChanged = options.onStatusChanged ?? (() => undefined)
+    this.now = options.now ?? Date.now
+  }
+
+  projectCleanup(
+    projects: ReadonlyArray<Pick<ProjectDeletionCleanup, 'projectId' | 'projectName'>>
+  ): ProjectDeletionCleanup[] {
+    const phase = this.nextRetryAt === undefined ? 'running' : 'retry-scheduled'
+    return projects.map((project) => ({
+      ...project,
+      phase,
+      failureCount: this.failureCount,
+      ...(this.nextRetryAt === undefined ? {} : { nextRetryAt: this.nextRetryAt })
+    }))
+  }
+
+  private notifyStatusChanged(): void {
+    try {
+      this.onStatusChanged()
+    } catch {
+      // A disconnected renderer cannot disable durable cleanup recovery.
+    }
   }
 
   start(): void {
@@ -126,11 +157,16 @@ class ProjectDeletionRecoveryLoop {
   private run(): void {
     if (!this.started || this.running) return
     this.running = true
+    this.nextRetryAt = undefined
+    this.notifyStatusChanged()
     const activeRun = Promise.resolve()
       .then(() => this.recover())
       .then(
         () => {
           this.running = false
+          this.failureCount = 0
+          this.nextRetryAt = undefined
+          this.notifyStatusChanged()
           if (!this.started || !this.rerunRequested) return
           this.rerunRequested = false
           this.run()
@@ -138,11 +174,14 @@ class ProjectDeletionRecoveryLoop {
         (error: unknown) => {
           this.running = false
           this.rerunRequested = false
+          this.failureCount += 1
+          this.nextRetryAt = this.now() + this.retryDelayMs
           try {
             this.onError(error)
           } catch {
             // A diagnostic sink failure must not disable durable deletion recovery.
           }
+          this.notifyStatusChanged()
           if (!this.started) return
           this.timer = setTimeout(() => {
             this.timer = undefined
@@ -165,6 +204,7 @@ class ProjectDeletionCoordinator {
   private operationQueue: Promise<void> = Promise.resolve()
   private recoveryPromise: Promise<void> | undefined
   private isRecoveryComplete = false
+  private recoveryLoop: ProjectDeletionRecoveryLoop | undefined
 
   constructor(
     private readonly projects: ProjectDeletionRepository,
@@ -175,6 +215,23 @@ class ProjectDeletionCoordinator {
     private readonly lifecycle?: ProjectDeletionLifecycle,
     private readonly events?: Pick<ApplicationEventPublisher, 'publish'>
   ) {}
+
+  setRecoveryLoop(recoveryLoop: ProjectDeletionRecoveryLoop): void {
+    this.recoveryLoop = recoveryLoop
+  }
+
+  async listDeletionCleanup(): Promise<ProjectDeletionCleanup[]> {
+    const projects = await this.projects.listDeletionCleanupProjects()
+    return (
+      this.recoveryLoop?.projectCleanup(projects) ??
+      projects.map((project) => ({ ...project, phase: 'running', failureCount: 0 }))
+    )
+  }
+
+  retryDeletionCleanup(): void {
+    if (!this.recoveryLoop) throw new Error('Project deletion recovery is not initialized.')
+    this.recoveryLoop.wake()
+  }
 
   // Enqueues before yielding so two callers in the same event-loop turn cannot publish competing
   // recovery promises. The queue tail swallows failures only to keep later recovery work runnable.

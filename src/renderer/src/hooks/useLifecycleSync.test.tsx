@@ -38,6 +38,7 @@ const listeners: {
   projectCreated?: (project: Project) => void
   projectUpdated?: (project: Project) => void
   projectDeleted?: (event: ProjectDeletedEvent) => void
+  projectDeletionCleanupChanged?: () => void
   sessionCreated?: (event: SessionUpsertEvent) => void
   sessionUpdated?: (event: SessionUpsertEvent) => void
   sessionDeleted?: (event: SessionDeletedEvent) => void
@@ -110,7 +111,9 @@ describe('useLifecycleSync', () => {
       projects: {
         onCreated: subscribe<Project>('projectCreated'),
         onUpdated: subscribe<Project>('projectUpdated'),
-        onDeleted: subscribe<ProjectDeletedEvent>('projectDeleted')
+        onDeleted: subscribe<ProjectDeletedEvent>('projectDeleted'),
+        onDeletionCleanupChanged: subscribe<undefined>('projectDeletionCleanupChanged'),
+        listDeletionCleanup: vi.fn().mockResolvedValue([])
       },
       sessions: {
         onCreated: subscribe<SessionUpsertEvent>('sessionCreated'),
@@ -1440,7 +1443,14 @@ describe('useLifecycleSync', () => {
 
     expect(useProjectStore.getState().projects).toEqual([])
     expect(useSessionStore.getState().sessions).toEqual([])
-    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has(project.id)).toBe(true)
+    expect(useProjectStore.getState().deletionCleanup).toEqual([
+      {
+        projectId: project.id,
+        projectName: project.name,
+        phase: 'running',
+        failureCount: 0
+      }
+    ])
     expect(useNavigationStore.getState().view).toBe('home')
 
     await act(async () => {
@@ -1450,6 +1460,23 @@ describe('useLifecycleSync', () => {
       })
     })
 
-    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has(project.id)).toBe(false)
+    expect(useProjectStore.getState().deletionCleanup).toEqual([])
+  })
+
+  it('refreshes sanitized cleanup status after a recovery lifecycle event', async () => {
+    const cleanup = [
+      {
+        projectId: project.id,
+        projectName: project.name,
+        phase: 'retry-scheduled' as const,
+        failureCount: 2,
+        nextRetryAt: 6_000
+      }
+    ]
+    vi.mocked(window.api.projects.listDeletionCleanup).mockResolvedValueOnce(cleanup)
+
+    await act(async () => listeners.projectDeletionCleanupChanged?.())
+
+    expect(useProjectStore.getState().deletionCleanup).toEqual(cleanup)
   })
 })
