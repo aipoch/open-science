@@ -84,6 +84,7 @@ type ManagedFileReadLease = ResolvedManagedFileVersion & {
   ) => Promise<{ bytesRead: number }>
   readRange: (begin: number, end: number) => Promise<Uint8Array>
   copyTo: (destinationPath: string, options?: { exclusive?: boolean }) => Promise<void>
+  assertCanCopyTo?: (destinationPath: string) => Promise<void>
   verifyUnchanged: () => Promise<void>
   close: () => Promise<void>
 }
@@ -1208,6 +1209,7 @@ class ManagedFileVersionService {
       },
       readRange: operatorLease.readRange,
       copyTo: (destinationPath, options) => operatorLease.copyTo(destinationPath, options),
+      assertCanCopyTo: operatorLease.assertCanCopyTo,
       verifyUnchanged: operatorLease.verifyUnchanged,
       close: operatorLease.close
     }

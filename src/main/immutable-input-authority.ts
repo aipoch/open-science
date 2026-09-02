@@ -48,6 +48,7 @@ type ImmutableInputContentLease = Pick<
   | 'read'
   | 'readRange'
   | 'copyTo'
+  | 'assertCanCopyTo'
   | 'verifyUnchanged'
   | 'close'
 >

@@ -31,7 +31,16 @@ describe('Skill ZIP export', () => {
     const archiveBytes = new Uint8Array([1, 2, 3])
 
     await expect(
-      saveSkillExport({ showSaveDialog, writeFile }, { fileName: 'my-skill.zip', archiveBytes })
+      saveSkillExport(
+        {
+          showSaveDialog,
+          writeFile,
+          publishUserFile: async (destinationPath, write) => {
+            await write(destinationPath)
+          }
+        },
+        { fileName: 'my-skill.zip', archiveBytes }
+      )
     ).resolves.toEqual({ saved: true })
     expect(showSaveDialog).toHaveBeenCalledWith({
       title: 'Export Skill',

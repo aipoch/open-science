@@ -16,6 +16,7 @@ import {
 import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
+import { publishUserFile } from '../user-file-publisher'
 
 type ConversationExportPrintWindow = {
   loadFile(path: string): Promise<void>
@@ -48,6 +49,7 @@ type ConversationExportDependencies = {
     options: SaveDialogOptions
   ): Promise<Electron.SaveDialogReturnValue>
   writeFile(path: string, data: string | Buffer): Promise<void>
+  publishUserFile: typeof publishUserFile
   createTempDirectory(prefix: string): Promise<string>
   removeDirectory(path: string): Promise<void>
   createPrintWindow(): ConversationExportPrintWindow
@@ -115,6 +117,7 @@ const defaultDependencies: ConversationExportDefaultDependencies = {
   showSaveDialog: (parentWindow, options) =>
     parentWindow ? dialog.showSaveDialog(parentWindow, options) : dialog.showSaveDialog(options),
   writeFile,
+  publishUserFile,
   createTempDirectory: mkdtemp,
   removeDirectory: (path) => rm(path, { recursive: true, force: true }),
   createPrintWindow: createDefaultPrintWindow,
@@ -216,7 +219,9 @@ const createConversationExportService = (
       if (dialogResult.canceled || !dialogResult.filePath) return { saved: false }
 
       if (request.format === 'markdown') {
-        await deps.writeFile(dialogResult.filePath, renderConversationMarkdown(document))
+        await deps.publishUserFile(dialogResult.filePath, (temporaryPath) =>
+          deps.writeFile(temporaryPath, renderConversationMarkdown(document))
+        )
         return { saved: true, filePath: dialogResult.filePath }
       }
 
@@ -258,7 +263,9 @@ const createConversationExportService = (
                 )
               )
           )
-          await deps.writeFile(dialogResult.filePath, pdf)
+          await deps.publishUserFile(dialogResult.filePath, (temporaryPath) =>
+            deps.writeFile(temporaryPath, pdf)
+          )
           return { saved: true, filePath: dialogResult.filePath }
         } finally {
           printWindow.destroy()

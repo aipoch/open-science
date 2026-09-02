@@ -176,7 +176,7 @@ struct NativeIoStatusBlock {
   ULONG_PTR information;
 };
 
-struct NativeFileLinkInformation {
+struct NativeFileRenameInformation {
   BOOLEAN replace_if_exists;
   HANDLE root_directory;
   ULONG file_name_length;
@@ -187,7 +187,7 @@ using NtSetInformationFileFunction = LONG(NTAPI*)(
     HANDLE, NativeIoStatusBlock*, void*, ULONG, ULONG);
 using RtlNtStatusToDosErrorFunction = ULONG(NTAPI*)(LONG);
 
-constexpr ULONG kFileLinkInformation = 11;
+constexpr ULONG kFileRenameInformation = 10;
 
 napi_value PublishWindows(
     napi_env env,
@@ -230,12 +230,6 @@ napi_value PublishWindows(
     return ThrowError(env, "Network storage roots are not supported for atomic publication.",
                       "ENOTSUP");
   }
-  bool supports_hard_links = false;
-  if (!QueryHardLinkSupport(root_handle, &supports_hard_links) || !supports_hard_links) {
-    CloseHandle(root_handle);
-    return ThrowError(env, "The storage root file system does not support hard links.", "ENOTSUP");
-  }
-
   FILE_ATTRIBUTE_TAG_INFO root_attributes{};
   if (!GetFileInformationByHandleEx(
           root_handle, FileAttributeTagInfo, &root_attributes, sizeof(root_attributes)) ||
@@ -314,24 +308,24 @@ napi_value PublishWindows(
   }
 
   const size_t destination_bytes = destination_name.size() * sizeof(wchar_t);
-  const size_t link_prefix_size = offsetof(NativeFileLinkInformation, file_name);
+  const size_t rename_prefix_size = offsetof(NativeFileRenameInformation, file_name);
   const size_t max_native_buffer = (std::numeric_limits<ULONG>::max)();
-  if (destination_bytes > max_native_buffer - link_prefix_size) {
+  if (destination_bytes > max_native_buffer - rename_prefix_size) {
     CloseHandle(source_handle);
     CloseHandle(parent_handle);
     CloseHandle(root_handle);
     return ThrowError(env, "The publication destination name is too long.", "EINVAL");
   }
-  size_t link_size = link_prefix_size + destination_bytes;
-  if (link_size < sizeof(NativeFileLinkInformation)) {
-    link_size = sizeof(NativeFileLinkInformation);
+  size_t rename_size = rename_prefix_size + destination_bytes;
+  if (rename_size < sizeof(NativeFileRenameInformation)) {
+    rename_size = sizeof(NativeFileRenameInformation);
   }
-  std::vector<unsigned char> link_buffer(link_size);
-  auto* link_info = reinterpret_cast<NativeFileLinkInformation*>(link_buffer.data());
-  link_info->replace_if_exists = FALSE;
-  link_info->root_directory = parent_handle;
-  link_info->file_name_length = static_cast<ULONG>(destination_bytes);
-  std::memcpy(link_info->file_name, destination_name.data(), destination_bytes);
+  std::vector<unsigned char> rename_buffer(rename_size);
+  auto* rename_info = reinterpret_cast<NativeFileRenameInformation*>(rename_buffer.data());
+  rename_info->replace_if_exists = FALSE;
+  rename_info->root_directory = parent_handle;
+  rename_info->file_name_length = static_cast<ULONG>(destination_bytes);
+  std::memcpy(rename_info->file_name, destination_name.data(), destination_bytes);
 
   HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
   const auto nt_set_information_file =
@@ -351,29 +345,23 @@ napi_value PublishWindows(
     return ThrowError(env, "Handle-relative publication is unavailable.", "ENOTSUP");
   }
 
-  // FileLinkInformation binds both the already-open source and parent handles while creating the
-  // destination atomically without replacement. Removing the temporary alias is best effort.
+  // FileRenameInformation binds both the already-open source and parent handles while moving the
+  // source atomically without replacement. Unlike a hard link, FAT/exFAT supports this operation.
   NativeIoStatusBlock io_status{};
-  const LONG link_status = nt_set_information_file(
+  const LONG rename_status = nt_set_information_file(
       source_handle,
       &io_status,
-      link_info,
-      static_cast<ULONG>(link_buffer.size()),
-      kFileLinkInformation);
-  const bool linked = link_status >= 0;
-  const DWORD link_error =
-      linked ? ERROR_SUCCESS : rtl_nt_status_to_dos_error(link_status);
-  if (linked) {
-    FILE_DISPOSITION_INFO disposition{};
-    disposition.DeleteFile = TRUE;
-    (void)SetFileInformationByHandle(
-        source_handle, FileDispositionInfo, &disposition, sizeof(disposition));
-  }
+      rename_info,
+      static_cast<ULONG>(rename_buffer.size()),
+      kFileRenameInformation);
+  const bool renamed = rename_status >= 0;
+  const DWORD rename_error =
+      renamed ? ERROR_SUCCESS : rtl_nt_status_to_dos_error(rename_status);
   CloseHandle(source_handle);
   CloseHandle(parent_handle);
   CloseHandle(root_handle);
-  if (!linked) {
-    return ThrowError(env, "Atomic no-replace publication failed.", WindowsErrorCode(link_error));
+  if (!renamed) {
+    return ThrowError(env, "Atomic no-replace publication failed.", WindowsErrorCode(rename_error));
   }
 
   napi_value undefined;

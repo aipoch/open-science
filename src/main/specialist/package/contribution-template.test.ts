@@ -92,7 +92,10 @@ describe('contribution template ZIP', () => {
       showSaveDialog,
       readReadme: vi.fn().mockResolvedValue('# 中文\n\n# English\n'),
       generatePackageId: () => '00000000-0000-4000-8000-000000000002',
-      writeFile
+      writeFile,
+      publishUserFile: async (destinationPath, write) => {
+        await write(destinationPath)
+      }
     })
 
     await expect(exportContributionTemplate()).resolves.toEqual({ saved: true })
@@ -109,7 +112,10 @@ describe('contribution template ZIP', () => {
         .fn()
         .mockResolvedValue({ canceled: false, filePath: '/secret/user/location/template.zip' }),
       readReadme: vi.fn().mockResolvedValue('# Guide'),
-      writeFile: vi.fn().mockRejectedValue(new Error('EACCES /secret/user/location/template.zip'))
+      writeFile: vi.fn().mockRejectedValue(new Error('EACCES /secret/user/location/template.zip')),
+      publishUserFile: async (destinationPath, write) => {
+        await write(destinationPath)
+      }
     })
 
     await expect(exportContributionTemplate()).rejects.toThrow(

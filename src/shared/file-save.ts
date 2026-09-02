@@ -68,7 +68,7 @@ type SaveProjectArtifactFailure = SaveProjectArtifactFile & {
   message: string
 }
 
-// filePath is absent when every file failed to resolve: no dialog is shown and nothing is written.
+// filePath is absent when every file fails after Save As confirmation: no archive is written.
 type SaveProjectArtifactsResult =
   { saved: false } | { saved: true; filePath?: string; failures?: SaveProjectArtifactFailure[] }
 

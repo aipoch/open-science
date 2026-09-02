@@ -880,6 +880,7 @@ const VisibleArtifactPreview = ({
         projectId: artifact.resolvedProjectId,
         ...(artifact.resolvedSessionId ? { sessionId: artifact.resolvedSessionId } : {}),
         fileId: artifact.artifactId,
+        ...(artifact.versionId ? { versionId: artifact.versionId } : {}),
         maxBytes: ARTIFACT_PREVIEW_BYTES,
         encoding: 'utf8'
       })
@@ -900,7 +901,17 @@ const VisibleArtifactPreview = ({
   }, [artifact, requestKey])
 
   const preview = previewState?.requestKey === requestKey ? previewState.preview : undefined
-  return <ArtifactPreview artifact={artifact} preview={preview} isVisible />
+  return (
+    <ArtifactPreview
+      artifact={artifact}
+      preview={preview}
+      projectId={artifact.resolvedProjectId}
+      sessionId={artifact.resolvedSessionId}
+      managedFileId={artifact.artifactId}
+      selectedVersionId={artifact.versionId}
+      isVisible
+    />
+  )
 }
 
 // Thumbnail button for one generated file; clicking it previews the file instead of opening it.
@@ -933,6 +944,7 @@ const ArtifactCard = ({
     projectId: artifact.resolvedProjectId,
     sessionId: artifact.resolvedSessionId,
     managedFileId: artifact.artifactId,
+    selectedVersionId: artifact.versionId,
     path: artifact.path,
     source: 'artifact',
     size: artifact.size,
@@ -957,7 +969,14 @@ const ArtifactCard = ({
           {publicationPending ? null : isNearViewport ? (
             <VisibleArtifactPreview artifact={artifact} requestKey={requestKey} />
           ) : (
-            <ArtifactPreview artifact={artifact} isVisible={false} />
+            <ArtifactPreview
+              artifact={artifact}
+              projectId={artifact.resolvedProjectId}
+              sessionId={artifact.resolvedSessionId}
+              managedFileId={artifact.artifactId}
+              selectedVersionId={artifact.versionId}
+              isVisible={false}
+            />
           )}
         </span>
         {missing ? (

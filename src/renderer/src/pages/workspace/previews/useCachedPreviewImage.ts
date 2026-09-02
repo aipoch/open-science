@@ -3,10 +3,13 @@ import { useEffect, useState } from 'react'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { createManagedPreviewRequest } from './preview-file-reader'
+import { isManagedFilePublicationPendingError } from './preview-errors'
 import { createPreviewResourceKey } from './preview-resource-key'
 
 const MAX_CACHED_IMAGE_BYTES = 64 * 1024 * 1024
 const MAX_CACHED_IMAGE_COUNT = 32
+const PUBLICATION_RETRY_DELAY_MS = 200
+const PUBLICATION_RETRY_LIMIT = 4
 
 type CachedImage = { url: string; size: number; managedResourceId?: string }
 type CachedImageEntry = {
@@ -57,8 +60,21 @@ const prune = (): void => {
   }
 }
 
+const acquirePreviewResource = async (
+  item: PreviewImageItem,
+  retriesRemaining = PUBLICATION_RETRY_LIMIT
+): ReturnType<Window['api']['previewResources']['acquire']> => {
+  try {
+    return await window.api.previewResources.acquire(createManagedPreviewRequest(item))
+  } catch (error) {
+    if (retriesRemaining === 0 || !isManagedFilePublicationPendingError(error)) throw error
+    await new Promise<void>((resolve) => setTimeout(resolve, PUBLICATION_RETRY_DELAY_MS))
+    return acquirePreviewResource(item, retriesRemaining - 1)
+  }
+}
+
 const loadImage = async (item: PreviewImageItem): Promise<CachedImage> => {
-  const resource = await window.api.previewResources.acquire(createManagedPreviewRequest(item))
+  const resource = await acquirePreviewResource(item)
 
   const imageSize = Math.max(item.size ?? 0, resource.size)
   if (imageSize > MAX_CACHED_IMAGE_BYTES) {

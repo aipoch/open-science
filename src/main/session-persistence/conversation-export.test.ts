@@ -1,4 +1,6 @@
 import { join } from 'node:path'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -23,6 +25,7 @@ import {
   createConversationExportService,
   registerConversationExportIpcHandler
 } from './conversation-export'
+import { publishUserFile as productionPublishUserFile } from '../user-file-publisher'
 
 const session: PersistedChatSession = {
   id: 'session-1',
@@ -61,6 +64,14 @@ describe('conversation export service', () => {
     webContents: { executeJavaScript, printToPDF },
     destroy
   }))
+  const publishDirectly: typeof productionPublishUserFile = async (
+    destinationPath,
+    write,
+    options
+  ) => {
+    await write(destinationPath)
+    await options?.validateDestination?.()
+  }
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -89,6 +100,7 @@ describe('conversation export service', () => {
       getDownloadsPath: () => '/downloads',
       getTempPath: () => '/tmp',
       now: () => 3,
+      publishUserFile: publishDirectly,
       ...overrides
     } as Parameters<typeof createConversationExportService>[0])
 
@@ -113,6 +125,30 @@ describe('conversation export service', () => {
     )
     expect(createPrintWindow).not.toHaveBeenCalled()
     expect(result).toEqual({ saved: true, filePath: '/downloads/export.md' })
+  })
+
+  it('preserves an existing Markdown destination when writing fails after partial output', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-conversation-export-failure-'))
+    const destinationPath = join(root, 'export.md')
+    await writeFile(destinationPath, 'existing conversation')
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    writeExportFile.mockImplementation(async (path: string) => {
+      await writeFile(path, 'partial conversation')
+      throw new Error('disk full')
+    })
+
+    try {
+      await expect(
+        createService({ publishUserFile: productionPublishUserFile }).exportConversation({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          format: 'markdown'
+        })
+      ).rejects.toThrow('disk full')
+      await expect(readFile(destinationPath, 'utf8')).resolves.toBe('existing conversation')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('saves only the selected durable turns in conversation order', async () => {
