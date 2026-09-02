@@ -365,6 +365,45 @@ const createProjectReconciliationSnapshot = (): ArtifactProjectReconciliationSna
   ({}) as ArtifactProjectReconciliationSnapshot
 
 describe('SessionPersistenceCoordinator', () => {
+  it('rejects a retry when any requested native Artifact run remains unresolved', async () => {
+    const session = createSession()
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session })
+    })
+    const artifactStorage = {
+      prepareProjectReconciliation: vi
+        .fn()
+        .mockResolvedValue(createProjectReconciliationSnapshot()),
+      reconcileSession: vi.fn().mockResolvedValue({
+        recoveredMessageArtifacts: [
+          { messageId: 'message-1', artifacts: [createRecoveredArtifact()] }
+        ],
+        nativeFinalizationRunIds: ['run-1', 'run-2'],
+        unresolvedNativeFinalizationRunIds: ['run-2']
+      })
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      artifactStorage
+    )
+
+    await expect(
+      coordinator.retryArtifactFinalization({
+        projectId: session.projectId,
+        sessionId: session.id,
+        messageId: 'message-1',
+        pendingPaths: [
+          '/artifacts/storage-session/.pending/run-1/a.txt',
+          '/artifacts/storage-session/.pending/run-2/b.txt'
+        ]
+      })
+    ).rejects.toThrow(/remains unresolved/u)
+  })
+
   it('resolves Message membership from the durable active Branch', async () => {
     const prompt = (id: string, createdAt: number): PersistedChatMessage => ({
       id,

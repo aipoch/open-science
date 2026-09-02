@@ -84,7 +84,8 @@ describe('artifact finalization startup recovery', () => {
       ]
     }
 
-    const finalized = await coordinator.retryArtifactFinalization(request)
+    const recovery = await coordinator.retryArtifactFinalization(request)
+    const finalized = recovery?.artifacts
 
     expect(finalized).toEqual([
       expect.objectContaining({
@@ -102,7 +103,7 @@ describe('artifact finalization startup recovery', () => {
     expect(durableSession?.messages[1].artifactIds).toBeUndefined()
     expect(durableSession?.artifacts).toBeUndefined()
 
-    await expect(coordinator.retryArtifactFinalization(request)).resolves.toEqual(finalized)
+    await expect(coordinator.retryArtifactFinalization(request)).resolves.toEqual(recovery)
   })
 
   it('persists an inspectable Message snapshot with the recovered Session attachment', async () => {
@@ -210,6 +211,24 @@ describe('artifact finalization startup recovery', () => {
 
     expect(loaded.sessions[0].messages[1].artifactIds).toBeUndefined()
     expect(loaded.sessions[0].artifacts).toBeUndefined()
+    await expect(
+      coordinator.retryArtifactFinalization({
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        messageId: 'message-1',
+        pendingPaths: [
+          join(
+            storageRoot,
+            'artifacts',
+            PROJECT_ID,
+            STORAGE_SESSION_ID,
+            '.pending',
+            RUN_ID,
+            'result.png'
+          )
+        ]
+      })
+    ).rejects.toThrow(/remains unresolved/u)
     await expect(
       compatibility.findRunFinalizationMarker(PROJECT_ID, RUN_ID)
     ).resolves.toMatchObject({

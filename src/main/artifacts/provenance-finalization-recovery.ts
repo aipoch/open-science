@@ -38,6 +38,8 @@ type PreparedArtifactFinalizationContext = Pick<
 type ArtifactFinalizationRecoveryResult = {
   recoveredVersionIds: string[]
   recoveredMessageArtifacts: Array<{ messageId: string; artifacts: ArtifactVersionFile[] }>
+  nativeFinalizationRunIds: string[]
+  unresolvedNativeFinalizationRunIds: string[]
 }
 
 type ArtifactProvenanceFinalizationRecoveryOptions = {
@@ -148,7 +150,9 @@ class ArtifactProvenanceFinalizationRecovery {
     this.validateProjectReconciliation(projectId, snapshot)
     const result: ArtifactFinalizationRecoveryResult = {
       recoveredVersionIds: [],
-      recoveredMessageArtifacts: []
+      recoveredMessageArtifacts: [],
+      nativeFinalizationRunIds: [],
+      unresolvedNativeFinalizationRunIds: []
     }
     const compatibilityRepository = this.options.compatibilityRepository
     if (
@@ -176,6 +180,10 @@ class ArtifactProvenanceFinalizationRecovery {
         (version.messageId !== null &&
           !isArtifactLinkedToDurableMessage(durableSession, version.messageId, version.id))
     )
+    result.nativeFinalizationRunIds = [
+      ...new Set(candidateVersions.map((version) => version.artifactRunId))
+    ]
+    const unresolvedNativeFinalizationRunIds = new Set(result.nativeFinalizationRunIds)
     // Native Session linkage proves only that immutable Provenance content is attached. A single
     // project scan adds the much narrower set whose compatibility publication is physically
     // unfinished, without replaying every historical finalized run or rescanning Sessions per run.
@@ -296,7 +304,9 @@ class ArtifactProvenanceFinalizationRecovery {
           artifacts: finalized
         })
       }
+      unresolvedNativeFinalizationRunIds.delete(artifactRunId)
     }
+    result.unresolvedNativeFinalizationRunIds = [...unresolvedNativeFinalizationRunIds]
     return result
   }
 }

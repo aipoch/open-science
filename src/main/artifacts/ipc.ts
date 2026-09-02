@@ -1,4 +1,5 @@
 import { shell } from 'electron'
+import { basename, dirname } from 'node:path'
 
 import { ipcMainHandle } from '../ipc-handler-registry'
 
@@ -92,7 +93,9 @@ type ArtifactHandlerDependencies = {
     sessionId: string,
     mutation: () => Promise<Result>
   ) => Promise<Result>
-  recoverPendingArtifacts?: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
+  recoverPendingArtifacts?: (
+    request: ReconcilePendingArtifactsRequest
+  ) => Promise<{ artifacts: ArtifactFile[]; nativeRunIds: string[] } | undefined>
   provenance?: Pick<
     ArtifactProvenanceRepository,
     | 'finalizeRun'
@@ -172,14 +175,31 @@ const createArtifactHandlers = (
       ),
     reconcilePendingArtifacts: (request) =>
       withDataRootWrite(async () => {
-        const recovered = await dependencies.recoverPendingArtifacts?.(request)
-        if (recovered && recovered.length > 0) return recovered
-        return repository.reconcilePendingArtifactPaths({
-          projectId: resolveProjectId(request),
-          sessionId: request.sessionId,
-          messageId: request.messageId,
-          pendingPaths: request.pendingPaths
-        })
+        const reconcileCompatibility = (pendingPaths: string[]): Promise<ArtifactFile[]> =>
+          repository.reconcilePendingArtifactPaths({
+            projectId: resolveProjectId(request),
+            sessionId: request.sessionId,
+            messageId: request.messageId,
+            pendingPaths
+          })
+        if (dependencies.recoverPendingArtifacts) {
+          const recovered = await dependencies.recoverPendingArtifacts(request)
+          if (recovered) {
+            const nativeRunIds = new Set(recovered.nativeRunIds)
+            const compatibilityPaths = request.pendingPaths.filter(
+              (pendingPath) => !nativeRunIds.has(basename(dirname(pendingPath)))
+            )
+            if (compatibilityPaths.length === 0) return recovered.artifacts
+
+            const compatibilityArtifacts = await reconcileCompatibility(compatibilityPaths)
+            const nativeNames = new Set(recovered.artifacts.map((artifact) => artifact.name))
+            return [
+              ...recovered.artifacts,
+              ...compatibilityArtifacts.filter((artifact) => !nativeNames.has(artifact.name))
+            ]
+          }
+        }
+        return reconcileCompatibility(request.pendingPaths)
       }),
     openFile: async (request) => {
       // Resolve through the repository first so shell.openPath never sees unmanaged locations.

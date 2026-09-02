@@ -1325,7 +1325,7 @@ const WorkspacePage = ({
             }}
             workflows={{
               artifactFinalization: {
-                running: artifactFinalizationRetrySessionId === activeSession?.id,
+                running: artifactFinalizationRetrySessionId !== undefined,
                 request: requestArtifactFinalizationRetry
               },
               review: {

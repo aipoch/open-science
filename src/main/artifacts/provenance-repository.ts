@@ -123,6 +123,8 @@ type ArtifactStorageReconciliationResult = {
   recoveredVersionIds: string[]
   quarantinedVersionIds: string[]
   recoveredMessageArtifacts: Array<{ messageId: string; artifacts: ArtifactVersionFile[] }>
+  nativeFinalizationRunIds: string[]
+  unresolvedNativeFinalizationRunIds: string[]
 }
 
 type ProjectVersionWriteOperation = {
@@ -652,7 +654,9 @@ class ArtifactProvenanceRepository {
     const result: ArtifactStorageReconciliationResult = {
       recoveredVersionIds: [],
       quarantinedVersionIds: [],
-      recoveredMessageArtifacts: []
+      recoveredMessageArtifacts: [],
+      nativeFinalizationRunIds: [],
+      unresolvedNativeFinalizationRunIds: []
     }
     const unindexedSnapshot = await this.unindexedRecovery.prepareSession(projectId, appSessionId)
     const stagingResult = await this.stagingRecovery.reconcileSession(
@@ -670,6 +674,10 @@ class ArtifactProvenanceRepository {
     )
     result.recoveredVersionIds.push(...finalizationResult.recoveredVersionIds)
     result.recoveredMessageArtifacts.push(...finalizationResult.recoveredMessageArtifacts)
+    result.nativeFinalizationRunIds.push(...finalizationResult.nativeFinalizationRunIds)
+    result.unresolvedNativeFinalizationRunIds.push(
+      ...finalizationResult.unresolvedNativeFinalizationRunIds
+    )
 
     const unindexedResult = await this.unindexedRecovery.reconcileSession(unindexedSnapshot)
     result.recoveredVersionIds.push(...unindexedResult.recoveredVersionIds)

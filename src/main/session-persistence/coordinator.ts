@@ -1,5 +1,5 @@
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
-import type { ArtifactFile, ReconcilePendingArtifactsRequest } from '../../shared/artifacts'
+import type { ReconcilePendingArtifactsRequest } from '../../shared/artifacts'
 import {
   type DelegationPolicy,
   type LoadAllSessionsResult,
@@ -66,6 +66,7 @@ import {
 import {
   SessionPersistenceReconciliationOwner,
   type ArtifactStorageReconciler,
+  type PendingArtifactFinalizationRecovery,
   type SessionPermissionGrantReconciliation,
   type SessionUploadPersistence
 } from './reconciliation-owner'
@@ -821,7 +822,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
   }
 
-  retryArtifactFinalization(request: ReconcilePendingArtifactsRequest): Promise<ArtifactFile[]> {
+  retryArtifactFinalization(
+    request: ReconcilePendingArtifactsRequest
+  ): Promise<PendingArtifactFinalizationRecovery | undefined> {
     return this.operationScheduler.runSession(request.projectId, request.sessionId, async () => {
       this.assertMutable(request.projectId, request.sessionId, 'mutate')
       const authority = await this.repository.loadSessionWithDiagnostics(
@@ -832,10 +835,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         throw new Error('Cannot retry Artifact finalization without a readable Session.')
       }
 
-      return this.reconciliationOwner.retryArtifactFinalization(
-        authority.session,
-        request.messageId
-      )
+      return this.reconciliationOwner.retryArtifactFinalization(authority.session, request)
     })
   }
 

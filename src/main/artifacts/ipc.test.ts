@@ -1459,7 +1459,10 @@ describe('artifact handler edge cases', () => {
       size: 1,
       mtimeMs: 1
     }
-    const recoverPendingArtifacts = vi.fn().mockResolvedValue([recovered])
+    const recoverPendingArtifacts = vi.fn().mockResolvedValue({
+      artifacts: [recovered],
+      nativeRunIds: ['run-1']
+    })
     const repository = { reconcilePendingArtifactPaths } as unknown as ArtifactRepository
     const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), {
       recoverPendingArtifacts
@@ -1477,6 +1480,38 @@ describe('artifact handler edge cases', () => {
     expect(reconcilePendingArtifactPaths).not.toHaveBeenCalled()
   })
 
+  it('does not bypass native recovery when its authoritative result is empty', async () => {
+    const reconcilePendingArtifactPaths = vi.fn().mockResolvedValue([
+      {
+        id: 'compatibility-artifact',
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        name: 'a.txt',
+        path: '/p/session-1/a.txt',
+        fileUrl: 'file:///p/session-1/a.txt',
+        size: 1,
+        mtimeMs: 1
+      }
+    ])
+    const recoverPendingArtifacts = vi.fn().mockResolvedValue({
+      artifacts: [],
+      nativeRunIds: ['run-1']
+    })
+    const repository = { reconcilePendingArtifactPaths } as unknown as ArtifactRepository
+    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), {
+      recoverPendingArtifacts
+    })
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      pendingPaths: ['/p/.pending/run-1/a.txt']
+    }
+
+    await expect(handlers.reconcilePendingArtifacts(request)).resolves.toEqual([])
+    expect(reconcilePendingArtifactPaths).not.toHaveBeenCalled()
+  })
+
   it('falls back to compatibility recovery for pending Artifacts without native Versions', async () => {
     const compatibilityArtifact = {
       id: 'legacy-artifact',
@@ -1489,7 +1524,7 @@ describe('artifact handler edge cases', () => {
       mtimeMs: 1
     }
     const reconcilePendingArtifactPaths = vi.fn().mockResolvedValue([compatibilityArtifact])
-    const recoverPendingArtifacts = vi.fn().mockResolvedValue([])
+    const recoverPendingArtifacts = vi.fn().mockResolvedValue(undefined)
     const repository = { reconcilePendingArtifactPaths } as unknown as ArtifactRepository
     const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), {
       recoverPendingArtifacts
@@ -1505,5 +1540,53 @@ describe('artifact handler edge cases', () => {
       compatibilityArtifact
     ])
     expect(reconcilePendingArtifactPaths).toHaveBeenCalledWith(request)
+  })
+
+  it('preserves compatibility-only files when native recovery covers only some pending runs', async () => {
+    const nativeArtifact = {
+      id: 'version-1',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      name: 'native.txt',
+      path: '/p/version-1/native.txt',
+      fileUrl: 'file:///p/version-1/native.txt',
+      size: 1,
+      mtimeMs: 1
+    }
+    const compatibilityArtifact = {
+      id: 'legacy-artifact',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      name: 'legacy.txt',
+      path: '/p/session-1/legacy.txt',
+      fileUrl: 'file:///p/session-1/legacy.txt',
+      size: 1,
+      mtimeMs: 1
+    }
+    const reconcilePendingArtifactPaths = vi
+      .fn()
+      .mockResolvedValue([{ ...nativeArtifact, id: 'compatibility-native' }, compatibilityArtifact])
+    const repository = { reconcilePendingArtifactPaths } as unknown as ArtifactRepository
+    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), {
+      recoverPendingArtifacts: vi.fn().mockResolvedValue({
+        artifacts: [nativeArtifact],
+        nativeRunIds: ['run-native']
+      })
+    })
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      pendingPaths: ['/p/.pending/run-native/native.txt', '/p/.pending/run-legacy/legacy.txt']
+    }
+
+    await expect(handlers.reconcilePendingArtifacts(request)).resolves.toEqual([
+      nativeArtifact,
+      compatibilityArtifact
+    ])
+    expect(reconcilePendingArtifactPaths).toHaveBeenCalledWith({
+      ...request,
+      pendingPaths: ['/p/.pending/run-legacy/legacy.txt']
+    })
   })
 })
