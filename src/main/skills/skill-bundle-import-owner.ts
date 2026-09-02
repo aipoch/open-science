@@ -214,7 +214,7 @@ export class SkillBundleImportOwner {
     )
     const baseName = normalizeSkillName(preview.name) || 'skill'
 
-    return this.transactions.runRecovered(async () => {
+    return this.transactions.runMutationRecovered(async () => {
       const existingDirectoryName = await this.findImportedDirectoryNameByUrl(url)
       if (existingDirectoryName) {
         const existing = await this.transactions.readImportedSource(existingDirectoryName)
@@ -299,7 +299,7 @@ export class SkillBundleImportOwner {
     const { roots } = discoverSkillRoots(zip)
     if (roots.length === 0) throw new Error('The bundle must contain a SKILL.md.')
     const root = this.selectRoot(roots, options.subPath)
-    return this.transactions.runRecovered(() =>
+    return this.transactions.runMutationRecovered(() =>
       this.writeRootLocked(root, options.replaceId, options.reservedNames)
     )
   }
@@ -312,7 +312,7 @@ export class SkillBundleImportOwner {
     const { roots } = discoverSkillRoots(zip)
     const bySubPath = new Map(roots.map((root) => [root.subPath, root]))
 
-    return this.transactions.runRecovered(async () => {
+    return this.transactions.runMutationRecovered(async () => {
       const results: { subPath: string; outcome?: ImportOutcome; error?: string }[] = []
       for (const item of items) {
         const root = bySubPath.get(item.subPath)

@@ -513,6 +513,7 @@ const createApplicationModules = async (
   const webSessionPersistenceFlush = createWebSessionPersistenceFlush(applicationEvents)
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
+  const specialistPackageRecovery = { current: undefined as (() => Promise<void>) | undefined }
   const settingsRepository = new SettingsRepository(
     settingsStore ?? resolveStorageRoot(),
     (operation) => specialistPackageSkillAdapter.runMutationExclusive(operation)
@@ -627,6 +628,9 @@ const createApplicationModules = async (
       applyNetworkProxy: async (settings) => {
         await networkProxyRuntime.apply(settings)
         await notebookNetworkSandbox.updateParentProxy()
+      },
+      beforeUserSkillOperation: async () => {
+        await specialistPackageRecovery.current?.()
       },
       applyNotebookNetwork: async (settings) => notebookNetworkSandbox.applySettings(settings),
       validatePackageMirror: async (settings) => {
@@ -1558,6 +1562,7 @@ const createApplicationModules = async (
       void runtime.requestSkillsReload()
     }
   })
+  specialistPackageRecovery.current = () => specialistPackageService.recover()
   const marketplaceService = new MarketplaceService({
     repository: marketplaceRepository,
     operationCoordinator: marketplaceOperationCoordinator,

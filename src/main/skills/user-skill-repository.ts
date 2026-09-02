@@ -46,9 +46,14 @@ class UserSkillRepository {
   constructor(
     storageRoot: string,
     mutationOwner?: SkillMutationOwner,
-    validatePromotion?: (list: () => Promise<BundledSkill[]>) => Promise<void>
+    validatePromotion?: (list: () => Promise<BundledSkill[]>) => Promise<void>,
+    beforeRecoveredOperation?: () => Promise<void>
   ) {
-    this.transactions = new SkillPackageTransactionOwner(storageRoot, mutationOwner)
+    this.transactions = new SkillPackageTransactionOwner(
+      storageRoot,
+      mutationOwner,
+      beforeRecoveredOperation
+    )
     this.compatibilityIndex = new UserSkillCompatibilityIndex(storageRoot)
     this.store = new UserSkillStore(storageRoot, this.transactions, this.compatibilityIndex)
     this.bundleImports = new SkillBundleImportOwner(this.store, this.transactions)

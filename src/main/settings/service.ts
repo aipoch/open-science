@@ -164,6 +164,7 @@ export type SettingsServiceOptions = {
   userAgentsDir?: string
   skillRegistry?: SkillRegistry
   userSkills?: UserSkillRepository
+  beforeUserSkillOperation?: () => Promise<void>
   githubFetch?: FetchLike
   // OpenAlex validation transport. Production injects Electron net.fetch so proxy settings apply.
   openAlexFetch?: typeof fetch
@@ -281,6 +282,7 @@ class SettingsService {
       userAgentsDir: options.userAgentsDir ?? join(homedir(), '.agents'),
       skillRegistry: options.skillRegistry ?? new SkillRegistry(),
       userSkills: options.userSkills,
+      beforeUserSkillOperation: options.beforeUserSkillOperation,
       githubFetch: options.githubFetch
     })
     const allocateSettingsIdSequence = createSettingsIdSequence()

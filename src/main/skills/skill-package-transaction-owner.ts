@@ -45,7 +45,8 @@ export class SkillPackageTransactionOwner {
 
   constructor(
     private readonly storageRoot: string,
-    mutationOwner: SkillMutationOwner = skillMutationOwnerFor(storageRoot)
+    mutationOwner: SkillMutationOwner = skillMutationOwnerFor(storageRoot),
+    private readonly beforeRecoveredOperation?: () => Promise<void>
   ) {
     this.mutationOwner = mutationOwner
   }
@@ -66,7 +67,23 @@ export class SkillPackageTransactionOwner {
     operation: () => Promise<T>,
     sources: readonly WritableSkillSource[] = WRITABLE_SOURCES
   ): Promise<T> {
+    return this.runAfterRecovery(operation, sources, false)
+  }
+
+  runMutationRecovered<T>(
+    operation: () => Promise<T>,
+    sources: readonly WritableSkillSource[] = WRITABLE_SOURCES
+  ): Promise<T> {
+    return this.runAfterRecovery(operation, sources, true)
+  }
+
+  private runAfterRecovery<T>(
+    operation: () => Promise<T>,
+    sources: readonly WritableSkillSource[],
+    enforceExternalRecovery: boolean
+  ): Promise<T> {
     return this.runExclusive(async () => {
+      if (enforceExternalRecovery) await this.beforeRecoveredOperation?.()
       for (const source of sources) await this.recover(source)
       return operation()
     })

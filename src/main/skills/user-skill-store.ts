@@ -246,7 +246,7 @@ export class UserSkillStore {
     assertUsableSkillName(name)
     const prepared = prepareSkillWrite({ ...input, name })
 
-    return this.transactions.runRecovered(async () => {
+    return this.transactions.runMutationRecovered(async () => {
       if (await this.skillNameTaken(name, reservedNames)) {
         throw new Error(`A skill named "${name}" already exists.`)
       }
@@ -271,7 +271,7 @@ export class UserSkillStore {
     const normalizedName = name.trim()
     assertUsableSkillName(normalizedName)
 
-    return this.transactions.runRecovered(async () => {
+    return this.transactions.runMutationRecovered(async () => {
       const [personalTaken, importedTaken] = await Promise.all([
         this.directoryNameTaken('personal', normalizedName),
         this.directoryNameTaken('imported', normalizedName)
@@ -312,7 +312,7 @@ export class UserSkillStore {
     const name = parsed.directoryName
     const prepared = prepareSkillWrite(input)
 
-    await this.transactions.runRecovered(async () => {
+    await this.transactions.runMutationRecovered(async () => {
       const live = this.skillDirectory('personal', name)
       const staged = await this.transactions.stage('personal', name, async (staging) => {
         await cp(live, staging, {
@@ -334,7 +334,7 @@ export class UserSkillStore {
   }
 
   async delete(id: string, guard?: (skillId: string) => Promise<void>): Promise<void> {
-    return this.transactions.runRecovered(async () => {
+    return this.transactions.runMutationRecovered(async () => {
       await guard?.(id)
       const parsed = await this.resolveSkillId(id)
       const metadata = await readSpecialistPackageSkillMetadata(

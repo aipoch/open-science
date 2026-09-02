@@ -2575,6 +2575,7 @@ describe('SpecialistPackageService', () => {
     const onSpecialistDeleted = vi
       .fn<(specialistId: string) => Promise<void>>()
       .mockRejectedValueOnce(new Error('Marketplace unavailable'))
+      .mockRejectedValueOnce(new Error('Marketplace still unavailable'))
       .mockResolvedValue(undefined)
     const onSkillsDeleted = vi.fn<(skillIds: readonly string[]) => Promise<void>>()
     const onResourcesDeleted =
@@ -2606,13 +2607,30 @@ describe('SpecialistPackageService', () => {
     )
     await expect(userSkills.list()).resolves.toEqual([])
     const unrelated = await new SpecialistService(repository).create({ name: 'Unrelated Edit' })
+    const guardedUserSkills = new UserSkillRepository(storageDir, undefined, undefined, () =>
+      new SpecialistPackageService(options).recover()
+    )
 
-    await new SpecialistPackageService(options).recover()
+    await expect(
+      guardedUserSkills.createPersonal({
+        name: 'recoverable-cleanup',
+        description: 'Must not appear before cleanup succeeds.',
+        body: 'Blocked recreation instructions.'
+      })
+    ).rejects.toThrow(/recovery failed/i)
+    await guardedUserSkills.createPersonal({
+      name: 'recoverable-cleanup',
+      description: 'Recreated after cleanup.',
+      body: 'Safe recreation instructions.'
+    })
 
-    expect(onSpecialistDeleted).toHaveBeenCalledTimes(2)
+    expect(onSpecialistDeleted).toHaveBeenCalledTimes(3)
     expect(onSpecialistDeleted).toHaveBeenLastCalledWith('cleanup-owner')
     expect(onSkillsDeleted).toHaveBeenCalledWith([skillId])
     expect(onResourcesDeleted).toHaveBeenCalledWith('cleanup-owner', [skillId])
+    await expect(guardedUserSkills.list()).resolves.toEqual([
+      expect.objectContaining({ id: skillId, description: 'Recreated after cleanup.' })
+    ])
     await expect(new SpecialistService(repository).getById(unrelated.id)).resolves.toMatchObject({
       id: unrelated.id,
       name: 'Unrelated Edit'
