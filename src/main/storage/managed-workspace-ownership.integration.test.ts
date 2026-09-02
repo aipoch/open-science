@@ -240,6 +240,47 @@ describe('managed workspace ownership', () => {
     await expect(readdir(join(dataRoot, 'workspaces', '.ownership'))).resolves.toEqual([])
   })
 
+  it('deletes a branch that shares its source Session managed workspace', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-shared-branch-'))
+    roots.push(dataRoot)
+    initDataRoot(dataRoot)
+    const cwd = join(dataRoot, 'workspaces', 'workspace-1')
+    await mkdir(cwd, { recursive: true })
+    const source = {
+      id: 'source-session',
+      projectId: 'project-1',
+      title: 'Source Session',
+      cwd,
+      status: 'idle' as const,
+      messages: [],
+      createdAt: 10,
+      updatedAt: 20
+    }
+    const branch = {
+      ...source,
+      id: 'branch-session',
+      title: 'Branch Session',
+      createdAt: 30,
+      updatedAt: 40
+    }
+    const liveSessions = new Map<string, PersistedChatSession>([
+      [source.id, source],
+      [branch.id, branch]
+    ])
+    await initializeManagedWorkspaceOwnership(cwd, source.projectId, source.createdAt, dataRoot)
+    await finalizeManagedWorkspaceOwnership(cwd, source.id, source.updatedAt, dataRoot)
+
+    await expect(
+      createDeletionOwner(liveSessions).deleteSession(branch.projectId, branch.id)
+    ).resolves.toBe('ordinary')
+
+    expect([...liveSessions.keys()]).toEqual([source.id])
+    await expect(readManagedWorkspaceOwnership(cwd, dataRoot)).resolves.toMatchObject({
+      sessionId: source.id,
+      retainedAfterDelete: false
+    })
+  })
+
   it('removes a provisional workspace left by an earlier process', async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-provisional-orphan-'))
     roots.push(dataRoot)

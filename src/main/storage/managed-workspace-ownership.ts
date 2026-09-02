@@ -254,12 +254,10 @@ const markManagedWorkspaceRetained = async (
   }
   const current = await readOwnershipForUpdate(candidate)
   if (!current) return false
-  if (
-    current.projectId !== session.projectId ||
-    (current.sessionId !== undefined && current.sessionId !== session.id)
-  ) {
+  if (current.projectId !== session.projectId) {
     throw new Error('Managed workspace ownership conflicts with the deleting Session.')
   }
+  if (current.sessionId !== undefined && current.sessionId !== session.id) return false
   await writeOwnership(location, {
     version: MANAGED_WORKSPACE_OWNERSHIP_VERSION,
     workspaceId: location.workspaceId,
