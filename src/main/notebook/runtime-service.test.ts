@@ -2995,7 +2995,7 @@ describe('notebook runtime service', () => {
       expect(state.runs[0].text.stdout).toContain('hi')
     })
 
-    it('routes one unqueued call through the shell process port and preserves its public result', async () => {
+    it('routes one admitted call through the shell process port and preserves its public result', async () => {
       const root = await createStorageRoot()
       const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue({
         stdout: 'partial output',
@@ -3044,7 +3044,7 @@ describe('notebook runtime service', () => {
       })
     })
 
-    it('admits overlapping shell calls without a per-session execution queue', async () => {
+    it('queues overlapping shell calls in the same Session until the active command finishes', async () => {
       const root = await createStorageRoot()
       const entered: string[] = []
       const releases = new Map<string, () => void>()
@@ -3062,35 +3062,387 @@ describe('notebook runtime service', () => {
         repository: new NotebookRunRepository(root),
         shellProcess: { execute }
       })
+      const rootContext = {
+        rootFrameId: 'root-frame-session-1',
+        agentFrameId: 'root-frame-session-1',
+        messageBranchId: 'branch-root',
+        runtimeSegmentId: 'runtime-root',
+        promptMessageId: 'message-root'
+      }
+      const childContext = {
+        ...rootContext,
+        agentFrameId: 'child-frame-1',
+        messageBranchId: 'branch-child',
+        runtimeSegmentId: 'runtime-child',
+        promptMessageId: 'message-child'
+      }
 
+      const first = service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'first',
+        provenanceContext: rootContext
+      })
+      const second = service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'second',
+        provenanceContext: childContext
+      })
+
+      await vi.waitFor(async () => {
+        const state = await service.state({
+          sessionId: 'session-1',
+          workspaceCwd: root
+        })
+        expect(state.runs).toHaveLength(2)
+      })
+      const queuedState = await service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root
+      })
+      const queuedRun = queuedState.runs.at(-1)
+      if (queuedRun?.status !== 'queued') {
+        await vi.waitFor(() => expect(entered).toHaveLength(2))
+        for (const release of releases.values()) release()
+        await Promise.allSettled([first, second])
+      }
+      await vi.waitFor(() => expect(entered).toEqual(['first']))
+      expect(entered).toEqual(['first'])
+      expect(queuedRun).toMatchObject({ script: 'second', status: 'queued' })
+
+      try {
+        releases.get('first')?.()
+        await vi.waitFor(() => expect(entered).toEqual(['first', 'second']))
+        releases.get('second')?.()
+
+        await expect(Promise.all([first, second])).resolves.toEqual([
+          { stdout: 'first', stderr: '', exitCode: 0 },
+          { stdout: 'second', stderr: '', exitCode: 0 }
+        ])
+      } finally {
+        for (const release of releases.values()) release()
+        await Promise.allSettled([first, second])
+      }
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.runs).toHaveLength(2)
+      expect(state.runs.every((run) => run.status === 'completed')).toBe(true)
+    })
+
+    it('admits at most six shell processes across Sessions', async () => {
+      const root = await createStorageRoot()
+      const entered: string[] = []
+      const releases = new Map<string, () => void>()
+      const execute = vi.fn<NotebookShellProcess['execute']>(
+        ({ command }) =>
+          new Promise((resolve) => {
+            entered.push(command)
+            releases.set(command, () => resolve({ stdout: command, stderr: '', exitCode: 0 }))
+          })
+      )
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute }
+      })
+      for (let index = 0; index < 7; index += 1) {
+        await service.state({
+          sessionId: `session-${index + 1}`,
+          workspaceCwd: root
+        })
+      }
+      const executions = Array.from({ length: 7 }, (_, index) =>
+        service.executeShell({
+          sessionId: `session-${index + 1}`,
+          workspaceCwd: root,
+          command: `command-${index + 1}`
+        })
+      )
+
+      await vi.waitFor(async () => {
+        const queuedState = await service.state({
+          sessionId: 'session-7',
+          workspaceCwd: root
+        })
+        expect(queuedState.runs).toHaveLength(1)
+      })
+      const queuedState = await service.state({
+        sessionId: 'session-7',
+        workspaceCwd: root
+      })
+      const queuedRun = queuedState.runs.at(-1)
+      if (queuedRun?.status !== 'queued') {
+        await vi.waitFor(() => expect(entered).toHaveLength(7))
+        for (const release of releases.values()) release()
+        await Promise.allSettled(executions)
+      }
+      expect(queuedRun).toMatchObject({ script: 'command-7', status: 'queued' })
+
+      try {
+        await vi.waitFor(() => expect(entered).toHaveLength(6))
+        expect(entered).toHaveLength(6)
+        expect(entered).not.toContain('command-7')
+
+        releases.get('command-1')?.()
+        await vi.waitFor(() => expect(entered).toContain('command-7'))
+        for (const release of releases.values()) release()
+
+        await expect(Promise.all(executions)).resolves.toHaveLength(7)
+      } finally {
+        for (const release of releases.values()) release()
+        await Promise.allSettled(executions)
+      }
+    })
+
+    it('cancels a queued shell call without starting its process', async () => {
+      const root = await createStorageRoot()
+      const entered: string[] = []
+      const releases = new Map<string, () => void>()
+      const execute = vi.fn<NotebookShellProcess['execute']>(
+        ({ command }) =>
+          new Promise((resolve) => {
+            entered.push(command)
+            releases.set(command, () => resolve({ stdout: command, stderr: '', exitCode: 0 }))
+          })
+      )
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute }
+      })
       const first = service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
         command: 'first'
       })
-      const second = service.executeShell({
+      const cancellation = new AbortController()
+      const queued = service.executeShell(
+        {
+          sessionId: 'session-1',
+          workspaceCwd: root,
+          command: 'cancelled-before-start'
+        },
+        cancellation.signal
+      )
+
+      await vi.waitFor(async () => {
+        const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+        expect(state.runs).toHaveLength(2)
+      })
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      const queuedRun = state.runs.at(-1)
+      if (queuedRun?.status !== 'queued') {
+        await vi.waitFor(() => expect(entered).toHaveLength(2))
+        for (const release of releases.values()) release()
+        await Promise.allSettled([first, queued])
+      }
+      expect(queuedRun).toMatchObject({ script: 'cancelled-before-start', status: 'queued' })
+
+      await vi.waitFor(() => expect(entered).toEqual(['first']))
+      cancellation.abort()
+      await expect(queued).resolves.toEqual({
+        stdout: '',
+        stderr: 'Shell command was cancelled.',
+        exitCode: null
+      })
+      expect(entered).toEqual(['first'])
+
+      releases.get('first')?.()
+      await expect(first).resolves.toEqual({ stdout: 'first', stderr: '', exitCode: 0 })
+      const finalState = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(finalState.runs.at(-1)).toMatchObject({ status: 'cancelled' })
+    })
+
+    it('cancels and drains queued shell work before Session shutdown completes', async () => {
+      const root = await createStorageRoot()
+      const entered: string[] = []
+      const signals = new Map<string, AbortSignal | undefined>()
+      const releases = new Map<string, () => void>()
+      const execute = vi.fn<NotebookShellProcess['execute']>(
+        ({ command, signal }) =>
+          new Promise((resolve) => {
+            let settled = false
+            const finish = (cancelled: boolean): void => {
+              if (settled) return
+              settled = true
+              resolve({
+                stdout: cancelled ? '' : command,
+                stderr: '',
+                exitCode: cancelled ? null : 0,
+                ...(cancelled ? { cancelled: true } : {})
+              })
+            }
+            entered.push(command)
+            signals.set(command, signal)
+            releases.set(command, () => finish(false))
+            signal?.addEventListener('abort', () => finish(true), { once: true })
+          })
+      )
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute }
+      })
+      const rootContext = {
+        rootFrameId: 'root-frame-session-1',
+        agentFrameId: 'root-frame-session-1',
+        messageBranchId: 'branch-root',
+        runtimeSegmentId: 'runtime-root',
+        promptMessageId: 'message-root'
+      }
+      const childContext = {
+        ...rootContext,
+        agentFrameId: 'child-frame-1',
+        messageBranchId: 'branch-child',
+        runtimeSegmentId: 'runtime-child',
+        promptMessageId: 'message-child'
+      }
+      const first = service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
-        command: 'second'
+        command: 'first',
+        provenanceContext: rootContext
+      })
+      const queued = service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'must-not-start',
+        provenanceContext: childContext
       })
 
-      await vi.waitFor(
-        () => {
-          expect(entered).toHaveLength(2)
-          expect(entered).toEqual(expect.arrayContaining(['first', 'second']))
-        },
-        { timeout: 5_000 }
-      )
-      releases.get('second')?.()
-      releases.get('first')?.()
+      await vi.waitFor(() => expect(entered).toEqual(['first']))
+      const shutdown = service.shutdownSession('session-1')
+      await shutdown
 
-      await expect(Promise.all([first, second])).resolves.toEqual([
-        { stdout: 'first', stderr: '', exitCode: 0 },
-        { stdout: 'second', stderr: '', exitCode: 0 }
-      ])
-      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
-      expect(state.runs).toHaveLength(2)
-      expect(state.runs.every((run) => run.status === 'completed')).toBe(true)
+      const activeWasCancelled = signals.get('first')?.aborted === true
+      if (!activeWasCancelled) {
+        releases.get('first')?.()
+        await vi.waitFor(() => expect(entered).toHaveLength(2))
+        releases.get('must-not-start')?.()
+      }
+      await Promise.allSettled([first, queued])
+
+      expect(activeWasCancelled).toBe(true)
+      expect(entered).toEqual(['first'])
+    })
+
+    it('waits for shell termination before removing the Session executor', async () => {
+      const root = await createStorageRoot()
+      let markShellStarted!: () => void
+      const shellStarted = new Promise<void>((resolve) => {
+        markShellStarted = resolve
+      })
+      let markCancellationStarted!: () => void
+      const cancellationStarted = new Promise<void>((resolve) => {
+        markCancellationStarted = resolve
+      })
+      let finishShell!: () => void
+      const execute = vi.fn<NotebookShellProcess['execute']>(
+        ({ signal }) =>
+          new Promise((resolve) => {
+            markShellStarted()
+            finishShell = () => resolve({ stdout: '', stderr: '', exitCode: null, cancelled: true })
+            signal?.addEventListener('abort', markCancellationStarted, { once: true })
+          })
+      )
+      const shutdownExecutor = vi.fn(async () => ({ reaped: true }))
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => ({
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }),
+          shutdown: shutdownExecutor
+        }),
+        shellProcess: { execute }
+      })
+      const running = service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'long-running'
+      })
+      await shellStarted
+
+      const shutdown = service.shutdownSession('session-1')
+      await cancellationStarted
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const removedBeforeShellFinished = shutdownExecutor.mock.calls.length > 0
+      finishShell()
+
+      await Promise.all([running, shutdown])
+      expect(removedBeforeShellFinished).toBe(false)
+      expect(shutdownExecutor).toHaveBeenCalledOnce()
+    })
+
+    it('rejects shell admission while Session shutdown owns the registry gate', async () => {
+      const root = await createStorageRoot()
+      let markShutdownStarted!: () => void
+      const shutdownStarted = new Promise<void>((resolve) => {
+        markShutdownStarted = resolve
+      })
+      let releaseShutdown!: () => void
+      const shutdownGate = new Promise<void>((resolve) => {
+        releaseShutdown = resolve
+      })
+      const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue({
+        stdout: 'must not run',
+        stderr: '',
+        exitCode: 0
+      })
+      const executorFactory = vi.fn(() => ({
+        execute: async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => {
+          markShutdownStarted()
+          await shutdownGate
+          return { reaped: true }
+        }
+      }))
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory,
+        shellProcess: { execute }
+      })
+      const request = { sessionId: 'session-1', workspaceCwd: root }
+      await service.state(request)
+
+      const shutdown = service.shutdownSession(request.sessionId)
+      await shutdownStarted
+      const lateShell = service.executeShell({ ...request, command: 'must-not-run' })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      releaseShutdown()
+
+      await expect(shutdown).resolves.toEqual({ sessionId: 'session-1', status: 'shutdown' })
+      await expect(lateShell).resolves.toEqual({
+        stdout: '',
+        stderr: 'Shell command was cancelled.',
+        exitCode: null
+      })
+      expect(execute).not.toHaveBeenCalled()
+      expect(executorFactory).toHaveBeenCalledOnce()
     })
 
     it('rejects a direct micromamba install before spawning the shell command', async () => {
@@ -3347,7 +3699,7 @@ describe('notebook runtime service', () => {
 
         const result = await execution
 
-        // The RPC promise settles at the timeout, well before either the grace period or the sleep.
+        // The RPC promise must not settle until the whole command tree has finished teardown.
         expect(result.exitCode).toBeNull()
 
         // Probe the exact descendant instead of searching the process table. The former pgrep fixture
@@ -3362,12 +3714,7 @@ describe('notebook runtime service', () => {
           }
         }
 
-        let stillRunning = descendantIsRunning()
-        const deadline = Date.now() + 10_000
-        while (stillRunning && Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 500))
-          stillRunning = descendantIsRunning()
-        }
+        const stillRunning = descendantIsRunning()
 
         try {
           expect(stillRunning).toBe(false)
@@ -3385,13 +3732,12 @@ describe('notebook runtime service', () => {
       15_000
     )
 
-    it('records two distinct runs for overlapping calls instead of colliding (no serialization queue)', async () => {
+    it('records distinct evidence for back-to-back same-Session calls', async () => {
       const root = await createStorageRoot()
       const service = createShellService(root)
 
-      // Two calls fired without awaiting between them: executeShell has no per-session serialization
-      // queue, so both spawn immediately, relying on the repository's own write-serialization to keep
-      // their running/completed records from clobbering each other.
+      // Submit without awaiting between calls. Session admission serializes their shared writable root,
+      // while durable run writes retain both identities and terminal results.
       const [okResult, failResult] = await Promise.all([
         service.executeShell({ sessionId: 'session-1', workspaceCwd: root, command: 'echo one' }),
         service.executeShell({ sessionId: 'session-1', workspaceCwd: root, command: 'exit 5' })
@@ -3408,6 +3754,9 @@ describe('notebook runtime service', () => {
       const statuses = state.runs.map((run) => run.status).sort()
       expect(statuses).toEqual(['completed', 'failed'])
       expect(state.runs.every((run) => run.kernelKind === 'bash')).toBe(true)
+      expect(
+        state.runs.every((run) => !run.fileEvidence?.reasonCodes.includes('observer-conflict'))
+      ).toBe(true)
     })
   })
 

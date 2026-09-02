@@ -48,7 +48,8 @@ import {
   validateNewDataRoot
 } from './migration-service'
 import { readMigrationMarker } from './migration-marker'
-import { availableBytes, computeStorageUsage } from './usage'
+import { availableBytes } from './usage'
+import { computeStorageUsageWithOwnership } from './usage-ownership'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { MIGRATABLE_DATA_DIRS } from './data-directories'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
@@ -311,7 +312,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     return {
       ...status,
       canAutoSelectDataDrive,
-      usage: await computeStorageUsage(status.dataRoot),
+      usage: await computeStorageUsageWithOwnership(status.dataRoot),
       availableBytes: available
     }
   }

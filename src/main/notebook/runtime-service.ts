@@ -966,13 +966,20 @@ class NotebookRuntimeService {
     })
   }
 
-  // Compatibility facade for stateless shell execution. The owner deliberately admits calls without
-  // a per-Session queue while the repository continues to serialize durable run writes.
-  async executeShell(request: ExecuteShellRequest): Promise<NotebookShellResult> {
-    return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
+  // Compatibility facade for stateless shell execution. The execution owner bounds process admission
+  // across the runtime generation and serializes calls that share one Session workspace.
+  async executeShell(
+    request: ExecuteShellRequest,
+    signal?: AbortSignal
+  ): Promise<NotebookShellResult> {
+    return this.sessionLifecycle.runProjectOperation(request, (deletionSignal) => {
       assertNotebookCodeWithinLimit(request.command)
-      const session = await this.sessionLifecycle.ensure(request)
-      return this.executionOwner.executeShell(session, request, deletionSignal)
+      return this.executionOwner.executeShell(
+        this.sessionLifecycle.laneForRequest(request),
+        request,
+        () => this.sessionLifecycle.ensure(request),
+        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
+      )
     })
   }
 
@@ -1246,11 +1253,17 @@ class NotebookRuntimeService {
   async shutdown(
     request: NotebookSessionRequest
   ): Promise<{ sessionId: string; status: 'shutdown' }> {
-    return this.sessionLifecycle.shutdown(request)
+    return this.executionOwner.withShellLaneTeardown(
+      this.sessionLifecycle.laneForRequest(request),
+      () => this.sessionLifecycle.shutdown(request)
+    )
   }
 
   async shutdownSession(sessionId: string): Promise<{ sessionId: string; status: 'shutdown' }> {
-    return this.sessionLifecycle.shutdownSession(sessionId)
+    return this.executionOwner.withShellSessionTeardown(
+      this.sessionLifecycle.rootLane(sessionId),
+      () => this.sessionLifecycle.shutdownSession(sessionId)
+    )
   }
 
   async shutdownProject(projectId: string): Promise<void> {
@@ -1431,7 +1444,7 @@ class NotebookRuntimeService {
   // when every kernel tree was cleanly reaped, so the update-install gate can refuse to trigger the
   // NSIS uninstall while a kernel may still hold file handles under the install dir.
   shutdownAll(): Promise<{ reaped: boolean }> {
-    return this.sessionLifecycle.shutdownAll()
+    return this.executionOwner.withShellTeardown(() => this.sessionLifecycle.shutdownAll())
   }
 
   // Permanently closes process-owned recovery work before the final kernel teardown. Unlike
@@ -1448,7 +1461,7 @@ class NotebookRuntimeService {
     // quit budget before kernel teardown even starts. Await both so non-quit module disposal still leaves
     // no recovery work behind once this terminal operation resolves.
     const recoveryDisposal = this.recoveryCoordinator.dispose()
-    const shutdown = this.sessionLifecycle.dispose()
+    const shutdown = this.executionOwner.withShellTeardown(() => this.sessionLifecycle.dispose())
     const disposal = Promise.allSettled([shutdown, recoveryDisposal]).then(
       ([shutdownResult, recoveryResult]) => {
         const failures = [shutdownResult, recoveryResult]

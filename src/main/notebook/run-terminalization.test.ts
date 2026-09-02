@@ -207,6 +207,33 @@ describe('NotebookRunTerminalizationOwner', () => {
     expect(terminalized.result.status).toBe('completed')
   })
 
+  it('publishes an admitted queued Run as running before invocation continues', async () => {
+    const harness = createHarness()
+    const queued = { ...runningRun('run-queued'), status: 'queued' as const }
+
+    await harness.owner.run({
+      session,
+      runningRun: queued,
+      invoke: async (markRunning) => {
+        harness.events.push('admitted')
+        await markRunning()
+        harness.events.push(`invoke:${harness.document().runs[0]?.status}`)
+        return completedResult()
+      }
+    })
+
+    expect(harness.events).toEqual([
+      'append:queued',
+      'notify:queued',
+      'admitted',
+      'update:running',
+      'notify:running',
+      'invoke:running',
+      'update:completed',
+      'notify:completed'
+    ])
+  })
+
   it('persists the observer evidence summary on the terminal Run', async () => {
     const harness = createHarness()
     const fileEvidence = {

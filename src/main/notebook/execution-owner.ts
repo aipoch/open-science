@@ -25,7 +25,7 @@ import {
 } from './environment-state-tracker'
 import { detectManagedRuntimeMutation } from './managed-runtime-guard'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
-import { notebookLaneScope } from './lane-identity'
+import { notebookLaneKey, notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 import type {
   NotebookSessionAggregate,
   NotebookSessionExecutionResult,
@@ -154,6 +154,77 @@ const cancelledExecutionResult = (cwd: string): NotebookSessionExecutionResult =
   status: 'cancelled'
 })
 
+const NOTEBOOK_SHELL_MAX_CONCURRENCY = 6
+const SHELL_CANCELLED_MESSAGE = 'Shell command was cancelled.'
+
+type ShellAdmissionWaiter = {
+  sessionKey: string
+  signal?: AbortSignal
+  resolve: (release: (() => void) | undefined) => void
+  onAbort: () => void
+}
+
+type ShellExecutionOperation = {
+  controller: AbortController
+  promise: Promise<NotebookShellResult>
+  sessionKey: string
+}
+
+const shellSessionKey = (lane: NotebookLaneIdentity): string => {
+  const { projectId, sessionId } = notebookLaneScope(lane)
+  return JSON.stringify([projectId, sessionId])
+}
+
+class NotebookShellExecutionAdmission {
+  private active = 0
+  private readonly activeSessions = new Set<string>()
+  private readonly waiters: ShellAdmissionWaiter[] = []
+
+  acquire(sessionKey: string, signal?: AbortSignal): Promise<(() => void) | undefined> {
+    if (signal?.aborted) return Promise.resolve(undefined)
+
+    return new Promise((resolve) => {
+      const onAbort = (): void => {
+        const index = this.waiters.indexOf(waiter)
+        if (index === -1) return
+        this.waiters.splice(index, 1)
+        signal?.removeEventListener('abort', onAbort)
+        resolve(undefined)
+      }
+      const waiter: ShellAdmissionWaiter = { sessionKey, signal, resolve, onAbort }
+      this.waiters.push(waiter)
+      signal?.addEventListener('abort', onAbort, { once: true })
+      if (signal?.aborted) onAbort()
+      else this.dispatch()
+    })
+  }
+
+  private dispatch(): void {
+    while (this.active < NOTEBOOK_SHELL_MAX_CONCURRENCY) {
+      const index = this.waiters.findIndex((waiter) => !this.activeSessions.has(waiter.sessionKey))
+      if (index === -1) return
+      const [waiter] = this.waiters.splice(index, 1)
+      if (!waiter) return
+      waiter.signal?.removeEventListener('abort', waiter.onAbort)
+      if (waiter.signal?.aborted) {
+        waiter.resolve(undefined)
+        continue
+      }
+
+      this.active += 1
+      this.activeSessions.add(waiter.sessionKey)
+      let released = false
+      waiter.resolve(() => {
+        if (released) return
+        released = true
+        this.active -= 1
+        this.activeSessions.delete(waiter.sessionKey)
+        this.dispatch()
+      })
+    }
+  }
+}
+
 // Root runtime ownership is Session-scoped, but every durable Run still belongs to the authenticated
 // conversation Frame that produced it. A renderer state read may have created the shared owner first.
 const runAgentFrameId = (
@@ -163,6 +234,12 @@ const runAgentFrameId = (
 
 class NotebookExecutionOwner {
   private readonly shellProcess: NotebookShellProcess
+  // ponytail: fixed runtime-generation ceiling; add settings only when real workloads need tuning.
+  private readonly shellAdmission = new NotebookShellExecutionAdmission()
+  private readonly shellOperationsByLane = new Map<string, Set<ShellExecutionOperation>>()
+  private readonly shellTeardownLaneKeys = new Set<string>()
+  private readonly shellTeardownSessionKeys = new Set<string>()
+  private shellTeardownActive = false
   private controlCompletionInterceptor: NotebookControlCompletionInterceptor | undefined
 
   constructor(private readonly options: NotebookExecutionOwnerOptions) {
@@ -613,13 +690,118 @@ class NotebookExecutionOwner {
     }
   }
 
-  async executeShell(
-    session: NotebookSessionAggregate,
+  executeShell(
+    lane: NotebookLaneIdentity,
     request: ExecuteShellRequest,
+    loadSession: () => Promise<NotebookSessionAggregate>,
     signal?: AbortSignal
   ): Promise<NotebookShellResult> {
+    const laneKey = notebookLaneKey(lane)
+    const sessionKey = shellSessionKey(lane)
+    if (
+      this.shellTeardownActive ||
+      this.shellTeardownLaneKeys.has(laneKey) ||
+      this.shellTeardownSessionKeys.has(sessionKey)
+    ) {
+      return Promise.resolve({ stdout: '', stderr: SHELL_CANCELLED_MESSAGE, exitCode: null })
+    }
+
+    const controller = new AbortController()
+    const executionSignal = signal
+      ? AbortSignal.any([signal, controller.signal])
+      : controller.signal
+    const cancelled = (): NotebookShellResult => ({
+      stdout: '',
+      stderr: SHELL_CANCELLED_MESSAGE,
+      exitCode: null
+    })
+    const promise = Promise.resolve().then(async () => {
+      if (executionSignal.aborted) return cancelled()
+      const session = await loadSession()
+      if (executionSignal.aborted) return cancelled()
+      return this.executeShellRun(session, request, executionSignal)
+    })
+    const operation = { controller, promise, sessionKey }
+    const operations = this.shellOperationsByLane.get(laneKey) ?? new Set<ShellExecutionOperation>()
+    operations.add(operation)
+    this.shellOperationsByLane.set(laneKey, operations)
+    void promise
+      .finally(() => {
+        operations.delete(operation)
+        if (operations.size === 0 && this.shellOperationsByLane.get(laneKey) === operations) {
+          this.shellOperationsByLane.delete(laneKey)
+        }
+      })
+      .catch(() => undefined)
+    return promise
+  }
+
+  async withShellLaneTeardown<Result>(
+    lane: NotebookLaneIdentity,
+    teardown: () => Promise<Result>
+  ): Promise<Result> {
+    const laneKey = notebookLaneKey(lane)
+    const ownsGate = !this.shellTeardownLaneKeys.has(laneKey)
+    this.shellTeardownLaneKeys.add(laneKey)
+    try {
+      return await this.drainShellOperations(
+        Array.from(this.shellOperationsByLane.get(laneKey) ?? []),
+        teardown
+      )
+    } finally {
+      if (ownsGate) this.shellTeardownLaneKeys.delete(laneKey)
+    }
+  }
+
+  async withShellSessionTeardown<Result>(
+    lane: NotebookLaneIdentity,
+    teardown: () => Promise<Result>
+  ): Promise<Result> {
+    const sessionKey = shellSessionKey(lane)
+    const ownsGate = !this.shellTeardownSessionKeys.has(sessionKey)
+    this.shellTeardownSessionKeys.add(sessionKey)
+    try {
+      return await this.drainShellOperations(
+        Array.from(this.shellOperationsByLane.values()).flatMap((operations) =>
+          Array.from(operations).filter((operation) => operation.sessionKey === sessionKey)
+        ),
+        teardown
+      )
+    } finally {
+      if (ownsGate) this.shellTeardownSessionKeys.delete(sessionKey)
+    }
+  }
+
+  async withShellTeardown<Result>(teardown: () => Promise<Result>): Promise<Result> {
+    const ownsGate = !this.shellTeardownActive
+    this.shellTeardownActive = true
+    try {
+      return await this.drainShellOperations(
+        Array.from(this.shellOperationsByLane.values()).flatMap((operations) => [...operations]),
+        teardown
+      )
+    } finally {
+      if (ownsGate) this.shellTeardownActive = false
+    }
+  }
+
+  private async drainShellOperations<Result>(
+    operations: ShellExecutionOperation[],
+    teardown: () => Promise<Result>
+  ): Promise<Result> {
+    const reason = new Error('Notebook Session is shutting down.')
+    for (const operation of operations) operation.controller.abort(reason)
+    await Promise.allSettled(operations.map((operation) => operation.promise))
+    return teardown()
+  }
+
+  private async executeShellRun(
+    session: NotebookSessionAggregate,
+    request: ExecuteShellRequest,
+    signal: AbortSignal
+  ): Promise<NotebookShellResult> {
     const { runId } = this.options.runTerminalization.allocateRunIdentity()
-    const runningRun: NotebookRunRecord = {
+    const queuedRun: NotebookRunRecord = {
       runId,
       ...(request.executionInvocationId
         ? { executionInvocationId: request.executionInvocationId }
@@ -629,7 +811,7 @@ class NotebookExecutionOwner {
       inputKind: 'cell',
       kernelKind: 'bash',
       script: request.command,
-      status: 'running',
+      status: 'queued',
       startedAt: Date.now(),
       cwdBefore: session.cwd,
       ...request.provenanceContext,
@@ -641,88 +823,109 @@ class NotebookExecutionOwner {
       inputFiles: request.provenanceContext ? (request.registeredInputFiles ?? []) : []
     }
 
-    // No per-Session queue; the repository serializes only the durable run writes.
     const { result } = await this.options.runTerminalization.run({
       session,
-      runningRun,
-      invoke: async () => {
-        const workingFileObservation = await startWorkingFileObservation({
-          dataRoot: session.dataRoot,
-          notebookSessionRoot: session.notebookSessionRoot,
-          ...this.fileEvidenceLocation(session),
-          runId,
-          signal
-        })
-        let workingFiles: NotebookWorkingFile[] = []
-        let fileEvidence: ExecutionFileEvidenceSummary | undefined
-        const blockedMutation = detectManagedRuntimeMutation({
-          source: request.command,
-          surface: this.options.platform === 'win32' ? 'powershell' : 'bash',
-          runtimeRoot: session.runtimeRoot,
-          cwd: session.cwd,
-          platform: this.options.platform
-        })
-        let shellResult: NotebookShellResult | undefined
-        try {
-          shellResult = await (blockedMutation
-            ? Promise.resolve<NotebookShellResult>({
-                stdout: '',
-                stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`,
-                exitCode: 1
-              })
-            : this.shellProcess.execute({
-                command: request.command,
-                cwd: session.cwd,
-                handoffDir: join(session.notebookSessionRoot, 'handoff'),
-                runtimeRoot: session.runtimeRoot,
-                notebookSessionRoot: session.notebookSessionRoot,
-                inputRoot: this.inputRoot(session),
-                protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
-                sessionId: session.sessionId,
-                projectId: session.projectId,
-                timeoutMs: request.timeoutMs,
-                signal
-              }))
-        } finally {
-          const observation = await workingFileObservation.finish(
-            shellResult === undefined ||
-              signal?.aborted ||
-              shellResult.cancelled ||
-              shellResult.exitCode === null
-              ? AbortSignal.abort()
-              : signal
-          )
-          workingFiles = observation.workingFiles
-          fileEvidence = observation.fileEvidence
+      runningRun: queuedRun,
+      invoke: async (markRunning) => {
+        const release = await this.shellAdmission.acquire(shellSessionKey(session.lane), signal)
+        if (!release || signal?.aborted) {
+          release?.()
+          return {
+            status: 'cancelled' as const,
+            stdout: '',
+            stderr: SHELL_CANCELLED_MESSAGE,
+            traceback: '',
+            cwdAfter: session.cwd,
+            outputs: [
+              { type: 'stream' as const, name: 'stderr' as const, text: SHELL_CANCELLED_MESSAGE }
+            ],
+            workingFiles: [],
+            exitCode: null
+          }
         }
-        if (!shellResult) throw new Error('Notebook shell execution completed without a result.')
-        const status: NotebookRunStatus = shellResult.cancelled
-          ? 'cancelled'
-          : shellResult.exitCode === 0
-            ? 'completed'
-            : shellResult.exitCode === null
-              ? 'timeout'
-              : 'failed'
-        const outputs: NotebookOutput[] = [
-          ...(shellResult.stdout
-            ? [{ type: 'stream' as const, name: 'stdout' as const, text: shellResult.stdout }]
-            : []),
-          ...(shellResult.stderr
-            ? [{ type: 'stream' as const, name: 'stderr' as const, text: shellResult.stderr }]
-            : [])
-        ]
 
-        return {
-          status,
-          stdout: shellResult.stdout,
-          stderr: shellResult.stderr,
-          traceback: '',
-          cwdAfter: session.cwd,
-          outputs,
-          truncated: shellResult.truncated,
-          workingFiles,
-          fileEvidence,
-          exitCode: shellResult.exitCode
+        try {
+          await markRunning()
+          const workingFileObservation = await startWorkingFileObservation({
+            dataRoot: session.dataRoot,
+            notebookSessionRoot: session.notebookSessionRoot,
+            ...this.fileEvidenceLocation(session),
+            runId,
+            signal
+          })
+          let workingFiles: NotebookWorkingFile[] = []
+          let fileEvidence: ExecutionFileEvidenceSummary | undefined
+          const blockedMutation = detectManagedRuntimeMutation({
+            source: request.command,
+            surface: this.options.platform === 'win32' ? 'powershell' : 'bash',
+            runtimeRoot: session.runtimeRoot,
+            cwd: session.cwd,
+            platform: this.options.platform
+          })
+          let shellResult: NotebookShellResult | undefined
+          try {
+            shellResult = await (blockedMutation
+              ? Promise.resolve<NotebookShellResult>({
+                  stdout: '',
+                  stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`,
+                  exitCode: 1
+                })
+              : this.shellProcess.execute({
+                  command: request.command,
+                  cwd: session.cwd,
+                  handoffDir: join(session.notebookSessionRoot, 'handoff'),
+                  runtimeRoot: session.runtimeRoot,
+                  notebookSessionRoot: session.notebookSessionRoot,
+                  inputRoot: this.inputRoot(session),
+                  protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
+                  sessionId: session.sessionId,
+                  projectId: session.projectId,
+                  timeoutMs: request.timeoutMs,
+                  signal
+                }))
+          } finally {
+            const observation = await workingFileObservation.finish(
+              shellResult === undefined ||
+                signal?.aborted ||
+                shellResult.cancelled ||
+                shellResult.exitCode === null
+                ? AbortSignal.abort()
+                : signal
+            )
+            workingFiles = observation.workingFiles
+            fileEvidence = observation.fileEvidence
+          }
+          if (!shellResult) throw new Error('Notebook shell execution completed without a result.')
+          const status: NotebookRunStatus = shellResult.cancelled
+            ? 'cancelled'
+            : shellResult.exitCode === 0
+              ? 'completed'
+              : shellResult.exitCode === null
+                ? 'timeout'
+                : 'failed'
+          const outputs: NotebookOutput[] = [
+            ...(shellResult.stdout
+              ? [{ type: 'stream' as const, name: 'stdout' as const, text: shellResult.stdout }]
+              : []),
+            ...(shellResult.stderr
+              ? [{ type: 'stream' as const, name: 'stderr' as const, text: shellResult.stderr }]
+              : [])
+          ]
+
+          return {
+            status,
+            stdout: shellResult.stdout,
+            stderr: shellResult.stderr,
+            traceback: '',
+            cwdAfter: session.cwd,
+            outputs,
+            truncated: shellResult.truncated,
+            workingFiles,
+            fileEvidence,
+            exitCode: shellResult.exitCode
+          }
+        } finally {
+          release()
         }
       }
     })

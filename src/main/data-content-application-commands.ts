@@ -311,8 +311,16 @@ const dataContentApplicationCommands = Object.freeze({
   sessionLoadAll: sessionCommand('sessions:load-all', 'loadAll'),
   sessionLoadOne: sessionCommand('sessions:load-one', 'loadOne'),
   sessionLoadUsage: sessionCommand('sessions:load-usage', 'loadUsage'),
-  sessionSaveManifest: sessionCommand('sessions:save-manifest', 'saveManifest'),
-  sessionUpdateArchive: sessionCommand('sessions:update-archive', 'updateArchive'),
+  sessionSaveManifest: sessionCommand(
+    'sessions:save-manifest',
+    'saveManifest',
+    SessionPersistence.sessionApplicationCommandContracts.saveManifest
+  ),
+  sessionUpdateArchive: sessionCommand(
+    'sessions:update-archive',
+    'updateArchive',
+    SessionPersistence.sessionApplicationCommandContracts.updateArchive
+  ),
   sessionUnlinkPdfContext: sessionCommand(
     'sessions:unlink-pdf-context',
     'unlinkPdfContext',
@@ -325,7 +333,7 @@ const dataContentApplicationCommands = Object.freeze({
       options?: SessionPersistence.SaveSessionOptions
     ],
     SessionPersistence.PersistedChatSession
-  >('sessions:save-session'),
+  >('sessions:save-session', SessionPersistence.sessionApplicationCommandContracts.save),
   sessionSetDelegationPolicy: defineApplicationCommand<
     'sessions:set-delegation-policy',
     readonly [projectId: string, sessionId: string, policy: SessionPersistence.DelegationPolicy],

@@ -8,10 +8,22 @@ import {
   type UsageChild
 } from '../../shared/storage'
 import { logicalEnvNameFromDirectory } from '../notebook/runtime-paths'
-import {
-  MANAGED_WORKSPACE_OWNERSHIP_DIR,
-  readManagedWorkspaceOwnership
-} from './managed-workspace-ownership'
+import { MANAGED_WORKSPACE_OWNERSHIP_DIR } from './managed-workspace-ownership-dir'
+
+// Ownership enrichment is injected by the electron-side wrapper (usage-ownership.ts) so this module
+// stays importable from the artifact MCP server's plain-Node bundle.
+export type StorageUsageOwnership = Readonly<{
+  workspaceId: string
+  projectId: string
+  sessionId?: string
+  createdAt: number
+  lastUsedAt: number
+  retainedAfterDelete: boolean
+}>
+export type StorageUsageOwnershipReader = (
+  workspacePath: string,
+  dataRoot: string
+) => Promise<StorageUsageOwnership | undefined>
 
 const isMissingPathError = (error: unknown): boolean => {
   const code = (error as NodeJS.ErrnoException)?.code
@@ -65,7 +77,10 @@ const fileSize = async (path: string, seen: Set<string>): Promise<number> => {
 // top-level directory so Settings can make those opaque UUID folders reachable without inventing
 // a Project/Session association that no longer exists. Empty directories remain visible; symlinks
 // are skipped rather than followed or offered as workspace roots.
-const workspaceUsage = async (dir: string): Promise<{ bytes: number; children: UsageChild[] }> => {
+const workspaceUsage = async (
+  dir: string,
+  readOwnership?: StorageUsageOwnershipReader
+): Promise<{ bytes: number; children: UsageChild[] }> => {
   let entries
   try {
     entries = await readdir(dir, { withFileTypes: true })
@@ -84,7 +99,7 @@ const workspaceUsage = async (dir: string): Promise<{ bytes: number; children: U
       if (entry.name === MANAGED_WORKSPACE_OWNERSHIP_DIR) {
         continue
       }
-      const ownership = await readManagedWorkspaceOwnership(path, join(dir, '..'))
+      const ownership = readOwnership ? await readOwnership(path, join(dir, '..')) : undefined
       children.push({
         name: entry.name,
         bytes: await dirSize(path, seen),
@@ -181,7 +196,10 @@ const runtimeUsage = async (dir: string): Promise<{ bytes: number; children: Usa
   return { bytes, children }
 }
 
-export const computeStorageUsage = async (dataRoot: string): Promise<StorageUsage> => {
+export const computeStorageUsage = async (
+  dataRoot: string,
+  readOwnership?: StorageUsageOwnershipReader
+): Promise<StorageUsage> => {
   const categories: StorageUsage['categories'] = []
   for (const key of STORAGE_USAGE_CATEGORY_KEYS) {
     const dir = join(dataRoot, key)
@@ -189,7 +207,7 @@ export const computeStorageUsage = async (dataRoot: string): Promise<StorageUsag
       const { bytes, children } = await runtimeUsage(dir)
       categories.push({ key, bytes, children })
     } else if (key === 'workspaces') {
-      const { bytes, children } = await workspaceUsage(dir)
+      const { bytes, children } = await workspaceUsage(dir, readOwnership)
       categories.push(children.length > 0 ? { key, bytes, children } : { key, bytes })
     } else if (key === 'execution-file-evidence') {
       const seen = new Set<string>()

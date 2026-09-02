@@ -22,8 +22,10 @@ import {
   type DataContentApplicationCommandDependencies
 } from './data-content-application-commands'
 import {
+  materializeSessionConversationGraph,
   SessionDetailsConflictError,
   SessionRevisionConflictError,
+  type PersistedChatSession,
   type SessionDeletionResult
 } from '../shared/session-persistence'
 import { ApplicationCommandError } from '../shared/application-command-contract'
@@ -485,7 +487,14 @@ describe('Data and content application commands', () => {
       },
       {
         key: 'sessionUpdateArchive',
-        args: [request('session-update-archive')],
+        args: [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            archived: true,
+            expectedArchivedAt: null
+          }
+        ],
         owner: deps.sessions.updateArchive
       },
       {
@@ -1045,6 +1054,190 @@ describe('Data and content application commands', () => {
     ).rejects.toMatchObject({ code: 'invalid-command-result' })
   })
 
+  it('sanitizes the complete authoritative Session result instead of passing malformed fields', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.sessions.editDetails.mockResolvedValueOnce({
+      ...deps.session,
+      status: 'future-status',
+      revision: -1,
+      createdAt: 'yesterday',
+      updatedAt: Number.NaN,
+      runtimeContext: { version: 1, revision: 'invalid' }
+    } as never)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    const result = await router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionEditDetails,
+      invocation([
+        {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          expectedTitle: 'Session',
+          expectedDescription: '',
+          title: 'Updated title',
+          description: 'Updated description'
+        }
+      ] as const)
+    )
+
+    expect(result).toMatchObject({ status: 'idle', revision: 0, createdAt: 0, updatedAt: 0 })
+    expect(result.runtimeContext).toBeUndefined()
+  })
+
+  it('rejects a malformed Session conversation graph returned by archive', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.sessions.updateArchive.mockResolvedValueOnce({
+      ...deps.session,
+      conversationGraph: { schemaVersion: 1 }
+    } as never)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionUpdateArchive,
+        invocation([
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            archived: true,
+            expectedArchivedAt: null
+          }
+        ] as const)
+      )
+    ).rejects.toMatchObject({ code: 'invalid-command-result' })
+  })
+
+  it('sanitizes a renderer Session once at the main-process save boundary', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    const malformedSession = {
+      ...deps.session,
+      status: 'future-status',
+      revision: -1,
+      createdAt: 'yesterday',
+      runtimeContext: { version: 1, revision: 'invalid' }
+    }
+    await dispatchCommand(router, 'sessionSave', [malformedSession]).result
+
+    expect(deps.sessions.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'idle', revision: 0, createdAt: 0 }),
+      undefined
+    )
+    const savedSession = (
+      deps.sessions.saveSession.mock.calls as unknown as Array<readonly [Record<string, unknown>]>
+    )[0]?.[0]
+    expect(savedSession?.runtimeContext).toBeUndefined()
+  })
+
+  it('normalizes graph-only Session arguments and results without preserving incomplete objects', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    const graphOnlySession: Partial<PersistedChatSession> = structuredClone(
+      materializeSessionConversationGraph(deps.session as PersistedChatSession)
+    )
+    delete graphOnlySession.messages
+    deps.sessions.updateArchive.mockResolvedValueOnce(graphOnlySession as never)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await dispatchCommand(router, 'sessionSave', [graphOnlySession]).result
+    const submitted = (
+      deps.sessions.saveSession.mock.calls as unknown as Array<readonly [PersistedChatSession]>
+    )[0]?.[0]
+    expect(submitted?.messages).toEqual([])
+
+    const result = await router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionUpdateArchive,
+      invocation([
+        {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          archived: true,
+          expectedArchivedAt: null
+        }
+      ] as const)
+    )
+    expect(result).not.toBe(graphOnlySession)
+    expect(result.messages).toEqual([])
+  })
+
+  it('normalizes incomplete nested Session messages before persistence', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await dispatchCommand(router, 'sessionSave', [
+      {
+        ...deps.session,
+        messages: [{ id: 'message-1', role: 'user', content: 'Hello' }]
+      }
+    ]).result
+
+    const submitted = (
+      deps.sessions.saveSession.mock.calls as unknown as Array<readonly [PersistedChatSession]>
+    )[0]?.[0]
+    expect(submitted?.messages[0]).toMatchObject({
+      status: 'complete',
+      eventIds: [],
+      createdAt: 0,
+      updatedAt: 0
+    })
+  })
+
+  it('preserves legacy upload paths through live save and archive command boundaries', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    const legacyPath = '/data/uploads/project-1/session-1/legacy.csv'
+    const legacySession = materializeSessionConversationGraph({
+      ...deps.session,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Analyze this upload',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'upload-1',
+              sessionId: 'session-1',
+              name: 'legacy.csv',
+              originalName: 'legacy.csv',
+              path: legacyPath,
+              size: 12
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    } as PersistedChatSession)
+    deps.sessions.updateArchive.mockResolvedValueOnce(legacySession as never)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await dispatchCommand(router, 'sessionSave', [legacySession]).result
+    const submitted = (
+      deps.sessions.saveSession.mock.calls as unknown as Array<readonly [PersistedChatSession]>
+    )[0]?.[0]
+    expect(submitted?.messages[0]?.uploads?.[0]).toMatchObject({ path: legacyPath })
+
+    const archived = await router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionUpdateArchive,
+      invocation([
+        {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          archived: true,
+          expectedArchivedAt: null
+        }
+      ] as const)
+    )
+    expect(archived.messages[0]?.uploads?.[0]).toMatchObject({ path: legacyPath })
+  })
+
   it('dispatches every remaining Project and Session wrapper to its existing owner', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
@@ -1165,6 +1358,8 @@ describe('Data and content application commands', () => {
       label: 'unknown extra field',
       request: { projectId: 'project-1', sessionId: 'session-1', force: true }
     },
+    { label: 'empty project id', request: { projectId: '', sessionId: 'session-1' } },
+    { label: 'empty session id', request: { projectId: 'project-1', sessionId: '' } },
     { label: 'missing session id', request: { projectId: 'project-1' } },
     { label: 'scalar payload', request: 'session-1' }
   ])(
@@ -1185,6 +1380,53 @@ describe('Data and content application commands', () => {
       expect(deps.events.publish).not.toHaveBeenCalled()
     }
   )
+
+  it.each([
+    {
+      label: 'archive request with a surplus field',
+      command: 'sessionUpdateArchive' as const,
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        archived: true,
+        expectedArchivedAt: null,
+        force: true
+      },
+      owner: 'updateArchive' as const
+    },
+    {
+      label: 'archive request with an invalid timestamp',
+      command: 'sessionUpdateArchive' as const,
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        archived: false,
+        expectedArchivedAt: Number.NaN
+      },
+      owner: 'updateArchive' as const
+    },
+    {
+      label: 'manifest request with the removed project id',
+      command: 'sessionSaveManifest' as const,
+      request: { lastProjectId: 'project-1', lastSessionId: 'session-1' },
+      owner: 'saveManifest' as const
+    },
+    {
+      label: 'manifest request with a surplus field',
+      command: 'sessionSaveManifest' as const,
+      request: { lastSessionId: 'session-1', path: '/private/data' },
+      owner: 'saveManifest' as const
+    }
+  ])('rejects a malformed Session $label before reaching the owner', async (testCase) => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    const { result: dispatched } = dispatchCommand(router, testCase.command, [testCase.request])
+
+    await expect(dispatched).rejects.toMatchObject({ code: 'invalid-command-arguments' })
+    expect(deps.sessions[testCase.owner]).not.toHaveBeenCalled()
+  })
 
   it('rejects a malformed Session deletion owner result without publishing deletion', async () => {
     const router = createApplicationCommandRouter()
