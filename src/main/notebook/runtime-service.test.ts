@@ -3251,6 +3251,81 @@ describe('notebook runtime service', () => {
       expect(finalState.runs.at(-1)).toMatchObject({ status: 'cancelled' })
     })
 
+    it('cancels and drains queued shell work before Session shutdown completes', async () => {
+      const root = await createStorageRoot()
+      const entered: string[] = []
+      const signals = new Map<string, AbortSignal | undefined>()
+      const releases = new Map<string, () => void>()
+      const execute = vi.fn<NotebookShellProcess['execute']>(
+        ({ command, signal }) =>
+          new Promise((resolve) => {
+            let settled = false
+            const finish = (cancelled: boolean): void => {
+              if (settled) return
+              settled = true
+              resolve({
+                stdout: cancelled ? '' : command,
+                stderr: '',
+                exitCode: cancelled ? null : 0,
+                ...(cancelled ? { cancelled: true } : {})
+              })
+            }
+            entered.push(command)
+            signals.set(command, signal)
+            releases.set(command, () => finish(false))
+            signal?.addEventListener('abort', () => finish(true), { once: true })
+          })
+      )
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute }
+      })
+      const rootContext = {
+        rootFrameId: 'root-frame-session-1',
+        agentFrameId: 'root-frame-session-1',
+        messageBranchId: 'branch-root',
+        runtimeSegmentId: 'runtime-root',
+        promptMessageId: 'message-root'
+      }
+      const childContext = {
+        ...rootContext,
+        agentFrameId: 'child-frame-1',
+        messageBranchId: 'branch-child',
+        runtimeSegmentId: 'runtime-child',
+        promptMessageId: 'message-child'
+      }
+      const first = service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'first',
+        provenanceContext: rootContext
+      })
+      const queued = service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'must-not-start',
+        provenanceContext: childContext
+      })
+
+      await vi.waitFor(() => expect(entered).toEqual(['first']))
+      const shutdown = service.shutdownSession('session-1')
+      await shutdown
+
+      const activeWasCancelled = signals.get('first')?.aborted === true
+      if (!activeWasCancelled) {
+        releases.get('first')?.()
+        await vi.waitFor(() => expect(entered).toHaveLength(2))
+        releases.get('must-not-start')?.()
+      }
+      await Promise.allSettled([first, queued])
+
+      expect(activeWasCancelled).toBe(true)
+      expect(entered).toEqual(['first'])
+    })
+
     it('rejects a direct micromamba install before spawning the shell command', async () => {
       const root = await createStorageRoot()
       const service = createShellService(root)

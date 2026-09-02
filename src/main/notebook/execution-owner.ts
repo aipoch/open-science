@@ -25,7 +25,7 @@ import {
 } from './environment-state-tracker'
 import { detectManagedRuntimeMutation } from './managed-runtime-guard'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
-import { notebookLaneScope } from './lane-identity'
+import { notebookLaneKey, notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 import type {
   NotebookSessionAggregate,
   NotebookSessionExecutionResult,
@@ -164,6 +164,17 @@ type ShellAdmissionWaiter = {
   onAbort: () => void
 }
 
+type ShellExecutionOperation = {
+  controller: AbortController
+  promise: Promise<NotebookShellResult>
+  sessionKey: string
+}
+
+const shellSessionKey = (lane: NotebookLaneIdentity): string => {
+  const { projectId, sessionId } = notebookLaneScope(lane)
+  return JSON.stringify([projectId, sessionId])
+}
+
 class NotebookShellExecutionAdmission {
   private active = 0
   private readonly activeSessions = new Set<string>()
@@ -225,6 +236,10 @@ class NotebookExecutionOwner {
   private readonly shellProcess: NotebookShellProcess
   // ponytail: fixed runtime-generation ceiling; add settings only when real workloads need tuning.
   private readonly shellAdmission = new NotebookShellExecutionAdmission()
+  private readonly shellOperationsByLane = new Map<string, Set<ShellExecutionOperation>>()
+  private readonly shellTeardownLaneKeys = new Set<string>()
+  private readonly shellTeardownSessionKeys = new Set<string>()
+  private shellTeardownActive = false
   private controlCompletionInterceptor: NotebookControlCompletionInterceptor | undefined
 
   constructor(private readonly options: NotebookExecutionOwnerOptions) {
@@ -675,10 +690,113 @@ class NotebookExecutionOwner {
     }
   }
 
-  async executeShell(
+  executeShell(
     session: NotebookSessionAggregate,
     request: ExecuteShellRequest,
     signal?: AbortSignal
+  ): Promise<NotebookShellResult> {
+    const laneKey = notebookLaneKey(session.lane)
+    const sessionKey = shellSessionKey(session.lane)
+    if (
+      this.shellTeardownActive ||
+      this.shellTeardownLaneKeys.has(laneKey) ||
+      this.shellTeardownSessionKeys.has(sessionKey)
+    ) {
+      return Promise.resolve({ stdout: '', stderr: SHELL_CANCELLED_MESSAGE, exitCode: null })
+    }
+
+    const controller = new AbortController()
+    const executionSignal = signal
+      ? AbortSignal.any([signal, controller.signal])
+      : controller.signal
+    const promise = this.executeShellRun(session, request, executionSignal)
+    const operation = { controller, promise, sessionKey }
+    const operations = this.shellOperationsByLane.get(laneKey) ?? new Set<ShellExecutionOperation>()
+    operations.add(operation)
+    this.shellOperationsByLane.set(laneKey, operations)
+    void promise
+      .finally(() => {
+        operations.delete(operation)
+        if (operations.size === 0 && this.shellOperationsByLane.get(laneKey) === operations) {
+          this.shellOperationsByLane.delete(laneKey)
+        }
+      })
+      .catch(() => undefined)
+    return promise
+  }
+
+  async withShellLaneTeardown<Result>(
+    lane: NotebookLaneIdentity,
+    teardown: () => Promise<Result>
+  ): Promise<Result> {
+    const laneKey = notebookLaneKey(lane)
+    const ownsGate = !this.shellTeardownLaneKeys.has(laneKey)
+    this.shellTeardownLaneKeys.add(laneKey)
+    try {
+      return await this.drainShellOperations(
+        Array.from(this.shellOperationsByLane.get(laneKey) ?? []),
+        teardown
+      )
+    } finally {
+      if (ownsGate) this.shellTeardownLaneKeys.delete(laneKey)
+    }
+  }
+
+  async withShellSessionTeardown<Result>(
+    lane: NotebookLaneIdentity,
+    teardown: () => Promise<Result>
+  ): Promise<Result> {
+    const sessionKey = shellSessionKey(lane)
+    const ownsGate = !this.shellTeardownSessionKeys.has(sessionKey)
+    this.shellTeardownSessionKeys.add(sessionKey)
+    try {
+      return await this.drainShellOperations(
+        Array.from(this.shellOperationsByLane.values()).flatMap((operations) =>
+          Array.from(operations).filter((operation) => operation.sessionKey === sessionKey)
+        ),
+        teardown
+      )
+    } finally {
+      if (ownsGate) this.shellTeardownSessionKeys.delete(sessionKey)
+    }
+  }
+
+  async withShellTeardown<Result>(teardown: () => Promise<Result>): Promise<Result> {
+    const ownsGate = !this.shellTeardownActive
+    this.shellTeardownActive = true
+    try {
+      return await this.drainShellOperations(
+        Array.from(this.shellOperationsByLane.values()).flatMap((operations) => [...operations]),
+        teardown
+      )
+    } finally {
+      if (ownsGate) this.shellTeardownActive = false
+    }
+  }
+
+  private async drainShellOperations<Result>(
+    operations: ShellExecutionOperation[],
+    teardown: () => Promise<Result>
+  ): Promise<Result> {
+    const reason = new Error('Notebook Session is shutting down.')
+    for (const operation of operations) operation.controller.abort(reason)
+    const [outcome] = await Promise.all([
+      Promise.resolve()
+        .then(teardown)
+        .then(
+          (value) => ({ status: 'fulfilled' as const, value }),
+          (error: unknown) => ({ status: 'rejected' as const, error })
+        ),
+      Promise.allSettled(operations.map((operation) => operation.promise))
+    ])
+    if (outcome.status === 'rejected') throw outcome.error
+    return outcome.value
+  }
+
+  private async executeShellRun(
+    session: NotebookSessionAggregate,
+    request: ExecuteShellRequest,
+    signal: AbortSignal
   ): Promise<NotebookShellResult> {
     const { runId } = this.options.runTerminalization.allocateRunIdentity()
     const queuedRun: NotebookRunRecord = {
@@ -707,10 +825,7 @@ class NotebookExecutionOwner {
       session,
       runningRun: queuedRun,
       invoke: async (markRunning) => {
-        const release = await this.shellAdmission.acquire(
-          JSON.stringify([session.projectId, session.sessionId]),
-          signal
-        )
+        const release = await this.shellAdmission.acquire(shellSessionKey(session.lane), signal)
         if (!release || signal?.aborted) {
           release?.()
           return {
