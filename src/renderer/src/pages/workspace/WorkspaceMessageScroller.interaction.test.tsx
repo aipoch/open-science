@@ -3648,7 +3648,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
   })
 
-  it.each(['/workspace/.pending/report.txt', 'C:\\workspace\\.pending\\report.txt'])(
+  it.each(['/workspace/.pending/run-1/report.txt', 'C:\\workspace\\.pending\\run-1\\report.txt'])(
     'keeps an unpublished managed thumbnail quiet while finalization is pending (%s)',
     async (path) => {
       const enterViewport = installIntersectionObserver()
@@ -3713,6 +3713,51 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       }
     }
   )
+
+  it('keeps a published artifact named .pending previewable', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Created the file',
+          artifactIds: ['artifact-version-1']
+        })
+      ],
+      artifacts: [
+        {
+          id: 'artifact-version-1',
+          artifactId: 'managed-artifact-1',
+          versionId: 'artifact-version-1',
+          kind: 'managed-file',
+          path: '/workspace/message-1/.pending',
+          name: '.pending',
+          mimeType: 'text/plain',
+          size: 2048,
+          mtimeMs: 1710000000100
+        }
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    const card = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Preview generated file .pending"]'
+    )
+    expect(card?.disabled).toBe(false)
+
+    await act(async () => card?.click())
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({ managedFileId: 'managed-artifact-1', name: '.pending' })
+    )
+  })
 
   it('mounts desktop Run Marks from visible human prompts', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')

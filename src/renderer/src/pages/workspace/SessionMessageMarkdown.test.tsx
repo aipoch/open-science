@@ -146,6 +146,35 @@ describe('SessionMessageMarkdown', () => {
     expect(onPreviewArtifactModal).toHaveBeenCalledWith(artifact)
   })
 
+  it('keeps unpublished artifact links and inline images inert until publication', async () => {
+    const onPreviewArtifact = vi.fn()
+    const onPreviewArtifactModal = vi.fn()
+    const pendingArtifact = {
+      ...artifact,
+      path: '/managed/session/.pending/run-1/sin_curve.png'
+    }
+
+    await act(async () => {
+      root.render(
+        <SessionMessageMarkdown
+          content={'![Sine curve](sin_curve.png)\n\n[sin_curve.png](sin_curve.png)'}
+          artifacts={[pendingArtifact]}
+          onPreviewArtifact={onPreviewArtifact}
+          onPreviewArtifactModal={onPreviewArtifactModal}
+        />
+      )
+    })
+
+    const artifactLink = container.querySelector<HTMLButtonElement>('[data-session-artifact-link]')
+    expect(artifactLink?.disabled).toBe(true)
+    expect(previewResourceHarness.enabled).toBe(false)
+    expect(container.querySelector('[data-session-artifact-image]')).toBeNull()
+
+    await act(async () => artifactLink?.click())
+    expect(onPreviewArtifact).not.toHaveBeenCalled()
+    expect(onPreviewArtifactModal).not.toHaveBeenCalled()
+  })
+
   it('retains the existing safe-link component for external links', async () => {
     markdownHarness.href = 'https://example.com/sin_curve.png'
 

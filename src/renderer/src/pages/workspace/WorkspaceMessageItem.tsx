@@ -72,6 +72,7 @@ import {
 import {
   ARTIFACT_PREVIEW_BYTES,
   getArtifactName,
+  isPendingArtifactPublication,
   shouldReadArtifactPreview
 } from './artifact-preview-utils'
 import {
@@ -106,8 +107,6 @@ type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
   resolvedProjectId?: string
   resolvedSessionId?: string
 }
-const isPendingArtifactPublication = (artifact: MessageArtifact): boolean =>
-  artifact.path.split(/[\\/]/u).includes('.pending')
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
 type MessageImage = NonNullable<ChatMessage['images']>[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>

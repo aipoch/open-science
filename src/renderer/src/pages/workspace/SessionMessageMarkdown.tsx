@@ -6,7 +6,11 @@ import { useTranslation } from 'react-i18next'
 import type { Components } from 'streamdown'
 
 import { ArtifactPreview } from './artifact-preview'
-import { getArtifactName, getArtifactPreviewFormat } from './artifact-preview-utils'
+import {
+  getArtifactName,
+  getArtifactPreviewFormat,
+  isPendingArtifactPublication
+} from './artifact-preview-utils'
 import { createPreviewResourceKey } from './previews/preview-resource-key'
 import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
 import { useNearViewport } from './previews/useNearViewport'
@@ -49,6 +53,7 @@ const SessionArtifactImage = ({
   const name = getArtifactName(artifact)
   const previewFormat = getArtifactPreviewFormat(artifact)
   const isTiff = previewFormat === 'tiff'
+  const publicationPending = isPendingArtifactPublication(artifact)
   const request = {
     path: artifact.path,
     projectId: artifact.resolvedProjectId,
@@ -62,9 +67,20 @@ const SessionArtifactImage = ({
   const [failedRequestKey, setFailedRequestKey] = useState<string>()
   const [setElement, isNearViewport] = useNearViewport<HTMLButtonElement | HTMLSpanElement>()
   const hasFailed = failedRequestKey === requestKey
-  const resourceState = useManagedPreviewResource(request, !isTiff && isNearViewport && !hasFailed)
+  const resourceState = useManagedPreviewResource(
+    request,
+    !publicationPending && !isTiff && isNearViewport && !hasFailed
+  )
   const accessibleAlt = alt || t('Preview of {{name}}', { name })
   const hasError = hasFailed || resourceState.status === 'error'
+
+  if (publicationPending) {
+    return (
+      <span ref={setElement} data-session-artifact-image-status="" data-state="loading">
+        {accessibleAlt}
+      </span>
+    )
+  }
 
   if (isTiff) {
     return (
@@ -158,6 +174,7 @@ const SessionMessageMarkdown = memo(
             <button
               type="button"
               className={className}
+              disabled={isPendingArtifactPublication(artifact)}
               data-incomplete={dataIncomplete}
               data-session-message-link=""
               data-session-artifact-link=""
