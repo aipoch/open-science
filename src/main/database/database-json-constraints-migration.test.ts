@@ -169,9 +169,7 @@ describe('database JSON constraints migration', () => {
         from: '0007_notification_attention_metadata',
         to: '0025_managed_file_version_foundation'
       })
-      await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).rejects.toMatchObject({
-        code: 'ENOENT'
-      })
+      await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).resolves.toBeUndefined()
       await expect(
         access(`${databasePath}.before-0011_cross_resource_tags.backup`)
       ).rejects.toMatchObject({ code: 'ENOENT' })
@@ -209,10 +207,10 @@ describe('database JSON constraints migration', () => {
       ).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(
         access(`${databasePath}.before-0024_compute_job_file_evidence.backup`)
-      ).resolves.toBeUndefined()
+      ).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(
         access(`${databasePath}.before-0025_managed_file_version_foundation.backup`)
-      ).resolves.toBeUndefined()
+      ).rejects.toMatchObject({ code: 'ENOENT' })
 
       await expect(
         client.$queryRaw<Array<{ scope: string; reviewerLog: string }>>`

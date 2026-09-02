@@ -79,7 +79,7 @@ describe('Compute Job sensitive data encryption migration', () => {
     })
     await expect(
       access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
+    ).resolves.toBeUndefined()
     await expect(
       access(`${databasePath}.before-0017_agent_memory_project_scope.backup`)
     ).rejects.toMatchObject({ code: 'ENOENT' })
@@ -97,10 +97,10 @@ describe('Compute Job sensitive data encryption migration', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0024_compute_job_file_evidence.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0025_managed_file_version_foundation.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       client.$queryRaw<
         Array<{ command: string; sensitiveDataEncrypted: boolean | null }>

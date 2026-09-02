@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createProjectDbClient } from '../projects/prisma-client'
 import { adaptMigrationOperationsForCurrentSchema } from './legacy-baseline-adapter'
+import { migrationSqlExecutor } from './migration-sql-executor'
 import { RUNTIME_SCHEMA_TABLE_DDL_BY_NAME } from './migrations/0001-runtime-schema-baseline'
 import { databaseJsonConstraintsMigration } from './migrations/0008-database-json-constraints'
 import { applySqliteMigrationOperations } from './sqlite-schema-migrations'
@@ -421,6 +422,40 @@ describe('application database migrations', () => {
     await migrateApplicationDatabase(client)
 
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
+  })
+
+  it('uses quick integrity checks only for an already-current startup', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-integrity-policy-'))
+    client = createProjectDbClient(storageRoot)
+    const query = vi.spyOn(migrationSqlExecutor, 'query')
+    const integrityPragmas = (): string[] =>
+      query.mock.calls
+        .map(([, statement]) => statement)
+        .filter((statement) => /^PRAGMA (?:quick_check|integrity_check)$/u.test(statement))
+
+    try {
+      await migrateApplicationDatabase(client)
+      expect(integrityPragmas()).toContain('PRAGMA integrity_check')
+
+      query.mockClear()
+      await migrateApplicationDatabase(client)
+      expect(integrityPragmas()).toEqual(['PRAGMA quick_check'])
+
+      query.mockClear()
+      await migrateApplicationDatabaseWithManifest(client, [
+        ...MIGRATION_MANIFEST,
+        futureTestMigration()
+      ])
+      expect(integrityPragmas()).toContain('PRAGMA integrity_check')
+      expect(integrityPragmas()).not.toContain('PRAGMA quick_check')
+
+      query.mockClear()
+      await verifyCurrentApplicationSchema(client)
+      expect(integrityPragmas()).toContain('PRAGMA integrity_check')
+      expect(integrityPragmas()).not.toContain('PRAGMA quick_check')
+    } finally {
+      query.mockRestore()
+    }
   })
 
   it('rejects the obsolete pre-release agent memory ledger without rewriting it', async () => {
@@ -947,7 +982,7 @@ describe('application database migrations', () => {
     expect(backupEvents).toEqual([])
   })
 
-  it('creates recovery snapshots while retaining only the newest two for a ledger database', async () => {
+  it('creates one recovery snapshot for a ledger migration batch', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-agent-context-backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
     const backupPath = `${databasePath}.before-0002_project_agent_context.backup`
@@ -1011,163 +1046,12 @@ describe('application database migrations', () => {
         migrationId: '0002_project_agent_context',
         path: backupPath,
         reused: false
-      },
-      {
-        migrationId: '0003_granted_local_roots',
-        path: `${databasePath}.before-0003_granted_local_roots.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0004_review_assessment_snapshots',
-        path: `${databasePath}.before-0004_review_assessment_snapshots.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0005_project_preview_state_owner_fk',
-        path: `${databasePath}.before-0005_project_preview_state_owner_fk.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0006_database_domain_constraints',
-        path: `${databasePath}.before-0006_database_domain_constraints.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0007_notification_attention_metadata',
-        path: `${databasePath}.before-0007_notification_attention_metadata.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0008_database_json_constraints',
-        path: `${databasePath}.before-0008_database_json_constraints.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0009_vision_evidence',
-        path: `${databasePath}.before-0009_vision_evidence.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0010_compute_password_auth',
-        path: `${databasePath}.before-0010_compute_password_auth.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0011_cross_resource_tags',
-        path: `${databasePath}.before-0011_cross_resource_tags.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0012_tag_ordering',
-        path: `${databasePath}.before-0012_tag_ordering.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0013_session_projection',
-        path: `${databasePath}.before-0013_session_projection.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0014_review_query_indexes',
-        path: `${databasePath}.before-0014_review_query_indexes.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0015_session_model_call_usage',
-        path: `${databasePath}.before-0015_session_model_call_usage.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0016_compute_job_sensitive_data_encryption',
-        path: `${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0017_agent_memory_project_scope',
-        path: `${databasePath}.before-0017_agent_memory_project_scope.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0018_session_auxiliary_turn_usage',
-        path: `${databasePath}.before-0018_session_auxiliary_turn_usage.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0019_session_usage_attribution',
-        path: `${databasePath}.before-0019_session_usage_attribution.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0020_compute_job_analysis_state',
-        path: `${databasePath}.before-0020_compute_job_analysis_state.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0021_compute_job_analysis_constraints',
-        path: `${databasePath}.before-0021_compute_job_analysis_constraints.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0022_memory_global_content_unique',
-        path: `${databasePath}.before-0022_memory_global_content_unique.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0023_compute_job_operation',
-        path: `${databasePath}.before-0023_compute_job_operation.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0024_compute_job_file_evidence',
-        path: `${databasePath}.before-0024_compute_job_file_evidence.backup`,
-        reused: false
-      },
-      expect.objectContaining({
-        migrationId: '0025_managed_file_version_foundation',
-        path: `${databasePath}.before-0025_managed_file_version_foundation.backup`,
-        reused: false
-      })
+      }
     ])
-    await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(`${databasePath}.before-0012_tag_ordering.backup`)).rejects.toMatchObject({
-      code: 'ENOENT'
-    })
+    await expect(access(backupPath)).resolves.toBeUndefined()
     await expect(
-      access(`${databasePath}.before-0011_cross_resource_tags.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0013_session_projection.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0014_review_query_indexes.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0015_session_model_call_usage.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0017_agent_memory_project_scope.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0018_session_auxiliary_turn_usage.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0021_compute_job_analysis_constraints.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0022_memory_global_content_unique.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0023_compute_job_operation.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0024_compute_job_file_evidence.backup`)
-    ).resolves.toBeUndefined()
-    await expect(
-      access(`${databasePath}.before-0025_managed_file_version_foundation.backup`)
-    ).resolves.toBeUndefined()
+      readdir(storageRoot).then((entries) => entries.filter((entry) => entry.endsWith('.backup')))
+    ).resolves.toEqual(['open-science.db.before-0002_project_agent_context.backup'])
     await expect(
       client.$queryRaw<Array<{ agentContext: string; name: string }>>`
         SELECT "agentContext", "name" FROM "Project" WHERE "id" = 'project-1'
@@ -2002,23 +1886,10 @@ describe('application database migrations', () => {
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
 
-  it('retains only the two newest restorable snapshots after adopting a legacy database', async () => {
+  it('retains one restorable snapshot after adopting a legacy database', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
     const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
-    const agentContextBackupPath = `${databasePath}.before-0002_project_agent_context.backup`
-    const visionEvidenceBackupPath = `${databasePath}.before-0009_vision_evidence.backup`
-    const computePasswordAuthBackupPath = `${databasePath}.before-0010_compute_password_auth.backup`
-    const crossResourceTagsBackupPath = `${databasePath}.before-0011_cross_resource_tags.backup`
-    const tagOrderingBackupPath = `${databasePath}.before-0012_tag_ordering.backup`
-    const sessionProjectionBackupPath = `${databasePath}.before-0013_session_projection.backup`
-    const reviewQueryIndexesBackupPath = `${databasePath}.before-0014_review_query_indexes.backup`
-    const modelCallUsageBackupPath = `${databasePath}.before-0015_session_model_call_usage.backup`
-    const computeJobEncryptionBackupPath = `${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`
-    const agentMemoryBackupPath = `${databasePath}.before-0017_agent_memory_project_scope.backup`
-    const auxiliaryUsageBackupPath = `${databasePath}.before-0018_session_auxiliary_turn_usage.backup`
-    const usageAttributionBackupPath = `${databasePath}.before-0019_session_usage_attribution.backup`
-    const analysisStateBackupPath = `${databasePath}.before-0020_compute_job_analysis_state.backup`
     const backupEvents: unknown[] = []
     client = createProjectDbClient(storageRoot)
     await client.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -2044,206 +1915,24 @@ describe('application database migrations', () => {
       })
     ).resolves.toMatchObject({
       adoptedLegacy: true,
-      applied: [
-        '0001_runtime_schema_baseline',
-        '0002_project_agent_context',
-        '0003_granted_local_roots',
-        '0004_review_assessment_snapshots',
-        '0005_project_preview_state_owner_fk',
-        '0006_database_domain_constraints',
-        '0007_notification_attention_metadata',
-        '0008_database_json_constraints',
-        '0009_vision_evidence',
-        '0010_compute_password_auth',
-        '0011_cross_resource_tags',
-        '0012_tag_ordering',
-        '0013_session_projection',
-        '0014_review_query_indexes',
-        '0015_session_model_call_usage',
-        '0016_compute_job_sensitive_data_encryption',
-        '0017_agent_memory_project_scope',
-        '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution',
-        '0020_compute_job_analysis_state',
-        '0021_compute_job_analysis_constraints',
-        '0022_memory_global_content_unique',
-        '0023_compute_job_operation',
-        '0024_compute_job_file_evidence',
-        '0025_managed_file_version_foundation'
-      ]
+      applied: MIGRATION_MANIFEST.map(({ id }) => id)
     })
     expect(backupEvents).toEqual([
       {
         migrationId: '0001_runtime_schema_baseline',
         path: backupPath,
         reused: false
-      },
-      {
-        migrationId: '0002_project_agent_context',
-        path: agentContextBackupPath,
-        reused: false
-      },
-      {
-        migrationId: '0003_granted_local_roots',
-        path: `${databasePath}.before-0003_granted_local_roots.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0004_review_assessment_snapshots',
-        path: `${databasePath}.before-0004_review_assessment_snapshots.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0005_project_preview_state_owner_fk',
-        path: `${databasePath}.before-0005_project_preview_state_owner_fk.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0006_database_domain_constraints',
-        path: `${databasePath}.before-0006_database_domain_constraints.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0007_notification_attention_metadata',
-        path: `${databasePath}.before-0007_notification_attention_metadata.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0008_database_json_constraints',
-        path: `${databasePath}.before-0008_database_json_constraints.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0009_vision_evidence',
-        path: `${databasePath}.before-0009_vision_evidence.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0010_compute_password_auth',
-        path: `${databasePath}.before-0010_compute_password_auth.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0011_cross_resource_tags',
-        path: `${databasePath}.before-0011_cross_resource_tags.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0012_tag_ordering',
-        path: `${databasePath}.before-0012_tag_ordering.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0013_session_projection',
-        path: sessionProjectionBackupPath,
-        reused: false
-      },
-      {
-        migrationId: '0014_review_query_indexes',
-        path: reviewQueryIndexesBackupPath,
-        reused: false
-      },
-      {
-        migrationId: '0015_session_model_call_usage',
-        path: modelCallUsageBackupPath,
-        reused: false
-      },
-      {
-        migrationId: '0016_compute_job_sensitive_data_encryption',
-        path: computeJobEncryptionBackupPath,
-        reused: false
-      },
-      {
-        migrationId: '0017_agent_memory_project_scope',
-        path: agentMemoryBackupPath,
-        reused: false
-      },
-      {
-        migrationId: '0018_session_auxiliary_turn_usage',
-        path: auxiliaryUsageBackupPath,
-        reused: false
-      },
-      {
-        migrationId: '0019_session_usage_attribution',
-        path: usageAttributionBackupPath,
-        reused: false
-      },
-      {
-        migrationId: '0020_compute_job_analysis_state',
-        path: analysisStateBackupPath,
-        reused: false
-      },
-      {
-        migrationId: '0021_compute_job_analysis_constraints',
-        path: `${databasePath}.before-0021_compute_job_analysis_constraints.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0022_memory_global_content_unique',
-        path: `${databasePath}.before-0022_memory_global_content_unique.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0023_compute_job_operation',
-        path: `${databasePath}.before-0023_compute_job_operation.backup`,
-        reused: false
-      },
-      {
-        migrationId: '0024_compute_job_file_evidence',
-        path: `${databasePath}.before-0024_compute_job_file_evidence.backup`,
-        reused: false
-      },
-      expect.objectContaining({
-        migrationId: '0025_managed_file_version_foundation',
-        path: `${databasePath}.before-0025_managed_file_version_foundation.backup`,
-        reused: false
-      })
+      }
     ])
     await expect(
       readdir(storageRoot).then((entries) =>
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
-    ).resolves.toEqual([
-      'open-science.db.before-0024_compute_job_file_evidence.backup',
-      'open-science.db.before-0025_managed_file_version_foundation.backup'
-    ])
-    await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(agentContextBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(visionEvidenceBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(computePasswordAuthBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(crossResourceTagsBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(tagOrderingBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(sessionProjectionBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(reviewQueryIndexesBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(modelCallUsageBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(computeJobEncryptionBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(agentMemoryBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(auxiliaryUsageBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(usageAttributionBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(analysisStateBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0021_compute_job_analysis_constraints.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0022_memory_global_content_unique.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0023_compute_job_operation.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      access(`${databasePath}.before-0024_compute_job_file_evidence.backup`)
-    ).resolves.toBeUndefined()
-    await expect(
-      access(`${databasePath}.before-0025_managed_file_version_foundation.backup`)
-    ).resolves.toBeUndefined()
+    ).resolves.toEqual(['open-science.db.before-0001_runtime_schema_baseline.backup'])
     await expect(client.project.count()).resolves.toBe(1)
 
     const backupClient = new PrismaClient({
-      datasources: {
-        db: {
-          url: `file:${`${databasePath}.before-0024_compute_job_file_evidence.backup`.replaceAll('\\', '/')}`
-        }
-      }
+      datasources: { db: { url: `file:${backupPath.replaceAll('\\', '/')}` } }
     })
     try {
       await expect(
@@ -2252,10 +1941,10 @@ describe('application database migrations', () => {
         `
       ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])
       await expect(
-        backupClient.$queryRaw<Array<{ id: string }>>`
-          SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
+        backupClient.$queryRaw<Array<{ name: string }>>`
+          SELECT "name" FROM "sqlite_schema" WHERE "name" = '_open_science_migrations'
         `
-      ).resolves.toEqual([{ id: '0023_compute_job_operation' }])
+      ).resolves.toEqual([])
     } finally {
       await backupClient.$disconnect()
     }
@@ -2311,6 +2000,73 @@ describe('application database migrations', () => {
     expect(backupEvents).toEqual([
       expect.objectContaining({ reused: false }),
       expect.objectContaining({ reused: true })
+    ])
+  })
+
+  it('starts a new backup batch when a later migration is retried', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-backup-partial-retry-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupEvents: Array<{ migrationId: string; reused: boolean }> = []
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+
+    const firstId = '0026_test_batch_start'
+    const firstStatements = [`UPDATE "Project" SET "name" = "name" WHERE 0`] as const
+    const firstVerifiers = [{ kind: 'table-exists', version: 1, table: 'Project' }] as const
+    const first = {
+      id: firstId,
+      statements: firstStatements,
+      verifiers: firstVerifiers,
+      checksum: checksumMigrationPayload(firstId, firstStatements, firstVerifiers),
+      backupOnApply: 'required' as const,
+      backupRetention: 'retain' as const
+    }
+    const secondId = '0027_test_batch_failure'
+    const secondStatements = [
+      `CREATE TABLE "MigrationSuffixProbe" ("id" TEXT NOT NULL PRIMARY KEY)`
+    ] as const
+    const secondVerifiers = [
+      { kind: 'table-exists', version: 1, table: 'MissingMigrationSuffixProbe' }
+    ] as const
+    const second = {
+      id: secondId,
+      statements: secondStatements,
+      verifiers: secondVerifiers,
+      checksum: checksumMigrationPayload(secondId, secondStatements, secondVerifiers),
+      backupOnApply: 'required' as const,
+      backupRetention: 'retain' as const
+    }
+    const manifest = [...MIGRATION_MANIFEST, first, second]
+    const options = {
+      databasePath,
+      onBackupReady: (event: { migrationId: string; reused: boolean }): void => {
+        backupEvents.push(event)
+      }
+    }
+
+    await expect(
+      migrateApplicationDatabaseWithManifest(client, manifest, options)
+    ).rejects.toMatchObject({ migrationId: secondId })
+    await expect(
+      migrateApplicationDatabaseWithManifest(client, manifest, options)
+    ).rejects.toMatchObject({ migrationId: secondId })
+
+    expect(backupEvents).toEqual([
+      expect.objectContaining({ migrationId: firstId, reused: false }),
+      expect.objectContaining({ migrationId: secondId, reused: false })
+    ])
+    await expect(
+      client.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "_open_science_migrations" WHERE "id" = ${firstId}
+      `
+    ).resolves.toEqual([{ id: firstId }])
+    await expect(
+      readdir(storageRoot).then((entries) =>
+        entries.filter((entry) => entry.endsWith('.backup')).sort()
+      )
+    ).resolves.toEqual([
+      `open-science.db.before-${firstId}.backup`,
+      `open-science.db.before-${secondId}.backup`
     ])
   })
 
@@ -2571,11 +2327,10 @@ describe('application database migrations', () => {
     await expect(access(temporaryBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('backs up a legacy database before deleting the snapshot after a successful migration', async () => {
+  it('deletes the migration-batch snapshot after a successful migration when requested', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-retired-backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
     const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
-    const agentContextBackupPath = `${databasePath}.before-0002_project_agent_context.backup`
     client = createProjectDbClient(storageRoot)
     await client.$executeRawUnsafe(`CREATE TABLE "Project" (
       "id" TEXT NOT NULL PRIMARY KEY,
@@ -2604,235 +2359,18 @@ describe('application database migrations', () => {
     })
 
     expect(ready).toEqual([
-      expect.objectContaining({
+      {
         migrationId: '0001_runtime_schema_baseline',
         path: backupPath,
         reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0002_project_agent_context',
-        path: agentContextBackupPath,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0003_granted_local_roots',
-        path: `${databasePath}.before-0003_granted_local_roots.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0004_review_assessment_snapshots',
-        path: `${databasePath}.before-0004_review_assessment_snapshots.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0005_project_preview_state_owner_fk',
-        path: `${databasePath}.before-0005_project_preview_state_owner_fk.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0006_database_domain_constraints',
-        path: `${databasePath}.before-0006_database_domain_constraints.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0007_notification_attention_metadata',
-        path: `${databasePath}.before-0007_notification_attention_metadata.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0008_database_json_constraints',
-        path: `${databasePath}.before-0008_database_json_constraints.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0009_vision_evidence',
-        path: `${databasePath}.before-0009_vision_evidence.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0010_compute_password_auth',
-        path: `${databasePath}.before-0010_compute_password_auth.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0011_cross_resource_tags',
-        path: `${databasePath}.before-0011_cross_resource_tags.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0012_tag_ordering',
-        path: `${databasePath}.before-0012_tag_ordering.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0013_session_projection',
-        path: `${databasePath}.before-0013_session_projection.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0014_review_query_indexes',
-        path: `${databasePath}.before-0014_review_query_indexes.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0015_session_model_call_usage',
-        path: `${databasePath}.before-0015_session_model_call_usage.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0016_compute_job_sensitive_data_encryption',
-        path: `${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0017_agent_memory_project_scope',
-        path: `${databasePath}.before-0017_agent_memory_project_scope.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0018_session_auxiliary_turn_usage',
-        path: `${databasePath}.before-0018_session_auxiliary_turn_usage.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0019_session_usage_attribution',
-        path: `${databasePath}.before-0019_session_usage_attribution.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0020_compute_job_analysis_state',
-        path: `${databasePath}.before-0020_compute_job_analysis_state.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0021_compute_job_analysis_constraints',
-        path: `${databasePath}.before-0021_compute_job_analysis_constraints.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0022_memory_global_content_unique',
-        path: `${databasePath}.before-0022_memory_global_content_unique.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0023_compute_job_operation',
-        path: `${databasePath}.before-0023_compute_job_operation.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0024_compute_job_file_evidence',
-        path: `${databasePath}.before-0024_compute_job_file_evidence.backup`,
-        reused: false
-      }),
-      expect.objectContaining({
-        migrationId: '0025_managed_file_version_foundation',
-        path: `${databasePath}.before-0025_managed_file_version_foundation.backup`,
-        reused: false
-      })
-    ])
-    expect(retired).toEqual([
-      { migrationId: '0001_runtime_schema_baseline', path: backupPath },
-      { migrationId: '0002_project_agent_context', path: agentContextBackupPath },
-      {
-        migrationId: '0003_granted_local_roots',
-        path: `${databasePath}.before-0003_granted_local_roots.backup`
-      },
-      {
-        migrationId: '0004_review_assessment_snapshots',
-        path: `${databasePath}.before-0004_review_assessment_snapshots.backup`
-      },
-      {
-        migrationId: '0005_project_preview_state_owner_fk',
-        path: `${databasePath}.before-0005_project_preview_state_owner_fk.backup`
-      },
-      {
-        migrationId: '0006_database_domain_constraints',
-        path: `${databasePath}.before-0006_database_domain_constraints.backup`
-      },
-      {
-        migrationId: '0007_notification_attention_metadata',
-        path: `${databasePath}.before-0007_notification_attention_metadata.backup`
-      },
-      {
-        migrationId: '0008_database_json_constraints',
-        path: `${databasePath}.before-0008_database_json_constraints.backup`
-      },
-      {
-        migrationId: '0009_vision_evidence',
-        path: `${databasePath}.before-0009_vision_evidence.backup`
-      },
-      {
-        migrationId: '0010_compute_password_auth',
-        path: `${databasePath}.before-0010_compute_password_auth.backup`
-      },
-      {
-        migrationId: '0011_cross_resource_tags',
-        path: `${databasePath}.before-0011_cross_resource_tags.backup`
-      },
-      {
-        migrationId: '0012_tag_ordering',
-        path: `${databasePath}.before-0012_tag_ordering.backup`
-      },
-      {
-        migrationId: '0013_session_projection',
-        path: `${databasePath}.before-0013_session_projection.backup`
-      },
-      {
-        migrationId: '0014_review_query_indexes',
-        path: `${databasePath}.before-0014_review_query_indexes.backup`
-      },
-      {
-        migrationId: '0015_session_model_call_usage',
-        path: `${databasePath}.before-0015_session_model_call_usage.backup`
-      },
-      {
-        migrationId: '0016_compute_job_sensitive_data_encryption',
-        path: `${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`
-      },
-      {
-        migrationId: '0017_agent_memory_project_scope',
-        path: `${databasePath}.before-0017_agent_memory_project_scope.backup`
-      },
-      {
-        migrationId: '0018_session_auxiliary_turn_usage',
-        path: `${databasePath}.before-0018_session_auxiliary_turn_usage.backup`
-      },
-      {
-        migrationId: '0019_session_usage_attribution',
-        path: `${databasePath}.before-0019_session_usage_attribution.backup`
-      },
-      {
-        migrationId: '0020_compute_job_analysis_state',
-        path: `${databasePath}.before-0020_compute_job_analysis_state.backup`
-      },
-      {
-        migrationId: '0021_compute_job_analysis_constraints',
-        path: `${databasePath}.before-0021_compute_job_analysis_constraints.backup`
-      },
-      {
-        migrationId: '0022_memory_global_content_unique',
-        path: `${databasePath}.before-0022_memory_global_content_unique.backup`
-      },
-      {
-        migrationId: '0023_compute_job_operation',
-        path: `${databasePath}.before-0023_compute_job_operation.backup`
-      },
-      {
-        migrationId: '0024_compute_job_file_evidence',
-        path: `${databasePath}.before-0024_compute_job_file_evidence.backup`
-      },
-      {
-        migrationId: '0025_managed_file_version_foundation',
-        path: `${databasePath}.before-0025_managed_file_version_foundation.backup`
       }
     ])
+    expect(retired).toEqual([{ migrationId: '0001_runtime_schema_baseline', path: backupPath }])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(access(agentContextBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       client.$queryRaw<Array<{ id: string; name: string }>>`SELECT "id", "name" FROM "Project"`
     ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])
   })
-
   it('prunes historical retained backups to the newest two without deleting an unknown backup', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-bounded-backups-'))
     const databasePath = join(storageRoot, 'open-science.db')

@@ -91,7 +91,7 @@ describe('notification attention metadata migration', () => {
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
+    ).resolves.toBeUndefined()
     await expect(
       access(`${databasePath}.before-0011_cross_resource_tags.backup`)
     ).rejects.toMatchObject({ code: 'ENOENT' })
@@ -127,10 +127,10 @@ describe('notification attention metadata migration', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0024_compute_job_file_evidence.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0025_managed_file_version_foundation.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
 
     await expect(
       client.$queryRaw<

@@ -552,6 +552,8 @@ type LegacySchemaExtensions = {
   columns?: Readonly<Record<string, readonly string[]>>
 }
 
+type RuntimeSchemaIntegrityCheck = 'quick' | 'full'
+
 const classifyLegacySchema = async (
   client: PrismaClient,
   extensions: LegacySchemaExtensions = {}
@@ -677,7 +679,8 @@ const verifyRuntimeSchemaTarget = async (
   target: RuntimeSchemaTarget,
   exact: boolean = false,
   allowedSuffixChecks: AllowedSuffixCheckConstraints = {},
-  extensions: RuntimeSchemaExtensions = {}
+  extensions: RuntimeSchemaExtensions = {},
+  integrityCheck: RuntimeSchemaIntegrityCheck = 'full'
 ): Promise<void> => {
   const tables = await migrationSqlExecutor.query<SqliteSchemaName[]>(
     client,
@@ -1008,15 +1011,16 @@ const verifyRuntimeSchemaTarget = async (
     }
   }
 
-  const integrityRows = await migrationSqlExecutor.query<Array<{ integrity_check: string }>>(
+  const pragma = integrityCheck === 'full' ? 'integrity_check' : 'quick_check'
+  const integrityRows = await migrationSqlExecutor.query<Array<Record<string, string>>>(
     client,
-    'PRAGMA integrity_check'
+    `PRAGMA ${pragma}`
   )
-  if (integrityRows.length !== 1 || integrityRows[0]?.integrity_check !== 'ok') {
-    throw new DatabaseValidationError(
-      'Database baseline verification failed SQLite integrity_check.',
-      { kind: 'integrity-check-failed', actual: integrityRows }
-    )
+  if (integrityRows.length !== 1 || integrityRows[0]?.[pragma] !== 'ok') {
+    throw new DatabaseValidationError(`Database baseline verification failed SQLite ${pragma}.`, {
+      kind: 'integrity-check-failed',
+      actual: integrityRows
+    })
   }
 }
 
@@ -1033,8 +1037,10 @@ const normalizeSchemaObjectSql = (value: string | null): string | null =>
 
 const verifyCurrentRuntimeSchema = (
   client: PrismaClient,
-  extensions: RuntimeSchemaExtensions = {}
-): Promise<void> => verifyRuntimeSchemaTarget(client, CURRENT_SCHEMA_TARGET, true, {}, extensions)
+  extensions: RuntimeSchemaExtensions = {},
+  integrityCheck: RuntimeSchemaIntegrityCheck = 'full'
+): Promise<void> =>
+  verifyRuntimeSchemaTarget(client, CURRENT_SCHEMA_TARGET, true, {}, extensions, integrityCheck)
 
 const verifyCurrentRuntimeSchemaTables = (
   client: PrismaClient,
@@ -1138,5 +1144,6 @@ export {
 export type {
   AdaptedMigrationOperations,
   AllowedSuffixCheckConstraints,
-  PreparedRuntimeSchemaBaseline
+  PreparedRuntimeSchemaBaseline,
+  RuntimeSchemaIntegrityCheck
 }

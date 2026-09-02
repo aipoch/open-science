@@ -827,7 +827,7 @@ describe('application database (integration)', () => {
   it('backs up legacy data through the shared client on a portable storage path', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0025_managed_file_version_foundation.backup`
+    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
     const seedClient = createProjectDbClient(storageRoot)
     try {
       await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -864,10 +864,10 @@ describe('application database (integration)', () => {
         `
       ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])
       await expect(
-        backupClient.$queryRaw<Array<{ id: string }>>`
-          SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
+        backupClient.$queryRaw<Array<{ name: string }>>`
+          SELECT "name" FROM "sqlite_schema" WHERE "name" = '_open_science_migrations'
         `
-      ).resolves.toEqual([{ id: '0024_compute_job_file_evidence' }])
+      ).resolves.toEqual([])
     } finally {
       await backupClient.$disconnect()
     }
