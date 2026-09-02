@@ -2276,7 +2276,7 @@ describe('notebook local RPC server', () => {
       token: 'secret-token',
       agentsService: { read: agentsRead },
       inputRegistry: {
-        registerTurn: vi.fn(async () => undefined),
+        registerTurn: vi.fn(async () => []),
         getTurnInputs: vi.fn(() => [
           {
             inputFileVersionId: 'upload-version-1',
@@ -3050,7 +3050,7 @@ describe('notebook local RPC server', () => {
       transport: 'tcp',
       token: 'secret-token',
       inputRegistry: {
-        registerTurn: async () => undefined,
+        registerTurn: async () => [],
         getTurnInputs: () => [registeredInput],
         openRun,
         clearSession: () => undefined
@@ -3438,7 +3438,7 @@ describe('notebook local RPC server', () => {
       transport: 'tcp',
       token: 'secret-token',
       inputRegistry: {
-        registerTurn: vi.fn().mockResolvedValue(undefined),
+        registerTurn: vi.fn().mockResolvedValue([]),
         getTurnInputs: () => [registeredInput],
         openRun: vi.fn().mockResolvedValue({
           getRunInputFiles: () => [registeredInput],

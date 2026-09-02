@@ -70,7 +70,7 @@ import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
-import type { NotebookExecutionRpcMethod } from '../../shared/notebook'
+import type { NotebookExecutionRpcMethod, NotebookPromptInput } from '../../shared/notebook'
 import type { SkillImportRpcConnection } from '../skills/mcp-server'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
@@ -367,7 +367,7 @@ type AcpRuntimeNotebookOptions = {
     promptMessageId: string
     uploads: UploadedAttachment[]
     references: FileReference[]
-  }) => Promise<void>
+  }) => Promise<readonly NotebookPromptInput[] | void>
   peekHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
 }
 

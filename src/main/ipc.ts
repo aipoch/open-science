@@ -893,6 +893,7 @@ const createApplicationModules = async (
     uploadRepository
   )
   const notebookInputRegistry = new NotebookInputRegistry({
+    storageRoot: resolveDataRoot(),
     inputAuthority: immutableInputAuthority,
     resolveArtifactVersionIdentity: async (projectId, versionId) => {
       const [artifact] = await projectFilesRepository.readHostArtifactCatalog({

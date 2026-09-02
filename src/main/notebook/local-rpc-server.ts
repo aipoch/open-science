@@ -1353,9 +1353,11 @@ class NotebookLocalRpcServer {
     this.consumedExecutionToolCalls.delete(sessionId)
   }
 
-  async registerNotebookTurnInputs(request: RegisterNotebookTurnInputsRequest): Promise<void> {
-    if (!this.inputRegistry) return
-    await this.inputRegistry.registerTurn(request)
+  async registerNotebookTurnInputs(
+    request: RegisterNotebookTurnInputsRequest
+  ): ReturnType<NotebookInputRegistry['registerTurn']> {
+    if (!this.inputRegistry) return []
+    return this.inputRegistry.registerTurn(request)
   }
 
   private acquireArtifactRpcRequest(

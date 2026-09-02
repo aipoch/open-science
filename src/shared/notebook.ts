@@ -292,6 +292,15 @@ export type NotebookRunInputFile = {
 
 export type NotebookInputFileSummary = Omit<NotebookRunInputFile, 'storageKey'>
 
+// Transient model-facing projection of one exact Notebook input Version. The relative path is
+// materialized under the current Notebook data directory and is never persisted in run history.
+export type NotebookPromptInput = Pick<
+  NotebookRunInputFile,
+  'sourceKind' | 'inputFileVersionId' | 'filename'
+> & {
+  notebookPath: string
+}
+
 export type NotebookInputPreviewIdentity = {
   projectId: string
   sourceKind: NotebookRunInputFile['sourceKind']

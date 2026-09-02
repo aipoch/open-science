@@ -10,6 +10,7 @@ import type {
 } from '../../shared/acp'
 import type { FileReference } from '../../shared/artifacts'
 import type { MessagePart } from '../../shared/session-persistence'
+import type { NotebookPromptInput } from '../../shared/notebook'
 import type { AgentFrameworkId } from '../../shared/settings'
 import {
   toPersistedUploadedAttachment,
@@ -70,7 +71,7 @@ type NativeFollowUpRegisterTurnInputs = (request: {
   promptMessageId: string
   uploads: UploadedAttachment[]
   references: FileReference[]
-}) => Promise<void>
+}) => Promise<readonly NotebookPromptInput[] | void>
 
 type NativeFollowUpLivePrompt = Readonly<{
   turnToken: string
