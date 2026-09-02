@@ -8,6 +8,10 @@ import {
   type UsageChild
 } from '../../shared/storage'
 import { logicalEnvNameFromDirectory } from '../notebook/runtime-paths'
+import {
+  MANAGED_WORKSPACE_OWNERSHIP_DIR,
+  readManagedWorkspaceOwnership
+} from './managed-workspace-ownership'
 
 const isMissingPathError = (error: unknown): boolean => {
   const code = (error as NodeJS.ErrnoException)?.code
@@ -77,7 +81,25 @@ const workspaceUsage = async (dir: string): Promise<{ bytes: number; children: U
     if (entry.isSymbolicLink()) continue
     const path = join(dir, entry.name)
     if (entry.isDirectory()) {
-      children.push({ name: entry.name, bytes: await dirSize(path, seen) })
+      if (entry.name === MANAGED_WORKSPACE_OWNERSHIP_DIR) {
+        looseBytes += await dirSize(path, seen)
+        continue
+      }
+      const ownership = await readManagedWorkspaceOwnership(path, join(dir, '..'))
+      children.push({
+        name: entry.name,
+        bytes: await dirSize(path, seen),
+        ...(ownership
+          ? {
+              workspaceId: ownership.workspaceId,
+              projectId: ownership.projectId,
+              ...(ownership.sessionId ? { sessionId: ownership.sessionId } : {}),
+              createdAt: ownership.createdAt,
+              lastUsedAt: ownership.lastUsedAt,
+              retainedAfterDelete: ownership.retainedAfterDelete
+            }
+          : {})
+      })
     } else if (entry.isFile()) {
       looseBytes += await fileSize(path, seen)
     }

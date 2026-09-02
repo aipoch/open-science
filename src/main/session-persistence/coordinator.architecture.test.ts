@@ -491,7 +491,8 @@ describe('Session persistence coordinator architecture', () => {
       'log:defaulted',
       'computeJobs:optional',
       'onDelegatedWorkSessionUpdated:optional',
-      'onDelegationPolicyUpdated:optional'
+      'onDelegationPolicyUpdated:optional',
+      'workspaceOwnership:optional'
     ])
     expect(exportedNames(facadeFile, 'value')).toEqual(
       ['SessionPersistenceCoordinator', 'SessionRuntimeContextRevisionConflictError'].sort()
@@ -576,7 +577,8 @@ describe('Session persistence coordinator architecture', () => {
         'provenance',
         'repository',
         'stateOwner',
-        'uploads'
+        'uploads',
+        'workspaceOwnership'
       ].sort()
     )
     expect(fields(reconciliationOwner)).toEqual(

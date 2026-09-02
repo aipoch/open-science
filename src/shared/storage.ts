@@ -11,7 +11,16 @@ export const STORAGE_USAGE_CATEGORY_KEYS = [
   'workspaces'
 ] as const
 export type UsageCategoryKey = (typeof STORAGE_USAGE_CATEGORY_KEYS)[number]
-export type UsageChild = { name: string; bytes: number }
+export type UsageChild = {
+  name: string
+  bytes: number
+  workspaceId?: string
+  projectId?: string
+  sessionId?: string
+  createdAt?: number
+  lastUsedAt?: number
+  retainedAfterDelete?: boolean
+}
 export type UsageCategory = { key: UsageCategoryKey; bytes: number; children?: UsageChild[] }
 export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
 

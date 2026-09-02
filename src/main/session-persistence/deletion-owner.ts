@@ -97,6 +97,13 @@ type ComputeJobDeletionParticipant = {
   abortProjectJobDeletion?(projectId: string): Promise<void>
 }
 
+type SessionWorkspaceOwnership = {
+  markRetained(
+    session: Pick<PersistedChatSession, 'cwd' | 'projectId' | 'id' | 'createdAt' | 'updatedAt'>
+  ): Promise<boolean>
+  restoreActive(session: Pick<PersistedChatSession, 'cwd' | 'projectId' | 'id'>): Promise<void>
+}
+
 type SessionPersistenceDeletionOwnerOptions = {
   repository: SessionDeletionRepository
   fileIndex: SessionDeletionFileIndex
@@ -104,6 +111,7 @@ type SessionPersistenceDeletionOwnerOptions = {
   provenance?: SessionDeletionProvenance
   uploads?: SessionDeletionUploads
   computeJobs?: ComputeJobDeletionParticipant
+  workspaceOwnership?: SessionWorkspaceOwnership
   log: Logger
   assertArchiveMutable(projectId: string, sessionId: string): void
   notifyFilesChanged(event: ProjectFilesChangedEvent): void
@@ -138,6 +146,7 @@ class SessionPersistenceDeletionOwner {
   private readonly provenance: SessionDeletionProvenance | undefined
   private readonly uploads: SessionDeletionUploads | undefined
   private readonly computeJobs: ComputeJobDeletionParticipant | undefined
+  private readonly workspaceOwnership: SessionWorkspaceOwnership | undefined
   private readonly log: Logger
   private readonly assertArchiveMutable: (projectId: string, sessionId: string) => void
   private readonly notifyFilesChanged: (event: ProjectFilesChangedEvent) => void
@@ -150,6 +159,7 @@ class SessionPersistenceDeletionOwner {
     this.provenance = options.provenance
     this.uploads = options.uploads
     this.computeJobs = options.computeJobs
+    this.workspaceOwnership = options.workspaceOwnership
     this.log = options.log
     this.assertArchiveMutable = options.assertArchiveMutable
     this.notifyFilesChanged = options.notifyFilesChanged
@@ -337,6 +347,11 @@ class SessionPersistenceDeletionOwner {
             if (cleanup.hasUnsafeResidual) this.fileIndex.markReconciliationIncomplete()
           }
         }
+        if (this.workspaceOwnership) {
+          for (const session of scan.sessions) {
+            await this.workspaceOwnership.markRetained(session)
+          }
+        }
         if (deletionState === 'legacy-committed') {
           await this.repository.markCommittedProjectSessionsPrepared(projectId)
         }
@@ -384,6 +399,7 @@ class SessionPersistenceDeletionOwner {
     let receipt: SessionDeletionReceipt = { kind: 'ordinary', projectId, sessionId }
     let jsonDeleted = false
     let computeJobsPrepared = false
+    let managedWorkspaceRetained = false
     let session: PersistedChatSession | undefined
 
     try {
@@ -414,6 +430,11 @@ class SessionPersistenceDeletionOwner {
         failurePhase = 'soft-delete-file-index'
         operation.phase(failurePhase)
         token = await this.fileIndex.softDeleteSession(projectId, sessionId)
+      }
+      if (session) {
+        failurePhase = 'retain-managed-workspace'
+        operation.phase(failurePhase)
+        managedWorkspaceRetained = (await this.workspaceOwnership?.markRetained(session)) ?? false
       }
       failurePhase = 'delete-authority'
       operation.phase(failurePhase)
@@ -452,6 +473,15 @@ class SessionPersistenceDeletionOwner {
             } catch (computeRestoreError) {
               recoveryPhase = 'abort-compute-cleanup'
               recoveryError = computeRestoreError
+              recoveryFailed = true
+            }
+          }
+          if (managedWorkspaceRetained && session) {
+            try {
+              recoveryPhase = 'restore-managed-workspace'
+              await this.workspaceOwnership?.restoreActive(session)
+            } catch (workspaceRestoreError) {
+              recoveryError = workspaceRestoreError
               recoveryFailed = true
             }
           }
@@ -566,6 +596,7 @@ class SessionPersistenceDeletionOwner {
 export { SessionPersistenceDeletionOwner, hasLegacySessionUpload }
 export type {
   ComputeJobDeletionParticipant,
+  SessionWorkspaceOwnership,
   ProjectSessionDeletionResult,
   SessionPersistenceDeletionOwnerOptions
 }

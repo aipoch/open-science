@@ -357,6 +357,10 @@ import {
 } from './storage/migration-state'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import { DataRootCleanupJournal } from './storage/data-root-cleanup'
+import {
+  markManagedWorkspaceRetained,
+  restoreManagedWorkspaceActive
+} from './storage/managed-workspace-ownership'
 import { deleteSources } from './storage/data-migration'
 import { removeMicromambaCacheForRoot } from './notebook/micromamba-cache'
 import { removeNotebookWorkloadCache } from './notebook/notebook-workload-cache-paths'
@@ -1027,6 +1031,10 @@ const createApplicationModules = async (
       if (session.delegationPolicy === 'allow') {
         delegatedWorkRef.current?.root.clearUnavailableReason?.(session.id)
       }
+    },
+    {
+      markRetained: markManagedWorkspaceRetained,
+      restoreActive: restoreManagedWorkspaceActive
     }
   )
   const sessionPdfContextOwner = new SessionPdfContextOwner({

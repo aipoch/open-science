@@ -1,0 +1,233 @@
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('electron', () => ({
+  app: { getPath: () => tmpdir(), isPackaged: true }
+}))
+
+import type { PersistedChatSession } from '../../shared/session-persistence'
+import { createAcpCreateSessionWorkflow } from '../acp/create-session-workflow'
+import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-workspace'
+import { SessionPersistenceDeletionOwner } from '../session-persistence/deletion-owner'
+import { initDataRoot } from '../storage-root'
+import {
+  markManagedWorkspaceRetained,
+  restoreManagedWorkspaceActive
+} from './managed-workspace-ownership'
+import { computeStorageUsage } from './usage'
+
+const roots: string[] = []
+
+const createDeletionOwner = (
+  liveSessions: Map<string, PersistedChatSession>,
+  options: { deleteSessionError?: Error } = {}
+): SessionPersistenceDeletionOwner =>
+  new SessionPersistenceDeletionOwner({
+    repository: {
+      getProjectSessionDeletionState: async () => 'live',
+      loadProjectWithDiagnostics: async (projectId: string) => ({
+        sessions: [...liveSessions.values()].filter((session) => session.projectId === projectId),
+        isComplete: true
+      }),
+      loadCommittedProjectWithDiagnostics: async (projectId: string) => ({
+        sessions: [...liveSessions.values()].filter((session) => session.projectId === projectId),
+        isComplete: true
+      }),
+      loadSessionWithDiagnostics: async (_projectId: string, sessionId: string) => ({
+        status: 'found',
+        session: liveSessions.get(sessionId)!
+      }),
+      deleteSession: async (_projectId: string, sessionId: string) => {
+        if (options.deleteSessionError) throw options.deleteSessionError
+        liveSessions.delete(sessionId)
+      },
+      deleteProjectSessions: async (projectId: string) => {
+        for (const [sessionId, session] of liveSessions) {
+          if (session.projectId === projectId) liveSessions.delete(sessionId)
+        }
+      }
+    } as never,
+    fileIndex: {
+      softDeleteSession: vi.fn().mockResolvedValue({}),
+      restoreSession: vi.fn().mockResolvedValue(undefined),
+      softDeleteProject: vi.fn().mockResolvedValue({}),
+      markReconciliationIncomplete: vi.fn()
+    } as never,
+    stateOwner: {
+      metadataSnapshot: () => ({ sessions: [...liveSessions.values()] }),
+      removeProject: vi.fn()
+    } as never,
+    log: {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn()
+    },
+    assertArchiveMutable: vi.fn(),
+    notifyFilesChanged: vi.fn(),
+    notifySessionsDeleted: vi.fn().mockResolvedValue(undefined),
+    workspaceOwnership: {
+      markRetained: (session) => markManagedWorkspaceRetained(session),
+      restoreActive: (session) => restoreManagedWorkspaceActive(session)
+    }
+  })
+
+afterEach(async () => {
+  initDataRoot(undefined)
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+describe('managed workspace ownership', () => {
+  it('keeps Project and Session identity after the live Session record is gone', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-ownership-'))
+    roots.push(dataRoot)
+    initDataRoot(dataRoot)
+    const liveSessions = new Map<string, PersistedChatSession>()
+    const workflow = createAcpCreateSessionWorkflow(
+      {
+        createSession: async (request) => {
+          const now = Date.now()
+          liveSessions.set('session-1', {
+            id: 'session-1',
+            projectId: request.projectId!,
+            title: 'Session',
+            cwd: request.cwd!,
+            status: 'idle',
+            messages: [],
+            createdAt: now,
+            updatedAt: now + 1_000
+          })
+          return { sessionId: 'session-1', cwd: request.cwd }
+        }
+      },
+      {
+        workspaces: createManagedSessionWorkspaceCapability({
+          resolveRoot: () => dataRoot,
+          createId: () => 'workspace-1'
+        }),
+        withDataRootWrite: (write) => write()
+      }
+    )
+
+    await workflow.create({ projectId: 'project-1' })
+    const deletion = createDeletionOwner(liveSessions)
+
+    await deletion.deleteSession('project-1', 'session-1')
+
+    const usage = await computeStorageUsage(dataRoot)
+    const workspace = usage.categories.find(({ key }) => key === 'workspaces')?.children?.[0]
+
+    expect(workspace).toMatchObject({
+      name: 'workspace-1',
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      retainedAfterDelete: true
+    })
+    expect(workspace?.lastUsedAt).toBeGreaterThan(workspace?.createdAt ?? 0)
+    expect(liveSessions).toEqual(new Map())
+  })
+
+  it('backfills a retained receipt from a historical live Session before deleting it', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-backfill-'))
+    roots.push(dataRoot)
+    initDataRoot(dataRoot)
+    const cwd = join(dataRoot, 'workspaces', 'legacy-workspace')
+    await mkdir(cwd, { recursive: true })
+    const liveSessions = new Map<string, PersistedChatSession>([
+      [
+        'legacy-session',
+        {
+          id: 'legacy-session',
+          projectId: 'legacy-project',
+          title: 'Legacy Session',
+          cwd,
+          status: 'idle',
+          messages: [],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      ]
+    ])
+
+    await createDeletionOwner(liveSessions).deleteProjectSessions(
+      'legacy-project',
+      (_sessionIds, operation) => operation()
+    )
+
+    const usage = await computeStorageUsage(dataRoot)
+    expect(usage.categories.find(({ key }) => key === 'workspaces')?.children?.[0]).toMatchObject({
+      name: 'legacy-workspace',
+      workspaceId: 'legacy-workspace',
+      projectId: 'legacy-project',
+      sessionId: 'legacy-session',
+      createdAt: 10,
+      lastUsedAt: 20,
+      retainedAfterDelete: true
+    })
+  })
+
+  it('leaves an external Session directory unowned and untouched during Project deletion', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-external-data-'))
+    const externalCwd = await mkdtemp(join(tmpdir(), 'managed-workspace-external-cwd-'))
+    roots.push(dataRoot, externalCwd)
+    initDataRoot(dataRoot)
+    const liveSessions = new Map<string, PersistedChatSession>([
+      [
+        'external-session',
+        {
+          id: 'external-session',
+          projectId: 'project-1',
+          title: 'External Session',
+          cwd: externalCwd,
+          status: 'idle',
+          messages: [],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      ]
+    ])
+
+    await createDeletionOwner(liveSessions).deleteProjectSessions(
+      'project-1',
+      (_sessionIds, operation) => operation()
+    )
+
+    await expect(readdir(externalCwd)).resolves.toEqual([])
+  })
+
+  it('restores active ownership when Session authority deletion fails', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-delete-failure-'))
+    roots.push(dataRoot)
+    initDataRoot(dataRoot)
+    const cwd = join(dataRoot, 'workspaces', 'workspace-1')
+    await mkdir(cwd, { recursive: true })
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Session',
+      cwd,
+      status: 'idle',
+      messages: [],
+      createdAt: 10,
+      updatedAt: 20
+    }
+    const liveSessions = new Map([[session.id, session]])
+
+    await expect(
+      createDeletionOwner(liveSessions, {
+        deleteSessionError: new Error('Session authority delete failed')
+      }).deleteSession(session.projectId, session.id)
+    ).rejects.toThrow('Session authority delete failed')
+
+    const usage = await computeStorageUsage(dataRoot)
+    expect(usage.categories.find(({ key }) => key === 'workspaces')?.children?.[0]).toMatchObject({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      retainedAfterDelete: false
+    })
+  })
+})

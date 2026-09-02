@@ -59,7 +59,8 @@ import {
 import {
   SessionPersistenceDeletionOwner,
   type ComputeJobDeletionParticipant,
-  type ProjectSessionDeletionResult
+  type ProjectSessionDeletionResult,
+  type SessionWorkspaceOwnership
 } from './deletion-owner'
 import {
   SessionPersistenceReconciliationOwner,
@@ -192,7 +193,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     private readonly log: Logger = createLogger('session-persistence'),
     private readonly computeJobs?: ComputeJobDeletionParticipant,
     onDelegatedWorkSessionUpdated?: SessionUpdatePublisher,
-    onDelegationPolicyUpdated?: (session: PersistedChatSession) => void
+    onDelegationPolicyUpdated?: (session: PersistedChatSession) => void,
+    workspaceOwnership?: SessionWorkspaceOwnership
   ) {
     const publishSessionUpdate = safeSessionUpdates(onDelegatedWorkSessionUpdated, log)
     this.stateOwner = new SessionPersistenceStateOwner({
@@ -221,6 +223,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       provenance,
       uploads,
       computeJobs,
+      workspaceOwnership,
       log,
       assertArchiveMutable: (projectId, sessionId) => {
         if (this.deletedProjects.has(projectId)) {

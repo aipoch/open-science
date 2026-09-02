@@ -274,7 +274,7 @@ describe('Project-owned data catalog architecture', () => {
       PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'managed-session-workspaces')
     ).toMatchObject({
       medium: 'filesystem',
-      resources: ['workspaces/<workspaceId>/'],
+      resources: ['workspaces/<workspaceId>/', 'workspaces/.ownership/<workspaceId>.json'],
       policy: {
         kind: 'retained-history',
         effect: 'retain'

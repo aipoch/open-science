@@ -460,12 +460,13 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
     id: 'managed-session-workspaces',
     medium: 'filesystem',
-    resources: ['workspaces/<workspaceId>/'],
+    resources: ['workspaces/<workspaceId>/', 'workspaces/.ownership/<workspaceId>.json'],
     policy: {
       kind: 'retained-history',
       effect: 'retain',
       retention: 'Retained until the user removes the workspace files.',
-      reason: 'Session and Project deletion preserve ordinary workspace files for user recovery.'
+      reason:
+        'Session and Project deletion preserve ordinary workspace files and their ownership receipt for user recovery.'
     }
   },
   {

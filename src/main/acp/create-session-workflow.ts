@@ -1,4 +1,5 @@
 import type { AcpCreateSessionRequest, AcpCreateSessionResponse } from '../../shared/acp'
+import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
 import { withDataRootWrite } from '../storage/migration-state'
 import {
   createManagedSessionWorkspaceCapability,
@@ -43,10 +44,15 @@ const createAcpCreateSessionWorkflow = (
         }
 
         return runDataRootWrite(async () => {
-          const workspace = await workspaces.acquire()
+          const projectId = request.projectId?.trim() || DEFAULT_ARTIFACT_PROJECT_ID
+          const workspace = await workspaces.acquire({ projectId })
           try {
-            const response = await sessions.createSession({ ...request, cwd: workspace.cwd })
-            workspace.commit()
+            const response = await sessions.createSession({
+              ...request,
+              projectId,
+              cwd: workspace.cwd
+            })
+            await workspace.commit(response.sessionId)
             return response
           } finally {
             await workspace.release()

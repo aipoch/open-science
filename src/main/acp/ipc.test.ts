@@ -40,6 +40,12 @@ vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] }
 }))
 vi.mock('node:fs/promises', () => ({ mkdir, rm }))
+vi.mock('../storage/managed-workspace-ownership', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../storage/managed-workspace-ownership')>()),
+  initializeManagedWorkspaceOwnership: vi.fn().mockResolvedValue(undefined),
+  finalizeManagedWorkspaceOwnership: vi.fn().mockResolvedValue(undefined),
+  removeManagedWorkspaceOwnership: vi.fn().mockResolvedValue(undefined)
+}))
 
 // A fake runtime whose methods are spies; registration wires closures over these, so only the invoked
 // handler's method needs meaningful behavior. Hoisted so the (hoisted) vi.mock factory can reference it.

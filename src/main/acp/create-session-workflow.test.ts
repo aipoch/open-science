@@ -9,7 +9,7 @@ type AcpCreateSessionWorkflowHarness = {
   createSession: Mock<(request: AcpCreateSessionRequest) => Promise<AcpCreateSessionResponse>>
   lease: ManagedSessionWorkspaceLease
   workspaces: {
-    acquire: Mock<() => Promise<ManagedSessionWorkspaceLease>>
+    acquire: Mock<(input: { projectId: string }) => Promise<ManagedSessionWorkspaceLease>>
   }
   dataRootWriteCalls: () => number
   events: string[]
@@ -28,13 +28,15 @@ const createHarness = (
   })
   const lease: ManagedSessionWorkspaceLease = {
     cwd: '/data/workspaces/managed-1',
-    commit: vi.fn(() => events.push('commit')),
+    commit: vi.fn(async () => {
+      events.push('commit')
+    }),
     release: vi.fn(async () => {
       events.push('release')
     })
   }
   const workspaces: AcpCreateSessionWorkflowHarness['workspaces'] = {
-    acquire: vi.fn<() => Promise<ManagedSessionWorkspaceLease>>(async () => {
+    acquire: vi.fn(async () => {
       events.push('acquire')
       return lease
     })
@@ -137,6 +139,8 @@ describe('ACP create-Session workflow', () => {
         projectId: 'project-1',
         permissionProfile: 'ask'
       })
+      expect(harness.workspaces.acquire).toHaveBeenCalledWith({ projectId: 'project-1' })
+      expect(harness.lease.commit).toHaveBeenCalledWith('session-1')
       expect(harness.events).toEqual([
         'guard:start',
         'acquire',
