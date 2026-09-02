@@ -24,7 +24,7 @@ import {
   restoreManagedProjectWorkspacesActive,
   restoreManagedWorkspaceActive
 } from './managed-workspace-ownership'
-import { computeStorageUsage } from './usage'
+import { computeStorageUsageWithOwnership } from './usage-ownership'
 
 const roots: string[] = []
 
@@ -139,7 +139,7 @@ describe('managed workspace ownership', () => {
 
     await deletion.deleteSession('project-1', 'session-1')
 
-    const usage = await computeStorageUsage(dataRoot)
+    const usage = await computeStorageUsageWithOwnership(dataRoot)
     const workspace = usage.categories.find(({ key }) => key === 'workspaces')?.children?.[0]
 
     expect(workspace).toMatchObject({
@@ -180,7 +180,7 @@ describe('managed workspace ownership', () => {
       (_sessionIds, operation) => operation()
     )
 
-    const usage = await computeStorageUsage(dataRoot)
+    const usage = await computeStorageUsageWithOwnership(dataRoot)
     expect(usage.categories.find(({ key }) => key === 'workspaces')?.children?.[0]).toEqual({
       name: 'legacy-workspace',
       bytes: 0
@@ -237,7 +237,7 @@ describe('managed workspace ownership', () => {
     await finalizeManagedWorkspaceOwnership(cwd, session.id, session.updatedAt, dataRoot)
     await rm(cwd, { recursive: true })
 
-    await expect(computeStorageUsage(dataRoot)).resolves.toMatchObject({
+    await expect(computeStorageUsageWithOwnership(dataRoot)).resolves.toMatchObject({
       categories: expect.arrayContaining([{ key: 'workspaces', bytes: 0 }])
     })
 
@@ -566,7 +566,7 @@ describe('managed workspace ownership', () => {
       }).deleteSession(session.projectId, session.id)
     ).rejects.toThrow('Session authority delete failed')
 
-    const usage = await computeStorageUsage(dataRoot)
+    const usage = await computeStorageUsageWithOwnership(dataRoot)
     expect(usage.categories.find(({ key }) => key === 'workspaces')?.children?.[0]).toMatchObject({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -600,7 +600,7 @@ describe('managed workspace ownership', () => {
       }).deleteSession(session.projectId, session.id)
     ).rejects.toThrow('Retention directory sync failed')
 
-    const usage = await computeStorageUsage(dataRoot)
+    const usage = await computeStorageUsageWithOwnership(dataRoot)
     expect(usage.categories.find(({ key }) => key === 'workspaces')?.children?.[0]).toMatchObject({
       retainedAfterDelete: false
     })
@@ -646,7 +646,7 @@ describe('managed workspace ownership', () => {
       }).deleteProjectSessions('project-1', (_sessionIds, operation) => operation())
     ).rejects.toThrow('Project Session authority delete failed')
 
-    const usage = await computeStorageUsage(dataRoot)
+    const usage = await computeStorageUsageWithOwnership(dataRoot)
     expect(usage.categories.find(({ key }) => key === 'workspaces')?.children?.[0]).toMatchObject({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -681,7 +681,7 @@ describe('managed workspace ownership', () => {
       }).deleteProjectSessions(session.projectId, (_sessionIds, operation) => operation())
     ).rejects.toThrow('Retention directory sync failed')
 
-    const usage = await computeStorageUsage(dataRoot)
+    const usage = await computeStorageUsageWithOwnership(dataRoot)
     expect(usage.categories.find(({ key }) => key === 'workspaces')?.children?.[0]).toMatchObject({
       retainedAfterDelete: false
     })

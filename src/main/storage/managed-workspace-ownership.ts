@@ -1,4 +1,5 @@
 import { lstat, mkdir, readdir, rm } from 'node:fs/promises'
+import { MANAGED_WORKSPACE_OWNERSHIP_DIR } from './managed-workspace-ownership-dir'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -10,7 +11,6 @@ import {
   writeDurableJsonFile
 } from './durable-json-file'
 
-const MANAGED_WORKSPACE_OWNERSHIP_DIR = '.ownership'
 const MANAGED_WORKSPACE_OWNERSHIP_VERSION = 1
 
 type ManagedWorkspaceOwnership = Readonly<{
