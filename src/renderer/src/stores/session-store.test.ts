@@ -7207,6 +7207,7 @@ describe('truncateSessionFromMessage', () => {
         ...toPersistedSession(source),
         enabledComputeHosts: ['ssh:lab', 'ssh:available'],
         selectedComputeHosts: ['ssh:lab'],
+        computeConcurrencyLimit: 2,
         updatedAt: source.updatedAt + 1
       },
       mode: 'compute-host-access-authority'
@@ -7215,7 +7216,8 @@ describe('truncateSessionFromMessage', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       title: 'Newer local title',
       enabledComputeHosts: ['ssh:lab', 'ssh:available'],
-      selectedComputeHosts: ['ssh:lab']
+      selectedComputeHosts: ['ssh:lab'],
+      computeConcurrencyLimit: 2
     })
   })
 })

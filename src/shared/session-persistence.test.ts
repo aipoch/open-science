@@ -85,6 +85,24 @@ describe('Session file envelope versions', () => {
     expect(normalizeSessionFile({ ...legacySession(), revision: '7' })?.revision).toBe(0)
   })
 
+  it('restores a valid Compute concurrency limit and keeps historical Sessions unlimited', () => {
+    expect(normalizeSessionFile(legacySession())?.computeConcurrencyLimit).toBeUndefined()
+    expect(
+      normalizeSessionFile({ ...legacySession(), computeConcurrencyLimit: 1 })
+        ?.computeConcurrencyLimit
+    ).toBe(1)
+    expect(
+      normalizeSessionFile({ ...legacySession(), computeConcurrencyLimit: 500 })
+        ?.computeConcurrencyLimit
+    ).toBe(500)
+  })
+
+  it.each([0, 501, 1.5, '1'])('rejects malformed Compute concurrency limit %j', (limit) => {
+    expect(
+      normalizeSessionFile({ ...legacySession(), computeConcurrencyLimit: limit })
+    ).toBeUndefined()
+  })
+
   it('redacts credentials while decoding a historical Session file', () => {
     const activity = normalizeSessionFile(
       createSessionWithActivity({

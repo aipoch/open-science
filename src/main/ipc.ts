@@ -1833,6 +1833,33 @@ const createApplicationModules = async (
   const computeArtifactResolver = createComputeArtifactResolver(resolveDataRoot(), (path) =>
     artifactRepository.resolveManagedFilePath({ path })
   )
+  const sessionLimitPersistence = {
+    load: async (): Promise<readonly (readonly [string, number])[]> => {
+      const catalog = await loadAllSessions()
+      if (!canReconcileSessionAbsences(catalog)) {
+        throw new Error('Session concurrency limits could not be restored authoritatively.')
+      }
+      return catalog.sessions.flatMap((session) =>
+        session.computeConcurrencyLimit === undefined
+          ? []
+          : [[session.id, session.computeConcurrencyLimit] as const]
+      )
+    },
+    save: async (sessionId: string, limit: number): Promise<void> => {
+      const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
+      if (!projectId)
+        throw new Error(`Cannot persist concurrency for missing Session ${sessionId}.`)
+      const session = await sessionPersistenceCoordinator.setSessionComputeConcurrencyLimit(
+        projectId,
+        sessionId,
+        limit
+      )
+      applicationEvents.publish('session:updated', {
+        session,
+        originClientId: MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
+      })
+    }
+  }
   const computeIpcModule = createComputeIpcModule(
     undefined,
     undefined,
@@ -1861,7 +1888,8 @@ const createApplicationModules = async (
           }
         }
       }
-    }
+    },
+    sessionLimitPersistence
   )
   surfaceAdapters = beforeAcpAdapters
   const {
@@ -1976,7 +2004,7 @@ const createApplicationModules = async (
               diagnosticErrorFields(error)
             )
           }
-          jobPoller.start()
+          await jobPoller.start()
         },
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
         dispose: () => jobPoller.stop()

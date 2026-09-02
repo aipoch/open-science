@@ -749,6 +749,9 @@ export type PersistedChatSession = {
   // enabled hosts. An explicit empty array distinguishes the new Available-only state from legacy
   // Session files where a missing field means every enabled host was selected.
   selectedComputeHosts?: string[]
+  // Durable Session-level Compute concurrency limit. Historical Sessions omit it and continue to
+  // use only their Compute Host ceilings.
+  computeConcurrencyLimit?: number
   // Pins the conversation to a dedicated section at the top of the sidebar. Absent (older files) or
   // non-true restores as unpinned; only an explicit true keeps it pinned across restarts.
   pinned?: boolean
@@ -4117,6 +4120,15 @@ const sanitizeSession = (
   const selectedComputeHosts = selectedComputeHostCandidates.filter((providerId) =>
     enabledComputeHostSet.has(providerId)
   )
+  const computeConcurrencyLimit = asNumber(session.computeConcurrencyLimit)
+  if (
+    session.computeConcurrencyLimit !== undefined &&
+    (!Number.isInteger(computeConcurrencyLimit) ||
+      (computeConcurrencyLimit ?? 0) < 1 ||
+      (computeConcurrencyLimit ?? 0) > 500)
+  ) {
+    return undefined
+  }
 
   if (activeRun) sanitized.activeRun = activeRun
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
@@ -4153,6 +4165,9 @@ const sanitizeSession = (
   if (enabledComputeHosts.length > 0) sanitized.enabledComputeHosts = enabledComputeHosts
   if (hasSelectedComputeHosts || enabledComputeHosts.length > 0) {
     sanitized.selectedComputeHosts = selectedComputeHosts
+  }
+  if (computeConcurrencyLimit !== undefined) {
+    sanitized.computeConcurrencyLimit = computeConcurrencyLimit
   }
   // Specialist ID: accept any non-empty string. The main process validates it against SpecialistService
   // at send time; the sanitizer only ensures the value is safe to re-persist.

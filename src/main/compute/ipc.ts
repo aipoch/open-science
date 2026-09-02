@@ -37,7 +37,7 @@ import type { TaskNotificationService } from '../notifications/task-notification
 import { buildComputeApprovalBroadcast } from '../notifications/electron-wiring'
 import { ComputeApprovalBroker, type ComputeApprovalContext } from './compute-approval-broker'
 import { ComputeService, type ArtifactResolver } from './compute-service'
-import { ConcurrencyManager } from './concurrency-manager'
+import { ConcurrencyManager, type SessionConcurrencyLimitPersistence } from './concurrency-manager'
 import { ComputeHostRepository } from './repository'
 import { ComputeJobRepository } from './job-repository'
 import { ComputeJobOperationRepository } from './compute-job-operation-repository'
@@ -243,7 +243,8 @@ const createComputeHandlers = (
   hostLifecycle?: ComputeHostLifecycle,
   authenticationDependencies?: ComputeAuthenticationDependencies,
   sessionCacheOwner?: SessionCacheOwner,
-  operationRepository?: ComputeJobOperationRepository
+  operationRepository?: ComputeJobOperationRepository,
+  sessionLimitPersistence?: SessionConcurrencyLimitPersistence
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
     ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
@@ -347,7 +348,10 @@ const createComputeHandlers = (
               onJobUpdated: handleJobUpdated,
               storageRoot
             }),
-          onJobUpdated
+          onJobUpdated,
+          undefined,
+          undefined,
+          sessionLimitPersistence
         )
       : undefined
   const service =
@@ -628,7 +632,8 @@ const createComputeIpcModule = (
   >,
   permissionGrantRegistry?: PermissionGrantRegistry,
   legacyComputeGrants?: LegacyComputeGrantPort,
-  hostLifecycle?: ComputeHostLifecycle
+  hostLifecycle?: ComputeHostLifecycle,
+  sessionLimitPersistence?: SessionConcurrencyLimitPersistence
 ): ComputeIpcModule => {
   const operationRepository = createDefaultComputeJobOperationRepository()
   const storageRoot = resolveStorageRoot()
@@ -657,7 +662,8 @@ const createComputeIpcModule = (
     hostLifecycle,
     undefined,
     sessionCacheOwner,
-    operationRepository
+    operationRepository,
+    sessionLimitPersistence
   )
   const jobDeletionOwner = createComputeJobDeletionOwner({
     jobRepository,

@@ -471,6 +471,7 @@ describe('useLifecycleSync', () => {
         session: {
           ...toPersistedSession(source),
           enabledComputeHosts: ['ssh:lab'],
+          computeConcurrencyLimit: 2,
           updatedAt: source.updatedAt + 1
         }
       })
@@ -478,6 +479,7 @@ describe('useLifecycleSync', () => {
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       enabledComputeHosts: ['ssh:lab'],
+      computeConcurrencyLimit: 2,
       messages: [expect.objectContaining({ content: 'Keep this live prompt' })]
     })
   })

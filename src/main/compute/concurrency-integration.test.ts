@@ -156,12 +156,102 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       { createPoller: () => poller }
     )
 
-    runtime.start()
+    await runtime.start()
 
     await vi.waitFor(async () => {
       expect((await jobRepo.get('persisted-queued-job'))?.status).toBe('submitted')
     })
     expect(poller.start).toHaveBeenCalledOnce()
+    await runtime.stop()
+  })
+
+  it('restores the session limit before reconciling persisted queued jobs', async () => {
+    const providerId = computeProviderId('test-host')
+    const durableSessionLimits = new Map<string, number>()
+    const sessionLimitPersistence = {
+      load: async () => [...durableSessionLimits.entries()],
+      save: async (sessionId: string, limit: number) => {
+        durableSessionLimits.set(sessionId, limit)
+      }
+    }
+    const initialManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      vi.fn(async () => undefined),
+      undefined,
+      undefined,
+      undefined,
+      sessionLimitPersistence
+    )
+    const initialService = new ComputeService({
+      runner: makeFakeRunner(),
+      repository: hostRepo,
+      approvalBroker: makeFakeBroker(),
+      scpRunner: makeFakeScp(),
+      jobRepository: jobRepo,
+      storageRoot,
+      concurrencyManager: initialManager
+    })
+    await initialService.setSessionConcurrencyLimit('session-cold-start', 1)
+    for (let index = 0; index < 10; index += 1) {
+      await jobRepo.create({
+        allowUnencryptedPersistence: true,
+        id: `persisted-queued-job-${index}`,
+        providerId,
+        shape: 'direct_ssh',
+        sessionId: 'session-cold-start',
+        projectId: 'project-1',
+        intent: 'resume persisted queue',
+        command: 'echo resumed',
+        commandHash: `hash-${index}`,
+        timeoutSeconds: 60,
+        remoteWorkdir: `~/.openscience/jobs/persisted-queued-job-${index}`,
+        initialStatus: 'queued'
+      })
+    }
+
+    const restartedManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      vi.fn(async () => undefined),
+      undefined,
+      undefined,
+      undefined,
+      sessionLimitPersistence
+    )
+    const restartedService = new ComputeService({
+      runner: makeFakeRunner(),
+      repository: hostRepo,
+      approvalBroker: makeFakeBroker(),
+      scpRunner: makeFakeScp(),
+      jobRepository: jobRepo,
+      storageRoot,
+      concurrencyManager: restartedManager
+    })
+    const runtime = createComputeJobRuntime(
+      {
+        computeService: restartedService,
+        hostRepository: hostRepo,
+        jobRepository: jobRepo,
+        connectionBroker: {} as ComputeConnectionBroker,
+        storageRoot
+      },
+      {
+        createPoller: () => ({
+          start: vi.fn(),
+          stop: vi.fn(async () => undefined),
+          pause: vi.fn(async () => undefined),
+          resume: vi.fn()
+        })
+      }
+    )
+
+    await runtime.start()
+    await restartedManager.reconcileQueuedJobs()
+
+    const jobs = await jobRepo.findBySession('session-cold-start')
+    expect(jobs.filter((job) => job.status === 'submitted')).toHaveLength(1)
+    expect(jobs.filter((job) => job.status === 'queued')).toHaveLength(9)
     await runtime.stop()
   })
 
@@ -223,11 +313,11 @@ describe('ConcurrencyManager integration with ComputeService', () => {
       { createPoller: () => poller }
     )
 
-    runtime.start()
+    const starting = runtime.start()
     await startupScanStarted
     const stopping = runtime.stop()
     releaseStartupScan?.()
-    await stopping
+    await Promise.all([starting, stopping])
 
     expect((await jobRepo.get('queued-during-runtime-stop'))?.status).toBe('queued')
     expect(dispatchQueuedJob).not.toHaveBeenCalled()

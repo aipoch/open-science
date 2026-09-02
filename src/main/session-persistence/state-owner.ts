@@ -489,6 +489,30 @@ class SessionPersistenceStateOwner {
     return persisted
   }
 
+  async setComputeConcurrencyLimit(
+    projectId: string,
+    sessionId: string,
+    limit: number
+  ): Promise<PersistedChatSession> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error(
+        `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
+      )
+    }
+    this.options.assertMutable(projectId, sessionId, 'mutate')
+    const loaded = await loadAuthority(this.options.repository, projectId, sessionId)
+    if (loaded.status !== 'found') {
+      throw new Error(`Cannot update Compute concurrency for a ${loaded.status} Session.`)
+    }
+    const persisted = await saveSessionWithRevision(this.options.repository, {
+      ...loaded.session,
+      computeConcurrencyLimit: limit,
+      updatedAt: Math.max(loaded.session.updatedAt + 1, Date.now())
+    })
+    this.recordSession(persisted)
+    return persisted
+  }
+
   async pruneEnabledComputeHosts(
     sessions: readonly PersistedChatSession[],
     validProviderIds: ReadonlySet<string>
@@ -607,6 +631,7 @@ class SessionPersistenceStateOwner {
       delete rendererOwnedSession.specialistBindingPending
     }
     if (authority) delete rendererOwnedSession.delegationPolicy
+    if (authority) delete rendererOwnedSession.computeConcurrencyLimit
     const permissionOwnedStatus =
       authority?.runtimeContext?.permission?.state === 'pending'
         ? 'waiting-permission'
@@ -661,6 +686,7 @@ class SessionPersistenceStateOwner {
               : undefined
           }
         : {}),
+      ...(authority ? { computeConcurrencyLimit: authority.computeConcurrencyLimit } : {}),
       ...(mainOwnedStatus ? { status: mainOwnedStatus } : {}),
       // Merging unchanged Main-owned authority is storage maintenance, not conversation activity.
       // Preserve the newest real activity time so opening a lazily loaded Session cannot move it into

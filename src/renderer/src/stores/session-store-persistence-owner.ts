@@ -616,6 +616,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           revision: Math.max(sessionRevision(current), sessionRevision(session)),
           enabledComputeHosts: session.enabledComputeHosts && [...session.enabledComputeHosts],
           selectedComputeHosts: session.selectedComputeHosts && [...session.selectedComputeHosts],
+          computeConcurrencyLimit: session.computeConcurrencyLimit,
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
         markExternallyHydratedSession(projected, session)

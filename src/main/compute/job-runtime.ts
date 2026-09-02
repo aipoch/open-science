@@ -6,13 +6,13 @@ import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import type { ComputeService } from './compute-service'
 import type { ComputeConnectionBroker } from './connection-broker'
-import { createLogger } from '../logger'
+import { createLogger, errorLogFields } from '../logger'
 import { ComputeJobCancellationReaper } from './compute-job-cancellation-owner'
 import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
 
 const log = createLogger('compute-integrity')
 
-type ComputeJobRuntime = { start(): void; stop(): Promise<void> }
+type ComputeJobRuntime = { start(): void | Promise<void>; stop(): Promise<void> }
 
 type ComputeJobRuntimeDeps = {
   computeService: Pick<
@@ -107,15 +107,26 @@ export const createComputeJobRuntime = (
     }
   }
   const unbindDeletionRuntime = deps.jobDeletionOwner?.bindRuntime(deletionRuntime)
+  let startTask: Promise<void> | undefined
   return {
     start: () => {
-      poller.start()
-      cancellationReaper?.start()
-      deps.computeService.startQueueReconciliation()
+      startTask ??= (async () => {
+        await Promise.all([poller.start(), cancellationReaper?.start()])
+        try {
+          await deps.computeService.startQueueReconciliation()
+        } catch (error) {
+          log.warn(
+            'compute queue reconciliation remains stopped after Session limit restoration failed',
+            errorLogFields(error)
+          )
+        }
+      })()
+      return startTask
     },
     stop: async () => {
       unbindDeletionRuntime?.()
       await deps.computeService.stopQueueReconciliation()
+      await startTask
       await Promise.all([poller.stop(), cancellationReaper?.stop()])
     }
   }

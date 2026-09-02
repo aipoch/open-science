@@ -78,6 +78,28 @@ describe('ConcurrencyManager', () => {
       await manager.setSessionLimit('session-1', 7)
       expect(manager['sessionLimits'].get('session-1')).toBe(7)
     })
+
+    it('does not change the live limit when durable persistence fails', async () => {
+      const durableManager = new ConcurrencyManager(
+        jobRepo,
+        hostRepo,
+        dispatchJob,
+        onJobUpdated,
+        undefined,
+        undefined,
+        {
+          load: async () => [],
+          save: async () => {
+            throw new Error('Session write failed')
+          }
+        }
+      )
+
+      await expect(durableManager.setSessionLimit('session-1', 5)).rejects.toThrow(
+        'Session write failed'
+      )
+      expect(durableManager['sessionLimits'].has('session-1')).toBe(false)
+    })
   })
 
   describe('setProviderLimit', () => {
@@ -135,6 +157,29 @@ describe('ConcurrencyManager', () => {
       )
       expect(hostRepo.updateConcurrencyLimit).not.toHaveBeenCalled()
     })
+  })
+
+  it('keeps queued reconciliation stopped when durable limits cannot be restored', async () => {
+    const durableManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      dispatchJob,
+      onJobUpdated,
+      undefined,
+      undefined,
+      {
+        load: async () => {
+          throw new Error('Session catalog unavailable')
+        },
+        save: async () => undefined
+      }
+    )
+
+    await expect(durableManager.startQueueReconciliation()).rejects.toThrow(
+      'Session catalog unavailable'
+    )
+    await durableManager.reconcileQueuedJobs()
+    expect(jobRepo.findQueuedJobs).not.toHaveBeenCalled()
   })
 
   describe('enqueue - global queue limit', () => {

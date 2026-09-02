@@ -762,6 +762,16 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
+  setSessionComputeConcurrencyLimit(
+    projectId: string,
+    sessionId: string,
+    limit: number
+  ): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
+      this.stateOwner.setComputeConcurrencyLimit(projectId, sessionId, limit)
+    )
+  }
+
   setSessionEnabledComputeHosts(
     projectId: string,
     sessionId: string,
