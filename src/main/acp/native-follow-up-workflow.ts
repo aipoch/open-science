@@ -61,6 +61,7 @@ type NativeFollowUpPreparedContent = Readonly<{
   prompt: readonly ContentBlock[]
   uploads?: readonly UploadedAttachment[]
   notebookTurnInputs?: NativeFollowUpNotebookTurnInputs
+  close?: () => void
 }>
 
 type NativeFollowUpRegisterTurnInputs = (request: {
@@ -114,6 +115,7 @@ type NativeFollowUpMediaInput = Readonly<{
   historyImageCount: number
   signal?: AbortSignal
   imageCompatibility?: Pick<ImageInputCompatibilityOwner, 'prepare'>
+  close?: () => void
 }>
 
 const nativeFollowUpPromptBlocks = (content: string | ContentBlock[]): ContentBlock[] => {
@@ -124,20 +126,31 @@ const nativeFollowUpPromptBlocks = (content: string | ContentBlock[]): ContentBl
 const finalizeNativeFollowUpPreparedContent = async (
   input: NativeFollowUpMediaInput
 ): Promise<NativeFollowUpPreparedContent> => {
-  const content = input.imageCompatibility
-    ? await input.imageCompatibility.prepare({
-        content: input.content,
-        supportsImageInput: input.supportsImageInput,
-        projectId: input.projectId,
-        sessionId: input.sessionId,
-        imageSources: input.imageSources,
-        historyImageCount: input.historyImageCount,
-        ...(input.signal ? { signal: input.signal } : {})
-      })
-    : input.content
+  let content: string | ContentBlock[]
+  try {
+    content = input.imageCompatibility
+      ? await input.imageCompatibility.prepare({
+          content: input.content,
+          supportsImageInput: input.supportsImageInput,
+          projectId: input.projectId,
+          sessionId: input.sessionId,
+          imageSources: input.imageSources,
+          historyImageCount: input.historyImageCount,
+          ...(input.signal ? { signal: input.signal } : {})
+        })
+      : input.content
+  } catch (error) {
+    try {
+      input.close?.()
+    } catch {
+      // Media preparation failure remains authoritative over resource cleanup.
+    }
+    throw error
+  }
   return {
     prompt: nativeFollowUpPromptBlocks(content),
     uploads: [...(input.turnInputs?.uploads ?? [])],
+    ...(input.close ? { close: input.close } : {}),
     ...(input.turnInputs && input.livePromptMessageId
       ? {
           notebookTurnInputs: {
@@ -168,7 +181,25 @@ const injected = (transport: NativeFollowUpTransport, messageId: string): AcpSte
   Object.freeze({ injected: true, transport, messageId })
 
 class AcpNativeFollowUpWorkflow {
+  private readonly preparedByTurn = new Map<string, Set<() => void>>()
+
   constructor(private readonly options: NativeFollowUpWorkflowOptions) {}
+
+  releaseTurn(sessionId: string, turnToken: string): void {
+    const key = this.turnKey(sessionId, turnToken)
+    const prepared = this.preparedByTurn.get(key)
+    this.preparedByTurn.delete(key)
+    for (const close of prepared ?? []) {
+      try {
+        close()
+      } catch (error) {
+        log.info('native follow-up resource cleanup failed', {
+          sessionId,
+          reason: error instanceof Error ? error.message : String(error)
+        })
+      }
+    }
+  }
 
   async steerSideChatAdvisory(
     request: AcpSteerFollowUpRequest
@@ -227,12 +258,31 @@ class AcpNativeFollowUpWorkflow {
     let prompt: readonly ContentBlock[]
     let preparedUploads: readonly UploadedAttachment[] | undefined
     let notebookTurnInputs: NativeFollowUpNotebookTurnInputs | undefined
+    let closePrepared: (() => void) | undefined
+    const closePreparedNow = (): void => {
+      const close = closePrepared
+      closePrepared = undefined
+      if (!close) return
+      try {
+        close()
+      } catch (error) {
+        log.info('native follow-up resource cleanup failed', {
+          sessionId: request.sessionId,
+          reason: error instanceof Error ? error.message : String(error)
+        })
+      }
+    }
+    const refusePrepared = (reason: AcpSteerFollowUpRefuseReason): AcpSteerFollowUpResult => {
+      closePreparedNow()
+      return refused(reason)
+    }
     try {
       if (this.options.prepareFollowUp) {
         const prepared = await this.options.prepareFollowUp(request)
         prompt = prepared.prompt
         preparedUploads = prepared.uploads
         notebookTurnInputs = prepared.notebookTurnInputs
+        closePrepared = prepared.close
       } else {
         prompt = steeringPromptFromText(text)
       }
@@ -242,7 +292,7 @@ class AcpNativeFollowUpWorkflow {
         reason: 'dispatch-failed',
         transport: route.transport
       })
-      return refused('dispatch-failed')
+      return refusePrepared('dispatch-failed')
     }
     if (prompt.length === 0) {
       log.info('native follow-up refused', {
@@ -250,7 +300,7 @@ class AcpNativeFollowUpWorkflow {
         reason: 'empty-text',
         transport: route.transport
       })
-      return refused('empty-text')
+      return refusePrepared('empty-text')
     }
 
     const live = this.options.livePrompt?.(request.sessionId)
@@ -260,7 +310,7 @@ class AcpNativeFollowUpWorkflow {
         reason: 'no-live-turn',
         transport: route.transport
       })
-      return refused('no-live-turn')
+      return refusePrepared('no-live-turn')
     }
     if (expectedTurnToken && live?.turnToken !== expectedTurnToken) {
       log.info('native follow-up refused', {
@@ -268,7 +318,7 @@ class AcpNativeFollowUpWorkflow {
         reason: 'no-live-turn',
         transport: route.transport
       })
-      return refused('no-live-turn')
+      return refusePrepared('no-live-turn')
     }
     if (this.options.hasPendingPermission(request.sessionId)) {
       log.info('native follow-up refused', {
@@ -277,7 +327,7 @@ class AcpNativeFollowUpWorkflow {
         pendingPermission: true,
         transport: route.transport
       })
-      return refused('prompt-required')
+      return refusePrepared('prompt-required')
     }
 
     const transportSignal = this.transportTimeout(route.transport)
@@ -298,7 +348,7 @@ class AcpNativeFollowUpWorkflow {
           reason: 'dispatch-failed',
           transport: route.transport
         })
-        return refused('dispatch-failed')
+        return refusePrepared('dispatch-failed')
       }
       const outcome = parseSteerOutcome(result)
       const dispatched = interpretSteerOutcome(outcome)
@@ -308,7 +358,7 @@ class AcpNativeFollowUpWorkflow {
           reason: dispatched.reason,
           transport: route.transport
         })
-        return refused(dispatched.reason)
+        return refusePrepared(dispatched.reason)
       }
     } else if (route.transport === 'codebuddy-acp-steer') {
       try {
@@ -326,7 +376,7 @@ class AcpNativeFollowUpWorkflow {
             reason: 'prompt-required',
             transport: route.transport
           })
-          return refused('prompt-required')
+          return refusePrepared('prompt-required')
         }
       } catch {
         log.info('native follow-up refused', {
@@ -334,7 +384,7 @@ class AcpNativeFollowUpWorkflow {
           reason: 'dispatch-failed',
           transport: route.transport
         })
-        return refused('dispatch-failed')
+        return refusePrepared('dispatch-failed')
       }
     } else {
       if (!openCodeUsageApi) {
@@ -343,7 +393,7 @@ class AcpNativeFollowUpWorkflow {
           reason: 'not-advertised',
           transport: route.transport
         })
-        return refused('not-advertised')
+        return refusePrepared('not-advertised')
       }
       const parts = contentBlocksToOpenCodeFollowUpParts(prompt)
       if (parts.length === 0) {
@@ -352,7 +402,7 @@ class AcpNativeFollowUpWorkflow {
           reason: 'empty-text',
           transport: route.transport
         })
-        return refused('empty-text')
+        return refusePrepared('empty-text')
       }
       const accepted = await this.postOpenCodeSteer(
         openCodeUsageApi,
@@ -368,7 +418,7 @@ class AcpNativeFollowUpWorkflow {
           transport: route.transport,
           providerSessionId
         })
-        return refused('dispatch-failed')
+        return refusePrepared('dispatch-failed')
       }
     }
 
@@ -400,7 +450,20 @@ class AcpNativeFollowUpWorkflow {
       transport: route.transport,
       messageId
     })
+    const retainedTurn = this.options.livePrompt?.(request.sessionId)
+    if (closePrepared && retainedTurn) {
+      const key = this.turnKey(request.sessionId, retainedTurn.turnToken)
+      const prepared = this.preparedByTurn.get(key) ?? new Set<() => void>()
+      prepared.add(closePrepared)
+      this.preparedByTurn.set(key, prepared)
+      closePrepared = undefined
+    }
+    closePreparedNow()
     return injected(route.transport, messageId)
+  }
+
+  private turnKey(sessionId: string, turnToken: string): string {
+    return `${sessionId.length}:${sessionId}${turnToken}`
   }
 
   private sameLivePrompt(sessionId: string, live: NativeFollowUpLivePrompt | undefined): boolean {

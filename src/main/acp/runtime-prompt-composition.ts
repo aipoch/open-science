@@ -23,6 +23,7 @@ type AcpRuntimePromptReloadHost = Readonly<{
 type AcpRuntimePromptHost = Readonly<{
   plan: AcpPromptTurnPlanWorkflow
   reload: AcpRuntimePromptReloadHost
+  onPromptEnded?: (sessionId: string, turnToken: string) => void
 }>
 
 const log = createLogger('acp')
@@ -315,7 +316,10 @@ const composeAcpRuntimePromptOwners = (
       errorMessage,
       errorKind: acpErrorKind,
       pushEvent: (event) => session.publication.pushEvent(event),
-      onPromptEnded: (sessionId, turnToken) => callbacks.onPromptEnded?.(sessionId, turnToken),
+      onPromptEnded: (sessionId, turnToken) => {
+        host.onPromptEnded?.(sessionId, turnToken)
+        callbacks.onPromptEnded?.(sessionId, turnToken)
+      },
       generationActivityChanged: base.notifyGenerationActivityChanged,
       autoCompact: (sessionId, active, interaction) =>
         contextCompactionWorkflow.compactAutomatic({
