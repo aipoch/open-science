@@ -107,6 +107,9 @@ describe('reconcilePendingArtifacts', () => {
       createPersistedSession({
         id: 'session-1',
         projectId: 'proj-1',
+        status: 'error',
+        error: 'Generated file finalization failed: disk temporarily unavailable',
+        errorReportable: true,
         messages: [
           {
             id: 'message-1',
@@ -157,6 +160,11 @@ describe('reconcilePendingArtifacts', () => {
     const session = useSessionStore.getState().sessions.find((item) => item.id === 'session-1')
     expect(session?.messages[0].artifactIds).toEqual(['session-1:message-1:chart.png'])
     expect(session?.artifacts?.map((artifact) => artifact.path)).toEqual([finalized.path])
+    expect(session).toMatchObject({
+      status: 'idle',
+      error: undefined,
+      errorReportable: undefined
+    })
   })
 
   it('leaves messages without pending artifacts untouched', async () => {

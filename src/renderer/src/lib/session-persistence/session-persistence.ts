@@ -990,6 +990,12 @@ const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<voi
   for (const session of useSessionStore.getState().sessions) {
     try {
       await reconcileSessionPendingArtifacts(session, api)
+      const current = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === session.id)
+      if (current && pendingArtifactRequests(current).length === 0) {
+        useSessionStore.getState().clearArtifactError(session.id)
+      }
     } catch (error) {
       reportPersistenceError(error, 'artifact-reconcile')
     }
