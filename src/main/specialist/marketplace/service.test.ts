@@ -561,6 +561,29 @@ describe('MarketplaceService', () => {
     })
   })
 
+  it('retries package recovery after a transient failure', async () => {
+    const repository = new MarketplaceRepository(
+      await mkdtemp(join(tmpdir(), 'marketplace-package-recovery-retry-'))
+    )
+    const packages = {
+      recover: vi.fn().mockRejectedValueOnce(new Error('transient cleanup failure'))
+    }
+    packages.recover.mockResolvedValueOnce(undefined)
+    const service = new MarketplaceService({
+      repository,
+      packages: packages as never,
+      fetch: vi.fn<typeof fetch>(),
+      getDisabledSkillIds: async () => [],
+      getInstalledSpecialists: async () => [],
+      setSkillsMainEnabled: async () => undefined
+    })
+
+    await expect(service.recover()).rejects.toThrow('transient cleanup failure')
+    await expect(service.recover()).resolves.toBeUndefined()
+
+    expect(packages.recover).toHaveBeenCalledTimes(2)
+  })
+
   it('returns the newest exact Marketplace provenance for installed Specialists', async () => {
     const repository = new MarketplaceRepository(
       await mkdtemp(join(tmpdir(), 'marketplace-installed-provenance-'))

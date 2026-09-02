@@ -302,8 +302,13 @@ export class MarketplaceService {
   }
 
   private async recoverUnlocked(): Promise<void> {
-    this.packageRecovery ??= this.options.packages.recover?.() ?? Promise.resolve()
-    await this.packageRecovery
+    try {
+      this.packageRecovery ??= this.options.packages.recover?.() ?? Promise.resolve()
+      await this.packageRecovery
+    } catch (error) {
+      this.packageRecovery = undefined
+      throw error
+    }
     const [document, installedSpecialists] = await Promise.all([
       this.options.repository.getAll(),
       this.options.getInstalledSpecialists()
