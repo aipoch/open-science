@@ -458,15 +458,22 @@ const installWebApi = async (): Promise<EventCursor> => {
 
         let resource: { id: string; url: string; size: number } | undefined
         try {
-          const previewRequest: AcquireManagedPreviewRequest =
-            'path' in request
-              ? { source: request.source, path: request.path }
-              : {
-                  source: request.source,
-                  projectId: request.projectId,
-                  fileId: request.fileId,
-                  ...(request.versionId ? { versionId: request.versionId } : {})
-                }
+          let previewRequest: AcquireManagedPreviewRequest
+          switch (request.source) {
+            case 'artifact':
+            case 'upload':
+              previewRequest = {
+                source: request.source,
+                projectId: request.projectId,
+                fileId: request.fileId,
+                ...(request.versionId ? { versionId: request.versionId } : {})
+              }
+              break
+            case 'notebook-input':
+            case 'local':
+              previewRequest = { source: request.source, path: request.path }
+              break
+          }
           const acquiredResource = (await invoke('preview-resources:acquire', [
             previewRequest
           ])) as { id: string; url: string; size: number }

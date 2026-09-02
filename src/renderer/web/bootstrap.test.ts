@@ -557,8 +557,9 @@ describe('Web bootstrap event connection', () => {
         projectId: 'project-1',
         fileId: 'artifact-1',
         versionId: 'version-3',
+        path: 'artifact-version:project-1/session-1/artifact-1/version-3',
         suggestedName: 'report.bin'
-      })
+      } as SaveManagedFileRequest)
     ).resolves.toEqual({ saved: true })
 
     expect(showSaveFilePicker).toHaveBeenCalledWith({ suggestedName: 'report.bin' })
