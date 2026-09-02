@@ -43,6 +43,14 @@ type SessionEnabledComputeHostsOwnerOptions = Readonly<{
   withDataRootWrite<Result>(operation: () => Promise<Result>): Promise<Result>
 }>
 
+const validateSessionConcurrencyLimit = (limit: number | undefined): void => {
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 500)) {
+    throw new Error(
+      `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
+    )
+  }
+}
+
 class SessionEnabledComputeHostsOwner {
   private queue: Promise<unknown> = Promise.resolve()
   private readonly reservationCounts = new Map<string, number>()
@@ -290,6 +298,7 @@ class SessionEnabledComputeHostsOwner {
     commit: (session: PersistedChatSession) => Promise<PersistedChatSession>
   ): Promise<PersistedChatSession> {
     return this.enqueueWrite(async () => {
+      validateSessionConcurrencyLimit(session.computeConcurrencyLimit)
       const enabledComputeHosts = await this.validateProviderIds(session.enabledComputeHosts ?? [])
       const selectedComputeHosts = await this.validateProviderIds(
         session.selectedComputeHosts ?? enabledComputeHosts

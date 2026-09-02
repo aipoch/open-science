@@ -205,6 +205,34 @@ describe('SessionEnabledComputeHostsOwner', () => {
     expect(projectSessionConcurrencyLimit).toHaveBeenCalledWith('session-1', 2)
   })
 
+  it('rejects an invalid concurrency limit before committing a new Session', async () => {
+    const projectSessionConcurrencyLimit = vi.fn(async () => {
+      throw new Error('Session concurrency limit must be an integer in the range 1..500 (got 0).')
+    })
+    const owner = new SessionEnabledComputeHostsOwner({
+      registry: new EnabledComputeHostsRegistry(),
+      hostExists: async () => true,
+      listHostIds: async () => [],
+      sessionAuthority: {
+        sessionProjectId: async () => undefined,
+        setSessionEnabledComputeHosts: async () => {
+          throw new Error('not expected')
+        },
+        pruneSessionEnabledComputeHosts: async () => createPruneResult()
+      },
+      withDataRootWrite: passthroughDataRootWrite,
+      projectSessionConcurrencyLimit
+    })
+    const commit = vi.fn(async (candidate: PersistedChatSession) => candidate)
+
+    await expect(
+      owner.createSession(createSession({ computeConcurrencyLimit: 0 }), commit)
+    ).rejects.toThrow(/integer in the range 1\.\.500/)
+
+    expect(commit).not.toHaveBeenCalled()
+    expect(projectSessionConcurrencyLimit).not.toHaveBeenCalled()
+  })
+
   it('replaces the derived cache from a complete Session catalog', async () => {
     const registry = new EnabledComputeHostsRegistry()
     registry.set('stale-session', ['ssh:old'])
