@@ -751,7 +751,9 @@ describe('TaskRunner', () => {
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async (_request, observer) => observer?.onPromptAdmitted?.()
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+        }
       }
     })
 
@@ -1304,7 +1306,9 @@ describe('TaskRunner', () => {
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async (_request, observer) => observer?.onPromptAdmitted?.()
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+        }
       },
       reviewer: { review },
       createId: () => ids.shift() ?? 'generated-id'
@@ -1707,20 +1711,26 @@ describe('TaskRunner', () => {
   })
 
   it('cleans up an admitted Task turn when Session persistence commits before rejecting', async () => {
-    const existing: PersistedChatSession = {
+    let durableSession: PersistedChatSession = {
       ...session,
+      revision: 1,
       messages: []
     }
-    let durableSession = existing
     const save = vi.fn(async (candidate: PersistedChatSession) => {
-      durableSession = candidate
+      if (candidate.revision !== durableSession.revision) {
+        throw new Error('Session revision conflict')
+      }
+      durableSession = {
+        ...structuredClone(candidate),
+        revision: (candidate.revision ?? 0) + 1
+      }
       throw new Error('index unavailable after durable commit')
     })
     const runner = createRunner({
-      sessions: { list: async () => [existing], save },
+      sessions: { list: async () => [structuredClone(durableSession)], save },
       agent: {
         withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
-        listAttachedSessionIds: async () => [existing.id],
+        listAttachedSessionIds: async () => [durableSession.id],
         createSession: async () => ({ sessionId: 'unused' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
@@ -1733,7 +1743,7 @@ describe('TaskRunner', () => {
 
     const started = await runner.startRun({
       project: project.id,
-      sessionId: existing.id,
+      sessionId: durableSession.id,
       prompt: 'Task API prompt'
     })
     const failed = await runner.waitForRun(started.id)
@@ -2023,7 +2033,9 @@ describe('TaskRunner', () => {
         resumeSession,
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async (_request, observer) => observer?.onPromptAdmitted?.()
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+        }
       },
       createId: () => ids.shift() ?? 'generated-id'
     })
@@ -2072,7 +2084,9 @@ describe('TaskRunner', () => {
         resumeSession,
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async (_request, observer) => observer?.onPromptAdmitted?.()
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+        }
       },
       createId: () => ids.shift() ?? 'generated-id'
     })

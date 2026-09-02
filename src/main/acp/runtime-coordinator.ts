@@ -845,7 +845,7 @@ class AcpRuntimeCoordinator {
   sendPromptObserved(
     request: AcpPromptRequest,
     onProviderPromptAccepted: () => void,
-    onPromptAdmitted?: () => Promise<void>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): ReturnType<AcpRuntime['sendPrompt']> {
     return this.sendObservedPrompt(
       request,
@@ -859,7 +859,7 @@ class AcpRuntimeCoordinator {
     request: AcpPromptRequest,
     acceptance?: PromptAcceptance,
     onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void,
-    onPromptAdmitted?: () => Promise<void>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
@@ -1023,7 +1023,7 @@ class AcpRuntimeCoordinator {
     retainAsLatestUserPrompt = operation === 'sendPrompt',
     attribution?: MessageAttribution,
     onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void,
-    onPromptAdmitted?: () => Promise<void>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): ReturnType<AcpRuntime['sendPrompt']> {
     let dispatchStarted = false
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> => {
@@ -1057,7 +1057,7 @@ class AcpRuntimeCoordinator {
     retainAsLatestUserPrompt = operation === 'sendPrompt',
     attribution?: MessageAttribution,
     onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void,
-    onPromptAdmitted?: () => Promise<void>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const owner = pinnedRuntime ?? this.findRuntimeForSession(request.sessionId)
@@ -1113,6 +1113,13 @@ class AcpRuntimeCoordinator {
           })
           .catch(() => undefined)
       : undefined
+    const admitPrompt = onPromptAdmitted
+      ? async (): Promise<AcpPromptRequest['provenanceContext']> => {
+          const provenanceContext = await onPromptAdmitted()
+          if (provenanceContext) taskRequest.provenanceContext = provenanceContext
+          return provenanceContext
+        }
+      : undefined
     const prompt = Promise.resolve(settlementStart).then((leaseId) => {
       settlementLeaseId = leaseId
       if (
@@ -1128,8 +1135,8 @@ class AcpRuntimeCoordinator {
         return runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
       }
       if (operation === 'sendPrompt') {
-        return onPromptAdmitted
-          ? runtime.sendPrompt(taskRequest, attempt.id, onPromptAdmitted)
+        return admitPrompt
+          ? runtime.sendPrompt(taskRequest, attempt.id, admitPrompt)
           : runtime.sendPrompt(taskRequest, attempt.id)
       }
       return runtime.sendAppContinuation(taskRequest, attempt.id)

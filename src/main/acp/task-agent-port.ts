@@ -21,7 +21,7 @@ type AcpTaskAgentRuntime = {
   sendPromptObserved(
     request: AcpPromptRequest,
     onProviderPromptAccepted: () => void,
-    onPromptAdmitted?: () => Promise<void>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<unknown>
   cancelPrompt(request: { sessionId: string }): Promise<unknown>
 }

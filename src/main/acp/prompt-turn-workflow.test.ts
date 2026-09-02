@@ -557,11 +557,12 @@ describe('AcpPromptTurnWorkflow', () => {
     const harness = createHarness()
     const callbackEntered = deferred<void>()
     const releaseCallback = deferred<void>()
-    const onPromptAdmitted = vi.fn(async () => {
+    const onPromptAdmitted = vi.fn(async (): Promise<AcpPromptRequest['provenanceContext']> => {
       harness.journal.push('persist')
       expect(harness.owner.current('s1')).toMatchObject({ kind: 'prompt' })
       callbackEntered.resolve()
       await releaseCallback.promise
+      return undefined
     })
 
     const turn = harness.workflow.run(request(), { kind: 'user' }, onPromptAdmitted)
@@ -582,6 +583,29 @@ describe('AcpPromptTurnWorkflow', () => {
     await expect(turn).resolves.toEqual({ stopReason: 'end_turn' })
     expect(harness.journal.indexOf('persist')).toBeLessThan(harness.journal.indexOf('start'))
     expect(harness.journal.indexOf('persist')).toBeLessThan(harness.journal.indexOf('execute'))
+  })
+
+  it('uses provenance returned by prompt admission for the provider turn', async () => {
+    const harness = createHarness()
+    const admittedProvenance = {
+      promptMessageId: 'message-1',
+      rootFrameId: 'root-frame-2',
+      agentFrameId: 'agent-frame-2',
+      messageBranchId: 'branch-2',
+      runtimeSegmentId: 'runtime-segment-2'
+    }
+    const onPromptAdmitted = async (): Promise<AcpPromptRequest['provenanceContext']> =>
+      admittedProvenance
+
+    await expect(
+      harness.workflow.run(request(), { kind: 'user' }, onPromptAdmitted)
+    ).resolves.toEqual({ stopReason: 'end_turn' })
+
+    expect(harness.artifacts.open).toHaveBeenCalledWith(
+      's1',
+      expect.any(String),
+      admittedProvenance
+    )
   })
 
   it('releases prompt ownership when the admitted callback rejects', async () => {

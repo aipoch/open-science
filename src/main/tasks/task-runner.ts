@@ -131,7 +131,7 @@ type TaskAgentPromptRequest = {
 }
 
 type TaskAgentPromptObserver = {
-  onPromptAdmitted?: () => Promise<void>
+  onPromptAdmitted?: () => Promise<AgentTurnProvenanceContext | undefined>
   onProviderPromptAccepted?: () => void
 }
 
@@ -1183,6 +1183,7 @@ class TaskRunner {
     persistOnPromptAdmission = false
   ): Promise<void> {
     let promptError: unknown
+    let admissionPersistenceError: unknown
     let cancellationAtPromptFailure: MutableTaskRun['cancellation'] = undefined
     let admittedSession: PersistedChatSession | undefined = persistOnPromptAdmission
       ? undefined
@@ -1210,7 +1211,7 @@ class TaskRunner {
           ...(persistOnPromptAdmission
             ? {
                 onPromptAdmitted: async () => {
-                  admittedSession = await this.dependencies.agent.withSessionAvailable(
+                  return this.dependencies.agent.withSessionAvailable(
                     run.projectId,
                     session.id,
                     async () => {
@@ -1231,7 +1232,17 @@ class TaskRunner {
                       // projection rejects. Retain the admitted aggregate so failure cleanup can
                       // clear that partially committed active run.
                       admittedSession = sessionToSave
-                      return this.dependencies.sessions.save(sessionToSave)
+                      try {
+                        const saved = await this.dependencies.sessions.save(sessionToSave)
+                        admittedSession = saved
+                        return getActiveConversationContext(
+                          materializeSessionConversationGraph(saved).conversationGraph,
+                          promptMessageId
+                        )
+                      } catch (error) {
+                        admissionPersistenceError = error
+                        throw error
+                      }
                     }
                   )
                 }
@@ -1247,6 +1258,23 @@ class TaskRunner {
     } catch (error) {
       promptError = error
       cancellationAtPromptFailure = run.cancellation
+    }
+
+    if (admissionPersistenceError !== undefined) {
+      await this.dependencies.agent
+        .withSessionAvailable(run.projectId, session.id, async () => {
+          const latestSession = (await this.dependencies.sessions.list()).find(
+            (candidate) => candidate.id === session.id && candidate.projectId === run.projectId
+          )
+          if (latestSession?.activeRun?.promptMessageId !== run.promptMessageId) return
+          await this.failRun(run, latestSession, undefined, admissionPersistenceError)
+        })
+        .catch(() => undefined)
+      if (run.status === 'running') {
+        await this.failRun(run, session, undefined, admissionPersistenceError, false)
+      }
+      run.eventAccumulator = undefined
+      return
     }
 
     if (!admittedSession) {

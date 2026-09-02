@@ -1438,7 +1438,7 @@ class AcpRuntime {
   async sendPrompt(
     request: AcpPromptRequest,
     promptAttemptId?: string,
-    onPromptAdmitted?: () => Promise<void>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
     if (
       request.referencedArtifacts?.some(
@@ -1501,7 +1501,7 @@ class AcpRuntime {
           promptAttemptId?: string
         }>
       | Readonly<{ kind: 'app-continuation'; promptAttemptId?: string }>,
-    onPromptAdmitted?: () => Promise<void>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
     return withDataRootWrite(async () => {
       let response: PromptResponse | undefined

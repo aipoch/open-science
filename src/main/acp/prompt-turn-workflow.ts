@@ -192,7 +192,7 @@ class AcpPromptTurnWorkflow {
   async run(
     request: AcpPromptRequest,
     mode: AcpPromptTurnMode,
-    onPromptAdmitted?: () => Promise<void>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
     let activeSession = this.activeSession(request.sessionId)
     if (!activeSession) throw new Error(`ACP session not found: ${request.sessionId}`)
@@ -266,15 +266,19 @@ class AcpPromptTurnWorkflow {
     }
 
     let interaction: AcpPromptSessionInteractionScope | undefined
+    let admittedRequest = request
     try {
       interaction = this.options.interactions.activatePrompt(reservation)
       const admittedPlan = this.options.plan.admit(request, interaction, plan)
       plan = admittedPlan instanceof Promise ? await admittedPlan : admittedPlan
       // Admission-dependent state may commit only while this interaction owns the Session. A
       // rejected commit releases ownership below without publishing prompt start or dispatching.
-      await onPromptAdmitted?.()
-      this.options.registry.select(request.sessionId)
-      this.options.recordAdmittedPrompt(request)
+      const admittedProvenanceContext = await onPromptAdmitted?.()
+      if (admittedProvenanceContext) {
+        admittedRequest = { ...request, provenanceContext: admittedProvenanceContext }
+      }
+      this.options.registry.select(admittedRequest.sessionId)
+      this.options.recordAdmittedPrompt(admittedRequest)
     } catch (error) {
       skill.close(rejectedSkillOutcome)
       this.options.interactions.release(interaction ?? reservation)
@@ -290,7 +294,7 @@ class AcpPromptTurnWorkflow {
       textLength: request.text?.length ?? 0
     })
     return this.executeTurn({
-      request,
+      request: admittedRequest,
       connectionGeneration: this.options.environment.connectionGeneration?.() ?? 0,
       mode,
       session: activeSession,
