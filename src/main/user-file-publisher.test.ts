@@ -130,6 +130,22 @@ describe('publishUserFile', () => {
     }
   )
 
+  it.runIf(process.platform !== 'win32')(
+    'replaces a read-only destination while preserving its permissions',
+    async () => {
+      const destinationPath = join(root, 'report.txt')
+      await writeFile(destinationPath, 'existing bytes')
+      await chmod(destinationPath, 0o444)
+
+      await publishUserFile(destinationPath, (temporaryPath) =>
+        writeFile(temporaryPath, 'new bytes')
+      )
+
+      await expect(readFile(destinationPath, 'utf8')).resolves.toBe('new bytes')
+      expect((await stat(destinationPath)).mode & 0o777).toBe(0o444)
+    }
+  )
+
   it('retries a transient replacement denial before publishing', async () => {
     const destinationPath = join(root, 'report.txt')
     await writeFile(destinationPath, 'existing bytes')

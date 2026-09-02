@@ -63,6 +63,7 @@ const publishUserFile = async (
 
   try {
     await write(temporaryPath)
+    await durability.syncFile(temporaryPath)
     if (!options.exclusive) {
       try {
         await chmod(temporaryPath, (await stat(destinationPath)).mode & 0o7777)
@@ -70,7 +71,6 @@ const publishUserFile = async (
         if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
       }
     }
-    await durability.syncFile(temporaryPath)
     await options.validateDestination?.()
     if (options.exclusive) {
       const copied = await publishExclusive(
