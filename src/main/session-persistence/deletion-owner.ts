@@ -352,8 +352,9 @@ class SessionPersistenceDeletionOwner {
         try {
           if (this.workspaceOwnership) {
             for (const session of scan.sessions) {
-              if (await this.workspaceOwnership.markRetained(session)) {
-                retainedWorkspaceSessions.push(session)
+              retainedWorkspaceSessions.push(session)
+              if (!(await this.workspaceOwnership.markRetained(session))) {
+                retainedWorkspaceSessions.pop()
               }
             }
           }
@@ -455,10 +456,11 @@ class SessionPersistenceDeletionOwner {
         operation.phase(failurePhase)
         token = await this.fileIndex.softDeleteSession(projectId, sessionId)
       }
-      if (session) {
+      if (session && this.workspaceOwnership) {
         failurePhase = 'retain-managed-workspace'
         operation.phase(failurePhase)
-        managedWorkspaceRetained = (await this.workspaceOwnership?.markRetained(session)) ?? false
+        managedWorkspaceRetained = true
+        managedWorkspaceRetained = await this.workspaceOwnership.markRetained(session)
       }
       failurePhase = 'delete-authority'
       operation.phase(failurePhase)

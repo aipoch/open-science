@@ -194,6 +194,34 @@ describe('ACP create-Session workflow', () => {
       'guard:end'
     ])
   })
+
+  it('retains the workspace when ownership publication and Session rollback both fail', async () => {
+    const harness = createHarness()
+    const publicationFailure = new Error('receipt publication failed')
+    const rollbackFailure = new Error('Session rollback failed')
+    vi.mocked(harness.lease.commit).mockImplementationOnce(async () => {
+      harness.events.push('commit')
+      throw publicationFailure
+    })
+    harness.deleteSession.mockImplementationOnce(async () => {
+      harness.events.push('delete-session')
+      throw rollbackFailure
+    })
+
+    await expect(harness.workflow.create({ projectId: 'project-1' })).rejects.toMatchObject({
+      errors: [publicationFailure, rollbackFailure]
+    })
+
+    expect(harness.lease.release).not.toHaveBeenCalled()
+    expect(harness.events).toEqual([
+      'guard:start',
+      'acquire',
+      'session',
+      'commit',
+      'delete-session',
+      'guard:end'
+    ])
+  })
 })
 
 const createDeferred = <Value>(): {

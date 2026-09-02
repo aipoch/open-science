@@ -51,6 +51,7 @@ const createAcpCreateSessionWorkflow = (
         return runDataRootWrite(async () => {
           const projectId = request.projectId?.trim() || DEFAULT_ARTIFACT_PROJECT_ID
           const workspace = await workspaces.acquire({ projectId })
+          let releaseWorkspace = true
           try {
             const response = await sessions.createSession({
               ...request,
@@ -63,6 +64,7 @@ const createAcpCreateSessionWorkflow = (
               try {
                 await sessions.deleteSession({ sessionId: response.sessionId })
               } catch (cleanupError) {
+                releaseWorkspace = false
                 throw new AggregateError(
                   [publicationError, cleanupError],
                   'Managed workspace publication and Session rollback failed.'
@@ -72,7 +74,7 @@ const createAcpCreateSessionWorkflow = (
             }
             return response
           } finally {
-            await workspace.release()
+            if (releaseWorkspace) await workspace.release()
           }
         })
       }
