@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -17,6 +17,7 @@ import {
   finalizeManagedWorkspaceOwnership,
   initializeManagedWorkspaceOwnership,
   markManagedWorkspaceRetained,
+  removeManagedWorkspaceOwnership,
   restoreManagedWorkspaceActive
 } from './managed-workspace-ownership'
 import { computeStorageUsage } from './usage'
@@ -196,6 +197,54 @@ describe('managed workspace ownership', () => {
     )
 
     await expect(readdir(externalCwd)).resolves.toEqual([])
+  })
+
+  it('allows Session deletion after its managed workspace was removed independently', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-missing-'))
+    roots.push(dataRoot)
+    initDataRoot(dataRoot)
+    const cwd = join(dataRoot, 'workspaces', 'workspace-1')
+    await mkdir(cwd, { recursive: true })
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Session',
+      cwd,
+      status: 'idle',
+      messages: [],
+      createdAt: 10,
+      updatedAt: 20
+    }
+    const liveSessions = new Map([[session.id, session]])
+    await initializeManagedWorkspaceOwnership(cwd, session.projectId, session.createdAt, dataRoot)
+    await finalizeManagedWorkspaceOwnership(cwd, session.id, session.updatedAt, dataRoot)
+    await rm(cwd, { recursive: true })
+
+    await createDeletionOwner(liveSessions).deleteSession(session.projectId, session.id)
+    expect(liveSessions).toEqual(new Map())
+  })
+
+  it('does not follow a symlinked ownership directory for receipt writes or removals', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-linked-ownership-'))
+    const externalOwnership = await mkdtemp(join(tmpdir(), 'managed-workspace-external-ownership-'))
+    roots.push(dataRoot, externalOwnership)
+    initDataRoot(dataRoot)
+    const workspacesRoot = join(dataRoot, 'workspaces')
+    const cwd = join(workspacesRoot, 'workspace-1')
+    await mkdir(cwd, { recursive: true })
+    await symlink(
+      externalOwnership,
+      join(workspacesRoot, '.ownership'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    await expect(
+      initializeManagedWorkspaceOwnership(cwd, 'project-1', 10, dataRoot)
+    ).rejects.toThrow(/ownership/i)
+    await writeFile(join(externalOwnership, 'workspace-1.json'), 'external receipt')
+
+    await expect(removeManagedWorkspaceOwnership(cwd, dataRoot)).resolves.toBeUndefined()
+    await expect(readdir(externalOwnership)).resolves.toEqual(['workspace-1.json'])
   })
 
   it('restores active ownership when Session authority deletion fails', async () => {

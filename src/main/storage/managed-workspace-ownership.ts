@@ -1,4 +1,4 @@
-import { lstat, rm } from 'node:fs/promises'
+import { lstat, mkdir, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -25,6 +25,7 @@ type ManagedWorkspaceOwnership = Readonly<{
 type ManagedWorkspaceLocation = Readonly<{
   directory: string
   workspaceId: string
+  ownershipDirectory: string
   receiptPath: string
 }>
 
@@ -33,6 +34,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const isTimestamp = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+
+const isFileSystemError = (error: unknown, code: string): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && error.code === code
 
 const decodeOwnership = (contents: string): ManagedWorkspaceOwnership => {
   const value: unknown = JSON.parse(contents)
@@ -83,10 +87,12 @@ const locateManagedWorkspace = (
   ) {
     return undefined
   }
+  const ownershipDirectory = join(workspacesRoot, MANAGED_WORKSPACE_OWNERSHIP_DIR)
   return {
     directory,
     workspaceId,
-    receiptPath: join(workspacesRoot, MANAGED_WORKSPACE_OWNERSHIP_DIR, `${workspaceId}.json`)
+    ownershipDirectory,
+    receiptPath: join(ownershipDirectory, `${workspaceId}.json`)
   }
 }
 
@@ -96,16 +102,48 @@ const assertManagedWorkspaceDirectory = async (
 ): Promise<ManagedWorkspaceLocation | undefined> => {
   const location = locateManagedWorkspace(cwd, dataRoot)
   if (!location) return undefined
-  const info = await lstat(location.directory)
+  let info
+  try {
+    info = await lstat(location.directory)
+  } catch (error) {
+    if (isFileSystemError(error, 'ENOENT')) return undefined
+    throw error
+  }
   if (!info.isDirectory() || info.isSymbolicLink()) {
     throw new Error('Managed workspace must be a regular directory.')
   }
   return location
 }
 
+const assertOwnershipDirectory = async (location: ManagedWorkspaceLocation): Promise<boolean> => {
+  let info
+  try {
+    info = await lstat(location.ownershipDirectory)
+  } catch (error) {
+    if (isFileSystemError(error, 'ENOENT')) return false
+    throw error
+  }
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new Error('Managed workspace ownership path must be a regular directory.')
+  }
+  return true
+}
+
+const ensureOwnershipDirectory = async (location: ManagedWorkspaceLocation): Promise<void> => {
+  try {
+    await mkdir(location.ownershipDirectory, { recursive: false })
+  } catch (error) {
+    if (!isFileSystemError(error, 'EEXIST')) throw error
+  }
+  if (!(await assertOwnershipDirectory(location))) {
+    throw new Error('Managed workspace ownership directory is missing.')
+  }
+}
+
 const readOwnershipForUpdate = async (
   location: ManagedWorkspaceLocation
 ): Promise<ManagedWorkspaceOwnership | undefined> => {
+  if (!(await assertOwnershipDirectory(location))) return undefined
   const result = await readDurableJsonFile(location.receiptPath, decodeOwnership)
   if (result.status === 'missing') return undefined
   if (result.value.workspaceId !== location.workspaceId) {
@@ -118,7 +156,9 @@ const writeOwnership = (
   location: ManagedWorkspaceLocation,
   ownership: ManagedWorkspaceOwnership
 ): Promise<void> =>
-  writeDurableJsonFile(location.receiptPath, `${JSON.stringify(ownership, null, 2)}\n`)
+  ensureOwnershipDirectory(location).then(() =>
+    writeDurableJsonFile(location.receiptPath, `${JSON.stringify(ownership, null, 2)}\n`)
+  )
 
 const initializeManagedWorkspaceOwnership = async (
   cwd: string,
@@ -220,6 +260,11 @@ const readManagedWorkspaceOwnership = async (
 const removeManagedWorkspaceOwnership = async (cwd: string, dataRoot?: string): Promise<void> => {
   const location = locateManagedWorkspace(cwd, dataRoot)
   if (!location) return
+  try {
+    if (!(await assertOwnershipDirectory(location))) return
+  } catch {
+    return
+  }
   await rm(location.receiptPath, { force: true, recursive: false })
 }
 
