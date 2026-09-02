@@ -98,10 +98,10 @@ const locateManagedWorkspace = (
   }
 }
 
-const assertWorkspacesRoot = async (location: ManagedWorkspaceLocation): Promise<boolean> => {
+const assertManagedWorkspacesRoot = async (workspacesRoot: string): Promise<boolean> => {
   let info
   try {
-    info = await lstat(location.workspacesRoot)
+    info = await lstat(workspacesRoot)
   } catch (error) {
     if (isFileSystemError(error, 'ENOENT')) return false
     throw error
@@ -118,7 +118,7 @@ const assertManagedWorkspaceDirectory = async (
 ): Promise<ManagedWorkspaceLocation | undefined> => {
   const location = locateManagedWorkspace(cwd, dataRoot)
   if (!location) return undefined
-  if (!(await assertWorkspacesRoot(location))) return undefined
+  if (!(await assertManagedWorkspacesRoot(location.workspacesRoot))) return undefined
   let info
   try {
     info = await lstat(location.directory)
@@ -133,7 +133,7 @@ const assertManagedWorkspaceDirectory = async (
 }
 
 const assertOwnershipDirectory = async (location: ManagedWorkspaceLocation): Promise<boolean> => {
-  if (!(await assertWorkspacesRoot(location))) return false
+  if (!(await assertManagedWorkspacesRoot(location.workspacesRoot))) return false
   let info
   try {
     info = await lstat(location.ownershipDirectory)
@@ -148,7 +148,7 @@ const assertOwnershipDirectory = async (location: ManagedWorkspaceLocation): Pro
 }
 
 const ensureOwnershipDirectory = async (location: ManagedWorkspaceLocation): Promise<void> => {
-  if (!(await assertWorkspacesRoot(location))) {
+  if (!(await assertManagedWorkspacesRoot(location.workspacesRoot))) {
     throw new Error('Managed workspaces root is missing.')
   }
   try {
@@ -228,9 +228,25 @@ const markManagedWorkspaceRetained = async (
   session: Pick<PersistedChatSession, 'cwd' | 'projectId' | 'id' | 'createdAt' | 'updatedAt'>,
   dataRoot?: string
 ): Promise<boolean> => {
+  const candidate = locateManagedWorkspace(session.cwd, dataRoot)
+  if (!candidate) return false
   const location = await assertManagedWorkspaceDirectory(session.cwd, dataRoot)
-  if (!location) return false
-  const current = await readOwnershipForUpdate(location)
+  if (!location) {
+    let orphanedOwnership: ManagedWorkspaceOwnership | undefined
+    try {
+      orphanedOwnership = await readOwnershipForUpdate(candidate)
+    } catch {
+      return false
+    }
+    if (
+      orphanedOwnership?.projectId === session.projectId &&
+      (orphanedOwnership.sessionId === undefined || orphanedOwnership.sessionId === session.id)
+    ) {
+      await rm(candidate.receiptPath, { force: true, recursive: false })
+    }
+    return false
+  }
+  const current = await readOwnershipForUpdate(candidate)
   if (!current) return false
   if (
     current.projectId !== session.projectId ||
@@ -291,6 +307,7 @@ const removeManagedWorkspaceOwnership = async (cwd: string, dataRoot?: string): 
 
 export {
   MANAGED_WORKSPACE_OWNERSHIP_DIR,
+  assertManagedWorkspacesRoot,
   finalizeManagedWorkspaceOwnership,
   initializeManagedWorkspaceOwnership,
   markManagedWorkspaceRetained,

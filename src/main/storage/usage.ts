@@ -82,7 +82,6 @@ const workspaceUsage = async (dir: string): Promise<{ bytes: number; children: U
     const path = join(dir, entry.name)
     if (entry.isDirectory()) {
       if (entry.name === MANAGED_WORKSPACE_OWNERSHIP_DIR) {
-        looseBytes += await dirSize(path, seen)
         continue
       }
       const ownership = await readManagedWorkspaceOwnership(path, join(dir, '..'))

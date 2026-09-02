@@ -228,8 +228,40 @@ describe('managed workspace ownership', () => {
     await finalizeManagedWorkspaceOwnership(cwd, session.id, session.updatedAt, dataRoot)
     await rm(cwd, { recursive: true })
 
+    await expect(computeStorageUsage(dataRoot)).resolves.toMatchObject({
+      categories: expect.arrayContaining([{ key: 'workspaces', bytes: 0 }])
+    })
+
     await createDeletionOwner(liveSessions).deleteSession(session.projectId, session.id)
     expect(liveSessions).toEqual(new Map())
+    await expect(readdir(join(dataRoot, 'workspaces', '.ownership'))).resolves.toEqual([])
+  })
+
+  it('does not remove an external directory through a symlinked workspaces root', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-allocation-root-'))
+    const externalWorkspaces = await mkdtemp(
+      join(tmpdir(), 'managed-workspace-allocation-external-')
+    )
+    roots.push(dataRoot, externalWorkspaces)
+    initDataRoot(dataRoot)
+    await mkdir(join(externalWorkspaces, 'workspace-1'))
+    await writeFile(join(externalWorkspaces, 'workspace-1', 'user-data.txt'), 'keep')
+    await symlink(
+      externalWorkspaces,
+      join(dataRoot, 'workspaces'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const workspaces = createManagedSessionWorkspaceCapability({
+      resolveRoot: () => dataRoot,
+      createId: () => 'workspace-1'
+    })
+
+    await expect(workspaces.acquire({ projectId: 'project-1' })).rejects.toThrow(/workspace/i)
+
+    await expect(readdir(externalWorkspaces)).resolves.toEqual(['workspace-1'])
+    await expect(readdir(join(externalWorkspaces, 'workspace-1'))).resolves.toEqual([
+      'user-data.txt'
+    ])
   })
 
   it('does not follow a symlinked ownership directory for receipt writes or removals', async () => {

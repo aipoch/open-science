@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { resolveDataRoot } from '../storage-root'
 import {
+  assertManagedWorkspacesRoot,
   finalizeManagedWorkspaceOwnership,
   initializeManagedWorkspaceOwnership,
   removeManagedWorkspaceOwnership
@@ -32,8 +33,18 @@ type ManagedSessionWorkspaceDependencies = {
 const defaultDependencies: ManagedSessionWorkspaceDependencies = {
   resolveRoot: resolveDataRoot,
   createId: randomUUID,
-  createDirectory: (path) => mkdir(path, { recursive: true }).then(() => undefined),
-  removeDirectory: (path) => rm(path, { recursive: true, force: true }),
+  createDirectory: async (path) => {
+    const workspacesRoot = dirname(path)
+    await mkdir(workspacesRoot, { recursive: true })
+    if (!(await assertManagedWorkspacesRoot(workspacesRoot))) {
+      throw new Error('Managed workspaces root is missing.')
+    }
+    await mkdir(path, { recursive: false })
+  },
+  removeDirectory: async (path) => {
+    if (!(await assertManagedWorkspacesRoot(dirname(path)))) return
+    await rm(path, { recursive: true, force: true })
+  },
   initializeOwnership: (path, projectId, dataRoot) =>
     initializeManagedWorkspaceOwnership(path, projectId, Date.now(), dataRoot),
   finalizeOwnership: (path, sessionId, dataRoot) =>
