@@ -837,6 +837,7 @@ describe('startWebHttpServer', () => {
 
     for (const [code, expectedStatus] of [
       ['command-unavailable', 404],
+      ['session-details-conflict', 409],
       ['session-revision-conflict', 409]
     ] as const) {
       directInvoke.mockRejectedValueOnce(new ApplicationCommandError(code, `Rejected: ${code}`))

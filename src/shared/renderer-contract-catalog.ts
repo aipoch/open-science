@@ -1497,7 +1497,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('sessions', ['sessions:delete-session', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.editDetails': callable<
     (request: EditSessionDetailsRequest) => Promise<PersistedChatSession>
-  >()('sessions', ['sessions:edit-details']),
+  >()('sessions', ['sessions:edit-details', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.exportConversation': callable<
     (request: ExportConversationRequest) => Promise<ExportConversationResult>
   >()('sessions', ['sessions:export-conversation', MAPPED_ELECTRON]),

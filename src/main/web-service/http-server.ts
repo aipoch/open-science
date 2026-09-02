@@ -405,6 +405,7 @@ const publicApplicationCommandError = (
 const applicationCommandErrorStatus = (error: ApplicationCommandError): number => {
   if (error.code === 'invalid-command-arguments') return 400
   if (error.code === 'command-unavailable') return 404
+  if (error.code === 'session-details-conflict') return 409
   if (error.code === 'session-revision-conflict') return 409
   return 500
 }

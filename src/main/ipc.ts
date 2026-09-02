@@ -350,7 +350,6 @@ import type {
   PersistedChatSession,
   SessionSummary
 } from '../shared/session-persistence'
-import { editSessionDetailsRequestSchema } from '../shared/session-persistence'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import {
@@ -3735,10 +3734,6 @@ const createApplicationModules = async (
     }
   })
   declareElectronAdapter('session-persistence', () => {
-    ipcMainHandle('sessions:edit-details', (_event, request) => {
-      const validatedRequest = editSessionDetailsRequestSchema.parse(request)
-      return withDataRootWrite(() => sessionDetailsOwner.edit(validatedRequest))
-    })
     registerSessionPersistenceIpcHandlers(
       sessionPersistenceBackend,
       reviewRepository,
