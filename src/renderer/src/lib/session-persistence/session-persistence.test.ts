@@ -461,6 +461,61 @@ describe('reconcilePendingArtifacts', () => {
     })
   })
 
+  it('keeps native-only recovery unresolved when startup and manual retries return no Version', async () => {
+    const nativePath =
+      '/data/artifacts/proj-1/.provenance/artifacts/artifact-1/versions/version-1/chart.png'
+    const originalError = 'Generated file finalization failed: disk temporarily unavailable'
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        status: 'error',
+        error: originalError,
+        errorReportable: true,
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'done',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['version-1'],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        artifacts: [
+          {
+            id: 'version-1',
+            artifactId: 'artifact-1',
+            versionId: 'version-1',
+            kind: 'managed-file',
+            path: nativePath,
+            name: 'chart.png'
+          }
+        ]
+      })
+    ])
+    const api = { reconcilePendingArtifacts: vi.fn().mockResolvedValue([]) }
+
+    await reconcilePendingArtifacts(api)
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: originalError,
+      errorReportable: true
+    })
+    await expect(retryPendingArtifactFinalization('session-1', api)).rejects.toThrow(
+      /did not resolve all native Versions/u
+    )
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error:
+        'Generated file finalization failed: Artifact finalization did not resolve all native Versions.',
+      errorReportable: true
+    })
+  })
+
   it('keeps an unresolved compatibility reference when native recovery succeeds', async () => {
     const nativePath =
       '/data/artifacts/proj-1/.provenance/artifacts/artifact-1/versions/version-1/chart.png'

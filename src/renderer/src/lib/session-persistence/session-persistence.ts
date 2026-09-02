@@ -981,6 +981,12 @@ const reconcileSessionPendingArtifacts = async (
       })
       if (!Array.isArray(result)) throw invalidArtifactFinalizationProofError(result.message)
       const finalized = result
+      const recoveredVersionIds = new Set(
+        finalized.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
+      )
+      if (request.artifactVersionIds?.some((versionId) => !recoveredVersionIds.has(versionId))) {
+        throw new Error('Artifact finalization did not resolve all native Versions.')
+      }
       if (finalized.length > 0) {
         const current = useSessionStore
           .getState()
