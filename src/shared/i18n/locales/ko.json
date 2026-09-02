@@ -40,6 +40,8 @@
     "Export Connector configuration": "커넥터 구성 내보내기"
   },
   "native": {
+    "Conversation export is too large. Select fewer conversation turns.": "대화 내보내기 용량이 너무 큽니다. 더 적은 대화 턴을 선택하세요.",
+    "Conversation PDF export timed out. Select fewer conversation turns.": "대화 PDF 내보내기 시간이 초과되었습니다. 더 적은 대화 턴을 선택하세요.",
     "Open Web UI": "Web UI 열기",
     "Copy URL": "URL 복사",
     "Show": "표시",

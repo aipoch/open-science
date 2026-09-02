@@ -26,6 +26,39 @@ describe('preview workbench store', () => {
     useSessionStore.setState({ sessions: [] })
   })
 
+  it('refreshes a file tab recency timestamp when it becomes active', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.upsertAndActivateItem({
+      id: 'file-1',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'one.md',
+      path: '/one.md',
+      format: 'markdown',
+      name: 'one.md'
+    })
+    store.upsertAndActivateItem({
+      id: 'file-2',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'two.md',
+      path: '/two.md',
+      format: 'markdown',
+      name: 'two.md'
+    })
+    const previousTimestamp = usePreviewWorkbenchStore
+      .getState()
+      .items.find((item) => item.id === 'file-1')?.updatedAt
+    vi.advanceTimersByTime(1_000)
+
+    store.activateItem('file-1')
+
+    expect(
+      usePreviewWorkbenchStore.getState().items.find((item) => item.id === 'file-1')?.updatedAt
+    ).toBe(Date.now())
+    expect(Date.now()).toBeGreaterThan(previousTimestamp ?? 0)
+  })
+
   it('does not switch, remove, collapse, or close a dialog when its active draft rejects leaving', () => {
     const store = usePreviewWorkbenchStore.getState()
     store.activateProject('project-a')

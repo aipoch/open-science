@@ -151,12 +151,13 @@ const assertSaveSessionArtifactsRequest: (
         file === null ||
         typeof file.fileId !== 'string' ||
         file.fileId.trim().length === 0 ||
+        typeof file.versionId !== 'string' ||
+        file.versionId.trim().length === 0 ||
         typeof file.suggestedName !== 'string'
       ) {
         return true
       }
       if ('path' in file && file.path !== undefined) return true
-      if ('versionId' in file && file.versionId !== undefined) return true
       return false
     })
   ) {
@@ -186,7 +187,8 @@ const assertSaveProjectArtifactsRequest = (request: SaveProjectArtifactsRequest)
         return true
       }
       if (typeof file.fileId !== 'string' || file.fileId.trim().length === 0) return true
-      if ('path' in file || ('versionId' in file && file.versionId !== undefined)) return true
+      if (typeof file.versionId !== 'string' || file.versionId.trim().length === 0) return true
+      if ('path' in file) return true
       return false
     })
   ) {
@@ -582,9 +584,9 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
     'file:save-session-artifacts',
     async (event, request: SaveSessionArtifactsRequest): Promise<SaveSessionArtifactsResult> => {
       assertSaveSessionArtifactsRequest(request)
-      const openLatestManagedFile = options.openLatestManagedFile
-      if (!openLatestManagedFile) {
-        throw new Error('Latest managed file resolver is not configured.')
+      const openManagedFileVersion = options.openManagedFileVersion
+      if (!openManagedFileVersion) {
+        throw new Error('Managed file Version resolver is not configured.')
       }
       const parentWindow = BrowserWindow.fromWebContents(event.sender)
 
@@ -601,9 +603,10 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
 
         if (canceled || !filePath) return { saved: false }
 
-        const managedFile = await openLatestManagedFile('artifact', {
+        const managedFile = await openManagedFileVersion('artifact', {
           projectId: request.projectId,
-          fileId: file.fileId
+          fileId: file.fileId,
+          versionId: file.versionId
         })
 
         try {
@@ -632,9 +635,10 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
       for (const file of request.files) {
         let managedFile: ManagedFileHandle | undefined
         try {
-          managedFile = await openLatestManagedFile('artifact', {
+          managedFile = await openManagedFileVersion('artifact', {
             projectId: request.projectId,
-            fileId: file.fileId
+            fileId: file.fileId,
+            versionId: file.versionId
           })
           const safeName = getSafeFilename(file.suggestedName, file.fileId)
           savedPaths.push(
@@ -663,9 +667,9 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
     'file:save-project-artifacts',
     async (event, request: SaveProjectArtifactsRequest): Promise<SaveProjectArtifactsResult> => {
       assertSaveProjectArtifactsRequest(request)
-      const openLatestManagedFile = options.openLatestManagedFile
-      if (!openLatestManagedFile) {
-        throw new Error('Latest managed file resolver is not configured.')
+      const openManagedFileVersion = options.openManagedFileVersion
+      if (!openManagedFileVersion) {
+        throw new Error('Managed file Version resolver is not configured.')
       }
 
       const limits = options.projectArtifactExportLimits ?? PROJECT_ARTIFACT_EXPORT_LIMITS
@@ -680,9 +684,10 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
           if (takenNames.size >= limits.maxFiles) {
             throw new Error('Project export exceeds the file-count limit.')
           }
-          const managedVersion = await openLatestManagedFile(file.source, {
+          const managedVersion = await openManagedFileVersion(file.source, {
             projectId: request.projectId,
-            fileId: file.fileId
+            fileId: file.fileId,
+            versionId: file.versionId
           })
           exportFile = managedVersion
           if (!Number.isSafeInteger(managedVersion.size) || managedVersion.size < 0) {

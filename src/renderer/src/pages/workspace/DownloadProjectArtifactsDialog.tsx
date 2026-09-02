@@ -169,6 +169,7 @@ const DownloadProjectArtifactsDialog = ({
           source: file.source,
           sessionId: file.sessionId,
           fileId: file.sourceFileId,
+          versionId: file.sourceVersionId,
           suggestedName: file.name
         }))
       })

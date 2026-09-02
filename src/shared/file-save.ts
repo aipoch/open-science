@@ -32,6 +32,7 @@ type SaveManagedFileResult = SaveBlobFileResult
 
 type SaveSessionArtifactFile = {
   fileId: string
+  versionId: string
   suggestedName: string
 }
 
@@ -52,6 +53,7 @@ type SaveProjectArtifactFile = {
   source: 'artifact' | 'upload'
   sessionId: string
   fileId: string
+  versionId: string
   suggestedName: string
 }
 

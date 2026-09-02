@@ -40,6 +40,8 @@
     "Export Connector configuration": "Exporter la configuration du connecteur"
   },
   "native": {
+    "Conversation export is too large. Select fewer conversation turns.": "L’exportation de la conversation est trop volumineuse. Sélectionnez moins de tours de conversation.",
+    "Conversation PDF export timed out. Select fewer conversation turns.": "L’exportation PDF de la conversation a expiré. Sélectionnez moins de tours de conversation.",
     "Open Web UI": "Ouvrir l'interface Web",
     "Copy URL": "Copier l'URL",
     "Show": "Afficher",

@@ -136,6 +136,7 @@ const DownloadSessionArtifactsDialog = ({
         sessionId: session.id,
         files: selectedArtifacts.map((artifact) => ({
           fileId: artifact.sourceFileId,
+          versionId: artifact.sourceVersionId,
           suggestedName: artifact.name
         }))
       })

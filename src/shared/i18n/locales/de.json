@@ -40,6 +40,8 @@
     "Task needs attention": "Aufgabe erfordert Aufmerksamkeit"
   },
   "native": {
+    "Conversation export is too large. Select fewer conversation turns.": "Der Konversationsexport ist zu groß. Wählen Sie weniger Konversationsrunden aus.",
+    "Conversation PDF export timed out. Select fewer conversation turns.": "Beim PDF-Export der Konversation wurde das Zeitlimit überschritten. Wählen Sie weniger Konversationsrunden aus.",
     "Open Web UI": "Web-UI öffnen",
     "Copy URL": "URL kopieren",
     "Show": "Anzeigen",

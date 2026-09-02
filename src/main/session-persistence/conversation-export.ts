@@ -9,6 +9,7 @@ import {
   renderConversationHtml,
   renderConversationMarkdown,
   sanitizeExportFilename,
+  selectConversationExportMessages,
   type ExportConversationRequest,
   type ExportConversationResult
 } from '../../shared/conversation-export'
@@ -23,6 +24,20 @@ type ConversationExportPrintWindow = {
     printToPDF(options: Electron.PrintToPDFOptions): Promise<Buffer>
   }
   destroy(): void
+}
+
+type ConversationExportLimits = {
+  maxMessages: number
+  maxImageBase64Bytes: number
+  maxHtmlBytes: number
+  pdfPrintTimeoutMs: number
+}
+
+const DEFAULT_CONVERSATION_EXPORT_LIMITS: ConversationExportLimits = {
+  maxMessages: 2000,
+  maxImageBase64Bytes: 32 * 1024 * 1024,
+  maxHtmlBytes: 64 * 1024 * 1024,
+  pdfPrintTimeoutMs: 120_000
 }
 
 type ConversationExportDependencies = {
@@ -40,6 +55,7 @@ type ConversationExportDependencies = {
   getTempPath(): string
   now(): number
   translate: NativeTranslator
+  exportLimits: ConversationExportLimits
 }
 
 type ConversationExportRequiredDependencies = Pick<
@@ -105,8 +121,28 @@ const defaultDependencies: ConversationExportDefaultDependencies = {
   getDownloadsPath: () => app.getPath('downloads'),
   getTempPath: () => app.getPath('temp'),
   now: Date.now,
-  translate: englishNativeTranslator
+  translate: englishNativeTranslator,
+  exportLimits: DEFAULT_CONVERSATION_EXPORT_LIMITS
 }
+
+const printToPdfWithTimeout = (
+  print: Promise<Buffer>,
+  timeoutMs: number,
+  timeoutError: () => Error
+): Promise<Buffer> =>
+  new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(timeoutError()), timeoutMs)
+    void print.then(
+      (pdf) => {
+        clearTimeout(timeout)
+        resolve(pdf)
+      },
+      (error: unknown) => {
+        clearTimeout(timeout)
+        reject(error)
+      }
+    )
+  })
 
 const createConversationExportService = (
   dependencies: ConversationExportRequiredDependencies &
@@ -133,6 +169,29 @@ const createConversationExportService = (
         throw new Error('Wait for the conversation to finish before exporting it.')
       }
       if (session.messages.length === 0) throw new Error('Conversation has no messages to export.')
+
+      const selectedMessages = selectConversationExportMessages(
+        session.messages,
+        request.selectedPromptMessageIds
+      )
+      const exceedsMessageBudget = selectedMessages.length > deps.exportLimits.maxMessages
+      const imageBase64Bytes =
+        request.format === 'pdf'
+          ? selectedMessages.reduce(
+              (total, message) =>
+                total +
+                (message.images ?? []).reduce(
+                  (messageTotal, image) => messageTotal + Buffer.byteLength(image.data, 'ascii'),
+                  0
+                ),
+              0
+            )
+          : 0
+      if (exceedsMessageBudget || imageBase64Bytes > deps.exportLimits.maxImageBase64Bytes) {
+        throw new Error(
+          deps.translate('Conversation export is too large. Select fewer conversation turns.')
+        )
+      }
 
       const document = createConversationExportDocument(
         session,
@@ -161,11 +220,16 @@ const createConversationExportService = (
         return { saved: true, filePath: dialogResult.filePath }
       }
 
+      const html = renderConversationHtml(document)
+      if (Buffer.byteLength(html, 'utf8') > deps.exportLimits.maxHtmlBytes) {
+        throw new Error(
+          deps.translate('Conversation export is too large. Select fewer conversation turns.')
+        )
+      }
       const tempDirectory = await deps.createTempDirectory(
         join(deps.getTempPath(), 'open-science-conversation-export-')
       )
       try {
-        const html = renderConversationHtml(document)
         const htmlPath = join(tempDirectory, 'conversation.html')
         await deps.writeFile(htmlPath, html)
 
@@ -175,16 +239,25 @@ const createConversationExportService = (
           await printWindow.webContents.executeJavaScript(
             'document.fonts ? document.fonts.ready.then(() => true) : true'
           )
-          const pdf = await printWindow.webContents.printToPDF({
-            pageSize: 'A4',
-            printBackground: true,
-            margins: {
-              top: 0.2,
-              bottom: 0.2,
-              left: 0.2,
-              right: 0.2
-            }
-          })
+          const pdf = await printToPdfWithTimeout(
+            printWindow.webContents.printToPDF({
+              pageSize: 'A4',
+              printBackground: true,
+              margins: {
+                top: 0.2,
+                bottom: 0.2,
+                left: 0.2,
+                right: 0.2
+              }
+            }),
+            deps.exportLimits.pdfPrintTimeoutMs,
+            () =>
+              new Error(
+                deps.translate(
+                  'Conversation PDF export timed out. Select fewer conversation turns.'
+                )
+              )
+          )
           await deps.writeFile(dialogResult.filePath, pdf)
           return { saved: true, filePath: dialogResult.filePath }
         } finally {
@@ -208,6 +281,7 @@ const registerConversationExportIpcHandler = (service: ConversationExportService
 export { createConversationExportService, registerConversationExportIpcHandler }
 export type {
   ConversationExportDependencies,
+  ConversationExportLimits,
   ConversationExportPrintWindow,
   ConversationExportService
 }

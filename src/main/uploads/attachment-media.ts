@@ -5,6 +5,12 @@ import { pathToFileURL } from 'node:url'
 
 import type { Sharp } from 'sharp'
 import { ResourceBudgetExceededError } from '../resource-budget'
+import {
+  exceedsDecodedImagePixelLimit,
+  MAX_DECODED_IMAGE_PIXELS,
+  readRasterImageDimensions,
+  type RasterImageDimensions
+} from '../raster-image-safety'
 
 import { joinPdfTextItems } from '../../shared/pdf-text'
 
@@ -33,7 +39,7 @@ export const MAX_IMAGE_LONG_EDGE = 1568
 // Keep the cheap PNG/JPEG header preflight in front of sharp's decoder-side pixel limit so
 // malformed or oversized inputs fail before native decoding and allocation. 16 MP is at most
 // ~64 MiB at four bytes per pixel, which bounds processing independently of compressed size.
-export const MAX_DECODED_IMAGE_PIXELS = 16_000_000
+export { MAX_DECODED_IMAGE_PIXELS }
 
 // A conversation replays its full history every turn, so inlined image payloads accumulate across
 // turns even though each image is individually capped. Once the running base64 total nears the
@@ -221,69 +227,11 @@ const detectedImageMimeType = (bytes: Buffer): 'image/png' | 'image/jpeg' | unde
     : undefined
 }
 
-type ImageDimensions = { width: number; height: number }
-
-const JPEG_START_OF_FRAME_MARKERS = new Set([
-  0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf
-])
-
-const declaredPngDimensions = (bytes: Buffer): ImageDimensions | undefined => {
-  if (
-    bytes.length < 33 ||
-    bytes.readUInt32BE(8) !== 13 ||
-    bytes.toString('ascii', 12, 16) !== 'IHDR'
-  ) {
-    return undefined
-  }
-  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
-}
-
-const declaredJpegDimensions = (bytes: Buffer): ImageDimensions | undefined => {
-  let offset = 2
-  while (offset < bytes.length) {
-    if (bytes[offset] !== 0xff) return undefined
-    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1
-    if (offset >= bytes.length) return undefined
-
-    const marker = bytes[offset]
-    offset += 1
-    if (
-      marker === 0x00 ||
-      marker === 0x01 ||
-      marker === 0xd8 ||
-      marker === 0xd9 ||
-      marker === 0xda ||
-      (marker >= 0xd0 && marker <= 0xd7)
-    ) {
-      return undefined
-    }
-    if (offset + 2 > bytes.length) return undefined
-
-    const segmentLength = bytes.readUInt16BE(offset)
-    if (segmentLength < 2 || offset + segmentLength > bytes.length) return undefined
-    if (JPEG_START_OF_FRAME_MARKERS.has(marker)) {
-      if (segmentLength < 11) return undefined
-      const samplePrecision = bytes[offset + 2]
-      const componentCount = bytes[offset + 7]
-      if (samplePrecision === 0 || componentCount < 1 || segmentLength !== 8 + 3 * componentCount) {
-        return undefined
-      }
-      return {
-        width: bytes.readUInt16BE(offset + 5),
-        height: bytes.readUInt16BE(offset + 3)
-      }
-    }
-    offset += segmentLength
-  }
-  return undefined
-}
-
 const declaredImageDimensions = (
   bytes: Buffer,
   mimeType: 'image/png' | 'image/jpeg'
-): ImageDimensions => {
-  const dimensions =
-    mimeType === 'image/png' ? declaredPngDimensions(bytes) : declaredJpegDimensions(bytes)
+): RasterImageDimensions => {
+  const dimensions = readRasterImageDimensions(bytes, mimeType)
   if (!dimensions) {
     throw new ImageContentError(
       'IMAGE_DECODE_FAILED',
@@ -293,12 +241,8 @@ const declaredImageDimensions = (
   return dimensions
 }
 
-const assertImagePixelLimit = (size: ImageDimensions): void => {
-  if (
-    size.width < 1 ||
-    size.height < 1 ||
-    size.width > Math.floor(MAX_DECODED_IMAGE_PIXELS / size.height)
-  ) {
+const assertImagePixelLimit = (size: RasterImageDimensions): void => {
+  if (exceedsDecodedImagePixelLimit(size)) {
     throw new ImageContentError(
       'IMAGE_PROCESSING_FAILED',
       `Decoded image exceeds the ${MAX_DECODED_IMAGE_PIXELS}-pixel processing limit.`
@@ -392,7 +336,7 @@ const processImageBytes = async (
     width: Math.max(1, Math.round(croppedSize.width * scale)),
     height: Math.max(1, Math.round(croppedSize.height * scale))
   }
-  const prepare = (size: ImageDimensions = outputSize): Sharp => {
+  const prepare = (size: RasterImageDimensions = outputSize): Sharp => {
     let pipeline = source.clone().autoOrient()
     if (crop) {
       pipeline = pipeline.extract({

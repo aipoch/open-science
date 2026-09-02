@@ -40,6 +40,8 @@
     "Export Connector configuration": "匯出連接器設定"
   },
   "native": {
+    "Conversation export is too large. Select fewer conversation turns.": "對話匯出內容過大。請選擇較少的對話輪次。",
+    "Conversation PDF export timed out. Select fewer conversation turns.": "對話 PDF 匯出逾時。請選擇較少的對話輪次。",
     "Open Web UI": "開啟 Web 介面",
     "Copy URL": "複製 URL",
     "Show": "顯示",

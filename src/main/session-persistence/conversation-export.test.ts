@@ -75,7 +75,9 @@ describe('conversation export service', () => {
     printToPDF.mockResolvedValue(Buffer.from('pdf'))
   })
 
-  const createService = (): ReturnType<typeof createConversationExportService> =>
+  const createService = (
+    overrides: Record<string, unknown> = {}
+  ): ReturnType<typeof createConversationExportService> =>
     createConversationExportService({
       loadSession,
       isSessionActive,
@@ -86,8 +88,9 @@ describe('conversation export service', () => {
       createPrintWindow,
       getDownloadsPath: () => '/downloads',
       getTempPath: () => '/tmp',
-      now: () => 3
-    })
+      now: () => 3,
+      ...overrides
+    } as Parameters<typeof createConversationExportService>[0])
 
   it('loads the durable session and saves normalized Markdown', async () => {
     const result = await createService().exportConversation({
@@ -217,6 +220,92 @@ describe('conversation export service', () => {
     expect(destroy).toHaveBeenCalledOnce()
     expect(removeDirectory).toHaveBeenCalledWith('/tmp/open-science-conversation-export-test')
     expect(result).toEqual({ saved: true, filePath: '/downloads/export.pdf' })
+  })
+
+  it('rejects oversized message and image selections before opening Save As', async () => {
+    loadSession.mockResolvedValue({
+      ...session,
+      messages: [
+        ...session.messages,
+        {
+          ...session.messages[0],
+          id: 'message-2',
+          images: [{ id: 'image-1', mimeType: 'image/png', data: 'AAAAAA' }]
+        }
+      ]
+    })
+    const exportLimits = {
+      maxMessages: 1,
+      maxImageBase64Bytes: 5,
+      maxHtmlBytes: 1_000_000,
+      pdfPrintTimeoutMs: 1_000
+    }
+
+    await expect(
+      createService({ exportLimits }).exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'pdf'
+      })
+    ).rejects.toThrow(/select fewer conversation turns/i)
+    await expect(
+      createService({ exportLimits: { ...exportLimits, maxMessages: 10 } }).exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'pdf'
+      })
+    ).rejects.toThrow(/select fewer conversation turns/i)
+    expect(showSaveDialog).not.toHaveBeenCalled()
+  })
+
+  it('rejects oversized rendered HTML before creating a print window', async () => {
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: '/downloads/export.pdf' })
+
+    await expect(
+      createService({
+        exportLimits: {
+          maxMessages: 10,
+          maxImageBase64Bytes: 1_000_000,
+          maxHtmlBytes: 100,
+          pdfPrintTimeoutMs: 1_000
+        }
+      }).exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'pdf'
+      })
+    ).rejects.toThrow(/select fewer conversation turns/i)
+    expect(createPrintWindow).not.toHaveBeenCalled()
+  })
+
+  it('times out PDF printing and destroys the hidden window', async () => {
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: '/downloads/export.pdf' })
+    printToPDF.mockReturnValue(new Promise(() => undefined))
+    const exportPromise = createService({
+      exportLimits: {
+        maxMessages: 10,
+        maxImageBase64Bytes: 1_000_000,
+        maxHtmlBytes: 1_000_000,
+        pdfPrintTimeoutMs: 5
+      }
+    }).exportConversation({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      format: 'pdf'
+    })
+
+    const outcome = await Promise.race([
+      exportPromise.then(
+        () => 'resolved',
+        (error: unknown) => error
+      ),
+      new Promise<'still-pending'>((resolve) => setTimeout(() => resolve('still-pending'), 50))
+    ])
+
+    expect(outcome).toBeInstanceOf(Error)
+    expect((outcome as Error).message).toMatch(/timed out/i)
+    expect(destroy).toHaveBeenCalledOnce()
+    expect(removeDirectory).toHaveBeenCalledWith('/tmp/open-science-conversation-export-test')
   })
 
   it('destroys the print window when PDF generation fails', async () => {

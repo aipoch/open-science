@@ -616,7 +616,12 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
     if (!get().items.some((item) => item.id === itemId)) return
     if (get().activeItemId === itemId) return
     previewLeaveGuards.request(activeWorkbenchGuardScope(get()), () =>
-      set({ activeItemId: itemId })
+      set((state) => ({
+        activeItemId: itemId,
+        items: state.items.map((item) =>
+          item.id === itemId ? { ...item, updatedAt: Date.now() } : item
+        )
+      }))
     )
   },
 

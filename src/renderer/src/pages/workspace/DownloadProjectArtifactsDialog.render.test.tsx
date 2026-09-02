@@ -184,12 +184,14 @@ describe('DownloadProjectArtifactsDialog', () => {
           source: 'artifact',
           sessionId: 'session-1',
           fileId: 'report',
+          versionId: 'report-version-1',
           suggestedName: 'report.csv'
         },
         {
           source: 'upload',
           sessionId: 'session-1',
           fileId: 'dataset',
+          versionId: 'dataset-version-1',
           suggestedName: 'dataset.csv'
         }
       ]
@@ -197,7 +199,7 @@ describe('DownloadProjectArtifactsDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('exports only the latest logical identity without a path or Version hint', async () => {
+  it('exports the immutable Version shown in the Project Files snapshot without a path', async () => {
     listFiles.mockResolvedValue({ items: [files[0]!], totalCount: 1 })
     await renderDialog()
 
@@ -214,6 +216,7 @@ describe('DownloadProjectArtifactsDialog', () => {
           source: 'artifact',
           sessionId: 'session-1',
           fileId: 'report',
+          versionId: 'report-version-1',
           suggestedName: 'report.csv'
         }
       ]

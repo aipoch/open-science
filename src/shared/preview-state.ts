@@ -6,6 +6,12 @@
 import type { ProjectFileOriginSession } from './project-files'
 
 export const PREVIEW_STATE_VERSION = 1
+export const MAX_PERSISTED_PREVIEW_ITEMS = 100
+
+const MAX_PREVIEW_ID_LENGTH = 512
+const MAX_PREVIEW_LABEL_LENGTH = 1024
+const MAX_PREVIEW_PATH_LENGTH = 8192
+const MAX_PREVIEW_METADATA_LENGTH = 256
 
 export type PersistedPreviewPanelState = 'open' | 'collapsed'
 
@@ -72,8 +78,8 @@ export type DeletePreviewStateRequest = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const asString = (value: unknown): string | undefined =>
-  typeof value === 'string' ? value : undefined
+const asBoundedString = (value: unknown, maxLength: number): string | undefined =>
+  typeof value === 'string' && value.length <= maxLength ? value : undefined
 
 const asNonNegativeNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
@@ -88,8 +94,8 @@ const sanitizeOriginSession = (value: unknown): ProjectFileOriginSession | undef
   }
 
   const origin: ProjectFileOriginSession = { state: value.state }
-  const title = asString(value.title)
-  const deletedAt = asString(value.deletedAt)
+  const title = asBoundedString(value.title, MAX_PREVIEW_LABEL_LENGTH)
+  const deletedAt = asBoundedString(value.deletedAt, MAX_PREVIEW_METADATA_LENGTH)
   if (title) origin.title = title
   if (deletedAt) origin.deletedAt = deletedAt
   return origin
@@ -106,28 +112,28 @@ export const createEmptyPersistedPreviewState = (): PersistedPreviewState => ({
 const sanitizePreviewFileItem = (value: unknown): PersistedPreviewFileItem | undefined => {
   if (!isRecord(value)) return undefined
 
-  const id = asString(value.id)
-  const sessionId = asString(value.sessionId)
-  const path = asString(value.path)
-  const name = asString(value.name)
+  const id = asBoundedString(value.id, MAX_PREVIEW_ID_LENGTH)
+  const sessionId = asBoundedString(value.sessionId, MAX_PREVIEW_ID_LENGTH)
+  const path = asBoundedString(value.path, MAX_PREVIEW_PATH_LENGTH)
+  const name = asBoundedString(value.name, MAX_PREVIEW_LABEL_LENGTH)
 
   if (!id || !sessionId || !path || !name) return undefined
 
   const item: PersistedPreviewFileItem = {
     id,
     sessionId,
-    title: asString(value.title) ?? name,
+    title: asBoundedString(value.title, MAX_PREVIEW_LABEL_LENGTH) ?? name,
     path,
-    format: asString(value.format) ?? 'unknown',
+    format: asBoundedString(value.format, MAX_PREVIEW_METADATA_LENGTH) ?? 'unknown',
     name
   }
-  const source = asString(value.source)
-  const mimeType = asString(value.mimeType)
+  const source = asBoundedString(value.source, MAX_PREVIEW_METADATA_LENGTH)
+  const mimeType = asBoundedString(value.mimeType, MAX_PREVIEW_METADATA_LENGTH)
   const size = asNonNegativeNumber(value.size)
   const mtimeMs = asNonNegativeNumber(value.mtimeMs)
-  const artifactId = asString(value.artifactId)
-  const managedFileId = asString(value.managedFileId)
-  const selectedVersionId = asString(value.selectedVersionId)
+  const artifactId = asBoundedString(value.artifactId, MAX_PREVIEW_ID_LENGTH)
+  const managedFileId = asBoundedString(value.managedFileId, MAX_PREVIEW_ID_LENGTH)
+  const selectedVersionId = asBoundedString(value.selectedVersionId, MAX_PREVIEW_ID_LENGTH)
   const versionNumber = asPositiveInteger(value.versionNumber)
   const originSession = sanitizeOriginSession(value.originSession)
 
@@ -150,14 +156,14 @@ const sanitizeSubagentsPreviewItem = (
   if (!isRecord(value) || value.type !== 'tool' || value.toolKind !== 'subagents') {
     return undefined
   }
-  const id = asString(value.id)
-  const sessionId = asString(value.sessionId)
-  const selectedAgentFrameId = asString(value.selectedAgentFrameId)
+  const id = asBoundedString(value.id, MAX_PREVIEW_ID_LENGTH)
+  const sessionId = asBoundedString(value.sessionId, MAX_PREVIEW_ID_LENGTH)
+  const selectedAgentFrameId = asBoundedString(value.selectedAgentFrameId, MAX_PREVIEW_ID_LENGTH)
   if (!id || !sessionId || !selectedAgentFrameId) return undefined
   return {
     id,
     sessionId,
-    title: asString(value.title) ?? 'Subagents',
+    title: asBoundedString(value.title, MAX_PREVIEW_LABEL_LENGTH) ?? 'Subagents',
     type: 'tool',
     toolKind: 'subagents',
     selectedAgentFrameId
@@ -168,18 +174,21 @@ const sanitizeSubagentsPreviewItem = (
 export const normalizePersistedPreviewState = (value: unknown): PersistedPreviewState => {
   if (!isRecord(value)) return createEmptyPersistedPreviewState()
 
-  const items = Array.isArray(value.items)
-    ? value.items
+  const serializedItems = Array.isArray(value.items)
+    ? value.items.slice(-MAX_PERSISTED_PREVIEW_ITEMS)
+    : []
+  const items = serializedItems.length
+    ? serializedItems
         .map(sanitizePreviewFileItem)
         .filter((item): item is PersistedPreviewFileItem => !!item)
     : []
   const subagents =
     sanitizeSubagentsPreviewItem(value.subagents) ??
-    (Array.isArray(value.items)
-      ? value.items.map(sanitizeSubagentsPreviewItem).find(Boolean)
+    (serializedItems.length
+      ? serializedItems.map(sanitizeSubagentsPreviewItem).find(Boolean)
       : undefined)
   const panelState: PersistedPreviewPanelState = value.panelState === 'open' ? 'open' : 'collapsed'
-  const requestedActiveItemId = asString(value.activeItemId)
+  const requestedActiveItemId = asBoundedString(value.activeItemId, MAX_PREVIEW_ID_LENGTH)
   // Keep the active id only when it still points at a persisted item.
   const activeItemId = [...items, ...(subagents ? [subagents] : [])].some(
     (item) => item.id === requestedActiveItemId

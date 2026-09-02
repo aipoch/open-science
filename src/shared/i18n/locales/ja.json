@@ -40,6 +40,8 @@
     "Export Connector configuration": "コネクタ構成をエクスポート"
   },
   "native": {
+    "Conversation export is too large. Select fewer conversation turns.": "会話のエクスポートが大きすぎます。選択する会話ターンを減らしてください。",
+    "Conversation PDF export timed out. Select fewer conversation turns.": "会話の PDF エクスポートがタイムアウトしました。選択する会話ターンを減らしてください。",
     "Open Web UI": "Web UI を開く",
     "Copy URL": "URL をコピー",
     "Show": "表示",
