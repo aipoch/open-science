@@ -80,7 +80,9 @@ const artifact: MessageArtifact = {
   name: 'sin_curve.png',
   mimeType: 'image/png',
   size: 1024,
-  mtimeMs: 1710000000000
+  mtimeMs: 1710000000000,
+  resolvedProjectId: 'project-1',
+  resolvedSessionId: 'session-1'
 }
 const tiffArtifact: MessageArtifact = {
   ...artifact,
@@ -235,6 +237,31 @@ describe('SessionMessageMarkdown', () => {
     expect(
       container.querySelector('[data-session-artifact-image-status]')?.getAttribute('data-state')
     ).toBe('error')
+  })
+
+  it('degrades to the alt text for artifacts without a logical identity', async () => {
+    // Artifacts persisted before editable versions may lack resolvedProjectId/artifactId; the
+    // acquire request builder throws for those, so the image must fall back instead.
+    const legacyArtifact: MessageArtifact = {
+      ...artifact,
+      resolvedProjectId: undefined,
+      resolvedSessionId: undefined
+    }
+
+    await act(async () => {
+      root.render(
+        <SessionMessageMarkdown
+          content="![Sine curve](sin_curve.png)"
+          artifacts={[legacyArtifact]}
+          onPreviewArtifact={vi.fn()}
+          onPreviewArtifactModal={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-session-artifact-image]')).toBeNull()
+    expect(container.querySelector('[data-session-artifact-image-status]')).toBeNull()
+    expect(previewResourceHarness.enabled).toBeUndefined()
   })
 
   it('keeps the image resource mounted after it has been near the viewport', async () => {

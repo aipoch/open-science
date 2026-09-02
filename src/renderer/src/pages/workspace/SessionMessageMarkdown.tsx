@@ -84,6 +84,7 @@ const SessionArtifactImage = ({
     path: artifact.path,
     projectId: artifact.resolvedProjectId,
     sessionId: artifact.resolvedSessionId,
+    managedFileId: artifact.artifactId,
     source: 'artifact' as const,
     mimeType: artifact.mimeType,
     size: artifact.size,
@@ -143,6 +144,7 @@ const SessionArtifactImage = ({
             artifact={artifact}
             projectId={artifact.resolvedProjectId}
             sessionId={artifact.resolvedSessionId}
+            managedFileId={artifact.artifactId}
             isVisible={isNearViewport}
           />
         </span>
@@ -278,6 +280,11 @@ const SessionMessageMarkdown = memo(
           if (
             !artifact ||
             artifact.kind !== 'managed-file' ||
+            // The acquire path requires a logical identity (project + managed file id); artifacts
+            // persisted before editable versions may lack it, so degrade to the alt text instead
+            // of letting the request builder throw inside the effect.
+            !artifact.resolvedProjectId ||
+            !artifact.artifactId ||
             !['image', 'tiff'].includes(getArtifactPreviewFormat(artifact))
           ) {
             return <>{alt}</>
