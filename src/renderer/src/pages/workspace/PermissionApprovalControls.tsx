@@ -15,6 +15,7 @@ import { dialogTitleClassName } from '@/components/ui/dialog-chrome'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { useSettingsStore } from '@/stores/settings-store'
 import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
 import {
   describePermissionRequest,
@@ -37,7 +38,9 @@ import { SpecialistDeleteDetail } from './SpecialistDeleteDetail'
 import { SpecialistSwitchDetail } from './SpecialistSwitchDetail'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
+import { SkillDocumentSheet } from './WorkspaceSkillLoadRow'
 import { buildLiteratureToolSummary } from './literature-tool-presentation'
+import { getSkillLoadPermissionSkillName } from './workspace-skill-load'
 
 type PermissionApprovalControlsProps = {
   requests: AcpPermissionRequest[]
@@ -320,6 +323,91 @@ const PermissionCodeSection = ({
       {expanded && (
         <div className="mx-1 mb-1.5 md:ml-[30px]">
           <WorkspaceToolCodeBlock code={code} language={language} copyable />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Activity-style collapsible card for a skills/load_skill approval. The request carries only the
+// skill's invocation name, so — like the transcript's load_skill rows — the SKILL.md body is
+// resolved from the app's skills catalog by catalog id. It defaults to expanded and fetches on
+// mount (rather than on first expand) because the document IS the payload under review.
+const PermissionSkillSection = ({
+  title,
+  skillId
+}: {
+  title: string
+  skillId: string
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(true)
+  // Keyed by catalog id so a re-imported or renamed skill cannot show a stale body.
+  const [loaded, setLoaded] = useState<{ id: string; body: string } | undefined>()
+  const [failedId, setFailedId] = useState<string | undefined>()
+  const requestRef = useRef(0)
+  const markdown = loaded && loaded.id === skillId ? loaded.body : undefined
+  const failed = failedId === skillId
+
+  useEffect(() => {
+    if (markdown !== undefined || failed) return undefined
+
+    const requestId = ++requestRef.current
+    let cancelled = false
+
+    void window.api.settings.getSkillDetail(skillId).then(
+      (detail) => {
+        if (!cancelled && requestRef.current === requestId) {
+          setLoaded({ id: skillId, body: detail.body })
+        }
+      },
+      () => {
+        if (!cancelled && requestRef.current === requestId) setFailedId(skillId)
+      }
+    )
+
+    return () => {
+      cancelled = true
+    }
+  }, [skillId, markdown, failed])
+
+  return (
+    <div className="w-full overflow-hidden rounded-lg bg-muted/60 px-2 py-1.5">
+      <button
+        type="button"
+        data-testid="permission-skill-toggle"
+        aria-expanded={expanded}
+        className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-[13px] transition-colors hover:bg-muted"
+        onClick={() => setExpanded((e) => !e)}
+      >
+        <span
+          className={cn(
+            'inline-flex w-4 shrink-0 items-center justify-center text-muted-foreground transition-transform duration-200',
+            expanded && 'rotate-90'
+          )}
+        >
+          <ChevronRight className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+        </span>
+        <span className="min-w-0 truncate text-left font-medium text-foreground">{title}</span>
+        <span className="ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+          {t('Skill')}
+        </span>
+      </button>
+      {expanded && (
+        <div className="mx-1 mb-1.5 md:ml-[30px]">
+          {markdown ? (
+            <SkillDocumentSheet markdown={markdown} />
+          ) : failed ? (
+            <button
+              type="button"
+              className="rounded-md px-1 py-1 text-[12px] text-text-300 transition-colors hover:text-text-100"
+              onClick={() => setFailedId(undefined)}
+            >
+              {t('Retry')}
+            </button>
+          ) : (
+            <div className="px-1 py-1 text-[12px] text-text-300">{t('Loading preview…')}</div>
+          )}
         </div>
       )}
     </div>
@@ -682,6 +770,17 @@ const PermissionApprovalCard = ({
   // Guard against a stale scope no longer offered by the current request.
   const effectiveScope = availableScopes.has(scope) ? scope : defaultScope
   const permCode = extractPermissionCode(request)
+  // A skills/load_skill approval names the skill being loaded; resolve its catalog entry so the
+  // card can show the SKILL.md document instead of the raw JSON input (mirroring the transcript's
+  // load_skill rows). The runtime materializes enabled skills, so an enabled entry wins a name
+  // collision; a skill outside the catalog keeps the generic JSON preview.
+  const skillLoadName = getSkillLoadPermissionSkillName(request)
+  const skillEntry = useSettingsStore((state) =>
+    skillLoadName
+      ? (state.skills.find((skill) => skill.name === skillLoadName && skill.enabled) ??
+        state.skills.find((skill) => skill.name === skillLoadName))
+      : undefined
+  )
   const literatureSummary = isLiteratureReadRequest(request)
     ? buildLiteratureToolSummary(request.rawInput)
     : undefined
@@ -891,7 +990,8 @@ const PermissionApprovalCard = ({
       ) : null}
 
       {/* Specialist switch/delete requests show a friendly detail block instead of the raw
-          redacted payload; all other requests keep the activity-style code preview. */}
+          redacted payload; all other requests keep the activity-style code preview. Skill loads
+          show the SKILL.md document itself — it is the payload being approved. */}
       {literatureSummary ? (
         <WorkspaceLiteratureToolCard summary={literatureSummary} />
       ) : isNotebookNetworkApprovalRequest(request) ? (
@@ -900,6 +1000,12 @@ const PermissionApprovalCard = ({
         <SpecialistSwitchDetail request={request} />
       ) : isSpecialistDeleteRequest(request) ? (
         <SpecialistDeleteDetail request={request} />
+      ) : skillEntry && skillLoadName ? (
+        <PermissionSkillSection
+          key={requestId}
+          title={skillEntry.displayName || skillLoadName}
+          skillId={skillEntry.id}
+        />
       ) : permCode ? (
         <PermissionCodeSection
           key={requestId}
