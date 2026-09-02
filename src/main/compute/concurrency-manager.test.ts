@@ -118,6 +118,14 @@ describe('ConcurrencyManager', () => {
       expect(durableManager['sessionLimits'].get('session-1')).toBe(2)
       expect(save).not.toHaveBeenCalled()
     })
+
+    it('clears projected limits when their Sessions are deleted', async () => {
+      await manager.projectPersistedSessionLimit('session-1', 2)
+
+      await manager.clearProjectedSessionLimits(['session-1'])
+
+      expect(manager['sessionLimits'].has('session-1')).toBe(false)
+    })
   })
 
   describe('setProviderLimit', () => {

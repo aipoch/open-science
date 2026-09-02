@@ -39,6 +39,7 @@ type SessionEnabledComputeHostsOwnerOptions = Readonly<{
   listHostIds(): Promise<readonly string[]>
   sessionAuthority: SessionEnabledComputeHostsAuthority
   projectSessionConcurrencyLimit?(sessionId: string, limit: number): Promise<void>
+  clearSessionConcurrencyLimits?(sessionIds: readonly string[]): Promise<void>
   withDataRootWrite<Result>(operation: () => Promise<Result>): Promise<Result>
 }>
 
@@ -143,6 +144,7 @@ class SessionEnabledComputeHostsOwner {
 
   clear(sessionIds: readonly string[]): Promise<void> {
     return this.enqueue(async () => {
+      await this.options.clearSessionConcurrencyLimits?.(sessionIds)
       for (const sessionId of sessionIds) this.options.registry.clear(sessionId)
     })
   }

@@ -371,7 +371,8 @@ describe('SessionEnabledComputeHostsOwner', () => {
   it('clears deleted Sessions from the cache', async () => {
     const registry = new EnabledComputeHostsRegistry()
     registry.set('session-1', ['ssh:cluster'])
-    const owner = new SessionEnabledComputeHostsOwner({
+    const clearSessionConcurrencyLimits = vi.fn(async () => undefined)
+    const options = {
       registry,
       hostExists: async () => true,
       listHostIds: async () => ['ssh:cluster'],
@@ -382,12 +383,15 @@ describe('SessionEnabledComputeHostsOwner', () => {
         },
         pruneSessionEnabledComputeHosts: async () => createPruneResult()
       },
+      clearSessionConcurrencyLimits,
       withDataRootWrite: passthroughDataRootWrite
-    })
+    }
+    const owner = new SessionEnabledComputeHostsOwner(options)
 
     await owner.clear(['session-1'])
 
     expect(owner.get('session-1')).toEqual([])
+    expect(clearSessionConcurrencyLimits).toHaveBeenCalledWith(['session-1'])
   })
 
   it('serializes Session deletion cache clears after in-flight reconciliation', async () => {

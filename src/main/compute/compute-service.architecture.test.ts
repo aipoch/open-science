@@ -339,6 +339,25 @@ describe('Compute service architecture', () => {
     expect(runtimeRegistration).toContain('disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS')
   })
 
+  it('persists Session concurrency limits inside the data-root write boundary', () => {
+    const source = readSource(computePaths.mainIpc)
+    const persistenceStart = source.indexOf('const sessionLimitPersistence = {')
+    const persistenceEnd = source.indexOf(
+      'const computeIpcModule = createComputeIpcModule',
+      persistenceStart
+    )
+    const persistence = source.slice(persistenceStart, persistenceEnd)
+    const writeBoundary = persistence.indexOf('withDataRootWrite(')
+    const sessionMutation = persistence.indexOf(
+      'sessionPersistenceCoordinator.setSessionComputeConcurrencyLimit'
+    )
+
+    expect(persistenceStart).toBeGreaterThan(-1)
+    expect(persistenceEnd).toBeGreaterThan(persistenceStart)
+    expect(writeBoundary).toBeGreaterThan(-1)
+    expect(sessionMutation).toBeGreaterThan(writeBoundary)
+  })
+
   it('awaits Compute Job barrier rollback when a new Project deletion aborts', () => {
     const source = readSource(computePaths.mainIpc)
     const abortStart = source.indexOf('abortProjectDeletion: async (projectId) => {')

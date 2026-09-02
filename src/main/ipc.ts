@@ -1846,14 +1846,16 @@ const createApplicationModules = async (
       )
     },
     save: async (sessionId: string, limit: number): Promise<void> => {
-      const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
-      if (!projectId)
-        throw new Error(`Cannot persist concurrency for missing Session ${sessionId}.`)
-      const session = await sessionPersistenceCoordinator.setSessionComputeConcurrencyLimit(
-        projectId,
-        sessionId,
-        limit
-      )
+      const session = await withDataRootWrite(async () => {
+        const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
+        if (!projectId)
+          throw new Error(`Cannot persist concurrency for missing Session ${sessionId}.`)
+        return sessionPersistenceCoordinator.setSessionComputeConcurrencyLimit(
+          projectId,
+          sessionId,
+          limit
+        )
+      })
       applicationEvents.publish('session:updated', {
         session,
         originClientId: MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
@@ -1912,6 +1914,11 @@ const createApplicationModules = async (
       const concurrencyManager = computeIpcModule.handlers.concurrencyManager
       if (!concurrencyManager) throw new Error('Session concurrency ownership is not initialized.')
       await concurrencyManager.projectPersistedSessionLimit(sessionId, limit)
+    },
+    clearSessionConcurrencyLimits: async (sessionIds) => {
+      const concurrencyManager = computeIpcModule.handlers.concurrencyManager
+      if (!concurrencyManager) throw new Error('Session concurrency ownership is not initialized.')
+      await concurrencyManager.clearProjectedSessionLimits(sessionIds)
     },
     withDataRootWrite
   })

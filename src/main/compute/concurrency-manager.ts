@@ -122,6 +122,12 @@ export class ConcurrencyManager {
     }
   }
 
+  async clearProjectedSessionLimits(sessionIds: readonly string[]): Promise<void> {
+    await this.runExclusive(async () => {
+      for (const sessionId of sessionIds) this.sessionLimits.delete(sessionId)
+    })
+  }
+
   // Provider limits are durable host configuration. Own the production mutation here so it shares
   // the same lock as admission and queued-job promotion; raising the ceiling then wakes the FIFO queue.
   async setProviderLimit(providerId: string, limit: number): Promise<void> {
