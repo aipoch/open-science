@@ -93,6 +93,7 @@ const createCommands = (): ConnectorCommands => ({
   updateCustomServer: vi.fn(async () => snapshot()),
   authenticateCustomServer: vi.fn(async () => snapshot()),
   disconnectCustomServer: vi.fn(async () => snapshot()),
+  retryConnectorProjection: vi.fn(async () => snapshot()),
   retryCustomServer: vi.fn(async () => snapshot()),
   onConnectorRuntimeChanged: vi.fn(() => () => undefined),
   cancelCustomServerAuthentication: vi.fn(async () => undefined),
@@ -763,6 +764,16 @@ describe('settings Connectors slice', () => {
 
     expect(commands.retryCustomServer).toHaveBeenCalledWith({ id: 'custom' })
     expect(store.getState().customServers).toEqual([connected])
+  })
+
+  it('clears degraded Skill projection status after an explicit retry succeeds', async () => {
+    store.setState({ skillProjectionStatus: 'degraded' })
+    vi.mocked(commands.retryConnectorProjection).mockResolvedValue(snapshot())
+
+    await store.getState().retryConnectorProjection()
+
+    expect(commands.retryConnectorProjection).toHaveBeenCalledOnce()
+    expect(store.getState().skillProjectionStatus).toBeUndefined()
   })
 
   it('optimistically toggles a custom server before authoritative reconciliation', async () => {

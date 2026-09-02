@@ -63,6 +63,7 @@ class UserSkillCatalogObserver {
   private watcher: FSWatcher | undefined
   private debounceTimer: ReturnType<typeof setTimeout> | undefined
   private reconcileTimer: ReturnType<typeof setInterval> | undefined
+  private retryTimer: ReturnType<typeof setTimeout> | undefined
   private fingerprint: string | undefined
   private reconcileDrain: Promise<void> | undefined
   private reconcilePending = false
@@ -109,8 +110,10 @@ class UserSkillCatalogObserver {
     this.watcher = undefined
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
     if (this.reconcileTimer) clearInterval(this.reconcileTimer)
+    if (this.retryTimer) clearTimeout(this.retryTimer)
     this.debounceTimer = undefined
     this.reconcileTimer = undefined
+    this.retryTimer = undefined
     this.reconcilePending = false
     this.reconcileForcePending = false
   }
@@ -134,6 +137,15 @@ class UserSkillCatalogObserver {
     this.reconcileTimer.unref?.()
   }
 
+  private scheduleRetry(): void {
+    if (this.disposed || this.retryTimer) return
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined
+      void this.enqueueReconcile(false)
+    }, this.options.reconcileIntervalMs ?? DEFAULT_RECONCILE_INTERVAL_MS)
+    this.retryTimer.unref?.()
+  }
+
   private enqueueReconcile(force: boolean): Promise<void> {
     this.reconcilePending = true
     this.reconcileForcePending ||= force
@@ -155,9 +167,12 @@ class UserSkillCatalogObserver {
       this.reconcileForcePending = false
       try {
         await this.reconcile(force)
+        if (this.retryTimer) clearTimeout(this.retryTimer)
+        this.retryTimer = undefined
       } catch (error) {
         failure ??= error
         log.warn('user skill catalog reconciliation failed', diagnosticErrorFields(error))
+        this.scheduleRetry()
       }
     }
     if (failure) throw failure
@@ -169,8 +184,8 @@ class UserSkillCatalogObserver {
     if (this.disposed) return
     const firstSuccessfulReconciliation = this.fingerprint === undefined
     const changed = !firstSuccessfulReconciliation && fingerprint !== this.fingerprint
-    this.fingerprint = fingerprint
     if (firstSuccessfulReconciliation || changed || force) await this.options.onCatalogChanged()
+    if (!this.disposed) this.fingerprint = fingerprint
   }
 }
 

@@ -84,6 +84,7 @@ beforeEach(() => {
     authenticateCustomServer: vi.fn().mockResolvedValue(undefined),
     cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined),
     disconnectCustomServer: vi.fn().mockResolvedValue(undefined),
+    retryConnectorProjection: vi.fn().mockResolvedValue(undefined),
     retryCustomServer: vi.fn().mockResolvedValue(undefined),
     setCustomServerEnabled: vi.fn().mockResolvedValue(undefined),
     removeCustomServer: vi.fn().mockResolvedValue(undefined)
@@ -426,6 +427,30 @@ describe('ConnectorsPanel (groups)', () => {
     )
     await act(async () => retry?.click())
     expect(loadConnectors).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows degraded Connector Skill documents and offers an explicit retry', async () => {
+    const retryConnectorProjection = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      skillProjectionStatus: 'degraded',
+      retryConnectorProjection
+    })
+
+    await act(async () => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+
+    const notice = document.body.querySelector('[role="alert"]')
+    expect(notice?.textContent).toContain(
+      'Connector settings are saved, but their Agent Skill documents are out of date.'
+    )
+
+    const retry = Array.from(notice?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    await act(async () => retry?.click())
+
+    expect(retryConnectorProjection).toHaveBeenCalledOnce()
   })
 
   it('reports a rejected Connector access change after rollback', async () => {

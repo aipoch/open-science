@@ -66,6 +66,7 @@ const expectedConnectorChannels = [
   'settings:authenticate-custom-server',
   'settings:cancel-custom-server-authentication',
   'settings:disconnect-custom-server',
+  'settings:retry-connector-projection',
   'settings:retry-custom-server'
 ] as const
 
@@ -150,7 +151,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings integration application commands', () => {
-  it('defines the exact 35-command Skill, Connector, and approval inventory', () => {
+  it('defines the exact 36-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -184,7 +185,7 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(35)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(36)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
@@ -193,7 +194,7 @@ describe('Settings integration application commands', () => {
         ...expectedApprovalChannels
       ])
     )
-    expect(integrationContracts).toHaveLength(35)
+    expect(integrationContracts).toHaveLength(36)
     expect(
       integrationContracts
         ?.filter(
@@ -201,6 +202,7 @@ describe('Settings integration application commands', () => {
             contract.channel !== 'settings:authenticate-custom-server' &&
             contract.channel !== 'settings:cancel-custom-server-authentication' &&
             contract.channel !== 'settings:disconnect-custom-server' &&
+            contract.channel !== 'settings:retry-connector-projection' &&
             contract.channel !== 'settings:retry-custom-server' &&
             contract.channel !== 'settings:list-device-credentials' &&
             contract.channel !== 'settings:create-device-credential' &&
@@ -230,6 +232,7 @@ describe('Settings integration application commands', () => {
             contract.channel === 'settings:authenticate-custom-server' ||
             contract.channel === 'settings:cancel-custom-server-authentication' ||
             contract.channel === 'settings:disconnect-custom-server' ||
+            contract.channel === 'settings:retry-connector-projection' ||
             contract.channel === 'settings:retry-custom-server' ||
             contract.channel === 'settings:list-device-credentials' ||
             contract.channel === 'settings:create-device-credential' ||
@@ -503,6 +506,12 @@ describe('Settings integration application commands', () => {
     expect(connectorMethod('disconnectCustomServer')).toHaveBeenCalledWith({ id: 'server-1' })
 
     await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.retryConnectorProjection,
+      invocation([] as const, createWebCallerContext('local-human'))
+    )
+    expect(connectorMethod('retryConnectorProjection')).toHaveBeenCalledOnce()
+
+    await router.dispatcher.invoke(
       settingsIntegrationApplicationCommands.retryCustomServer,
       invocation([{ id: 'server-1' }] as const, createWebCallerContext('local-human'))
     )
@@ -558,6 +567,15 @@ describe('Settings integration application commands', () => {
       )
     ).rejects.toThrow(
       'Channel only available from the local app: settings:disconnect-custom-server'
+    )
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsIntegrationApplicationCommands.retryConnectorProjection,
+        invocation([] as const, createWebCallerContext('remote-human', { location: 'remote' }))
+      )
+    ).rejects.toThrow(
+      'Channel only available from the local app: settings:retry-connector-projection'
     )
 
     await expect(

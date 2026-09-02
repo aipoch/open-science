@@ -66,7 +66,11 @@ const SkillBulkManageView = (): React.JSX.Element => {
   }, [loadSpecialists])
 
   const manageableSkills = useMemo(
-    () => skills.filter((skill) => skill.source === 'imported' || skill.source === 'personal'),
+    () =>
+      skills.filter(
+        (skill) =>
+          skill.available !== false && (skill.source === 'imported' || skill.source === 'personal')
+      ),
     [skills]
   )
   const manageableIds = useMemo(

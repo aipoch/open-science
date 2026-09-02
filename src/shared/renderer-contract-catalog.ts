@@ -1827,6 +1827,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.respondSkillImportApproval': callable<
     (response: ConversationSkillImportApprovalResponse) => Promise<void>
   >()('settings', ['skills:conversation-import-respond']),
+  'settings.retryConnectorProjection': callable<() => Promise<ConnectorsSnapshot>>()('settings', [
+    'settings:retry-connector-projection',
+    LOCAL
+  ]),
   'settings.retryCustomServer': callable<
     (request: AuthenticateCustomServerRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:retry-custom-server', LOCAL]),

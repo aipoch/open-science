@@ -298,6 +298,24 @@ class SkillCatalogModule {
     return (await this.catalog()).filter((skill) => skill.exposure !== 'internal')
   }
 
+  private async settingsCatalog(): Promise<
+    Array<{ skill: BundledSkill; available: boolean; catalogEntryKey: string }>
+  > {
+    const [featured, user] = await Promise.all([this.skillRegistry.list(), this.listUserSkills()])
+    const available = new Set(this.mergeCatalog(featured, user))
+    return [...featured, ...user].flatMap((skill, index) =>
+      skill.exposure === 'internal'
+        ? []
+        : [
+            {
+              skill,
+              available: available.has(skill),
+              catalogEntryKey: `${skill.source}:${skill.id}:${index}`
+            }
+          ]
+    )
+  }
+
   // Main-process adapter for host.skills. This intentionally includes internal bundled Skills so
   // /Customize can load skill-creator, while user-facing projections below use managedCatalog().
   async listHostSkills(): Promise<BundledSkill[]> {
@@ -342,12 +360,17 @@ class SkillCatalogModule {
   }
 
   async listSkills(): Promise<SkillView[]> {
-    const [skills, settings] = await Promise.all([
-      this.managedCatalog(),
+    const [entries, settings] = await Promise.all([
+      this.settingsCatalog(),
       this.options.repository.getSettings()
     ])
     const disabled = new Set(settings.disabledSkillIds ?? [])
-    return skills.map((skill) => this.toSkillView(skill, disabled))
+    return entries.map(({ skill, available, catalogEntryKey }) => ({
+      ...this.toSkillView(skill, disabled),
+      available,
+      catalogEntryKey,
+      ...(available ? {} : { availability: 'identity-conflict' as const })
+    }))
   }
 
   async listSpecialistSkillCatalog(options: { bundledOnly?: boolean } = {}): Promise<
@@ -1120,6 +1143,7 @@ class SkillCatalogModule {
       source: skill.source,
       updatedAt: skill.updatedAt,
       enabled: !disabled.has(skill.id),
+      available: true,
       author: skill.author,
       license: skill.license,
       thirdParty: skill.thirdParty

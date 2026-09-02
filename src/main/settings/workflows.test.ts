@@ -757,6 +757,27 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     ])
   })
 
+  it('reports an explicit Connector projection retry failure after requesting an Agent reload', async () => {
+    const calls: string[] = []
+    const { store, capability } = fakeStore()
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        invalidatePermissionProjection: () => calls.push('invalidate'),
+        refreshConnectorSkillDocs: async () => {
+          calls.push('refresh')
+          throw new Error('projection refresh failed')
+        },
+        requestSkillsReload: () => calls.push('reload')
+      })
+    ).connectors
+
+    await expect(workflows.retryConnectorProjection()).rejects.toThrow('projection refresh failed')
+
+    expect(calls).toEqual(['invalidate', 'refresh', 'reload'])
+    expect(store.listConnectors).not.toHaveBeenCalled()
+  })
+
   it('refreshes after journaled deletion even when permission pruning fails', async () => {
     const calls: string[] = []
     const { store, capability } = fakeStore()

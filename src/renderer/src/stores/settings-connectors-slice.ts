@@ -29,6 +29,7 @@ type SettingsConnectorsProjection = {
   connectors: ConnectorView[]
   customServers: CustomServerView[]
   reservedCustomServerIds?: string[]
+  skillProjectionStatus?: 'degraded'
   ncbi: NcbiCredentialsView
   openAlex?: OpenAlexCredentialView
 }
@@ -75,6 +76,7 @@ export type SettingsConnectorsActions = {
   authenticateCustomServer: (request: AuthenticateCustomServerRequest) => Promise<void>
   cancelCustomServerAuthentication: (request: AuthenticateCustomServerRequest) => Promise<void>
   disconnectCustomServer: (request: DisconnectCustomServerRequest) => Promise<void>
+  retryConnectorProjection: () => Promise<void>
   retryCustomServer: (id: string) => Promise<void>
   setCustomServerEnabled: (id: string, enabled: boolean) => Promise<void>
   removeCustomServer: (id: string) => Promise<void>
@@ -108,6 +110,7 @@ type SettingsConnectorsCommands = Pick<
   | 'authenticateCustomServer'
   | 'cancelCustomServerAuthentication'
   | 'disconnectCustomServer'
+  | 'retryConnectorProjection'
   | 'retryCustomServer'
   | 'onConnectorRuntimeChanged'
   | 'setCustomServerEnabled'
@@ -130,6 +133,7 @@ export const createInitialSettingsConnectorsState = (): SettingsConnectorsState 
   connectors: [],
   customServers: [],
   reservedCustomServerIds: [],
+  skillProjectionStatus: undefined,
   connectorsLoaded: false,
   pendingApprovals: [],
   pendingCredentialRequests: [],
@@ -156,6 +160,7 @@ export const createSettingsConnectorsSlice = ({
     generation: number
   ): NormalizedSettingsConnectorsProjection => ({
     ...projection,
+    skillProjectionStatus: projection.skillProjectionStatus,
     openAlex: projection.openAlex ?? { hasApiKey: false },
     reservedCustomServerIds: projection.reservedCustomServerIds ?? [],
     connectors: projection.connectors.map((connector) => ({
@@ -427,6 +432,8 @@ export const createSettingsConnectorsSlice = ({
           await refreshDeviceCredentialsIfLoaded()
         }
       }),
+    retryConnectorProjection: () =>
+      reconcileMutation(() => getCommands().retryConnectorProjection()),
     retryCustomServer: (id) => reconcileMutation(() => getCommands().retryCustomServer({ id })),
     setCustomServerEnabled: async (id, enabled) => {
       const key = customServerEnabledKey(id)

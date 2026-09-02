@@ -380,6 +380,44 @@ describe('SkillsPanel (list view)', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'detail', id: 'a' })
   })
 
+  it('shows identity-conflicting Skills without exposing ambiguous actions', () => {
+    const onNavigate = vi.fn()
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'shared-id',
+          catalogEntryKey: 'personal:shared-id:0',
+          name: 'conflicting',
+          displayName: 'Conflicting Skill',
+          description: 'Installed directly.',
+          source: 'personal',
+          updatedAt: '2026-09-02T00:00:00.000Z',
+          enabled: true,
+          available: false,
+          availability: 'identity-conflict'
+        }
+      ]
+    })
+
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    })
+
+    expect(document.body.textContent).toContain('Conflicting Skill')
+    expect(document.body.textContent).toContain('Identity conflict')
+    expect(document.body.querySelector('[aria-label="Actions for Conflicting Skill"]')).toBeNull()
+    const toggle = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Toggle Conflicting Skill"]'
+    )
+    expect(toggle?.disabled).toBe(true)
+    const title = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Conflicting Skill')
+    )
+    expect(title?.disabled).toBe(true)
+    act(() => title?.click())
+    expect(onNavigate).not.toHaveBeenCalled()
+  })
+
   it('shows a distinct loading state before an empty Skill catalog settles', () => {
     useSettingsStore.setState({
       skills: [],

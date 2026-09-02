@@ -575,6 +575,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.respondConnectorApproval',
       'settings.respondConnectorCredentialRequest',
       'settings.respondSkillImportApproval',
+      'settings.retryConnectorProjection',
       'settings.retryCustomServer',
       'settings.saveGitHubToken',
       'settings.scanRepoSkills',

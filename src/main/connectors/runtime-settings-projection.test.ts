@@ -308,7 +308,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     await projection.refresh()
     expect(projection.current()).toBe(first)
 
-    await projection.refresh()
+    await expect(projection.refresh()).rejects.toThrow('sync failed')
     expect(projection.current()).toBe(second)
     expect(projection.materializedCustomSkillNames()).toEqual([])
     expect(reportError).toHaveBeenNthCalledWith(
@@ -316,12 +316,46 @@ describe('ConnectorRuntimeSettingsProjection', () => {
       expect.objectContaining({ message: 'sync failed' })
     )
 
-    await projection.refresh()
+    await expect(projection.refresh()).rejects.toThrow('read failed')
     expect(projection.current()).toBe(second)
     expect(reportError).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ message: 'read failed' })
     )
+  })
+
+  it('rejects an explicit failed refresh without discarding the last materialized catalog', async () => {
+    const syncBundledSkillDocs = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('sync failed'))
+      .mockResolvedValue(undefined)
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors: vi.fn().mockResolvedValue(connectors()),
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
+      syncBundledSkillDocs,
+      syncCustomSkillDocs: vi
+        .fn()
+        .mockResolvedValue({ materializedNames: ['existing'], failures: [] }),
+      reportError: vi.fn()
+    })
+    await projection.refresh()
+
+    const outcome = await projection.refresh().then(
+      () => ({ status: 'fulfilled' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error })
+    )
+
+    expect.soft(outcome).toMatchObject({
+      status: 'rejected',
+      error: expect.objectContaining({ message: 'sync failed' })
+    })
+    expect(projection.materializedCustomSkillNames()).toEqual(['mcp-existing'])
+    expect(projection.isDegraded()).toBe(true)
+
+    await projection.refresh()
+    expect(projection.isDegraded()).toBe(false)
   })
 
   it('serializes simultaneous refresh pipelines so an older write cannot replace newer docs', async () => {
@@ -391,8 +425,10 @@ describe('ConnectorRuntimeSettingsProjection', () => {
       reportError
     })
 
-    await Promise.all([projection.refresh(), projection.refresh()])
+    const [older, newer] = await Promise.allSettled([projection.refresh(), projection.refresh()])
 
+    expect(older).toMatchObject({ status: 'rejected', reason: { message: 'older sync failed' } })
+    expect(newer).toMatchObject({ status: 'fulfilled' })
     expect(reportError).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'older sync failed' })
     )

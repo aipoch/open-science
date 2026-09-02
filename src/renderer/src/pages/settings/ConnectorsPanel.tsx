@@ -129,12 +129,14 @@ export function ConnectorsPanel({
   const connectors = useSettingsStore((state) => state.connectors)
   const connectorsLoaded = useSettingsStore((state) => state.connectorsLoaded)
   const customServers = useSettingsStore((state) => state.customServers)
+  const skillProjectionStatus = useSettingsStore((state) => state.skillProjectionStatus)
   const ncbi = useSettingsStore((state) => state.ncbi)
   const loadConnectors = useSettingsStore((state) => state.loadConnectors)
   const setConnectorEnabled = useSettingsStore((state) => state.setConnectorEnabled)
   const setCustomServerEnabled = useSettingsStore((state) => state.setCustomServerEnabled)
   const retryCustomServer = useSettingsStore((state) => state.retryCustomServer)
   const disconnectCustomServer = useSettingsStore((state) => state.disconnectCustomServer)
+  const retryConnectorProjection = useSettingsStore((state) => state.retryConnectorProjection)
   const removeCustomServer = useSettingsStore((state) => state.removeCustomServer)
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadSpecialists = useSpecialistStore((state) => state.load)
@@ -148,6 +150,7 @@ export function ConnectorsPanel({
     Partial<Record<'featured' | 'directory' | 'custom', boolean>>
   >({})
   const [retryingIds, setRetryingIds] = useState<Set<string>>(() => new Set())
+  const [retryingProjection, setRetryingProjection] = useState(false)
   const [oauthSignInServer, setOAuthSignInServer] = useState<CustomServerView>()
   const [oauthConnectionServer, setOAuthConnectionServer] = useState<CustomServerView>()
   const [oauthConnectionBusy, setOAuthConnectionBusy] = useState(false)
@@ -303,6 +306,23 @@ export function ConnectorsPanel({
         next.delete(id)
         return next
       })
+    }
+  }
+
+  const retrySkillProjection = async (): Promise<void> => {
+    if (retryingProjection) return
+    setRetryingProjection(true)
+    setOperationError(null)
+    try {
+      await retryConnectorProjection()
+    } catch (error) {
+      setOperationError(
+        error instanceof Error
+          ? error.message
+          : 'Could not refresh the Agent Skill documents for Connectors.'
+      )
+    } finally {
+      setRetryingProjection(false)
     }
   }
 
@@ -625,6 +645,30 @@ export function ConnectorsPanel({
       </div>
 
       <div className="flex flex-col gap-4">
+        {skillProjectionStatus === 'degraded' ? (
+          <div
+            className="flex items-center justify-between gap-3 rounded-lg border border-status-warning-foreground/30 bg-status-warning-surface/40 px-3 py-2 text-xs text-status-warning-foreground dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20 dark:text-status-warning-dark-foreground"
+            role="alert"
+          >
+            <span className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <span>
+                {t(
+                  'Connector settings are saved, but their Agent Skill documents are out of date.'
+                )}
+              </span>
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={retryingProjection}
+              onClick={() => void retrySkillProjection()}
+            >
+              {retryingProjection ? t('Checking…') : t('Retry')}
+            </Button>
+          </div>
+        ) : null}
         {operationError ? (
           <div
             className="flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"

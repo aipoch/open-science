@@ -86,6 +86,7 @@ type CustomServerRuntimeProjectionProvider = {
   materializedSkillNames: () => readonly string[]
   availability: (id: string) => CustomServerView['availability']
   isRefreshing: (id: string) => boolean
+  isDegraded?: () => boolean
 }
 
 const sharedOAuthMatchesServer = (
@@ -197,7 +198,8 @@ class ConnectorSettingsModule {
   private customServerRuntimeProjectionProvider: CustomServerRuntimeProjectionProvider = {
     materializedSkillNames: () => [],
     availability: () => undefined,
-    isRefreshing: () => false
+    isRefreshing: () => false,
+    isDegraded: () => false
   }
   private credentialBindingMutation = Promise.resolve()
 
@@ -1280,6 +1282,9 @@ class ConnectorSettingsModule {
     return {
       connectors: this.toConnectorViews(connectors),
       customServers: this.toCustomServerViews(connectors),
+      ...(this.customServerRuntimeProjectionProvider.isDegraded?.()
+        ? { skillProjectionStatus: 'degraded' as const }
+        : {}),
       reservedCustomServerIds: connectors?.pendingCustomServerDeletionIds ?? [],
       ncbi: this.ncbiView(connectors),
       openAlex: this.openAlexView(connectors)

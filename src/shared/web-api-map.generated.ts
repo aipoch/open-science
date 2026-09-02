@@ -244,6 +244,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.replayPendingSkillImportApprovals': 'skills:conversation-import-replay-pending',
   'settings.respondConnectorApproval': 'connectors:approval-respond',
   'settings.respondSkillImportApproval': 'skills:conversation-import-respond',
+  'settings.retryConnectorProjection': 'settings:retry-connector-projection',
   'settings.retryCustomServer': 'settings:retry-custom-server',
   'settings.saveGitHubToken': 'settings:save-github-token',
   'settings.scanRepoSkills': 'settings:scan-repo-skills',

@@ -227,9 +227,10 @@ const SkillsPanel = ({
     const term = query.trim().toLowerCase()
     return skills.flatMap((skill) => {
       if (filter !== 'all' && skill.source !== filter) return []
-      const usages = specialistsUsingSkill(specialistItems, skill.id)
-      const owners = specialistsOwningSkill(specialistItems, skill.id)
-      if (specialistFilter === MAIN_AGENT_FILTER && !skill.enabled) return []
+      const available = skill.available !== false
+      const usages = available ? specialistsUsingSkill(specialistItems, skill.id) : []
+      const owners = available ? specialistsOwningSkill(specialistItems, skill.id) : []
+      if (specialistFilter === MAIN_AGENT_FILTER && (!available || !skill.enabled)) return []
       if (
         specialistFilter !== 'all' &&
         specialistFilter !== MAIN_AGENT_FILTER &&
@@ -552,6 +553,7 @@ const SkillsPanel = ({
                 rows.length > 0 ? (
                   <ul className="mt-2 flex flex-col">
                     {rows.map(({ skill, usages, owners }) => {
+                      const available = skill.available !== false
                       const deleteBlockedReason =
                         owners.length === 1
                           ? t(
@@ -576,15 +578,16 @@ const SkillsPanel = ({
                                 : undefined
                       return (
                         <li
-                          key={skill.id}
+                          key={skill.catalogEntryKey ?? skill.id}
                           data-slot="settings-list-row"
                           className="flex min-h-14 flex-wrap items-center gap-2 py-2.5"
                         >
                           <div className="min-w-0 flex-1">
                             <button
                               type="button"
+                              disabled={!available}
                               onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
-                              className="block w-full min-w-0 text-left"
+                              className="block w-full min-w-0 text-left disabled:cursor-default"
                             >
                               <span className="block truncate text-sm text-foreground">
                                 {skill.displayName}
@@ -594,7 +597,12 @@ const SkillsPanel = ({
                               </span>
                             </button>
                             <div className="mt-0.5 flex min-w-0 items-center gap-2">
-                              {skill.enabled || usages.length > 0 ? (
+                              {!available ? (
+                                <span className="shrink-0 text-xs text-destructive">
+                                  {t('Identity conflict')}
+                                </span>
+                              ) : null}
+                              {available && (skill.enabled || usages.length > 0) ? (
                                 <span className="inline-flex shrink-0 items-center gap-1">
                                   <span
                                     data-slot="skill-usage-agents-label"
@@ -609,13 +617,15 @@ const SkillsPanel = ({
                                   />
                                 </span>
                               ) : null}
-                              <ResourceTagBadges
-                                reference={{
-                                  resourceType: 'catalog.skill',
-                                  resourceId: skill.id
-                                }}
-                                onOpenTag={onOpenTag}
-                              />
+                              {available ? (
+                                <ResourceTagBadges
+                                  reference={{
+                                    resourceType: 'catalog.skill',
+                                    resourceId: skill.id
+                                  }}
+                                  onOpenTag={onOpenTag}
+                                />
+                              ) : null}
                             </div>
                           </div>
                           {exportStatus?.id === skill.id ? (
@@ -624,10 +634,12 @@ const SkillsPanel = ({
                             </span>
                           ) : null}
                           <div className="flex shrink-0 items-center gap-2">
-                            <ResourceTagMenu
-                              reference={{ resourceType: 'catalog.skill', resourceId: skill.id }}
-                            />
-                            {skill.source !== 'featured' ? (
+                            {available ? (
+                              <ResourceTagMenu
+                                reference={{ resourceType: 'catalog.skill', resourceId: skill.id }}
+                              />
+                            ) : null}
+                            {available && skill.source !== 'featured' ? (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                   <Button
@@ -712,13 +724,18 @@ const SkillsPanel = ({
                             ) : null}
                             <SettingsToggle
                               enabled={skill.enabled}
+                              disabled={!available}
                               aria-label={t('Toggle {{name}}', { name: skill.displayName })}
                               title={
-                                skill.enabled
-                                  ? t('Available to Main Agent')
-                                  : t('Unavailable to Main Agent')
+                                !available
+                                  ? t('This Skill has an identity conflict and cannot be used.')
+                                  : skill.enabled
+                                    ? t('Available to Main Agent')
+                                    : t('Unavailable to Main Agent')
                               }
-                              onToggle={() => void toggleSkill(skill.id, !skill.enabled)}
+                              onToggle={() => {
+                                if (available) void toggleSkill(skill.id, !skill.enabled)
+                              }}
                             />
                           </div>
                           {deleteError?.id === skill.id ? (

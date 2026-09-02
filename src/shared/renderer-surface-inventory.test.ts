@@ -236,6 +236,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'remove-custom-server',
     'remove-device-credential',
     'remove-github-token',
+    'retry-connector-projection',
     'retry-custom-server',
     'save-github-token',
     'set-app-icon-variant',

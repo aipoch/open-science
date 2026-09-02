@@ -33,6 +33,7 @@ class ConnectorRuntimeSettingsProjection {
   private dispatchAvailabilities = new Map<string, CustomMcpFailureAvailability>()
   private pendingRefreshes = 0
   private pendingCustomServerRefreshes = new Map<string, number>()
+  private refreshErrors = new Map<string, unknown>()
   private refreshQueue: Promise<void> = Promise.resolve()
   private readonly syncBundledSkillDocs: typeof syncConnectorSkillDocs
   private readonly syncCustomSkillDocs: typeof syncCustomServerSkillDocs
@@ -65,6 +66,10 @@ class ConnectorRuntimeSettingsProjection {
     return serverId
       ? (this.pendingCustomServerRefreshes.get(serverId) ?? 0) > 0
       : this.pendingCustomServerRefreshes.size > 0
+  }
+
+  isDegraded(): boolean {
+    return this.refreshErrors.size > 0
   }
 
   setCustomServerDispatchAvailability(
@@ -109,18 +114,18 @@ class ConnectorRuntimeSettingsProjection {
           this.options.notifyStatusChanged?.()
         }
       })
-    this.refreshQueue = queued
+    this.refreshQueue = queued.catch(() => undefined)
     return queued
   }
 
   private async refreshOnce(serverId?: string): Promise<void> {
-    if (!serverId) this.materializedCustomSkills = []
     try {
       const connectors = await this.options.readConnectors()
       this.snapshot = connectors
 
       if (serverId) {
         await this.refreshCustomServerOnce(connectors, serverId)
+        this.clearRefreshError(serverId)
         return
       }
 
@@ -139,9 +144,27 @@ class ConnectorRuntimeSettingsProjection {
         customSync.failures.map(({ server, error }) => [server.id, classifyCustomMcpFailure(error)])
       )
       this.reportCustomSyncFailures(customSync.failures)
+      this.clearRefreshError()
     } catch (error) {
       this.reportError(error)
+      this.recordRefreshError(serverId, error)
+      throw error
     }
+  }
+
+  private recordRefreshError(serverId: string | undefined, error: unknown): void {
+    const key = serverId ?? '*'
+    const wasDegraded = this.isDegraded()
+    this.refreshErrors.set(key, error)
+    if (serverId) this.discoveryAvailabilities.set(serverId, classifyCustomMcpFailure(error))
+    if (!wasDegraded || serverId) this.options.notifyStatusChanged?.()
+  }
+
+  private clearRefreshError(serverId?: string): void {
+    const wasDegraded = this.isDegraded()
+    if (serverId) this.refreshErrors.delete(serverId)
+    else this.refreshErrors.clear()
+    if (wasDegraded !== this.isDegraded()) this.options.notifyStatusChanged?.()
   }
 
   private async refreshCustomServerOnce(
