@@ -1077,7 +1077,11 @@ class NotebookRuntimeService {
       if (target) {
         const { language, environment } = target
         const processKey = dataProcessKey(language, environment)
-        const statusBeforeRestart = session.kernelStatus(processKey)
+        const statusBeforeRestart =
+          session.kernelStatus(processKey) ??
+          (processKey === dataProcessKey('python', DEFAULT_PY_ENV)
+            ? session.restoredKernelStatus()
+            : undefined)
         const wasDurablyTerminated = session.hasDurableKernelTermination(processKey)
         const hasTargetState = statusBeforeRestart !== undefined || wasDurablyTerminated
 

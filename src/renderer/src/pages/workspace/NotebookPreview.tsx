@@ -539,7 +539,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const onSelectLanguage = (lang: NotebookLanguage): void => {
     setShowVariables(false)
     const binding = notebookState?.runtimeBindings?.[lang]
-    if (!hasActiveRuntimeTarget(binding) && shouldProvisionR(envStatus, lang)) void provision('r')
+    if (binding === undefined && shouldProvisionR(envStatus, lang)) void provision('r')
   }
 
   // Keeps state assignment isolated so load paths and event paths share the same update hook.
@@ -755,6 +755,10 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     activeKernelStatus === 'starting' ||
     activeKernelStatus === 'running' ||
     activeKernelStatus === 'restarting'
+  const explicitRuntimeTargetUnavailable =
+    activeDataLanguage !== undefined &&
+    activeRuntimeBinding !== undefined &&
+    !activeRuntimeTargetReady
   // The Session Aggregate owns one active write and run, so input stays globally locked even when a
   // different persistent data kernel is selected.
   const isTerminalLocked =
@@ -763,8 +767,11 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     Boolean(notebookState?.activeWrite) ||
     Boolean(notebookState?.activeRunId) ||
     gated ||
+    explicitRuntimeTargetUnavailable ||
     isSelectedKernelRunning ||
-    (activeDataLanguage === 'r' && !activeRuntimeTargetReady && (!envStatus.rReady || isPreparingR))
+    (activeDataLanguage === 'r' &&
+      activeRuntimeBinding === undefined &&
+      (!envStatus.rReady || isPreparingR))
   const cellCount = notebookState?.runCount ?? runs.length
 
   const loadNamespace = async (): Promise<void> => {

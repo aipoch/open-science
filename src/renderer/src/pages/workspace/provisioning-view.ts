@@ -66,7 +66,8 @@ export function deriveProvisionUi(
 }
 
 // The notebook pane is greyed while its implicit managed Python target is unavailable or while an
-// additive upgrade is running. An active explicit runtime binding bypasses managed provisioning.
+// additive upgrade is running. Any explicit binding bypasses managed provisioning; callers handle
+// a non-active binding as an unavailable target instead of silently switching runtime ownership.
 export function notebookGated(
   status: ProvisionStatus,
   ui: ProvisionUiState,
@@ -76,9 +77,10 @@ export function notebookGated(
   if (ui.kind !== 'ready' && ui.sessionId && sessionId && ui.sessionId !== sessionId) {
     return false
   }
-  // Explicit Session bindings have already been validated by the runtime registry. Only the absent
-  // binding (the implicit app-managed default) depends on global provisioning readiness.
-  if (hasActiveRuntimeTarget(binding)) return false
+  // Only the absent binding (the implicit app-managed default) depends on global provisioning
+  // readiness. A present but unavailable/revoking binding must stay explicit so the user is not sent
+  // through the unrelated managed-runtime recovery path.
+  if (binding !== undefined) return false
   // A progress event can identify Python/upgrade work before its follow-up status refresh observes
   // provisioning=true. Fail closed from either signal so a refresh failure never opens the gate;
   // R-only work stays additive, and the error overlay still exposes Retry.

@@ -4105,7 +4105,7 @@ describe('notebook runtime service', () => {
     expect(terminated).toEqual([['r', DEFAULT_R_ENV]])
   })
 
-  it('persists default Python idle after a targeted restart recovers a coarse error', async () => {
+  it('persists default Python idle after reload when a targeted restart recovers a coarse error', async () => {
     const root = await createStorageRoot()
     const request = { sessionId: 'session-1', workspaceCwd: root }
     const executorFactory = (): NotebookSessionExecutor => ({
@@ -4133,13 +4133,6 @@ describe('notebook runtime service', () => {
     await service.execute({ ...request, code: '1' })
     await expect(service.restart(request)).rejects.toThrow('restart failed')
 
-    const restarted = await service.restart({
-      ...request,
-      language: 'python',
-      environment: DEFAULT_PY_ENV
-    })
-    expect(restarted.kernelStatus).toBe('idle')
-
     const reloadedService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
@@ -4147,7 +4140,21 @@ describe('notebook runtime service', () => {
       repository: new NotebookRunRepository(root),
       executorFactory
     })
-    expect((await reloadedService.state(request)).kernelStatus).toBe('idle')
+    const restarted = await reloadedService.restart({
+      ...request,
+      language: 'python',
+      environment: DEFAULT_PY_ENV
+    })
+    expect(restarted.kernelStatus).toBe('idle')
+
+    const verifiedService = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory
+    })
+    expect((await verifiedService.state(request)).kernelStatus).toBe('idle')
   })
 
   it('preserves durable termination when targeted restart cleanup fails', async () => {

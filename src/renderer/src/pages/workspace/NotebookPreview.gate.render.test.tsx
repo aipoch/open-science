@@ -1581,6 +1581,68 @@ describe('NotebookPreview per-environment selector', () => {
     }
   )
 
+  it.each([
+    {
+      language: 'python' as const,
+      environment: 'external-python',
+      runtimeId: '/usr/local/bin/python3'
+    },
+    {
+      language: 'r' as const,
+      environment: 'external-r',
+      runtimeId: '/usr/local/bin/R'
+    }
+  ])(
+    'does not fall back to managed provisioning for an unavailable explicit $language binding',
+    async ({ language, environment, runtimeId }) => {
+      await mountWithRuns(
+        [makeRun({ runId: `${language}-1`, kernelKind: language, environment })],
+        [],
+        { [language]: environment },
+        {
+          [language]: {
+            runtimeId,
+            language,
+            label: `Unavailable ${language}`,
+            source: 'external',
+            provenance: 'user-own',
+            interpreterPath: runtimeId,
+            status: 'unavailable',
+            reason: 'missing'
+          }
+        }
+      )
+
+      const unavailableManagedStatus: ProvisionStatus = {
+        pythonReady: false,
+        rReady: false,
+        version: 1,
+        provisioning: false
+      }
+      act(() => {
+        useNotebookEnvStore.setState({
+          status: unavailableManagedStatus,
+          ui: deriveProvisionUi(unavailableManagedStatus, undefined, undefined, undefined)
+        })
+      })
+
+      expect(container.querySelector('[data-testid="notebook-env-gate"]')).toBeNull()
+      expect(
+        (container.querySelector('[data-testid="kernel-terminal-input"]') as HTMLTextAreaElement)
+          .disabled
+      ).toBe(true)
+
+      if (language === 'r') {
+        await act(async () => {
+          fireEvent.click(
+            container.querySelector('[data-testid="kernel-switcher-r"]') as HTMLElement
+          )
+        })
+        expect(window.api.notebookEnv.provision).not.toHaveBeenCalled()
+      }
+    }
+  )
+
   it('shows the current R runtime binding on the R kernel tab', async () => {
     await mountWithRuns(
       [
