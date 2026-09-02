@@ -99,7 +99,7 @@ describe('managed Session workspace capability', () => {
     expect(removeOwnership).not.toHaveBeenCalled()
   })
 
-  it('retains a provisional ownership receipt when final publication fails', async () => {
+  it('releases the provisional workspace when final publication fails', async () => {
     const { capability, finalizeOwnership, removeDirectory, removeOwnership } = createCapability()
     const lease = await capability.acquire({ projectId: 'project-1' })
     finalizeOwnership.mockRejectedValueOnce(new Error('receipt publication failed'))
@@ -107,7 +107,7 @@ describe('managed Session workspace capability', () => {
     await expect(lease.commit('session-1')).rejects.toThrow('receipt publication failed')
     await lease.release()
 
-    expect(removeDirectory).not.toHaveBeenCalled()
-    expect(removeOwnership).not.toHaveBeenCalled()
+    expect(removeDirectory).toHaveBeenCalledWith(lease.cwd)
+    expect(removeOwnership).toHaveBeenCalledWith(lease.cwd, '/relocatable/data')
   })
 })

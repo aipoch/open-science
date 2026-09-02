@@ -14,6 +14,8 @@ import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-
 import { SessionPersistenceDeletionOwner } from '../session-persistence/deletion-owner'
 import { initDataRoot } from '../storage-root'
 import {
+  finalizeManagedWorkspaceOwnership,
+  initializeManagedWorkspaceOwnership,
   markManagedWorkspaceRetained,
   restoreManagedWorkspaceActive
 } from './managed-workspace-ownership'
@@ -23,7 +25,7 @@ const roots: string[] = []
 
 const createDeletionOwner = (
   liveSessions: Map<string, PersistedChatSession>,
-  options: { deleteSessionError?: Error } = {}
+  options: { deleteSessionError?: Error; deleteProjectSessionsError?: Error } = {}
 ): SessionPersistenceDeletionOwner =>
   new SessionPersistenceDeletionOwner({
     repository: {
@@ -45,6 +47,7 @@ const createDeletionOwner = (
         liveSessions.delete(sessionId)
       },
       deleteProjectSessions: async (projectId: string) => {
+        if (options.deleteProjectSessionsError) throw options.deleteProjectSessionsError
         for (const [sessionId, session] of liveSessions) {
           if (session.projectId === projectId) liveSessions.delete(sessionId)
         }
@@ -101,7 +104,8 @@ describe('managed workspace ownership', () => {
             updatedAt: now + 1_000
           })
           return { sessionId: 'session-1', cwd: request.cwd }
-        }
+        },
+        deleteSession: async () => undefined
       },
       {
         workspaces: createManagedSessionWorkspaceCapability({
@@ -131,7 +135,7 @@ describe('managed workspace ownership', () => {
     expect(liveSessions).toEqual(new Map())
   })
 
-  it('backfills a retained receipt from a historical live Session before deleting it', async () => {
+  it('does not adopt an unproven direct child workspace during historical Session deletion', async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-backfill-'))
     roots.push(dataRoot)
     initDataRoot(dataRoot)
@@ -159,14 +163,9 @@ describe('managed workspace ownership', () => {
     )
 
     const usage = await computeStorageUsage(dataRoot)
-    expect(usage.categories.find(({ key }) => key === 'workspaces')?.children?.[0]).toMatchObject({
+    expect(usage.categories.find(({ key }) => key === 'workspaces')?.children?.[0]).toEqual({
       name: 'legacy-workspace',
-      workspaceId: 'legacy-workspace',
-      projectId: 'legacy-project',
-      sessionId: 'legacy-session',
-      createdAt: 10,
-      lastUsedAt: 20,
-      retainedAfterDelete: true
+      bytes: 0
     })
   })
 
@@ -216,6 +215,8 @@ describe('managed workspace ownership', () => {
       updatedAt: 20
     }
     const liveSessions = new Map([[session.id, session]])
+    await initializeManagedWorkspaceOwnership(cwd, session.projectId, session.createdAt, dataRoot)
+    await finalizeManagedWorkspaceOwnership(cwd, session.id, session.updatedAt, dataRoot)
 
     await expect(
       createDeletionOwner(liveSessions, {
@@ -229,5 +230,53 @@ describe('managed workspace ownership', () => {
       sessionId: 'session-1',
       retainedAfterDelete: false
     })
+  })
+
+  it('restores active ownership when Project Session authority deletion fails', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-project-delete-failure-'))
+    roots.push(dataRoot)
+    initDataRoot(dataRoot)
+    const liveSessions = new Map<string, PersistedChatSession>()
+    const workflow = createAcpCreateSessionWorkflow(
+      {
+        createSession: async (request) => {
+          const session: PersistedChatSession = {
+            id: 'session-1',
+            projectId: request.projectId!,
+            title: 'Session',
+            cwd: request.cwd!,
+            status: 'idle',
+            messages: [],
+            createdAt: 10,
+            updatedAt: 20
+          }
+          liveSessions.set(session.id, session)
+          return { sessionId: session.id, cwd: session.cwd }
+        },
+        deleteSession: async () => undefined
+      },
+      {
+        workspaces: createManagedSessionWorkspaceCapability({
+          resolveRoot: () => dataRoot,
+          createId: () => 'workspace-1'
+        }),
+        withDataRootWrite: (write) => write()
+      }
+    )
+    await workflow.create({ projectId: 'project-1' })
+
+    await expect(
+      createDeletionOwner(liveSessions, {
+        deleteProjectSessionsError: new Error('Project Session authority delete failed')
+      }).deleteProjectSessions('project-1', (_sessionIds, operation) => operation())
+    ).rejects.toThrow('Project Session authority delete failed')
+
+    const usage = await computeStorageUsage(dataRoot)
+    expect(usage.categories.find(({ key }) => key === 'workspaces')?.children?.[0]).toMatchObject({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      retainedAfterDelete: false
+    })
+    expect(liveSessions.has('session-1')).toBe(true)
   })
 })

@@ -70,10 +70,8 @@ const createManagedSessionWorkspaceCapability = (
         cwd,
         commit: async (sessionId) => {
           if (released) return
-          // Preserve the successfully-created Session workspace if publishing the final receipt
-          // fails; the provisional receipt still proves its Project ownership for later recovery.
-          committed = true
           await resolvedDependencies.finalizeOwnership(cwd, sessionId, dataRoot)
+          committed = true
         },
         release: async () => {
           if (released) return

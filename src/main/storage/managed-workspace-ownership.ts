@@ -170,21 +170,20 @@ const markManagedWorkspaceRetained = async (
   const location = await assertManagedWorkspaceDirectory(session.cwd, dataRoot)
   if (!location) return false
   const current = await readOwnershipForUpdate(location)
+  if (!current) return false
   if (
-    current &&
-    (current.projectId !== session.projectId ||
-      (current.sessionId !== undefined && current.sessionId !== session.id))
+    current.projectId !== session.projectId ||
+    (current.sessionId !== undefined && current.sessionId !== session.id)
   ) {
     throw new Error('Managed workspace ownership conflicts with the deleting Session.')
   }
-  const createdAt = current?.createdAt ?? session.createdAt
   await writeOwnership(location, {
     version: MANAGED_WORKSPACE_OWNERSHIP_VERSION,
     workspaceId: location.workspaceId,
     projectId: session.projectId,
     sessionId: session.id,
-    createdAt,
-    lastUsedAt: Math.max(current?.lastUsedAt ?? createdAt, session.updatedAt),
+    createdAt: current.createdAt,
+    lastUsedAt: Math.max(current.lastUsedAt, session.updatedAt),
     retainedAfterDelete: true
   })
   return true

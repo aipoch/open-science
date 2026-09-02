@@ -347,26 +347,50 @@ class SessionPersistenceDeletionOwner {
             if (cleanup.hasUnsafeResidual) this.fileIndex.markReconciliationIncomplete()
           }
         }
-        if (this.workspaceOwnership) {
-          for (const session of scan.sessions) {
-            await this.workspaceOwnership.markRetained(session)
+        const retainedWorkspaceSessions: PersistedChatSession[] = []
+        let sessionAuthorityDeleted = false
+        try {
+          if (this.workspaceOwnership) {
+            for (const session of scan.sessions) {
+              if (await this.workspaceOwnership.markRetained(session)) {
+                retainedWorkspaceSessions.push(session)
+              }
+            }
           }
-        }
-        if (deletionState === 'legacy-committed') {
-          await this.repository.markCommittedProjectSessionsPrepared(projectId)
-        }
-        await this.repository.deleteProjectSessions(projectId)
-        await this.computeJobs?.commitProjectJobDeletion(projectId)
-        this.stateOwner.removeProject(projectId, deletedSessionIds)
-        await this.fileIndex.softDeleteProject(projectId)
+          if (deletionState === 'legacy-committed') {
+            await this.repository.markCommittedProjectSessionsPrepared(projectId)
+          }
+          await this.repository.deleteProjectSessions(projectId)
+          sessionAuthorityDeleted = true
+          await this.computeJobs?.commitProjectJobDeletion(projectId)
+          this.stateOwner.removeProject(projectId, deletedSessionIds)
+          await this.fileIndex.softDeleteProject(projectId)
 
-        this.notifyFilesChanged({
-          projectId,
-          sources: ['artifact', 'upload'],
-          kind: 'reset'
-        })
-        await this.notifySessionsDeleted(deletedSessionIds)
-        return { status: 'completed' }
+          this.notifyFilesChanged({
+            projectId,
+            sources: ['artifact', 'upload'],
+            kind: 'reset'
+          })
+          await this.notifySessionsDeleted(deletedSessionIds)
+          return { status: 'completed' }
+        } catch (error) {
+          if (sessionAuthorityDeleted || !this.workspaceOwnership) throw error
+          const recoveryErrors: unknown[] = []
+          for (const session of retainedWorkspaceSessions.reverse()) {
+            try {
+              await this.workspaceOwnership.restoreActive(session)
+            } catch (recoveryError) {
+              recoveryErrors.push(recoveryError)
+            }
+          }
+          if (recoveryErrors.length > 0) {
+            throw new AggregateError(
+              [error, ...recoveryErrors],
+              `Project Session deletion and managed workspace rollback failed: ${projectId}`
+            )
+          }
+          throw error
+        }
       }
     )
   }

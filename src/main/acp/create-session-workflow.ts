@@ -1,4 +1,8 @@
-import type { AcpCreateSessionRequest, AcpCreateSessionResponse } from '../../shared/acp'
+import type {
+  AcpCreateSessionRequest,
+  AcpCreateSessionResponse,
+  AcpDeleteSessionRequest
+} from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
 import { withDataRootWrite } from '../storage/migration-state'
 import {
@@ -8,6 +12,7 @@ import {
 
 type AcpSessionCreator = {
   createSession(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
+  deleteSession(request: AcpDeleteSessionRequest): Promise<unknown>
 }
 
 type DataRootWrite = <Result>(write: () => Promise<Result>) => Promise<Result>
@@ -52,7 +57,19 @@ const createAcpCreateSessionWorkflow = (
               projectId,
               cwd: workspace.cwd
             })
-            await workspace.commit(response.sessionId)
+            try {
+              await workspace.commit(response.sessionId)
+            } catch (publicationError) {
+              try {
+                await sessions.deleteSession({ sessionId: response.sessionId })
+              } catch (cleanupError) {
+                throw new AggregateError(
+                  [publicationError, cleanupError],
+                  'Managed workspace publication and Session rollback failed.'
+                )
+              }
+              throw publicationError
+            }
             return response
           } finally {
             await workspace.release()

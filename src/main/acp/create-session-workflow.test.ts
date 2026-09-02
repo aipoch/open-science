@@ -7,6 +7,7 @@ import type { ManagedSessionWorkspaceLease } from './managed-session-workspace'
 type AcpCreateSessionWorkflowHarness = {
   workflow: ReturnType<typeof createAcpCreateSessionWorkflow>
   createSession: Mock<(request: AcpCreateSessionRequest) => Promise<AcpCreateSessionResponse>>
+  deleteSession: Mock<(request: { sessionId: string }) => Promise<unknown>>
   lease: ManagedSessionWorkspaceLease
   workspaces: {
     acquire: Mock<(input: { projectId: string }) => Promise<ManagedSessionWorkspaceLease>>
@@ -25,6 +26,10 @@ const createHarness = (
     events.push('session')
     if (createSessionResult instanceof Error) throw createSessionResult
     return { sessionId: 'session-1', cwd: request.cwd }
+  })
+  const deleteSession = vi.fn<(request: { sessionId: string }) => Promise<unknown>>(async () => {
+    events.push('delete-session')
+    return undefined
   })
   const lease: ManagedSessionWorkspaceLease = {
     cwd: '/data/workspaces/managed-1',
@@ -52,12 +57,13 @@ const createHarness = (
     }
   }
   const workflow = createAcpCreateSessionWorkflow(
-    { createSession },
+    { createSession, deleteSession },
     { workspaces, withDataRootWrite }
   )
   return {
     workflow,
     createSession,
+    deleteSession,
     lease,
     workspaces,
     dataRootWriteCalls: () => dataRootWriteCalls,
@@ -85,7 +91,10 @@ describe('ACP create-Session workflow', () => {
         admissionActive = false
       }
     }
-    const workflow = createAcpCreateSessionWorkflow({ createSession }, { withProjectAvailable })
+    const workflow = createAcpCreateSessionWorkflow(
+      { createSession, deleteSession: vi.fn() },
+      { withProjectAvailable }
+    )
 
     const pending = workflow.create({
       cwd: '/workspace',
@@ -163,6 +172,28 @@ describe('ACP create-Session workflow', () => {
       expect(harness.events).toEqual(['guard:start', 'acquire', 'session', 'release', 'guard:end'])
     }
   )
+
+  it('deletes the published Session when final ownership publication fails', async () => {
+    const harness = createHarness()
+    const failure = new Error('receipt publication failed')
+    vi.mocked(harness.lease.commit).mockImplementationOnce(async () => {
+      harness.events.push('commit')
+      throw failure
+    })
+
+    await expect(harness.workflow.create({ projectId: 'project-1' })).rejects.toBe(failure)
+
+    expect(harness.deleteSession).toHaveBeenCalledWith({ sessionId: 'session-1' })
+    expect(harness.events).toEqual([
+      'guard:start',
+      'acquire',
+      'session',
+      'commit',
+      'delete-session',
+      'release',
+      'guard:end'
+    ])
+  })
 })
 
 const createDeferred = <Value>(): {
