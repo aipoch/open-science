@@ -17,6 +17,7 @@ type RegisterNotebookTurnInputsRequest = {
   promptMessageId: string
   uploads: UploadedAttachment[]
   references: FileReference[]
+  materializeOnly?: boolean
 }
 
 type GetNotebookTurnInputsRequest = Pick<
@@ -172,7 +173,7 @@ class NotebookInputRegistry {
         })
       )
     )
-    this.turns.set(key, { fingerprint, inputs: deduplicated })
+    if (!request.materializeOnly) this.turns.set(key, { fingerprint, inputs: deduplicated })
     return promptInputs
   }
 

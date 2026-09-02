@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 
@@ -177,6 +187,85 @@ const setup = async (): Promise<NotebookInputRegistry> => {
 }
 
 describe('NotebookInputRegistry', () => {
+  it('rejects a replaced Notebook data-root symlink before materializing prompt inputs', async () => {
+    const registry = await setup()
+    await createUpload({
+      projectId: 'project-1',
+      sessionId: 'source-session-1',
+      uploadFileId: 'upload-1',
+      versionId: 'upload-version-1',
+      filename: 'groups.csv',
+      content: 'group\nA\n'
+    })
+    const dataRoot = getNotebookDataRoot(storageRoot!, 'project-1', 'active-session')
+    const outsideRoot = join(storageRoot!, 'outside')
+    await mkdir(dirname(dataRoot), { recursive: true })
+    await mkdir(outsideRoot)
+    await symlink(outsideRoot, dataRoot, process.platform === 'win32' ? 'junction' : 'dir')
+
+    await expect(
+      registry.registerTurn({
+        projectId: 'project-1',
+        appSessionId: 'active-session',
+        promptMessageId: 'prompt-1',
+        uploads: [
+          {
+            id: 'upload-1',
+            versionId: 'upload-version-1',
+            versionNumber: 1,
+            sessionId: 'source-session-1',
+            name: 'groups.csv',
+            originalName: 'groups.csv',
+            path: '/untrusted-renderer-path',
+            size: 8
+          }
+        ],
+        references: []
+      })
+    ).rejects.toThrow('trusted Notebook storage')
+    await expect(
+      readFile(join(outsideRoot, 'inputs', 'groups-dbdc13461d5e.csv'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('materializes prompt inputs without committing a refused turn registration', async () => {
+    const registry = await setup()
+    await createUpload({
+      projectId: 'project-1',
+      sessionId: 'source-session-1',
+      uploadFileId: 'upload-1',
+      versionId: 'upload-version-1',
+      filename: 'groups.csv',
+      content: 'group\nA\n'
+    })
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'active-session',
+      promptMessageId: 'prompt-1',
+      uploads: [
+        {
+          id: 'upload-1',
+          versionId: 'upload-version-1',
+          versionNumber: 1,
+          sessionId: 'source-session-1',
+          name: 'groups.csv',
+          originalName: 'groups.csv',
+          path: '/untrusted-renderer-path',
+          size: 8
+        }
+      ],
+      references: []
+    }
+
+    await expect(registry.registerTurn({ ...request, materializeOnly: true })).resolves.toEqual([
+      expect.objectContaining({ notebookPath: 'inputs/groups-dbdc13461d5e.csv' })
+    ])
+    expect(registry.getTurnInputs(request)).toEqual([])
+
+    await registry.registerTurn(request)
+    expect(registry.getTurnInputs(request)).toHaveLength(1)
+  })
+
   it('freezes exact Upload and Artifact Versions in turn order without exposing absolute paths', async () => {
     const registry = await setup()
     await createUpload({

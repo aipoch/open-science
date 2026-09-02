@@ -367,6 +367,7 @@ type AcpRuntimeNotebookOptions = {
     promptMessageId: string
     uploads: UploadedAttachment[]
     references: FileReference[]
+    materializeOnly?: boolean
   }) => Promise<readonly NotebookPromptInput[] | void>
   peekHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
 }

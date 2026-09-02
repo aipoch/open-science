@@ -488,6 +488,7 @@ describe('AcpPromptPreparationOwner', () => {
       }
     ])
     expect(JSON.stringify(handle.content)).toContain('Do not copy inputs to /tmp')
+    expect(JSON.stringify(handle.content)).toContain('including its inputs/ prefix')
     handle.close()
   })
 

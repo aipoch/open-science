@@ -136,7 +136,7 @@ const appendNotebookInputPrompt = (
       '<open_science_notebook_inputs>',
       JSON.stringify(inputs),
       '</open_science_notebook_inputs>',
-      'These exact input Versions already exist relative to the Notebook working directory. Use notebookPath directly in Notebook and shell code. Do not copy inputs to /tmp or embed absolute file URIs in Notebook cells.'
+      'These exact input Versions already exist relative to the Notebook working directory. When Notebook or shell code reads an attached file, ignore the attachment resource URI, path, and basename; use only the exact notebookPath shown above, including its inputs/ prefix. Do not copy inputs to /tmp or embed absolute file URIs in Notebook cells.'
     ].join('\n')
   }
   return typeof content === 'string'
@@ -471,7 +471,7 @@ class AcpPromptPreparationOwner {
   }
 }
 
-export { AcpPromptPreparationOwner }
+export { AcpPromptPreparationOwner, appendNotebookInputPrompt }
 export type {
   AcpPromptPreparationInput,
   AcpPromptPreparationOwnerOptions,
