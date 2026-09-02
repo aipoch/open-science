@@ -179,6 +179,7 @@ describe('provider-kind helpers', () => {
     expect(apiKeys).toContain('official:tencent')
     expect(apiKeys).toContain('official:tencentcodingplan')
     expect(apiKeys).toContain('official:tencenttokenplan')
+    expect(apiKeys).toContain('official:nvidia')
     // The two subscription sign-ins each get their own group, parallel to one another, rather than
     // the Claude one hiding under Official API.
     expect(groupKeys('codex')).toEqual(['codex-subscription'])

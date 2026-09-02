@@ -26,4 +26,13 @@ describe('ProviderKindIcon', () => {
       expect(html).not.toContain('text-muted-foreground')
     }
   )
+
+  it('renders the NVIDIA provider logo', () => {
+    const html = renderToStaticMarkup(<ProviderKindIcon kindKey="official:nvidia" />)
+
+    expect(html).toContain('<svg')
+    expect(html).toContain('<title>Nvidia</title>')
+    expect(html).toContain('#74B71B')
+    expect(html).not.toContain('text-muted-foreground')
+  })
 })

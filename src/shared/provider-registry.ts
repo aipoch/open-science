@@ -34,6 +34,7 @@ export type OfficialVendorId =
   | 'tencent'
   | 'tencentcodingplan'
   | 'tencenttokenplan'
+  | 'nvidia'
   | 'opencode-go'
   | 'opencode'
   | 'openrouter'
@@ -703,6 +704,27 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       { id: 'minimax-m3', contextWindow: 1_000_000 }
     ],
     multimodal: { multimodalModels: ['kimi-k2.6'] }
+  },
+  {
+    id: 'nvidia',
+    label: 'NVIDIA',
+    reasoningEffort: 'unsupported',
+    apiEndpoints: ['openai'],
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    apiKeyUrl: 'https://build.nvidia.com/settings/api-keys',
+    // The live catalog mixes chat, embedding, image, OCR, safety, and other model types, so keep the
+    // agent-capable chat catalog curated instead of exposing refresh-from-vendor.
+    models: [
+      { id: 'nvidia/nemotron-3.5-lightning-30b-a3b', contextWindow: 1_000_000 },
+      { id: 'deepseek-ai/deepseek-v4-pro-0813', contextWindow: 1_000_000 },
+      { id: 'minimaxai/minimax-m3', contextWindow: 1_000_000 },
+      { id: 'poolside/laguna-xs-2.1', contextWindow: 262_144 },
+      { id: 'meta/muse-glimmer-30b', contextWindow: 131_072 },
+      { id: 'moonshotai/kimi-k3', contextWindow: 1_048_576 }
+    ],
+    multimodal: {
+      multimodalModels: ['minimaxai/minimax-m3', 'meta/muse-glimmer-30b', 'moonshotai/kimi-k3']
+    }
   },
   {
     id: 'opencode-go',

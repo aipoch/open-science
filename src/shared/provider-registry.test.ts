@@ -40,6 +40,7 @@ describe('provider registry', () => {
     expect(isOfficialVendorId('tencent')).toBe(true)
     expect(isOfficialVendorId('tencentcodingplan')).toBe(true)
     expect(isOfficialVendorId('tencenttokenplan')).toBe(true)
+    expect(isOfficialVendorId('nvidia')).toBe(true)
     expect(isOfficialVendorId(undefined)).toBe(false)
     expect(isOfficialVendorId(42)).toBe(false)
   })
@@ -144,6 +145,26 @@ describe('provider registry', () => {
     expect(resolveVendorModelApiEndpoints('opencode', 'minimax-m3')).toEqual(['openai'])
     expect(isVendorModelMultimodal('opencode-go', 'glm-5.3-flash')).toBe(true)
     expect(isVendorModelMultimodal('opencode', 'gpt-5.3-codex-spark')).toBe(false)
+  })
+
+  it('routes NVIDIA through Chat Completions with a curated agent catalog', () => {
+    expect(resolveVendorApiEndpoints('nvidia')).toEqual(['openai'])
+    expect(resolveVendorBaseUrl('nvidia')).toBe('https://integrate.api.nvidia.com/v1')
+    expect(resolveVendorApiKeyUrl('nvidia')).toBe('https://build.nvidia.com/settings/api-keys')
+    expect(resolveVendorModelsUrl('nvidia')).toBeUndefined()
+    expect(defaultVendorModel('nvidia')).toBe('nvidia/nemotron-3.5-lightning-30b-a3b')
+    expect(getOfficialVendor('nvidia')?.models.map(({ id }) => id)).toEqual([
+      'nvidia/nemotron-3.5-lightning-30b-a3b',
+      'deepseek-ai/deepseek-v4-pro-0813',
+      'minimaxai/minimax-m3',
+      'poolside/laguna-xs-2.1',
+      'meta/muse-glimmer-30b',
+      'moonshotai/kimi-k3'
+    ])
+    expect(isVendorModelMultimodal('nvidia', 'minimaxai/minimax-m3')).toBe(true)
+    expect(isVendorModelMultimodal('nvidia', 'meta/muse-glimmer-30b')).toBe(true)
+    expect(isVendorModelMultimodal('nvidia', 'moonshotai/kimi-k3')).toBe(true)
+    expect(isVendorModelMultimodal('nvidia', 'poolside/laguna-xs-2.1')).toBe(false)
   })
 
   it('resolves a single-endpoint vendor base URL', () => {
