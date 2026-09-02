@@ -590,6 +590,12 @@ const registerDataContentApplicationCommands = (
           try {
             return await dependencies.sessions.editDetails(invocation.args[0])
           } catch (error) {
+            if (SessionPersistence.isSessionDetailsConflictError(error)) {
+              throw new ApplicationCommandError(
+                SessionPersistence.SESSION_DETAILS_CONFLICT_ERROR_CODE,
+                error instanceof Error ? error.message : 'Session details changed elsewhere.'
+              )
+            }
             if (SessionPersistence.isSessionRevisionConflictError(error)) {
               throw new ApplicationCommandError(
                 SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,

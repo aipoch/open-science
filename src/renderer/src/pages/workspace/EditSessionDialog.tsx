@@ -30,6 +30,7 @@ type EditSessionDialogProps = {
   titleDraft: string
   descriptionDraft: string
   isSaving?: boolean
+  error?: string | null
   onTitleDraftChange: (value: string) => void
   onDescriptionDraftChange: (value: string) => void
   onCancel: () => void
@@ -41,6 +42,7 @@ const EditSessionDialog = ({
   titleDraft,
   descriptionDraft,
   isSaving = false,
+  error,
   onTitleDraftChange,
   onDescriptionDraftChange,
   onCancel,
@@ -123,6 +125,14 @@ const EditSessionDialog = ({
                   className={`${dialogFormInputClassName} min-h-28 resize-y px-3 py-2 text-sm`}
                 />
               </div>
+              {error ? (
+                <p
+                  role="alert"
+                  className="rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+                >
+                  {error}
+                </p>
+              ) : null}
             </div>
             <div className={dialogFooterClassName}>
               <Button

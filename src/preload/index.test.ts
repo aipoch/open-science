@@ -1165,6 +1165,8 @@ const sampleDeleteSession = { projectId: 'p-1', sessionId: 's-1' }
 const sampleEditSessionDetails = {
   projectId: 'p-1',
   sessionId: 's-1',
+  expectedTitle: 'Original',
+  expectedDescription: 'Original description',
   title: 'Edited',
   description: 'Description'
 }

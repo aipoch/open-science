@@ -22,6 +22,7 @@ import {
   type DataContentApplicationCommandDependencies
 } from './data-content-application-commands'
 import {
+  SessionDetailsConflictError,
   SessionRevisionConflictError,
   type SessionDeletionResult
 } from '../shared/session-persistence'
@@ -923,6 +924,32 @@ describe('Data and content application commands', () => {
     expect(deps.events.publish).not.toHaveBeenCalled()
   })
 
+  it('preserves the Session details conflict code across the application command boundary', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.sessions.editDetails.mockRejectedValueOnce(new SessionDetailsConflictError())
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionEditDetails,
+        invocation([
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            expectedTitle: 'Session',
+            expectedDescription: '',
+            title: 'Edited',
+            description: ''
+          }
+        ] as const)
+      )
+    ).rejects.toMatchObject({
+      code: 'session-details-conflict'
+    })
+    expect(deps.events.publish).not.toHaveBeenCalled()
+  })
+
   it('allows current Electron/Web humans and Task automation to update main-owned delegation policy', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
@@ -1008,6 +1035,8 @@ describe('Data and content application commands', () => {
           {
             projectId: 'project-1',
             sessionId: 'session-1',
+            expectedTitle: 'Session',
+            expectedDescription: '',
             title: 'Updated title',
             description: 'Updated description'
           }
@@ -1042,6 +1071,8 @@ describe('Data and content application commands', () => {
     const editDetailsRequest = {
       projectId: 'project-1',
       sessionId: 'session-1',
+      expectedTitle: 'Session',
+      expectedDescription: '',
       title: 'Edited',
       description: 'Description'
     }
@@ -1183,6 +1214,8 @@ describe('Data and content application commands', () => {
       request: {
         projectId: 'project-1',
         sessionId: 'session-1',
+        expectedTitle: 'Session',
+        expectedDescription: '',
         title: 'Edited',
         description: '',
         force: true
@@ -1193,6 +1226,8 @@ describe('Data and content application commands', () => {
       request: {
         projectId: 'project-1',
         sessionId: '',
+        expectedTitle: 'Session',
+        expectedDescription: '',
         title: 'Edited',
         description: ''
       }
@@ -1202,7 +1237,19 @@ describe('Data and content application commands', () => {
       request: {
         projectId: 'project-1',
         sessionId: 'session-1',
+        expectedTitle: 'Session',
+        expectedDescription: '',
         title: 'Edited'
+      }
+    },
+    {
+      label: 'missing expected title',
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedDescription: '',
+        title: 'Edited',
+        description: ''
       }
     }
   ])('rejects a malformed Session details edit request ($label)', async ({ request }) => {

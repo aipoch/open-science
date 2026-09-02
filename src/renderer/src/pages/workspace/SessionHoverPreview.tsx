@@ -14,7 +14,10 @@ import { useTranslation } from 'react-i18next'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import { SESSION_DETAILS_TITLE_MAX_LENGTH } from '../../../../shared/session-persistence'
+import {
+  isSessionDetailsConflictError,
+  SESSION_DETAILS_TITLE_MAX_LENGTH
+} from '../../../../shared/session-persistence'
 
 const SESSION_HOVER_PREVIEW_DELAY_MS = 0
 // Radix-internal close grace while the pointer crosses from the row onto the card; the explicit
@@ -28,7 +31,7 @@ type SessionPreviewContent = {
 }
 type SessionPreviewDetails = SessionPreviewContent & { id: string }
 type SessionPreviewRequest = (sessionId: string) => Promise<void> | void
-type SessionRenameRequest = (title: string) => void
+type SessionRenameRequest = (title: string) => Promise<void> | void
 
 type SessionHoverPreviewContextValue = {
   activeSessionId: string | null
@@ -150,6 +153,9 @@ const SessionHoverPreviewTitle = ({
   const [editing, setEditing] = useState(false)
   const editingRef = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const savingRef = useRef(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
 
   const updateEditing = useCallback(
     (next: boolean): void => {
@@ -161,11 +167,32 @@ const SessionHoverPreviewTitle = ({
   )
 
   const commit = useCallback((): void => {
-    if (!editingRef.current) return
+    if (!editingRef.current || savingRef.current) return
     const nextTitle = inputRef.current?.value.trim() ?? ''
-    updateEditing(false)
-    if (nextTitle && nextTitle !== title) onRenameTitle?.(nextTitle)
-  }, [onRenameTitle, title, updateEditing])
+    if (!nextTitle || nextTitle === title) {
+      updateEditing(false)
+      return
+    }
+    savingRef.current = true
+    setIsSaving(true)
+    setRenameError(null)
+    void Promise.resolve(onRenameTitle?.(nextTitle))
+      .then(() => updateEditing(false))
+      .catch((error: unknown) => {
+        setRenameError(
+          isSessionDetailsConflictError(error)
+            ? t(
+                "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details."
+              )
+            : t('Could not save session details.')
+        )
+        queueMicrotask(() => inputRef.current?.focus())
+      })
+      .finally(() => {
+        savingRef.current = false
+        setIsSaving(false)
+      })
+  }, [onRenameTitle, t, title, updateEditing])
 
   if (!canRename) {
     return <p className={sessionHoverPreviewTitleClassName}>{title}</p>
@@ -173,27 +200,37 @@ const SessionHoverPreviewTitle = ({
 
   if (editing) {
     return (
-      <Input
-        ref={inputRef}
-        defaultValue={title}
-        autoFocus
-        maxLength={SESSION_DETAILS_TITLE_MAX_LENGTH}
-        aria-label={t('Session title')}
-        className="h-auto rounded-sm px-1 py-0 text-sm font-semibold leading-5"
-        onFocus={(event) => event.currentTarget.select()}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault()
-            commit()
-            return
-          }
-          if (event.key === 'Escape') {
-            event.stopPropagation()
-            updateEditing(false)
-          }
-        }}
-        onBlur={commit}
-      />
+      <div className="space-y-1">
+        <Input
+          ref={inputRef}
+          defaultValue={title}
+          autoFocus
+          maxLength={SESSION_DETAILS_TITLE_MAX_LENGTH}
+          aria-label={t('Session title')}
+          disabled={isSaving}
+          className="h-auto rounded-sm px-1 py-0 text-sm font-semibold leading-5"
+          onFocus={(event) => {
+            if (!renameError) event.currentTarget.select()
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              commit()
+              return
+            }
+            if (event.key === 'Escape' && !savingRef.current) {
+              event.stopPropagation()
+              updateEditing(false)
+            }
+          }}
+          onBlur={commit}
+        />
+        {renameError ? (
+          <p role="alert" className="text-xs leading-4 text-danger-000">
+            {renameError}
+          </p>
+        ) : null}
+      </div>
     )
   }
 
@@ -207,7 +244,10 @@ const SessionHoverPreviewTitle = ({
         'hover:bg-bg-300 focus-visible:ring-2 focus-visible:ring-ring',
         sessionHoverPreviewTitleClassName
       )}
-      onClick={() => updateEditing(true)}
+      onClick={() => {
+        setRenameError(null)
+        updateEditing(true)
+      }}
     >
       {title}
     </button>

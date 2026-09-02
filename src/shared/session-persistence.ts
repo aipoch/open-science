@@ -685,6 +685,8 @@ export type PersistedSessionDetailsGeneration =
 export type EditSessionDetailsRequest = Readonly<{
   projectId: string
   sessionId: string
+  expectedTitle: string
+  expectedDescription: string
   title: string
   description: string
 }>
@@ -852,6 +854,25 @@ export type SaveSessionOptions = {
 }
 
 export const SESSION_REVISION_CONFLICT_ERROR_CODE = 'session-revision-conflict' as const
+export const SESSION_DETAILS_CONFLICT_ERROR_CODE = 'session-details-conflict' as const
+
+export class SessionDetailsConflictError extends Error {
+  readonly code = SESSION_DETAILS_CONFLICT_ERROR_CODE
+
+  constructor() {
+    super('Session details changed elsewhere. Reopen the editor and try again.')
+    this.name = 'SessionDetailsConflictError'
+  }
+}
+
+export const isSessionDetailsConflictError = (
+  error: unknown
+): error is Readonly<{ code: typeof SESSION_DETAILS_CONFLICT_ERROR_CODE }> =>
+  error instanceof SessionDetailsConflictError ||
+  (typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === SESSION_DETAILS_CONFLICT_ERROR_CODE)
 
 export class SessionRevisionConflictError extends Error {
   readonly code = SESSION_REVISION_CONFLICT_ERROR_CODE
@@ -4527,6 +4548,8 @@ export const editSessionDetailsRequestSchema = z
   .object({
     projectId: z.string().min(1),
     sessionId: z.string().min(1),
+    expectedTitle: z.string(),
+    expectedDescription: z.string(),
     title: z.string(),
     description: z.string()
   })

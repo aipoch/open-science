@@ -3735,6 +3735,8 @@
     "Could not load this session for editing.": "無法載入此工作階段進行編輯。",
     "Edit…": "編輯…",
     "Edit session": "編輯工作階段",
+    "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details.": "此工作階段的標題或描述已在另一個視窗中變更。你的變更尚未儲存。請關閉並重新開啟編輯器，以查看最新詳細資料。",
+    "Could not save session details.": "無法儲存工作階段詳細資料。",
     "Generates a title and description after the first message is saved.": "儲存第一則訊息後產生標題與說明。",
     "Models for session details, subagents, review, and image understanding.": "用於工作階段詳細資訊、子智能體、審查與影像理解的模型。",
     "Session details": "工作階段詳細資訊",

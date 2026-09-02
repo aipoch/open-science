@@ -30,6 +30,20 @@ const createSession = (overrides: Partial<ChatSession>): ChatSession => ({
   ...overrides
 })
 
+const deferred = <T,>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason: unknown) => void
+} => {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 const createDelegatedQuestionSession = (): ChatSession =>
   createSession({
     id: 'delegated-question',
@@ -649,6 +663,65 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(
         document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
       ).toBeNull()
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
+  })
+
+  it('keeps an inline rename open and announces a save failure', async () => {
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const save = deferred<void>()
+    void save.promise.catch(() => undefined)
+    const onRenameTitle = vi.fn(() => save.promise)
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview
+              session={{ id: 'failed-rename', title: 'Old title' }}
+              canRename
+              onRenameTitle={onRenameTitle}
+            >
+              <button type="button">Rename trigger</button>
+            </SessionHoverPreview>
+          </SessionHoverPreviewProvider>
+        )
+      })
+      const trigger = container.querySelector('button')
+      if (!trigger) throw new Error('Session preview trigger did not render')
+      const pointerOver = new MouseEvent('pointerover', { bubbles: true })
+      Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
+      await act(async () => trigger.dispatchEvent(pointerOver))
+      const titleButton = document.body.querySelector<HTMLElement>(
+        '[data-slot="session-hover-preview-title-button"]'
+      )
+      await act(async () => titleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+      const input = document.body.querySelector<HTMLInputElement>(
+        '[data-slot="hovercard-content"] [data-slot="input"]'
+      )
+      if (!input) throw new Error('Session preview title editor did not render')
+      input.value = 'Unsaved title'
+      await act(async () =>
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      )
+
+      await act(async () => {
+        save.reject(new Error('disk failure'))
+        await save.promise.catch(() => undefined)
+      })
+
+      expect(
+        document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
+      ).toBeInstanceOf(HTMLInputElement)
+      expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+        'Could not save session details.'
+      )
     } finally {
       act(() => root.unmount())
       container.remove()

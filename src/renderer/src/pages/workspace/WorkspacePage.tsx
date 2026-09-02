@@ -1343,6 +1343,7 @@ const WorkspacePage = ({
         titleDraft={sessionController.view.dialogs.edit?.titleDraft ?? ''}
         descriptionDraft={sessionController.view.dialogs.edit?.descriptionDraft ?? ''}
         isSaving={sessionController.view.dialogs.edit?.isSaving}
+        error={sessionController.view.dialogs.edit?.error}
         onTitleDraftChange={sessionController.actions.changeEditTitleDraft}
         onDescriptionDraftChange={sessionController.actions.changeEditDescriptionDraft}
         onCancel={sessionController.actions.closeEdit}

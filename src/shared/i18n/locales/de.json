@@ -3698,6 +3698,8 @@
     "Could not load this session for editing.": "Diese Sitzung konnte nicht zur Bearbeitung geladen werden.",
     "Edit…": "Bearbeiten…",
     "Edit session": "Sitzung bearbeiten",
+    "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details.": "Der Titel oder die Beschreibung dieser Sitzung wurde in einem anderen Fenster geändert. Ihre Änderungen wurden nicht gespeichert. Schließen Sie den Editor und öffnen Sie ihn erneut, um die neuesten Details zu prüfen.",
+    "Could not save session details.": "Die Sitzungsdetails konnten nicht gespeichert werden.",
     "Generates a title and description after the first message is saved.": "Erstellt einen Titel und eine Beschreibung, nachdem die erste Nachricht gespeichert wurde.",
     "Models for session details, subagents, review, and image understanding.": "Modelle für Sitzungsdetails, Unteragenten, Reviews und Bildverständnis.",
     "Session details": "Sitzungsdetails",

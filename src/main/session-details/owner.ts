@@ -12,6 +12,7 @@ import {
   type EditSessionDetailsRequest,
   type PersistedChatSession,
   type PersistedSessionDetailsGeneration,
+  SessionDetailsConflictError,
   type SessionDetailsAdmission
 } from '../../shared/session-persistence'
 import type { AgentFrameworkId, ReasoningEffort } from '../../shared/settings'
@@ -730,6 +731,11 @@ export const createSessionDetailsOwner = (
     async edit(request: EditSessionDetailsRequest): Promise<PersistedChatSession> {
       const key = keyOf(request.projectId, request.sessionId)
       const currentAttempt = active.get(key)
+      const details = validateManualDetails(request.title, request.description)
+      const expectedTitle = trimDisplayValue(request.expectedTitle)
+      const expectedDescription = trimDisplayValue(request.expectedDescription)
+      const titleChanged = details.title !== expectedTitle
+      const descriptionChanged = details.description !== expectedDescription
       // Manual edits change only authority-owned display fields on the freshly loaded Session, so
       // unrelated concurrent writes (conversation turns, runtime context) never fence them. The
       // details' single other writer — generation — is superseded below instead.
@@ -737,7 +743,13 @@ export const createSessionDetailsOwner = (
         request.projectId,
         request.sessionId,
         (session) => {
-          const details = validateManualDetails(request.title, request.description)
+          if (
+            (titleChanged && trimDisplayValue(session.title) !== expectedTitle) ||
+            (descriptionChanged &&
+              trimDisplayValue(session.description ?? '') !== expectedDescription)
+          ) {
+            throw new SessionDetailsConflictError()
+          }
           const generation = session.sessionDetailsGeneration
           const superseded =
             generation?.status === 'queued' || generation?.status === 'running'
@@ -747,8 +759,8 @@ export const createSessionDetailsOwner = (
             kind: 'write',
             session: {
               ...session,
-              title: details.title,
-              description: details.description,
+              ...(titleChanged ? { title: details.title } : {}),
+              ...(descriptionChanged ? { description: details.description } : {}),
               sessionDetailsSource: 'manual',
               ...(superseded ? { sessionDetailsGeneration: superseded } : {})
             }

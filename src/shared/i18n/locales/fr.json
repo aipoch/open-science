@@ -4039,6 +4039,8 @@
     "Could not load this session for editing.": "Impossible de charger cette session pour la modifier.",
     "Edit…": "Modifier…",
     "Edit session": "Modifier la session",
+    "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details.": "Le titre ou la description de cette session a changé dans une autre fenêtre. Vos modifications n’ont pas été enregistrées. Fermez et rouvrez l’éditeur pour consulter les informations les plus récentes.",
+    "Could not save session details.": "Les détails de la session n’ont pas pu être enregistrés.",
     "Generates a title and description after the first message is saved.": "Génère un titre et une description après l’enregistrement du premier message.",
     "Models for session details, subagents, review, and image understanding.": "Modèles pour les détails de session, les sous-agents, la révision et l’analyse d’images.",
     "Session details": "Détails de la session",

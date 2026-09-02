@@ -305,6 +305,8 @@ describe('workspace session controller', () => {
     expect(editDetails).toHaveBeenCalledWith({
       projectId: active.projectId,
       sessionId: active.id,
+      expectedTitle: 'Original title',
+      expectedDescription: 'Before',
       title: '  After  ',
       description: ''
     })
@@ -342,6 +344,43 @@ describe('workspace session controller', () => {
       titleDraft: second.title,
       isSaving: false
     })
+  })
+
+  it.each([
+    [
+      Object.assign(new Error('Session details changed elsewhere.'), {
+        code: 'session-details-conflict'
+      }),
+      "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details."
+    ],
+    [new Error('disk failure'), 'Could not save session details.']
+  ])('keeps Edit session open with a visible save error', async (failure, expectedMessage) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const active = session({ description: 'Original description' })
+    const editDetails = vi.fn().mockRejectedValue(failure)
+    window.api = { sessions: { editDetails } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    const hook = renderController({ activeSession: active })
+    mounted.push(hook)
+
+    try {
+      act(() => hook.result.current.actions.openEdit(active))
+      act(() => hook.result.current.actions.changeEditTitleDraft('Unsaved title'))
+      act(() => hook.result.current.actions.confirmEdit({ preventDefault: vi.fn() } as never))
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(hook.result.current.view.dialogs.edit).toMatchObject({
+        titleDraft: 'Unsaved title',
+        descriptionDraft: 'Original description',
+        isSaving: false,
+        error: expectedMessage
+      })
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('does not clear a new Edit save state when the previous save fails', async () => {
@@ -403,15 +442,15 @@ describe('workspace session controller', () => {
     const hook = renderController({ activeSession: active })
     mounted.push(hook)
 
-    act(() => hook.result.current.actions.renameTitle(active, '  Renamed inline  '))
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await hook.result.current.actions.renameTitle(active, '  Renamed inline  ')
     })
 
     expect(editDetails).toHaveBeenCalledWith({
       projectId: active.projectId,
       sessionId: active.id,
+      expectedTitle: 'Original title',
+      expectedDescription: 'Keep me',
       title: 'Renamed inline',
       description: 'Keep me'
     })
@@ -430,8 +469,10 @@ describe('workspace session controller', () => {
     const hook = renderController({ activeSession: active })
     mounted.push(hook)
 
-    act(() => hook.result.current.actions.renameTitle(active, '   '))
-    act(() => hook.result.current.actions.renameTitle(active, 'Original title'))
+    act(() => {
+      void hook.result.current.actions.renameTitle(active, '   ')
+      void hook.result.current.actions.renameTitle(active, 'Original title')
+    })
 
     expect(editDetails).not.toHaveBeenCalled()
   })
@@ -479,6 +520,8 @@ describe('workspace session controller', () => {
     expect(editDetails).toHaveBeenCalledWith({
       projectId: 'project-a',
       sessionId: 'session-a',
+      expectedTitle: 'Original title',
+      expectedDescription: 'Durable description',
       title: 'Renamed',
       description: 'Durable description'
     })

@@ -3,6 +3,7 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'invalid-command-result',
   'command-unavailable',
   'command-failed',
+  'session-details-conflict',
   'session-revision-conflict'
 ] as const
 

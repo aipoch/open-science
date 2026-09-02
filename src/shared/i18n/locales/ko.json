@@ -3733,6 +3733,8 @@
     "Could not load this session for editing.": "편집할 세션을 불러오지 못했습니다.",
     "Edit…": "편집…",
     "Edit session": "세션 편집",
+    "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details.": "이 세션의 제목 또는 설명이 다른 창에서 변경되었습니다. 변경 사항이 저장되지 않았습니다. 편집기를 닫았다가 다시 열어 최신 세부 정보를 확인하세요.",
+    "Could not save session details.": "세션 세부 정보를 저장할 수 없습니다.",
     "Generates a title and description after the first message is saved.": "첫 메시지가 저장된 후 제목과 설명을 생성합니다.",
     "Models for session details, subagents, review, and image understanding.": "세션 세부 정보, 서브에이전트, 검토 및 이미지 이해에 사용할 모델입니다.",
     "Session details": "세션 세부 정보",
