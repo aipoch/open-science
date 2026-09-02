@@ -71,11 +71,7 @@ const materializeNotebookPromptInput = async (request: {
   input: NotebookRunInputFile
   stagedPath: string
 }): Promise<NotebookPromptInput> => {
-  const dataRoot = getNotebookDataRoot(
-    request.storageRoot,
-    request.projectId,
-    request.appSessionId
-  )
+  const dataRoot = getNotebookDataRoot(request.storageRoot, request.projectId, request.appSessionId)
   const inputsRoot = await ensureInputDirectory(dataRoot)
   const candidates = [
     inputFilename(request.input.filename, request.input.checksum),
