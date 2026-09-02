@@ -360,6 +360,32 @@ describe('managed workspace ownership', () => {
     await expect(readdir(join(workspacesRoot, '.ownership'))).resolves.toEqual([])
   })
 
+  it('recovers a provisional durable temp receipt before startup cleanup', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-provisional-temp-'))
+    roots.push(dataRoot)
+    const workspacesRoot = join(dataRoot, 'workspaces')
+    const ownershipDirectory = join(workspacesRoot, '.ownership')
+    const cwd = join(workspacesRoot, 'workspace-1')
+    await mkdir(cwd, { recursive: true })
+    await mkdir(ownershipDirectory)
+    await writeFile(
+      join(ownershipDirectory, 'workspace-1.json.1700000000000-1.tmp'),
+      `${JSON.stringify({
+        version: 1,
+        workspaceId: 'workspace-1',
+        projectId: 'project-1',
+        createdAt: 10,
+        lastUsedAt: 10,
+        retainedAfterDelete: false
+      })}\n`
+    )
+
+    await reconcileProvisionalManagedWorkspaces([], 20, dataRoot)
+
+    await expect(readdir(workspacesRoot)).resolves.toEqual(['.ownership'])
+    await expect(readdir(ownershipDirectory)).resolves.toEqual([])
+  })
+
   it('finalizes a provisional receipt referenced by an authoritative Session', async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-provisional-session-'))
     roots.push(dataRoot)

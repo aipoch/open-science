@@ -1,11 +1,12 @@
 import { lstat, mkdir, readdir, rm } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { resolveDataRoot } from '../storage-root'
 import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
+  recoverDurableJsonDirectory,
   writeDurableJsonFile
 } from './durable-json-file'
 
@@ -159,6 +160,19 @@ const listManagedWorkspaceOwnershipLocations = async (
   const workspacesRoot = resolve(dataRoot, 'workspaces')
   const ownershipDirectory = join(workspacesRoot, MANAGED_WORKSPACE_OWNERSHIP_DIR)
   if (!(await assertOwnershipDirectoryPath(workspacesRoot, ownershipDirectory))) return []
+
+  await recoverDurableJsonDirectory(ownershipDirectory, (targetPath, contents) => {
+    const workspaceId = basename(targetPath, '.json')
+    const location = locateManagedWorkspace(join(workspacesRoot, workspaceId), dataRoot)
+    if (location?.receiptPath !== targetPath) {
+      throw new Error('Managed workspace ownership temporary path is invalid.')
+    }
+    const ownership = decodeOwnership(contents)
+    if (ownership.workspaceId !== location.workspaceId) {
+      throw new Error('Managed workspace ownership does not match its directory.')
+    }
+    return ownership
+  })
 
   const locations: ManagedWorkspaceLocation[] = []
   for (const entry of await readdir(ownershipDirectory, { withFileTypes: true })) {
