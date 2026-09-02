@@ -35,6 +35,8 @@ export type { ImportOutcome } from './user-skill-import-contracts'
 
 // Reads and writes user-authored (personal) and imported skills under `<storageRoot>/skills/`.
 class UserSkillRepository {
+  readonly isMutationOwnerContext = (): boolean => this.transactions.isHeldByCurrentContext()
+
   private readonly transactions: SkillPackageTransactionOwner
   private readonly compatibilityIndex: UserSkillCompatibilityIndex
   private readonly store: UserSkillStore

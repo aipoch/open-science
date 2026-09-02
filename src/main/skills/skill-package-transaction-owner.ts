@@ -54,6 +54,10 @@ export class SkillPackageTransactionOwner {
     this.validatePromoted = validate
   }
 
+  isHeldByCurrentContext(): boolean {
+    return this.mutationOwner.isHeldByCurrentContext()
+  }
+
   runExclusive<T>(operation: () => Promise<T>): Promise<T> {
     return this.mutationOwner.runExclusive(operation)
   }

@@ -7,6 +7,10 @@ export class SkillMutationOwner {
   private tail: Promise<void> = Promise.resolve()
   private readonly context = new AsyncLocalStorage<SkillMutationOwner>()
 
+  isHeldByCurrentContext(): boolean {
+    return this.context.getStore() === this
+  }
+
   async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
     // Guards are allowed to inspect the catalog through the same repository while already holding
     // the owner lock. Treat that call chain as re-entrant instead of waiting on itself.

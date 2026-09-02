@@ -304,6 +304,9 @@ class SkillCatalogModule {
   // second production transaction facade while excluding immutable bundled packages from each
   // writable-directory reconciliation.
   async listUserSkills(): Promise<BundledSkill[]> {
+    // A scan started outside the owner can be queued behind a mutation. Reads inside that
+    // mutation must bypass the shared Promise so a guard cannot wait on its own lock.
+    if (this.userSkills.isMutationOwnerContext?.()) return this.userSkills.list()
     if (this.userSkillCatalogRead) return this.userSkillCatalogRead
     const read = this.userSkills.list().finally(() => {
       if (this.userSkillCatalogRead === read) this.userSkillCatalogRead = undefined
