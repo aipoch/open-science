@@ -36,16 +36,16 @@ describe('Windows AppContainer elevation', () => {
 describe('Windows AppContainer launch', () => {
   it('launches a structured executable directly instead of through PowerShell', () => {
     const launch = windowsLaunch({
-      command: "& 'D:\\runtime\\python.exe' 'D:\\app\\python_loop.py'",
-      executable: 'D:\\runtime\\python.exe',
-      args: ['D:\\app\\python_loop.py'],
-      cwd: 'D:\\workspace',
+      command: "& '/runtime/python.exe' '/app/python_loop.py'",
+      executable: '/runtime/python.exe',
+      args: ['/app/python_loop.py'],
+      cwd: '/workspace',
       gatewayPort: 49700,
       gatewayCredentials: { username: 'command', password: 'secret' },
       env: {},
       filesystem: {
-        readOnlyRoots: ['D:\\runtime', 'D:\\app\\python_loop.py'],
-        readWriteRoots: ['D:\\workspace'],
+        readOnlyRoots: ['/runtime', '/app/python_loop.py'],
+        readWriteRoots: ['/workspace'],
         deniedReadRoots: [],
         deniedWriteRoots: []
       },
@@ -59,9 +59,9 @@ describe('Windows AppContainer launch', () => {
     ) as { executable: string; arguments: string[]; cwd: string }
 
     expect(specification).toMatchObject({
-      executable: 'D:\\runtime\\python.exe',
-      arguments: ['D:\\app\\python_loop.py'],
-      cwd: 'D:\\workspace'
+      executable: '/runtime/python.exe',
+      arguments: ['/app/python_loop.py'],
+      cwd: '/workspace'
     })
   })
 
