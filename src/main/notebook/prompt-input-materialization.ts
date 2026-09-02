@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
 import { chmod, copyFile, lstat, mkdir, realpath, rm } from 'node:fs/promises'
-import { basename, extname, isAbsolute, join, posix, relative } from 'node:path'
+import { basename, extname, isAbsolute, join, posix, relative, sep } from 'node:path'
 
 import type { NotebookPromptInput, NotebookRunInputFile } from '../../shared/notebook'
 import { toSafeUploadFilename } from '../uploads/storage-helpers'
@@ -46,7 +46,7 @@ const ensureInputDirectory = async (dataRoot: string): Promise<string> => {
   if (
     !relativePath ||
     relativePath === '..' ||
-    relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) ||
+    relativePath.startsWith(`..${sep}`) ||
     isAbsolute(relativePath)
   ) {
     throw new Error('Notebook input directory escapes the current Notebook data root.')
