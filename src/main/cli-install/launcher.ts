@@ -543,10 +543,14 @@ const replaceCliLauncher = async (
     ) {
       refuseUnmanagedCliLauncher(plan.target)
     }
-    // NTFS cannot replace a path while this process still holds it open. Identity checks are
-    // complete; close before rename so Windows and POSIX share one publish sequence.
-    await expected.handle.close()
-    expected.closed = true
+    // NTFS MoveFileEx(REPLACE_EXISTING) fails while the destination is open. POSIX can rename over
+    // an open file, so keep the validated handle as the ownership lock there. Windows must release
+    // it after the identity checks and accept the remaining local TOCTOU until a native exclusive
+    // replace API is available.
+    if (process.platform === 'win32') {
+      await expected.handle.close()
+      expected.closed = true
+    }
     await rename(temporaryPath, plan.target)
     published = true
     await defaultFileDurability.syncDirectory(plan.binDir)
@@ -708,9 +712,11 @@ export const uninstallCliLauncher = async (
       if (!isDirectRegularFile(final) || !isSameFile(opened.stats, final)) {
         refuseUnmanagedCliLauncher(plan.target)
       }
-      await opened.handle.close()
-      opened.closed = true
-      opened = undefined
+      if (process.platform === 'win32') {
+        await opened.handle.close()
+        opened.closed = true
+        opened = undefined
+      }
       await rm(plan.target)
     }
   } finally {
