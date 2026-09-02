@@ -75,6 +75,45 @@ describe('publishUserFile', () => {
     await expect(readdir(root)).resolves.toEqual(['report.txt'])
   })
 
+  it('publishes exclusively when the destination file system does not support hard links', async () => {
+    const destinationPath = join(root, 'report.txt')
+    const syncFile = vi.fn().mockResolvedValue(undefined)
+
+    await publishUserFile(
+      destinationPath,
+      (temporaryPath) => writeFile(temporaryPath, 'new bytes'),
+      {
+        exclusive: true,
+        linkFile: async () => {
+          throw Object.assign(new Error('hard links are unsupported'), { code: 'EOPNOTSUPP' })
+        },
+        durability: { syncFile, syncDirectory: vi.fn().mockResolvedValue(undefined) }
+      }
+    )
+
+    expect(syncFile).toHaveBeenCalledTimes(2)
+    expect(syncFile).toHaveBeenLastCalledWith(destinationPath)
+    await expect(readFile(destinationPath, 'utf8')).resolves.toBe('new bytes')
+    await expect(readdir(root)).resolves.toEqual(['report.txt'])
+  })
+
+  it('does not replace a destination that appears before the hard-link fallback', async () => {
+    const destinationPath = join(root, 'report.txt')
+
+    await expect(
+      publishUserFile(destinationPath, (temporaryPath) => writeFile(temporaryPath, 'new bytes'), {
+        exclusive: true,
+        linkFile: async () => {
+          await writeFile(destinationPath, 'racing bytes')
+          throw Object.assign(new Error('hard links are unsupported'), { code: 'EOPNOTSUPP' })
+        }
+      })
+    ).rejects.toMatchObject({ code: 'EEXIST' })
+
+    await expect(readFile(destinationPath, 'utf8')).resolves.toBe('racing bytes')
+    await expect(readdir(root)).resolves.toEqual(['report.txt'])
+  })
+
   it.runIf(process.platform !== 'win32')(
     'preserves existing destination permissions when replacing its bytes',
     async () => {
