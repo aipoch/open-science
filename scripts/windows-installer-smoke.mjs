@@ -1058,10 +1058,16 @@ const findUninstaller = async (installDirectory) => {
   return join(installDirectory, uninstallers[0])
 }
 
-const launchUninstallerLockHolder = async (installDirectory, env) => {
+const launchUninstallerLockHolder = async (
+  installDirectory,
+  env,
+  spawnProcess = spawn,
+  waitForReady = waitFor,
+  terminate = terminateProcessTree
+) => {
   const uninstaller = await findUninstaller(installDirectory)
   const ready = join(env.TEMP, 'installer-smoke-lock-holder.ready')
-  const child = spawn(
+  const child = spawnProcess(
     'powershell.exe',
     [
       '-NoProfile',
@@ -1079,14 +1085,19 @@ const launchUninstallerLockHolder = async (installDirectory, env) => {
     }
   )
   const exit = observeChildExit(child)
-  await Promise.race([
-    waitFor('the old uninstaller to be exclusively locked', async () =>
-      (await pathExists(ready)) ? true : undefined
-    ),
-    exit.then((code) => {
-      throw new Error(`Uninstaller lock holder exited before becoming ready (${code}).`)
-    })
-  ])
+  try {
+    await Promise.race([
+      waitForReady('the old uninstaller to be exclusively locked', async () =>
+        (await pathExists(ready)) ? true : undefined
+      ),
+      exit.then((code) => {
+        throw new Error(`Uninstaller lock holder exited before becoming ready (${code}).`)
+      })
+    ])
+  } catch (error) {
+    await terminate(child)
+    throw error
+  }
   return { child, uninstaller }
 }
 
@@ -1098,25 +1109,24 @@ const drillOrphanedUninstallerLock = async ({ installer, installDirectory, env }
     .update(await readFile(staleUninstaller))
     .digest('hex')
   const lock = await launchUninstallerLockHolder(installDirectory, env)
-  const writeProbe = await runProcess(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      "try { $stream = [System.IO.File]::Open($env:OPEN_SCIENCE_LOCK_PROBE_PATH, 'Open', 'Write', 'None'); $stream.Dispose(); exit 0 } catch { exit 1 }"
-    ],
-    {
-      allowNonZero: true,
-      env: { ...env, OPEN_SCIENCE_LOCK_PROBE_PATH: lock.uninstaller }
-    }
-  )
-  if (writeProbe.code !== 1) {
-    throw new Error('Uninstaller lock fixture did not block an independent write handle.')
-  }
-
   let installResult
   try {
+    const writeProbe = await runProcess(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        "try { $stream = [System.IO.File]::Open($env:OPEN_SCIENCE_LOCK_PROBE_PATH, 'Open', 'Write', 'None'); $stream.Dispose(); exit 0 } catch { exit 1 }"
+      ],
+      {
+        allowNonZero: true,
+        env: { ...env, OPEN_SCIENCE_LOCK_PROBE_PATH: lock.uninstaller }
+      }
+    )
+    if (writeProbe.code !== 1) {
+      throw new Error('Uninstaller lock fixture did not block an independent write handle.')
+    }
     installResult = await runProcess(installer, ['/S', `/D=${installDirectory}`], {
       allowNonZero: true,
       env,
@@ -1415,6 +1425,7 @@ export {
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
+  launchUninstallerLockHolder,
   launchAndExpectDatabaseBlocked,
   installAndProbe,
   launchAndProbe,
