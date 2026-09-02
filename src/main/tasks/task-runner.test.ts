@@ -1750,6 +1750,69 @@ describe('TaskRunner', () => {
     })
   })
 
+  it('rebases an admitted Task turn onto concurrent Session metadata edits', async () => {
+    let durableSession: PersistedChatSession = {
+      ...session,
+      revision: 1,
+      messages: []
+    }
+    const list = vi.fn(async () => [structuredClone(durableSession)])
+    const save = vi.fn(async (candidate: PersistedChatSession) => {
+      if (candidate.revision !== durableSession.revision) {
+        throw new Error('Session revision conflict')
+      }
+      durableSession = {
+        ...structuredClone(candidate),
+        revision: (candidate.revision ?? 0) + 1
+      }
+      return structuredClone(durableSession)
+    })
+    const runner = createRunner({
+      sessions: { list, save },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [durableSession.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (_request, observer) => {
+          durableSession = {
+            ...durableSession,
+            title: 'Renamed concurrently',
+            description: 'Keep this edit',
+            revision: 2,
+            updatedAt: 3
+          }
+          await observer?.onPromptAdmitted?.()
+        }
+      },
+      createId: (() => {
+        const ids = ['task-user', 'task-run', 'unused-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: durableSession.id,
+      prompt: 'Task API prompt'
+    })
+    const completed = await runner.waitForRun(started.id)
+
+    expect(completed.status).toBe('completed')
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(durableSession).toMatchObject({
+      title: 'Renamed concurrently',
+      description: 'Keep this edit'
+    })
+    expect(durableSession.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'task-user', content: 'Task API prompt' })
+      ])
+    )
+  })
+
   it('rejects a new authored turn while a restored Plan awaits approval', async () => {
     const existing: PersistedChatSession = {
       ...session,

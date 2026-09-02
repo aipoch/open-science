@@ -367,6 +367,57 @@ const createUserMessage = (
   updatedAt: now
 })
 
+const rebaseTaskTurnOntoLatestSession = (
+  latest: PersistedChatSession,
+  prepared: PersistedChatSession,
+  contextReset: boolean
+): PersistedChatSession => {
+  const activeRun = prepared.activeRun
+  const promptMessageId = activeRun?.promptMessageId
+  const userMessage = prepared.messages.find((message) => message.id === promptMessageId)
+  if (!activeRun || !userMessage) {
+    throw new Error('Task prompt admission is missing its prepared user message.')
+  }
+
+  let rebased: PersistedChatSession = {
+    ...latest,
+    cwd: prepared.cwd,
+    status: 'running',
+    permissionProfile: prepared.permissionProfile,
+    autoReviewEnabled: prepared.autoReviewEnabled,
+    delegationPolicy: prepared.delegationPolicy,
+    specialistId: prepared.specialistId,
+    agentFrameworkId: prepared.agentFrameworkId,
+    agentBackendId: prepared.agentBackendId,
+    providerSessionId: prepared.providerSessionId,
+    providerContinuityToken: prepared.providerContinuityToken,
+    agentConfiguration: prepared.agentConfiguration,
+    messages: [...latest.messages.filter((message) => message.id !== userMessage.id), userMessage],
+    activeRun,
+    error: undefined,
+    updatedAt: prepared.updatedAt
+  }
+  delete rebased.resumeRecovery
+
+  const currentGraph = materializeSessionConversationGraph(latest).conversationGraph
+  const graphWithRuntime = ensureConversationRuntimeSegment(currentGraph, {
+    id: `runtime-segment-${promptMessageId}`,
+    frameworkId: rebased.agentFrameworkId ?? 'claude-code',
+    providerId: rebased.agentConfiguration?.providerId,
+    backendId: rebased.agentBackendId,
+    model: rebased.agentModel,
+    startedAt: activeRun.startedAt,
+    forceNew: contextReset
+  })
+  if (graphWithRuntime.runtimeSegments.length !== currentGraph.runtimeSegments.length) {
+    rebased = materializeSessionConversationGraph({
+      ...rebased,
+      conversationGraph: graphWithRuntime
+    })
+  }
+  return rebased
+}
+
 const toPersistedArtifact = (
   artifact: ArtifactFile,
   fallbackCreatedAt?: number
@@ -1163,11 +1214,24 @@ class TaskRunner {
                     run.projectId,
                     session.id,
                     async () => {
+                      const latestSession = (await this.dependencies.sessions.list()).find(
+                        (candidate) => candidate.id === session.id
+                      )
+                      if (!latestSession || latestSession.projectId !== run.projectId) {
+                        throw new Error(
+                          `Session not found for Task prompt admission: ${session.id}`
+                        )
+                      }
+                      const sessionToSave = rebaseTaskTurnOntoLatestSession(
+                        latestSession,
+                        session,
+                        contextReset === true
+                      )
                       // Once the durable save starts it may commit the Session before a derived
                       // projection rejects. Retain the admitted aggregate so failure cleanup can
                       // clear that partially committed active run.
-                      admittedSession = session
-                      return this.dependencies.sessions.save(session)
+                      admittedSession = sessionToSave
+                      return this.dependencies.sessions.save(sessionToSave)
                     }
                   )
                 }
