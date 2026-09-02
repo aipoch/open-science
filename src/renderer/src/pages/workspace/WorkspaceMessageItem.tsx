@@ -954,7 +954,7 @@ const ArtifactCard = ({
       <div className={cn('relative', artifactPreviewClassName)}>
         <span className={cn('block size-full', missing && 'opacity-40')}>
           {/* Unmount the reader outside the overscan window so message history stays lightweight. */}
-          {isNearViewport && !publicationPending ? (
+          {publicationPending ? null : isNearViewport ? (
             <VisibleArtifactPreview artifact={artifact} requestKey={requestKey} />
           ) : (
             <ArtifactPreview artifact={artifact} isVisible={false} />

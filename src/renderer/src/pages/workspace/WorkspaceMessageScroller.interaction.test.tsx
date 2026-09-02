@@ -18,6 +18,7 @@ import { createUploadVersionReference, type UploadedAttachment } from '../../../
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import type { ArtifactVersionDescriptor } from '../../../../shared/artifact-provenance'
+import type { ManagedPreviewResource } from '../../../../shared/preview-resources'
 import type {
   HandoffLifecycleEvent,
   HandoffLifecycleEventSource
@@ -306,24 +307,33 @@ const createDeferred = <Value,>(): {
 }
 
 const installIntersectionObserver = (): (() => void) => {
-  let intersectionCallback: IntersectionObserverCallback | undefined
+  const observers = new Set<{
+    callback: IntersectionObserverCallback
+    elements: Set<Element>
+  }>()
   vi.stubGlobal(
     'IntersectionObserver',
     class {
-      observe = vi.fn()
-      unobserve = vi.fn()
-      disconnect = vi.fn()
+      private readonly record: { callback: IntersectionObserverCallback; elements: Set<Element> }
+      observe = vi.fn((element: Element) => this.record.elements.add(element))
+      unobserve = vi.fn((element: Element) => this.record.elements.delete(element))
+      disconnect = vi.fn(() => observers.delete(this.record))
 
       constructor(callback: IntersectionObserverCallback) {
-        intersectionCallback = callback
+        this.record = { callback, elements: new Set() }
+        observers.add(this.record)
       }
     }
   )
   return () => {
-    intersectionCallback?.(
-      [{ isIntersecting: true } as IntersectionObserverEntry],
-      {} as IntersectionObserver
-    )
+    for (const { callback, elements } of observers) {
+      callback(
+        [...elements].map(
+          (target) => ({ target, isIntersecting: true }) as IntersectionObserverEntry
+        ),
+        {} as IntersectionObserver
+      )
+    }
   }
 }
 
@@ -3713,6 +3723,53 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       }
     }
   )
+
+  it('does not acquire a PDF thumbnail while artifact publication is pending', async () => {
+    const enterViewport = installIntersectionObserver()
+    window.api.previewResources.acquire = vi.fn(
+      () => new Promise<ManagedPreviewResource>(() => undefined)
+    )
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Created the file',
+          artifactIds: ['artifact-version-1']
+        })
+      ],
+      artifacts: [
+        {
+          id: 'artifact-version-1',
+          artifactId: 'managed-artifact-1',
+          versionId: 'artifact-version-1',
+          kind: 'managed-file',
+          path: '/workspace/.pending/run-1/report.pdf',
+          name: 'report.pdf',
+          mimeType: 'application/pdf',
+          size: 2048,
+          mtimeMs: 1710000000100
+        }
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    await act(async () => {
+      enterViewport()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
+  })
 
   it('keeps a published artifact named .pending previewable', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
