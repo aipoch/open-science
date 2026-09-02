@@ -107,17 +107,20 @@ const createIpcHandlerRegistry = (
       if (!details.isMainFrame || details.isSameDocument) return
       releaseCurrentLease()
     }
-    const removeNavigationBinding = (): void => {
-      lifecycleSender.removeListener?.('did-start-navigation', releaseOnMainFrameNavigation)
-    }
-    lifecycleSender.on?.('did-start-navigation', releaseOnMainFrameNavigation)
-    ownedLease.lease.signal.addEventListener('abort', removeNavigationBinding, { once: true })
-    lifecycleSender.once?.('destroyed', () => {
+    const releaseOnDestroyed = (): void => {
       destroyedNativeCallers.add(sender)
       releaseCurrentLease()
-    })
+    }
+    const removeLifecycleBindings = (): void => {
+      lifecycleSender.removeListener?.('did-start-navigation', releaseOnMainFrameNavigation)
+      lifecycleSender.removeListener?.('destroyed', releaseOnDestroyed)
+      lifecycleSender.removeListener?.('render-process-gone', releaseCurrentLease)
+    }
+    lifecycleSender.on?.('did-start-navigation', releaseOnMainFrameNavigation)
+    lifecycleSender.once?.('destroyed', releaseOnDestroyed)
     lifecycleSender.once?.('render-process-gone', releaseCurrentLease)
-    if (ownedLease.lease.signal.aborted) removeNavigationBinding()
+    ownedLease.lease.signal.addEventListener('abort', removeLifecycleBindings, { once: true })
+    if (ownedLease.lease.signal.aborted) removeLifecycleBindings()
     return ownedLease
   }
 
