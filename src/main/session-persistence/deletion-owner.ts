@@ -98,6 +98,7 @@ type ComputeJobDeletionParticipant = {
 }
 
 type SessionWorkspaceOwnership = {
+  reconcileProvisional(sessions: readonly PersistedChatSession[]): Promise<void>
   markRetained(
     session: Pick<PersistedChatSession, 'cwd' | 'projectId' | 'id' | 'createdAt' | 'updatedAt'>
   ): Promise<boolean>

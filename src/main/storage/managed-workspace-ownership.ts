@@ -1,4 +1,4 @@
-import { lstat, mkdir, rm } from 'node:fs/promises'
+import { lstat, mkdir, readdir, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -132,11 +132,14 @@ const assertManagedWorkspaceDirectory = async (
   return location
 }
 
-const assertOwnershipDirectory = async (location: ManagedWorkspaceLocation): Promise<boolean> => {
-  if (!(await assertManagedWorkspacesRoot(location.workspacesRoot))) return false
+const assertOwnershipDirectoryPath = async (
+  workspacesRoot: string,
+  ownershipDirectory: string
+): Promise<boolean> => {
+  if (!(await assertManagedWorkspacesRoot(workspacesRoot))) return false
   let info
   try {
-    info = await lstat(location.ownershipDirectory)
+    info = await lstat(ownershipDirectory)
   } catch (error) {
     if (isFileSystemError(error, 'ENOENT')) return false
     throw error
@@ -146,6 +149,9 @@ const assertOwnershipDirectory = async (location: ManagedWorkspaceLocation): Pro
   }
   return true
 }
+
+const assertOwnershipDirectory = (location: ManagedWorkspaceLocation): Promise<boolean> =>
+  assertOwnershipDirectoryPath(location.workspacesRoot, location.ownershipDirectory)
 
 const ensureOwnershipDirectory = async (location: ManagedWorkspaceLocation): Promise<void> => {
   if (!(await assertManagedWorkspacesRoot(location.workspacesRoot))) {
@@ -280,6 +286,60 @@ const restoreManagedWorkspaceActive = async (
   await writeOwnership(location, { ...current, retainedAfterDelete: false })
 }
 
+const reconcileProvisionalManagedWorkspaces = async (
+  sessions: readonly Pick<PersistedChatSession, 'cwd' | 'projectId' | 'id' | 'updatedAt'>[],
+  createdBefore: number,
+  dataRoot = resolveDataRoot()
+): Promise<void> => {
+  const workspacesRoot = resolve(dataRoot, 'workspaces')
+  const ownershipDirectory = join(workspacesRoot, MANAGED_WORKSPACE_OWNERSHIP_DIR)
+  if (!(await assertOwnershipDirectoryPath(workspacesRoot, ownershipDirectory))) return
+
+  const sessionsByDirectory = new Map<string, typeof sessions>()
+  for (const session of sessions) {
+    const directory = resolve(session.cwd)
+    sessionsByDirectory.set(directory, [...(sessionsByDirectory.get(directory) ?? []), session])
+  }
+
+  const entries = await readdir(ownershipDirectory, { withFileTypes: true })
+  let firstFailure: unknown
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+    const workspaceId = entry.name.slice(0, -'.json'.length)
+    const location = locateManagedWorkspace(join(workspacesRoot, workspaceId), dataRoot)
+    if (!location || location.receiptPath !== join(ownershipDirectory, entry.name)) continue
+
+    try {
+      const ownership = await readOwnershipForUpdate(location)
+      if (!ownership || ownership.sessionId || ownership.retainedAfterDelete) continue
+
+      const matchingSessions = sessionsByDirectory.get(location.directory) ?? []
+      if (matchingSessions.length > 0) {
+        if (
+          matchingSessions.length === 1 &&
+          matchingSessions[0].projectId === ownership.projectId
+        ) {
+          await finalizeManagedWorkspaceOwnership(
+            location.directory,
+            matchingSessions[0].id,
+            matchingSessions[0].updatedAt,
+            dataRoot
+          )
+        }
+        continue
+      }
+      if (ownership.createdAt >= createdBefore) continue
+
+      const workspace = await assertManagedWorkspaceDirectory(location.directory, dataRoot)
+      if (workspace) await rm(workspace.directory, { recursive: true, force: true })
+      await removeManagedWorkspaceOwnership(location.directory, dataRoot)
+    } catch (error) {
+      firstFailure ??= error
+    }
+  }
+  if (firstFailure) throw firstFailure
+}
+
 const readManagedWorkspaceOwnership = async (
   cwd: string,
   dataRoot?: string
@@ -312,6 +372,7 @@ export {
   initializeManagedWorkspaceOwnership,
   markManagedWorkspaceRetained,
   readManagedWorkspaceOwnership,
+  reconcileProvisionalManagedWorkspaces,
   removeManagedWorkspaceOwnership,
   restoreManagedWorkspaceActive
 }

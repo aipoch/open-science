@@ -17,6 +17,8 @@ import {
   finalizeManagedWorkspaceOwnership,
   initializeManagedWorkspaceOwnership,
   markManagedWorkspaceRetained,
+  readManagedWorkspaceOwnership,
+  reconcileProvisionalManagedWorkspaces,
   removeManagedWorkspaceOwnership,
   restoreManagedWorkspaceActive
 } from './managed-workspace-ownership'
@@ -78,6 +80,7 @@ const createDeletionOwner = (
     notifyFilesChanged: vi.fn(),
     notifySessionsDeleted: vi.fn().mockResolvedValue(undefined),
     workspaceOwnership: {
+      reconcileProvisional: vi.fn().mockResolvedValue(undefined),
       markRetained: async (session) => {
         const retained = await markManagedWorkspaceRetained(session)
         if (options.markRetainedErrorAfterWrite) throw options.markRetainedErrorAfterWrite
@@ -235,6 +238,62 @@ describe('managed workspace ownership', () => {
     await createDeletionOwner(liveSessions).deleteSession(session.projectId, session.id)
     expect(liveSessions).toEqual(new Map())
     await expect(readdir(join(dataRoot, 'workspaces', '.ownership'))).resolves.toEqual([])
+  })
+
+  it('removes a provisional workspace left by an earlier process', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-provisional-orphan-'))
+    roots.push(dataRoot)
+    const workspacesRoot = join(dataRoot, 'workspaces')
+    const cwd = join(workspacesRoot, 'workspace-1')
+    await mkdir(cwd, { recursive: true })
+    await writeFile(join(cwd, 'partial-output.txt'), 'orphaned')
+    await initializeManagedWorkspaceOwnership(cwd, 'project-1', 10, dataRoot)
+
+    await reconcileProvisionalManagedWorkspaces([], 20, dataRoot)
+
+    await expect(readdir(workspacesRoot)).resolves.toEqual(['.ownership'])
+    await expect(readdir(join(workspacesRoot, '.ownership'))).resolves.toEqual([])
+  })
+
+  it('finalizes a provisional receipt referenced by an authoritative Session', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-provisional-session-'))
+    roots.push(dataRoot)
+    const cwd = join(dataRoot, 'workspaces', 'workspace-1')
+    await mkdir(cwd, { recursive: true })
+    await initializeManagedWorkspaceOwnership(cwd, 'project-1', 10, dataRoot)
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Session',
+      cwd,
+      status: 'idle',
+      messages: [],
+      createdAt: 10,
+      updatedAt: 30
+    }
+
+    await reconcileProvisionalManagedWorkspaces([session], 20, dataRoot)
+
+    await expect(readManagedWorkspaceOwnership(cwd, dataRoot)).resolves.toMatchObject({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      lastUsedAt: 30
+    })
+  })
+
+  it('preserves a provisional workspace created after the recovery cutoff', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-current-provisional-'))
+    roots.push(dataRoot)
+    const cwd = join(dataRoot, 'workspaces', 'workspace-1')
+    await mkdir(cwd, { recursive: true })
+    await initializeManagedWorkspaceOwnership(cwd, 'project-1', 20, dataRoot)
+
+    await reconcileProvisionalManagedWorkspaces([], 20, dataRoot)
+
+    await expect(readManagedWorkspaceOwnership(cwd, dataRoot)).resolves.toMatchObject({
+      workspaceId: 'workspace-1',
+      projectId: 'project-1'
+    })
   })
 
   it('does not remove an external directory through a symlinked workspaces root', async () => {

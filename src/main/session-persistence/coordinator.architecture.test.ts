@@ -530,7 +530,8 @@ describe('Session persistence coordinator architecture', () => {
         'repository',
         'sessionDeletionHandlers',
         'sideChatOwner',
-        'stateOwner'
+        'stateOwner',
+        'workspaceOwnership'
       ].sort()
     )
     expect(mutableFields(facade)).toEqual(

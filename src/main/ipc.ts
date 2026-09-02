@@ -359,6 +359,7 @@ import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import { DataRootCleanupJournal } from './storage/data-root-cleanup'
 import {
   markManagedWorkspaceRetained,
+  reconcileProvisionalManagedWorkspaces,
   restoreManagedWorkspaceActive
 } from './storage/managed-workspace-ownership'
 import { deleteSources } from './storage/data-migration'
@@ -996,6 +997,7 @@ const createApplicationModules = async (
       .filter((chat) => chat.running)
       .map((chat) => ({ projectId: chat.projectId, sessionId: chat.parentSessionId }))
 
+  const managedWorkspaceRecoveryCutoff = Date.now()
   const sessionPersistenceCoordinator = new SessionPersistenceCoordinator(
     sessionRepository,
     projectFilesRepository,
@@ -1033,6 +1035,8 @@ const createApplicationModules = async (
       }
     },
     {
+      reconcileProvisional: (sessions) =>
+        reconcileProvisionalManagedWorkspaces(sessions, managedWorkspaceRecoveryCutoff),
       markRetained: markManagedWorkspaceRetained,
       restoreActive: restoreManagedWorkspaceActive
     }
