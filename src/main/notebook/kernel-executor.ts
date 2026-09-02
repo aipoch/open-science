@@ -744,8 +744,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
       if (this.procs.get(key) !== proc) return
       this.rejectPending(proc, new Error('Notebook kernel stdin pipe failed.'))
     })
-    child.on('exit', () => {
-      // Stale exit: this proc was already replaced (dropped after a hard kill, or a respawn) before
+    child.on('close', (code, signal) => {
+      // Stale close: this proc was already replaced (dropped after a hard kill, or a respawn) before
       // the event fired, so it must not touch the live proc or its pending run.
       if (this.procs.get(key) !== proc) return
       proc.alive = false
@@ -758,7 +758,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
           ? new NotebookExecutionTimeoutError(
               `Notebook execution timed out after ${pending.timeoutMs}ms.`
             )
-          : new Error('Notebook kernel process exited.')
+          : (() => {
+              const reason =
+                code !== null ? ` with exit code ${code}` : signal ? ` after signal ${signal}` : ''
+              const stderr = proc.annotateStderr(proc.stderrTail).trim()
+              return new Error(
+                `Notebook kernel process exited${reason}.` + (stderr ? `\n${stderr}` : '')
+              )
+            })()
       proc.terminationError = terminationError
       this.rejectPending(proc, terminationError)
       // Unexpected exit of a still-live proc is a crash; surface it as a 'terminated' kernel status.

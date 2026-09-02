@@ -49,6 +49,8 @@ type NetworkAskCallback = (request: {
 
 type NetworkWrapRequest = Readonly<{
   command: string
+  executable?: string
+  args?: readonly string[]
   commandId: string
   shell?: string | WindowsShell
   cwd: string
@@ -226,6 +228,7 @@ const wrap = async (
     if (process.platform === 'win32') {
       const launchRequest = {
         command: request.command,
+        ...(request.executable ? { executable: request.executable, args: request.args ?? [] } : {}),
         ...(request.shell ? { shell: request.shell } : {}),
         gatewayPort: gateway.port,
         gatewayCredentials: credentials,

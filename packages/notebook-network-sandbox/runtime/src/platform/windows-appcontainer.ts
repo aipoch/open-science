@@ -16,6 +16,8 @@ type WindowsShell = Readonly<{ kind: 'powershell' | 'cmd'; path: string }>
 
 type WindowsLaunchRequest = Readonly<{
   command: string
+  executable?: string
+  args?: readonly string[]
   shell?: string | WindowsShell
   cwd: string
   gatewayPort: number
@@ -320,11 +322,13 @@ const windowsLaunch = (
     shell.kind === 'powershell'
       ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command]
       : ['/d', '/s', '/c', request.command]
+  const executable = request.executable ?? shell.path
+  const args = request.executable ? [...(request.args ?? [])] : childArgs
   const layout = normalizeFilesystemLayout(request.filesystem)
   const specification = Buffer.from(
     JSON.stringify({
-      executable: shell.path,
-      arguments: childArgs,
+      executable,
+      arguments: args,
       cwd: request.cwd,
       readOnlyRoots: layout.readOnlyRoots,
       readWriteRoots: layout.readWriteRoots,

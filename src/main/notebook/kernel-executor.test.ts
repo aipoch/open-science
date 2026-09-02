@@ -509,6 +509,35 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   })
 
+  it('reports the exit code and stderr when a kernel exits before replying', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-startup-exit-'))
+    const crashingLoop = join(cwdDir, 'crashing_loop.py')
+    await writeFile(
+      crashingLoop,
+      [
+        'import sys',
+        'sys.stderr.write("PowerShell FileSystem provider initialization failed.\\n")',
+        'sys.stderr.flush()',
+        'raise SystemExit(23)'
+      ].join('\n')
+    )
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: crashingLoop })
+
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'import numpy',
+        resolvedInterpreter: { command: python3 as string }
+      })
+
+      expect(result).toMatchObject({ status: 'failed' })
+      expect(result.stderr).toContain('Notebook kernel process exited with exit code 23.')
+      expect(result.stderr).toContain('PowerShell FileSystem provider initialization failed.')
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
   it('drops a kernel whose stdout exceeds the bounded protocol line', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-protocol-line-limit-')
     const terminated: string[] = []

@@ -34,6 +34,37 @@ describe('Windows AppContainer elevation', () => {
 })
 
 describe('Windows AppContainer launch', () => {
+  it('launches a structured executable directly instead of through PowerShell', () => {
+    const launch = windowsLaunch({
+      command: "& 'D:\\runtime\\python.exe' 'D:\\app\\python_loop.py'",
+      executable: 'D:\\runtime\\python.exe',
+      args: ['D:\\app\\python_loop.py'],
+      cwd: 'D:\\workspace',
+      gatewayPort: 49700,
+      gatewayCredentials: { username: 'command', password: 'secret' },
+      env: {},
+      filesystem: {
+        readOnlyRoots: ['D:\\runtime', 'D:\\app\\python_loop.py'],
+        readWriteRoots: ['D:\\workspace'],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      },
+      hostPath: 'C:\\resources\\notebook-sandbox-host.exe',
+      installationId: '0123456789abcdef01234567',
+      ownershipRoot: 'C:\\sandbox'
+    })
+
+    const specification = JSON.parse(
+      Buffer.from(launch.argv.at(-1)!, 'base64url').toString('utf8')
+    ) as { executable: string; arguments: string[]; cwd: string }
+
+    expect(specification).toMatchObject({
+      executable: 'D:\\runtime\\python.exe',
+      arguments: ['D:\\app\\python_loop.py'],
+      cwd: 'D:\\workspace'
+    })
+  })
+
   it('routes local RPC through the authenticated command gateway', () => {
     const launch = windowsLaunch({
       command: 'node repl_loop.js',
