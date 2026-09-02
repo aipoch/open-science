@@ -587,6 +587,115 @@ describe('HeadlessTaskApi adapter', () => {
     await api.dispose()
   })
 
+  it('exposes durable lifecycle state without hiding archived Sessions', async () => {
+    const archivedSession: PersistedChatSession = {
+      id: 'session-archived',
+      projectId: project.id,
+      title: 'Archived research',
+      cwd: '/workspace/archived',
+      status: 'idle',
+      pinned: true,
+      archivedAt: 30,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 30
+    }
+    const activeSession: PersistedChatSession = {
+      id: 'session-active',
+      projectId: project.id,
+      title: 'Active research',
+      cwd: '/workspace/active',
+      status: 'idle',
+      messages: [],
+      createdAt: 2,
+      updatedAt: 20
+    }
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') {
+        return { sessions: [archivedSession, activeSession], manifest: { version: 1 } }
+      }
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+
+    try {
+      await expect(api.listSessions(project.id)).resolves.toEqual([
+        expect.objectContaining({ id: archivedSession.id, pinned: true, archivedAt: 30 }),
+        expect.objectContaining({ id: activeSession.id, pinned: false, archivedAt: undefined })
+      ])
+      await expect(api.getSession(archivedSession.id)).resolves.toMatchObject({
+        pinned: true,
+        archivedAt: 30
+      })
+    } finally {
+      await api.dispose()
+    }
+  })
+
+  it.each([
+    {
+      name: 'Project',
+      code: 'project_archived',
+      projects: [{ ...project, archivedAt: 40 }],
+      sessions: [] as PersistedChatSession[],
+      request: { project: project.id, prompt: 'Research this.' },
+      admissionMessage: 'Restore this archived Project before continuing.'
+    },
+    {
+      name: 'Session',
+      code: 'session_archived',
+      projects: [project],
+      sessions: [
+        {
+          id: 'session-archived',
+          projectId: project.id,
+          title: 'Archived research',
+          cwd: '/workspace/archived',
+          status: 'idle' as const,
+          archivedAt: 40,
+          messages: [],
+          createdAt: 1,
+          updatedAt: 40
+        }
+      ],
+      request: {
+        project: project.id,
+        sessionId: 'session-archived',
+        prompt: 'Continue this research.'
+      },
+      admissionMessage: 'Restore this archived Session before continuing.'
+    }
+  ])('reports archived $name admission as a stable Task conflict', async (fixture) => {
+    const invoke = vi.fn(
+      async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
+        if (channel === 'projects:list') return fixture.projects
+        if (channel === 'sessions:load-all') {
+          return { sessions: fixture.sessions, manifest: { version: 1 } }
+        }
+        if (channel === 'sessions:save-session') return args[0]
+        throw new Error(`Unexpected Task command: ${channel}`)
+      }
+    )
+    const api = new HeadlessTaskApi({
+      commands: commandsFrom(invoke),
+      agent: createAgent({
+        withSessionAvailable: async () => {
+          throw new Error(fixture.admissionMessage)
+        }
+      })
+    })
+
+    try {
+      await expect(api.startRun(fixture.request)).rejects.toMatchObject({
+        code: fixture.code,
+        message: fixture.admissionMessage
+      })
+    } finally {
+      await api.dispose()
+    }
+  })
+
   it('maps public query and artifact commands to the compatibility façade', async () => {
     const session: PersistedChatSession = {
       id: 'session-query',

@@ -47,6 +47,7 @@ import type {
   TaskApiErrorCode,
   TaskProject,
   TaskRun,
+  TaskRunStatus,
   TaskRunIdentity,
   TaskRunProgressEvent,
   TaskRunProgressPhase,
@@ -54,7 +55,12 @@ import type {
   TaskSessionSummary,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
+import { ArchiveAvailabilityError, archiveAvailabilityMessage } from '../archive/availability-error'
 import { toErrorMessage } from '../error-message'
+import { createLogger } from '../logger'
+import type { TaskRunJournal } from './task-run-journal'
+
+const log = createLogger('task-runner')
 
 type TaskProjectPort = {
   list(): Promise<Project[]>
@@ -181,6 +187,7 @@ type TaskRunnerDependencies = {
   reviewer: TaskReviewerPort
   computePreferences: TaskComputePreferencePort
   runWithLifecycleContext<Result>(operation: () => Result): Result
+  runJournal?: TaskRunJournal
   createId: () => string
   now: () => number
 }
@@ -205,6 +212,7 @@ type MutableTaskRun = TaskRun & {
   progressPhase: TaskRunProgressPhase
   providerAccepted: boolean
   firstVisibleOutput: boolean
+  terminalStatus?: Exclude<TaskRunStatus, 'running'>
   heartbeatTimer?: ReturnType<typeof setTimeout>
   reviewAbortController?: AbortController
   cancellation?: {
@@ -230,8 +238,9 @@ class PartialTaskCompletionError extends Error {
 }
 
 const MAX_RETAINED_RUNS = 200
+const PROCESS_RESTARTED_MESSAGE = 'Run interrupted because Open Science restarted.'
 const TASK_RUN_HEARTBEAT_INTERVAL_MS = 10_000
-export const TASK_REVIEW_DISPOSAL_BUDGET_MS = 1000
+export const TASK_RUN_DISPOSAL_BUDGET_MS = 1000
 const VISIBLE_PROVIDER_EVENT_KINDS = new Set<AcpRuntimeEvent['kind']>([
   'message',
   'thought',
@@ -342,10 +351,16 @@ const cloneRun = (run: MutableTaskRun): TaskRun => ({
   completedAt: run.completedAt,
   output: run.output,
   error: run.error,
+  failureCode: run.failureCode,
   artifacts: [...run.artifacts],
   attention: run.attention,
   review: run.review,
   preferredComputeHostIds: [...run.preferredComputeHostIds]
+})
+
+const cloneRunForJournal = (run: MutableTaskRun): TaskRun => ({
+  ...cloneRun(run),
+  status: run.terminalStatus ?? run.status
 })
 
 const createTitle = (prompt: string): string => {
@@ -486,6 +501,8 @@ const summarizeSession = (session: PersistedChatSession): TaskSessionSummary => 
   autoReviewEnabled: session.autoReviewEnabled === true,
   specialistId: session.specialistId,
   delegationPolicy: session.delegationPolicy === 'deny' ? 'deny' : 'allow',
+  pinned: session.pinned === true,
+  archivedAt: session.archivedAt,
   createdAt: session.createdAt,
   updatedAt: session.updatedAt,
   output: [...session.messages].reverse().find((message) => message.role === 'agent')?.content,
@@ -566,6 +583,8 @@ class TaskRunner {
   private readonly activeRunBySession = new Map<string, string>()
   private readonly progressListeners = new Set<(event: TaskRunProgressEvent) => void>()
   private readonly unsubscribeEvents: () => void
+  private initialization: Promise<void> | undefined
+  private journalWriteTail = Promise.resolve()
   private disposed = false
   private disposal: Promise<void> | undefined
 
@@ -573,6 +592,11 @@ class TaskRunner {
     this.unsubscribeEvents = dependencies.runtimeEvents.subscribe((event) =>
       this.captureEvent(event)
     )
+  }
+
+  initialize(): Promise<void> {
+    if (!this.initialization) this.initialization = this.restoreRuns()
+    return this.initialization
   }
 
   dispose(): Promise<void> {
@@ -587,13 +611,16 @@ class TaskRunner {
       activeReviewCompletions.push(run.completion)
     }
     this.progressListeners.clear()
-    const settleReviews = Promise.allSettled(activeReviewCompletions).then(() => undefined)
+    const settleBackgroundWork = Promise.allSettled([
+      ...activeReviewCompletions,
+      this.journalWriteTail
+    ]).then(() => undefined)
     let timer: ReturnType<typeof setTimeout> | undefined
     const deadline = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, TASK_REVIEW_DISPOSAL_BUDGET_MS)
+      timer = setTimeout(resolve, TASK_RUN_DISPOSAL_BUDGET_MS)
       timer.unref?.()
     })
-    this.disposal = Promise.race([settleReviews, deadline]).finally(() => {
+    this.disposal = Promise.race([settleBackgroundWork, deadline]).finally(() => {
       if (timer) clearTimeout(timer)
     })
     return this.disposal
@@ -607,7 +634,7 @@ class TaskRunner {
   resolveActiveRun(sessionId: string, promptMessageId?: string): TaskRunIdentity | undefined {
     const runId = this.activeRunBySession.get(sessionId)
     const run = runId ? this.runs.get(runId) : undefined
-    if (!run || run.status !== 'running') return undefined
+    if (!run || run.status !== 'running' || run.terminalStatus) return undefined
     if (promptMessageId !== undefined && promptMessageId !== run.promptMessageId) return undefined
     return { runId: run.id, sessionId: run.sessionId, projectId: run.projectId }
   }
@@ -759,6 +786,7 @@ class TaskRunner {
   }
 
   async startRun(request: StartTaskRunRequest): Promise<TaskRun> {
+    await this.initialize()
     if (!request || typeof request !== 'object') {
       throw new TaskRunnerError('invalid_request', 'Run request must be an object.')
     }
@@ -819,12 +847,18 @@ class TaskRunner {
     let normalizedRequest: StartTaskRunRequest = cwd === undefined ? request : { ...request, cwd }
 
     const project = await this.resolveProject(request.project)
+    if (project.archivedAt !== undefined) {
+      throw new TaskRunnerError('project_archived', archiveAvailabilityMessage('project-archived'))
+    }
     const sessions = await this.dependencies.sessions.list()
     const existing = request.sessionId
       ? sessions.find((session) => session.id === request.sessionId)
       : undefined
     if (request.sessionId && !existing) {
       throw new TaskRunnerError('session_not_found', `Session not found: ${request.sessionId}`)
+    }
+    if (existing?.archivedAt !== undefined) {
+      throw new TaskRunnerError('session_archived', archiveAvailabilityMessage('session-archived'))
     }
     if (existing && existing.projectId !== project.id) {
       throw new TaskRunnerError(
@@ -882,6 +916,12 @@ class TaskRunner {
       if (error instanceof ComputeHostPreferenceValidationError) {
         throw new TaskRunnerError('invalid_request', error.message)
       }
+      if (error instanceof ArchiveAvailabilityError) {
+        throw new TaskRunnerError(
+          error.code === 'project-archived' ? 'project_archived' : 'session_archived',
+          error.message
+        )
+      }
       throw error
     }
     const session = prepared.session
@@ -906,6 +946,22 @@ class TaskRunner {
 
     this.pruneRuns()
     this.runs.set(runId, run)
+    try {
+      await this.persistRuns()
+    } catch (error) {
+      this.runs.delete(runId)
+      this.releaseSession(session.id, runId)
+      await this.dependencies.sessions
+        .save({
+          ...session,
+          status: 'error',
+          activeRun: undefined,
+          error: 'Task Run identity could not be persisted.',
+          updatedAt: this.dependencies.now()
+        })
+        .catch(() => undefined)
+      throw error
+    }
     this.publishProgress(run, 'accepted')
     this.publishProgress(run, 'session-ready')
     this.scheduleHeartbeat(run)
@@ -939,6 +995,10 @@ class TaskRunner {
     const run = this.runs.get(runId)
     if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
     if (run.status !== 'running') return cloneRun(run)
+    if (run.terminalStatus) {
+      await run.completion
+      return cloneRun(run)
+    }
 
     const existingCancellation = run.cancellation
     if (existingCancellation) {
@@ -1319,13 +1379,14 @@ class TaskRunner {
       const cancellation = run.cancellation
       if (cancellation) await cancellation.dispatch.catch(() => undefined)
       if (cancellationAtPromptFailure?.accepted === true) {
-        run.status = 'cancelled'
         run.attention = undefined
         const cancelledAt = this.dependencies.now()
         run.completedAt = cancelledAt
         run.cancelledAt = cancelledAt
         this.stopHeartbeat(run)
-        this.publishProgress(run, 'cancelled')
+        await this.persistTerminalRun(run, 'cancelled').finally(() =>
+          this.publishProgress(run, run.status === 'failed' ? 'failed' : 'cancelled')
+        )
       } else {
         await this.failRun(
           run,
@@ -1420,14 +1481,16 @@ class TaskRunner {
     if (terminalCancellation) await terminalCancellation.dispatch.catch(() => undefined)
     const terminalCancellationAccepted = terminalCancellation?.accepted === true
     if (terminalCancellationAccepted) run.attention = undefined
-    run.status = terminalCancellationAccepted ? 'cancelled' : 'completed'
+    const terminalStatus = terminalCancellationAccepted ? 'cancelled' : 'completed'
     run.output = completed!.output
     run.artifacts = completed!.artifacts
     const completedAt = this.dependencies.now()
     run.completedAt = completedAt
     if (terminalCancellationAccepted) run.cancelledAt = completedAt
     this.stopHeartbeat(run)
-    this.publishProgress(run, terminalCancellationAccepted ? 'cancelled' : 'completed')
+    await this.persistTerminalRun(run, terminalStatus).finally(() =>
+      this.publishProgress(run, run.status === 'failed' ? 'failed' : terminalStatus)
+    )
   }
 
   private async failRun(
@@ -1447,15 +1510,14 @@ class TaskRunner {
       ...(runtimeError?.providerError ? { errorReportable: false } : {}),
       updatedAt: this.dependencies.now()
     }
-    run.status = 'failed'
     run.attention = undefined
     run.error = message
     run.output = completed?.output
     run.artifacts = completed?.artifacts ?? []
     run.completedAt = this.dependencies.now()
     this.stopHeartbeat(run)
-    this.publishProgress(run, 'failed')
     if (persistSession) await this.dependencies.sessions.save(failed).catch(() => undefined)
+    await this.persistTerminalRun(run, 'failed').finally(() => this.publishProgress(run, 'failed'))
   }
 
   private async completeSession(
@@ -1563,7 +1625,8 @@ class TaskRunner {
   private captureEvent(event: AcpRuntimeEvent): void {
     if (!event.sessionId) return
     for (const run of this.runs.values()) {
-      if (run.status !== 'running' || run.sessionId !== event.sessionId) continue
+      if (run.status !== 'running' || run.terminalStatus || run.sessionId !== event.sessionId)
+        continue
       if (event.promptMessageId !== undefined && event.promptMessageId !== run.promptMessageId) {
         continue
       }
@@ -1573,6 +1636,7 @@ class TaskRunner {
           event.planProjection.lifecycle === 'awaiting_approval'
             ? { kind: 'plan-approval', plan: event.planProjection }
             : undefined
+        void this.persistRunsBestEffort()
       }
       if (
         run.providerAccepted &&
@@ -1637,6 +1701,71 @@ class TaskRunner {
     for (const run of completed) {
       this.runs.delete(run.id)
       if (this.runs.size < MAX_RETAINED_RUNS) return
+    }
+  }
+
+  private async restoreRuns(): Promise<void> {
+    const journal = this.dependencies.runJournal
+    if (!journal) return
+    const loadedRuns = await journal.load()
+    const storedRuns = loadedRuns.slice(-MAX_RETAINED_RUNS)
+    let normalized = false
+    for (const stored of storedRuns) {
+      const snapshot = structuredClone(stored)
+      if (snapshot.status === 'running') {
+        snapshot.status = 'failed'
+        snapshot.failureCode = 'process_restarted'
+        snapshot.error = PROCESS_RESTARTED_MESSAGE
+        snapshot.completedAt = this.dependencies.now()
+        normalized = true
+      }
+      const run: MutableTaskRun = {
+        ...snapshot,
+        completion: Promise.resolve(),
+        promptMessageId: '',
+        progressPhase: snapshot.status,
+        providerAccepted: false,
+        firstVisibleOutput: true
+      }
+      this.runs.set(run.id, run)
+    }
+    if (normalized || loadedRuns.length !== storedRuns.length) await this.persistRuns()
+  }
+
+  private persistRuns(): Promise<void> {
+    const journal = this.dependencies.runJournal
+    if (!journal) return Promise.resolve()
+    const snapshot = [...this.runs.values()].map(cloneRunForJournal)
+    const write = this.journalWriteTail.then(() => journal.replace(snapshot))
+    this.journalWriteTail = write.catch(() => undefined)
+    return write
+  }
+
+  private async persistRunsBestEffort(): Promise<void> {
+    try {
+      await this.persistRuns()
+    } catch (error) {
+      log.error('Failed to persist Task Run state.', { error: toErrorMessage(error) })
+    }
+  }
+
+  private async persistTerminalRun(
+    run: MutableTaskRun,
+    status: Exclude<TaskRunStatus, 'running'>
+  ): Promise<void> {
+    run.terminalStatus = status
+    try {
+      await this.persistRuns()
+      run.status = status
+    } catch (error) {
+      const persistenceMessage = 'Task Run terminal state could not be persisted.'
+      run.status = 'failed'
+      run.terminalStatus = 'failed'
+      run.error = run.error ? `${run.error}\n\n${persistenceMessage}` : persistenceMessage
+      log.error(persistenceMessage, { error: toErrorMessage(error), runId: run.id })
+      await this.persistRuns()
+    } finally {
+      run.terminalStatus = undefined
     }
   }
 

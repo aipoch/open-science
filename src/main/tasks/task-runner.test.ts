@@ -13,7 +13,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
 import {
-  TASK_REVIEW_DISPOSAL_BUDGET_MS,
+  TASK_RUN_DISPOSAL_BUDGET_MS,
   TaskRunner,
   type TaskPreviewResourcePort,
   type TaskProjectPort,
@@ -1232,7 +1232,7 @@ describe('TaskRunner', () => {
       })
 
       expect(review.mock.calls[0]?.[2].aborted).toBe(true)
-      await vi.advanceTimersByTimeAsync(TASK_REVIEW_DISPOSAL_BUDGET_MS)
+      await vi.advanceTimersByTimeAsync(TASK_RUN_DISPOSAL_BUDGET_MS)
       expect(disposed).toBe(true)
     } finally {
       vi.useRealTimers()
@@ -3372,5 +3372,26 @@ describe('TaskRunner', () => {
       expect.objectContaining({ code: 'run_not_found' })
     )
     expect(runner.getRun(latestRunId)).toMatchObject({ status: 'completed' })
+  })
+
+  it('does not report completion when the terminal Run record cannot be persisted', async () => {
+    let writes = 0
+    const runner = createRunner({
+      runJournal: {
+        load: async () => [],
+        replace: async () => {
+          writes += 1
+          if (writes > 1) throw new Error('disk full')
+        }
+      }
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Persist this Run.' })
+
+    await expect(runner.waitForRun(started.id)).rejects.toThrow('disk full')
+    expect(runner.getRun(started.id)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('Task Run terminal state could not be persisted.')
+    })
   })
 })

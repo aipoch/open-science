@@ -4027,6 +4027,20 @@ describe('startWebHttpServer', () => {
       }
     })
 
+    for (const [code, message] of [
+      ['session_archived', 'Restore this archived Session before continuing.'],
+      ['project_archived', 'Restore this archived Project before continuing.']
+    ] as const) {
+      tasks.startRun.mockRejectedValueOnce(new TaskApiError(code, message))
+      const archived = await fetch(`${base}/api/v1/runs`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ project: 'project-1', sessionId: 'session-1', prompt: 'Again' })
+      })
+      expect(archived.status).toBe(409)
+      expect(await archived.json()).toEqual({ error: { code, message } })
+    }
+
     tasks.startRun.mockRejectedValueOnce(
       new TaskApiError('project_not_found', 'Project not found: missing')
     )

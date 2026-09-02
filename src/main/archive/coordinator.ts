@@ -3,6 +3,7 @@ import type {
   PersistedChatSession,
   UpdateSessionArchiveRequest
 } from '../../shared/session-persistence'
+import { ArchiveAvailabilityError } from './availability-error'
 
 type ProjectArchiveRepository = {
   get(id: string): Promise<Project | null>
@@ -57,7 +58,7 @@ class ArchiveCoordinator {
     this.assertProjectDeletionAvailable(projectId)
     if (!project) throw new Error('Project not found.')
     if (project.archivedAt !== undefined) {
-      throw new Error('Restore this archived Project before continuing.')
+      throw new ArchiveAvailabilityError('project-archived')
     }
     return project
   }

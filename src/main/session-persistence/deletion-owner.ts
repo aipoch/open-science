@@ -12,6 +12,7 @@ import type {
   UpdateSessionArchiveRequest
 } from '../../shared/session-persistence'
 import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
+import { ArchiveAvailabilityError } from '../archive/availability-error'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
 import type { Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
@@ -194,7 +195,7 @@ class SessionPersistenceDeletionOwner {
     }
     if (loaded.status === 'missing') return
     if (loaded.session.archivedAt !== undefined) {
-      throw new Error('Restore this archived Session before continuing.')
+      throw new ArchiveAvailabilityError('session-archived')
     }
   }
 
