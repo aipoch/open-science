@@ -574,6 +574,7 @@ class CommandGateway {
   static #routeShared(state: SharedIngressState, socket: Socket): void {
     state.pendingConnections.add(socket)
     socket.once('close', () => state.pendingConnections.delete(socket))
+    socket.once('error', () => socket.destroy())
     socket.once('data', (first: Buffer) => {
       if (first[0] === 0x05) void CommandGateway.#routeSharedSocks(state, socket, first)
       else void CommandGateway.#routeSharedHttp(state, socket, first)
@@ -661,6 +662,7 @@ class CommandGateway {
       return false
     }
     this.#connections.add(socket)
+    socket.once('error', () => socket.destroy())
     socket.once('close', () => this.#connections.delete(socket))
     return true
   }
@@ -755,8 +757,10 @@ class CommandGateway {
                 tls.once('error', reject)
               })
             : tunnel
-        this.#connections.add(connection)
-        connection.once('close', () => this.#connections.delete(connection))
+        if (!this.#trackConnection(connection)) {
+          response.destroy()
+          return
+        }
         const send = target.protocol === 'https:' ? httpsRequest : httpRequest
         const upstream = send(
           {
@@ -881,8 +885,10 @@ class CommandGateway {
         client.destroy()
         return
       }
-      this.#connections.add(upstream)
-      upstream.once('close', () => this.#connections.delete(upstream))
+      if (!this.#trackConnection(upstream)) {
+        client.destroy()
+        return
+      }
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
       if (head.length) upstream.write(head)
       client.pipe(upstream).pipe(client)
@@ -954,8 +960,10 @@ class CommandGateway {
       client.destroy()
       return
     }
-    this.#connections.add(upstream)
-    upstream.once('close', () => this.#connections.delete(upstream))
+    if (!this.#trackConnection(upstream)) {
+      client.destroy()
+      return
+    }
     client.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]))
     const buffered = reader.remainder()
     if (buffered.length) upstream.write(buffered)
