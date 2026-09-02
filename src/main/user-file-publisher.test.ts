@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -74,4 +74,20 @@ describe('publishUserFile', () => {
     await expect(readFile(destinationPath, 'utf8')).resolves.toBe('existing bytes')
     await expect(readdir(root)).resolves.toEqual(['report.txt'])
   })
+
+  it.runIf(process.platform !== 'win32')(
+    'preserves existing destination permissions when replacing its bytes',
+    async () => {
+      const destinationPath = join(root, 'report.txt')
+      await writeFile(destinationPath, 'existing bytes')
+      await chmod(destinationPath, 0o600)
+
+      await publishUserFile(destinationPath, async (temporaryPath) => {
+        await writeFile(temporaryPath, 'new bytes')
+        await chmod(temporaryPath, 0o644)
+      })
+
+      expect((await stat(destinationPath)).mode & 0o777).toBe(0o600)
+    }
+  )
 })

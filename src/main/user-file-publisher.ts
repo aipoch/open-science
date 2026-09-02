@@ -1,4 +1,4 @@
-import { link, mkdtemp, rename, rm } from 'node:fs/promises'
+import { chmod, link, mkdtemp, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 import { defaultFileDurability, type FileDurability } from './storage/file-durability'
@@ -23,6 +23,13 @@ const publishUserFile = async (
 
   try {
     await write(temporaryPath)
+    if (!options.exclusive) {
+      try {
+        await chmod(temporaryPath, (await stat(destinationPath)).mode & 0o7777)
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
+      }
+    }
     await durability.syncFile(temporaryPath)
     await options.validateDestination?.()
     if (options.exclusive) await link(temporaryPath, destinationPath)
