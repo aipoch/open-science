@@ -94,10 +94,72 @@ const hasExactClaudeCallCoverage = (
   )
 }
 
+type ClaudeTranscriptReader = (
+  input: Readonly<{
+    providerSessionId: string
+    cwd: string
+  }>
+) => Promise<readonly unknown[]>
+
+type ClaudeCodeTurnAdapterOptions = Readonly<{
+  readTranscriptMessages?: ClaudeTranscriptReader
+}>
+
+const recoverClaudeModelCalls = async (
+  readTranscriptMessages: ClaudeTranscriptReader | undefined,
+  input: Readonly<{
+    providerSessionId: string
+    cwd: string
+    observedCalls: readonly AcpProviderModelCallUsage[]
+    modelTurnCount: number
+    turnUsage: AcpTurnTokenUsage | undefined
+  }>
+): Promise<readonly AcpProviderModelCallUsage[] | undefined> => {
+  if (!readTranscriptMessages || input.observedCalls.length !== input.modelTurnCount) {
+    return undefined
+  }
+  const invocationIds = input.observedCalls.map((call) => call.sourceInvocationId)
+  if (invocationIds.some((id) => !id)) return undefined
+
+  let messages: readonly unknown[]
+  try {
+    messages = await readTranscriptMessages({
+      providerSessionId: input.providerSessionId,
+      cwd: input.cwd
+    })
+  } catch {
+    return undefined
+  }
+
+  const expectedIds = new Set(invocationIds as string[])
+  const recoveredById = new Map<string, AcpProviderModelCallUsage>()
+  for (const value of messages) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue
+    const message = value as Record<string, unknown>
+    if (message.type !== 'assistant') continue
+    const call = toClaudeModelStepUsage(message)
+    const id = call?.sourceInvocationId
+    if (!call || !id || !expectedIds.has(id)) continue
+    const previous = recoveredById.get(id)
+    if (previous && !sameClaudeModelCallUsage(previous, call)) return undefined
+    recoveredById.set(id, call)
+  }
+
+  const recovered = (invocationIds as string[]).flatMap((id) => {
+    const call = recoveredById.get(id)
+    return call ? [call] : []
+  })
+  return hasExactClaudeCallCoverage(recovered, input.modelTurnCount, input.turnUsage)
+    ? recovered
+    : undefined
+}
+
 // ARD-24 owns Runtime probe selection and lifecycle wiring; this leaf only provides the
 // side-effect-free Claude interpretation module for that serialized executor cutover.
-export const claudeCodeTurnAdapter: AcpProviderTurnAdapter = {
-  begin: ({ providerSessionId }) => {
+export const createClaudeCodeTurnAdapter = (
+  options: ClaudeCodeTurnAdapterOptions = {}
+): AcpProviderTurnAdapter => ({
+  begin: ({ providerSessionId, cwd }) => {
     let modelTurnCount = 0
     let lastModelStepUsage: AcpModelStepTokenUsage | undefined
     let modelCalls: AcpProviderModelCallUsage[] = []
@@ -156,7 +218,7 @@ export const claudeCodeTurnAdapter: AcpProviderTurnAdapter = {
         const nextCount = modelTurnCount + (message.num_turns as number)
         if (Number.isSafeInteger(nextCount)) modelTurnCount = nextCount
       },
-      finalize: ({ response }) => {
+      finalize: async ({ response }) => {
         if (closed) return {}
         const finalModelTurnCount = modelTurnCount
         const finalLastModelStepUsage = lastModelStepUsage
@@ -164,18 +226,34 @@ export const claudeCodeTurnAdapter: AcpProviderTurnAdapter = {
         const finalModelCallsTrusted = modelCallsTrusted
         close()
         const turnUsage = toAcpTurnTokenUsage(response.usage)
+        const exactLiveCalls =
+          finalModelCallsTrusted &&
+          hasExactClaudeCallCoverage(finalModelCalls, finalModelTurnCount, turnUsage)
+            ? finalModelCalls
+            : undefined
+        const exactModelCalls =
+          exactLiveCalls ??
+          (await recoverClaudeModelCalls(options.readTranscriptMessages, {
+            providerSessionId,
+            cwd,
+            observedCalls: finalModelCalls,
+            modelTurnCount: finalModelTurnCount,
+            turnUsage
+          }))
+        const exactLastModelStepUsage = exactModelCalls?.at(-1) ?? finalLastModelStepUsage
         const result: AcpProviderTurnResult = {
           ...(turnUsage ? { turnUsage } : {}),
           ...(finalModelTurnCount > 0 ? { modelTurnCount: finalModelTurnCount } : {}),
-          ...(finalLastModelStepUsage ? { lastModelStepUsage: finalLastModelStepUsage } : {}),
-          ...(finalModelCallsTrusted &&
-          hasExactClaudeCallCoverage(finalModelCalls, finalModelTurnCount, turnUsage)
-            ? { modelCalls: finalModelCalls }
-            : {})
+          ...(exactLastModelStepUsage ? { lastModelStepUsage: exactLastModelStepUsage } : {}),
+          ...(exactModelCalls ? { modelCalls: exactModelCalls } : {})
         }
         return result
       },
       cancel: close
     }
   }
-}
+})
+
+export const claudeCodeTurnAdapter = createClaudeCodeTurnAdapter()
+
+export type { ClaudeTranscriptReader }
