@@ -392,12 +392,17 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     await workflows.setSkillsEnabled({ ids: ['imported-skill'], enabled: false })
     await workflows.createSkill({ name: 'Skill', description: '', body: 'Body' })
     await workflows.deleteSkill({ id: 'deleted-skill' })
+    removeTagsForSkill.mockRejectedValueOnce(new Error('Tag cleanup failed'))
+    await expect(workflows.deleteSkill({ id: 'deleted-skill-with-tag-failure' })).resolves.toEqual(
+      []
+    )
     await workflows.setConversationSkillImportEnabled({ enabled: false })
     store.deleteSkill.mockRejectedValue(new Error('delete failed'))
     await expect(workflows.deleteSkill({ id: 'skill' })).rejects.toThrow('delete failed')
 
-    expect(removeTagsForSkill).toHaveBeenCalledWith('deleted-skill')
-    expect(notifySkillCatalogChanged).toHaveBeenCalledTimes(4)
+    expect(removeTagsForSkill).toHaveBeenNthCalledWith(1, 'deleted-skill')
+    expect(removeTagsForSkill).toHaveBeenNthCalledWith(2, 'deleted-skill-with-tag-failure')
+    expect(notifySkillCatalogChanged).toHaveBeenCalledTimes(5)
     expect(requestSkillsReload).toHaveBeenCalledOnce()
   })
 

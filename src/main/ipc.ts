@@ -1464,9 +1464,19 @@ const createApplicationModules = async (
     new MemoryRepository(() => getProjectDbClient(configRoot)),
     applicationEvents
   )
-  const removeResourceTags = async (
+  const tagCleanupLog = createLogger('tags:cleanup')
+  const removeResourceTagsOrThrow = async (
     resources: Parameters<TagService['removeResources']>[0]
   ): Promise<void> => tagService.removeResources(resources)
+  const removeResourceTags = async (
+    resources: Parameters<TagService['removeResources']>[0]
+  ): Promise<void> => {
+    try {
+      await removeResourceTagsOrThrow(resources)
+    } catch (error) {
+      tagCleanupLog.warn('resource deletion Tag cleanup failed', { error, resources })
+    }
+  }
   const specialistPackageService = new SpecialistPackageService({
     storageDir: resolveStorageRoot(),
     repository: specialistRepository,
@@ -1536,7 +1546,7 @@ const createApplicationModules = async (
       }
     },
     onResourcesDeleted: (specialistId, skillIds) =>
-      removeResourceTags([
+      removeResourceTagsOrThrow([
         { resourceType: 'catalog.specialist', resourceId: specialistId },
         ...skillIds.map((resourceId) => ({
           resourceType: 'catalog.skill' as const,
@@ -2567,7 +2577,7 @@ const createApplicationModules = async (
     await reconcilePendingCustomServerDeletions(permissionGrantRegistry, {
       pendingCustomServerDeletionIds,
       removeTagsForConnector: (serverId) =>
-        removeResourceTags([{ resourceType: 'catalog.connector', resourceId: serverId }]),
+        removeResourceTagsOrThrow([{ resourceType: 'catalog.connector', resourceId: serverId }]),
       completeCustomServerDeletion: (serverId) =>
         settingsRepository.completeCustomServerDeletion(serverId)
     })
@@ -3213,7 +3223,7 @@ const createApplicationModules = async (
       pruneCustomServerPermissions: (serverId) =>
         permissionGrantRegistry.prune({ kind: 'mcp_server', serverId }).then(() => undefined),
       removeTagsForConnector: (resourceId) =>
-        removeResourceTags([{ resourceType: 'catalog.connector', resourceId }]),
+        removeResourceTagsOrThrow([{ resourceType: 'catalog.connector', resourceId }]),
       beginCustomServerSecurityChange: (serverId) =>
         connectorService.beginCustomServerSecurityChange(serverId),
       clearCustomServerFailure: (serverId) => connectorService.clearCustomServerFailure(serverId),
