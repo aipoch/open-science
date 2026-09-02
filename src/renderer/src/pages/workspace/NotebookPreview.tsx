@@ -1468,7 +1468,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           <ErrorNotice
             icon={TriangleAlert}
             tone="amber"
-            description={actionError}
+            description={initialStateError}
             primaryButton={{
               label: t('Retry'),
               onClick: () => void loadNotebookState(),
