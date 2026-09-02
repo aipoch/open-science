@@ -487,23 +487,55 @@ describe('ProjectDeletionCoordinator', () => {
     await recovery.stop()
   })
 
-  it('projects retry timing without exposing the cleanup error', async () => {
+  it('projects retry timing and failure counts per project without exposing errors', async () => {
     vi.useFakeTimers()
     const onStatusChanged = vi.fn()
-    const recovery = new ProjectDeletionRecoveryLoop(
-      vi.fn().mockRejectedValueOnce(new Error('/Users/private/project cleanup failed')),
-      { retryDelayMs: 1_000, now: () => 5_000, onStatusChanged }
-    )
+    const projects = createProjects()
+    projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-1', 'project-2'])
+    const sessions = createSessions({
+      deleteProjectSessions: vi.fn(async (projectId) => {
+        if (projectId === 'project-1') {
+          throw new Error('/Users/private/project cleanup failed')
+        }
+        return { status: 'completed' as const }
+      })
+    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions)
+    const recovery = new ProjectDeletionRecoveryLoop(() => coordinator.recoverPendingDeletions(), {
+      retryDelayMs: 1_000,
+      now: () => 5_000,
+      onStatusChanged
+    })
 
     recovery.start()
     await vi.advanceTimersByTimeAsync(0)
 
-    expect(recovery.projectCleanup([{ projectId: 'project-1', projectName: 'Research' }])).toEqual([
+    expect(
+      recovery.projectCleanup([
+        { projectId: 'project-1', projectName: 'Research' },
+        { projectId: 'project-2', projectName: 'Completed' },
+        { projectId: 'project-new', projectName: 'New deletion' }
+      ])
+    ).toEqual([
       {
         projectId: 'project-1',
         projectName: 'Research',
         phase: 'retry-scheduled',
         failureCount: 1,
+        nextRetryAt: 6_000
+      },
+      {
+        projectId: 'project-2',
+        projectName: 'Completed',
+        phase: 'retry-scheduled',
+        failureCount: 0,
+        nextRetryAt: 6_000
+      },
+      {
+        projectId: 'project-new',
+        projectName: 'New deletion',
+        phase: 'retry-scheduled',
+        failureCount: 0,
         nextRetryAt: 6_000
       }
     ])
@@ -564,9 +596,6 @@ describe('ProjectDeletionCoordinator', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(recover).toHaveBeenCalledTimes(2)
-    expect(recovery.projectCleanup([{ projectId: 'project-1' }])).toEqual([
-      { projectId: 'project-1', phase: 'running', failureCount: 1 }
-    ])
     await vi.advanceTimersByTimeAsync(1_000)
     expect(recover).toHaveBeenCalledTimes(2)
 

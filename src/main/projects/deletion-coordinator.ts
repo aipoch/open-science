@@ -94,7 +94,7 @@ class ProjectDeletionRecoveryLoop {
   private running = false
   private rerunRequested = false
   private activeRun: Promise<void> | undefined
-  private failureCount = 0
+  private readonly failureCounts = new Map<string, number>()
   private nextRetryAt: number | undefined
 
   constructor(
@@ -114,7 +114,7 @@ class ProjectDeletionRecoveryLoop {
     return projects.map((project) => ({
       ...project,
       phase,
-      failureCount: this.failureCount,
+      failureCount: this.failureCounts.get(project.projectId) ?? 0,
       ...(this.nextRetryAt === undefined ? {} : { nextRetryAt: this.nextRetryAt })
     }))
   }
@@ -164,7 +164,7 @@ class ProjectDeletionRecoveryLoop {
       .then(
         () => {
           this.running = false
-          this.failureCount = 0
+          this.failureCounts.clear()
           this.nextRetryAt = undefined
           this.notifyStatusChanged()
           if (!this.started || !this.rerunRequested) return
@@ -175,7 +175,15 @@ class ProjectDeletionRecoveryLoop {
           this.running = false
           const rerunRequested = this.rerunRequested
           this.rerunRequested = false
-          this.failureCount += 1
+          if (error instanceof ProjectDeletionRecoveryError) {
+            const failedProjectIds = new Set(error.failures.map(({ projectId }) => projectId))
+            for (const projectId of this.failureCounts.keys()) {
+              if (!failedProjectIds.has(projectId)) this.failureCounts.delete(projectId)
+            }
+            for (const projectId of failedProjectIds) {
+              this.failureCounts.set(projectId, (this.failureCounts.get(projectId) ?? 0) + 1)
+            }
+          }
           this.nextRetryAt = rerunRequested ? undefined : this.now() + this.retryDelayMs
           try {
             this.onError(error)
