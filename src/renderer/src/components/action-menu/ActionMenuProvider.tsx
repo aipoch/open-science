@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { PointerActionMenu } from './PointerActionMenu'
 import {
@@ -44,9 +44,11 @@ export const ActionMenuProvider = ({
   const onOpenChangeRef = useRef(onOpenChange)
   const onActionErrorRef = useRef(onActionError)
   const [openState, setOpenState] = useState<OpenActionMenuState | null>(null)
-  const [pendingRevision, setPendingRevision] = useState(0)
-  onOpenChangeRef.current = onOpenChange
-  onActionErrorRef.current = onActionError
+  const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(() => new Set())
+  useLayoutEffect(() => {
+    onOpenChangeRef.current = onOpenChange
+    onActionErrorRef.current = onActionError
+  }, [onActionError, onOpenChange])
 
   const closeMenu = useCallback((): void => {
     const current = openStateRef.current
@@ -70,20 +72,14 @@ export const ActionMenuProvider = ({
     [closeMenu]
   )
 
-  const isPending = useCallback(
-    (snapshot: ActionMenuSnapshot, actionId: string): boolean =>
-      pendingKeysRef.current.has(executionKey(snapshot.identityKey, actionId)),
-    []
-  )
-
   const resolveEntries = useCallback(
     (snapshot: ActionMenuSnapshot): readonly ResolvedActionMenuEntry<string>[] =>
       resolveActionMenuEntries(snapshot.spec, snapshot.invocation).map((entry) =>
-        entry.kind === 'action' && isPending(snapshot, entry.action)
+        entry.kind === 'action' && pendingKeys.has(executionKey(snapshot.identityKey, entry.action))
           ? { ...entry, disabled: true }
           : entry
       ),
-    [isPending]
+    [pendingKeys]
   )
 
   const openSnapshot = useCallback(
@@ -95,7 +91,13 @@ export const ActionMenuProvider = ({
     ): boolean => {
       if (registrationsRef.current.get(registration.targetId) !== registration) return false
       const snapshot = registration.snapshot(invocation)
-      if (!resolveEntries(snapshot).some((entry) => entry.kind === 'action')) return false
+      if (
+        !resolveActionMenuEntries(snapshot.spec, snapshot.invocation).some(
+          (entry) => entry.kind === 'action'
+        )
+      ) {
+        return false
+      }
 
       focusTargetRef.current =
         focusTarget instanceof HTMLElement
@@ -113,7 +115,7 @@ export const ActionMenuProvider = ({
       onOpenChangeRef.current?.(snapshot.targetId, true)
       return true
     },
-    [resolveEntries]
+    []
   )
 
   const openFromEvent = useCallback(
@@ -144,7 +146,7 @@ export const ActionMenuProvider = ({
 
   const execute = useCallback(
     async (snapshot: ActionMenuSnapshot, actionId: string): Promise<void> => {
-      const entry = resolveEntries(snapshot).find(
+      const entry = resolveActionMenuEntries(snapshot.spec, snapshot.invocation).find(
         (candidate) => candidate.kind === 'action' && candidate.action === actionId
       )
       if (!entry || entry.kind !== 'action' || entry.disabled) return
@@ -154,7 +156,7 @@ export const ActionMenuProvider = ({
       const key = executionKey(snapshot.identityKey, actionId)
       if (pendingKeysRef.current.has(key)) return
       pendingKeysRef.current.add(key)
-      setPendingRevision((revision) => revision + 1)
+      setPendingKeys((current) => new Set(current).add(key))
       try {
         await binding.execute(snapshot.invocation)
       } catch (error) {
@@ -168,10 +170,15 @@ export const ActionMenuProvider = ({
           console.error(`Failed to execute action ${actionId} for ${snapshot.identityKey}`, error)
       } finally {
         pendingKeysRef.current.delete(key)
-        setPendingRevision((revision) => revision + 1)
+        setPendingKeys((current) => {
+          if (!current.has(key)) return current
+          const next = new Set(current)
+          next.delete(key)
+          return next
+        })
       }
     },
-    [resolveEntries]
+    []
   )
 
   const restoreFocus = useCallback((snapshot: ActionMenuSnapshot): void => {
@@ -187,34 +194,27 @@ export const ActionMenuProvider = ({
 
   const contextValue = useMemo<ActionMenuProviderContextValue>(
     () => ({ registerTarget, openFromEvent, openMenu, closeMenu, resolveEntries, execute }),
-    [closeMenu, execute, openFromEvent, openMenu, pendingRevision, registerTarget, resolveEntries]
+    [closeMenu, execute, openFromEvent, openMenu, registerTarget, resolveEntries]
   )
-
-  const currentOpenState =
-    openState &&
-    registrationsRef.current.get(openState.snapshot.targetId)?.registrationKey ===
-      openState.snapshot.registrationKey
-      ? openState
-      : null
 
   return (
     <ActionMenuProviderContext.Provider value={contextValue}>
       {children}
-      {currentOpenState ? (
+      {openState ? (
         <PointerActionMenu
-          entries={resolveEntries(currentOpenState.snapshot)}
-          pointer={currentOpenState.pointer}
+          entries={resolveEntries(openState.snapshot)}
+          pointer={openState.pointer}
           testId={testId}
           contentClassName={contentClassName}
-          compact={currentOpenState.snapshot.compact}
-          dangerClassName={currentOpenState.snapshot.dangerClassName}
-          renderLabel={currentOpenState.snapshot.renderLabel}
+          compact={openState.snapshot.compact}
+          dangerClassName={openState.snapshot.dangerClassName}
+          renderLabel={openState.snapshot.renderLabel}
           onSelect={(actionId) => {
             closeMenu()
-            void execute(currentOpenState.snapshot, actionId)
+            void execute(openState.snapshot, actionId)
           }}
           onClose={closeMenu}
-          onRestoreFocus={() => restoreFocus(currentOpenState.snapshot)}
+          onRestoreFocus={() => restoreFocus(openState.snapshot)}
         />
       ) : null}
     </ActionMenuProviderContext.Provider>

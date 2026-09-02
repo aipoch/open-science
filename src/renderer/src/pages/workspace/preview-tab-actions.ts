@@ -1,22 +1,12 @@
 // The preview tab context-menu model: one module owns both which actions a tab offers (decision)
-// and what each action does (execution). The menu UI stays a thin renderer — it draws the list
-// `getPreviewTabActions` returns and forwards picks to `runPreviewTabAction`, knowing nothing about
-// store mutations or save pipelines.
+// and what each action does (execution). The menu UI stays a thin renderer: it resolves the recipe
+// and bindings here, knowing nothing about store mutations or save pipelines.
 //
 // Actions that live inside a tab's content surface (Provenance, Reload, View in context, Plan
 // download, full screen) are deliberately absent: they are owned by the surfaces themselves. This
 // module only exposes actions that can run without mounting the tab's content.
 
-import {
-  BookOpen,
-  CircleX,
-  ClipboardCopy,
-  Download,
-  Link2Off,
-  PackagePlus,
-  X,
-  type LucideIcon
-} from 'lucide-react'
+import { BookOpen, CircleX, ClipboardCopy, Download, Link2Off, PackagePlus, X } from 'lucide-react'
 
 import type { PreviewFileItem, PreviewItem } from '@/stores/preview-workbench-store'
 import type {
@@ -40,17 +30,6 @@ export const PREVIEW_TAB_ACTION_CATALOG: Record<PreviewTabActionCommand, ActionM
   'save-as-artifact': { labelKey: 'Save as artifact', icon: PackagePlus }
 }
 
-export type PreviewTabAction = {
-  command: PreviewTabActionCommand
-  // English source text; doubles as the i18n key per repo convention.
-  label: string
-  // Icon follows the prototype's close affordances (×, ⊗) and the existing header buttons for
-  // file actions, so the tab menu and the in-surface controls read as one family.
-  icon: LucideIcon
-  danger: boolean
-  disabled: boolean
-}
-
 export type PreviewTabActionContext = {
   tabCount: number
   // Set by the host (which owns the stores) for linkable PDF file tabs; drives the leading
@@ -63,9 +42,9 @@ export type PreviewTabActionContext = {
 // shared. The optional pdfContext group leads the menu: reading-context entry points sit above
 // window management.
 export type PreviewTabActionGroups = {
-  pdfContext: PreviewTabAction[]
-  shared: PreviewTabAction[]
-  specific: PreviewTabAction[]
+  pdfContext: PreviewTabActionCommand[]
+  shared: PreviewTabActionCommand[]
+  specific: PreviewTabActionCommand[]
 }
 
 // Everything an action needs from its host. Injected so tests exercise the command→effect mapping
@@ -89,74 +68,20 @@ export type PreviewTabActionDeps = {
   activeProjectId: string | undefined
 }
 
-const closeAction: PreviewTabAction = {
-  command: 'close',
-  label: 'Close',
-  icon: X,
-  danger: false,
-  disabled: false
-}
-
 // Every tab can be closed; closing others is meaningless with nothing else open.
-const sharedActions = (tabCount: number): PreviewTabAction[] => [
-  closeAction,
-  {
-    command: 'close-others',
-    label: 'Close others',
-    icon: CircleX,
-    danger: true,
-    disabled: tabCount <= 1
-  }
-]
+const sharedActions: PreviewTabActionCommand[] = ['close', 'close-others']
 
 // File tabs add source-specific actions; tool tabs (Files, Notebook, Session Plan, Reviewer,
 // Subagents) offer none here — their operations are content-surface interactions.
-const fileSpecificActions = (item: PreviewFileItem): PreviewTabAction[] =>
-  item.source === 'local'
-    ? [
-        {
-          command: 'copy-path',
-          label: 'Copy path',
-          icon: ClipboardCopy,
-          danger: false,
-          disabled: false
-        },
-        { command: 'download', label: 'Download', icon: Download, danger: false, disabled: false },
-        {
-          command: 'save-as-artifact',
-          label: 'Save as artifact',
-          icon: PackagePlus,
-          danger: false,
-          disabled: false
-        }
-      ]
-    : [{ command: 'download', label: 'Download', icon: Download, danger: false, disabled: false }]
-
-// Unlink is reversible, so the remove label deliberately stays out of the danger styling.
-const pdfContextActions: Record<PdfContextLinkState, PreviewTabAction> = {
-  link: {
-    command: 'toggle-pdf-context',
-    label: 'Read with agent',
-    icon: BookOpen,
-    danger: false,
-    disabled: false
-  },
-  remove: {
-    command: 'toggle-pdf-context',
-    label: 'Remove PDF from context',
-    icon: Link2Off,
-    danger: false,
-    disabled: false
-  }
-}
+const fileSpecificActions = (item: PreviewFileItem): PreviewTabActionCommand[] =>
+  item.source === 'local' ? ['copy-path', 'download', 'save-as-artifact'] : ['download']
 
 export const getPreviewTabActionGroups = (
   item: PreviewItem,
   context: PreviewTabActionContext
 ): PreviewTabActionGroups => ({
-  pdfContext:
-    item.type === 'file' && context.pdfContext ? [pdfContextActions[context.pdfContext]] : [],
-  shared: sharedActions(context.tabCount),
+  pdfContext: item.type === 'file' && context.pdfContext ? ['toggle-pdf-context'] : [],
+  shared: sharedActions,
   specific: item.type === 'file' ? fileSpecificActions(item) : []
 })
 
@@ -169,7 +94,7 @@ export const getPreviewTabActionRecipe = (
     .filter((group) => group.length > 0)
     .flatMap((group, index) => [
       ...(index > 0 ? [{ kind: 'separator' as const }] : []),
-      ...group.map((action) => ({ kind: 'action' as const, action: action.command }))
+      ...group.map((action) => ({ kind: 'action' as const, action }))
     ])
 }
 

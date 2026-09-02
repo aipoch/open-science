@@ -64,10 +64,8 @@ import type { PreviewDownloadVersionContext } from './previews/preview-runtime-c
 import type { PreviewInteractionPort } from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
 import { ManagedVersionDiffContent } from './ManagedVersionDiffContent'
-import {
-  PreviewActionMenuAdapterProvider,
-  usePreviewActions
-} from './preview-actions/preview-action-adapter'
+import { PreviewActionMenuAdapterProvider } from './preview-actions/preview-action-adapter'
+import { usePreviewActions } from './preview-actions/preview-action-hooks'
 import {
   LOCAL_PREVIEW_MENU_RECIPE,
   MANAGED_PDF_PREVIEW_MENU_RECIPE,
@@ -1141,6 +1139,12 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             invocation={undefined}
             resolveInvocation={(event) => {
               if (showProvenance || !renderContent || mode === 'edit') return null
+              if (
+                !(event.target instanceof Element) ||
+                !event.target.closest('[data-preview-action-menu-content]')
+              ) {
+                return null
+              }
               return shouldHandlePreviewContextMenu(event.target) ? undefined : null
             }}
             onRestoreFocus={(restoreDefault) => {
@@ -1294,6 +1298,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
               ) : null}
               <div
                 data-testid="preview-file-content-region"
+                data-preview-action-menu-content
                 className="min-h-0 flex-1 overflow-hidden"
               >
                 <div

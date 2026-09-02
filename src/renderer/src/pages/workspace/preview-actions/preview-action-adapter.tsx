@@ -1,31 +1,12 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  type ReactNode,
-  type RefObject
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
 
-import { useActionMenu, useActionMenuTarget } from '@/components/action-menu'
+import { useActionMenu } from '@/components/action-menu'
 import { isPreviewContextMenuRequest } from '../../../../../shared/preview-context-menu'
 
-import type { PreviewCapabilityId } from './preview-action-model'
-
-type PreviewContextMenuFrameRegistration = Readonly<{
-  id: string
-  frameUrl: string
-  getFrame: () => HTMLIFrameElement | null
-}>
-
-type PreviewActionMenuAdapter = {
-  openContextMenu: (pointer: { x: number; y: number }, focusTarget?: Element | null) => void
-  registerFrame: (registration: PreviewContextMenuFrameRegistration) => () => void
-}
-
-const PreviewActionMenuAdapterContext = createContext<PreviewActionMenuAdapter | null>(null)
+import {
+  PreviewActionMenuAdapterContext,
+  type PreviewContextMenuFrameRegistration
+} from './preview-action-adapter-context'
 
 const matchesRegisteredFrame = (registeredUrl: string, requestedUrl: string): boolean => {
   try {
@@ -101,31 +82,4 @@ export const PreviewActionMenuAdapterProvider = ({
       {children}
     </PreviewActionMenuAdapterContext.Provider>
   )
-}
-
-export const usePreviewActions = () => {
-  const adapter = useContext(PreviewActionMenuAdapterContext)
-  const target = useActionMenuTarget<PreviewCapabilityId>()
-  if (!adapter) {
-    throw new Error('Preview actions must be used inside PreviewActionMenuAdapterProvider.')
-  }
-  return { ...target, openContextMenu: adapter.openContextMenu }
-}
-
-export const useRegisterPreviewContextMenuFrame = ({
-  id,
-  frameUrl,
-  frameRef,
-  enabled = true
-}: {
-  id: string
-  frameUrl: string
-  frameRef: RefObject<HTMLIFrameElement | null>
-  enabled?: boolean
-}): void => {
-  const adapter = useContext(PreviewActionMenuAdapterContext)
-  useEffect(() => {
-    if (!adapter || !enabled || !frameUrl) return
-    return adapter.registerFrame({ id, frameUrl, getFrame: () => frameRef.current })
-  }, [adapter, enabled, frameRef, frameUrl, id])
 }

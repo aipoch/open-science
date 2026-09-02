@@ -2777,6 +2777,11 @@ describe('PreviewFileSurface local file header', () => {
     expect(menu?.textContent).not.toContain('Open with default app')
     expect(menu?.textContent).not.toContain('Annotate')
     expect(menu?.textContent).not.toContain('Delete')
+    expect(
+      [...(menu?.querySelectorAll<HTMLElement>('[data-action-id]') ?? [])].map(
+        (item) => item.dataset.actionId
+      )
+    ).toEqual(['copy-path', 'download', 'save-as-artifact'])
 
     await clickMenuItem('Download')
 
@@ -2809,6 +2814,26 @@ describe('PreviewFileSurface local file header', () => {
     expect(menu?.textContent).toContain('Download')
     expect(menu?.textContent).toContain('Save as artifact')
     expect(menu?.textContent).not.toContain('On this machine')
+  })
+
+  it('leaves context-menu events outside the preview content region untouched', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localItem} onClose={vi.fn()} />)
+    })
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 80,
+      clientY: 96
+    })
+
+    await act(async () => {
+      container.querySelector('[data-testid="preview-card-header"]')?.dispatchEvent(event)
+      await Promise.resolve()
+    })
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(document.body.querySelector('[data-testid="preview-content-context-menu"]')).toBeNull()
   })
 
   it('shares Save as artifact execution and state between the context menu and header', async () => {

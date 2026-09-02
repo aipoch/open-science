@@ -689,6 +689,23 @@ describe('PreviewPanel', () => {
       document.body.querySelector('[data-radix-popper-content-wrapper] [data-state]')?.className
     ).toContain('z-[70]')
 
+    const contextMenuEvent = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 80,
+      clientY: 96
+    })
+    await act(async () => {
+      dialog
+        ?.querySelector('[data-testid="preview-file-content-region"]')
+        ?.dispatchEvent(contextMenuEvent)
+      await Promise.resolve()
+    })
+    expect(contextMenuEvent.defaultPrevented).toBe(true)
+    expect(
+      document.body.querySelector('[data-testid="preview-content-context-menu"]')?.classList
+    ).toContain('z-[70]')
+
     await act(async () => {
       dialog
         ?.querySelector<HTMLButtonElement>(`[aria-label="Close preview of ${name}"]`)

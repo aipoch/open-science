@@ -5,10 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ActionMenuProvider, ActionMenuTarget } from '@/components/action-menu'
 
-import {
-  PreviewActionMenuAdapterProvider,
-  useRegisterPreviewContextMenuFrame
-} from './preview-action-adapter'
+import { PreviewActionMenuAdapterProvider } from './preview-action-adapter'
+import { useRegisterPreviewContextMenuFrame } from './preview-action-hooks'
 import {
   PREVIEW_CAPABILITY_CATALOG,
   type PreviewActionBindings,
@@ -22,18 +20,22 @@ let root: Root
 let emitFrameContextMenu:
   ((request: { x: number; y: number; frameUrl: string }) => void) | undefined
 const unsubscribeFrameContextMenu = vi.fn()
+const subscribeFrameContextMenu = vi.fn(
+  (listener: NonNullable<typeof emitFrameContextMenu>): (() => void) => {
+    emitFrameContextMenu = listener
+    return unsubscribeFrameContextMenu
+  }
+)
 
 beforeEach(() => {
   emitFrameContextMenu = undefined
   unsubscribeFrameContextMenu.mockClear()
+  subscribeFrameContextMenu.mockClear()
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: {
       previewContextMenu: {
-        onRequested: (listener: typeof emitFrameContextMenu) => {
-          emitFrameContextMenu = listener
-          return unsubscribeFrameContextMenu
-        }
+        onRequested: subscribeFrameContextMenu
       }
     }
   })
@@ -58,7 +60,13 @@ const bindings: PreviewActionBindings = {
   'copy-path': { execute: () => undefined }
 }
 
-const FrameHarness = ({ frameUrl }: { frameUrl: string }): React.JSX.Element => (
+const FrameHarness = ({
+  frameUrl,
+  actionBindings = bindings
+}: {
+  frameUrl: string
+  actionBindings?: PreviewActionBindings
+}): React.JSX.Element => (
   <ActionMenuProvider testId="preview-content-context-menu">
     <PreviewActionMenuAdapterProvider targetId="preview-content">
       <ActionMenuTarget<PreviewCapabilityId, undefined>
@@ -66,7 +74,7 @@ const FrameHarness = ({ frameUrl }: { frameUrl: string }): React.JSX.Element => 
         identityKey={frameUrl}
         catalog={PREVIEW_CAPABILITY_CATALOG}
         recipe={[{ kind: 'action', action: 'copy-path' }]}
-        bindings={bindings}
+        bindings={actionBindings}
         invocation={undefined}
         asChild
       >
@@ -78,14 +86,58 @@ const FrameHarness = ({ frameUrl }: { frameUrl: string }): React.JSX.Element => 
   </ActionMenuProvider>
 )
 
-const render = async (frameUrl: string): Promise<void> => {
+const render = async (frameUrl: string, actionBindings?: PreviewActionBindings): Promise<void> => {
   await act(async () => {
-    root.render(<FrameHarness frameUrl={frameUrl} />)
+    root.render(<FrameHarness frameUrl={frameUrl} actionBindings={actionBindings} />)
     await Promise.resolve()
   })
 }
 
 describe('Preview Action Menu adapter', () => {
+  it('keeps the Electron subscription and frame registration stable across pending changes', async () => {
+    let settle: (() => void) | undefined
+    const frameUrl = 'open-science-preview://resource-1/report.html'
+    await render(frameUrl, {
+      'copy-path': {
+        execute: () => new Promise<void>((resolve) => (settle = resolve))
+      }
+    })
+    expect(subscribeFrameContextMenu).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      emitFrameContextMenu?.({ x: 31, y: 47, frameUrl })
+      await Promise.resolve()
+    })
+    await act(async () => {
+      document.body.querySelector<HTMLElement>('[data-action-id="copy-path"]')!.click()
+      await Promise.resolve()
+    })
+
+    expect(settle).toBeTypeOf('function')
+    expect(subscribeFrameContextMenu).toHaveBeenCalledOnce()
+    expect(unsubscribeFrameContextMenu).not.toHaveBeenCalled()
+
+    await act(async () => {
+      emitFrameContextMenu?.({ x: 41, y: 53, frameUrl })
+      await Promise.resolve()
+    })
+    expect(
+      document.body.querySelector('[data-action-id="copy-path"]')?.hasAttribute('data-disabled')
+    ).toBe(true)
+
+    if (!settle) throw new Error('Expected the deferred preview action to start')
+    const settleAction = settle
+    await act(async () => {
+      settleAction()
+      await Promise.resolve()
+    })
+    expect(subscribeFrameContextMenu).toHaveBeenCalledOnce()
+    expect(unsubscribeFrameContextMenu).not.toHaveBeenCalled()
+    expect(
+      document.body.querySelector('[data-action-id="copy-path"]')?.hasAttribute('data-disabled')
+    ).toBe(false)
+  })
+
   it('opens for the registered frame at Electron viewport coordinates and restores iframe focus', async () => {
     const frameUrl = 'open-science-preview://resource-1/report.html'
     await render(frameUrl)

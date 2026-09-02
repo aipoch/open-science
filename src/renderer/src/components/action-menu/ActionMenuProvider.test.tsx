@@ -134,25 +134,25 @@ describe('ActionMenuProvider and ActionMenuTarget', () => {
     expect(document.body.querySelector('[data-action-id="copy"]')).toBeNull()
   })
 
-  it('executes the invocation captured when the menu opened after the target rerenders', async () => {
+  it('snapshots an open menu and uses current data on later opens with the same identity', async () => {
     const copied: string[] = []
     const SnapshotHarness = (): React.JSX.Element => {
-      const [invocation, setInvocation] = useState<MessageInvocation>({
-        kind: 'selection',
-        messageId: 'message-1',
-        text: 'Selected snapshot'
-      })
+      const [version, setVersion] = useState(1)
+      const invocation: MessageInvocation =
+        version === 1
+          ? { kind: 'selection', messageId: 'message-1', text: 'Selected snapshot' }
+          : { kind: 'message', messageId: 'message-1', text: 'Current message' }
       return (
         <ActionMenuProvider>
           <ActionMenuTarget
             targetId="message-1"
             identityKey="message-1:v1"
             catalog={catalog}
-            recipe={recipe}
+            recipe={version === 3 ? [] : recipe}
             bindings={{
               copy: {
                 execute: (captured) => {
-                  copied.push(captured.text)
+                  copied.push(`v${version}:${captured.text}`)
                 }
               }
             }}
@@ -163,12 +163,10 @@ describe('ActionMenuProvider and ActionMenuTarget', () => {
           </ActionMenuTarget>
           <button
             type="button"
-            data-testid="replace-invocation"
-            onClick={() =>
-              setInvocation({ kind: 'message', messageId: 'message-1', text: 'Current message' })
-            }
+            data-testid="update-target"
+            onClick={() => setVersion((current) => current + 1)}
           >
-            Replace
+            Update
           </button>
         </ActionMenuProvider>
       )
@@ -177,11 +175,21 @@ describe('ActionMenuProvider and ActionMenuTarget', () => {
 
     await openContextMenu(container.querySelector('button')!)
     await act(async () =>
-      container.querySelector<HTMLElement>('[data-testid="replace-invocation"]')!.click()
+      container.querySelector<HTMLElement>('[data-testid="update-target"]')!.click()
     )
     await clickAction()
+    expect(copied).toEqual(['v1:Selected snapshot'])
 
-    expect(copied).toEqual(['Selected snapshot'])
+    await openContextMenu(container.querySelector('button')!)
+    await clickAction()
+    expect(copied).toEqual(['v1:Selected snapshot', 'v2:Current message'])
+
+    await act(async () =>
+      container.querySelector<HTMLElement>('[data-testid="update-target"]')!.click()
+    )
+    const event = await openContextMenu(container.querySelector('button')!)
+    expect(event.defaultPrevented).toBe(false)
+    expect(document.body.querySelector('[data-action-id="copy"]')).toBeNull()
   })
 
   it('supports future selection and whole-message invocation snapshots without core changes', async () => {
@@ -240,7 +248,13 @@ describe('ActionMenuProvider and ActionMenuTarget', () => {
   })
 
   it('invalidates an open menu when its identity changes or target unregisters', async () => {
-    const Harness = ({ identityKey, visible }: { identityKey: string; visible: boolean }) => (
+    const Harness = ({
+      identityKey,
+      visible
+    }: {
+      identityKey: string
+      visible: boolean
+    }): React.JSX.Element => (
       <ActionMenuProvider>
         {visible ? (
           <ActionMenuTarget
@@ -456,6 +470,65 @@ const TargetExecutionControls = ({ name }: { name: string }): React.JSX.Element 
 }
 
 describe('Action Menu execution protection', () => {
+  it('keeps another target pointer menu open when an async action settles', async () => {
+    let resolveFirst: (() => void) | undefined
+    await render(
+      <ActionMenuProvider testId="pending-menu">
+        {['first', 'second'].map((name) => (
+          <ActionMenuTarget
+            key={name}
+            targetId={name}
+            identityKey={`${name}:v1`}
+            catalog={catalog}
+            recipe={recipe}
+            bindings={{
+              copy: {
+                execute:
+                  name === 'first'
+                    ? () => new Promise<void>((resolve) => (resolveFirst = resolve))
+                    : () => undefined
+              }
+            }}
+            invocation={{ kind: 'message', messageId: name, text: name }}
+            asChild
+          >
+            <button type="button" data-target-id={name}>
+              {name}
+            </button>
+          </ActionMenuTarget>
+        ))}
+      </ActionMenuProvider>
+    )
+
+    await openContextMenu(container.querySelector('[data-target-id="first"]')!)
+    await clickAction()
+    await openContextMenu(container.querySelector('[data-target-id="first"]')!)
+    expect(
+      document.body.querySelector('[data-action-id="copy"]')?.hasAttribute('data-disabled')
+    ).toBe(true)
+    await openContextMenu(container.querySelector('[data-target-id="second"]')!)
+    expect(document.body.querySelector('[data-testid="pending-menu"]')).not.toBeNull()
+    expect(
+      document.body.querySelector('[data-action-id="copy"]')?.hasAttribute('data-disabled')
+    ).toBe(false)
+
+    if (!resolveFirst) throw new Error('Expected the first async action to start')
+    const settleFirst = resolveFirst
+    await act(async () => {
+      settleFirst()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[data-testid="pending-menu"]')).not.toBeNull()
+    expect(
+      document.body.querySelector('[data-action-id="copy"]')?.hasAttribute('data-disabled')
+    ).toBe(false)
+    await openContextMenu(container.querySelector('[data-target-id="first"]')!)
+    expect(
+      document.body.querySelector('[data-action-id="copy"]')?.hasAttribute('data-disabled')
+    ).toBe(false)
+  })
+
   it('blocks duplicate async execution for one identity while allowing another target', async () => {
     const resolvers = new Map<string, () => void>()
     const executions: string[] = []

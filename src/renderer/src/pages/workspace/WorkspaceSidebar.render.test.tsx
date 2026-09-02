@@ -2794,7 +2794,10 @@ describe('WorkspaceSidebar accessible render', () => {
       onDownloadProjectArtifacts: vi.fn()
     })
 
-    expect(getTextContent(tree)).not.toContain('Export conversation')
+    const entries = resolveSessionTargetEntries(getSessionActionTargetProps(tree, 'session-1'))
+    expect(entries.some((entry) => entry.kind === 'action' && entry.action === 'export')).toBe(
+      false
+    )
   })
 
   it('hides artifact downloads when the runtime does not provide the desktop save capability', async () => {
@@ -2826,10 +2829,9 @@ describe('WorkspaceSidebar accessible render', () => {
       onDownloadProjectArtifacts: vi.fn()
     })
 
-    const downloadItem = collectElements(tree).find(
-      (element) => getTextContent(element).trim() === 'Download all artifacts'
-    )
-
-    expect(downloadItem).toBeUndefined()
+    const entries = resolveSessionTargetEntries(getSessionActionTargetProps(tree, session.id))
+    expect(
+      entries.some((entry) => entry.kind === 'action' && entry.action === 'download-artifacts')
+    ).toBe(false)
   })
 })

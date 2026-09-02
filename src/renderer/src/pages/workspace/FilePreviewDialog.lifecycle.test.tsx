@@ -47,7 +47,12 @@ vi.mock('radix-ui', () => ({
 }))
 
 vi.mock('./PreviewFileSurface', () => ({
-  PreviewFileSurface: (props: { item: PreviewFileItem; provenanceEntry?: string }) => {
+  PreviewFileSurface: (props: {
+    item: PreviewFileItem
+    provenanceEntry?: string
+    tooltipClassName?: string
+    actionMenuContentClassName?: string
+  }) => {
     previewSurfaceSpy(props)
     return <div data-testid="preview-surface">{props.item.title}</div>
   }
@@ -148,6 +153,17 @@ describe('FilePreviewDialog closing lifecycle', () => {
 
     expect(previewSurfaceSpy).toHaveBeenCalledWith(
       expect.objectContaining({ provenanceEntry: 'trailing' })
+    )
+  })
+
+  it('layers Preview action menus and tooltips above the dialog', () => {
+    act(() => root.render(<FilePreviewDialog item={item} onClose={vi.fn()} />))
+
+    expect(previewSurfaceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tooltipClassName: 'z-[70]',
+        actionMenuContentClassName: 'z-[70]'
+      })
     )
   })
 

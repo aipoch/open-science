@@ -62,25 +62,47 @@ const ActionMenuTargetInner = <ActionId extends string, Invocation>(
     dangerClassName,
     renderLabel,
     onRestoreFocus,
-    asChild: _asChild,
+    asChild,
     children,
     onContextMenu,
     ...slotProps
   }: ActionMenuTargetProps<ActionId, Invocation>,
   forwardedRef: Ref<HTMLElement>
 ): React.JSX.Element => {
+  if (!asChild) throw new Error('ActionMenuTarget requires asChild.')
+
   const provider = useActionMenuProviderContext()
-  const currentRef = useRef<CurrentTarget<ActionId, Invocation>>(undefined)
-  currentRef.current = {
-    spec: { identityKey, catalog, recipe, bindings },
-    invocation,
-    resolveInvocation,
-    compact,
-    dangerClassName,
-    renderLabel,
-    restoreFocus: onRestoreFocus
-  }
-  const registrationKey = useMemo(() => Symbol(targetId), [identityKey, targetId])
+  const current = useMemo<CurrentTarget<ActionId, Invocation>>(
+    () => ({
+      spec: { identityKey, catalog, recipe, bindings },
+      invocation,
+      resolveInvocation,
+      compact,
+      dangerClassName,
+      renderLabel,
+      restoreFocus: onRestoreFocus
+    }),
+    [
+      bindings,
+      catalog,
+      compact,
+      dangerClassName,
+      identityKey,
+      invocation,
+      onRestoreFocus,
+      recipe,
+      renderLabel,
+      resolveInvocation
+    ]
+  )
+  const currentRef = useRef(current)
+  useLayoutEffect(() => {
+    currentRef.current = current
+  }, [current])
+  const registrationKey = useMemo(
+    () => Symbol(`${targetId}:${identityKey}`),
+    [identityKey, targetId]
+  )
 
   const registration = useMemo<ActionMenuRegistration>(
     () => ({
@@ -112,9 +134,38 @@ const ActionMenuTargetInner = <ActionId extends string, Invocation>(
     [identityKey, registrationKey, targetId]
   )
 
-  useLayoutEffect(() => provider.registerTarget(registration), [provider, registration])
+  const { registerTarget } = provider
+  useLayoutEffect(() => registerTarget(registration), [registerTarget, registration])
 
-  const snapshot = registration.snapshot(invocation)
+  const snapshot = useMemo<ActionMenuSnapshot>(
+    () => ({
+      targetId,
+      identityKey,
+      registrationKey,
+      spec: { identityKey, catalog, recipe, bindings } as unknown as ActionMenuSpec<
+        string,
+        unknown
+      >,
+      invocation,
+      compact,
+      dangerClassName,
+      renderLabel: renderLabel as ActionMenuLabelRenderer<string> | undefined,
+      restoreFocus: onRestoreFocus
+    }),
+    [
+      bindings,
+      catalog,
+      compact,
+      dangerClassName,
+      identityKey,
+      invocation,
+      onRestoreFocus,
+      recipe,
+      registrationKey,
+      renderLabel,
+      targetId
+    ]
+  )
   const controller = useMemo<ActionMenuTargetController<ActionId>>(
     () => ({
       entries: provider.resolveEntries(snapshot) as ReturnType<

@@ -19,7 +19,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { errorDetail } from '@/lib/error-detail'
-import { usePreviewActions } from './preview-actions/preview-action-adapter'
+import { usePreviewActions } from './preview-actions/preview-action-hooks'
 
 export type LocalFileActionFailure = Readonly<{
   title: string
@@ -116,10 +116,8 @@ export const LocalFileHeaderActions = ({
   const identityEntries = previewActions.entries.filter(
     (entry) => entry.kind === 'action' && entry.action === 'copy-path'
   )
-  const machineEntries = previewActions.entries.filter(
-    (entry) =>
-      entry.kind === 'action' &&
-      (entry.action === 'download' || entry.action === 'save-as-artifact')
+  const machineEntries = (['download', 'save-as-artifact'] as const).flatMap((action) =>
+    previewActions.entries.filter((entry) => entry.kind === 'action' && entry.action === action)
   )
 
   return (

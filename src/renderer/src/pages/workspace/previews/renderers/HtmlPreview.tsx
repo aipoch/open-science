@@ -11,7 +11,7 @@ import { useManagedPreviewResource } from '../useManagedPreviewResource'
 import { usePreviewFileContent } from '../usePreviewFileContent'
 import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { SourcePreviewContent } from './SourcePreview'
-import { useRegisterPreviewContextMenuFrame } from '../../preview-actions/preview-action-adapter'
+import { useRegisterPreviewContextMenuFrame } from '../../preview-actions/preview-action-hooks'
 
 type HtmlPreviewMode = 'render' | 'source'
 
