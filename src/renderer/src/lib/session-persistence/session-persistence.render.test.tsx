@@ -549,7 +549,6 @@ describe('session persistence startup', () => {
     const sessions = [manifestSession, selectedSession]
     const manifest = {
       version: SESSION_MANIFEST_VERSION,
-      lastProjectId: manifestSession.projectId,
       lastSessionId: manifestSession.id
     }
     loadAll
@@ -579,7 +578,6 @@ describe('session persistence startup', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe(selectedSession.id)
     expect(saveManifest).toHaveBeenCalledOnce()
     expect(saveManifest).toHaveBeenCalledWith({
-      lastProjectId: selectedSession.projectId,
       lastSessionId: selectedSession.id
     })
     expect(container.querySelector('div')?.dataset.ready).toBe('false')
@@ -600,7 +598,6 @@ describe('session persistence startup', () => {
       sessions: [manifestSession],
       manifest: {
         version: SESSION_MANIFEST_VERSION,
-        lastProjectId: manifestSession.projectId,
         lastSessionId: manifestSession.id
       }
     }
@@ -622,10 +619,7 @@ describe('session persistence startup', () => {
     expect(container.querySelector('div')?.dataset.ready).toBe('true')
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
     expect(saveManifest).toHaveBeenCalledOnce()
-    expect(saveManifest).toHaveBeenCalledWith({
-      lastProjectId: undefined,
-      lastSessionId: undefined
-    })
+    expect(saveManifest).toHaveBeenCalledWith({ lastSessionId: undefined })
   })
 
   it('keeps persistence blocked until a failed retry manifest write succeeds', async () => {
@@ -659,7 +653,6 @@ describe('session persistence startup', () => {
       sessions: [manifestSession],
       manifest: {
         version: SESSION_MANIFEST_VERSION,
-        lastProjectId: manifestSession.projectId,
         lastSessionId: manifestSession.id
       }
     }

@@ -152,7 +152,7 @@ describe('SessionPersistenceCoordinator contracts', () => {
         order.push('mutation:recovered')
       })
     ).resolves.toBeUndefined()
-    await expect(coordinator.saveManifest({ lastProjectId: 'project-1' })).resolves.toBeUndefined()
+    await expect(coordinator.saveManifest({ lastSessionId: undefined })).resolves.toBeUndefined()
     expect(order.slice(-2)).toEqual(['mutation:recovered', 'manifest'])
     expect(repository.saveManifest).toHaveBeenCalledTimes(2)
   })

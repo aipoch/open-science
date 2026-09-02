@@ -845,8 +845,6 @@ export type SessionConflictRebaseField =
   | 'autoReviewEnabled'
   | 'memoryEnabled'
   | 'agentConfiguration'
-  | 'enabledComputeHosts'
-  | 'selectedComputeHosts'
   | 'pinned'
 
 export type SaveSessionOptions = {
@@ -4392,10 +4390,9 @@ export const normalizeSessionFile = (
   return decoded.status === 'ok' ? decoded.session : undefined
 }
 
-// Tiny app-level pointer restoring the last-open project + session after a restart.
+// Tiny app-level pointer restoring the last-open Session after a restart.
 export type PersistedSessionManifest = {
   version: typeof SESSION_MANIFEST_VERSION
-  lastProjectId?: string
   lastSessionId?: string
 }
 
@@ -4409,10 +4406,8 @@ export const normalizeSessionManifest = (value: unknown): PersistedSessionManife
   if (!isRecord(value)) return createEmptySessionManifest()
 
   const manifest: PersistedSessionManifest = { version: SESSION_MANIFEST_VERSION }
-  const lastProjectId = asString(value.lastProjectId)
   const lastSessionId = asString(value.lastSessionId)
 
-  if (lastProjectId) manifest.lastProjectId = lastProjectId
   if (lastSessionId) manifest.lastSessionId = lastSessionId
 
   return manifest
@@ -4569,7 +4564,6 @@ export type UpdateSessionArchiveRequest = {
 }
 
 export type SaveSessionManifestRequest = {
-  lastProjectId?: string
   lastSessionId?: string
 }
 

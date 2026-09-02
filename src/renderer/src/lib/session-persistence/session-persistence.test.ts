@@ -1063,8 +1063,7 @@ describe('renderer session persistence bridge', () => {
     await save(useSessionStore.getState())
 
     expect(api.saveManifest).toHaveBeenCalledWith({
-      lastSessionId: 'session-2',
-      lastProjectId: 'project-b'
+      lastSessionId: 'session-2'
     })
   })
 

@@ -1435,8 +1435,7 @@ const createStoreSaver = (
           run: async () => {
             try {
               await persistence.saveManifest({
-                lastSessionId: state.selectedSessionId,
-                lastProjectId: selectedSession?.projectId
+                lastSessionId: state.selectedSessionId
               })
             } catch (error) {
               reportPersistenceError(error, 'session-manifest-save')

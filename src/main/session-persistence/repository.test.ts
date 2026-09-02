@@ -507,17 +507,16 @@ describe('session persistence repository (per-session files)', () => {
   it('recovers a valid historical manifest temp when the primary is missing', async () => {
     const root = await createStorageRoot()
     const manifestPath = join(root, 'sessions', 'manifest.json')
-    await new SessionRepository(root).saveManifest({
-      lastProjectId: 'project-a',
-      lastSessionId: 'session-1'
-    })
+    await mkdir(join(root, 'sessions'), { recursive: true })
+    await writeFile(
+      manifestPath,
+      JSON.stringify({ version: 1, lastProjectId: 'project-a', lastSessionId: 'session-1' }),
+      'utf8'
+    )
     await rename(manifestPath, `${manifestPath}.1700000000000-1.tmp`)
 
     await expect(new SessionRepository(root).loadAll()).resolves.toMatchObject({
-      manifest: {
-        lastProjectId: 'project-a',
-        lastSessionId: 'session-1'
-      }
+      manifest: { version: 1, lastSessionId: 'session-1' }
     })
     await expect(readdir(join(root, 'sessions'))).resolves.toEqual(['manifest.json'])
   })
@@ -2026,10 +2025,10 @@ describe('session persistence repository (per-session files)', () => {
   it('round-trips the manifest', async () => {
     const repository = new SessionRepository(await createStorageRoot())
 
-    await repository.saveManifest({ lastProjectId: 'project-a', lastSessionId: 'session-1' })
+    await repository.saveManifest({ lastSessionId: 'session-1' })
 
     await expect(repository.loadAll()).resolves.toMatchObject({
-      manifest: { version: 1, lastProjectId: 'project-a', lastSessionId: 'session-1' }
+      manifest: { version: 1, lastSessionId: 'session-1' }
     })
   })
 

@@ -5639,12 +5639,9 @@ describe('SessionPersistenceCoordinator', () => {
     const repository = createSessionRepository()
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
-    await coordinator.saveManifest({ lastProjectId: 'project-1', lastSessionId: 'session-1' })
+    await coordinator.saveManifest({ lastSessionId: 'session-1' })
 
-    expect(repository.saveManifest).toHaveBeenCalledWith({
-      lastProjectId: 'project-1',
-      lastSessionId: 'session-1'
-    })
+    expect(repository.saveManifest).toHaveBeenCalledWith({ lastSessionId: 'session-1' })
   })
 
   it('does not broadcast a files change when the files revision is already indexed', async () => {
