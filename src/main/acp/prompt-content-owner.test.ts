@@ -318,8 +318,10 @@ describe('AcpPromptContentOwner', () => {
     expect(snapshotPath).not.toBe(replacedPath)
     await writeFile(replacedPath, 'replaced again after prepare')
     await expect(readFile(snapshotPath)).resolves.toEqual(trustedBytes)
-    expect((await stat(dirname(snapshotPath))).mode & 0o777).toBe(0o700)
-    expect((await stat(snapshotPath)).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect((await stat(dirname(snapshotPath))).mode & 0o777).toBe(0o700)
+      expect((await stat(snapshotPath)).mode & 0o777).toBe(0o600)
+    }
     expect(trustedLease.copyTo).toHaveBeenCalledWith(snapshotPath, { exclusive: true })
     expect(trustedLease.close).toHaveBeenCalledOnce()
 

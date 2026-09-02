@@ -37,8 +37,8 @@ describe('Notebook filesystem policy', () => {
         deniedWriteRoots: []
       })
     ).toMatchObject({
-      readOnlyRoots: [realpathSync(root)],
-      readWriteRoots: [realpathSync(nested)]
+      readOnlyRoots: [absolutePhysicalPath(root)],
+      readWriteRoots: [absolutePhysicalPath(nested)]
     })
   })
 

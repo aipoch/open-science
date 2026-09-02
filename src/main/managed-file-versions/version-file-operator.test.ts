@@ -19,6 +19,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 let cleanupRoot: string | undefined
 
+// NTFS refuses to rename a directory while a descendant file handle is still open, so parent-swap
+// cases that depend on that TOCTOU stay POSIX-only. Windows still fail-closes at the OS rename.
+const posixIt = process.platform === 'win32' ? it.skip : it
+
 afterEach(async () => {
   if (cleanupRoot) await rm(cleanupRoot, { recursive: true, force: true })
   cleanupRoot = undefined
@@ -264,7 +268,7 @@ describe('NodeVersionFileOperator', () => {
     await rm(outsideRoot, { recursive: true, force: true })
   })
 
-  it('fails closed when the version parent changes during a claim transition', async () => {
+  posixIt('fails closed when the version parent changes during a claim transition', async () => {
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
     const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-outside-'))
@@ -1192,7 +1196,7 @@ describe('NodeVersionFileOperator', () => {
     await rm(outsideRoot, { recursive: true, force: true })
   })
 
-  it('fails closed when the version parent changes after content is synced', async () => {
+  posixIt('fails closed when the version parent changes after content is synced', async () => {
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
     const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-outside-'))
@@ -1571,7 +1575,7 @@ describe('NodeVersionFileOperator', () => {
     await expect(readFile(heldAsidePath)).resolves.toHaveLength(0)
   })
 
-  it('fails closed when the version parent changes during incomplete cleanup', async () => {
+  posixIt('fails closed when the version parent changes during incomplete cleanup', async () => {
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
     const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-outside-'))
@@ -1791,6 +1795,7 @@ describe('NodeVersionFileOperator', () => {
   })
 
   it('scrubs only the held immutable inode when the parent changes during content removal', async () => {
+    if (process.platform === 'win32') return
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
     const outsideRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-outside-'))

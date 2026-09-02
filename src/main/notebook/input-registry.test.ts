@@ -154,7 +154,7 @@ const createArtifact = async (input: {
 }
 
 const setup = async (): Promise<NotebookInputRegistry> => {
-  storageRoot = await mkdtemp(join(tmpdir(), 'open-science-input-registry-'))
+  storageRoot = await realpath(await mkdtemp(join(tmpdir(), 'open-science-input-registry-')))
   client = createProjectDbClient(storageRoot)
   await migrateApplicationDatabase(client)
   await client.project.createMany({

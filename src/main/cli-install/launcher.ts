@@ -401,7 +401,7 @@ const isDirectRegularFile = (stats: Stats): boolean =>
 const isSameFile = (left: Stats, right: Stats): boolean =>
   left.dev === right.dev && left.ino === right.ino
 
-type OpenCliLauncher = { handle: FileHandle; stats: Stats }
+type OpenCliLauncher = { handle: FileHandle; stats: Stats; closed?: boolean }
 
 // Open only a direct, single-link regular file and verify that the path still resolves to the same
 // inode after opening it. O_NOFOLLOW closes the lstat/open gap on POSIX; the identity checks provide
@@ -543,6 +543,10 @@ const replaceCliLauncher = async (
     ) {
       refuseUnmanagedCliLauncher(plan.target)
     }
+    // NTFS cannot replace a path while this process still holds it open. Identity checks are
+    // complete; close before rename so Windows and POSIX share one publish sequence.
+    await expected.handle.close()
+    expected.closed = true
     await rename(temporaryPath, plan.target)
     published = true
     await defaultFileDurability.syncDirectory(plan.binDir)
@@ -616,7 +620,7 @@ export const installCliLauncher = async (
       await replaceCliLauncher(plan, opened)
       written = true
     } finally {
-      await opened.handle.close()
+      if (!opened.closed) await opened.handle.close()
     }
   }
   if (!written) throw new Error(`The CLI launcher path kept changing: ${plan.target}`)
@@ -642,7 +646,7 @@ export const uninstallCliLauncher = async (
   runCommand: CommandRunner = defaultRunCommand
 ): Promise<CliLauncherStatus> => {
   const plan = planCliLauncher(env)
-  const opened = await openStableCliLauncher(plan.target, constants.O_RDONLY)
+  let opened = await openStableCliLauncher(plan.target, constants.O_RDONLY)
   let pathJournal: OpenCliLauncher | undefined
   try {
     if (opened !== undefined) {
@@ -704,6 +708,9 @@ export const uninstallCliLauncher = async (
       if (!isDirectRegularFile(final) || !isSameFile(opened.stats, final)) {
         refuseUnmanagedCliLauncher(plan.target)
       }
+      await opened.handle.close()
+      opened.closed = true
+      opened = undefined
       await rm(plan.target)
     }
   } finally {

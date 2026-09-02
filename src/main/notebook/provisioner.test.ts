@@ -50,6 +50,7 @@ import {
 } from './operation-journal'
 
 const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'os-prov-'))
+const TEST_WINDOWS_PATH_BUDGET = { maxCacheRelativePath: 1, maxEnvRelativePath: 1 } as const
 const RELOCATION_ARCHIVE = 'x-1.conda'
 const RELOCATION_ARCHIVE_CONTENT = 'relocation archive'
 const RELOCATION_ARCHIVE_MD5 = createHash('md5').update(RELOCATION_ARCHIVE_CONTENT).digest('hex')
@@ -78,7 +79,8 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
     mm: '/mm',
     channel: 'conda-forge',
     fetchBundle: async (spec): Promise<FetchedBundle> => ({
-      lockPath: join(root, `${spec.name}.lock`)
+      lockPath: join(root, `${spec.name}.lock`),
+      pathBudget: TEST_WINDOWS_PATH_BUDGET
     }),
     runArgv: async (argv: string[]): Promise<void> => {
       // argv[3] is --prefix / -p value depending on form; find the prefix and drop a bin file.
@@ -116,7 +118,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
         cache: { path: cachePath, lockKey: 'selected-cache-key' },
         fetchBundle: async () => {
           order.push('fetch')
-          return { lockPath: join(root, 'python.lock') }
+          return { lockPath: join(root, 'python.lock'), pathBudget: TEST_WINDOWS_PATH_BUDGET }
         },
         maintainCache: async (cache, onBeforeSpawn, onChild) => {
           expect(cache.path).toBe(cachePath)
@@ -247,7 +249,10 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     const argvs: string[][] = []
     const lockPath = join(root, 'default-python.lock')
     const deps = makeDeps(root, {
-      fetchBundle: async (): Promise<FetchedBundle> => ({ lockPath }),
+      fetchBundle: async (): Promise<FetchedBundle> => ({
+        lockPath,
+        pathBudget: TEST_WINDOWS_PATH_BUDGET
+      }),
       runArgv: async (argv) => {
         argvs.push(argv)
         const bin = pythonBin(envPrefix(root, DEFAULT_PY_ENV))
@@ -476,7 +481,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     writeFileSync(join(prefix, 'stale-file'), 'stale')
     let verifyCalls = 0
     const fetchBundle = vi.fn(async (): Promise<FetchedBundle> => ({
-      lockPath: join(root, 'python-3.12.lock')
+      lockPath: join(root, 'python-3.12.lock'),
+      pathBudget: TEST_WINDOWS_PATH_BUDGET
     }))
     const runArgv = vi.fn(async () => {
       expect(existsSync(join(prefix, 'stale-file'))).toBe(false)
@@ -509,7 +515,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
 
     let creates = 0
     const fetchBundle = vi.fn(async (): Promise<FetchedBundle> => ({
-      lockPath: join(root, 'python-3.12.lock')
+      lockPath: join(root, 'python-3.12.lock'),
+      pathBudget: TEST_WINDOWS_PATH_BUDGET
     }))
     const runArgv = vi.fn(async () => {
       creates += 1
@@ -546,7 +553,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
 
     let creates = 0
     const fetchBundle = vi.fn(async (): Promise<FetchedBundle> => ({
-      lockPath: join(root, 'python-3.12.lock')
+      lockPath: join(root, 'python-3.12.lock'),
+      pathBudget: TEST_WINDOWS_PATH_BUDGET
     }))
     const runArgv = vi.fn(async () => {
       creates += 1
@@ -693,7 +701,10 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
       writeFileSync(bin, 'ok')
     })
     const deps = makeDeps(root, {
-      fetchBundle: async () => ({ lockPath: join(root, 'python-3.12.lock') }),
+      fetchBundle: async () => ({
+        lockPath: join(root, 'python-3.12.lock'),
+        pathBudget: TEST_WINDOWS_PATH_BUDGET
+      }),
       runArgv
     })
 
@@ -726,7 +737,10 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
       writeFileSync(bin, 'ok')
     })
     const deps = makeDeps(root, {
-      fetchBundle: vi.fn(async (): Promise<FetchedBundle> => ({ lockPath: join(root, 'p.lock') })),
+      fetchBundle: vi.fn(async (): Promise<FetchedBundle> => ({
+        lockPath: join(root, 'p.lock'),
+        pathBudget: TEST_WINDOWS_PATH_BUDGET
+      })),
       runArgv
     })
 
@@ -761,7 +775,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     const provisioner = new DefaultRuntimeProvisioner(
       makeDeps(root, {
         fetchBundle: vi.fn(async (): Promise<FetchedBundle> => ({
-          lockPath: join(root, 'p.lock')
+          lockPath: join(root, 'p.lock'),
+          pathBudget: TEST_WINDOWS_PATH_BUDGET
         })),
         runArgv: vi.fn(async function firstCreate() {
           // Simulate the user cancelling right as the create fails with a cache signature: the abort

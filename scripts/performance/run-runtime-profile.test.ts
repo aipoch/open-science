@@ -19,7 +19,12 @@ appendFileSync(process.env.RUNTIME_PROFILE_INVOCATION_LOG, JSON.stringify(proces
 
     try {
       const environment = Object.fromEntries(
-        Object.entries(process.env).filter(([name]) => name.toLowerCase() !== 'path')
+        Object.entries(process.env).filter(([name]) => {
+          // The launcher must not depend on `npm` being on PATH. Windows still needs PATH so
+          // node.exe can load its DLLs; stripping it hangs spawnSync until the timeout.
+          if (process.platform === 'win32') return true
+          return name.toLowerCase() !== 'path'
+        })
       )
       const result = spawnSync(
         process.execPath,
@@ -39,7 +44,7 @@ appendFileSync(process.env.RUNTIME_PROFILE_INVOCATION_LOG, JSON.stringify(proces
             npm_execpath: npmCliPath,
             RUNTIME_PROFILE_INVOCATION_LOG: invocationLog
           },
-          timeout: 10_000
+          timeout: 30_000
         }
       )
 

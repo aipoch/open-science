@@ -101,7 +101,7 @@ const makeFixture = (): Fixture => {
       .join(';')
   }
   const userIdentity = [env.USERDOMAIN, env.USERNAME].filter(Boolean).join('\\')
-  const managedParent = join(configuredTemp, 'OpenScienceTmp')
+  const managedParent = join(realpathSync.native(configuredTemp), 'OpenScienceTmp')
   const cachePath = micromambaWorkingCachePaths(runtimeRoot, {
     platform: 'win32',
     env
