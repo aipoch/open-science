@@ -430,7 +430,8 @@ export const createCodexFramework = ({
     await prepareCodexRuntimeHomeAuthentication({
       sourceHome: backend.env.CODEX_HOME,
       runtimeHome,
-      useSubscriptionAuthentication: backend.providerId === CODEX_SUBSCRIPTION_PROVIDER_ID
+      useSubscriptionAuthentication: backend.providerId === CODEX_SUBSCRIPTION_PROVIDER_ID,
+      subscriptionTransport: backend.codexSubscriptionTransport
     })
     return {
       executablePath: backend.executablePath,

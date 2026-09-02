@@ -396,10 +396,12 @@ export class AgentBackendResolver {
       }
     }
 
-    if (framework.id === 'codex' && isCodexSubscriptionProvider(target.provider.type)) {
-      await this.ensureCodexSubscriptionHome(
-        resolveEffectiveCodexSubscriptionTransport(target.provider)
-      )
+    const codexSubscriptionTransport =
+      framework.id === 'codex' && isCodexSubscriptionProvider(target.provider.type)
+        ? resolveEffectiveCodexSubscriptionTransport(target.provider)
+        : undefined
+    if (codexSubscriptionTransport) {
+      await this.ensureCodexSubscriptionHome(codexSubscriptionTransport)
     }
     const backendProviderId = plan.backendProviderId
     if (framework.supportsSkills || framework.id === 'codebuddy') {
@@ -466,6 +468,7 @@ export class AgentBackendResolver {
       return {
         framework,
         providerId: target.providerId,
+        ...(codexSubscriptionTransport ? { codexSubscriptionTransport } : {}),
         backendId: `${framework.id}:${backendProviderId}`,
         modelRoute,
         ...(modelRoute === 'codex-bridge' && responsesBridge?.continuityToken

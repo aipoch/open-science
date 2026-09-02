@@ -190,6 +190,57 @@ describe('codexFramework', () => {
     }
   })
 
+  it.each([
+    ['https', 'open-science-chatgpt-https', false],
+    ['websocket', 'open-science-chatgpt-websocket', true]
+  ] as const)(
+    'projects the resolved %s subscription transport into a delegated runtime home',
+    async (codexSubscriptionTransport, providerId, supportsWebsockets) => {
+      const root = await mkdtemp(join(tmpdir(), 'codex-delegated-transport-'))
+      const sourceHome = join(root, 'subscription')
+      const runtimeHome = join(root, 'runtime')
+      await mkdir(sourceHome, { recursive: true })
+      await writeFile(join(sourceHome, 'auth.json'), '{"tokens":{"access_token":"secret"}}\n')
+      // This is the app-owned non-loopback route used by subscription sessions. It is deliberately
+      // not imported as an arbitrary provider route; the trusted resolved transport below owns it.
+      await writeFile(
+        join(sourceHome, 'config.toml'),
+        [
+          'model_provider = "open-science-chatgpt-https"',
+          '',
+          '[model_providers."open-science-chatgpt-https"]',
+          'name = "OpenAI HTTPS"',
+          'base_url = "https://chatgpt.com/backend-api/codex"',
+          'wire_api = "responses"',
+          'requires_openai_auth = true',
+          'supports_websockets = false',
+          ''
+        ].join('\n')
+      )
+
+      try {
+        const framework = createCodexFramework({ platform: 'darwin' })
+        await framework.prepareDelegatedSpawn!(
+          {
+            framework,
+            providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+            codexSubscriptionTransport,
+            executablePath: '/runtime/codex-acp',
+            env: { CODEX_HOME: sourceHome }
+          },
+          runtimeHome
+        )
+
+        const configToml = await readFile(join(runtimeHome, 'config.toml'), 'utf8')
+        expect(configToml).toContain(`model_provider = "${providerId}"`)
+        expect(configToml).toContain('base_url = "https://chatgpt.com/backend-api/codex"')
+        expect(configToml).toContain(`supports_websockets = ${String(supportsWebsockets)}`)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('does not copy stale subscription authentication for an API-key delegated backend', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-delegated-api-key-'))
     const sourceHome = join(root, 'shared-codex-home')

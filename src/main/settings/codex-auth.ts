@@ -657,7 +657,8 @@ const readCodexAuthenticationSnapshot = async (
 const writeCodexAuthenticationSnapshot = async (
   snapshot: CodexAuthenticationSnapshot | undefined,
   destinationHome: string,
-  credentialStore?: 'file' | 'ephemeral'
+  credentialStore?: 'file' | 'ephemeral',
+  subscriptionTransport: CodexSubscriptionTransport = 'auto'
 ): Promise<void> => {
   const destinationPath = join(destinationHome, 'auth.json')
   const destinationConfigPath = join(destinationHome, 'config.toml')
@@ -672,9 +673,9 @@ const writeCodexAuthenticationSnapshot = async (
   let nextConfigToml = snapshot?.providerRoute
     ? serializeImportedCodexProviderRoute(snapshot.providerRoute, existingConfigToml)
     : removeImportedCodexProviderRoute(existingConfigToml)
-  // Imported routes stay authoritative; aligning on 'auto' only removes a stale owned transport
-  // route left behind in a reused runtime home (subscription transport stays a runtime decision).
-  nextConfigToml = serializeCodexSubscriptionTransport(nextConfigToml, 'auto')
+  // Imported loopback routes stay authoritative. Otherwise project the effective app-owned
+  // subscription transport selected by Settings into this disposable runtime home.
+  nextConfigToml = serializeCodexSubscriptionTransport(nextConfigToml, subscriptionTransport)
   if (credentialStore) {
     nextConfigToml = serializeCodexCredentialStore(nextConfigToml, credentialStore)
   }
@@ -702,23 +703,31 @@ export const importCodexAuthentication = async (
 }
 
 // Runtime profiles start from a fresh app-owned home. Subscription backends receive one sanitized
-// authentication snapshot; every other backend is pinned to ephemeral ACP authentication and clears
-// any stale file credential or imported route already present in a reused runtime home.
+// authentication snapshot plus the transport already resolved by Settings; every other backend is
+// pinned to ephemeral ACP authentication and clears any stale file credential or imported route
+// already present in a reused runtime home.
 export const prepareCodexRuntimeHomeAuthentication = async ({
   sourceHome,
   runtimeHome,
-  useSubscriptionAuthentication
+  useSubscriptionAuthentication,
+  subscriptionTransport
 }: Readonly<{
   sourceHome?: string
   runtimeHome: string
   useSubscriptionAuthentication: boolean
+  subscriptionTransport?: CodexSubscriptionTransport
 }>): Promise<void> => {
   const snapshot =
     useSubscriptionAuthentication && sourceHome
       ? await readCodexAuthenticationSnapshot(sourceHome, false)
       : undefined
 
-  await writeCodexAuthenticationSnapshot(snapshot, runtimeHome, snapshot ? 'file' : 'ephemeral')
+  await writeCodexAuthenticationSnapshot(
+    snapshot,
+    runtimeHome,
+    snapshot ? 'file' : 'ephemeral',
+    useSubscriptionAuthentication ? subscriptionTransport : undefined
+  )
 }
 
 export const clearImportedCodexProviderRoute = async (destinationHome: string): Promise<void> => {

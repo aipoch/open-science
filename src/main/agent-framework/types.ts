@@ -3,7 +3,11 @@ import type { ClientConnection, McpServer, SessionModeState } from '@agentclient
 
 import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { AgentFrameworkId, ChatApiEndpoint } from '../../shared/settings'
+import type {
+  AgentFrameworkId,
+  ChatApiEndpoint,
+  CodexSubscriptionTransport
+} from '../../shared/settings'
 import type {
   CustomReasoningEffortTransport,
   ModelReasoningEffort,
@@ -310,6 +314,10 @@ export type ResolvedAgentBackend = {
   // Stable app provider/account identity used for usage attribution. This remains separate from
   // backendId because a framework may normalize provider selections onto one session store.
   providerId?: string
+  // Effective transport for an app-owned Codex subscription profile. Settings resolves Auto and
+  // its learned HTTPS fallback once; disposable child/restricted homes project this exact choice
+  // instead of re-reading or guessing it from a sanitized config snapshot.
+  codexSubscriptionTransport?: CodexSubscriptionTransport
   // Stable identity of the framework/provider storage boundary. Two providers can use the same
   // framework while keeping incompatible session stores (for example Codex shared vs isolated login).
   backendId?: string

@@ -133,7 +133,8 @@ const prepareCodexBackend = async (
   await prepareCodexRuntimeHomeAuthentication({
     sourceHome: backend.env.CODEX_HOME,
     runtimeHome: codexHome,
-    useSubscriptionAuthentication: backend.providerId === CODEX_SUBSCRIPTION_PROVIDER_ID
+    useSubscriptionAuthentication: backend.providerId === CODEX_SUBSCRIPTION_PROVIDER_ID,
+    subscriptionTransport: backend.codexSubscriptionTransport
   })
   const codexConfig = record(JSON.parse(backend.env.CODEX_CONFIG ?? '{}'))
   delete codexConfig.developer_instructions
