@@ -497,6 +497,9 @@ export const createSessionMessageGraphOwner = <
       ...(source.selectedComputeHosts
         ? { selectedComputeHosts: [...source.selectedComputeHosts] }
         : {}),
+      ...(source.computeConcurrencyLimit !== undefined
+        ? { computeConcurrencyLimit: source.computeConcurrencyLimit }
+        : {}),
       ...(nextSpecialistId ? { specialistId: nextSpecialistId } : {}),
       messages,
       activities: sourceActivities.map((activity) => copySnapshotActivity(activity, sessionId)),

@@ -6044,6 +6044,7 @@ describe('branchInNewSession', () => {
               autoReviewEnabled: true,
               memoryEnabled: false,
               enabledComputeHosts: ['ssh:build'],
+              computeConcurrencyLimit: 2,
               filesRevision: 7,
               artifacts: [
                 {
@@ -6109,6 +6110,7 @@ describe('branchInNewSession', () => {
       delegationPolicy: 'deny',
       memoryEnabled: false,
       enabledComputeHosts: ['ssh:build'],
+      computeConcurrencyLimit: 2,
       branchSource: {
         sessionId: 'source-session',
         agentFrameId: sourceFrame?.id,

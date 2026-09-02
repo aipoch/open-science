@@ -2744,9 +2744,10 @@ describe('renderer session persistence bridge', () => {
   })
 
   it('rebases an explicit Session save over a disjoint concurrent main-process update', async () => {
-    const base = createPersistedSession({ revision: 8 })
+    const base = createPersistedSession({ revision: 8, computeConcurrencyLimit: 1 })
     const submitted = createPersistedSession({
       revision: 8,
+      computeConcurrencyLimit: 2,
       messages: [
         {
           id: 'message-1',
@@ -2762,6 +2763,7 @@ describe('renderer session persistence bridge', () => {
     })
     const latest = createPersistedSession({
       revision: 9,
+      computeConcurrencyLimit: 3,
       runtimeContext: {
         version: 1,
         revision: 1,
@@ -2810,6 +2812,7 @@ describe('renderer session persistence bridge', () => {
     await expect(explicitSave).resolves.toMatchObject({
       revision: 10,
       messages: submitted.messages,
+      computeConcurrencyLimit: latest.computeConcurrencyLimit,
       runtimeContext: latest.runtimeContext
     })
     await expect(laterSave).resolves.toMatchObject({
@@ -2820,6 +2823,7 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession.mock.calls[1][0]).toMatchObject({
       revision: 9,
       messages: submitted.messages,
+      computeConcurrencyLimit: latest.computeConcurrencyLimit,
       runtimeContext: latest.runtimeContext
     })
     expect(saveSession.mock.calls[2][0]).toMatchObject({
