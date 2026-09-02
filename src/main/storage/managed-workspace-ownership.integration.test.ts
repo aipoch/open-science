@@ -247,6 +247,31 @@ describe('managed workspace ownership', () => {
     await expect(readdir(externalOwnership)).resolves.toEqual(['workspace-1.json'])
   })
 
+  it('does not follow a symlinked workspaces root for receipt writes or removals', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-linked-root-'))
+    const externalWorkspaces = await mkdtemp(join(tmpdir(), 'managed-workspace-external-root-'))
+    roots.push(dataRoot, externalWorkspaces)
+    initDataRoot(dataRoot)
+    const cwd = join(dataRoot, 'workspaces', 'workspace-1')
+    await mkdir(join(externalWorkspaces, 'workspace-1'))
+    await symlink(
+      externalWorkspaces,
+      join(dataRoot, 'workspaces'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    await expect(
+      initializeManagedWorkspaceOwnership(cwd, 'project-1', 10, dataRoot)
+    ).rejects.toThrow(/workspace/i)
+    await mkdir(join(externalWorkspaces, '.ownership'))
+    await writeFile(join(externalWorkspaces, '.ownership', 'workspace-1.json'), 'external receipt')
+
+    await expect(removeManagedWorkspaceOwnership(cwd, dataRoot)).resolves.toBeUndefined()
+    await expect(readdir(join(externalWorkspaces, '.ownership'))).resolves.toEqual([
+      'workspace-1.json'
+    ])
+  })
+
   it('restores active ownership when Session authority deletion fails', async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-delete-failure-'))
     roots.push(dataRoot)

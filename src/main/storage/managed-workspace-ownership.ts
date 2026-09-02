@@ -23,6 +23,7 @@ type ManagedWorkspaceOwnership = Readonly<{
 }>
 
 type ManagedWorkspaceLocation = Readonly<{
+  workspacesRoot: string
   directory: string
   workspaceId: string
   ownershipDirectory: string
@@ -89,11 +90,26 @@ const locateManagedWorkspace = (
   }
   const ownershipDirectory = join(workspacesRoot, MANAGED_WORKSPACE_OWNERSHIP_DIR)
   return {
+    workspacesRoot,
     directory,
     workspaceId,
     ownershipDirectory,
     receiptPath: join(ownershipDirectory, `${workspaceId}.json`)
   }
+}
+
+const assertWorkspacesRoot = async (location: ManagedWorkspaceLocation): Promise<boolean> => {
+  let info
+  try {
+    info = await lstat(location.workspacesRoot)
+  } catch (error) {
+    if (isFileSystemError(error, 'ENOENT')) return false
+    throw error
+  }
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new Error('Managed workspaces root must be a regular directory.')
+  }
+  return true
 }
 
 const assertManagedWorkspaceDirectory = async (
@@ -102,6 +118,7 @@ const assertManagedWorkspaceDirectory = async (
 ): Promise<ManagedWorkspaceLocation | undefined> => {
   const location = locateManagedWorkspace(cwd, dataRoot)
   if (!location) return undefined
+  if (!(await assertWorkspacesRoot(location))) return undefined
   let info
   try {
     info = await lstat(location.directory)
@@ -116,6 +133,7 @@ const assertManagedWorkspaceDirectory = async (
 }
 
 const assertOwnershipDirectory = async (location: ManagedWorkspaceLocation): Promise<boolean> => {
+  if (!(await assertWorkspacesRoot(location))) return false
   let info
   try {
     info = await lstat(location.ownershipDirectory)
@@ -130,6 +148,9 @@ const assertOwnershipDirectory = async (location: ManagedWorkspaceLocation): Pro
 }
 
 const ensureOwnershipDirectory = async (location: ManagedWorkspaceLocation): Promise<void> => {
+  if (!(await assertWorkspacesRoot(location))) {
+    throw new Error('Managed workspaces root is missing.')
+  }
   try {
     await mkdir(location.ownershipDirectory, { recursive: false })
   } catch (error) {
