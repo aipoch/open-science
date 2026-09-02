@@ -358,8 +358,10 @@ import {
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import { DataRootCleanupJournal } from './storage/data-root-cleanup'
 import {
+  markManagedProjectWorkspacesRetained,
   markManagedWorkspaceRetained,
   reconcileProvisionalManagedWorkspaces,
+  restoreManagedProjectWorkspacesActive,
   restoreManagedWorkspaceActive
 } from './storage/managed-workspace-ownership'
 import { deleteSources } from './storage/data-migration'
@@ -1037,6 +1039,8 @@ const createApplicationModules = async (
     {
       reconcileProvisional: (sessions) =>
         reconcileProvisionalManagedWorkspaces(sessions, managedWorkspaceRecoveryCutoff),
+      markProjectRetained: markManagedProjectWorkspacesRetained,
+      restoreProjectActive: restoreManagedProjectWorkspacesActive,
       markRetained: markManagedWorkspaceRetained,
       restoreActive: restoreManagedWorkspaceActive
     }

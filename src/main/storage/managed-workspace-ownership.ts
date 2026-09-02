@@ -153,6 +153,23 @@ const assertOwnershipDirectoryPath = async (
 const assertOwnershipDirectory = (location: ManagedWorkspaceLocation): Promise<boolean> =>
   assertOwnershipDirectoryPath(location.workspacesRoot, location.ownershipDirectory)
 
+const listManagedWorkspaceOwnershipLocations = async (
+  dataRoot: string
+): Promise<ManagedWorkspaceLocation[]> => {
+  const workspacesRoot = resolve(dataRoot, 'workspaces')
+  const ownershipDirectory = join(workspacesRoot, MANAGED_WORKSPACE_OWNERSHIP_DIR)
+  if (!(await assertOwnershipDirectoryPath(workspacesRoot, ownershipDirectory))) return []
+
+  const locations: ManagedWorkspaceLocation[] = []
+  for (const entry of await readdir(ownershipDirectory, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+    const workspaceId = entry.name.slice(0, -'.json'.length)
+    const location = locateManagedWorkspace(join(workspacesRoot, workspaceId), dataRoot)
+    if (location?.receiptPath === join(ownershipDirectory, entry.name)) locations.push(location)
+  }
+  return locations
+}
+
 const ensureOwnershipDirectory = async (location: ManagedWorkspaceLocation): Promise<void> => {
   if (!(await assertManagedWorkspacesRoot(location.workspacesRoot))) {
     throw new Error('Managed workspaces root is missing.')
@@ -284,29 +301,76 @@ const restoreManagedWorkspaceActive = async (
   await writeOwnership(location, { ...current, retainedAfterDelete: false })
 }
 
+const restoreManagedProjectWorkspacesActive = async (
+  projectId: string,
+  directories: readonly string[],
+  dataRoot = resolveDataRoot()
+): Promise<void> => {
+  const failures: unknown[] = []
+  for (const directory of directories) {
+    try {
+      const location = locateManagedWorkspace(directory, dataRoot)
+      if (!location) continue
+      const current = await readOwnershipForUpdate(location)
+      if (!current || !current.retainedAfterDelete) continue
+      if (current.projectId !== projectId) {
+        throw new Error('Managed workspace ownership conflicts with the restored Project.')
+      }
+      await writeOwnership(location, { ...current, retainedAfterDelete: false })
+    } catch (error) {
+      failures.push(error)
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'Managed Project workspace ownership restoration failed.')
+  }
+}
+
+const markManagedProjectWorkspacesRetained = async (
+  projectId: string,
+  dataRoot = resolveDataRoot()
+): Promise<readonly string[]> => {
+  if (!projectId.trim()) throw new Error('Managed workspace Project identity is required.')
+  const retainedDirectories: string[] = []
+  try {
+    for (const location of await listManagedWorkspaceOwnershipLocations(dataRoot)) {
+      let current: ManagedWorkspaceOwnership | undefined
+      try {
+        current = await readOwnershipForUpdate(location)
+      } catch {
+        continue
+      }
+      if (!current || current.projectId !== projectId || current.retainedAfterDelete) continue
+      retainedDirectories.push(location.directory)
+      await writeOwnership(location, { ...current, retainedAfterDelete: true })
+    }
+    return retainedDirectories
+  } catch (error) {
+    try {
+      await restoreManagedProjectWorkspacesActive(projectId, retainedDirectories, dataRoot)
+    } catch (recoveryError) {
+      throw new AggregateError(
+        [error, recoveryError],
+        'Managed Project workspace ownership retention failed and rollback was incomplete.'
+      )
+    }
+    throw error
+  }
+}
+
 const reconcileProvisionalManagedWorkspaces = async (
   sessions: readonly Pick<PersistedChatSession, 'cwd' | 'projectId' | 'id' | 'updatedAt'>[],
   createdBefore: number,
   dataRoot = resolveDataRoot()
 ): Promise<void> => {
-  const workspacesRoot = resolve(dataRoot, 'workspaces')
-  const ownershipDirectory = join(workspacesRoot, MANAGED_WORKSPACE_OWNERSHIP_DIR)
-  if (!(await assertOwnershipDirectoryPath(workspacesRoot, ownershipDirectory))) return
-
   const sessionsByDirectory = new Map<string, typeof sessions>()
   for (const session of sessions) {
     const directory = resolve(session.cwd)
     sessionsByDirectory.set(directory, [...(sessionsByDirectory.get(directory) ?? []), session])
   }
 
-  const entries = await readdir(ownershipDirectory, { withFileTypes: true })
   let firstFailure: unknown
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue
-    const workspaceId = entry.name.slice(0, -'.json'.length)
-    const location = locateManagedWorkspace(join(workspacesRoot, workspaceId), dataRoot)
-    if (!location || location.receiptPath !== join(ownershipDirectory, entry.name)) continue
-
+  for (const location of await listManagedWorkspaceOwnershipLocations(dataRoot)) {
     try {
       const ownership = await readOwnershipForUpdate(location)
       if (!ownership || ownership.sessionId || ownership.retainedAfterDelete) continue
@@ -368,10 +432,12 @@ export {
   assertManagedWorkspacesRoot,
   finalizeManagedWorkspaceOwnership,
   initializeManagedWorkspaceOwnership,
+  markManagedProjectWorkspacesRetained,
   markManagedWorkspaceRetained,
   readManagedWorkspaceOwnership,
   reconcileProvisionalManagedWorkspaces,
   removeManagedWorkspaceOwnership,
+  restoreManagedProjectWorkspacesActive,
   restoreManagedWorkspaceActive
 }
 export type { ManagedWorkspaceOwnership }

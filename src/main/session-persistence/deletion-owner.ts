@@ -99,6 +99,8 @@ type ComputeJobDeletionParticipant = {
 
 type SessionWorkspaceOwnership = {
   reconcileProvisional(sessions: readonly PersistedChatSession[]): Promise<void>
+  markProjectRetained(projectId: string): Promise<readonly string[]>
+  restoreProjectActive(projectId: string, directories: readonly string[]): Promise<void>
   markRetained(
     session: Pick<PersistedChatSession, 'cwd' | 'projectId' | 'id' | 'createdAt' | 'updatedAt'>
   ): Promise<boolean>
@@ -349,6 +351,7 @@ class SessionPersistenceDeletionOwner {
           }
         }
         const retainedWorkspaceSessions: PersistedChatSession[] = []
+        let retainedProjectWorkspaceDirectories: readonly string[] = []
         let sessionAuthorityDeleted = false
         try {
           if (this.workspaceOwnership) {
@@ -357,6 +360,10 @@ class SessionPersistenceDeletionOwner {
               if (!(await this.workspaceOwnership.markRetained(session))) {
                 retainedWorkspaceSessions.pop()
               }
+            }
+            if (!scan.isComplete) {
+              retainedProjectWorkspaceDirectories =
+                await this.workspaceOwnership.markProjectRetained(projectId)
             }
           }
           if (deletionState === 'legacy-committed') {
@@ -378,6 +385,16 @@ class SessionPersistenceDeletionOwner {
         } catch (error) {
           if (sessionAuthorityDeleted || !this.workspaceOwnership) throw error
           const recoveryErrors: unknown[] = []
+          if (retainedProjectWorkspaceDirectories.length > 0) {
+            try {
+              await this.workspaceOwnership.restoreProjectActive(
+                projectId,
+                retainedProjectWorkspaceDirectories
+              )
+            } catch (recoveryError) {
+              recoveryErrors.push(recoveryError)
+            }
+          }
           for (const session of retainedWorkspaceSessions.reverse()) {
             try {
               await this.workspaceOwnership.restoreActive(session)

@@ -3359,7 +3359,9 @@ describe('SessionPersistenceCoordinator', () => {
       undefined,
       undefined,
       {
+        markProjectRetained: vi.fn().mockResolvedValue([]),
         markRetained: vi.fn().mockResolvedValue(false),
+        restoreProjectActive: vi.fn().mockResolvedValue(undefined),
         restoreActive: vi.fn().mockResolvedValue(undefined),
         reconcileProvisional
       }

@@ -16,10 +16,12 @@ import { initDataRoot } from '../storage-root'
 import {
   finalizeManagedWorkspaceOwnership,
   initializeManagedWorkspaceOwnership,
+  markManagedProjectWorkspacesRetained,
   markManagedWorkspaceRetained,
   readManagedWorkspaceOwnership,
   reconcileProvisionalManagedWorkspaces,
   removeManagedWorkspaceOwnership,
+  restoreManagedProjectWorkspacesActive,
   restoreManagedWorkspaceActive
 } from './managed-workspace-ownership'
 import { computeStorageUsage } from './usage'
@@ -32,6 +34,7 @@ const createDeletionOwner = (
     deleteSessionError?: Error
     deleteProjectSessionsError?: Error
     markRetainedErrorAfterWrite?: Error
+    projectScanComplete?: boolean
   } = {}
 ): SessionPersistenceDeletionOwner =>
   new SessionPersistenceDeletionOwner({
@@ -39,7 +42,7 @@ const createDeletionOwner = (
       getProjectSessionDeletionState: async () => 'live',
       loadProjectWithDiagnostics: async (projectId: string) => ({
         sessions: [...liveSessions.values()].filter((session) => session.projectId === projectId),
-        isComplete: true
+        isComplete: options.projectScanComplete ?? true
       }),
       loadCommittedProjectWithDiagnostics: async (projectId: string) => ({
         sessions: [...liveSessions.values()].filter((session) => session.projectId === projectId),
@@ -81,6 +84,9 @@ const createDeletionOwner = (
     notifySessionsDeleted: vi.fn().mockResolvedValue(undefined),
     workspaceOwnership: {
       reconcileProvisional: vi.fn().mockResolvedValue(undefined),
+      markProjectRetained: (projectId) => markManagedProjectWorkspacesRetained(projectId),
+      restoreProjectActive: (projectId, directories) =>
+        restoreManagedProjectWorkspacesActive(projectId, directories),
       markRetained: async (session) => {
         const retained = await markManagedWorkspaceRetained(session)
         if (options.markRetainedErrorAfterWrite) throw options.markRetainedErrorAfterWrite
@@ -277,6 +283,64 @@ describe('managed workspace ownership', () => {
     expect([...liveSessions.keys()]).toEqual([source.id])
     await expect(readManagedWorkspaceOwnership(cwd, dataRoot)).resolves.toMatchObject({
       sessionId: source.id,
+      retainedAfterDelete: false
+    })
+  })
+
+  it('retains owned workspaces when deleting an incomplete Project catalog', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-incomplete-project-'))
+    roots.push(dataRoot)
+    initDataRoot(dataRoot)
+    const readableCwd = join(dataRoot, 'workspaces', 'workspace-readable')
+    const unreadableCwd = join(dataRoot, 'workspaces', 'workspace-unreadable')
+    await mkdir(readableCwd, { recursive: true })
+    await mkdir(unreadableCwd, { recursive: true })
+    const readableSession: PersistedChatSession = {
+      id: 'readable-session',
+      projectId: 'project-1',
+      title: 'Readable Session',
+      cwd: readableCwd,
+      status: 'idle',
+      messages: [],
+      createdAt: 10,
+      updatedAt: 20
+    }
+    const liveSessions = new Map([[readableSession.id, readableSession]])
+    await initializeManagedWorkspaceOwnership(readableCwd, 'project-1', 10, dataRoot)
+    await finalizeManagedWorkspaceOwnership(readableCwd, readableSession.id, 20, dataRoot)
+    await initializeManagedWorkspaceOwnership(unreadableCwd, 'project-1', 30, dataRoot)
+    await finalizeManagedWorkspaceOwnership(unreadableCwd, 'unreadable-session', 40, dataRoot)
+
+    await createDeletionOwner(liveSessions, { projectScanComplete: false }).deleteProjectSessions(
+      'project-1',
+      (_sessionIds, operation) => operation()
+    )
+
+    await expect(readManagedWorkspaceOwnership(readableCwd, dataRoot)).resolves.toMatchObject({
+      retainedAfterDelete: true
+    })
+    await expect(readManagedWorkspaceOwnership(unreadableCwd, dataRoot)).resolves.toMatchObject({
+      retainedAfterDelete: true
+    })
+  })
+
+  it('restores Project-scanned ownership when incomplete authority deletion fails', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-incomplete-rollback-'))
+    roots.push(dataRoot)
+    initDataRoot(dataRoot)
+    const cwd = join(dataRoot, 'workspaces', 'workspace-unreadable')
+    await mkdir(cwd, { recursive: true })
+    await initializeManagedWorkspaceOwnership(cwd, 'project-1', 10, dataRoot)
+    await finalizeManagedWorkspaceOwnership(cwd, 'unreadable-session', 20, dataRoot)
+
+    await expect(
+      createDeletionOwner(new Map(), {
+        projectScanComplete: false,
+        deleteProjectSessionsError: new Error('Project Session authority delete failed')
+      }).deleteProjectSessions('project-1', (_sessionIds, operation) => operation())
+    ).rejects.toThrow('Project Session authority delete failed')
+
+    await expect(readManagedWorkspaceOwnership(cwd, dataRoot)).resolves.toMatchObject({
       retainedAfterDelete: false
     })
   })
