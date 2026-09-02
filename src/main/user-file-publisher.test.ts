@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -90,4 +90,26 @@ describe('publishUserFile', () => {
       expect((await stat(destinationPath)).mode & 0o777).toBe(0o600)
     }
   )
+
+  it('retries a transient replacement denial before publishing', async () => {
+    const destinationPath = join(root, 'report.txt')
+    await writeFile(destinationPath, 'existing bytes')
+    const wait = vi.fn().mockResolvedValue(undefined)
+    const replace = vi.fn(async (sourcePath: string, targetPath: string) => {
+      if (replace.mock.calls.length === 1) {
+        throw Object.assign(new Error('replacement denied'), { code: 'EPERM' })
+      }
+      await rename(sourcePath, targetPath)
+    })
+
+    await publishUserFile(
+      destinationPath,
+      (temporaryPath) => writeFile(temporaryPath, 'new bytes'),
+      { replace, wait }
+    )
+
+    expect(replace).toHaveBeenCalledTimes(2)
+    expect(wait).toHaveBeenCalledWith(25)
+    await expect(readFile(destinationPath, 'utf8')).resolves.toBe('new bytes')
+  })
 })

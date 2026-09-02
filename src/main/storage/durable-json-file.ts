@@ -3,8 +3,8 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/p
 import { basename, dirname, join } from 'node:path'
 
 import { defaultFileDurability } from './file-durability'
+import { retryFileReplacement } from './file-replacement'
 
-const FILE_REPLACEMENT_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const
 const fileOperations = new Map<string, Promise<void>>()
 
 type DurableJsonDirectoryEntry = {
@@ -54,12 +54,6 @@ const DEFAULT_DEPENDENCIES: DurableJsonFileDependencies = {
   writeFile: (path, contents, options) => writeFile(path, contents, options)
 }
 
-const isRetryableFileReplacementError = (error: unknown): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  'code' in error &&
-  ['EPERM', 'EACCES', 'EBUSY'].includes(String(error.code))
-
 const isMissingFileError = (error: unknown): boolean =>
   typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT'
 
@@ -83,23 +77,6 @@ const runFileOperation = async <Result>(
   } finally {
     release()
     if (fileOperations.get(filePath) === tail) fileOperations.delete(filePath)
-  }
-}
-
-const renameWithRetry = async (
-  source: string,
-  destination: string,
-  dependencies: DurableJsonFileDependencies
-): Promise<void> => {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      await dependencies.rename(source, destination)
-      return
-    } catch (error) {
-      const delayMs = FILE_REPLACEMENT_RETRY_DELAYS_MS[attempt]
-      if (delayMs === undefined || !isRetryableFileReplacementError(error)) throw error
-      await dependencies.wait(delayMs)
-    }
   }
 }
 
@@ -127,7 +104,10 @@ export const writeDurableJsonFile = async (
         throw error
       }
       await dependencies.syncFile(temporaryPath)
-      await renameWithRetry(temporaryPath, filePath, dependencies)
+      await retryFileReplacement(
+        () => dependencies.rename(temporaryPath, filePath),
+        dependencies.wait
+      )
       await dependencies.syncDirectory(directory)
     } catch (error) {
       if (ownsTemporaryPath) {
@@ -274,7 +254,10 @@ export const readDurableJsonFile = async <Value>(
         }
 
         await dependencies.syncFile(candidate.path)
-        await renameWithRetry(candidate.path, filePath, dependencies)
+        await retryFileReplacement(
+          () => dependencies.rename(candidate.path, filePath),
+          dependencies.wait
+        )
         await dependencies.syncDirectory(dirname(filePath))
         await cleanupTemporaryCandidates(candidates, dependencies)
         return { status: 'found', value }
