@@ -65,12 +65,17 @@ type CodexSkillInput = {
   path: string
 }
 
+type ResourceSnapshotScope = Readonly<{
+  appSessionId: string
+  projectId: string
+}>
+
 type AcpPromptContentOwnerOptions = {
   uploadRepository?: UploadRepository
   managedFileVersions?: Pick<ManagedFileVersionService, 'openLatest'>
   fileReferenceResolver: FileReferenceResolver
   inlineImageBudgetBytes?: number
-  createResourceSnapshotStore?: () => TurnResourceSnapshotStore
+  createResourceSnapshotStore?: (scope: ResourceSnapshotScope) => TurnResourceSnapshotStore
 }
 
 type PrepareAcpPromptContentInput = {
@@ -189,7 +194,10 @@ class AcpPromptContentOwner {
 
   async prepare(input: PrepareAcpPromptContentInput): Promise<PreparedAcpPromptContent> {
     const snapshots =
-      this.options.createResourceSnapshotStore?.() ?? new TurnResourceSnapshotStore()
+      this.options.createResourceSnapshotStore?.({
+        appSessionId: input.appSessionId,
+        projectId: input.projectId
+      }) ?? new TurnResourceSnapshotStore()
     let closed = false
     const close = (): void => {
       if (closed) return

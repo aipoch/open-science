@@ -4,6 +4,7 @@ import { claudeCodeFramework } from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { createLogger, errorLogFields } from '../logger'
+import { getNotebookInputRoot } from '../notebook/input-staging'
 import { createProductionPlanService } from '../session-plan/production-plan-service'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { AcpAgentConnectionAdapter } from './agent-connection-adapter'
@@ -30,6 +31,7 @@ import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import { createNotebookArtifactSourceScopeProvider } from '../notebook/artifact-source-scope'
 import { ArtifactTurnOwner } from './artifact-turn-owner'
 import { AcpTurnSkillOwner } from './turn-skill-owner'
+import { TurnResourceSnapshotStore } from './turn-resource-snapshot-store'
 
 const log = createLogger('acp')
 
@@ -201,6 +203,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     grantedRoots: options.grantedRoots,
     managedFileVersions: options.artifacts?.managedFileVersions
   })
+  const notebookInputStorageRoot = options.notebook ? options.artifacts?.dataRoot : undefined
 
   return Object.freeze({
     snapshotOwner,
@@ -233,7 +236,19 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       uploadRepository,
       managedFileVersions: options.artifacts?.managedFileVersions,
       fileReferenceResolver,
-      inlineImageBudgetBytes: options.inlineImageBudgetBytes
+      inlineImageBudgetBytes: options.inlineImageBudgetBytes,
+      ...(notebookInputStorageRoot
+        ? {
+            createResourceSnapshotStore: ({ appSessionId, projectId }) =>
+              new TurnResourceSnapshotStore({
+                temporaryRoot: getNotebookInputRoot(
+                  notebookInputStorageRoot,
+                  projectId,
+                  appSessionId
+                )
+              })
+          }
+        : {})
     }),
     sessionPresentationPolicy: new AcpSessionPresentationPolicy(),
     promptOutcomeFinalizer: new AcpPromptOutcomeFinalizer()

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { rmSync } from 'node:fs'
-import { chmod, mkdtemp } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -65,9 +65,9 @@ class TurnResourceSnapshotStore {
 
   private async ensureRoot(): Promise<string> {
     if (this.rootPath) return this.rootPath
-    const rootPath = await mkdtemp(
-      join(this.options.temporaryRoot ?? tmpdir(), 'open-science-acp-turn-')
-    )
+    const temporaryRoot = this.options.temporaryRoot ?? tmpdir()
+    if (this.options.temporaryRoot) await mkdir(temporaryRoot, { recursive: true })
+    const rootPath = await mkdtemp(join(temporaryRoot, 'open-science-acp-turn-'))
     this.rootPath = rootPath
     await chmod(rootPath, 0o700)
     return rootPath
