@@ -103,7 +103,11 @@ describe('createIpcHandlerRegistry', () => {
     }
 
     expect(sender.listenerCount('render-process-gone')).toBe(0)
-    expect(sender.listenerCount('destroyed')).toBe(0)
+    expect(sender.listenerCount('destroyed')).toBeLessThanOrEqual(1)
+    sender.emit('destroyed')
+    expect(() => nativeHandlers.get('projects:list')?.({ sender })).toThrow(
+      'Caller lease is no longer current.'
+    )
   })
 
   it('renews a crashed WebContents lease but keeps destroyed terminal', () => {

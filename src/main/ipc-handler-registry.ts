@@ -71,6 +71,7 @@ const createIpcHandlerRegistry = (
   const registeredChannels = new Set<string>()
   let activeCallerLeaseEpoch = createCallerLeaseEpoch()
   const destroyedNativeCallers = new WeakSet<object>()
+  const destructionBoundNativeCallers = new WeakSet<object>()
 
   const callerLeaseEpochForRegistration = (): CallerLeaseEpoch => {
     if (activeCallerLeaseEpoch.disposed) activeCallerLeaseEpoch = createCallerLeaseEpoch()
@@ -95,6 +96,15 @@ const createIpcHandlerRegistry = (
       once?: (name: string, listener: () => void) => unknown
       removeListener?: (name: string, listener: (...args: never[]) => void) => unknown
     }
+    if (!destructionBoundNativeCallers.has(sender) && lifecycleSender.once) {
+      destructionBoundNativeCallers.add(sender)
+      lifecycleSender.once('destroyed', () => {
+        destroyedNativeCallers.add(sender)
+        const currentLease = activeCallerLeaseEpoch.nativeCallers.get(sender)
+        activeCallerLeaseEpoch.nativeCallers.delete(sender)
+        currentLease?.release()
+      })
+    }
     const releaseCurrentLease = (): void => {
       if (epoch.nativeCallers.get(sender) !== ownedLease) return
       epoch.nativeCallers.delete(sender)
@@ -107,17 +117,11 @@ const createIpcHandlerRegistry = (
       if (!details.isMainFrame || details.isSameDocument) return
       releaseCurrentLease()
     }
-    const releaseOnDestroyed = (): void => {
-      destroyedNativeCallers.add(sender)
-      releaseCurrentLease()
-    }
     const removeLifecycleBindings = (): void => {
       lifecycleSender.removeListener?.('did-start-navigation', releaseOnMainFrameNavigation)
-      lifecycleSender.removeListener?.('destroyed', releaseOnDestroyed)
       lifecycleSender.removeListener?.('render-process-gone', releaseCurrentLease)
     }
     lifecycleSender.on?.('did-start-navigation', releaseOnMainFrameNavigation)
-    lifecycleSender.once?.('destroyed', releaseOnDestroyed)
     lifecycleSender.once?.('render-process-gone', releaseCurrentLease)
     ownedLease.lease.signal.addEventListener('abort', removeLifecycleBindings, { once: true })
     if (ownedLease.lease.signal.aborted) removeLifecycleBindings()
