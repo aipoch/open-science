@@ -547,6 +547,33 @@ describe('ProjectDeletionCoordinator', () => {
     await recovery.stop()
   })
 
+  it('honors a manual retry queued while a failing recovery run is active', async () => {
+    vi.useFakeTimers()
+    const firstRun = createDeferred<void>()
+    const secondRun = createDeferred<void>()
+    const recover = vi
+      .fn<() => Promise<void>>()
+      .mockImplementationOnce(() => firstRun.promise)
+      .mockImplementationOnce(() => secondRun.promise)
+    const recovery = new ProjectDeletionRecoveryLoop(recover, { retryDelayMs: 1_000 })
+
+    recovery.start()
+    await vi.advanceTimersByTimeAsync(0)
+    recovery.wake()
+    firstRun.reject(new Error('compute host offline'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(recover).toHaveBeenCalledTimes(2)
+    expect(recovery.projectCleanup([{ projectId: 'project-1' }])).toEqual([
+      { projectId: 'project-1', phase: 'running', failureCount: 1 }
+    ])
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(recover).toHaveBeenCalledTimes(2)
+
+    secondRun.resolve(undefined)
+    await recovery.stop()
+  })
+
   it('awaits active background recovery when stopping', async () => {
     const active = createDeferred<void>()
     const recover = vi.fn(() => active.promise)
@@ -1076,12 +1103,18 @@ const createSessions = (
   ...overrides
 })
 
-const createDeferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+const createDeferred = <T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason?: unknown) => void
+} => {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((innerResolve) => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((innerResolve, innerReject) => {
     resolve = innerResolve
+    reject = innerReject
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 const flushMicrotasks = async (): Promise<void> => {

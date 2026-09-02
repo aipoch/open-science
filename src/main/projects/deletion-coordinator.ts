@@ -173,9 +173,10 @@ class ProjectDeletionRecoveryLoop {
         },
         (error: unknown) => {
           this.running = false
+          const rerunRequested = this.rerunRequested
           this.rerunRequested = false
           this.failureCount += 1
-          this.nextRetryAt = this.now() + this.retryDelayMs
+          this.nextRetryAt = rerunRequested ? undefined : this.now() + this.retryDelayMs
           try {
             this.onError(error)
           } catch {
@@ -183,6 +184,10 @@ class ProjectDeletionRecoveryLoop {
           }
           this.notifyStatusChanged()
           if (!this.started) return
+          if (rerunRequested) {
+            this.run()
+            return
+          }
           this.timer = setTimeout(() => {
             this.timer = undefined
             this.run()
