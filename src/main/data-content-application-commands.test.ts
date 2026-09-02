@@ -484,7 +484,14 @@ describe('Data and content application commands', () => {
       },
       {
         key: 'sessionUpdateArchive',
-        args: [request('session-update-archive')],
+        args: [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            archived: true,
+            expectedArchivedAt: null
+          }
+        ],
         owner: deps.sessions.updateArchive
       },
       {
@@ -1072,10 +1079,6 @@ describe('Data and content application commands', () => {
   it('sanitizes a renderer Session once at the main-process save boundary', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
-    deps.sessions.saveSession.mockImplementationOnce(async (session) => ({
-      created: false,
-      session
-    }))
     registerDataContentApplicationCommands(router.registrar, deps.dependencies)
 
     const malformedSession = {
@@ -1091,7 +1094,10 @@ describe('Data and content application commands', () => {
       expect.objectContaining({ status: 'idle', revision: 0, createdAt: 0 }),
       undefined
     )
-    expect(deps.sessions.saveSession.mock.calls[0]?.[0].runtimeContext).toBeUndefined()
+    const savedSession = (
+      deps.sessions.saveSession.mock.calls as unknown as Array<readonly [Record<string, unknown>]>
+    )[0]?.[0]
+    expect(savedSession?.runtimeContext).toBeUndefined()
   })
 
   it('dispatches every remaining Project and Session wrapper to its existing owner', async () => {

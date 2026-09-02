@@ -1,6 +1,10 @@
 import { z } from 'zod'
 
-import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
+import {
+  defineApplicationCommandContract,
+  type RuntimeCodec,
+  validationCodec
+} from './application-command-contract'
 import type { PersistedUploadedAttachment } from './uploads'
 import type { FileReference } from './artifacts'
 import { sanitizeAnnotations, type Annotation } from './annotations'
@@ -4390,6 +4394,37 @@ export const normalizeSessionFile = (
   return decoded.status === 'ok' ? decoded.session : undefined
 }
 
+const matchesSanitizedProjection = (value: unknown, sanitized: unknown): boolean => {
+  if (Object.is(value, sanitized)) return true
+  if (Array.isArray(value)) {
+    return (
+      Array.isArray(sanitized) &&
+      value.length === sanitized.length &&
+      value.every((item, index) => matchesSanitizedProjection(item, sanitized[index]))
+    )
+  }
+  if (!isRecord(value) || !isRecord(sanitized)) return false
+  return Object.entries(value).every(
+    ([key, item]) =>
+      Object.hasOwn(sanitized, key) && matchesSanitizedProjection(item, sanitized[key])
+  )
+}
+
+// The wire boundary uses the same recursive decoder as durable Session files, but preserves live
+// runtime state instead of applying restart recovery. This keeps one source of truth for every
+// nested message, graph, activity and runtime-context field while upgrading historical shapes.
+export const persistedChatSessionCodec: RuntimeCodec<PersistedChatSession> = Object.freeze({
+  parse: (value): PersistedChatSession => {
+    const decoded = decodeSessionFile(value, { preserveRuntimeState: true })
+    if (decoded.status !== 'ok' || decoded.session.projectId.length === 0) {
+      throw new Error('Invalid Session payload.')
+    }
+    return matchesSanitizedProjection(value, decoded.session)
+      ? (value as PersistedChatSession)
+      : decoded.session
+  }
+})
+
 // Tiny app-level pointer restoring the last-open Session after a restart.
 export type PersistedSessionManifest = {
   version: typeof SESSION_MANIFEST_VERSION
@@ -4517,7 +4552,7 @@ export const unlinkSessionPdfContextRequestSchema = z
   .strict()
 
 export const deleteSessionRequestSchema = z
-  .object({ projectId: z.string(), sessionId: z.string() })
+  .object({ projectId: z.string().min(1), sessionId: z.string().min(1) })
   .strict()
 
 // Manual details edits mutate only authority-owned display fields server-side, so they carry no
@@ -4556,29 +4591,38 @@ export const sessionDeletionResultSchema = z.union([
 
 export type SessionDeletionResult = z.infer<typeof sessionDeletionResultSchema>
 
-export type UpdateSessionArchiveRequest = {
-  projectId: string
-  sessionId: string
-  archived: boolean
-  expectedArchivedAt: number | null
-}
+export const updateSessionArchiveRequestSchema = z
+  .object({
+    projectId: z.string().min(1),
+    sessionId: z.string().min(1),
+    archived: z.boolean(),
+    expectedArchivedAt: z.number().int().positive().nullable()
+  })
+  .strict()
 
-export type SaveSessionManifestRequest = {
-  lastSessionId?: string
-}
+export const saveSessionManifestRequestSchema = z
+  .object({
+    lastSessionId: z.string().min(1).optional()
+  })
+  .strict()
 
-const persistedChatSessionResultSchema = z.custom<PersistedChatSession>(
-  (value) =>
-    isRecord(value) &&
-    typeof value.id === 'string' &&
-    typeof value.projectId === 'string' &&
-    typeof value.title === 'string' &&
-    Array.isArray(value.messages)
-)
+export type UpdateSessionArchiveRequest = z.infer<typeof updateSessionArchiveRequestSchema>
+export type SaveSessionManifestRequest = z.infer<typeof saveSessionManifestRequestSchema>
 
-// Runtime-validated contract for the Electron-facing terminal Session deletion command. The request
-// and result schemas double as the wire types so the router enforces exactly the union the
-// SessionDeletionOwner can produce.
+const saveSessionArgsCodec: RuntimeCodec<
+  readonly [session: PersistedChatSession, options?: SaveSessionOptions]
+> = Object.freeze({
+  parse: (value) => {
+    if (!Array.isArray(value) || value.length < 1 || value.length > 2) {
+      throw new Error('Invalid Session save arguments.')
+    }
+    const session = persistedChatSessionCodec.parse(value[0])
+    return value.length === 1 ? [session] : [session, value[1] as SaveSessionOptions | undefined]
+  }
+})
+
+// Runtime-validated contracts for Electron-facing Session commands. Request schemas double as wire
+// types, while Session-bearing commands share the recursive persistence codec above.
 export const sessionApplicationCommandContracts = Object.freeze({
   filterPdfContextCandidates: defineApplicationCommandContract(
     validationCodec(z.tuple([filterSessionPdfContextCandidatesRequestSchema])),
@@ -4600,12 +4644,21 @@ export const sessionApplicationCommandContracts = Object.freeze({
     validationCodec(z.tuple([deleteSessionRequestSchema])),
     validationCodec(sessionDeletionResultSchema)
   ),
+  saveManifest: defineApplicationCommandContract(
+    validationCodec(z.tuple([saveSessionManifestRequestSchema])),
+    validationCodec(z.void())
+  ),
+  updateArchive: defineApplicationCommandContract(
+    validationCodec(z.tuple([updateSessionArchiveRequestSchema])),
+    persistedChatSessionCodec
+  ),
+  save: defineApplicationCommandContract(saveSessionArgsCodec, persistedChatSessionCodec),
   editDetails: defineApplicationCommandContract(
     validationCodec(z.tuple([editSessionDetailsRequestSchema])),
-    validationCodec(persistedChatSessionResultSchema)
+    persistedChatSessionCodec
   ),
   setDelegationPolicy: defineApplicationCommandContract(
     validationCodec(z.tuple([z.string(), z.string(), delegationPolicySchema])),
-    validationCodec(persistedChatSessionResultSchema)
+    persistedChatSessionCodec
   )
 })
