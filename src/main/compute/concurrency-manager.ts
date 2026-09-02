@@ -203,7 +203,8 @@ export class ConcurrencyManager {
     commit: (status: 'submitted' | 'queued') => Promise<void>
   ): Promise<'submitted' | 'queued' | 'queue_full'> {
     return this.runExclusive(async () => {
-      const shouldQueue = await this.overActiveLimits(params.sessionId, params.providerId)
+      const shouldQueue =
+        this.queueStopped || (await this.overActiveLimits(params.sessionId, params.providerId))
       if (!shouldQueue) {
         await commit('submitted')
         return 'submitted'
@@ -234,7 +235,9 @@ export class ConcurrencyManager {
   }): Promise<'can_dispatch' | 'should_queue' | 'queue_full'> {
     const { sessionId, providerId } = params
 
-    if (!(await this.overActiveLimits(sessionId, providerId))) return 'can_dispatch'
+    if (!this.queueStopped && !(await this.overActiveLimits(sessionId, providerId))) {
+      return 'can_dispatch'
+    }
     const globalQueuedCount = await this.jobRepository.countQueuedJobs()
     return globalQueuedCount >= GLOBAL_QUEUE_LIMIT ? 'queue_full' : 'should_queue'
   }
@@ -246,22 +249,23 @@ export class ConcurrencyManager {
 
   async startQueueReconciliation(): Promise<void> {
     const lifecycleRevision = ++this.queueLifecycleRevision
+    const restoredLimits = await this.sessionLimitPersistence?.load()
+    let limits: Map<string, number> | undefined
+    if (restoredLimits) {
+      limits = new Map<string, number>()
+      for (const [sessionId, limit] of restoredLimits) {
+        if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+          throw new Error(
+            `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
+          )
+        }
+        limits.set(sessionId, limit)
+      }
+    }
     let shouldReconcile = false
     await this.runExclusive(async () => {
-      const restoredLimits = await this.sessionLimitPersistence?.load()
       if (lifecycleRevision !== this.queueLifecycleRevision) return
-      if (restoredLimits) {
-        const limits = new Map<string, number>()
-        for (const [sessionId, limit] of restoredLimits) {
-          if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
-            throw new Error(
-              `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
-            )
-          }
-          limits.set(sessionId, limit)
-        }
-        this.sessionLimits = limits
-      }
+      if (limits) this.sessionLimits = limits
       this.queueStopped = false
       shouldReconcile = true
     })

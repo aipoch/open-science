@@ -208,6 +208,62 @@ describe('ConcurrencyManager', () => {
     expect(jobRepo.findQueuedJobs).not.toHaveBeenCalled()
   })
 
+  it('queues new admissions when durable limits cannot be restored', async () => {
+    const durableManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      dispatchJob,
+      onJobUpdated,
+      undefined,
+      undefined,
+      {
+        load: async () => {
+          throw new Error('Session catalog unavailable')
+        },
+        save: async () => undefined
+      }
+    )
+    vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+    vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+    vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 10 } as ComputeHost)
+    const commit = vi.fn(async () => undefined)
+
+    await expect(durableManager.startQueueReconciliation()).rejects.toThrow(
+      'Session catalog unavailable'
+    )
+    await expect(
+      durableManager.admit({ sessionId: 'session-1', providerId: 'ssh:cluster-a' }, commit)
+    ).resolves.toBe('queued')
+    expect(commit).toHaveBeenCalledWith('queued')
+  })
+
+  it('does not hold the admission lock while loading durable limits', async () => {
+    const managerRef: { current?: ConcurrencyManager } = {}
+    const durableManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      dispatchJob,
+      onJobUpdated,
+      undefined,
+      undefined,
+      {
+        load: async () => {
+          await managerRef.current?.clearProjectedSessionLimits(['deleted-session'])
+          return [['session-1', 1]]
+        },
+        save: async () => undefined
+      }
+    )
+    managerRef.current = durableManager
+
+    await expect(
+      Promise.race([
+        durableManager.startQueueReconciliation().then(() => 'restored' as const),
+        new Promise<'timed_out'>((resolve) => setTimeout(() => resolve('timed_out'), 100))
+      ])
+    ).resolves.toBe('restored')
+  })
+
   describe('enqueue - global queue limit', () => {
     it('returns queue_full when global queue >= 100', async () => {
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(100)
