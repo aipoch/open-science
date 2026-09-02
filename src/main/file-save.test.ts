@@ -241,8 +241,19 @@ describe('file save IPC handlers', () => {
       .fn()
       .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceA))
       .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceB))
+    const publishWithoutHardLinks: typeof productionPublishUserFile = (
+      destination,
+      write,
+      options
+    ) =>
+      productionPublishUserFile(destination, write, {
+        ...options,
+        linkFile: async () => {
+          throw Object.assign(new Error('hard links are unsupported'), { code: 'EOPNOTSUPP' })
+        }
+      })
     showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
-    registerFileSaveHandlers({ openLatestManagedFile } as never)
+    registerFileSaveHandlers({ openLatestManagedFile, publishUserFile: publishWithoutHardLinks })
 
     try {
       const result = await handlers.get('file:save-session-artifacts')!(
