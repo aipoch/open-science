@@ -73,11 +73,16 @@ const CODEX_MODE_IDS = {
 // contract. This must live in CODEX_CONFIG (rather than only custom model metadata), because trusted
 // bundled models intentionally do not receive an app-authored model catalog.
 const CODEX_DISABLED_NATIVE_FEATURES = Object.freeze({
+  memories: false,
   multi_agent: false,
   multi_agent_v2: false,
   // Disabling unified_exec alone falls back to shell_command. shell_tool disables both generations
   // so execution stays on the app-owned Notebook bash_execute MCP tool.
   shell_tool: false
+})
+const CODEX_DISABLED_NATIVE_MEMORY = Object.freeze({
+  generate_memories: false,
+  use_memories: false
 })
 
 const CODEX_ENV_KEYS = [
@@ -174,6 +179,7 @@ const buildCodexConfig = (provider: {
   return {
     ...buildCodexModelOptions(provider),
     features: CODEX_DISABLED_NATIVE_FEATURES,
+    memories: CODEX_DISABLED_NATIVE_MEMORY,
     ...(contextWindow
       ? {
           model_context_window: contextWindow,
@@ -461,6 +467,7 @@ export const createCodexFramework = ({
       const codexConfig = {
         ...modelOptions,
         features: CODEX_DISABLED_NATIVE_FEATURES,
+        memories: CODEX_DISABLED_NATIVE_MEMORY,
         ...(persistentSystemPrompt ? { developer_instructions: persistentSystemPrompt } : {})
       }
       const codexConfigJson =

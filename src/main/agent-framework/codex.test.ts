@@ -288,7 +288,7 @@ describe('codexFramework', () => {
     expect(codexNativeModelInstructions).not.toContain('coding agent')
   })
 
-  it('disables native multi-agent and Shell features across every backend route', () => {
+  it('disables native multi-agent, Shell, and memory across every backend route', () => {
     const framework = createCodexFramework()
     const configurations = [
       framework.prepareModelConfig(
@@ -354,8 +354,18 @@ describe('codexFramework', () => {
       )
     ]
 
-    expect(configurations.map(({ env }) => JSON.parse(env?.CODEX_CONFIG ?? '{}').features)).toEqual(
-      configurations.map(() => ({ multi_agent: false, multi_agent_v2: false, shell_tool: false }))
+    const codexConfigs = configurations.map(({ env }) => JSON.parse(env?.CODEX_CONFIG ?? '{}'))
+
+    expect(codexConfigs.map(({ features }) => features)).toEqual(
+      configurations.map(() => ({
+        memories: false,
+        multi_agent: false,
+        multi_agent_v2: false,
+        shell_tool: false
+      }))
+    )
+    expect(codexConfigs.map(({ memories }) => memories)).toEqual(
+      configurations.map(() => ({ generate_memories: false, use_memories: false }))
     )
   })
 
@@ -822,7 +832,13 @@ describe('codexFramework', () => {
         HOME: join('/data', 'codex-subscription'),
         CODEX_HOME: join('/data', 'codex-subscription'),
         CODEX_CONFIG: JSON.stringify({
-          features: { multi_agent: false, multi_agent_v2: false, shell_tool: false }
+          features: {
+            memories: false,
+            multi_agent: false,
+            multi_agent_v2: false,
+            shell_tool: false
+          },
+          memories: { generate_memories: false, use_memories: false }
         })
       }
     })
@@ -840,7 +856,13 @@ describe('codexFramework', () => {
         HOME: join('/data', 'codex-subscription'),
         CODEX_HOME: join('/data', 'codex-subscription'),
         CODEX_CONFIG: JSON.stringify({
-          features: { multi_agent: false, multi_agent_v2: false, shell_tool: false }
+          features: {
+            memories: false,
+            multi_agent: false,
+            multi_agent_v2: false,
+            shell_tool: false
+          },
+          memories: { generate_memories: false, use_memories: false }
         })
       }
     })

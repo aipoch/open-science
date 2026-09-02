@@ -48,6 +48,8 @@ describe('codebuddy framework', () => {
       CODEBUDDY_MODEL: 'test-model',
       OPEN_SCIENCE_CODEBUDDY_CHAT_COMPLETIONS_URL:
         'https://gateway.example.test/v1/chat/completions',
+      CODEBUDDY_DISABLE_AUTO_MEMORY: '1',
+      CODEBUDDY_CODE_DISABLE_AUTO_MEMORY: '1',
       CODEBUDDY_DISABLE_FORK_SUBAGENT: '1',
       CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS: '1',
       DISABLE_AUTOUPDATER: '1',

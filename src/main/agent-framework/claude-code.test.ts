@@ -34,7 +34,11 @@ describe('claudeCodeFramework', () => {
             disableWorkflows: true,
             workflowKeywordTriggerEnabled: false
           },
+          settings: {
+            env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' }
+          },
           env: {
+            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
             CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
             CLAUDE_CODE_DISABLE_WORKFLOWS: '1'
           }
@@ -57,7 +61,14 @@ describe('claudeCodeFramework', () => {
       sessionOptions: {
         disallowedTools: ['CustomDeniedTool'],
         managedSettings: { disableAgentView: false, disableWorkflows: false },
+        settings: {
+          env: {
+            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+            SAFE_SETTING_VALUE: 'preserved'
+          }
+        },
         env: {
+          CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
           CLAUDE_CODE_DISABLE_AGENT_VIEW: '0',
           CLAUDE_CODE_DISABLE_WORKFLOWS: '0',
           SAFE_BACKEND_VALUE: 'preserved'
@@ -81,8 +92,15 @@ describe('claudeCodeFramework', () => {
       disableWorkflows: true,
       workflowKeywordTriggerEnabled: false
     })
+    expect(options.settings).toEqual({
+      env: {
+        SAFE_SETTING_VALUE: 'preserved',
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'
+      }
+    })
     expect(options.env).toEqual({
       SAFE_BACKEND_VALUE: 'preserved',
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
       CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
       CLAUDE_CODE_DISABLE_WORKFLOWS: '1'
     })
