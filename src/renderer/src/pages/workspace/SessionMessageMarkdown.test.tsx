@@ -12,7 +12,8 @@ const markdownHarness = vi.hoisted(() => ({
 }))
 const previewResourceHarness = vi.hoisted(() => ({
   status: 'ready' as 'ready' | 'error',
-  enabled: undefined as boolean | undefined
+  enabled: undefined as boolean | undefined,
+  dimensions: undefined as { width: number; height: number } | undefined
 }))
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
@@ -58,7 +59,11 @@ vi.mock('./previews/useManagedPreviewResource', () => ({
       : previewResourceHarness.status === 'ready'
         ? {
             status: 'ready',
-            resource: { id: 'resource-1', url: 'preview-resource://sin-curve' }
+            resource: {
+              id: 'resource-1',
+              url: 'preview-resource://sin-curve',
+              ...(previewResourceHarness.dimensions ?? {})
+            }
           }
         : { status: 'error', error: new Error('Preview unavailable') }
   }
@@ -85,6 +90,15 @@ const tiffArtifact: MessageArtifact = {
   name: 'scan.tiff',
   mimeType: 'image/tiff'
 }
+// A distinct path/size so its preview request key (and geometry cache entry) is unique per test.
+const chartArtifact: MessageArtifact = {
+  ...artifact,
+  id: 'version-chart',
+  versionId: 'version-chart',
+  path: '/managed/session/chart.png',
+  name: 'chart.png',
+  size: 2048
+}
 
 describe('SessionMessageMarkdown', () => {
   let container: HTMLDivElement
@@ -96,6 +110,7 @@ describe('SessionMessageMarkdown', () => {
     markdownHarness.renderedContent = ''
     previewResourceHarness.status = 'ready'
     previewResourceHarness.enabled = undefined
+    previewResourceHarness.dimensions = undefined
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -294,6 +309,72 @@ describe('SessionMessageMarkdown', () => {
     )
     expect(placeholder).not.toBeNull()
     expect(placeholder?.style.width).toBe('800px')
+    expect(placeholder?.style.maxWidth).toBe('100%')
+    expect(placeholder?.style.aspectRatio).toBe('2 / 1')
+
+    await act(async () => remountRoot.unmount())
+    remountContainer.remove()
+  })
+
+  it('sizes the image and the remounted placeholder from header-probed metadata', async () => {
+    previewResourceHarness.dimensions = { width: 1000, height: 500 }
+    markdownHarness.artifactRef = 'version-chart'
+    let intersectionCallback: IntersectionObserverCallback | undefined
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          intersectionCallback = callback
+        }
+
+        observe = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+
+    await act(async () => {
+      root.render(
+        <SessionMessageMarkdown
+          content="![Chart](chart.png)"
+          artifacts={[chartArtifact]}
+          onPreviewArtifact={vi.fn()}
+          onPreviewArtifactModal={vi.fn()}
+        />
+      )
+    })
+    await act(async () => {
+      intersectionCallback?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+    })
+
+    // The metadata dimensions land on the <img> attributes so the browser reserves the exact
+    // box before decoding. No load event is dispatched: the placeholder lock must come from the
+    // metadata-seeded cache, not from measured natural sizes.
+    const img = container.querySelector<HTMLImageElement>('[data-session-artifact-image] img')
+    expect(img?.getAttribute('width')).toBe('1000')
+    expect(img?.getAttribute('height')).toBe('500')
+
+    const remountContainer = document.createElement('div')
+    document.body.appendChild(remountContainer)
+    const remountRoot = createRoot(remountContainer)
+    await act(async () => {
+      remountRoot.render(
+        <SessionMessageMarkdown
+          content="![Chart](chart.png)"
+          artifacts={[chartArtifact]}
+          onPreviewArtifact={vi.fn()}
+          onPreviewArtifactModal={vi.fn()}
+        />
+      )
+    })
+
+    const placeholder = remountContainer.querySelector<HTMLElement>(
+      '[data-session-artifact-image-status]'
+    )
+    expect(placeholder).not.toBeNull()
+    expect(placeholder?.style.width).toBe('1000px')
     expect(placeholder?.style.maxWidth).toBe('100%')
     expect(placeholder?.style.aspectRatio).toBe('2 / 1')
 

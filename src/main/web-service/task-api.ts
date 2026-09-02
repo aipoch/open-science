@@ -112,6 +112,8 @@ class HeadlessTaskApi {
             url: string
             size: number
             mimeType?: string
+            width?: number
+            height?: number
           }>,
         // Capability cleanup must remain available if request authorization is revoked while a
         // response stream drains. The fixed local automation context grants no new access.

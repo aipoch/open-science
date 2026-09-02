@@ -4,6 +4,7 @@ import { open, stat } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 
 import { FileObservationMismatchError, type FileObservation } from './bounded-file-io'
+import { readImageHeaderDimensions, type ImageHeaderDimensions } from './image-header-dimensions'
 import type { OfficePreviewAdmissionError } from '../shared/office-preview'
 import type {
   AcquireManagedPreviewRequest,
@@ -56,6 +57,14 @@ const inferMimeType = (filePath: string, fallback?: string): string =>
   MIME_TYPES_BY_EXTENSION[extname(filePath).toLowerCase()] ??
   normalizeMimeType(fallback) ??
   'application/octet-stream'
+
+// Header probing is cheap (first bytes only) and best-effort: the parser sniffs magic bytes, so
+// mislabeled extensions and unsupported image formats (SVG, TIFF) simply yield no dimensions.
+const probeImageDimensions = (
+  filePath: string,
+  mimeType: string
+): Promise<ImageHeaderDimensions | undefined> =>
+  mimeType.startsWith('image/') ? readImageHeaderDimensions(filePath) : Promise.resolve(undefined)
 
 type ManagedPreviewResourcesOptions = {
   resolvePath: (
@@ -252,12 +261,15 @@ class ManagedPreviewResources {
       }
 
       const id = this.createId()
+      const resolvedMimeType = inferMimeType(filePath, request.mimeType)
+      const dimensions = await probeImageDimensions(filePath, resolvedMimeType)
       const resource: ManagedPreviewResource = {
         id,
         url: `${PREVIEW_SCHEME}://${id}/${encodeURIComponent(basename(filePath))}`,
         size: fileSnapshot.size,
-        mimeType: inferMimeType(filePath, request.mimeType),
-        version: fileSnapshot.version
+        mimeType: resolvedMimeType,
+        version: fileSnapshot.version,
+        ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {})
       }
 
       this.releasedOwners.delete(id)
@@ -318,12 +330,15 @@ class ManagedPreviewResources {
     }
 
     const id = this.createId()
+    const resolvedMimeType = inferMimeType(request.path, request.mimeType)
+    const dimensions = await probeImageDimensions(request.path, resolvedMimeType)
     const resource: ManagedPreviewResource = {
       id,
       url: `${PREVIEW_SCHEME}://${id}/${encodeURIComponent(basename(request.path))}`,
       size: expected.sizeBytes,
-      mimeType: inferMimeType(request.path, request.mimeType),
-      version: expected.modifiedAtMs
+      mimeType: resolvedMimeType,
+      version: expected.modifiedAtMs,
+      ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {})
     }
     this.releasedOwners.delete(id)
     this.resources.set(id, {

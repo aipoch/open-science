@@ -103,6 +103,16 @@ const SessionArtifactImage = ({
   const accessibleAlt = alt || t('Preview of {{name}}', { name })
   const hasError = hasFailed || resourceState.status === 'error'
 
+  // Header-probed dimensions beat the measured cache. Seeding the cache with them lets future
+  // placeholders lock the exact height from the first frame, even when this instance's <img>
+  // never decodes (lazy loading keeps offscreen images undecoded until the window recycles them).
+  const readyResource = resourceState.status === 'ready' ? resourceState.resource : undefined
+  const metadataWidth = readyResource?.width
+  const metadataHeight = readyResource?.height
+  if (metadataWidth && metadataHeight) {
+    cacheImageGeometry(requestKey, metadataWidth, metadataHeight)
+  }
+
   if (isTiff) {
     return (
       <button
@@ -148,6 +158,19 @@ const SessionArtifactImage = ({
     )
   }
 
+  // Explicit width/height let the browser reserve the exact box before (and while) the image
+  // decodes; the stylesheet keeps height:auto so max-w-full scaling never distorts the ratio.
+  const cachedGeometry = imageGeometryCache.get(requestKey)
+  const imgDimensions =
+    metadataWidth && metadataHeight
+      ? { width: metadataWidth, height: metadataHeight }
+      : cachedGeometry
+        ? {
+            width: cachedGeometry.naturalWidth,
+            height: Math.round(cachedGeometry.naturalWidth / cachedGeometry.aspectRatio)
+          }
+        : undefined
+
   return (
     <button
       ref={setElement}
@@ -162,6 +185,7 @@ const SessionArtifactImage = ({
         loading="lazy"
         decoding="async"
         draggable={false}
+        {...(imgDimensions ? { width: imgDimensions.width, height: imgDimensions.height } : {})}
         onLoad={(event) =>
           cacheImageGeometry(
             requestKey,

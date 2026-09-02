@@ -30,6 +30,10 @@ export type ManagedPreviewResource = {
   size: number
   mimeType: string
   version: number
+  // Pixel dimensions for image resources, probed from the file header at acquire time.
+  // Absent for non-images and for images whose header could not be parsed.
+  width?: number
+  height?: number
 }
 
 export type ReadManagedPreviewRangeRequest = {
