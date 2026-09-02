@@ -3996,6 +3996,34 @@ describe('SettingsService: skills', () => {
     await expect(service.getSkillDetail('personal-my-skill')).resolves.toBeDefined()
   })
 
+  it('does not deadlock deletion on an observer read queued behind the mutation owner', async () => {
+    const service = await createSkillService()
+    await service.createSkill({ name: 'my-skill', description: 'Mine.', body: '# Mine' })
+
+    let startObserver!: () => void
+    let markObserverStarted!: () => void
+    // Register the observer continuation outside the deletion's mutation-owner context.
+    const observerTrigger = new Promise<void>((resolve) => (startObserver = resolve))
+    const observerStarted = new Promise<void>((resolve) => (markObserverStarted = resolve))
+    const observerRead = observerTrigger.then(() => {
+      const read = service.listUserSkills()
+      markObserverStarted()
+      return read
+    })
+
+    service.setSkillDeletionGuard(async () => {
+      startObserver()
+      await observerStarted
+      await service.listSpecialistSkillCatalog()
+    })
+
+    await expect(service.deleteSkill({ id: 'personal-my-skill' })).resolves.toEqual([
+      expect.objectContaining({ id: 'demo' })
+    ])
+    await expect(observerRead).resolves.toEqual([])
+    await expect(service.listSkills()).resolves.toEqual([expect.objectContaining({ id: 'demo' })])
+  })
+
   it('uses the immutable name and reconciles references reported by the detail view', async () => {
     const service = await createSkillService()
     const b64 = (text: string): string => Buffer.from(text).toString('base64')

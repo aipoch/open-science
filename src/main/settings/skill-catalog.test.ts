@@ -17,7 +17,6 @@ import { SkillRegistry } from '../skills/registry'
 import type { FetchLike } from '../skills/github-import'
 import type { UserSkillRepository } from '../skills/user-skill-repository'
 import { SPECIALIST_PACKAGE_SKILL_METADATA } from '../skills/specialist-package-adapter'
-import { skillMutationOwnerFor } from '../skills/skill-mutation-owner'
 import { SettingsRepository } from './repository'
 import { SkillCatalogModule } from './skill-catalog'
 
@@ -131,34 +130,6 @@ describe('SkillCatalogModule', () => {
     expect(list).toHaveBeenCalledOnce()
     finishScan?.([])
     await expect(Promise.all([observerRead, sessionRead])).resolves.toEqual([[], undefined])
-  })
-
-  it('does not reuse an in-flight scan from outside a held mutation context', async () => {
-    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
-    roots.push(storageRoot)
-    let finishObserverScan: ((skills: []) => void) | undefined
-    const list = vi
-      .fn<() => Promise<[]>>()
-      .mockImplementationOnce(() => new Promise<[]>((resolve) => (finishObserverScan = resolve)))
-      .mockResolvedValueOnce([])
-    const mutationOwner = skillMutationOwnerFor(storageRoot)
-    const catalog = new SkillCatalogModule({
-      repository: new SettingsRepository(storageRoot),
-      storageRoot,
-      skillRegistry: { list: vi.fn().mockResolvedValue([]) } as unknown as SkillRegistry,
-      userSkills: {
-        list,
-        isMutationOwnerContext: () => mutationOwner.isHeldByCurrentContext()
-      } as unknown as UserSkillRepository
-    })
-
-    const observerRead = catalog.listUserSkills()
-    await mutationOwner.runExclusive(async () => {
-      await expect(catalog.listUserSkills()).resolves.toEqual([])
-      expect(list).toHaveBeenCalledTimes(2)
-    })
-    finishObserverScan?.([])
-    await expect(observerRead).resolves.toEqual([])
   })
 
   it('keeps only the newest user Skill when Personal and Imported packages share a name', async () => {
