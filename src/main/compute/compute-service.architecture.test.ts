@@ -284,6 +284,9 @@ describe('Compute service architecture', () => {
       projectBarriers
     )
     const runtimeStart = source.indexOf('const jobPoller = createComputeJobRuntime', jobBarriers)
+    const projectRuntimeReady = source.indexOf(
+      'projectRuntimeQuiescenceRef.current = new ProjectRuntimeQuiescenceOwner'
+    )
     const backgroundRecovery = source.indexOf(
       'const projectDeletionRecovery = new ProjectDeletionRecoveryLoop',
       runtimeStart
@@ -311,7 +314,8 @@ describe('Compute service architecture', () => {
 
     expect(projectBarriers).toBeGreaterThan(-1)
     expect(jobBarriers).toBeGreaterThan(projectBarriers)
-    expect(runtimeStart).toBeGreaterThan(jobBarriers)
+    expect(projectRuntimeReady).toBeGreaterThan(jobBarriers)
+    expect(runtimeStart).toBeGreaterThan(projectRuntimeReady)
     expect(backgroundRecovery).toBeGreaterThan(runtimeStart)
     expect(projectOrphanRecovery).toBeGreaterThan(-1)
     expect(backgroundOrphanRecovery).toBeGreaterThan(backgroundRecovery)
@@ -324,7 +328,10 @@ describe('Compute service architecture', () => {
   it('gives Compute Job shutdown the transport cancellation budget', () => {
     const source = readSource(computePaths.mainIpc)
     const runtimeStart = source.indexOf('const jobPoller = createComputeJobRuntime')
-    const runtimeEnd = source.indexOf('const agentComputeService', runtimeStart)
+    const runtimeEnd = source.indexOf(
+      'const projectDeletionRecovery = new ProjectDeletionRecoveryLoop',
+      runtimeStart
+    )
     const runtimeRegistration = source.slice(runtimeStart, runtimeEnd)
 
     expect(runtimeStart).toBeGreaterThan(-1)

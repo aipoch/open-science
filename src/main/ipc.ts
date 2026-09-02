@@ -1945,77 +1945,6 @@ const createApplicationModules = async (
   await jobDeletionOwner.restoreOrphanJobDeletionBarriers(isComputeJobOwnerLive)
   composition.phase('deletion-barriers')
   const dataRoot = resolveDataRoot()
-  // Start the JobPoller wired to the shared broadcaster so every state/tail change is pushed to all
-  // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3). The dispatcher
-  // (inside ComputeService) uses the same hook, so submitted→running/error transitions broadcast too.
-  // Phase 3b: harvestFn drives automatic harvest on terminal transitions; broadcast + storageRoot
-  // wire the compute_done notification emitter for all three terminal outcomes (issue 06).
-  await modules.add(
-    {
-      computeService,
-      connectionBroker,
-      jobDeletionOwner,
-      hostRepository,
-      jobRepository,
-      operationRepository,
-      storageRoot: dataRoot
-    },
-    (dependencies) => {
-      const jobPoller = createComputeJobRuntime(dependencies)
-      return {
-        name: 'compute-job-runtime',
-        capability: undefined,
-        start: async () => {
-          try {
-            const owners = await jobRepository.listOwners()
-            const jobs = (
-              await Promise.all(owners.map((owner) => jobRepository.findByOwner(owner)))
-            ).flat()
-            for (const [index, job] of jobs.entries()) {
-              if (
-                job.status !== 'error' ||
-                hasImmutableExecutionFileEvidenceReference(job.file_evidence)
-              ) {
-                continue
-              }
-              const fileEvidence = await recoverPublishedComputeJobFileEvidence({
-                storageRoot: dataRoot,
-                projectId: job.project_id,
-                sessionId: job.session_id,
-                jobId: job.job_id,
-                producerRunId: job.producer_run_id
-              })
-              if (!fileEvidence) continue
-              const updated = await jobRepository.update(job.job_id, { fileEvidence })
-              jobs[index] = updated
-              await settleComputeJobFileEvidence({
-                storageRoot: dataRoot,
-                projectId: job.project_id,
-                sessionId: job.session_id,
-                jobId: job.job_id,
-                producerRunId: job.producer_run_id,
-                fileEvidence
-              }).catch((error) =>
-                createLogger('compute:file-evidence').warn(
-                  'Recovered Compute Job file-evidence receipt remains for reconciliation.',
-                  { jobId: job.job_id, ...errorLogFields(error) }
-                )
-              )
-            }
-            await reconcileComputeJobFileEvidence(dataRoot, jobs)
-          } catch (error) {
-            createLogger('compute:file-evidence').warn(
-              'Compute Job file-evidence startup reconciliation failed closed.',
-              diagnosticErrorFields(error)
-            )
-          }
-          await jobPoller.start()
-        },
-        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
-        dispose: () => jobPoller.stop()
-      }
-    }
-  )
   // The Notebook RPC receives only this Session-admitted facade, never the unrestricted service
   // used by Settings and internal runtimes.
   const agentComputeService = new AgentComputeService(computeService, hostsRegistry)
@@ -2868,6 +2797,75 @@ const createApplicationModules = async (
     sideChatLog.error('durable Side chat hydration failed', diagnosticErrorFields(error))
   }
   composition.phase('side-chat')
+  // Start the JobPoller wired to the shared broadcaster only after Project runtime quiescence and
+  // Side Chat recovery are available. Queue startup loads the Session catalog, which may first need
+  // to finish a pending Project deletion through those owners before restoring concurrency limits.
+  await modules.add(
+    {
+      computeService,
+      connectionBroker,
+      jobDeletionOwner,
+      hostRepository,
+      jobRepository,
+      operationRepository,
+      storageRoot: dataRoot
+    },
+    (dependencies) => {
+      const jobPoller = createComputeJobRuntime(dependencies)
+      return {
+        name: 'compute-job-runtime',
+        capability: undefined,
+        start: async () => {
+          try {
+            const owners = await jobRepository.listOwners()
+            const jobs = (
+              await Promise.all(owners.map((owner) => jobRepository.findByOwner(owner)))
+            ).flat()
+            for (const [index, job] of jobs.entries()) {
+              if (
+                job.status !== 'error' ||
+                hasImmutableExecutionFileEvidenceReference(job.file_evidence)
+              ) {
+                continue
+              }
+              const fileEvidence = await recoverPublishedComputeJobFileEvidence({
+                storageRoot: dataRoot,
+                projectId: job.project_id,
+                sessionId: job.session_id,
+                jobId: job.job_id,
+                producerRunId: job.producer_run_id
+              })
+              if (!fileEvidence) continue
+              const updated = await jobRepository.update(job.job_id, { fileEvidence })
+              jobs[index] = updated
+              await settleComputeJobFileEvidence({
+                storageRoot: dataRoot,
+                projectId: job.project_id,
+                sessionId: job.session_id,
+                jobId: job.job_id,
+                producerRunId: job.producer_run_id,
+                fileEvidence
+              }).catch((error) =>
+                createLogger('compute:file-evidence').warn(
+                  'Recovered Compute Job file-evidence receipt remains for reconciliation.',
+                  { jobId: job.job_id, ...errorLogFields(error) }
+                )
+              )
+            }
+            await reconcileComputeJobFileEvidence(dataRoot, jobs)
+          } catch (error) {
+            createLogger('compute:file-evidence').warn(
+              'Compute Job file-evidence startup reconciliation failed closed.',
+              diagnosticErrorFields(error)
+            )
+          }
+          await jobPoller.start()
+        },
+        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
+        dispose: () => jobPoller.stop()
+      }
+    }
+  )
   // Recovery quiesces every runtime owner, so do not start its first attempt until ACP, Delegation,
   // Notebook, Side Chat, and the composed quiescence boundary are all initialized. The bounded
   // durable barrier restoration above still runs early enough to block admission during startup.
