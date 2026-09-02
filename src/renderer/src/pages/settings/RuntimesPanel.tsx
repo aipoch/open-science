@@ -89,6 +89,9 @@ const RuntimesPanel = ({
   const formatDate = useDateTimeFormat()
   const envs = useRuntimeSettingsStore((state) => state.envs)
   const enablement = useRuntimeSettingsStore((state) => state.enablement)
+  const agentEnvironmentCreationEnabled = useRuntimeSettingsStore(
+    (state) => state.agentEnvironmentCreationEnabled
+  )
   const loaded = useRuntimeSettingsStore((state) => state.loaded)
   const checkedAt = useRuntimeSettingsStore((state) => state.checkedAt)
   const busy = useRuntimeSettingsStore((state) => state.busy)
@@ -99,6 +102,9 @@ const RuntimesPanel = ({
   const setBusy = useRuntimeSettingsStore((state) => state.setBusy)
   const setError = useRuntimeSettingsStore((state) => state.setError)
   const setEnablement = useRuntimeSettingsStore((state) => state.setEnablement)
+  const setAgentEnvironmentCreationEnabled = useRuntimeSettingsStore(
+    (state) => state.setAgentEnvironmentCreationEnabled
+  )
   const updatePackageCount = useRuntimeSettingsStore((state) => state.updatePackageCount)
   const [managedOperations, setManagedOperations] = useState<
     Partial<Record<NotebookLanguage, boolean>>
@@ -277,6 +283,21 @@ const RuntimesPanel = ({
       setError(
         e instanceof Error ? e.message : t('Could not change package-install authorization.')
       )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggleAgentEnvironmentCreation = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      const enabled = await window.api.runtime.setAgentEnvironmentCreationEnabled({
+        enabled: !agentEnvironmentCreationEnabled
+      })
+      setAgentEnvironmentCreationEnabled(enabled)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('Could not change Agent environment creation.'))
     } finally {
       setBusy(false)
     }
@@ -599,6 +620,23 @@ const RuntimesPanel = ({
             {error === 'Could not load runtimes.' ? t('Could not load runtimes.') : error}
           </p>
         )}
+        {!loading && envs !== null ? (
+          <SettingsRow
+            label={t('Allow Agent to create environments')}
+            description={t(
+              'Lets the Agent create named environments and prepare missing app-managed runtimes. Disable this to require setup from Settings.'
+            )}
+          >
+            <div className="flex justify-end">
+              <SettingsToggle
+                enabled={agentEnvironmentCreationEnabled}
+                onToggle={() => void toggleAgentEnvironmentCreation()}
+                disabled={busy}
+                aria-label={t('Allow Agent to create environments')}
+              />
+            </div>
+          </SettingsRow>
+        ) : null}
         {loading ? (
           <p className="text-sm text-muted-foreground">{t('Detecting runtimes…')}</p>
         ) : envs === null ? null : (

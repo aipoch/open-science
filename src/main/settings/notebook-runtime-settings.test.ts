@@ -33,6 +33,23 @@ describe('NotebookRuntimeSettingsModule', () => {
     })
   })
 
+  it('defaults Agent environment creation to allowed and persists an explicit choice', async () => {
+    const settings = await createModule()
+
+    await expect(settings.getAgentEnvironmentCreationEnabled()).resolves.toBe(true)
+    await expect(settings.setAgentEnvironmentCreationEnabled(false)).resolves.toBe(false)
+    await expect(settings.getAgentEnvironmentCreationEnabled()).resolves.toBe(false)
+  })
+
+  it('rejects a non-boolean Agent environment creation choice before persistence', async () => {
+    const settings = await createModule()
+
+    await expect(settings.setAgentEnvironmentCreationEnabled('false' as never)).rejects.toThrow(
+      'Agent environment creation enabled must be a boolean.'
+    )
+    await expect(settings.getAgentEnvironmentCreationEnabled()).resolves.toBe(true)
+  })
+
   it('persists and clears a runtime selection through the repository policy', async () => {
     const settings = await createModule()
     const interpreterPath = resolve('/usr/bin/python3')

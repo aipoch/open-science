@@ -79,6 +79,7 @@ beforeEach(() => {
   useRuntimeSettingsStore.setState({
     envs: null,
     enablement: {},
+    agentEnvironmentCreationEnabled: true,
     loaded: false,
     checkedAt: null,
     busy: false,
@@ -131,8 +132,10 @@ beforeEach(() => {
       listPackages,
       listPackageCounts,
       getEnablement,
+      getAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true),
       describeUsage,
       setEnvironmentEnabled,
+      setAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true),
       setInstallAuthorized,
       registerInterpreter,
       pickInterpreter
@@ -341,6 +344,18 @@ describe('RuntimesPanel', () => {
     const userToggle = container.querySelector('[aria-label="Enable System Python"]')
     expect(managedToggle?.getAttribute('data-state')).toBe('checked')
     expect(userToggle?.getAttribute('data-state')).toBe('unchecked')
+  })
+
+  it('persists the Agent environment-creation toggle', async () => {
+    await render()
+    const toggle = container.querySelector('[aria-label="Allow Agent to create environments"]')
+
+    expect(toggle?.getAttribute('data-state')).toBe('checked')
+    await click(toggle)
+
+    expect(window.api.runtime.setAgentEnvironmentCreationEnabled).toHaveBeenCalledWith({
+      enabled: false
+    })
   })
 
   it('offers Reinstall only for the default app-managed runtime', async () => {

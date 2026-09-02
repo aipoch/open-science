@@ -50,6 +50,8 @@ type RuntimeSelectionSettings = {
     envId: string,
     authorized: boolean
   ): Promise<RuntimeEnablement>
+  getAgentEnvironmentCreationEnabled(): Promise<boolean>
+  setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<boolean>
   getManualInterpreters(language: NotebookLanguage): Promise<string[]>
   addManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
   removeManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
@@ -88,6 +90,8 @@ type RuntimeSelectionWorkflows = {
   // omitted). Non-runnable envs get no entry.
   listPackageCounts(request: { language: NotebookLanguage }): Promise<Record<string, number | null>>
   getEnablement(request: { language: NotebookLanguage }): Promise<RuntimeEnablement>
+  getAgentEnvironmentCreationEnabled(): Promise<boolean>
+  setAgentEnvironmentCreationEnabled(request: { enabled: boolean }): Promise<boolean>
   describeUsage(request: { language: NotebookLanguage; envId: string }): Promise<RuntimeUsage>
   setSelection(request: {
     language: NotebookLanguage
@@ -227,6 +231,14 @@ const createRuntimeSelectionWorkflows = (
       return counts
     },
     getEnablement: (request) => deps.settingsService.getRuntimeEnablement(request.language),
+    getAgentEnvironmentCreationEnabled: () =>
+      deps.settingsService.getAgentEnvironmentCreationEnabled(),
+    setAgentEnvironmentCreationEnabled: async (request) => {
+      if (typeof request?.enabled !== 'boolean') {
+        throw new TypeError('Agent environment creation enabled must be a boolean.')
+      }
+      return deps.settingsService.setAgentEnvironmentCreationEnabled(request.enabled)
+    },
     describeUsage: async (request) =>
       deps.describeRuntimeUsage?.(request.language, request.envId) ?? {
         running: 0,

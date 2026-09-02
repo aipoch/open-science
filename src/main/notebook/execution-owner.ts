@@ -225,7 +225,11 @@ class NotebookExecutionOwner {
     const startedAt = Date.now()
     const executionCount = session.nextExecutionCount()
     const cwdBefore = session.cwd
-    const admission = await this.options.dataExecutionAdmission.admit(session, cell)
+    const admission = await this.options.dataExecutionAdmission.admit(
+      session,
+      cell,
+      (request.source ?? 'agent') === 'agent'
+    )
     const { environment, processKey } = admission.route
     const { binding, resolvedInterpreter } = admission
     const kernelWasTerminated =

@@ -648,6 +648,10 @@ class SettingsRepository {
     })
   }
 
+  async setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, agentEnvironmentCreationEnabled: enabled }))
+  }
+
   // Applies one catalog change to the latest persisted paths inside the write queue.
   async setManualInterpreters(
     language: NotebookLanguage,

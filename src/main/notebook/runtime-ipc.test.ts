@@ -73,6 +73,7 @@ const fakeSettingsService = (): SettingsPort & {
   const selections = new Map<NotebookLanguage, RuntimeSelection>()
   const enablement = new Map<NotebookLanguage, RuntimeEnablement>()
   const manual = new Map<NotebookLanguage, string[]>()
+  let agentEnvironmentCreationEnabled = true
   const readEnablement = (language: NotebookLanguage): RuntimeEnablement =>
     enablement.get(language) ?? { enabled: {}, installAuthorized: {} }
 
@@ -107,6 +108,11 @@ const fakeSettingsService = (): SettingsPort & {
       }
       enablement.set(language, next)
       return next
+    },
+    getAgentEnvironmentCreationEnabled: async () => agentEnvironmentCreationEnabled,
+    setAgentEnvironmentCreationEnabled: async (enabled) => {
+      agentEnvironmentCreationEnabled = enabled
+      return enabled
     },
     getManualInterpreters: async (language) => manual.get(language) ?? [],
     addManualInterpreter: async (language, path) => {
@@ -157,9 +163,11 @@ describe('runtime IPC adapter', () => {
       'runtime:list-package-counts',
       'runtime:set-selection',
       'runtime:get-enablement',
+      'runtime:get-agent-environment-creation-enabled',
       'runtime:describe-usage',
       'runtime:set-environment-enabled',
       'runtime:set-install-authorized',
+      'runtime:set-agent-environment-creation-enabled',
       'runtime:pick-interpreter',
       'runtime:register-interpreter',
       'runtime:unregister-interpreter'
@@ -200,6 +208,10 @@ describe('runtime IPC adapter', () => {
       enabled: {},
       installAuthorized: {}
     })
+    await expect(invoke('runtime:get-agent-environment-creation-enabled')).resolves.toBe(true)
+    await expect(
+      invoke('runtime:set-agent-environment-creation-enabled', { enabled: false })
+    ).resolves.toBe(false)
     await expect(
       invoke('runtime:describe-usage', { language: 'python', envId: '/usr/bin/python3' })
     ).resolves.toBe(usage)
@@ -240,6 +252,19 @@ describe('runtime IPC adapter', () => {
     registerRuntime(fakeDeps({ settingsService }))
 
     await expect(invoke('runtime:get-enablement', { language: 'python' })).rejects.toBe(failure)
+  })
+
+  it('rejects a non-boolean Agent environment creation policy before persistence', () => {
+    const settingsService = fakeSettingsService()
+    settingsService.setAgentEnvironmentCreationEnabled = vi.fn(
+      settingsService.setAgentEnvironmentCreationEnabled
+    )
+    registerRuntime(fakeDeps({ settingsService }))
+
+    expect(() =>
+      invoke('runtime:set-agent-environment-creation-enabled', { enabled: 'false' })
+    ).toThrow('Agent environment creation enabled must be a boolean.')
+    expect(settingsService.setAgentEnvironmentCreationEnabled).not.toHaveBeenCalled()
   })
 
   it('returns an injected interpreter path', async () => {

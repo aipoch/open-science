@@ -83,6 +83,18 @@ class NotebookRuntimeSettingsModule implements NotebookRuntimeSettings {
     return cloneRuntimeEnablement(settings.notebookRuntimeEnablement?.[language])
   }
 
+  async getAgentEnvironmentCreationEnabled(): Promise<boolean> {
+    return (await this.repository.getSettings()).agentEnvironmentCreationEnabled ?? true
+  }
+
+  async setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<boolean> {
+    if (typeof enabled !== 'boolean') {
+      throw new TypeError('Agent environment creation enabled must be a boolean.')
+    }
+    const settings = await this.repository.setAgentEnvironmentCreationEnabled(enabled)
+    return settings.agentEnvironmentCreationEnabled ?? true
+  }
+
   async addManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]> {
     const settings = await this.repository.setManualInterpreters(language, (current) => [
       ...current,

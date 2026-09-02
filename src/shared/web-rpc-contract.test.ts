@@ -135,12 +135,14 @@ describe('Web RPC contract', () => {
     ])
     expect(invokePaths.filter((path) => path.startsWith('runtime.'))).toEqual([
       'runtime.describeUsage',
+      'runtime.getAgentEnvironmentCreationEnabled',
       'runtime.getEnablement',
       'runtime.listEnvironments',
       'runtime.listPackageCounts',
       'runtime.listPackages',
       'runtime.pickInterpreter',
       'runtime.registerInterpreter',
+      'runtime.setAgentEnvironmentCreationEnabled',
       'runtime.setEnvironmentEnabled',
       'runtime.setInstallAuthorized',
       'runtime.setSelection',

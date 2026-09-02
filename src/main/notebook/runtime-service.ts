@@ -200,6 +200,9 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   // injects this named capability; isolated tests may omit it and receive a fail-safe empty policy.
   notebookRuntimeSettings?: Pick<NotebookRuntimeSettings, 'getSnapshot'> &
     Partial<Pick<NotebookRuntimeSettings, 'setEnvironmentEnabled'>>
+  // Read fresh at every Agent-triggered creation boundary. Historical settings resolve to true;
+  // a failed production read rejects creation rather than silently bypassing the user's policy.
+  getAgentEnvironmentCreationEnabled?: () => Promise<boolean>
   // Discovers the interpreters available for a language (app-managed + user-own). Injectable so tests
   // don't spawn real interpreters; production defaults to environment-discovery over the runtime root.
   discoverRuntimes?: (language: NotebookLanguage) => Promise<DiscoveredInterpreter[]>
@@ -367,6 +370,7 @@ class NotebookRuntimeService {
     ((binding: McpRpcConnectionBinding) => Promise<McpRpcConnection>) | undefined
   private readonly runtimeEnablementResolver:
     ((language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>) | undefined
+  private readonly agentEnvironmentCreationEnabled: () => Promise<boolean>
   private readonly runtimeBindingOwner: NotebookRuntimeBindingOwner
   private readonly recoveryCoordinator: NotebookRecoveryCoordinator
   private readonly runtimeLogger: RuntimeDiagnosticLogger
@@ -407,6 +411,8 @@ class NotebookRuntimeService {
     const runtimeSettings = options.notebookRuntimeSettings ?? EMPTY_NOTEBOOK_RUNTIME_SETTINGS
     this.runtimeEnablementResolver = async (language) =>
       (await runtimeSettings.getSnapshot(language)).runtimeEnablement
+    this.agentEnvironmentCreationEnabled =
+      options.getAgentEnvironmentCreationEnabled ?? (() => Promise.resolve(true))
     this.runtimeBindingOwner = new NotebookRuntimeBindingOwner({
       dataRoot: options.dataRoot,
       repository: this.repository,
@@ -495,7 +501,8 @@ class NotebookRuntimeService {
       ensureRecovered: () => this.ensureRecovered(),
       assertPrefixRecoverable: (prefix) => this.assertPrefixRecoverable(prefix),
       environmentOperations: this.environmentOperations,
-      runtimeRepair: this.runtimeRepair
+      runtimeRepair: this.runtimeRepair,
+      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled
     })
     this.environmentStateTracker =
       options.environmentStateTracker ??
@@ -518,6 +525,7 @@ class NotebookRuntimeService {
       resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
       isDefaultEnvironmentDisabled: (language, candidateRuntimeRoot) =>
         this.isDefaultEnvDisabled(language, candidateRuntimeRoot),
+      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled,
       repairPolicy: this.repairPolicy,
       runtimeRepair: this.runtimeRepair,
       environmentOperations: this.environmentOperations,
@@ -546,6 +554,7 @@ class NotebookRuntimeService {
       recovery: this.recoveryCoordinator,
       ensureRecovered: () => this.ensureRecovered(),
       resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
+      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled,
       repairPolicy: this.repairPolicy,
       platform: options.platform
     })

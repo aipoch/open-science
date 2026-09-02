@@ -47,10 +47,12 @@ const fakeSettingsService = (): SettingsPort & {
   selections: Map<NotebookLanguage, RuntimeSelection>
   enablement: Map<NotebookLanguage, RuntimeEnablement>
   manual: Map<NotebookLanguage, string[]>
+  agentEnvironmentCreationEnabled: { value: boolean }
 } => {
   const selections = new Map<NotebookLanguage, RuntimeSelection>()
   const enablement = new Map<NotebookLanguage, RuntimeEnablement>()
   const manual = new Map<NotebookLanguage, string[]>()
+  const agentEnvironmentCreationEnabled = { value: true }
   const readEnablement = (language: NotebookLanguage): RuntimeEnablement =>
     enablement.get(language) ?? emptyEnablement()
 
@@ -58,6 +60,7 @@ const fakeSettingsService = (): SettingsPort & {
     selections,
     enablement,
     manual,
+    agentEnvironmentCreationEnabled,
     getRuntimeSelection: async (language) => selections.get(language),
     setRuntimeSelection: async (language, selection) => {
       if (selection === null) {
@@ -85,6 +88,11 @@ const fakeSettingsService = (): SettingsPort & {
       }
       enablement.set(language, next)
       return next
+    },
+    getAgentEnvironmentCreationEnabled: async () => agentEnvironmentCreationEnabled.value,
+    setAgentEnvironmentCreationEnabled: async (enabled) => {
+      agentEnvironmentCreationEnabled.value = enabled
+      return enabled
     },
     getManualInterpreters: async (language) => manual.get(language) ?? [],
     addManualInterpreter: async (language, path) => {
@@ -272,6 +280,38 @@ describe('runtime selection workflows', () => {
 
     expect(result.enabled['/user/python']).toBe(true)
     expect(onRuntimeDisabled).not.toHaveBeenCalled()
+  })
+
+  it('persists the Agent environment-creation policy', async () => {
+    const settingsService = fakeSettingsService()
+    const workflows = createRuntimeSelectionWorkflows({
+      settingsService,
+      runtimeRoot: () => '/data/runtime',
+      registry: fakeRegistry()
+    })
+
+    await expect(workflows.getAgentEnvironmentCreationEnabled()).resolves.toBe(true)
+    await expect(workflows.setAgentEnvironmentCreationEnabled({ enabled: false })).resolves.toBe(
+      false
+    )
+    await expect(workflows.getAgentEnvironmentCreationEnabled()).resolves.toBe(false)
+  })
+
+  it('rejects a non-boolean Agent environment-creation policy before the settings port', async () => {
+    const settingsService = fakeSettingsService()
+    settingsService.setAgentEnvironmentCreationEnabled = vi.fn(
+      settingsService.setAgentEnvironmentCreationEnabled
+    )
+    const workflows = createRuntimeSelectionWorkflows({
+      settingsService,
+      runtimeRoot: () => '/data/runtime',
+      registry: fakeRegistry()
+    })
+
+    await expect(
+      workflows.setAgentEnvironmentCreationEnabled({ enabled: 'false' } as never)
+    ).rejects.toThrow('Agent environment creation enabled must be a boolean.')
+    expect(settingsService.setAgentEnvironmentCreationEnabled).not.toHaveBeenCalled()
   })
 
   it('discovers both languages from one manual-catalog and runtime-root snapshot', async () => {

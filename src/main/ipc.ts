@@ -1382,6 +1382,8 @@ const createApplicationModules = async (
       projectId: DEFAULT_ARTIFACT_PROJECT_ID,
       repository: new NotebookRunRepository(resolveDataRoot()),
       getPackageMirror: () => settingsService.getPackageMirror(),
+      getAgentEnvironmentCreationEnabled: () =>
+        settingsService.getAgentEnvironmentCreationEnabled(),
       notebookRuntimeSettings,
       micromambaRunner,
       locale: app.getLocale(),

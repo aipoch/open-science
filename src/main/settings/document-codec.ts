@@ -376,6 +376,10 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   if (notebookRuntimes) settings.notebookRuntimes = notebookRuntimes
   const notebookRuntimeEnablement = sanitizeRuntimeEnablement(value.notebookRuntimeEnablement)
   if (notebookRuntimeEnablement) settings.notebookRuntimeEnablement = notebookRuntimeEnablement
+  const agentEnvironmentCreationEnabled = asBoolean(value.agentEnvironmentCreationEnabled)
+  if (agentEnvironmentCreationEnabled !== undefined) {
+    settings.agentEnvironmentCreationEnabled = agentEnvironmentCreationEnabled
+  }
   const notebookManualInterpreters = sanitizeManualInterpreters(value.notebookManualInterpreters)
   if (notebookManualInterpreters) settings.notebookManualInterpreters = notebookManualInterpreters
 

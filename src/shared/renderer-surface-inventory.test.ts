@@ -197,6 +197,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
   runtime: [
     'pick-interpreter',
     'register-interpreter',
+    'set-agent-environment-creation-enabled',
     'set-environment-enabled',
     'set-install-authorized',
     'set-selection',

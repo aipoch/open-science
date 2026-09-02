@@ -44,6 +44,7 @@ describe('settings document codec', () => {
       },
       computeGrants: [{ projectId: 'p1', operation: 'download', providerId: 'c1' }],
       notebookRuntimes: { python: { source: 'managed' } },
+      agentEnvironmentCreationEnabled: false,
       defaultPermissionProfile: 'ask',
       dataRoot,
       unknown: true
@@ -60,6 +61,7 @@ describe('settings document codec', () => {
       },
       computeGrants: [{ projectId: 'p1', operation: 'download', providerId: 'c1' }],
       notebookRuntimes: { python: { source: 'managed' } },
+      agentEnvironmentCreationEnabled: false,
       defaultPermissionProfile: 'ask',
       dataRoot
     })
@@ -73,6 +75,12 @@ describe('settings document codec', () => {
     ])
     expect(settings.providers[0]).not.toHaveProperty('apiKey')
     expect(settings).not.toHaveProperty('unknown')
+  })
+
+  it('drops a malformed Agent environment creation policy', () => {
+    expect(
+      sanitizeSettings({ providers: [], agentEnvironmentCreationEnabled: 'false' })
+    ).not.toHaveProperty('agentEnvironmentCreationEnabled')
   })
 })
 
