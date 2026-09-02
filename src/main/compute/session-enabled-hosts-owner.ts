@@ -38,6 +38,7 @@ type SessionEnabledComputeHostsOwnerOptions = Readonly<{
   hostExists(providerId: string): Promise<boolean>
   listHostIds(): Promise<readonly string[]>
   sessionAuthority: SessionEnabledComputeHostsAuthority
+  projectSessionConcurrencyLimit?(sessionId: string, limit: number): Promise<void>
   withDataRootWrite<Result>(operation: () => Promise<Result>): Promise<Result>
 }>
 
@@ -307,6 +308,15 @@ class SessionEnabledComputeHostsOwner {
           ? { selectedComputeHosts }
           : {})
       })
+      if (durableSession.computeConcurrencyLimit !== undefined) {
+        if (!this.options.projectSessionConcurrencyLimit) {
+          throw new Error('Session concurrency ownership is not initialized.')
+        }
+        await this.options.projectSessionConcurrencyLimit(
+          durableSession.id,
+          durableSession.computeConcurrencyLimit
+        )
+      }
       this.project(durableSession)
       return durableSession
     })

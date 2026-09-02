@@ -101,6 +101,27 @@ export class ConcurrencyManager {
     }
   }
 
+  // Projects a limit that was already committed through Session persistence. Session creation uses
+  // this path so inherited limits become authoritative in the current process without writing the
+  // same Session a second time.
+  async projectPersistedSessionLimit(sessionId: string, limit: number): Promise<void> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error(
+        `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
+      )
+    }
+
+    let previousLimit: number | undefined
+    await this.runExclusive(async () => {
+      previousLimit = this.sessionLimits.get(sessionId)
+      this.sessionLimits.set(sessionId, limit)
+    })
+
+    if (previousLimit !== undefined && limit > previousLimit) {
+      this.requestQueueReconciliation()
+    }
+  }
+
   // Provider limits are durable host configuration. Own the production mutation here so it shares
   // the same lock as admission and queued-job promotion; raising the ceiling then wakes the FIFO queue.
   async setProviderLimit(providerId: string, limit: number): Promise<void> {

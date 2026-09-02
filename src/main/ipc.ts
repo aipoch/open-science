@@ -1908,6 +1908,11 @@ const createApplicationModules = async (
     hostExists: async (providerId) => (await hostRepository.get(providerId)) !== null,
     listHostIds: async () => (await hostRepository.list()).map((host) => host.providerId),
     sessionAuthority: sessionPersistenceCoordinator,
+    projectSessionConcurrencyLimit: async (sessionId, limit) => {
+      const concurrencyManager = computeIpcModule.handlers.concurrencyManager
+      if (!concurrencyManager) throw new Error('Session concurrency ownership is not initialized.')
+      await concurrencyManager.projectPersistedSessionLimit(sessionId, limit)
+    },
     withDataRootWrite
   })
   sessionEnabledComputeHostsOwnerRef.current = sessionEnabledComputeHostsOwner

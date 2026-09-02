@@ -181,6 +181,30 @@ describe('SessionEnabledComputeHostsOwner', () => {
     expect(commit).toHaveBeenCalledTimes(1)
   })
 
+  it('projects a persisted concurrency limit before first Session creation completes', async () => {
+    const projectSessionConcurrencyLimit = vi.fn(async () => undefined)
+    const options = {
+      registry: new EnabledComputeHostsRegistry(),
+      hostExists: async () => true,
+      listHostIds: async () => [],
+      sessionAuthority: {
+        sessionProjectId: async () => undefined,
+        setSessionEnabledComputeHosts: async () => {
+          throw new Error('not expected')
+        },
+        pruneSessionEnabledComputeHosts: async () => createPruneResult()
+      },
+      withDataRootWrite: passthroughDataRootWrite,
+      projectSessionConcurrencyLimit
+    }
+    const owner = new SessionEnabledComputeHostsOwner(options)
+    const session = createSession({ computeConcurrencyLimit: 2 })
+
+    await owner.createSession(session, async (candidate) => candidate)
+
+    expect(projectSessionConcurrencyLimit).toHaveBeenCalledWith('session-1', 2)
+  })
+
   it('replaces the derived cache from a complete Session catalog', async () => {
     const registry = new EnabledComputeHostsRegistry()
     registry.set('stale-session', ['ssh:old'])

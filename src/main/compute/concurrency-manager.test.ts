@@ -100,6 +100,24 @@ describe('ConcurrencyManager', () => {
       )
       expect(durableManager['sessionLimits'].has('session-1')).toBe(false)
     })
+
+    it('projects an already-persisted limit without writing the Session again', async () => {
+      const save = vi.fn(async () => undefined)
+      const durableManager = new ConcurrencyManager(
+        jobRepo,
+        hostRepo,
+        dispatchJob,
+        onJobUpdated,
+        undefined,
+        undefined,
+        { load: async () => [], save }
+      )
+
+      await durableManager.projectPersistedSessionLimit('session-1', 2)
+
+      expect(durableManager['sessionLimits'].get('session-1')).toBe(2)
+      expect(save).not.toHaveBeenCalled()
+    })
   })
 
   describe('setProviderLimit', () => {
