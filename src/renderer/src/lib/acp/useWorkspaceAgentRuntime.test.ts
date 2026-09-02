@@ -28,6 +28,7 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '../../stores/preview-workbench-store'
+import { resetSessionPersistenceWriteFailuresForTests } from '../session-persistence/session-persistence'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
 import {
   clearLinkedPendingPdfContext,
@@ -137,6 +138,10 @@ const flushRuntimeTasks = async (): Promise<void> => {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+beforeEach(() => {
+  resetSessionPersistenceWriteFailuresForTests()
+})
 
 describe('workspace permission wait recovery', () => {
   it('projects a restored main-owned request and prefers a matching live request', () => {

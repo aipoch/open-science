@@ -119,6 +119,7 @@ type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'sa
   seedAcknowledgedSessions: (sessions: readonly PersistedChatSession[]) => void
   getAcknowledgedSession: (sessionId: string) => PersistedChatSession | undefined
   clearWriteFailure: (target: string) => void
+  clearWriteFailures: () => void
   flush: () => Promise<void>
 }
 
@@ -787,6 +788,7 @@ const createOrderedSessionPersistence = (
       return session ? structuredClone(session) : undefined
     },
     clearWriteFailure: (target) => failedWritesByTarget.delete(target),
+    clearWriteFailures: () => failedWritesByTarget.clear(),
     saveSession: (session, options) =>
       enqueue(`session:${session.id}`, () => saveSubmittedSession(session, options)),
     saveSessionWithRecovery: (session, options, recover) =>
@@ -823,6 +825,10 @@ const liveSessionPersistence = createOrderedSessionPersistence({
 })
 
 const unresolvedSessionRevisionConflictTargets = new Set<string>()
+
+const resetSessionPersistenceWriteFailuresForTests = (): void => {
+  liveSessionPersistence.clearWriteFailures()
+}
 
 const saveSessionInOrder = async (
   session: PersistedChatSession,
@@ -1818,6 +1824,7 @@ export {
   loadPersistedSession,
   loadPersistedSessions,
   reconcilePendingArtifacts,
+  resetSessionPersistenceWriteFailuresForTests,
   deriveSessionCatalogRecovery,
   deleteSession,
   saveSessionInOrder,
