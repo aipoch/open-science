@@ -1,17 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
-import type {
-  EnvPackage,
-  RuntimeEnablement,
-  RuntimeReadiness,
-  RuntimeSelection
-} from '../../shared/notebook-runtime'
+import type { EnvPackage, RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { DiscoveredInterpreter } from './environment-discovery'
-import {
-  createRuntimeSelectionWorkflows,
-  type RuntimeSelectionWorkflowDeps
-} from './runtime-selection-workflows'
+import { createRuntimeWorkflows, type RuntimeWorkflowDeps } from './runtime-workflows'
 
 const handlers = new Map<string, (event: unknown, payload?: unknown) => unknown>()
 const showOpenDialog = vi.fn()
@@ -43,34 +35,12 @@ vi.mock('./environment-discovery', () => ({
 
 const { registerRuntimeIpcHandlers } = await import('./runtime-ipc')
 
-type SettingsPort = RuntimeSelectionWorkflowDeps['settingsService']
-
-const readiness = (
-  language: NotebookLanguage,
-  source: RuntimeReadiness['source']
-): RuntimeReadiness => ({
-  language,
-  source,
-  detected: true,
-  selected: false,
-  runnable: true,
-  packageMutable: source === 'managed'
-})
-
-const fakeRegistry = (): NonNullable<RuntimeSelectionWorkflowDeps['registry']> => ({
-  survey: async (language) => ({
-    managed: readiness(language, 'managed'),
-    external: readiness(language, 'external')
-  }),
-  readiness: async (language) => ({ ...readiness(language, 'external'), selected: true })
-})
+type SettingsPort = RuntimeWorkflowDeps['settingsService']
 
 const fakeSettingsService = (): SettingsPort & {
-  selections: Map<NotebookLanguage, RuntimeSelection>
   enablement: Map<NotebookLanguage, RuntimeEnablement>
   manual: Map<NotebookLanguage, string[]>
 } => {
-  const selections = new Map<NotebookLanguage, RuntimeSelection>()
   const enablement = new Map<NotebookLanguage, RuntimeEnablement>()
   const manual = new Map<NotebookLanguage, string[]>()
   let agentEnvironmentCreationEnabled = true
@@ -78,18 +48,8 @@ const fakeSettingsService = (): SettingsPort & {
     enablement.get(language) ?? { enabled: {}, installAuthorized: {} }
 
   return {
-    selections,
     enablement,
     manual,
-    getRuntimeSelection: async (language) => selections.get(language),
-    setRuntimeSelection: async (language, selection) => {
-      if (selection === null) {
-        selections.delete(language)
-        return undefined
-      }
-      selections.set(language, selection)
-      return selection
-    },
     getRuntimeEnablement: async (language) => readEnablement(language),
     setEnvironmentEnabled: async (language, envId, enabled) => {
       const current = readEnablement(language)
@@ -128,12 +88,9 @@ const fakeSettingsService = (): SettingsPort & {
   }
 }
 
-const fakeDeps = (
-  overrides: Partial<RuntimeSelectionWorkflowDeps> = {}
-): RuntimeSelectionWorkflowDeps => ({
+const fakeDeps = (overrides: Partial<RuntimeWorkflowDeps> = {}): RuntimeWorkflowDeps => ({
   settingsService: fakeSettingsService(),
   runtimeRoot: () => '/data/runtime',
-  registry: fakeRegistry(),
   ...overrides
 })
 
@@ -141,9 +98,9 @@ const invoke = (channel: string, payload?: unknown): Promise<unknown> =>
   Promise.resolve(handlers.get(channel)!(undefined, payload))
 
 const registerRuntime = (
-  deps: RuntimeSelectionWorkflowDeps,
+  deps: RuntimeWorkflowDeps,
   options?: { showOpenDialog?: () => Promise<string | null> }
-): void => registerRuntimeIpcHandlers(createRuntimeSelectionWorkflows(deps), options)
+): void => registerRuntimeIpcHandlers(createRuntimeWorkflows(deps), options)
 
 beforeEach(() => {
   handlers.clear()
@@ -157,11 +114,9 @@ describe('runtime IPC adapter', () => {
     registerRuntime(fakeDeps())
 
     expect([...handlers.keys()]).toEqual([
-      'runtime:survey',
       'runtime:list-environments',
       'runtime:list-packages',
       'runtime:list-package-counts',
-      'runtime:set-selection',
       'runtime:get-enablement',
       'runtime:get-agent-environment-creation-enabled',
       'runtime:describe-usage',
@@ -174,7 +129,7 @@ describe('runtime IPC adapter', () => {
     ])
   })
 
-  it('routes all nine application commands through their existing payloads', async () => {
+  it('routes Runtime application commands through their existing payloads', async () => {
     const settingsService = fakeSettingsService()
     const usage = { running: 1, idle: 2, dormant: 3 }
     const onRuntimeDisabled = vi.fn().mockResolvedValue(undefined)
@@ -196,14 +151,10 @@ describe('runtime IPC adapter', () => {
       })
     )
 
-    await expect(invoke('runtime:survey')).resolves.toHaveLength(2)
     await expect(invoke('runtime:list-environments')).resolves.toEqual({
       python: discoveryState.python,
       r: []
     })
-    await expect(
-      invoke('runtime:set-selection', { language: 'python', selection: { source: 'managed' } })
-    ).resolves.toMatchObject({ language: 'python', selection: { source: 'managed' } })
     await expect(invoke('runtime:get-enablement', { language: 'python' })).resolves.toEqual({
       enabled: {},
       installAuthorized: {}

@@ -81,7 +81,7 @@ import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookNetworkSettings, NotebookNetworkStatus } from '../../shared/notebook-network'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
-import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { resolveStorageRoot } from '../storage-root'
@@ -360,22 +360,6 @@ class SettingsService {
 
   async getPackageMirror(): Promise<PackageMirror> {
     return this.notebookRuntimeSettings.getPackageMirror()
-  }
-
-  // The persisted notebook runtime selection for a language (managed vs the user's own interpreter),
-  // read fresh. undefined means "not chosen" -> the notebook runtime resolves to the managed default.
-  async getRuntimeSelection(language: NotebookLanguage): Promise<RuntimeSelection | undefined> {
-    return (await this.notebookRuntimeSettings.getSnapshot(language)).runtimeSelection
-  }
-
-  // Sets (or clears, when `selection` is null) the persisted runtime choice for a language, returning
-  // the resulting per-language selection (undefined once cleared, or when a bad value was dropped).
-  // Validation/rejection (bad shape, external R) lives in the repository so it can never be bypassed.
-  async setRuntimeSelection(
-    language: NotebookLanguage,
-    selection: RuntimeSelection | null
-  ): Promise<RuntimeSelection | undefined> {
-    return this.notebookRuntimeSettings.setRuntimeSelection(language, selection)
   }
 
   // The persisted v4 environment enablement for a language, read fresh. Always returns a concrete

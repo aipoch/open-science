@@ -9,12 +9,6 @@ vi.mock('../logger', async (importOriginal) => ({
   createLogger: () => log
 }))
 
-import type { NotebookLanguage } from '../../shared/notebook'
-import type {
-  RuntimeReadiness,
-  RuntimeSelection,
-  RuntimeSurvey
-} from '../../shared/notebook-runtime'
 import { RENDERER_CONTRACT_GROUPS } from '../../shared/renderer-contract-catalog'
 import {
   createApplicationCommandRouter,
@@ -24,7 +18,7 @@ import {
   type ApplicationInvocation
 } from '../application-command-router'
 import { createWebCallerContext, type CallerContext } from '../caller-context'
-import type { RuntimeSelectionWorkflows } from './runtime-selection-workflows'
+import type { RuntimeWorkflows } from './runtime-workflows'
 import {
   registerRuntimeApplicationCommands,
   runtimeApplicationCommandGroup,
@@ -48,28 +42,10 @@ const invocation = <Args extends readonly unknown[]>(
 ): ApplicationInvocation<Args> =>
   Object.freeze({ callerContext: caller(location), callerLease: lease(), args })
 
-const readiness = (language: NotebookLanguage): RuntimeReadiness => ({
-  language,
-  source: 'managed',
-  detected: true,
-  selected: true,
-  runnable: true,
-  packageMutable: true
-})
-
-const survey: RuntimeSurvey = {
-  language: 'python',
-  selection: { source: 'managed' },
-  managed: readiness('python'),
-  external: { ...readiness('python'), source: 'external' }
-}
-
-const createWorkflows = (): RuntimeSelectionWorkflows => ({
-  survey: vi.fn(async () => [survey]),
+const createWorkflows = (): RuntimeWorkflows => ({
   listEnvironments: vi.fn(async () => ({ python: [], r: [] })),
   listPackages: vi.fn(async () => [{ name: 'numpy', version: '2.1.3' }]),
   listPackageCounts: vi.fn(async () => ({ managed: 1 })),
-  setSelection: vi.fn(async () => survey),
   getEnablement: vi.fn(async () => ({ enabled: {}, installAuthorized: {} })),
   getAgentEnvironmentCreationEnabled: vi.fn(async () => true),
   setAgentEnvironmentCreationEnabled: vi.fn(async ({ enabled }) => enabled),
@@ -93,7 +69,7 @@ const install = (
   installation: ApplicationCommandInstallation
   pickInterpreter: () => Promise<string | null>
   router: ApplicationCommandRouter
-  workflows: RuntimeSelectionWorkflows
+  workflows: RuntimeWorkflows
 }> => {
   const router = createApplicationCommandRouter()
   const installation = registerRuntimeApplicationCommands(router.registrar, {
@@ -104,26 +80,20 @@ const install = (
 }
 
 describe('runtime application commands', () => {
-  it('installs the exact 14-command group and dispatches a remote-safe survey', async () => {
-    const { router, workflows } = install()
+  it('installs the exact 12-command Runtime group', () => {
+    install()
     const runtimeChannels = RENDERER_CONTRACT_GROUPS.find(
       (group) => group.capability === 'runtime'
     )?.contracts.map((contract) => contract.channel)
 
-    expect(runtimeChannels).toHaveLength(14)
+    expect(runtimeChannels).toHaveLength(12)
     expect(runtimeApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       runtimeChannels
     )
-    await expect(
-      router.dispatcher.invoke(runtimeApplicationCommands.survey, invocation([] as const, 'remote'))
-    ).resolves.toEqual([survey])
-    expect(workflows.survey).toHaveBeenCalledOnce()
   })
 
   it('passes canonical request objects to the runtime workflows', async () => {
     const { router, workflows } = install()
-    const selection: RuntimeSelection = { source: 'managed' }
-
     await router.dispatcher.invoke(
       runtimeApplicationCommands.listEnvironments,
       invocation([] as const)
@@ -135,10 +105,6 @@ describe('runtime application commands', () => {
     await router.dispatcher.invoke(
       runtimeApplicationCommands.listPackageCounts,
       invocation([{ language: 'python' }] as const)
-    )
-    await router.dispatcher.invoke(
-      runtimeApplicationCommands.setSelection,
-      invocation([{ language: 'python', selection }] as const)
     )
     await router.dispatcher.invoke(
       runtimeApplicationCommands.getEnablement,
@@ -176,7 +142,6 @@ describe('runtime application commands', () => {
     expect(workflows.listEnvironments).toHaveBeenCalledWith()
     expect(workflows.listPackages).toHaveBeenCalledWith({ language: 'python', envId: 'managed' })
     expect(workflows.listPackageCounts).toHaveBeenCalledWith({ language: 'python' })
-    expect(workflows.setSelection).toHaveBeenCalledWith({ language: 'python', selection })
     expect(workflows.getEnablement).toHaveBeenCalledWith({ language: 'python' })
     expect(workflows.getAgentEnvironmentCreationEnabled).toHaveBeenCalledWith()
     expect(workflows.describeUsage).toHaveBeenCalledWith({ language: 'python', envId: 'managed' })
@@ -196,16 +161,8 @@ describe('runtime application commands', () => {
     expect(workflows.unregister).toHaveBeenCalledWith({ language: 'python', path: '/opt/python' })
   })
 
-  it('rejects all seven local-only commands before invoking their owners', async () => {
+  it('rejects all six local-only commands before invoking their owners', async () => {
     const { pickInterpreter, router, workflows } = install()
-    const selection: RuntimeSelection = { source: 'managed' }
-
-    await expect(
-      router.dispatcher.invoke(
-        runtimeApplicationCommands.setSelection,
-        invocation([{ language: 'python', selection }] as const, 'remote')
-      )
-    ).rejects.toThrow('Runtime command is only available to local callers.')
     await expect(
       router.dispatcher.invoke(
         runtimeApplicationCommands.setEnvironmentEnabled,
@@ -243,7 +200,6 @@ describe('runtime application commands', () => {
       )
     ).rejects.toThrow('Runtime command is only available to local callers.')
 
-    expect(workflows.setSelection).not.toHaveBeenCalled()
     expect(workflows.setEnvironmentEnabled).not.toHaveBeenCalled()
     expect(workflows.setInstallAuthorized).not.toHaveBeenCalled()
     expect(workflows.setAgentEnvironmentCreationEnabled).not.toHaveBeenCalled()
@@ -279,7 +235,7 @@ describe('runtime application commands', () => {
 
     expect(router.dispatcher.commandNames()).toEqual([])
     await expect(
-      router.dispatcher.invoke(runtimeApplicationCommands.survey, invocation([] as const))
-    ).rejects.toThrow('Unknown application command: runtime:survey')
+      router.dispatcher.invoke(runtimeApplicationCommands.listEnvironments, invocation([] as const))
+    ).rejects.toThrow('Unknown application command: runtime:list-environments')
   })
 })

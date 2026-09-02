@@ -22,7 +22,7 @@ describe('settings document codec', () => {
     })
   })
 
-  it('preserves cross-field migrations and durable settings families', () => {
+  it('preserves current durable settings families and drops retired Runtime selections', () => {
     const dataRoot = resolve('portable-settings-data')
     const settings = sanitizeSettings({
       providers: [
@@ -60,7 +60,6 @@ describe('settings document codec', () => {
         pendingCustomServerDeletionIds: ['rna-reviewer']
       },
       computeGrants: [{ projectId: 'p1', operation: 'download', providerId: 'c1' }],
-      notebookRuntimes: { python: { source: 'managed' } },
       agentEnvironmentCreationEnabled: false,
       defaultPermissionProfile: 'ask',
       dataRoot
@@ -74,6 +73,7 @@ describe('settings document codec', () => {
       })
     ])
     expect(settings.providers[0]).not.toHaveProperty('apiKey')
+    expect(settings).not.toHaveProperty('notebookRuntimes')
     expect(settings).not.toHaveProperty('unknown')
   })
 

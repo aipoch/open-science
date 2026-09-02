@@ -1946,6 +1946,7 @@ describe('notebook runtime service', () => {
       inputKind: 'terminal',
       script: 'print(os.getcwd())'
     })
+    expect(state.runs[0]).not.toHaveProperty('artifacts')
   })
 
   it('announces agent notebook availability once while publishing notebook changes', async () => {
@@ -2211,6 +2212,7 @@ describe('notebook runtime service', () => {
       status: 'completed',
       source: 'agent'
     })
+    expect(state.runs[state.runs.length - 1]).not.toHaveProperty('artifacts')
   })
 
   it('serializes only the raw control executions for one session', async () => {
@@ -2992,6 +2994,7 @@ describe('notebook runtime service', () => {
         status: 'completed',
         source: 'agent'
       })
+      expect(state.runs[0]).not.toHaveProperty('artifacts')
       expect(state.runs[0].text.stdout).toContain('hi')
     })
 

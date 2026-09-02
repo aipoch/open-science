@@ -4,8 +4,7 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 import { createLogger, diagnosticErrorFields } from '../logger'
 
 import type { NotebookLanguage } from '../../shared/notebook'
-import type { RuntimeSelection } from '../../shared/notebook-runtime'
-import type { RuntimeSelectionWorkflows } from './runtime-selection-workflows'
+import type { RuntimeWorkflows } from './runtime-workflows'
 
 const log = createLogger('notebook:runtime-ipc')
 
@@ -21,14 +20,12 @@ export type RuntimeIpcOptions = {
   showOpenDialog?: () => Promise<string | null>
 }
 
-// Registers renderer-callable runtime-selection commands while keeping native host interaction in
+// Registers renderer-callable runtime environment commands while keeping native host interaction in
 // the Electron adapter. Application ordering and state ownership live behind the workflow interface.
 const registerRuntimeIpcHandlers = (
-  workflows: RuntimeSelectionWorkflows,
+  workflows: RuntimeWorkflows,
   options: RuntimeIpcOptions = {}
 ): void => {
-  ipcMainHandle('runtime:survey', () => workflows.survey())
-
   ipcMainHandle('runtime:list-environments', () => workflows.listEnvironments())
 
   ipcMainHandle(
@@ -39,12 +36,6 @@ const registerRuntimeIpcHandlers = (
 
   ipcMainHandle('runtime:list-package-counts', (_event, request: { language: NotebookLanguage }) =>
     workflows.listPackageCounts(request)
-  )
-
-  ipcMainHandle(
-    'runtime:set-selection',
-    (_event, request: { language: NotebookLanguage; selection: RuntimeSelection | null }) =>
-      workflows.setSelection(request)
   )
 
   ipcMainHandle('runtime:get-enablement', (_event, request: { language: NotebookLanguage }) =>

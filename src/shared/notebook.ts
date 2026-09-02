@@ -481,7 +481,9 @@ export type NotebookRunRecord = {
   executionCount?: number
   text: NotebookTextOutput
   outputs: NotebookOutput[]
-  artifacts: ArtifactFile[]
+  // Retained only for reading/exporting historical run.json documents. New native Artifact
+  // relationships are recorded by ArtifactVersion provenance and omit this field.
+  artifacts?: ArtifactFile[]
   workingFiles: NotebookWorkingFile[]
   // Immutable file-generation evidence is stored in a checksummed per-run sidecar. Optional keeps
   // historical run.json documents readable without fabricating capture coverage.
@@ -857,15 +859,14 @@ export type ExecuteNotebookCodeRequest = NotebookSessionRequest & {
 }
 
 // Runs code on the control-plane REPL kernel (JS; the only kernel with host.mcp connector access).
-// Distinct from data cells: no run history, no NotebookLanguage — just code and an optional timeout.
+// Distinct from data cells: durable Run history uses kernelKind "repl", with no NotebookLanguage.
 export type ExecuteNotebookControlRequest = NotebookSessionRequest & {
   code: string
   timeoutMs?: number
 }
 
-// Runs one shell command in a fresh, stateless process in the session workspace. Distinct from every
-// other kernel: no persistent process, no run history, no NotebookLanguage — just a command and an
-// optional timeout.
+// Runs one shell command in a fresh, stateless process in the session workspace. It has no
+// persistent process or NotebookLanguage, but each invocation is persisted as a "bash" Run.
 export type ExecuteShellRequest = NotebookSessionRequest & {
   command: string
   timeoutMs?: number

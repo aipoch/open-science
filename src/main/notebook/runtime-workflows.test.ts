@@ -1,11 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
-import type {
-  RuntimeEnablement,
-  RuntimeReadiness,
-  RuntimeSelection
-} from '../../shared/notebook-runtime'
+import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { DiscoveredInterpreter } from './environment-discovery'
 
 const discoveryState = vi.hoisted(() => ({
@@ -34,22 +30,17 @@ vi.mock('./environment-discovery', () => ({
   }
 }))
 
-import {
-  createRuntimeSelectionWorkflows,
-  type RuntimeSelectionWorkflowDeps
-} from './runtime-selection-workflows'
+import { createRuntimeWorkflows, type RuntimeWorkflowDeps } from './runtime-workflows'
 
-type SettingsPort = RuntimeSelectionWorkflowDeps['settingsService']
+type SettingsPort = RuntimeWorkflowDeps['settingsService']
 
 const emptyEnablement = (): RuntimeEnablement => ({ enabled: {}, installAuthorized: {} })
 
 const fakeSettingsService = (): SettingsPort & {
-  selections: Map<NotebookLanguage, RuntimeSelection>
   enablement: Map<NotebookLanguage, RuntimeEnablement>
   manual: Map<NotebookLanguage, string[]>
   agentEnvironmentCreationEnabled: { value: boolean }
 } => {
-  const selections = new Map<NotebookLanguage, RuntimeSelection>()
   const enablement = new Map<NotebookLanguage, RuntimeEnablement>()
   const manual = new Map<NotebookLanguage, string[]>()
   const agentEnvironmentCreationEnabled = { value: true }
@@ -57,19 +48,9 @@ const fakeSettingsService = (): SettingsPort & {
     enablement.get(language) ?? emptyEnablement()
 
   return {
-    selections,
     enablement,
     manual,
     agentEnvironmentCreationEnabled,
-    getRuntimeSelection: async (language) => selections.get(language),
-    setRuntimeSelection: async (language, selection) => {
-      if (selection === null) {
-        selections.delete(language)
-        return undefined
-      }
-      selections.set(language, selection)
-      return selection
-    },
     getRuntimeEnablement: async (language) => readEnablement(language),
     setEnvironmentEnabled: async (language, envId, enabled) => {
       const current = readEnablement(language)
@@ -108,36 +89,6 @@ const fakeSettingsService = (): SettingsPort & {
   }
 }
 
-const runtimeReadiness = (
-  language: NotebookLanguage,
-  source: RuntimeReadiness['source'],
-  overrides: Partial<RuntimeReadiness> = {}
-): RuntimeReadiness => ({
-  language,
-  source,
-  detected: true,
-  selected: false,
-  runnable: true,
-  packageMutable: source === 'managed',
-  ...overrides
-})
-
-const fakeRegistry = (
-  order: string[] = []
-): NonNullable<RuntimeSelectionWorkflowDeps['registry']> => ({
-  survey: vi.fn(async (language: NotebookLanguage) => {
-    order.push('survey')
-    return {
-      managed: runtimeReadiness(language, 'managed'),
-      external: runtimeReadiness(language, 'external')
-    }
-  }),
-  readiness: vi.fn(async (language: NotebookLanguage) => {
-    order.push('readiness')
-    return runtimeReadiness(language, 'external', { selected: true })
-  })
-})
-
 beforeEach(() => {
   discoveryState.python = []
   discoveryState.r = []
@@ -145,7 +96,7 @@ beforeEach(() => {
   discoveryState.calls = []
 })
 
-describe('runtime selection workflows', () => {
+describe('runtime workflows', () => {
   it('returns the persisted runtime enablement unchanged', async () => {
     const settingsService = fakeSettingsService()
     const persisted: RuntimeEnablement = {
@@ -153,20 +104,18 @@ describe('runtime selection workflows', () => {
       installAuthorized: { '/user/python': true }
     }
     settingsService.enablement.set('python', persisted)
-    const workflows = createRuntimeSelectionWorkflows({
+    const workflows = createRuntimeWorkflows({
       settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry()
+      runtimeRoot: () => '/data/runtime'
     })
 
     await expect(workflows.getEnablement({ language: 'python' })).resolves.toBe(persisted)
   })
 
   it('reports zero live usage when runtime usage is not wired', async () => {
-    const workflows = createRuntimeSelectionWorkflows({
+    const workflows = createRuntimeWorkflows({
       settingsService: fakeSettingsService(),
-      runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry()
+      runtimeRoot: () => '/data/runtime'
     })
 
     await expect(
@@ -177,10 +126,9 @@ describe('runtime selection workflows', () => {
   it('returns the live runtime usage object unchanged when usage is wired', async () => {
     const usage = { running: 1, idle: 2, dormant: 3 }
     const describeRuntimeUsage = vi.fn(() => usage)
-    const workflows = createRuntimeSelectionWorkflows({
+    const workflows = createRuntimeWorkflows({
       settingsService: fakeSettingsService(),
       runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry(),
       describeRuntimeUsage
     })
 
@@ -196,10 +144,9 @@ describe('runtime selection workflows', () => {
       enabled: { '/user/python': true },
       installAuthorized: {}
     })
-    const workflows = createRuntimeSelectionWorkflows({
+    const workflows = createRuntimeWorkflows({
       settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry()
+      runtimeRoot: () => '/data/runtime'
     })
 
     const enablement = await workflows.setInstallAuthorized({
@@ -216,10 +163,9 @@ describe('runtime selection workflows', () => {
 
   it('registers and unregisters a manual interpreter without duplicating its path', async () => {
     const settingsService = fakeSettingsService()
-    const workflows = createRuntimeSelectionWorkflows({
+    const workflows = createRuntimeWorkflows({
       settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry()
+      runtimeRoot: () => '/data/runtime'
     })
     const request = { language: 'python' as const, path: '/manual/python3' }
 
@@ -241,10 +187,9 @@ describe('runtime selection workflows', () => {
       order.push('revoke')
       throw failure
     })
-    const workflows = createRuntimeSelectionWorkflows({
+    const workflows = createRuntimeWorkflows({
       settingsService,
       runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry(),
       onRuntimeDisabled
     })
 
@@ -265,10 +210,9 @@ describe('runtime selection workflows', () => {
   it('does not revoke a runtime when enabling it', async () => {
     const settingsService = fakeSettingsService()
     const onRuntimeDisabled = vi.fn()
-    const workflows = createRuntimeSelectionWorkflows({
+    const workflows = createRuntimeWorkflows({
       settingsService,
       runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry(),
       onRuntimeDisabled
     })
 
@@ -284,10 +228,9 @@ describe('runtime selection workflows', () => {
 
   it('persists the Agent environment-creation policy', async () => {
     const settingsService = fakeSettingsService()
-    const workflows = createRuntimeSelectionWorkflows({
+    const workflows = createRuntimeWorkflows({
       settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry()
+      runtimeRoot: () => '/data/runtime'
     })
 
     await expect(workflows.getAgentEnvironmentCreationEnabled()).resolves.toBe(true)
@@ -302,10 +245,9 @@ describe('runtime selection workflows', () => {
     settingsService.setAgentEnvironmentCreationEnabled = vi.fn(
       settingsService.setAgentEnvironmentCreationEnabled
     )
-    const workflows = createRuntimeSelectionWorkflows({
+    const workflows = createRuntimeWorkflows({
       settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry()
+      runtimeRoot: () => '/data/runtime'
     })
 
     await expect(
@@ -338,10 +280,9 @@ describe('runtime selection workflows', () => {
         runnable: true
       }
     ]
-    const workflows = createRuntimeSelectionWorkflows({
+    const workflows = createRuntimeWorkflows({
       settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry()
+      runtimeRoot: () => '/data/runtime'
     })
 
     const environments = await workflows.listEnvironments()
@@ -352,153 +293,6 @@ describe('runtime selection workflows', () => {
       python: ['/manual/python3'],
       r: ['/manual/R']
     })
-  })
-
-  it('surveys both languages and refreshes readiness for the selected external runtime', async () => {
-    const settingsService = fakeSettingsService()
-    const selection: RuntimeSelection = {
-      source: 'external',
-      interpreterPath: '/selected/python3',
-      appOwnedOverlay: false,
-      packageInstallAuthorized: false
-    }
-    settingsService.selections.set('python', selection)
-    const registry = fakeRegistry()
-    const workflows = createRuntimeSelectionWorkflows({
-      settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry
-    })
-
-    const surveys = await workflows.survey()
-
-    expect(surveys.map((survey) => survey.language)).toEqual(['python', 'r'])
-    expect(registry.readiness).toHaveBeenCalledWith('python', selection)
-    expect(surveys[0]?.external).toMatchObject({ source: 'external', selected: true })
-    expect(surveys[1]?.selection).toBeUndefined()
-  })
-
-  it('prepares an app-owned external runtime before persisting its selection', async () => {
-    const order: string[] = []
-    const settingsService = fakeSettingsService()
-    const persist = settingsService.setRuntimeSelection
-    settingsService.setRuntimeSelection = async (language, selection) => {
-      order.push('persist')
-      return persist(language, selection)
-    }
-    const prepareExternalPython = vi.fn(async () => void order.push('prepare'))
-    const workflows = createRuntimeSelectionWorkflows({
-      settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry(order),
-      prepareExternalPython
-    })
-    const selection: RuntimeSelection = {
-      source: 'external',
-      interpreterPath: '/usr/bin/python3',
-      appOwnedOverlay: true,
-      packageInstallAuthorized: true
-    }
-
-    const survey = await workflows.setSelection({ language: 'python', selection })
-
-    expect(order).toEqual(['readiness', 'prepare', 'persist', 'survey', 'readiness'])
-    expect(prepareExternalPython).toHaveBeenCalledWith(selection, '/data/runtime')
-    expect(settingsService.selections.get('python')).toBe(selection)
-    expect(survey.selection).toBe(selection)
-  })
-
-  it('does not persist an app-owned selection when overlay preparation fails', async () => {
-    const settingsService = fakeSettingsService()
-    const workflows = createRuntimeSelectionWorkflows({
-      settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry(),
-      prepareExternalPython: async () => {
-        throw new Error('matplotlib import failed')
-      }
-    })
-
-    await expect(
-      workflows.setSelection({
-        language: 'python',
-        selection: {
-          source: 'external',
-          interpreterPath: '/usr/bin/python3',
-          appOwnedOverlay: true,
-          packageInstallAuthorized: true
-        }
-      })
-    ).rejects.toThrow(/selection was not saved.*matplotlib import failed/)
-    expect(settingsService.selections.has('python')).toBe(false)
-  })
-
-  it('rejects an unusable external runtime without persisting it', async () => {
-    const settingsService = fakeSettingsService()
-    const registry = fakeRegistry()
-    vi.mocked(registry.readiness).mockResolvedValue(
-      runtimeReadiness('python', 'external', {
-        runnable: false,
-        detail: 'not a runnable Python 3'
-      })
-    )
-    const workflows = createRuntimeSelectionWorkflows({
-      settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry
-    })
-
-    await expect(
-      workflows.setSelection({
-        language: 'python',
-        selection: {
-          source: 'external',
-          interpreterPath: '/usr/bin/python2',
-          appOwnedOverlay: false,
-          packageInstallAuthorized: false
-        }
-      })
-    ).rejects.toThrow(/not a runnable Python 3/)
-    expect(settingsService.selections.has('python')).toBe(false)
-  })
-
-  it('rejects external R before probing or persisting it', async () => {
-    const settingsService = fakeSettingsService()
-    const registry = fakeRegistry()
-    const workflows = createRuntimeSelectionWorkflows({
-      settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry
-    })
-
-    await expect(
-      workflows.setSelection({
-        language: 'r',
-        selection: {
-          source: 'external',
-          interpreterPath: '/usr/bin/R',
-          appOwnedOverlay: false,
-          packageInstallAuthorized: false
-        }
-      })
-    ).rejects.toThrow('R only supports the app-managed runtime.')
-    expect(registry.readiness).not.toHaveBeenCalled()
-    expect(settingsService.selections.has('r')).toBe(false)
-  })
-
-  it('clears a persisted selection and returns its refreshed survey', async () => {
-    const settingsService = fakeSettingsService()
-    settingsService.selections.set('python', { source: 'managed' })
-    const workflows = createRuntimeSelectionWorkflows({
-      settingsService,
-      runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry()
-    })
-
-    const survey = await workflows.setSelection({ language: 'python', selection: null })
-
-    expect(settingsService.selections.has('python')).toBe(false)
-    expect(survey.selection).toBeUndefined()
   })
 })
 
@@ -518,12 +312,11 @@ describe('package-listing workflows', () => {
   })
 
   const fakeWorkflows = (
-    listPackages: NonNullable<RuntimeSelectionWorkflowDeps['listPackages']>
-  ): ReturnType<typeof createRuntimeSelectionWorkflows> =>
-    createRuntimeSelectionWorkflows({
+    listPackages: NonNullable<RuntimeWorkflowDeps['listPackages']>
+  ): ReturnType<typeof createRuntimeWorkflows> =>
+    createRuntimeWorkflows({
       settingsService: fakeSettingsService(),
       runtimeRoot: () => '/data/runtime',
-      registry: fakeRegistry(),
       listPackages
     })
 

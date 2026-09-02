@@ -171,7 +171,7 @@ import { NotebookInputRegistry } from './notebook/input-registry'
 import { effectiveMirrorAsync } from './notebook/mirror-probe'
 import { createProductionProvisioner, type RuntimeProvisioner } from './notebook/provisioner'
 import { createProductionMicromambaRunner } from './notebook/windows-micromamba-runner'
-import { createRuntimeSelectionWorkflows } from './notebook/runtime-selection-workflows'
+import { createRuntimeWorkflows } from './notebook/runtime-workflows'
 import { runtimeRoot } from './notebook/runtime-paths'
 import { HostArtifactsService } from './notebook/host-artifacts-service'
 import { HostLineageService } from './notebook/host-lineage-service'
@@ -188,7 +188,6 @@ import {
   OFFICE_PREVIEW_STATE_CHANNEL,
   type OfficePreviewOpenRequest
 } from '../shared/office-preview'
-import { prepareExternalPythonRuntime } from './notebook/venv-overlay'
 import {
   createDefaultPreviewStateRepository,
   createDefaultProjectRepository,
@@ -1373,16 +1372,13 @@ const createApplicationModules = async (
     'getSnapshot' | 'setEnvironmentEnabled'
   > = {
     getSnapshot: async (language) => {
-      const [runtimeSelection, runtimeEnablement, manualInterpreters, packageMirror] =
-        await Promise.all([
-          settingsService.getRuntimeSelection(language),
-          settingsService.getRuntimeEnablement(language),
-          settingsService.getManualInterpreters(language),
-          settingsService.getPackageMirror()
-        ])
+      const [runtimeEnablement, manualInterpreters, packageMirror] = await Promise.all([
+        settingsService.getRuntimeEnablement(language),
+        settingsService.getManualInterpreters(language),
+        settingsService.getPackageMirror()
+      ])
       return {
         language,
-        runtimeSelection,
         runtimeEnablement,
         manualInterpreters,
         packageMirror
@@ -3438,10 +3434,10 @@ const createApplicationModules = async (
       marketplaceService
     )
   )
-  // Runtime selection UI (Settings/Onboarding): survey managed+external per language, persist the
-  // choice, and pick an interpreter file. The runtime root MUST match the executor/service's
+  // Runtime Settings UI: discover managed/external environments and pick an interpreter file. The
+  // runtime root MUST match the executor/service's
   // (getRuntimeRoot(<dataRoot>)); read lazily so a data-root switch is reflected without re-register.
-  const runtimeSelectionWorkflows = createRuntimeSelectionWorkflows({
+  const runtimeWorkflows = createRuntimeWorkflows({
     settingsService,
     runtimeRoot: () => getRuntimeRoot(resolveDataRoot()),
     micromambaRunner,
@@ -3449,20 +3445,9 @@ const createApplicationModules = async (
     onRuntimeDisabled: (language, envId, force) =>
       notebookService.revokeRuntime(language, envId, { force }),
     // WS11: live-session usage of a runtime, for the disable-impact warning.
-    describeRuntimeUsage: (language, envId) =>
-      notebookService.describeRuntimeUsage(language, envId),
-    prepareExternalPython: async (selection, root) => {
-      const configuredMirror = await settingsService.getPackageMirror()
-      const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
-      await prepareExternalPythonRuntime(selection, root, {
-        pypiIndex: mirror.pypiIndex,
-        caBundle: mirror.caBundle
-      })
-    }
+    describeRuntimeUsage: (language, envId) => notebookService.describeRuntimeUsage(language, envId)
   })
-  declareElectronAdapter('notebook-runtime', () =>
-    registerRuntimeIpcHandlers(runtimeSelectionWorkflows)
-  )
+  declareElectronAdapter('notebook-runtime', () => registerRuntimeIpcHandlers(runtimeWorkflows))
   declareElectronAdapter('managed-preview', () =>
     installManagedPreviewElectronAdapter(
       previewResources,
@@ -3941,7 +3926,7 @@ const createApplicationModules = async (
     },
     notebookEnvironment: notebookEnvironmentLifecycle,
     notebookRuntime: {
-      workflows: runtimeSelectionWorkflows,
+      workflows: runtimeWorkflows,
       pickInterpreter: async () => {
         const result = await dialog.showOpenDialog({ properties: ['openFile'] })
         return result.filePaths[0] ?? null

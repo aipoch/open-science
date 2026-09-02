@@ -180,9 +180,7 @@ import type {
   DiscoveredInterpreter,
   EnvPackage,
   RuntimeEnablement,
-  RuntimeUsage,
-  RuntimeSelection,
-  RuntimeSurvey
+  RuntimeUsage
 } from './notebook-runtime'
 import type {
   DeletePreviewStateRequest,
@@ -494,7 +492,6 @@ const DEFAULT_EMPTY_ABSENT_ONLY = 'default-empty-object-absent-only'
 const OPTIONAL_ARGUMENT_SLOT = 'optional-argument-slot'
 const STORAGE_PARENT = 'storage-parent-object'
 const STORAGE_ROOT = 'storage-data-root-object'
-const RUNTIME_SELECTION = 'runtime-selection-object'
 const RUNTIME_LANGUAGE_ENV = 'runtime-language-environment-object'
 const RUNTIME_LANGUAGE = 'runtime-language-object'
 const RUNTIME_ENABLEMENT = 'runtime-enablement-object'
@@ -1471,10 +1468,6 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'runtime.setInstallAuthorized': callable<
     (language: NotebookLanguage, envId: string, authorized: boolean) => Promise<RuntimeEnablement>
   >()('runtime', ['runtime:set-install-authorized', LOCAL, RUNTIME_INSTALL_AUTH]),
-  'runtime.setSelection': callable<
-    (language: NotebookLanguage, selection: RuntimeSelection | null) => Promise<RuntimeSurvey>
-  >()('runtime', ['runtime:set-selection', LOCAL, RUNTIME_SELECTION]),
-  'runtime.survey': callable<() => Promise<RuntimeSurvey[]>>()('runtime', ['runtime:survey']),
   'runtime.unregisterInterpreter': callable<
     (language: NotebookLanguage, path: string) => Promise<string[]>
   >()('runtime', ['runtime:unregister-interpreter', LOCAL, RUNTIME_INTERPRETER]),

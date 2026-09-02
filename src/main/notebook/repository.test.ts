@@ -1054,7 +1054,7 @@ describe('notebook run repository', () => {
       projectId: 'canonical-project',
       notebookSessionRoot: join(root, 'notebooks', 'canonical-project', 'session-1')
     })
-    expect(reloaded?.runs[0].artifacts[0]).toMatchObject({ projectId: 'canonical-project' })
+    expect(reloaded?.runs[0].artifacts?.[0]).toMatchObject({ projectId: 'canonical-project' })
   })
 
   it('keeps a matching legacy projectName document readable through loadOrCreate', async () => {

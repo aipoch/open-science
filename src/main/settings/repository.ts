@@ -28,7 +28,7 @@ import {
   type NetworkProxySettings
 } from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook'
-import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type { LanguagePreference } from '../../shared/locale'
 import {
@@ -586,41 +586,6 @@ class SettingsRepository {
         ...(notebookRuntimeEnablement ? { notebookRuntimeEnablement } : {}),
         dataRoot: update.dataRoot
       }
-    })
-  }
-
-  // Sets (or clears, when `selection` is null) the persisted runtime choice for one language. The
-  // value is run through the SAME sanitizer used on read, so a bad selection can never be persisted;
-  // external R is rejected here too (managed-only in v1, mirroring sanitizeNotebookRuntimes). Clearing
-  // deletes the language's entry and drops the whole `notebookRuntimes` map when it becomes empty, so
-  // an absent map keeps meaning "use the managed default".
-  async setRuntimeSelection(
-    language: NotebookLanguage,
-    selection: RuntimeSelection | null
-  ): Promise<StoredSettings> {
-    const sanitized =
-      selection === null
-        ? null
-        : sanitizeSettings({ notebookRuntimes: { python: selection } }).notebookRuntimes?.python
-
-    if (selection !== null && !sanitized) {
-      throw new Error('Invalid runtime selection.')
-    }
-    if (sanitized && language === 'r' && sanitized.source === 'external') {
-      throw new Error('R only supports the managed runtime.')
-    }
-
-    return this.mutate((settings) => {
-      const current: Partial<Record<NotebookLanguage, RuntimeSelection>> = {
-        ...settings.notebookRuntimes
-      }
-
-      if (sanitized === null) delete current[language]
-      else current[language] = sanitized
-
-      const notebookRuntimes = Object.keys(current).length > 0 ? current : undefined
-
-      return { ...settings, notebookRuntimes }
     })
   }
 

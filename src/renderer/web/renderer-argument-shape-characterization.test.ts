@@ -208,14 +208,7 @@ describe('renderer argument-shape characterization', () => {
   })
 
   it('keeps Runtime request arguments equivalent across Electron and Web', async () => {
-    const selection = { kind: 'interpreter', path: '/opt/python' }
     const cases = [
-      {
-        path: 'runtime.setSelection',
-        args: ['python', selection],
-        channel: 'runtime:set-selection',
-        electronArgs: [{ language: 'python', selection }]
-      },
       {
         path: 'runtime.listPackages',
         args: ['python', 'python-env'],
