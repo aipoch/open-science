@@ -24,6 +24,7 @@ type TransactionJournal = {
   specialistId: string
   beforeDigest: string
   afterDigest: string
+  deleteSkillIds?: string[]
   // Legacy journals embedded documents. New journals keep sensitive Specialist payloads in
   // transaction data sidecars and contain only IDs, digests, and phase metadata.
   before?: StoredSpecialists
@@ -65,7 +66,11 @@ export class SpecialistPackageTransaction {
     storageDir: string,
     private readonly repository: SpecialistRepository,
     private readonly transactionId: () => string = randomUUID,
-    private readonly skillPort: SpecialistPackageSkillPort = NOOP_SPECIALIST_PACKAGE_SKILL_PORT
+    private readonly skillPort: SpecialistPackageSkillPort = NOOP_SPECIALIST_PACKAGE_SKILL_PORT,
+    private readonly cleanupCommittedDeletion?: (
+      specialistId: string,
+      skillIds: readonly string[]
+    ) => Promise<void>
   ) {
     this.journalPath = join(storageDir, 'specialist-package-transaction.json')
     this.beforeDataPath = join(storageDir, 'specialist-package-transaction.before.json')
@@ -94,7 +99,13 @@ export class SpecialistPackageTransaction {
 
     try {
       const journal = JSON.parse(raw) as TransactionJournal
-      if (!journal || typeof journal.transactionId !== 'string') {
+      if (
+        !journal ||
+        typeof journal.transactionId !== 'string' ||
+        (journal.deleteSkillIds !== undefined &&
+          (!Array.isArray(journal.deleteSkillIds) ||
+            journal.deleteSkillIds.some((id) => typeof id !== 'string')))
+      ) {
         throw new Error('Invalid Specialist package transaction journal.')
       }
       const { before, after } = await this.readTransactionData(journal)
@@ -108,6 +119,9 @@ export class SpecialistPackageTransaction {
           throw new Error('Specialist document changed after package commit.')
         }
         await this.skillPort.recover(journal.transactionId, 'commit')
+        if (journal.deleteSkillIds) {
+          await this.cleanupCommittedDeletion?.(journal.specialistId, journal.deleteSkillIds)
+        }
       } else if (journal.phase !== 'rolled-back') {
         await this.skillPort.recover(journal.transactionId, 'rollback')
         const current = await this.repository.getAll()
@@ -295,7 +309,8 @@ export class SpecialistPackageTransaction {
         phase: 'prepared',
         specialistId,
         beforeDigest: documentDigest(before),
-        afterDigest: documentDigest(after)
+        afterDigest: documentDigest(after),
+        deleteSkillIds: [...deleteSkillIds]
       }
       let specialistCommitted = false
       let skillMutationBegun = false
@@ -320,10 +335,16 @@ export class SpecialistPackageTransaction {
           journal.phase = 'committed'
           await this.writeJournal(journal)
           await this.skillPort.recover(transactionId, 'commit')
+          try {
+            await this.cleanupCommittedDeletion?.(specialistId, deleteSkillIds)
+          } catch {
+            throw new SpecialistPackageRecoveryError()
+          }
           await this.cleanupTransactionData()
         }
         await (this.skillPort.runInMutationContext?.(transactionId, commit) ?? commit())
       } catch (error) {
+        if (error instanceof SpecialistPackageRecoveryError) throw error
         try {
           journal.phase = 'rolling-back'
           await this.writeJournal(journal)

@@ -811,6 +811,19 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     })
     await expect(workflows.removeCustomServer({ id: 'server' })).rejects.toThrow('reset failed')
     expect(calls).toEqual(['persist', 'reset', 'invalidate', 'refresh'])
+
+    calls.length = 0
+    pruneCustomServerPermissions.mockImplementation(async () => {
+      calls.push('prune')
+    })
+    removeTagsForConnector.mockImplementationOnce(async () => {
+      calls.push('tags')
+      throw new Error('Tag cleanup failed')
+    })
+    await expect(workflows.removeCustomServer({ id: 'server' })).rejects.toThrow(
+      'Tag cleanup failed'
+    )
+    expect(calls).toEqual(['persist', 'reset', 'clear', 'prune', 'tags', 'invalidate', 'refresh'])
   })
 
   it('owns the security-sensitive update barrier and rolls it back when prune fails', async () => {

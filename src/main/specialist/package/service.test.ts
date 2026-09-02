@@ -2503,7 +2503,7 @@ describe('SpecialistPackageService', () => {
     expect(onResourcesDeleted).toHaveBeenCalledWith('safe-owner', [])
   })
 
-  it('attempts Tag cleanup when deleted Skill settings cleanup fails', async () => {
+  it('attempts Tag cleanup and keeps deletion recoverable when Skill settings cleanup fails', async () => {
     const repository = new SpecialistRepository(storageDir)
     await repository.insert({
       id: 'cleanup-owner',
@@ -2536,9 +2536,82 @@ describe('SpecialistPackageService', () => {
         expectedRevision: preview.expectedRevision,
         deleteSkillIds: []
       })
-    ).resolves.toEqual({ status: 'deleted' })
+    ).resolves.toEqual({ status: 'failed', code: 'recovery-failed' })
     expect(onSkillsDeleted).toHaveBeenCalledWith([])
     expect(onResourcesDeleted).toHaveBeenCalledWith('cleanup-owner', [])
+  })
+
+  it('keeps committed relationship cleanup recoverable instead of reporting deletion success', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const userSkills = new UserSkillRepository(storageDir)
+    const skillId = await userSkills.createPersonal({
+      name: 'recoverable-cleanup',
+      description: 'Exercises committed deletion cleanup recovery.',
+      body: 'Recovery instructions.'
+    })
+    await repository.insert({
+      id: 'cleanup-owner',
+      name: 'Cleanup Owner',
+      description: '',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [skillId], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '0.1.0',
+      origin: 'marketplace',
+      ownedSkillIds: []
+    })
+    const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)
+    const catalogWithSkill = async (): Promise<SpecialistPackageCatalogSnapshot> => ({
+      ...catalog,
+      skills: (await skillPort.snapshot()).map((skill) => ({
+        ...skill,
+        builtin: false,
+        mainEnabled: false
+      }))
+    })
+    const onSpecialistDeleted = vi
+      .fn<(specialistId: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('Marketplace unavailable'))
+      .mockResolvedValue(undefined)
+    const onSkillsDeleted = vi.fn<(skillIds: readonly string[]) => Promise<void>>()
+    const onResourcesDeleted =
+      vi.fn<(specialistId: string, skillIds: readonly string[]) => Promise<void>>()
+    const onCommitted = vi.fn()
+    const options = {
+      storageDir,
+      repository,
+      skillPort,
+      catalog: catalogWithSkill,
+      onSpecialistDeleted,
+      onSkillsDeleted,
+      onResourcesDeleted,
+      onCommitted
+    }
+    const service = new SpecialistPackageService(options)
+    const preview = await service.previewSpecialistDelete({ id: 'cleanup-owner' })
+
+    const result = await service.deleteSpecialist({
+      id: 'cleanup-owner',
+      expectedRevision: preview.expectedRevision,
+      deleteSkillIds: [skillId]
+    })
+
+    expect(result).toEqual({ status: 'failed', code: 'recovery-failed' })
+    expect(onCommitted).toHaveBeenCalledOnce()
+    await expect(new SpecialistService(repository).getById('cleanup-owner')).rejects.toThrow(
+      /not found/i
+    )
+    await expect(userSkills.list()).resolves.toEqual([])
+
+    await new SpecialistPackageService(options).recover()
+
+    expect(onSpecialistDeleted).toHaveBeenCalledTimes(2)
+    expect(onSpecialistDeleted).toHaveBeenLastCalledWith('cleanup-owner')
+    expect(onSkillsDeleted).toHaveBeenCalledWith([skillId])
+    expect(onResourcesDeleted).toHaveBeenCalledWith('cleanup-owner', [skillId])
   })
 
   it('rolls back prepared Skill deletion when the Specialist document swap fails', async () => {

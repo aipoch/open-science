@@ -1464,16 +1464,9 @@ const createApplicationModules = async (
     new MemoryRepository(() => getProjectDbClient(configRoot)),
     applicationEvents
   )
-  const tagCleanupLog = createLogger('tags:cleanup')
   const removeResourceTags = async (
     resources: Parameters<TagService['removeResources']>[0]
-  ): Promise<void> => {
-    try {
-      await tagService.removeResources(resources)
-    } catch (error) {
-      tagCleanupLog.warn('resource deletion Tag cleanup failed', { error, resources })
-    }
-  }
+  ): Promise<void> => tagService.removeResources(resources)
   const specialistPackageService = new SpecialistPackageService({
     storageDir: resolveStorageRoot(),
     repository: specialistRepository,
@@ -2573,6 +2566,8 @@ const createApplicationModules = async (
       (await settingsRepository.getSettings()).connectors?.pendingCustomServerDeletionIds ?? []
     await reconcilePendingCustomServerDeletions(permissionGrantRegistry, {
       pendingCustomServerDeletionIds,
+      removeTagsForConnector: (serverId) =>
+        removeResourceTags([{ resourceType: 'catalog.connector', resourceId: serverId }]),
       completeCustomServerDeletion: (serverId) =>
         settingsRepository.completeCustomServerDeletion(serverId)
     })
@@ -2581,7 +2576,7 @@ const createApplicationModules = async (
     recoverPendingCustomServerDeletions()
       .catch((error) =>
         permissionGrantsLog.error(
-          'pending Connector permission cleanup failed',
+          'pending Connector relationship cleanup failed',
           errorLogFields(error)
         )
       )

@@ -13,6 +13,7 @@ type PermissionGrantOwnerSnapshot = {
 
 type PendingCustomServerDeletionStore = {
   pendingCustomServerDeletionIds: readonly string[]
+  removeTagsForConnector(id: string): Promise<unknown>
   completeCustomServerDeletion(id: string): Promise<unknown>
 }
 
@@ -80,6 +81,7 @@ const reconcilePendingCustomServerDeletions = async (
 ): Promise<void> => {
   for (const serverId of store.pendingCustomServerDeletionIds) {
     await registry.prune({ kind: 'mcp_server', serverId })
+    await store.removeTagsForConnector(serverId)
     await store.completeCustomServerDeletion(serverId)
   }
 }
