@@ -22,7 +22,9 @@ import {
   type DataContentApplicationCommandDependencies
 } from './data-content-application-commands'
 import {
+  materializeSessionConversationGraph,
   SessionRevisionConflictError,
+  type PersistedChatSession,
   type SessionDeletionResult
 } from '../shared/session-persistence'
 import { ApplicationCommandError } from '../shared/application-command-contract'
@@ -1100,6 +1102,60 @@ describe('Data and content application commands', () => {
     expect(savedSession?.runtimeContext).toBeUndefined()
   })
 
+  it('normalizes graph-only Session arguments and results without preserving incomplete objects', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    const graphOnlySession: Partial<PersistedChatSession> = structuredClone(
+      materializeSessionConversationGraph(deps.session as PersistedChatSession)
+    )
+    delete graphOnlySession.messages
+    deps.sessions.updateArchive.mockResolvedValueOnce(graphOnlySession as never)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await dispatchCommand(router, 'sessionSave', [graphOnlySession]).result
+    const submitted = (
+      deps.sessions.saveSession.mock.calls as unknown as Array<readonly [PersistedChatSession]>
+    )[0]?.[0]
+    expect(submitted?.messages).toEqual([])
+
+    const result = await router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionUpdateArchive,
+      invocation([
+        {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          archived: true,
+          expectedArchivedAt: null
+        }
+      ] as const)
+    )
+    expect(result).not.toBe(graphOnlySession)
+    expect(result.messages).toEqual([])
+  })
+
+  it('normalizes incomplete nested Session messages before persistence', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await dispatchCommand(router, 'sessionSave', [
+      {
+        ...deps.session,
+        messages: [{ id: 'message-1', role: 'user', content: 'Hello' }]
+      }
+    ]).result
+
+    const submitted = (
+      deps.sessions.saveSession.mock.calls as unknown as Array<readonly [PersistedChatSession]>
+    )[0]?.[0]
+    expect(submitted?.messages[0]).toMatchObject({
+      status: 'complete',
+      eventIds: [],
+      createdAt: 0,
+      updatedAt: 0
+    })
+  })
+
   it('dispatches every remaining Project and Session wrapper to its existing owner', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
@@ -1266,15 +1322,15 @@ describe('Data and content application commands', () => {
       owner: 'updateArchive' as const
     },
     {
-      label: 'manifest request with an empty project id',
+      label: 'manifest request with the removed project id',
       command: 'sessionSaveManifest' as const,
-      request: { lastProjectId: '', lastSessionId: 'session-1' },
+      request: { lastProjectId: 'project-1', lastSessionId: 'session-1' },
       owner: 'saveManifest' as const
     },
     {
       label: 'manifest request with a surplus field',
       command: 'sessionSaveManifest' as const,
-      request: { lastProjectId: 'project-1', lastSessionId: 'session-1', path: '/private/data' },
+      request: { lastSessionId: 'session-1', path: '/private/data' },
       owner: 'saveManifest' as const
     }
   ])('rejects a malformed Session $label before reaching the owner', async (testCase) => {

@@ -4394,7 +4394,11 @@ export const normalizeSessionFile = (
   return decoded.status === 'ok' ? decoded.session : undefined
 }
 
-const matchesSanitizedProjection = (value: unknown, sanitized: unknown): boolean => {
+const matchesSanitizedProjection = (
+  value: unknown,
+  sanitized: unknown,
+  allowMissingSanitizedFields = false
+): boolean => {
   if (Object.is(value, sanitized)) return true
   if (Array.isArray(value)) {
     return (
@@ -4404,11 +4408,25 @@ const matchesSanitizedProjection = (value: unknown, sanitized: unknown): boolean
     )
   }
   if (!isRecord(value) || !isRecord(sanitized)) return false
+  if (!allowMissingSanitizedFields && Object.keys(value).length !== Object.keys(sanitized).length) {
+    return false
+  }
   return Object.entries(value).every(
     ([key, item]) =>
       Object.hasOwn(sanitized, key) && matchesSanitizedProjection(item, sanitized[key])
   )
 }
+
+const hasRequiredSessionFields = (value: unknown): value is PersistedChatSession =>
+  isRecord(value) &&
+  Object.hasOwn(value, 'id') &&
+  Object.hasOwn(value, 'projectId') &&
+  Object.hasOwn(value, 'title') &&
+  Object.hasOwn(value, 'cwd') &&
+  Object.hasOwn(value, 'status') &&
+  Object.hasOwn(value, 'messages') &&
+  Object.hasOwn(value, 'createdAt') &&
+  Object.hasOwn(value, 'updatedAt')
 
 // The wire boundary uses the same recursive decoder as durable Session files, but preserves live
 // runtime state instead of applying restart recovery. This keeps one source of truth for every
@@ -4419,8 +4437,9 @@ export const persistedChatSessionCodec: RuntimeCodec<PersistedChatSession> = Obj
     if (decoded.status !== 'ok' || decoded.session.projectId.length === 0) {
       throw new Error('Invalid Session payload.')
     }
-    return matchesSanitizedProjection(value, decoded.session)
-      ? (value as PersistedChatSession)
+    return hasRequiredSessionFields(value) &&
+      matchesSanitizedProjection(value, decoded.session, true)
+      ? value
       : decoded.session
   }
 })
