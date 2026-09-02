@@ -284,7 +284,7 @@ describe('workspace page architecture', () => {
     )
 
     expect(archivedPanelSource).toContain(
-      'isDeleting={busyKey === `session:${sessionToDelete?.id}`}'
+      'isDeleting={busyKeys.has(`session:${sessionToDelete?.id}`)}'
     )
   })
 
