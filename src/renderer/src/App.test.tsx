@@ -64,6 +64,7 @@ const mocks = vi.hoisted(() => {
     },
     projects: [{ id: 'project-1', archivedAt: undefined }],
     loadProjects: vi.fn().mockResolvedValue(undefined),
+    loadDeletionCleanup: vi.fn().mockResolvedValue(undefined),
     deepLinkNavigation: vi.fn(),
     lifecycleSync: vi.fn(() => ({
       notice: undefined,
@@ -204,8 +205,14 @@ vi.mock('@/stores/project-store', () => ({
     selector: (state: {
       projects: typeof mocks.projects
       loadProjects: typeof mocks.loadProjects
+      loadDeletionCleanup: typeof mocks.loadDeletionCleanup
     }) => T
-  ): T => selector({ projects: mocks.projects, loadProjects: mocks.loadProjects })
+  ): T =>
+    selector({
+      projects: mocks.projects,
+      loadProjects: mocks.loadProjects,
+      loadDeletionCleanup: mocks.loadDeletionCleanup
+    })
 }))
 vi.mock('@/stores/settings-store', () => ({
   useSettingsStore: <T,>(selector: (state: typeof mocks.settings) => T): T =>
@@ -1298,6 +1305,7 @@ describe('App startup routing', () => {
     expect(mocks.initUpdates).toHaveBeenCalled()
     expect(mocks.environment.init).toHaveBeenCalled()
     expect(mocks.loadProjects).toHaveBeenCalled()
+    expect(mocks.loadDeletionCleanup).toHaveBeenCalled()
     expect(mocks.settings.load).toHaveBeenCalled()
     expect(mocks.settings.checkEnvironment).toHaveBeenCalled()
     expect(mocks.getStatus).toHaveBeenCalled()
