@@ -204,6 +204,8 @@ describe('application command composition', () => {
       'projects:delete',
       'projects:get',
       'projects:list',
+      'projects:list-deletion-cleanup',
+      'projects:retry-deletion-cleanup',
       'projects:update',
       'projects:update-archive',
       'sessions:delete-session',
