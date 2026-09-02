@@ -777,16 +777,17 @@ describe('HeadlessTaskApi adapter', () => {
       location: 'remote',
       isAuthorizationCurrent: () => authorizationCurrent
     })
-    const invoke = vi.fn(
-      async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
-        if (channel === 'projects:list') return [project]
-        if (channel === 'sessions:load-all') {
-          return { sessions: [existing], manifest: { version: 1 } }
-        }
-        if (channel === 'sessions:save-session') return args[0]
-        throw new Error(`Unexpected RPC channel: ${channel}`)
+    const invoke = vi.fn(async (channel: string, callerContext: CallerContext, args: unknown[]) => {
+      if (!callerContext.isAuthorizationCurrent()) {
+        throw new Error('Caller authorization is no longer current.')
       }
-    )
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') {
+        return { sessions: [existing], manifest: { version: 1 } }
+      }
+      if (channel === 'sessions:save-session') return args[0]
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
     const agent = createAgent({
       listAttachedSessionIds: vi.fn(async () => [existing.id]),
       prompt: vi.fn(async (_request, observer) => {
@@ -873,7 +874,7 @@ describe('HeadlessTaskApi adapter', () => {
     expect(invoke.mock.calls.every(([channel]) => !String(channel).startsWith('acp:'))).toBe(true)
   })
 
-  it('keeps the captured request caller across asynchronous run façade calls', async () => {
+  it('uses the request caller before admission and the Task caller for admitted lifecycle work', async () => {
     let finishPrompt: (() => void) | undefined
     const promptGate = new Promise<void>((resolve) => {
       finishPrompt = resolve
@@ -908,8 +909,14 @@ describe('HeadlessTaskApi adapter', () => {
     finishPrompt?.()
     await api.waitForRun(run.id)
 
-    expect(invoke).toHaveBeenCalled()
-    expect(invoke.mock.calls.every(([, callerContext]) => callerContext === context)).toBe(true)
+    expect(invoke).toHaveBeenCalledWith('projects:list', context, [])
+    expect(invoke).toHaveBeenCalledWith('sessions:load-all', context, [])
+    expect(invoke).toHaveBeenCalledWith('sessions:save-session', context, [
+      expect.objectContaining({ status: 'running' })
+    ])
+    expect(invoke).toHaveBeenCalledWith('sessions:save-session', taskCallerContext(), [
+      expect.objectContaining({ status: 'idle' })
+    ])
     expect(agent.createSession).toHaveBeenCalledWith({
       projectId: project.id,
       permissionProfile: 'ask'
@@ -1071,7 +1078,7 @@ describe('HeadlessTaskApi adapter', () => {
         }
         if (channel === 'sessions:save-session') return args[0]
         if (channel === 'reviewer:run') {
-          expect(callerContext).toBe(context)
+          expect(callerContext).toEqual(taskCallerContext())
           authorizationCurrent = false
           return { started: true }
         }

@@ -1339,6 +1339,18 @@ class TaskRunner {
       return
     }
 
+    const sessionAtAdmission = admittedSession
+    return this.dependencies.runWithLifecycleContext(() =>
+      this.finalizeAdmittedRun(run, sessionAtAdmission, promptError, cancellationAtPromptFailure)
+    )
+  }
+
+  private async finalizeAdmittedRun(
+    run: MutableTaskRun,
+    admittedSession: PersistedChatSession,
+    promptError: unknown,
+    cancellationAtPromptFailure: MutableTaskRun['cancellation']
+  ): Promise<void> {
     const acceptedSession =
       promptError === undefined ? consumePendingHistoryReplay(admittedSession) : admittedSession
 
