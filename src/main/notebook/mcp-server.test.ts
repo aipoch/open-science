@@ -241,10 +241,12 @@ describe('notebook MCP server config', () => {
     // write_artifact_file now resolves a relative name against the notebook data dir, so the guidance
     // must steer the model to the saved relative filename — not to a rebuilt absolute path. Guard the
     // old "use an ABSOLUTE path" / "will not resolve a bare relative name" wording from regressing.
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('the SAME relative filename you saved with')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Reuse saved relative filename and runId')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
-      'producerRunId` set to the exact `runId` returned by the execution'
+      '`write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })`'
     )
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/validation errors.*correct once/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/never repeat.*identical.*failed arguments/i)
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('use an ABSOLUTE path')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
   })

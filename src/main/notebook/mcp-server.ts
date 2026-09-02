@@ -49,7 +49,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Retry once at most; repeated kernel-process failures mean stop Notebook tools and report the failure.',
   'After OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED, call `request_network_access` with the exact hostname, runtime, reason, and failed bash command when applicable. Never call speculatively; retry only after an allowed result.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',
-  'For final files, call `write_artifact_file` from `open-science-artifacts` first with `source: { "kind": "localPath", "path": "plot.png" }`, the SAME relative filename you saved with, and `producerRunId` set to the exact `runId` returned by the execution. Inline only small text.',
+  'Call `write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })` from `open-science-artifacts`. Reuse saved relative filename and runId; inline small text. On validation errors, correct once; never repeat identical failed arguments.',
   '</open_science_notebook_instructions>'
 ].join('\n')
 
