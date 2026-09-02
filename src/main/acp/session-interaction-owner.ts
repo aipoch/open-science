@@ -101,6 +101,9 @@ interface AcpSessionInteractionTerminalFacts {
 interface ActiveSessionInteraction {
   readonly scope: AcpSessionInteractionScope
   readonly abortController: AbortController
+  readonly promptProvenance?: {
+    value: AcpPromptRequest['provenanceContext']
+  }
   cancelled: boolean
   modelTurnCount: number
   readonly referencedSessionIds: Set<string>
@@ -353,11 +356,16 @@ export class AcpSessionInteractionOwner {
     }
 
     const abortController = new AbortController()
+    const promptProvenance = {
+      value: cloneProvenanceContext(request.provenanceContext)
+    }
     const scope: AcpPromptSessionInteractionScope = Object.freeze({
       sessionId: request.sessionId,
       kind: 'prompt',
       promptMessageId: request.promptMessageId,
-      provenanceContext: cloneProvenanceContext(request.provenanceContext),
+      get provenanceContext() {
+        return promptProvenance.value
+      },
       ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {}),
       turnToken: request.turnToken ?? randomUUID(),
       sequence: ++this.sequence,
@@ -367,6 +375,7 @@ export class AcpSessionInteractionOwner {
     this.pendingPromptReservations.set(request.sessionId, {
       scope,
       abortController,
+      promptProvenance,
       cancelled: false,
       modelTurnCount: 0,
       referencedSessionIds: new Set(request.referencedSessionIds ?? [])
@@ -390,6 +399,17 @@ export class AcpSessionInteractionOwner {
     return scope
   }
 
+  updatePromptProvenance(
+    scope: AcpPromptSessionInteractionScope,
+    provenanceContext: AcpPromptRequest['provenanceContext']
+  ): void {
+    const active = this.activeInteractions.get(scope.sessionId)
+    if (active?.scope !== scope || !active.promptProvenance) {
+      throw new Error('ACP prompt interaction is no longer active')
+    }
+    active.promptProvenance.value = cloneProvenanceContext(provenanceContext)
+  }
+
   claim<Request extends AcpSessionInteractionRequest>(request: Request): ScopeFor<Request> {
     if (
       this.activeInteractions.has(request.sessionId) ||
@@ -399,6 +419,10 @@ export class AcpSessionInteractionOwner {
     }
 
     const abortController = new AbortController()
+    const promptProvenance =
+      request.kind === 'prompt'
+        ? { value: cloneProvenanceContext(request.provenanceContext) }
+        : undefined
     const base = {
       sessionId: request.sessionId,
       sequence: ++this.sequence,
@@ -410,7 +434,9 @@ export class AcpSessionInteractionOwner {
             ...base,
             kind: request.kind,
             promptMessageId: request.promptMessageId,
-            provenanceContext: cloneProvenanceContext(request.provenanceContext),
+            get provenanceContext() {
+              return promptProvenance?.value
+            },
             turnToken: request.turnToken ?? randomUUID()
           }
         : { ...base, kind: request.kind }
@@ -418,6 +444,7 @@ export class AcpSessionInteractionOwner {
     this.activeInteractions.set(request.sessionId, {
       scope,
       abortController,
+      ...(promptProvenance ? { promptProvenance } : {}),
       cancelled: false,
       modelTurnCount: 0,
       referencedSessionIds: new Set(

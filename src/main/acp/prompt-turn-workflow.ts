@@ -159,6 +159,7 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     | 'release'
     | 'reservePrompt'
     | 'settle'
+    | 'updatePromptProvenance'
   >
   skills: Pick<AcpTurnSkillOwner, 'authorize'>
   preparation: Pick<AcpPromptPreparationOwner, 'prepare'>
@@ -275,6 +276,7 @@ class AcpPromptTurnWorkflow {
       // rejected commit releases ownership below without publishing prompt start or dispatching.
       const admittedProvenanceContext = await onPromptAdmitted?.()
       if (admittedProvenanceContext) {
+        this.options.interactions.updatePromptProvenance(interaction, admittedProvenanceContext)
         admittedRequest = { ...request, provenanceContext: admittedProvenanceContext }
       }
       this.options.registry.select(admittedRequest.sessionId)

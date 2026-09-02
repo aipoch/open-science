@@ -54,6 +54,7 @@ type Harness = {
     cancellationCheckpoint: Mock<AcpSessionInteractionOwner['cancellationCheckpoint']>
     captureTerminal: Mock<AcpSessionInteractionOwner['captureTerminal']>
     settle: Mock<AcpSessionInteractionOwner['settle']>
+    updatePromptProvenance: Mock<AcpSessionInteractionOwner['updatePromptProvenance']>
     release: Mock<AcpSessionInteractionOwner['release']>
     supersede: Mock<AcpSessionInteractionOwner['supersede']>
   }
@@ -201,6 +202,9 @@ const createHarness = (
       owner.captureTerminal(...args)
     ),
     settle: vi.fn((...args: Parameters<typeof owner.settle>) => owner.settle(...args)),
+    updatePromptProvenance: vi.fn((...args: Parameters<typeof owner.updatePromptProvenance>) =>
+      owner.updatePromptProvenance(...args)
+    ),
     release: vi.fn((scope: Parameters<typeof owner.release>[0]) => owner.release(scope)),
     supersede: vi.fn((scope: Parameters<typeof owner.supersede>[0]) => owner.supersede(scope))
   }
@@ -586,7 +590,14 @@ describe('AcpPromptTurnWorkflow', () => {
   })
 
   it('uses provenance returned by prompt admission for the provider turn', async () => {
-    const harness = createHarness()
+    let activeInteractionProvenance: AcpPromptRequest['provenanceContext']
+    const harness = createHarness({
+      onPromptStarted: () => {
+        const current = harness.owner.current('s1')
+        activeInteractionProvenance =
+          current?.kind === 'prompt' ? current.provenanceContext : undefined
+      }
+    })
     const admittedProvenance = {
       promptMessageId: 'message-1',
       rootFrameId: 'root-frame-2',
@@ -606,6 +617,7 @@ describe('AcpPromptTurnWorkflow', () => {
       expect.any(String),
       admittedProvenance
     )
+    expect(activeInteractionProvenance).toEqual(admittedProvenance)
   })
 
   it('releases prompt ownership when the admitted callback rejects', async () => {
