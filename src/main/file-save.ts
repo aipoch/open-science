@@ -259,9 +259,7 @@ const writeProjectArtifactArchive = async (options: {
   destinationPath: string
   projectId: string
   files: SaveProjectArtifactsRequest['files']
-  openManagedFileVersion: NonNullable<
-    RegisterFileSaveHandlersOptions['openManagedFileVersion']
-  >
+  openManagedFileVersion: NonNullable<RegisterFileSaveHandlersOptions['openManagedFileVersion']>
   publishUserFile: typeof publishUserFile
   failures: SaveProjectArtifactFailure[]
   limits: ProjectArtifactExportLimits

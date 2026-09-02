@@ -374,8 +374,16 @@ describe('file save IPC handlers', () => {
           projectId: 'project-1',
           sessionId: 'session-1',
           files: [
-            { fileId: 'artifact-a', suggestedName: 'report.csv' },
-            { fileId: 'artifact-b', suggestedName: 'other.csv' }
+            {
+              fileId: 'artifact-a',
+              versionId: 'artifact-a-version',
+              suggestedName: 'report.csv'
+            },
+            {
+              fileId: 'artifact-b',
+              versionId: 'artifact-b-version',
+              suggestedName: 'other.csv'
+            }
           ]
         }
       )
