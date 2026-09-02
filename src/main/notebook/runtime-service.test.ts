@@ -3326,6 +3326,62 @@ describe('notebook runtime service', () => {
       expect(entered).toEqual(['first'])
     })
 
+    it('waits for shell termination before removing the Session executor', async () => {
+      const root = await createStorageRoot()
+      let markShellStarted!: () => void
+      const shellStarted = new Promise<void>((resolve) => {
+        markShellStarted = resolve
+      })
+      let markCancellationStarted!: () => void
+      const cancellationStarted = new Promise<void>((resolve) => {
+        markCancellationStarted = resolve
+      })
+      let finishShell!: () => void
+      const execute = vi.fn<NotebookShellProcess['execute']>(
+        ({ signal }) =>
+          new Promise((resolve) => {
+            markShellStarted()
+            finishShell = () => resolve({ stdout: '', stderr: '', exitCode: null, cancelled: true })
+            signal?.addEventListener('abort', markCancellationStarted, { once: true })
+          })
+      )
+      const shutdownExecutor = vi.fn(async () => ({ reaped: true }))
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => ({
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }),
+          shutdown: shutdownExecutor
+        }),
+        shellProcess: { execute }
+      })
+      const running = service.executeShell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        command: 'long-running'
+      })
+      await shellStarted
+
+      const shutdown = service.shutdownSession('session-1')
+      await cancellationStarted
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const removedBeforeShellFinished = shutdownExecutor.mock.calls.length > 0
+      finishShell()
+
+      await Promise.all([running, shutdown])
+      expect(removedBeforeShellFinished).toBe(false)
+      expect(shutdownExecutor).toHaveBeenCalledOnce()
+    })
+
     it('rejects shell admission while Session shutdown owns the registry gate', async () => {
       const root = await createStorageRoot()
       let markShutdownStarted!: () => void

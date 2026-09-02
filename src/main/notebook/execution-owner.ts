@@ -791,17 +791,8 @@ class NotebookExecutionOwner {
   ): Promise<Result> {
     const reason = new Error('Notebook Session is shutting down.')
     for (const operation of operations) operation.controller.abort(reason)
-    const [outcome] = await Promise.all([
-      Promise.resolve()
-        .then(teardown)
-        .then(
-          (value) => ({ status: 'fulfilled' as const, value }),
-          (error: unknown) => ({ status: 'rejected' as const, error })
-        ),
-      Promise.allSettled(operations.map((operation) => operation.promise))
-    ])
-    if (outcome.status === 'rejected') throw outcome.error
-    return outcome.value
+    await Promise.allSettled(operations.map((operation) => operation.promise))
+    return teardown()
   }
 
   private async executeShellRun(
