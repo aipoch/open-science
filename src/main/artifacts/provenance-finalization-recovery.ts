@@ -184,7 +184,8 @@ class ArtifactProvenanceFinalizationRecovery {
         (!isScopedRetry ||
           requestedRunIds?.has(version.artifactRunId) ||
           requestedVersionIds?.has(version.id)) &&
-        (version.state === 'pending' ||
+        (isScopedRetry ||
+          version.state === 'pending' ||
           (version.messageId !== null &&
             !isArtifactLinkedToDurableMessage(durableSession, version.messageId, version.id)))
     )

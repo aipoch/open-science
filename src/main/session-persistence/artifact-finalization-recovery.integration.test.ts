@@ -97,6 +97,77 @@ describe('artifact finalization startup recovery', () => {
     await expect(coordinator.retryArtifactFinalization(request)).resolves.toEqual(recovery)
   })
 
+  it('replays an explicitly requested finalized Version that is already linked', async () => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const { provenance, version } = await prepareRecovery(compatibility)
+    await client.artifactVersion.update({
+      where: { id: version.versionId },
+      data: { state: 'finalized', messageId: 'message-1' }
+    })
+    const linked = (await sessions.loadSession(PROJECT_ID, SESSION_ID))!
+    linked.messages[1] = {
+      ...linked.messages[1],
+      status: 'complete',
+      artifactIds: [version.versionId]
+    }
+    const graphMessage = linked.conversationGraph?.messages.find(
+      (message) => message.id === 'message-1'
+    )
+    if (graphMessage) {
+      graphMessage.status = 'complete'
+      graphMessage.artifactIds = [version.versionId]
+    }
+    linked.artifacts = [
+      {
+        id: version.versionId,
+        artifactId: version.artifactId,
+        versionId: version.versionId,
+        versionNumber: version.versionNumber,
+        kind: 'managed-file',
+        path: version.path,
+        fileUrl: version.fileUrl,
+        name: version.name,
+        mimeType: version.mimeType,
+        size: version.size,
+        createdAt: Date.parse(version.createdAt),
+        mtimeMs: version.mtimeMs,
+        sha256: version.checksum
+      }
+    ]
+    await sessions.saveSession(linked)
+    const coordinator = new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      undefined,
+      undefined,
+      provenance
+    )
+
+    await expect(
+      coordinator.retryArtifactFinalization({
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        messageId: 'message-1',
+        pendingPaths: [],
+        artifactVersionIds: [version.versionId]
+      })
+    ).resolves.toMatchObject({
+      artifacts: [expect.objectContaining({ versionId: version.versionId })],
+      nativeRunIds: [RUN_ID]
+    })
+    await expect(
+      compatibility.listPendingRunFiles({
+        projectId: PROJECT_ID,
+        sessionId: STORAGE_SESSION_ID,
+        runId: RUN_ID
+      })
+    ).resolves.toEqual([])
+    await expect(
+      client.artifactLineage.findUniqueOrThrow({ where: { id: version.artifactId } })
+    ).resolves.toMatchObject({ currentVersionId: version.versionId })
+  })
+
   it('persists an inspectable Message snapshot with the recovered Session attachment', async () => {
     const compatibility = new ArtifactRepository(storageRoot)
     const { provenance, version } = await prepareRecovery(compatibility)

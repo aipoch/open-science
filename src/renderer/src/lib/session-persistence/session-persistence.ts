@@ -909,6 +909,13 @@ type ArtifactReconcileApi = {
 const isPendingArtifactPath = (path: string | undefined): path is string =>
   typeof path === 'string' && path.split(/[\\/]/).includes('.pending')
 
+const pendingArtifactRunId = (path: string | undefined): string | undefined => {
+  if (!path) return undefined
+  const parts = path.split(/[\\/]/)
+  const pendingIndex = parts.lastIndexOf('.pending')
+  return pendingIndex >= 0 ? parts[pendingIndex + 1] : undefined
+}
+
 const pendingArtifactRequests = (
   session: ChatSession,
   includeNativeVersions = false
@@ -967,9 +974,22 @@ const reconcileSessionPendingArtifacts = async (
         const artifactsById = new Map(
           (current?.artifacts ?? []).map((artifact) => [artifact.id, artifact])
         )
-        const preserveArtifactIds = (message?.artifactIds ?? []).filter(
-          (artifactId) => !isPendingArtifactPath(artifactsById.get(artifactId)?.path)
+        const recoveredRunIds = new Set(
+          finalized.flatMap((artifact) => (artifact.runId ? [artifact.runId] : []))
         )
+        const recoveredCompatibilityNames = new Set(
+          finalized.flatMap((artifact) => (!artifact.versionId ? [artifact.name] : []))
+        )
+        const preserveArtifactIds = (message?.artifactIds ?? []).filter((artifactId) => {
+          const artifact = artifactsById.get(artifactId)
+          if (!isPendingArtifactPath(artifact?.path)) return true
+          const runId = pendingArtifactRunId(artifact.path)
+          const name = artifact.name ?? artifact.path.split(/[\\/]/).at(-1)
+          return (
+            (!runId || !recoveredRunIds.has(runId)) &&
+            (!name || !recoveredCompatibilityNames.has(name))
+          )
+        })
         useSessionStore.getState().replaceMessageArtifacts({
           sessionId: session.id,
           messageId: request.messageId,
