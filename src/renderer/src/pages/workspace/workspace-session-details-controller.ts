@@ -26,7 +26,7 @@ type WorkspaceSessionDetailsController = {
   changeTitle: (draft: string) => void
   changeDescription: (draft: string) => void
   confirm: (event: FormEvent<HTMLFormElement>) => void
-  rename: (session: ChatSession, title: string) => Promise<void>
+  rename: (session: ChatSession, title: string, expectedTitle?: string) => Promise<boolean>
 }
 
 const useWorkspaceSessionDetailsController = (
@@ -101,22 +101,27 @@ const useWorkspaceSessionDetailsController = (
   // owner's editDetails mutation — like the Edit dialog — so the durable title is marked
   // sessionDetailsSource 'manual' and a later details generation cannot overwrite it. The
   // authoritative session is loaded first when needed so its description is preserved verbatim.
-  const rename = (session: ChatSession, title: string): Promise<void> => {
-    if (!isPersistenceReady) return Promise.resolve()
+  const rename = (
+    session: ChatSession,
+    title: string,
+    expectedTitle = session.title
+  ): Promise<boolean> => {
+    if (!isPersistenceReady) return Promise.resolve(true)
     const trimmedTitle = title.trim()
-    if (!trimmedTitle || trimmedTitle === session.title) return Promise.resolve()
-    const submit = (authoritative: ChatSession): Promise<void> =>
+    if (!trimmedTitle || trimmedTitle === expectedTitle) return Promise.resolve(true)
+    const submit = (authoritative: ChatSession): Promise<boolean> =>
       window.api.sessions
         .editDetails({
           projectId: authoritative.projectId,
           sessionId: authoritative.id,
-          expectedTitle: authoritative.title,
+          expectedTitle,
           expectedDescription: authoritative.description ?? '',
           title: trimmedTitle,
           description: authoritative.description ?? ''
         })
         .then((persisted) => {
           useSessionStore.getState().upsertPersistedSession(persisted)
+          return true
         })
     if (session.contentLoaded !== false) {
       return submit(session)
@@ -131,11 +136,11 @@ const useWorkspaceSessionDetailsController = (
         if (!hydrated) throw new Error('Selected Session JSON is invalid.')
         return hydrated
       })
-      .catch((error: unknown) => {
+      .catch(() => {
         onLoadFailure()
-        throw error
+        return undefined
       })
-    return authoritative.then(submit)
+    return authoritative.then((loaded) => (loaded ? submit(loaded) : false))
   }
   return {
     dialog,

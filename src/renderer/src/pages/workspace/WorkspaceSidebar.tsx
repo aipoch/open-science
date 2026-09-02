@@ -71,7 +71,11 @@ type WorkspaceSidebarProps = {
   onRenameSession: (session: ChatSession) => void
   // Desktop hover card: renames a session from the inline title editor. Absent or
   // `canMutateConversations === false` keeps the hover card title read-only.
-  onRenameSessionTitle?: (session: ChatSession, title: string) => void
+  onRenameSessionTitle?: (
+    session: ChatSession,
+    title: string,
+    expectedTitle: string
+  ) => Promise<boolean> | void
   canDownloadArtifacts: boolean
   onDownloadArtifacts: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
@@ -994,7 +998,8 @@ const WorkspaceSidebarView = ({
                         previewSuppressed={openSessionActionsId === session.id}
                         onRenameTitle={
                           onRenameSessionTitle
-                            ? (title) => onRenameSessionTitle(session, title)
+                            ? (title, expectedTitle) =>
+                                onRenameSessionTitle(session, title, expectedTitle)
                             : undefined
                         }
                       >

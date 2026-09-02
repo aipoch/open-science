@@ -479,10 +479,11 @@ describe('workspace session controller', () => {
 
   it('loads an unopened Session before an inline rename to preserve its description', async () => {
     const summary = session({ contentLoaded: false, activeMessageCount: 1 })
+    const latestSummary = { ...summary, title: 'Title updated in another window' }
     const persisted: PersistedChatSession = {
       id: summary.id,
       projectId: summary.projectId,
-      title: summary.title,
+      title: 'Title updated in another window',
       description: 'Durable description',
       cwd: summary.cwd,
       status: summary.status,
@@ -505,12 +506,12 @@ describe('workspace session controller', () => {
       .fn()
       .mockResolvedValue({ ...persisted, title: 'Renamed', sessionDetailsSource: 'manual' })
     window.api = { sessions: { loadOne, editDetails } } as unknown as Window['api']
-    useSessionStore.setState({ sessions: [summary], selectedSessionId: summary.id })
-    const hook = renderController({ activeSession: summary })
+    useSessionStore.setState({ sessions: [latestSummary], selectedSessionId: summary.id })
+    const hook = renderController({ activeSession: latestSummary })
     mounted.push(hook)
 
     await act(async () => {
-      hook.result.current.actions.renameTitle(summary, 'Renamed')
+      await hook.result.current.actions.renameTitle(latestSummary, 'Renamed', summary.title)
       await Promise.resolve()
       await Promise.resolve()
       await Promise.resolve()
@@ -525,6 +526,23 @@ describe('workspace session controller', () => {
       title: 'Renamed',
       description: 'Durable description'
     })
+  })
+
+  it('reports an unopened Session load failure without turning it into a save failure', async () => {
+    const summary = session({ contentLoaded: false, activeMessageCount: 1 })
+    const loadOne = vi.fn().mockRejectedValue(new Error('read failure'))
+    const editDetails = vi.fn()
+    window.api = { sessions: { loadOne, editDetails } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [summary], selectedSessionId: summary.id })
+    const hook = renderController({ activeSession: summary })
+    mounted.push(hook)
+
+    await act(async () => {
+      await expect(hook.result.current.actions.renameTitle(summary, 'Renamed')).resolves.toBe(false)
+    })
+
+    expect(hook.result.current.view.exportError).toBe('Could not load this session for editing.')
+    expect(editDetails).not.toHaveBeenCalled()
   })
 
   it('loads an unopened Session before opening conversation export', async () => {

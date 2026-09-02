@@ -31,7 +31,10 @@ type SessionPreviewContent = {
 }
 type SessionPreviewDetails = SessionPreviewContent & { id: string }
 type SessionPreviewRequest = (sessionId: string) => Promise<void> | void
-type SessionRenameRequest = (title: string) => Promise<void> | void
+type SessionRenameRequest = (
+  title: string,
+  expectedTitle: string
+) => Promise<boolean | void> | boolean | void
 
 type SessionHoverPreviewContextValue = {
   activeSessionId: string | null
@@ -153,6 +156,9 @@ const SessionHoverPreviewTitle = ({
   const [editing, setEditing] = useState(false)
   const editingRef = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  // The input intentionally keeps its draft when live Session props change mid-edit. Keep the
+  // matching optimistic-concurrency baseline stable for the same interval.
+  const expectedTitleRef = useRef(title)
   const savingRef = useRef(false)
   const [isSaving, setIsSaving] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
@@ -169,15 +175,21 @@ const SessionHoverPreviewTitle = ({
   const commit = useCallback((): void => {
     if (!editingRef.current || savingRef.current) return
     const nextTitle = inputRef.current?.value.trim() ?? ''
-    if (!nextTitle || nextTitle === title) {
+    if (!nextTitle || nextTitle === expectedTitleRef.current) {
       updateEditing(false)
       return
     }
     savingRef.current = true
     setIsSaving(true)
     setRenameError(null)
-    void Promise.resolve(onRenameTitle?.(nextTitle))
-      .then(() => updateEditing(false))
+    void Promise.resolve(onRenameTitle?.(nextTitle, expectedTitleRef.current))
+      .then((saved) => {
+        if (saved === false) {
+          queueMicrotask(() => inputRef.current?.focus())
+          return
+        }
+        updateEditing(false)
+      })
       .catch((error: unknown) => {
         setRenameError(
           isSessionDetailsConflictError(error)
@@ -192,7 +204,7 @@ const SessionHoverPreviewTitle = ({
         savingRef.current = false
         setIsSaving(false)
       })
-  }, [onRenameTitle, t, title, updateEditing])
+  }, [onRenameTitle, t, updateEditing])
 
   if (!canRename) {
     return <p className={sessionHoverPreviewTitleClassName}>{title}</p>
@@ -245,6 +257,7 @@ const SessionHoverPreviewTitle = ({
         sessionHoverPreviewTitleClassName
       )}
       onClick={() => {
+        expectedTitleRef.current = title
         setRenameError(null)
         updateEditing(true)
       }}
