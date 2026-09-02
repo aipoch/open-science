@@ -70,6 +70,7 @@ vi.mock('node:os', async (importOriginal) => ({
 // Controllable ChildProcess double matching execFile's surface used by
 // SystemSshRunner: stdout/stderr are EventEmitters, kill() records the signal.
 class FakeChild extends EventEmitter {
+  stdin = Object.assign(new EventEmitter(), { end: vi.fn() })
   stdout = Object.assign(new EventEmitter(), { destroy: vi.fn() })
   stderr = Object.assign(new EventEmitter(), { destroy: vi.fn() })
   kill = vi.fn(() => true)
@@ -512,6 +513,27 @@ describe('SystemSshRunner', () => {
     sshBinary: '/usr/bin/ssh',
     host: 'aliyun-xt-test',
     extraArgs: []
+  })
+
+  it('does not place a large remote command in the local process arguments', async () => {
+    const child = new FakeChild()
+    execFileMock.mockImplementationOnce((_file: string, args: string[]) => {
+      queueMicrotask(() => {
+        if (args.join(' ').length > 20_000) {
+          child.emit('error', new Error('spawn ENAMETOOLONG'))
+        } else {
+          child.emit('close', 0)
+        }
+      })
+      return child as unknown as ReturnType<typeof execFileMock>
+    })
+    const command = `# ${'x'.repeat(24_000)}\nprintf 'ok\\n' > long-command-ok.txt`
+
+    const result = await runner.run(target(), command, { timeoutMs: 5000 })
+
+    expect(result).toMatchObject({ exitCode: 0, stderr: '' })
+    expect(execFileMock.mock.calls[0]?.[1]).not.toContain(command)
+    expect(child.stdin.end).toHaveBeenCalledWith(command)
   })
 
   it('captures stdout/stderr and reports exitCode on a clean child close', async () => {
