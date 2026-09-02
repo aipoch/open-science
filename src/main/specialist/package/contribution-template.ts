@@ -38,7 +38,7 @@ const assertValidAppVersion = (appVersion: string): void => {
 export const buildDeterministicSpecialistZip = (
   files: Readonly<Record<string, Uint8Array>>
 ): Uint8Array => {
-  const zipOptions = { mtime: new Date('1980-01-01T00:00:00.000Z') }
+  const zipOptions = { mtime: new Date(1980, 0, 1) }
   const entries: Zippable = {}
   for (const [path, bytes] of Object.entries(files).sort(([left], [right]) =>
     left.localeCompare(right)

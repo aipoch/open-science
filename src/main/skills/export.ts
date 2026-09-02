@@ -94,7 +94,7 @@ const collectFiles = async (directory: string, skillName: string): Promise<Zippa
     if (totalBytes > SKILL_IMPORT_LIMITS.maxTotalBytes) {
       throw new Error('Skill tree exceeds the total export size limit.')
     }
-    files[file.relativePath] = [bytes, { mtime: new Date('1980-01-01T00:00:00.000Z') }]
+    files[file.relativePath] = [bytes, { mtime: new Date(1980, 0, 1) }]
   }
   return files
 }

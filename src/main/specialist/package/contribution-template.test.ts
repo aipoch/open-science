@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { strFromU8, unzipSync } from 'fflate'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { SpecialistPackageCatalogSnapshot } from '../../../shared/specialist-package'
 import {
@@ -20,6 +20,10 @@ const catalog: SpecialistPackageCatalogSnapshot = {
   connectorIds: [],
   protectedSpecialistIds: ['reviewer']
 }
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 describe('contribution template ZIP', () => {
   it('builds the fixed root package with valid application-generated metadata', () => {
@@ -141,5 +145,19 @@ describe('contribution template ZIP', () => {
 
     expect(first).toEqual(second)
     expect(Object.keys(unzipSync(first)).sort()).toEqual(['manifest.json', 'specialist.json'])
+  })
+
+  it('builds a deterministic Specialist ZIP in a negative UTC timezone', () => {
+    vi.stubEnv('TZ', 'UTC')
+    const utcArchive = buildDeterministicSpecialistZip({
+      'specialist.json': new TextEncoder().encode('{}\n')
+    })
+    vi.stubEnv('TZ', 'America/Los_Angeles')
+
+    expect(
+      buildDeterministicSpecialistZip({
+        'specialist.json': new TextEncoder().encode('{}\n')
+      })
+    ).toEqual(utcArchive)
   })
 })
