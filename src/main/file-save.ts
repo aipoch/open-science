@@ -480,12 +480,7 @@ const copyToAvailableDestination = async (
       await publish(
         destinationPath,
         (temporaryPath) => managedFile.copyTo(temporaryPath, { exclusive: true }),
-        {
-          exclusive: true,
-          ...(managedFile.assertCanCopyTo
-            ? { validateDestination: () => managedFile.assertCanCopyTo!(destinationPath) }
-            : {})
-        }
+        { exclusive: true }
       )
       return destinationPath
     } catch (error) {

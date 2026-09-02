@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { unzipSync } from 'fflate'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -47,6 +47,13 @@ const publishDirectly: typeof productionPublishUserFile = async (
   await options?.validateDestination?.()
   await write(destinationPath)
 }
+const publishWithoutHardLinks: typeof productionPublishUserFile = (destination, write, options) =>
+  productionPublishUserFile(destination, write, {
+    ...options,
+    linkFile: async () => {
+      throw Object.assign(new Error('hard links are unsupported'), { code: 'EOPNOTSUPP' })
+    }
+  })
 const registerFileSaveHandlers = (
   options: NonNullable<Parameters<typeof registerProductionFileSaveHandlers>[0]> = {}
 ): void => {
@@ -63,6 +70,7 @@ type TestManagedVersionHandle = {
   readRange: (begin: number, end: number) => Promise<Uint8Array>
   verifyUnchanged: () => Promise<void>
   copyTo: (destinationPath: string, options?: { exclusive?: boolean }) => Promise<void>
+  assertCanCopyTo?: (destinationPath: string) => Promise<void>
   close: () => Promise<void>
 }
 
@@ -87,7 +95,21 @@ const fileBackedManagedVersionHandle = async (
   managedVersionHandle(await readFile(sourcePath), {
     copyTo: vi.fn(async (destinationPath, options) =>
       copyFile(sourcePath, destinationPath, options?.exclusive ? constants.COPYFILE_EXCL : 0)
-    )
+    ),
+    assertCanCopyTo: async (destinationPath) => {
+      try {
+        const [sourceInfo, destinationInfo] = await Promise.all([
+          stat(sourcePath),
+          stat(destinationPath)
+        ])
+        if (sourceInfo.dev === destinationInfo.dev && sourceInfo.ino === destinationInfo.ino) {
+          throw new Error('Cannot save a managed file over its source.')
+        }
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return
+        throw error
+      }
+    }
   })
 
 type TestFileSaveOptions = Omit<
@@ -241,17 +263,6 @@ describe('file save IPC handlers', () => {
       .fn()
       .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceA))
       .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceB))
-    const publishWithoutHardLinks: typeof productionPublishUserFile = (
-      destination,
-      write,
-      options
-    ) =>
-      productionPublishUserFile(destination, write, {
-        ...options,
-        linkFile: async () => {
-          throw Object.assign(new Error('hard links are unsupported'), { code: 'EOPNOTSUPP' })
-        }
-      })
     showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
     registerFileSaveHandlers({ openLatestManagedFile, publishUserFile: publishWithoutHardLinks })
 
@@ -305,7 +316,7 @@ describe('file save IPC handlers', () => {
       .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceA))
       .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceB))
     showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
-    registerFileSaveHandlers({ openLatestManagedFile } as never)
+    registerFileSaveHandlers({ openLatestManagedFile, publishUserFile: publishWithoutHardLinks })
 
     try {
       const result = await handlers.get('file:save-session-artifacts')!(
@@ -336,6 +347,46 @@ describe('file save IPC handlers', () => {
       await expect(readFile(join(destinationDirectory, 'report (3).csv'), 'utf8')).resolves.toBe(
         'artifact b'
       )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('uses a collision suffix when the selected batch destination is the source file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-artifact-self-collision-'))
+    const sourcePath = join(root, 'report.csv')
+    const otherSourcePath = join(root, 'other-source.csv')
+    await writeFile(sourcePath, 'artifact bytes')
+    await writeFile(otherSourcePath, 'other bytes')
+    showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [root] })
+    registerFileSaveHandlers({
+      openLatestManagedFile: vi
+        .fn()
+        .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourcePath))
+        .mockResolvedValueOnce(await fileBackedManagedVersionHandle(otherSourcePath)),
+      publishUserFile: productionPublishUserFile
+    })
+
+    try {
+      const result = await handlers.get('file:save-session-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          files: [
+            { fileId: 'artifact-a', suggestedName: 'report.csv' },
+            { fileId: 'artifact-b', suggestedName: 'other.csv' }
+          ]
+        }
+      )
+
+      expect(result).toEqual({
+        saved: true,
+        filePaths: [join(root, 'report (2).csv'), join(root, 'other.csv')]
+      })
+      await expect(readFile(sourcePath, 'utf8')).resolves.toBe('artifact bytes')
+      await expect(readFile(join(root, 'report (2).csv'), 'utf8')).resolves.toBe('artifact bytes')
+      await expect(readFile(join(root, 'other.csv'), 'utf8')).resolves.toBe('other bytes')
     } finally {
       await rm(root, { recursive: true, force: true })
     }

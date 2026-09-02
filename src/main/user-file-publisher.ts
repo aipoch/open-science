@@ -1,20 +1,26 @@
+import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { chmod, copyFile, link, mkdtemp, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 import { defaultFileDurability, type FileDurability } from './storage/file-durability'
 import { retryFileReplacement } from './storage/file-replacement'
+import { publishNoReplace as publishAnchoredNoReplace } from './uploads/atomic-no-replace-publisher'
 
 type PublishUserFileOptions = {
   exclusive?: boolean
   validateDestination?: () => Promise<void>
   durability?: FileDurability
+  copyFileExclusive?: (sourcePath: string, destinationPath: string) => Promise<void>
   linkFile?: (sourcePath: string, destinationPath: string) => Promise<void>
+  publishNoReplace?: (sourcePath: string, destinationPath: string) => Promise<void>
   replace?: (sourcePath: string, destinationPath: string) => Promise<void>
   wait?: (delayMs: number) => Promise<void>
 }
 
 type LinkFile = NonNullable<PublishUserFileOptions['linkFile']>
+type CopyFileExclusive = NonNullable<PublishUserFileOptions['copyFileExclusive']>
+type PublishNoReplace = NonNullable<PublishUserFileOptions['publishNoReplace']>
 
 const hardLinkUnsupportedCodes = new Set([
   'EACCES',
@@ -31,21 +37,38 @@ const isHardLinkUnsupported = (error: unknown): boolean =>
   typeof error.code === 'string' &&
   hardLinkUnsupportedCodes.has(error.code)
 
+const defaultCopyFileExclusive: CopyFileExclusive = (sourcePath, destinationPath) =>
+  copyFile(sourcePath, destinationPath, constants.COPYFILE_EXCL)
+
+const defaultPublishNoReplace: PublishNoReplace = async (sourcePath, destinationPath) => {
+  const directory = dirname(destinationPath)
+  publishAnchoredNoReplace(directory, directory, basename(sourcePath), basename(destinationPath))
+}
+
 const publishExclusive = async (
   sourcePath: string,
   destinationPath: string,
-  linkFile: LinkFile
-): Promise<boolean> => {
+  linkFile: LinkFile,
+  copyFileExclusive: CopyFileExclusive,
+  durability: FileDurability,
+  publishNoReplace: PublishNoReplace
+): Promise<void> => {
   try {
     await linkFile(sourcePath, destinationPath)
-    return false
+    return
   } catch (error) {
     if (!isHardLinkUnsupported(error)) throw error
-    // Some user-selected volumes (notably FAT/exFAT) cannot create hard links. copyFile's
-    // exclusive flag keeps the no-overwrite guarantee and removes its destination after a failed
-    // copy; unlike the hard-link path, the copied inode needs its own durability barrier.
-    await copyFile(sourcePath, destinationPath, constants.COPYFILE_EXCL)
-    return true
+  }
+
+  // Some user-selected volumes (notably FAT/exFAT) cannot create hard links. Keep the fallback
+  // copy under a private random name, flush it, then atomically rename it without replacement.
+  const stagingPath = join(dirname(destinationPath), `.open-science-publish-${randomUUID()}`)
+  try {
+    await copyFileExclusive(sourcePath, stagingPath)
+    await durability.syncFile(stagingPath)
+    await publishNoReplace(stagingPath, destinationPath)
+  } finally {
+    await rm(stagingPath, { force: true }).catch(() => undefined)
   }
 }
 
@@ -73,12 +96,14 @@ const publishUserFile = async (
     }
     await options.validateDestination?.()
     if (options.exclusive) {
-      const copied = await publishExclusive(
+      await publishExclusive(
         temporaryPath,
         destinationPath,
-        options.linkFile ?? link
+        options.linkFile ?? link,
+        options.copyFileExclusive ?? defaultCopyFileExclusive,
+        durability,
+        options.publishNoReplace ?? defaultPublishNoReplace
       )
-      if (copied) await durability.syncFile(destinationPath)
     } else {
       await retryFileReplacement(
         () => (options.replace ?? rename)(temporaryPath, destinationPath),

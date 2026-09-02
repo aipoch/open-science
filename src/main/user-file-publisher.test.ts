@@ -1,4 +1,15 @@
-import { chmod, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import {
+  chmod,
+  copyFile,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -87,12 +98,13 @@ describe('publishUserFile', () => {
         linkFile: async () => {
           throw Object.assign(new Error('hard links are unsupported'), { code: 'EOPNOTSUPP' })
         },
+        publishNoReplace: rename,
         durability: { syncFile, syncDirectory: vi.fn().mockResolvedValue(undefined) }
       }
     )
 
     expect(syncFile).toHaveBeenCalledTimes(2)
-    expect(syncFile).toHaveBeenLastCalledWith(destinationPath)
+    expect(syncFile.mock.calls[1]?.[0]).toMatch(/\.open-science-publish-/)
     await expect(readFile(destinationPath, 'utf8')).resolves.toBe('new bytes')
     await expect(readdir(root)).resolves.toEqual(['report.txt'])
   })
@@ -106,12 +118,36 @@ describe('publishUserFile', () => {
         linkFile: async () => {
           await writeFile(destinationPath, 'racing bytes')
           throw Object.assign(new Error('hard links are unsupported'), { code: 'EOPNOTSUPP' })
+        },
+        publishNoReplace: async (sourcePath, targetPath) => {
+          await copyFile(sourcePath, targetPath, constants.COPYFILE_EXCL)
+          await rm(sourcePath)
         }
       })
     ).rejects.toMatchObject({ code: 'EEXIST' })
 
     await expect(readFile(destinationPath, 'utf8')).resolves.toBe('racing bytes')
     await expect(readdir(root)).resolves.toEqual(['report.txt'])
+  })
+
+  it('does not expose partial output when the no-hard-link fallback copy fails', async () => {
+    const destinationPath = join(root, 'report.txt')
+
+    await expect(
+      publishUserFile(destinationPath, (temporaryPath) => writeFile(temporaryPath, 'new bytes'), {
+        exclusive: true,
+        linkFile: async () => {
+          throw Object.assign(new Error('hard links are unsupported'), { code: 'EOPNOTSUPP' })
+        },
+        copyFileExclusive: async (_sourcePath, targetPath) => {
+          await writeFile(targetPath, 'partial bytes')
+          throw new Error('disk full')
+        }
+      })
+    ).rejects.toThrow('disk full')
+
+    await expect(readFile(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readdir(root)).resolves.toEqual([])
   })
 
   it.runIf(process.platform !== 'win32')(
