@@ -3603,6 +3603,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       projectId: 'default',
       sessionId: 'session-1',
       fileId: 'managed-artifact-1',
+      versionId: 'artifact-version-1',
       maxBytes: 1,
       encoding: 'base64'
     })
@@ -3611,6 +3612,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       projectId: 'default',
       sessionId: 'session-1',
       fileId: 'managed-artifact-1',
+      versionId: 'artifact-version-1',
       maxBytes: 32 * 1024,
       encoding: 'utf8'
     })
