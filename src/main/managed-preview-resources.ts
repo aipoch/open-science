@@ -17,7 +17,8 @@ import {
   exceedsDecodedImagePixelLimit,
   isPixelLimitedRasterMimeType,
   MAX_DECODED_IMAGE_PIXELS,
-  readRasterImageDimensions
+  readRasterImageDimensions,
+  type RasterImageDimensions
 } from './raster-image-safety'
 
 const MAX_PREVIEW_RANGE_BYTES = 1024 * 1024
@@ -259,6 +260,9 @@ class ManagedPreviewResources {
       }
 
       const mimeType = inferMimeType(filePath, request.mimeType)
+      // Reused below as the resource's width/height, so consumers learn the exact geometry from
+      // the same header read that enforces the decoded-pixel limit.
+      let imageDimensions: RasterImageDimensions | undefined
       if (isPixelLimitedRasterMimeType(mimeType)) {
         const headerLength = Math.min(fileSnapshot.size, MAX_IMAGE_HEADER_BYTES)
         let header: Buffer
@@ -303,6 +307,7 @@ class ManagedPreviewResources {
             `Image preview exceeds the ${MAX_DECODED_IMAGE_PIXELS.toLocaleString('en-US')}-pixel limit.`
           )
         }
+        imageDimensions = dimensions
       }
 
       const id = this.createId()
@@ -311,7 +316,8 @@ class ManagedPreviewResources {
         url: `${PREVIEW_SCHEME}://${id}/${encodeURIComponent(basename(filePath))}`,
         size: fileSnapshot.size,
         mimeType,
-        version: fileSnapshot.version
+        version: fileSnapshot.version,
+        ...(imageDimensions ? { width: imageDimensions.width, height: imageDimensions.height } : {})
       }
 
       this.releasedOwners.delete(id)

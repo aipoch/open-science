@@ -273,6 +273,65 @@ describe('ManagedPreviewResources', () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
+  it('attaches header-probed pixel dimensions when acquiring an image', async () => {
+    // Minimal PNG: signature + IHDR length/type + 640x400 dimensions.
+    const png = Buffer.alloc(33)
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0)
+    png.writeUInt32BE(13, 8)
+    png.write('IHDR', 12, 'ascii')
+    png.writeUInt32BE(640, 16)
+    png.writeUInt32BE(400, 20)
+    const filePath = await createFile(png, 'plot.png')
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId: () => 'resource-1'
+    })
+
+    const resource = await resources.acquire(17, { source: 'local', path: filePath })
+
+    expect(resource).toMatchObject({
+      mimeType: 'image/png',
+      width: 640,
+      height: 400
+    })
+  })
+
+  it('rejects forged image content whose header cannot be parsed', async () => {
+    const filePath = await createFile(Buffer.from('definitely not an image'), 'forged.png')
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId: () => 'resource-1'
+    })
+
+    // The shared raster safety path fails closed for pixel-limited types: an unparseable header
+    // rejects the acquire rather than minting a dimension-less resource.
+    await expect(resources.acquire(17, { source: 'local', path: filePath })).rejects.toThrow(
+      /dimensions/i
+    )
+  })
+
+  it('skips the header probe for image formats the parser does not support', async () => {
+    // PNG magic behind an .svg name: SVG/TIFF/AVIF acquires must not pay for a probe that the
+    // parser cannot serve anyway.
+    const png = Buffer.alloc(33)
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0)
+    png.writeUInt32BE(13, 8)
+    png.write('IHDR', 12, 'ascii')
+    png.writeUInt32BE(640, 16)
+    png.writeUInt32BE(400, 20)
+    const filePath = await createFile(png, 'vector.svg')
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId: () => 'resource-1'
+    })
+
+    const resource = await resources.acquire(17, { source: 'local', path: filePath })
+
+    expect(resource.mimeType).toBe('image/svg+xml')
+    expect(resource.width).toBeUndefined()
+    expect(resource.height).toBeUndefined()
+  })
+
   it('inspects authoritative metadata without minting a resource capability', async () => {
     const filePath = await createFile(Buffer.from('office'))
     const createId = vi.fn(() => 'resource-1')

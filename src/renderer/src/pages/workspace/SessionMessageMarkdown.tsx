@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { SessionMessageLink } from '@/components/streamdown/SessionMessageLink'
-import { memo, useMemo, useState, type ComponentProps, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, useState, type ComponentProps, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Components } from 'streamdown'
 
@@ -108,6 +108,19 @@ const SessionArtifactImage = ({
   const accessibleAlt = alt || t('Preview of {{name}}', { name })
   const hasError = hasFailed || resourceState.status === 'error'
 
+  // Header-probed dimensions seed the cache so future placeholders lock the exact height from the
+  // first frame, even when this instance's <img> never decodes (lazy loading keeps offscreen
+  // images undecoded until the window recycles them). Seeding only fills a missing entry: a
+  // measured onLoad value wins because it reflects EXIF orientation as actually displayed.
+  const readyResource = resourceState.status === 'ready' ? resourceState.resource : undefined
+  const metadataWidth = readyResource?.width
+  const metadataHeight = readyResource?.height
+  useEffect(() => {
+    if (metadataWidth && metadataHeight && !imageGeometryCache.has(requestKey)) {
+      cacheImageGeometry(requestKey, metadataWidth, metadataHeight)
+    }
+  }, [metadataWidth, metadataHeight, requestKey])
+
   if (publicationPending) {
     return (
       <span ref={setElement} data-session-artifact-image-status="" data-state="loading">
@@ -148,10 +161,12 @@ const SessionArtifactImage = ({
           cachedGeometry
             ? {
                 // Mirror the loaded <img> geometry (natural width capped by max-w-full) so the
-                // placeholder reserves the same height and remounts stay scroll-neutral.
+                // placeholder reserves the same height and remounts stay scroll-neutral. Hidden
+                // overflow keeps the alt text inside tiny locked boxes (e.g. a 32px icon).
                 width: `${cachedGeometry.naturalWidth}px`,
                 maxWidth: '100%',
-                aspectRatio: String(cachedGeometry.aspectRatio)
+                aspectRatio: String(cachedGeometry.aspectRatio),
+                overflow: 'hidden'
               }
             : undefined
         }
@@ -160,6 +175,19 @@ const SessionArtifactImage = ({
       </span>
     )
   }
+
+  // Explicit width/height let the browser reserve the exact box before (and while) the image
+  // decodes; the stylesheet keeps height:auto so max-w-full scaling never distorts the ratio.
+  // The cache (measured, or metadata-seeded by the effect above) wins over raw metadata.
+  const cachedGeometry = imageGeometryCache.get(requestKey)
+  const imgDimensions = cachedGeometry
+    ? {
+        width: cachedGeometry.naturalWidth,
+        height: Math.round(cachedGeometry.naturalWidth / cachedGeometry.aspectRatio)
+      }
+    : metadataWidth && metadataHeight
+      ? { width: metadataWidth, height: metadataHeight }
+      : undefined
 
   return (
     <button
@@ -175,6 +203,7 @@ const SessionArtifactImage = ({
         loading="lazy"
         decoding="async"
         draggable={false}
+        {...(imgDimensions ? { width: imgDimensions.width, height: imgDimensions.height } : {})}
         onLoad={(event) =>
           cacheImageGeometry(
             requestKey,
