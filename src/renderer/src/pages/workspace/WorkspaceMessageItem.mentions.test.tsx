@@ -10,6 +10,10 @@ import type { ChatMessage } from '@/stores/session-store'
 
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
 
+const { artifactPreview } = vi.hoisted(() => ({
+  artifactPreview: vi.fn(() => null)
+}))
+
 // Keep the transcript row and markdown surface as thin wrappers so the test never loads Shiki.
 vi.mock('@/components/ui/message-scroller', () => ({
   MessageScrollerItem: ({ children }: PropsWithChildren): JSX.Element => <div>{children}</div>
@@ -21,7 +25,7 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
 }))
 
 vi.mock('./artifact-preview', () => ({
-  ArtifactPreview: () => null
+  ArtifactPreview: artifactPreview
 }))
 
 let container: HTMLDivElement
@@ -41,6 +45,7 @@ const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
 const noop = (): void => {}
 
 beforeEach(() => {
+  artifactPreview.mockClear()
   useSettingsStore.setState(createInitialSettingsState())
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -330,6 +335,82 @@ describe('WorkspaceMessageItem file names', () => {
     expectSplitFileName(button, 'lon', 't', '.csv')
     expect(button?.querySelector('div[class*="px-1.5"]')).not.toBeNull()
     expect(button?.querySelector('span.text-text-000')?.className).toContain('ml-1')
+  })
+
+  it('reads the exact generated Artifact Version shown by the card', async () => {
+    const readPreview = vi.fn().mockResolvedValue({
+      content: '',
+      encoding: 'utf8',
+      size: 10,
+      truncated: false
+    })
+    ;(window as unknown as { api: unknown }).api = { artifacts: { readPreview } }
+
+    await renderMessageItem(createMessage({ id: 'm-assistant', role: 'agent', content: 'Done' }), [
+      {
+        id: 'version-1',
+        artifactId: 'artifact-1',
+        versionId: 'version-1',
+        kind: 'managed-file',
+        path: '/p/chart.png',
+        name: 'chart.png',
+        mimeType: 'image/png',
+        size: 10,
+        mtimeMs: 1,
+        resolvedProjectId: 'project-1',
+        resolvedSessionId: 'session-1'
+      }
+    ])
+
+    expect(readPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        fileId: 'artifact-1',
+        versionId: 'version-1'
+      })
+    )
+  })
+
+  it('forwards generated Artifact identity to the image preview', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      artifacts: {
+        readPreview: vi.fn().mockResolvedValue({
+          content: '',
+          encoding: 'utf8',
+          size: 10,
+          truncated: false
+        })
+      }
+    }
+    const artifact = {
+      id: 'version-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1',
+      kind: 'managed-file' as const,
+      path: '/p/chart.png',
+      name: 'chart.png',
+      mimeType: 'image/png',
+      size: 10,
+      mtimeMs: 1,
+      resolvedProjectId: 'project-1',
+      resolvedSessionId: 'session-1'
+    }
+
+    await renderMessageItem(createMessage({ id: 'm-assistant', role: 'agent', content: 'Done' }), [
+      artifact
+    ])
+
+    expect(artifactPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifact,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        managedFileId: 'artifact-1',
+        selectedVersionId: 'version-1'
+      }),
+      undefined
+    )
   })
 })
 

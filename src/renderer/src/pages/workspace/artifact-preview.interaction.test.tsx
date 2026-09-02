@@ -91,4 +91,32 @@ describe('ArtifactPreview image lifecycle', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
   })
+
+  it('recovers when the first image read races Artifact publication', async () => {
+    vi.mocked(window.api.previewResources.acquire)
+      .mockRejectedValueOnce(new Error('Managed file has no published version.'))
+      .mockResolvedValueOnce({
+        id: 'resource-chart-after-publication',
+        url: 'open-science-preview://resource/resource-chart-after-publication',
+        size: 2048,
+        mimeType: 'image/png',
+        version: 1
+      })
+    root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <ArtifactPreview
+          artifact={imageArtifact}
+          projectId="project-1"
+          sessionId="session-1"
+          managedFileId="artifact-chart"
+          selectedVersionId="version-chart"
+        />
+      )
+    })
+
+    await waitFor(() => expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(container.querySelector('img')).not.toBeNull())
+  })
 })
