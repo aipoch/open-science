@@ -366,12 +366,6 @@ export class SpecialistPackageTransaction {
           journal.phase = 'committed'
           await this.writeJournal(journal)
           await this.skillPort.recover(transactionId, 'commit')
-          try {
-            await this.cleanupCommittedDeletion?.(specialistId, deleteSkillIds)
-          } catch {
-            throw new SpecialistPackageRecoveryError()
-          }
-          await this.cleanupTransactionData()
         }
         await (this.skillPort.runInMutationContext?.(transactionId, commit) ?? commit())
       } catch (error) {
@@ -395,6 +389,12 @@ export class SpecialistPackageTransaction {
         throw error
       } finally {
         if (skillMutationBegun) await this.skillPort.endMutation?.(transactionId)
+      }
+      try {
+        await this.cleanupCommittedDeletion?.(specialistId, deleteSkillIds)
+        await this.cleanupTransactionData()
+      } catch {
+        throw new SpecialistPackageRecoveryError()
       }
     })
     this.queue = run.then(

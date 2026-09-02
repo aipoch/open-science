@@ -63,6 +63,50 @@ afterEach(async () => {
 })
 
 describe('SpecialistPackageTransaction imported setup lifecycle', () => {
+  it('releases the Skill mutation lock before committed relationship cleanup', async () => {
+    await repository.insert({
+      id: 'imported-specialist',
+      name: 'IMPORTED_SPECIALIST',
+      displayName: 'Imported Specialist',
+      description: 'Imported description.',
+      systemPrompt: 'Imported instructions.',
+      enabled: false,
+      setupPending: false,
+      capabilityMode: 'selected',
+      fullAccess: emptyFullAccessConfig(),
+      selectedCapabilities: emptySelectedConfig(),
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'imported',
+      ownedSkillIds: []
+    })
+    let skillMutationLocked = false
+    const calls: string[] = []
+    const transaction = new SpecialistPackageTransaction(
+      storageDir,
+      repository,
+      randomUUID,
+      {
+        ...NOOP_SPECIALIST_PACKAGE_SKILL_PORT,
+        beginMutation: async () => {
+          calls.push('lock')
+          skillMutationLocked = true
+        },
+        endMutation: async () => {
+          calls.push('unlock')
+          skillMutationLocked = false
+        }
+      },
+      async () => {
+        calls.push('cleanup')
+        expect(skillMutationLocked).toBe(false)
+      }
+    )
+
+    await expect(transaction.deleteSpecialist('imported-specialist', 1, [])).resolves.toBeUndefined()
+    expect(calls).toEqual(['lock', 'unlock', 'cleanup'])
+  })
+
   it('serializes an external recovery barrier behind an active package transaction', async () => {
     let signalPrepareStarted!: () => void
     let releasePrepare!: () => void
