@@ -98,12 +98,14 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     getSnapshot: vi.fn(async () => ({
       revision: 1,
       unreadCount: 0,
+      unreadSessionIds: [],
       latestSequence: 0,
       items: []
     })),
     markAllRead: vi.fn(async () => undefined),
     markRead: vi.fn(async () => undefined),
     markSessionCompletionsRead: vi.fn(async () => undefined),
+    markSessionUnread: vi.fn(async () => undefined),
     peekPendingOpenSession: vi.fn(() => ({ sessionId: 'session-1', token: 7 })),
     takePendingOpenSession: vi.fn(() => ({ sessionId: 'session-1', token: 7 }))
   },
@@ -195,7 +197,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 55 Electron request channels in their existing capability groups', () => {
+  it('defines the exact 56 Electron request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
@@ -215,7 +217,7 @@ describe('Host application commands', () => {
       }
     })
 
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(55)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(56)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -231,7 +233,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(55)
+    expect(router.dispatcher.commandNames()).toHaveLength(56)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -254,6 +256,7 @@ describe('Host application commands', () => {
     const markReadRequest = { ids: ['message-1'] }
     const markAllReadRequest = { throughSequence: 7 }
     const markSessionCompletionsReadRequest = { sessionIds: ['session-1'] }
+    const markSessionUnreadRequest = { sessionIds: ['session-2'] }
 
     await router.dispatcher.invoke(hostApplicationCommands.cli.getStatus, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.cli.install, invocation([]))
@@ -302,6 +305,10 @@ describe('Host application commands', () => {
     await router.dispatcher.invoke(
       hostApplicationCommands.notifications.markSessionCompletionsRead,
       invocation([markSessionCompletionsReadRequest])
+    )
+    await router.dispatcher.invoke(
+      hostApplicationCommands.notifications.markSessionUnread,
+      invocation([markSessionUnreadRequest])
     )
     await router.dispatcher.invoke(
       hostApplicationCommands.notifications.peekPendingOpenSession,
@@ -399,6 +406,9 @@ describe('Host application commands', () => {
     expect(dependencies.notifications.markRead).toHaveBeenCalledWith(markReadRequest)
     expect(dependencies.notifications.markSessionCompletionsRead).toHaveBeenCalledWith(
       markSessionCompletionsReadRequest
+    )
+    expect(dependencies.notifications.markSessionUnread).toHaveBeenCalledWith(
+      markSessionUnreadRequest
     )
     expect(dependencies.remoteAccess.approve).toHaveBeenCalledWith(
       { requestId: 'pair-1', decision: 'once' },
@@ -729,9 +739,24 @@ describe('Host application commands', () => {
         )
       ).rejects.toThrow('Invalid notifications:mark-session-completions-read request.')
     }
+    for (const invalidRequest of [
+      undefined,
+      null,
+      {},
+      { sessionIds: 'session-1' },
+      { sessionIds: [1] }
+    ]) {
+      await expect(
+        router.dispatcher.invoke(
+          commandByName('notifications:mark-session-unread'),
+          invocation([invalidRequest])
+        )
+      ).rejects.toThrow('Invalid notifications:mark-session-unread request.')
+    }
 
     expect(dependencies.notifications.markRead).not.toHaveBeenCalled()
     expect(dependencies.notifications.markAllRead).not.toHaveBeenCalled()
     expect(dependencies.notifications.markSessionCompletionsRead).not.toHaveBeenCalled()
+    expect(dependencies.notifications.markSessionUnread).not.toHaveBeenCalled()
   })
 })

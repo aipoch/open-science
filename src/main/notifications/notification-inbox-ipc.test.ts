@@ -13,12 +13,19 @@ describe('notification inbox Electron IPC adapter', () => {
   beforeEach(() => handlers.clear())
 
   it('registers snapshot and read mutations against the shared owner', async () => {
-    const snapshot = { revision: 1, unreadCount: 0, latestSequence: 0, items: [] }
+    const snapshot = {
+      revision: 1,
+      unreadCount: 0,
+      unreadSessionIds: [],
+      latestSequence: 0,
+      items: []
+    }
     const owner = {
       getSnapshot: vi.fn(async () => snapshot),
       markRead: vi.fn(async () => undefined),
       markAllRead: vi.fn(async () => undefined),
-      markSessionCompletionsRead: vi.fn(async () => undefined)
+      markSessionCompletionsRead: vi.fn(async () => undefined),
+      markSessionUnread: vi.fn(async () => undefined)
     }
     registerNotificationInboxIpcAdapter(owner)
 
@@ -28,10 +35,14 @@ describe('notification inbox Electron IPC adapter', () => {
     await handlers.get('notifications:mark-session-completions-read')?.(undefined, {
       sessionIds: ['session-1']
     })
+    await handlers.get('notifications:mark-session-unread')?.(undefined, {
+      sessionIds: ['session-2']
+    })
 
     expect(owner.markRead).toHaveBeenCalledWith(['message-1'])
     expect(owner.markAllRead).toHaveBeenCalledWith(7)
     expect(owner.markSessionCompletionsRead).toHaveBeenCalledWith(['session-1'])
+    expect(owner.markSessionUnread).toHaveBeenCalledWith(['session-2'])
   })
 
   it('rejects malformed read requests before calling the owner', () => {
@@ -39,12 +50,14 @@ describe('notification inbox Electron IPC adapter', () => {
       getSnapshot: vi.fn(async () => ({
         revision: 1,
         unreadCount: 0,
+        unreadSessionIds: [],
         latestSequence: 0,
         items: []
       })),
       markRead: vi.fn(async () => undefined),
       markAllRead: vi.fn(async () => undefined),
-      markSessionCompletionsRead: vi.fn(async () => undefined)
+      markSessionCompletionsRead: vi.fn(async () => undefined),
+      markSessionUnread: vi.fn(async () => undefined)
     }
     registerNotificationInboxIpcAdapter(owner)
 
@@ -57,8 +70,12 @@ describe('notification inbox Electron IPC adapter', () => {
     expect(() =>
       handlers.get('notifications:mark-session-completions-read')?.(undefined, { sessionIds: [1] })
     ).toThrow('Invalid notifications:mark-session-completions-read request.')
+    expect(() =>
+      handlers.get('notifications:mark-session-unread')?.(undefined, { sessionIds: [1] })
+    ).toThrow('Invalid notifications:mark-session-unread request.')
     expect(owner.markRead).not.toHaveBeenCalled()
     expect(owner.markAllRead).not.toHaveBeenCalled()
     expect(owner.markSessionCompletionsRead).not.toHaveBeenCalled()
+    expect(owner.markSessionUnread).not.toHaveBeenCalled()
   })
 })

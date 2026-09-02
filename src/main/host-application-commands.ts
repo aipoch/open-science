@@ -15,6 +15,7 @@ import type {
   NotificationMarkAllReadRequest,
   NotificationMarkReadRequest,
   NotificationMarkSessionCompletionsReadRequest,
+  NotificationMarkSessionUnreadRequest,
   OpenSessionFromNotificationRequest
 } from '../shared/notifications'
 import type {
@@ -63,7 +64,8 @@ import type { LogsCommandOwner } from './logs-ipc'
 import {
   requireNotificationMarkAllReadRequest,
   requireNotificationMarkReadRequest,
-  requireNotificationMarkSessionCompletionsReadRequest
+  requireNotificationMarkSessionCompletionsReadRequest,
+  requireNotificationMarkSessionUnreadRequest
 } from './notifications/notification-inbox-requests'
 import {
   canManagePairing,
@@ -172,6 +174,11 @@ const notificationCommands = Object.freeze({
     readonly [request: NotificationMarkSessionCompletionsReadRequest],
     void
   >('notifications:mark-session-completions-read'),
+  markSessionUnread: defineApplicationCommand<
+    'notifications:mark-session-unread',
+    readonly [request: NotificationMarkSessionUnreadRequest],
+    void
+  >('notifications:mark-session-unread'),
   peekPendingOpenSession: defineApplicationCommand<
     'notifications:peek-pending-open-session',
     readonly [],
@@ -377,6 +384,7 @@ type HostApplicationCommandDependencies = Readonly<{
     markSessionCompletionsRead: (
       request: NotificationMarkSessionCompletionsReadRequest
     ) => Promise<void>
+    markSessionUnread: (request: NotificationMarkSessionUnreadRequest) => Promise<void>
     peekPendingOpenSession: () => OpenSessionFromNotificationRequest | null
     takePendingOpenSession: (expectedToken: number) => OpenSessionFromNotificationRequest | null
   }>
@@ -509,6 +517,10 @@ const registerHostApplicationCommands = (
       'notifications:mark-session-completions-read': ({ args }) =>
         dependencies.notifications.markSessionCompletionsRead(
           requireNotificationMarkSessionCompletionsReadRequest(args[0])
+        ),
+      'notifications:mark-session-unread': ({ args }) =>
+        dependencies.notifications.markSessionUnread(
+          requireNotificationMarkSessionUnreadRequest(args[0])
         ),
       'notifications:peek-pending-open-session': () =>
         dependencies.notifications.peekPendingOpenSession(),

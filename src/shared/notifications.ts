@@ -61,6 +61,7 @@ export type NotificationInboxItem = Readonly<{
 export type NotificationInboxSnapshot = Readonly<{
   revision: number
   unreadCount: number
+  unreadSessionIds: readonly string[]
   latestSequence: number
   items: readonly NotificationInboxItem[]
 }>
@@ -79,5 +80,9 @@ export type NotificationMarkReadRequest = Readonly<{ ids: readonly string[] }>
 export type NotificationMarkAllReadRequest = Readonly<{ throughSequence: number }>
 
 export type NotificationMarkSessionCompletionsReadRequest = Readonly<{
+  sessionIds: readonly string[]
+}>
+
+export type NotificationMarkSessionUnreadRequest = Readonly<{
   sessionIds: readonly string[]
 }>

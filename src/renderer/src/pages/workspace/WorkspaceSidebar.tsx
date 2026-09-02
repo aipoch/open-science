@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronLeft,
   Download,
+  Eye,
   Files,
   MoreVertical,
   PanelLeft,
@@ -57,6 +58,7 @@ type WorkspaceSidebarProps = {
   onOpenProject?: (projectId: string) => void
   starNudgeKey?: string
   sessions: ChatSession[]
+  unreadSessionIds?: ReadonlySet<string>
   credentialPendingSessionIds?: ReadonlySet<string>
   activeSessionId: string | undefined
   canCreateConversation: boolean
@@ -77,6 +79,7 @@ type WorkspaceSidebarProps = {
   onViewNotebook: (session: ChatSession) => void
   onExportSession?: (session: ChatSession) => void
   onTogglePin: (session: ChatSession) => void
+  onMarkSessionUnread?: (session: ChatSession) => void
   canArchiveSession?: (session: ChatSession) => boolean
   onArchiveSession?: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
@@ -135,7 +138,7 @@ const sessionStatusLabelKeys = {
 } as const satisfies Record<SessionStatus, string>
 
 const ACTIVE_SESSION_GRACE_MS = 15 * 60_000
-const EMPTY_CREDENTIAL_SESSION_IDS = new Set<string>()
+const EMPTY_SESSION_IDS = new Set<string>()
 const INITIAL_PROJECT_MENU_LIMIT = 5
 const FIRST_PROJECT_MENU_DESTINATION_SELECTOR = '[data-project-id], [data-project-new]'
 const OPEN_DIALOG_SELECTOR =
@@ -311,7 +314,8 @@ const WorkspaceSidebarView = ({
   onOpenProject,
   starNudgeKey,
   sessions,
-  credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
+  unreadSessionIds = EMPTY_SESSION_IDS,
+  credentialPendingSessionIds = EMPTY_SESSION_IDS,
   activeSessionId,
   canCreateConversation,
   canMutateConversations,
@@ -329,6 +333,7 @@ const WorkspaceSidebarView = ({
   onViewNotebook,
   onExportSession,
   onTogglePin,
+  onMarkSessionUnread,
   canArchiveSession,
   onArchiveSession,
   onDeleteSession,
@@ -777,6 +782,7 @@ const WorkspaceSidebarView = ({
                   </div>
                   {section.items.map((session) => {
                     const isActive = session.id === activeSessionId
+                    const isUnread = unreadSessionIds.has(session.id)
                     const shortcutNumber = shortcutNumberBySessionId.get(session.id)
                     const presentedStatus = getPresentedSessionStatus(
                       session,
@@ -806,9 +812,12 @@ const WorkspaceSidebarView = ({
                           aria-hidden="true"
                         >
                           <span
+                            data-slot="session-status-indicator"
                             className={cn(
                               'size-[7px] shrink-0 rounded-full',
-                              sessionStatusDotClassName[presentedStatus]
+                              presentedStatus === 'idle' && isUnread
+                                ? 'bg-success-000 ring-2 ring-success-000/20'
+                                : sessionStatusDotClassName[presentedStatus]
                             )}
                           />
                         </span>
@@ -820,11 +829,12 @@ const WorkspaceSidebarView = ({
                         <SessionTitleMarquee
                           title={session.title}
                           className={cn(
-                            section.label === 'Active' &&
-                              presentedStatus !== 'idle' &&
+                            ((section.label === 'Active' && presentedStatus !== 'idle') ||
+                              isUnread) &&
                               'font-semibold'
                           )}
                         />
+                        {isUnread ? <span className="sr-only">{t('Unread')}</span> : null}
                         {showSessionShortcuts && shortcutNumber ? (
                           <kbd
                             aria-hidden="true"
@@ -912,6 +922,16 @@ const WorkspaceSidebarView = ({
                                   <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
                                 </span>
                                 {t('Edit…')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="gap-2"
+                                disabled={!onMarkSessionUnread}
+                                onSelect={() => onMarkSessionUnread?.(session)}
+                              >
+                                <span className={sessionMenuIconClassName}>
+                                  <Eye className="size-4" strokeWidth={2} aria-hidden="true" />
+                                </span>
+                                {t('Mark as unread')}
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               {canDownloadArtifacts ? (
@@ -1046,11 +1066,7 @@ const WorkspaceSidebarView = ({
 }
 
 const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
-  const {
-    credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
-    onOpenSession,
-    sessions
-  } = props
+  const { credentialPendingSessionIds = EMPTY_SESSION_IDS, onOpenSession, sessions } = props
   const [now, setNow] = useState(Date.now)
   const [showSessionShortcuts, setShowSessionShortcuts] = useState(false)
   const [openSessionActionsId, setOpenSessionActionsId] = useState<string | null>(null)

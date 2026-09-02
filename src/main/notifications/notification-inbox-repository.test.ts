@@ -63,6 +63,7 @@ describe('NotificationInboxDbRepository', () => {
     expect((await repository.snapshot()).items.every((item) => item.readAt === undefined)).toBe(
       true
     )
+    expect((await repository.snapshot()).unreadSessionIds).toEqual(['session-one', 'session-two'])
   })
 
   it('returns every active pending action in addition to recent history', async () => {
@@ -100,6 +101,7 @@ describe('NotificationInboxDbRepository', () => {
 
     const snapshot = await repository.snapshot()
     expect(snapshot.unreadCount).toBe(1)
+    expect(snapshot.unreadSessionIds).toEqual(['session-after'])
     expect(snapshot.items.find((item) => item.originId === 'before')?.readAt).toBe(1000)
     expect(snapshot.items.find((item) => item.originId === 'after')?.readAt).toBeUndefined()
   })
@@ -223,6 +225,45 @@ describe('NotificationInboxDbRepository', () => {
     expect(snapshot.unreadCount).toBe(1)
     expect(snapshot.items.find((item) => item.kind === 'task.completed')?.readAt).toBe(2750)
     expect(snapshot.items.find((item) => item.kind === 'task.failed')?.readAt).toBeUndefined()
+  })
+
+  it('restores only the latest notification per session without advancing its sequence', async () => {
+    const repository = await createRepository()
+    for (const originId of ['older', 'latest']) {
+      await repository.record({
+        id: `item-${originId}`,
+        dedupeKey: `task:${originId}`,
+        kind: 'task.completed',
+        sessionId: 'session-shared',
+        originId,
+        title: 'Task completed',
+        summary: `Task ${originId} finished.`
+      })
+    }
+    await repository.markSessionsRead(['session-shared'], 2800)
+    for (let index = 0; index < 50; index += 1) await record(repository, `newer-${index}`)
+
+    expect((await repository.snapshot()).items.some((item) => item.id === 'item-latest')).toBe(
+      false
+    )
+    const latestSequence = (await repository.snapshot()).latestSequence
+
+    await repository.markSessionUnread(['session-shared'])
+
+    const snapshot = await repository.snapshot()
+    expect(snapshot.unreadCount).toBe(51)
+    expect(snapshot.latestSequence).toBe(latestSequence)
+    expect(snapshot.unreadSessionIds).toContain('session-shared')
+    expect(snapshot.items.find((item) => item.id === 'item-latest')).toMatchObject({
+      id: 'item-latest',
+      sessionId: 'session-shared'
+    })
+    expect(snapshot.items.find((item) => item.id === 'item-latest')).not.toHaveProperty('readAt')
+    expect(
+      await client!.notificationInboxItem.findUnique({ where: { id: 'item-older' } })
+    ).toMatchObject({
+      readAt: new Date(2800)
+    })
   })
 
   it('migrates legacy unread sessions exactly once and clears the old projection', async () => {

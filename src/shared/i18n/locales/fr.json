@@ -1435,6 +1435,7 @@
     "Managed runtime is not set up yet": "L'environnement d'exécution géré n'est pas encore configuré",
     "Manual": "Manuel",
     "Mark all read": "Marquer tout comme lu",
+    "Mark as unread": "Marquer comme non lu",
     "Mark completed session {{title}} as read": "Marquer la session terminée {{title}} comme lue",
     "Markdown couldn't be read for preview": "Markdown n'a pas pu être lu pour l'aperçu",
     "Markdown shown to the agent when the skill is invoked.": "Markdown affiché à l'agent lorsque la compétence est invoquée.",

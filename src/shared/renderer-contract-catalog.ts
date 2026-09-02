@@ -128,6 +128,7 @@ import type {
   NotificationMarkAllReadRequest,
   NotificationMarkReadRequest,
   NotificationMarkSessionCompletionsReadRequest,
+  NotificationMarkSessionUnreadRequest,
   NotificationTestResult,
   OpenSessionFromNotificationRequest,
   UnreadTaskViewState
@@ -1207,6 +1208,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'notifications.markSessionCompletionsRead': callable<
     (request: NotificationMarkSessionCompletionsReadRequest) => Promise<void>
   >()('notifications', ['notifications:mark-session-completions-read']),
+  'notifications.markSessionUnread': callable<
+    (request: NotificationMarkSessionUnreadRequest) => Promise<void>
+  >()('notifications', ['notifications:mark-session-unread']),
   'notifications.sendTest': callable<() => Promise<NotificationTestResult>>()(
     'notifications',
     ['notifications:send-test', ELECTRON],

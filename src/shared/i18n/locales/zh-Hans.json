@@ -1446,6 +1446,7 @@
     "Managed runtime is not set up yet": "托管运行时尚未设置",
     "Manual": "手动",
     "Mark all read": "全部标记为已读",
+    "Mark as unread": "标记为未读",
     "Mark completed session {{title}} as read": "将已完成的会话 {{title}} 标记为已读",
     "Markdown couldn't be read for preview": "无法读取 Markdown 以进行预览",
     "Markdown shown to the agent when the skill is invoked.": "技能被调用时展示给智能体的 Markdown。",

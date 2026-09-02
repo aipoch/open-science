@@ -9,11 +9,29 @@ afterEach(() => {
 })
 
 describe('notification inbox store', () => {
+  it('marks normalized session ids unread and refreshes the snapshot', async () => {
+    const markSessionUnread = vi.fn(async () => undefined)
+    const getSnapshot = vi.fn(async () => ({
+      revision: 2,
+      unreadCount: 1,
+      unreadSessionIds: ['session-1'],
+      latestSequence: 4,
+      items: []
+    }))
+    vi.stubGlobal('window', { api: { notifications: { getSnapshot, markSessionUnread } } })
+
+    await useNotificationInboxStore.getState().markSessionUnread([' session-1 ', 'session-1', ''])
+
+    expect(markSessionUnread).toHaveBeenCalledWith({ sessionIds: ['session-1'] })
+    expect(getSnapshot).toHaveBeenCalledOnce()
+  })
+
   it('marks all completions for normalized session ids and refreshes the snapshot', async () => {
     const markSessionCompletionsRead = vi.fn(async () => undefined)
     const getSnapshot = vi.fn(async () => ({
       revision: 2,
       unreadCount: 0,
+      unreadSessionIds: [],
       latestSequence: 3,
       items: []
     }))
@@ -30,7 +48,13 @@ describe('notification inbox store', () => {
   })
 
   it('accepts a lower revision from a restarted backend as authoritative', async () => {
-    const snapshot = { revision: 1, unreadCount: 0, latestSequence: 0, items: [] }
+    const snapshot = {
+      revision: 1,
+      unreadCount: 0,
+      unreadSessionIds: [],
+      latestSequence: 0,
+      items: []
+    }
     vi.stubGlobal('window', {
       api: { notifications: { getSnapshot: vi.fn(async () => snapshot) } }
     })
@@ -49,6 +73,7 @@ describe('notification inbox store', () => {
     const getSnapshot = vi.fn(async () => ({
       revision: 2,
       unreadCount: 1,
+      unreadSessionIds: ['session-1'],
       latestSequence: 3,
       items: []
     }))
@@ -84,6 +109,7 @@ describe('notification inbox store', () => {
     const getSnapshot = vi.fn(async () => ({
       revision: 2,
       unreadCount: 1,
+      unreadSessionIds: ['session-1'],
       latestSequence: 3,
       items: []
     }))

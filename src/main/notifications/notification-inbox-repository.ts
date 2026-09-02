@@ -59,6 +59,7 @@ type NotificationRepositoryState = Readonly<{
 
 type NotificationRepositorySnapshot = Readonly<{
   unreadCount: number
+  unreadSessionIds: readonly string[]
   latestSequence: number
   items: readonly NotificationInboxItem[]
 }>
@@ -164,7 +165,7 @@ export class NotificationInboxDbRepository {
     )
     return this.enqueue(async () => {
       const client = await this.getClient()
-      const [pendingRows, historyRows, metadata] = await Promise.all([
+      const [pendingRows, historyRows, unreadSessionRows, metadata] = await Promise.all([
         client.notificationInboxItem.findMany({
           where: ACTIVE_PENDING_WHERE,
           orderBy: { sequence: 'desc' }
@@ -174,12 +175,30 @@ export class NotificationInboxDbRepository {
           orderBy: { sequence: 'desc' },
           take: limit
         }),
+        client.notificationInboxItem.findMany({
+          where: {
+            readAt: null,
+            sessionId: { not: null },
+            targetInvalidatedAt: null
+          },
+          distinct: ['sessionId'],
+          orderBy: { sequence: 'desc' },
+          take: MAX_SNAPSHOT_LIMIT
+        }),
         stateFor(client, false)
       ])
-      const rows = [...pendingRows, ...historyRows].sort(
-        (left, right) => right.sequence - left.sequence
-      )
-      return { ...metadata, items: rows.map(toInboxItem) }
+      const rows = [
+        ...new Map(
+          [...pendingRows, ...unreadSessionRows, ...historyRows].map((row) => [row.id, row])
+        ).values()
+      ].sort((left, right) => right.sequence - left.sequence)
+      return {
+        ...metadata,
+        unreadSessionIds: normalizeIds(
+          unreadSessionRows.flatMap((row) => (row.sessionId ? [row.sessionId] : []))
+        ).sort(),
+        items: rows.map(toInboxItem)
+      }
     })
   }
 
@@ -288,6 +307,39 @@ export class NotificationInboxDbRepository {
     const normalized = normalizeIds(sessionIds)
     return this.updateReadStateForValues('sessionId', normalized, readAt, {
       kind: 'task.completed'
+    })
+  }
+
+  markSessionUnread(sessionIds: readonly string[]): Promise<NotificationRepositoryState> {
+    const normalized = normalizeIds(sessionIds)
+    if (normalized.length === 0) return this.currentState()
+    return this.enqueue(async () => {
+      const client = await this.getClient()
+      return client.$transaction(async (transaction) => {
+        const rows = await transaction.notificationInboxItem.findMany({
+          where: {
+            sessionId: { in: normalized },
+            targetInvalidatedAt: null
+          },
+          orderBy: { sequence: 'desc' }
+        })
+        const seenSessionIds = new Set<string>()
+        const latestReadRows = rows.flatMap((row) => {
+          if (!row.sessionId || seenSessionIds.has(row.sessionId)) return []
+          seenSessionIds.add(row.sessionId)
+          return row.readAt ? [row] : []
+        })
+        if (latestReadRows.length === 0) return stateFor(transaction, false)
+        const count = await mutateInChunks(
+          latestReadRows.map((row) => row.id),
+          (ids) =>
+            transaction.notificationInboxItem.updateMany({
+              where: { id: { in: ids }, readAt: { not: null } },
+              data: { readAt: null }
+            })
+        )
+        return stateFor(transaction, count > 0)
+      })
     })
   }
 

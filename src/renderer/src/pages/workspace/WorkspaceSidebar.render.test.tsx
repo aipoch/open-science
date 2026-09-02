@@ -135,7 +135,8 @@ const createMessage = (): ChatSession['messages'][number] => ({
 const renderSidebar = async (
   sessions: ChatSession[],
   mobileMode = false,
-  credentialPendingSessionIds?: ReadonlySet<string>
+  credentialPendingSessionIds?: ReadonlySet<string>,
+  unreadSessionIds?: ReadonlySet<string>
 ): Promise<string> => {
   const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
 
@@ -143,6 +144,7 @@ const renderSidebar = async (
     <WorkspaceSidebar
       projectName="Example project"
       sessions={sessions}
+      unreadSessionIds={unreadSessionIds}
       credentialPendingSessionIds={credentialPendingSessionIds}
       activeSessionId={sessions[0]?.id}
       canCreateConversation
@@ -1922,6 +1924,39 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
+  it('fills the idle status dot green and emphasizes the title for unread Sessions', async () => {
+    const session = createSession({
+      id: 'session-unread',
+      title: 'Read this later',
+      status: 'idle'
+    })
+    const container = document.createElement('div')
+    container.innerHTML = await renderSidebar([session], false, undefined, new Set([session.id]))
+
+    const title = container.querySelector<HTMLElement>('[data-slot="session-title-marquee"]')
+    const status = container.querySelector<HTMLElement>('[data-slot="session-status-indicator"]')
+
+    expect(title?.classList).toContain('font-semibold')
+    expect(status?.classList).toContain('bg-success-000')
+    expect(status?.classList).not.toContain('bg-destructive')
+    expect(container.querySelector('[data-slot="session-unread-indicator"]')).toBeNull()
+    expect(container.textContent).toContain('Unread')
+  })
+
+  it('keeps lifecycle status colors ahead of unread green', async () => {
+    const session = createSession({
+      id: 'session-waiting-unread',
+      title: 'Needs approval',
+      status: 'waiting-permission'
+    })
+    const container = document.createElement('div')
+    container.innerHTML = await renderSidebar([session], false, undefined, new Set([session.id]))
+
+    const status = container.querySelector<HTMLElement>('[data-slot="session-status-indicator"]')
+    expect(status?.classList).toContain('bg-session-waiting')
+    expect(status?.classList).not.toContain('bg-success-000')
+  })
+
   it('wires session open and row menu actions to the matching session', async () => {
     const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const sessions = [
@@ -1934,6 +1969,7 @@ describe('WorkspaceSidebar accessible render', () => {
     const onDeleteSession = vi.fn()
     const onExportSession = vi.fn()
     const onArchiveSession = vi.fn()
+    const onMarkSessionUnread = vi.fn()
     const tree = WorkspaceSidebarView({
       now: Date.now(),
       projectName: 'Example project',
@@ -1953,6 +1989,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onViewNotebook: vi.fn(),
       onExportSession,
       onTogglePin: vi.fn(),
+      onMarkSessionUnread,
       canArchiveSession: () => true,
       onArchiveSession,
       onDeleteSession,
@@ -1975,6 +2012,9 @@ describe('WorkspaceSidebar accessible render', () => {
     )
     const deleteItems = elements.filter((element) => getTextContent(element).trim() === 'Delete')
     const archiveItems = elements.filter((element) => getTextContent(element).trim() === 'Archive')
+    const unreadItems = elements.filter(
+      (element) => getTextContent(element).trim() === 'Mark as unread'
+    )
     const exportItems = elements.filter(
       (element) => getTextContent(element).trim() === 'Export conversation…'
     )
@@ -2002,6 +2042,10 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(archiveItems[1]?.props.onSelect).toBeTypeOf('function')
     ;(archiveItems[1]?.props.onSelect as () => void)()
     expect(onArchiveSession).toHaveBeenCalledWith(sessions[1])
+
+    expect(unreadItems[1]?.props.onSelect).toBeTypeOf('function')
+    ;(unreadItems[1]?.props.onSelect as () => void)()
+    expect(onMarkSessionUnread).toHaveBeenCalledWith(sessions[1])
 
     expect(deleteItems[0]?.props.onSelect).toBeTypeOf('function')
     ;(deleteItems[0]?.props.onSelect as () => void)()
