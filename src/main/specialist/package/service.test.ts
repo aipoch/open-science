@@ -2614,6 +2614,62 @@ describe('SpecialistPackageService', () => {
     expect(onResourcesDeleted).toHaveBeenCalledWith('cleanup-owner', [skillId])
   })
 
+  it('does not roll back a committed deletion when transaction cleanup fails', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    await repository.insert({
+      id: 'committed-delete',
+      name: 'Committed Delete',
+      description: '',
+      systemPrompt: '',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      packageVersion: '0.1.0',
+      origin: 'marketplace',
+      ownedSkillIds: []
+    })
+    const beforeDataPath = join(storageDir, 'specialist-package-transaction.before.json')
+    const onSpecialistDeleted = vi.fn<(specialistId: string) => Promise<void>>()
+    const onResourcesDeleted = vi
+      .fn<(specialistId: string, skillIds: readonly string[]) => Promise<void>>()
+      .mockImplementationOnce(async () => {
+        await rm(beforeDataPath, { force: true })
+        await mkdir(beforeDataPath)
+      })
+      .mockResolvedValue(undefined)
+    const options = {
+      storageDir,
+      repository,
+      catalog: async () => catalog,
+      onSpecialistDeleted,
+      onResourcesDeleted
+    }
+    const service = new SpecialistPackageService(options)
+    const preview = await service.previewSpecialistDelete({ id: 'committed-delete' })
+
+    await expect(
+      service.deleteSpecialist({
+        id: 'committed-delete',
+        expectedRevision: preview.expectedRevision,
+        deleteSkillIds: []
+      })
+    ).resolves.toEqual({ status: 'failed', code: 'recovery-failed' })
+    await expect(new SpecialistService(repository).getById('committed-delete')).rejects.toThrow(
+      /not found/i
+    )
+
+    await rm(beforeDataPath, { recursive: true })
+    await new SpecialistPackageService(options).recover()
+
+    expect(onSpecialistDeleted).toHaveBeenCalledTimes(2)
+    expect(onResourcesDeleted).toHaveBeenCalledTimes(2)
+    await expect(new SpecialistService(repository).getById('committed-delete')).rejects.toThrow(
+      /not found/i
+    )
+  })
+
   it('rolls back prepared Skill deletion when the Specialist document swap fails', async () => {
     const repository = new SpecialistRepository(storageDir)
     await repository.insert({

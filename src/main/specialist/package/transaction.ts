@@ -108,21 +108,27 @@ export class SpecialistPackageTransaction {
       ) {
         throw new Error('Invalid Specialist package transaction journal.')
       }
-      const { before, after } = await this.readTransactionData(journal)
-      const beforeDigest = journal.beforeDigest ?? documentDigest(before)
-      const afterDigest = journal.afterDigest ?? documentDigest(after)
       if (journal.phase === 'committed') {
         const current = await this.repository.getAll()
-        if (documentDigest(current) === beforeDigest) {
-          await this.repository.replaceAllIfUnchanged(before, after)
-        } else if (documentDigest(current) !== afterDigest) {
-          throw new Error('Specialist document changed after package commit.')
+        const currentDigest = documentDigest(current)
+        if (typeof journal.afterDigest !== 'string' || currentDigest !== journal.afterDigest) {
+          const { before, after } = await this.readTransactionData(journal)
+          const beforeDigest = journal.beforeDigest ?? documentDigest(before)
+          const afterDigest = journal.afterDigest ?? documentDigest(after)
+          if (currentDigest === beforeDigest) {
+            await this.repository.replaceAllIfUnchanged(before, after)
+          } else if (currentDigest !== afterDigest) {
+            throw new Error('Specialist document changed after package commit.')
+          }
         }
         await this.skillPort.recover(journal.transactionId, 'commit')
         if (journal.deleteSkillIds) {
           await this.cleanupCommittedDeletion?.(journal.specialistId, journal.deleteSkillIds)
         }
       } else if (journal.phase !== 'rolled-back') {
+        const { before, after } = await this.readTransactionData(journal)
+        const beforeDigest = journal.beforeDigest ?? documentDigest(before)
+        const afterDigest = journal.afterDigest ?? documentDigest(after)
         await this.skillPort.recover(journal.transactionId, 'rollback')
         const current = await this.repository.getAll()
         if (documentDigest(current) === afterDigest) {
@@ -260,6 +266,7 @@ export class SpecialistPackageTransaction {
         await (this.skillPort.runInMutationContext?.(transactionId, commit) ?? commit())
         return toView(stored)
       } catch (error) {
+        if (journal.phase === 'committed') throw new SpecialistPackageRecoveryError()
         try {
           journal.phase = 'rolling-back'
           await this.writeJournal(journal)
@@ -344,7 +351,9 @@ export class SpecialistPackageTransaction {
         }
         await (this.skillPort.runInMutationContext?.(transactionId, commit) ?? commit())
       } catch (error) {
-        if (error instanceof SpecialistPackageRecoveryError) throw error
+        if (error instanceof SpecialistPackageRecoveryError || journal.phase === 'committed') {
+          throw new SpecialistPackageRecoveryError()
+        }
         try {
           journal.phase = 'rolling-back'
           await this.writeJournal(journal)
@@ -405,9 +414,9 @@ export class SpecialistPackageTransaction {
 
   private async cleanupTransactionData(): Promise<void> {
     await Promise.all([
-      rm(this.journalPath, { force: true }),
       rm(this.beforeDataPath, { force: true }),
       rm(this.afterDataPath, { force: true })
     ])
+    await rm(this.journalPath, { force: true })
   }
 }
