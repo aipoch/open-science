@@ -1505,6 +1505,23 @@ describe('Data and content application commands', () => {
     expect(deps.sessions.editDetails).not.toHaveBeenCalled()
   })
 
+  it('accepts the legacy Web RPC v1 Session details request without edit baselines', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const request = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      title: 'Edited',
+      description: 'Description'
+    }
+
+    const { result: dispatched } = dispatchCommand(router, 'sessionEditDetails', [request])
+
+    await expect(dispatched).resolves.toBe(deps.session)
+    expect(deps.sessions.editDetails).toHaveBeenCalledWith(request)
+  })
+
   it('keeps native and local upload/export capability restrictions and standalone invalidation', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()

@@ -693,6 +693,29 @@ describe('SessionDetailsOwner', () => {
     expect(store.current().title).toBe('Fresh title')
   })
 
+  it('keeps legacy details requests without edit baselines on last-write-wins semantics', async () => {
+    const session = queuedSession({
+      sessionDetailsGeneration: undefined,
+      sessionDetailsSource: 'manual'
+    })
+    const { owner, store } = harness([session])
+    await owner.start()
+
+    const edited = await owner.edit({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      title: 'Legacy client title',
+      description: 'Legacy client description'
+    })
+
+    expect(edited).toMatchObject({
+      title: 'Legacy client title',
+      description: 'Legacy client description',
+      sessionDetailsSource: 'manual'
+    })
+    expect(store.current()).toEqual(edited)
+  })
+
   it('rejects a stale manual edit when the same detail changed in another window', async () => {
     const session = queuedSession({
       sessionDetailsGeneration: undefined,

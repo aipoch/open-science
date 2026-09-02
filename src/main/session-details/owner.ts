@@ -732,10 +732,19 @@ export const createSessionDetailsOwner = (
       const key = keyOf(request.projectId, request.sessionId)
       const currentAttempt = active.get(key)
       const details = validateManualDetails(request.title, request.description)
-      const expectedTitle = trimDisplayValue(request.expectedTitle)
-      const expectedDescription = trimDisplayValue(request.expectedDescription)
-      const titleChanged = details.title !== expectedTitle
-      const descriptionChanged = details.description !== expectedDescription
+      const expectedDetails =
+        request.expectedTitle === undefined || request.expectedDescription === undefined
+          ? undefined
+          : {
+              title: trimDisplayValue(request.expectedTitle),
+              description: trimDisplayValue(request.expectedDescription)
+            }
+      // Web RPC v1 clients predate edit baselines and retain their original last-write-wins
+      // behavior. Current clients identify changed fields and fence only those fields.
+      const titleChanged = expectedDetails ? details.title !== expectedDetails.title : true
+      const descriptionChanged = expectedDetails
+        ? details.description !== expectedDetails.description
+        : true
       // Manual edits change only authority-owned display fields on the freshly loaded Session, so
       // unrelated concurrent writes (conversation turns, runtime context) never fence them. The
       // details' single other writer — generation — is superseded below instead.
@@ -744,9 +753,10 @@ export const createSessionDetailsOwner = (
         request.sessionId,
         (session) => {
           if (
-            (titleChanged && trimDisplayValue(session.title) !== expectedTitle) ||
-            (descriptionChanged &&
-              trimDisplayValue(session.description ?? '') !== expectedDescription)
+            expectedDetails &&
+            ((titleChanged && trimDisplayValue(session.title) !== expectedDetails.title) ||
+              (descriptionChanged &&
+                trimDisplayValue(session.description ?? '') !== expectedDetails.description))
           ) {
             throw new SessionDetailsConflictError()
           }

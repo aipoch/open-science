@@ -686,14 +686,18 @@ export type PersistedSessionDetailsGeneration =
         | (SessionDetailsAdmission & SessionDetailsOptionalUsage)
       ))
 
-export type EditSessionDetailsRequest = Readonly<{
+type EditSessionDetailsRequestBase = Readonly<{
   projectId: string
   sessionId: string
-  expectedTitle: string
-  expectedDescription: string
   title: string
   description: string
 }>
+
+export type EditSessionDetailsRequest = EditSessionDetailsRequestBase &
+  (
+    | Readonly<{ expectedTitle: string; expectedDescription: string }>
+    | Readonly<{ expectedTitle?: never; expectedDescription?: never }>
+  )
 
 export type PersistedChatSession = {
   id: string
@@ -4601,16 +4605,29 @@ export const deleteSessionRequestSchema = z
 // Manual details edits mutate only authority-owned display fields server-side, so they carry no
 // whole-Session revision: concurrent unrelated writes advance that revision constantly and must
 // not fence the edit.
-export const editSessionDetailsRequestSchema = z
-  .object({
-    projectId: z.string().min(1),
-    sessionId: z.string().min(1),
-    expectedTitle: z.string(),
-    expectedDescription: z.string(),
-    title: z.string(),
-    description: z.string()
-  })
-  .strict()
+const editSessionDetailsRequestFields = {
+  projectId: z.string().min(1),
+  sessionId: z.string().min(1),
+  title: z.string(),
+  description: z.string()
+} as const
+
+// Web RPC v1 originally exposed this command without optimistic edit baselines. Accept that exact
+// legacy shape alongside the protected shape; a partial baseline is neither valid nor useful.
+export const editSessionDetailsRequestSchema = z.union([
+  z
+    .object({
+      ...editSessionDetailsRequestFields,
+      expectedTitle: z.string(),
+      expectedDescription: z.string()
+    })
+    .strict(),
+  z
+    .object({
+      ...editSessionDetailsRequestFields
+    })
+    .strict()
+])
 
 export type DeleteSessionRequest = z.infer<typeof deleteSessionRequestSchema>
 
