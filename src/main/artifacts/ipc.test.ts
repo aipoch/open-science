@@ -991,49 +991,6 @@ describe('artifact IPC handlers', () => {
       versionIds: ['version-1', 'version-1']
     })
   })
-
-  it('excludes both prompt-active runs and unfinalized claims from the orphan scan', async () => {
-    const listProjectArtifacts = vi.fn().mockResolvedValue([])
-    const repository = { listProjectArtifacts } as unknown as ArtifactRepository
-    const runRegistry = new ArtifactRunRegistry()
-
-    // A run whose files were emitted and are awaiting the renderer's finalize call — it has left the
-    // runtime's prompt-active set but must still be treated as in-flight, not orphaned.
-    runRegistry.register({
-      projectId: 'default-project',
-      artifactSessionId: 'artifact-session-1',
-      sessionId: 'session-1',
-      runId: 'run-awaiting-finalize'
-    })
-
-    const handlers = createArtifactHandlers(repository, runRegistry, {
-      getActiveArtifactRunIds: () => ['run-in-prompt']
-    })
-
-    await handlers.listProjectFiles({ projectId: 'default-project' })
-
-    const passedSet = listProjectArtifacts.mock.calls[0][1] as Set<string>
-    expect([...passedSet].sort()).toEqual(['run-awaiting-finalize', 'run-in-prompt'])
-  })
-
-  it('drops a run from the exclusion set once its claim is finalized', async () => {
-    const listProjectArtifacts = vi.fn().mockResolvedValue([])
-    const repository = { listProjectArtifacts } as unknown as ArtifactRepository
-    const runRegistry = new ArtifactRunRegistry()
-    const claimId = runRegistry.register({
-      projectId: 'default-project',
-      artifactSessionId: 'artifact-session-1',
-      sessionId: 'session-1',
-      runId: 'run-done'
-    })
-    runRegistry.markFinalized(claimId, 'message-1')
-
-    const handlers = createArtifactHandlers(repository, runRegistry)
-    await handlers.listProjectFiles({ projectId: 'default-project' })
-
-    const passedSet = listProjectArtifacts.mock.calls[0][1] as Set<string>
-    expect(passedSet.has('run-done')).toBe(false)
-  })
 })
 
 describe('artifact IPC handler registration', () => {
@@ -1064,12 +1021,17 @@ describe('artifact IPC handler registration', () => {
       'artifacts:get-version-messages',
       'artifacts:get-version-provenance',
       'artifacts:get-version-review',
-      'artifacts:list-project-files',
       'artifacts:open-file',
       'artifacts:read-preview',
       'artifacts:reconcile-pending',
       'artifacts:resolve-version-descriptors'
     ])
+  })
+
+  it('does not register the obsolete Project artifact directory scan', () => {
+    registerArtifactIpcHandlers()
+
+    expect(ipcHandlers.has('artifacts:list-project-files')).toBe(false)
   })
 
   it('shares the injected artifact finalization lock with application commands', async () => {
@@ -1089,7 +1051,7 @@ describe('artifact IPC handler registration', () => {
       runId: 'run-1'
     })
     const injected = createArtifactHandlers(repository, runRegistry)
-    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, undefined, injected)
+    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, injected)
     const request = { claimId, messageId: 'message-1' }
 
     const applicationFinalize = injected.finalizeRunArtifacts(request)
@@ -1109,7 +1071,6 @@ describe('artifact IPC handler registration', () => {
     const failure = new Error('registration failed')
     const injected: ArtifactHandlers = {
       finalizeRunArtifacts: vi.fn(),
-      listProjectFiles: vi.fn().mockResolvedValue([]),
       reconcilePendingArtifacts: vi.fn(),
       openFile: vi.fn(),
       readPreview: vi.fn(),
@@ -1126,21 +1087,18 @@ describe('artifact IPC handler registration', () => {
     registrationFailure.error = failure
 
     expect(() =>
-      registerArtifactIpcHandlers(undefined, undefined, undefined, undefined, undefined, injected)
+      registerArtifactIpcHandlers(undefined, undefined, undefined, undefined, injected)
     ).toThrow(failure)
 
     registrationFailure.channel = undefined
     registrationFailure.error = undefined
-    registerArtifactIpcHandlers(undefined, undefined, undefined, undefined, undefined, injected)
-    await ipcHandlers.get('artifacts:list-project-files')?.({}, { projectId: 'default-project' })
-    expect(injected.listProjectFiles).toHaveBeenCalledOnce()
+    registerArtifactIpcHandlers(undefined, undefined, undefined, undefined, injected)
   })
 
   it('delegates each registered channel to the matching handler implementation', async () => {
     // Register with lightweight repositories whose methods are spies — this exercises the entire
     // ipcMain.handle -> createArtifactHandlers -> method chain for every channel.
     const finalizeRunArtifacts = vi.fn().mockResolvedValue([])
-    const listProjectArtifacts = vi.fn().mockResolvedValue([])
     const reconcilePendingArtifactPaths = vi.fn().mockResolvedValue([])
     const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/inside.txt')
     const readManagedFilePreview = vi.fn().mockResolvedValue({
@@ -1151,7 +1109,6 @@ describe('artifact IPC handler registration', () => {
     })
     const repository = {
       finalizeRunArtifacts,
-      listProjectArtifacts,
       reconcilePendingArtifactPaths,
       resolveManagedFilePath,
       readManagedFilePreview
@@ -1167,7 +1124,7 @@ describe('artifact IPC handler registration', () => {
       sessionId: 'session-1',
       runId: 'run-1'
     })
-    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, undefined, handlers)
+    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, handlers)
 
     const finalizeResult = await ipcHandlers.get('artifacts:finalize-run')?.(
       {},
@@ -1184,14 +1141,6 @@ describe('artifact IPC handler registration', () => {
       runId: 'run-1',
       messageId: 'message-1'
     })
-
-    await ipcHandlers.get('artifacts:list-project-files')?.(
-      {},
-      {
-        projectId: 'default-project'
-      }
-    )
-    expect(listProjectArtifacts).toHaveBeenCalledWith('default-project', expect.any(Set))
 
     await ipcHandlers.get('artifacts:reconcile-pending')?.(
       {},
@@ -1261,7 +1210,7 @@ describe('artifact IPC handler registration', () => {
     const handlers = createArtifactHandlers(repository, runRegistry, {
       codeReconstruction: { get, generate }
     })
-    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, undefined, handlers)
+    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, handlers)
 
     await expect(
       ipcHandlers.get('artifacts:get-code-reconstruction')?.({}, request)
@@ -1302,14 +1251,7 @@ describe('artifact IPC handler registration', () => {
       provenance: provenance as never,
       logger: diagnosticLogger
     })
-    registerArtifactIpcHandlers(
-      repository,
-      runRegistry,
-      undefined,
-      provenance as never,
-      undefined,
-      handlers
-    )
+    registerArtifactIpcHandlers(repository, runRegistry, provenance as never, undefined, handlers)
 
     await expect(
       ipcHandlers.get('artifacts:finalize-run')?.({}, { claimId, messageId: 'message-1' })
@@ -1425,27 +1367,6 @@ describe('artifact IPC handler registration', () => {
     expect(openPath).toHaveBeenCalledWith(latestPath)
     expect(resolveVersionContent).not.toHaveBeenCalled()
     expect(close).toHaveBeenCalledOnce()
-  })
-
-  it('threads a live getActiveArtifactRunIds closure into list-project-files', async () => {
-    // Without getActiveArtifactRunIds the in-flight set defaults to empty. The registry-based
-    // unfinalized-claim exclusion is exercised in the main suite; here we pin the runtime-side
-    // thread (default vs. supplied) so a regression that loses the dependency is caught.
-    const listProjectArtifacts = vi.fn().mockResolvedValue([])
-    const repository = { listProjectArtifacts } as unknown as ArtifactRepository
-    const activeIds = vi.fn().mockReturnValue(['run-active'])
-
-    registerArtifactIpcHandlers(repository, new ArtifactRunRegistry(), activeIds)
-    await ipcHandlers.get('artifacts:list-project-files')?.(
-      {},
-      {
-        projectId: 'default-project'
-      }
-    )
-
-    expect(activeIds).toHaveBeenCalled()
-    const passedSet = listProjectArtifacts.mock.calls[0][1] as Set<string>
-    expect([...passedSet]).toEqual(['run-active'])
   })
 })
 

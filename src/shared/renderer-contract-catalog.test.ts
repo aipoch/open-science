@@ -13,6 +13,15 @@ const paths = (
 ): string[] => RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
 
 describe('renderer contract catalog', () => {
+  it('does not expose the obsolete disk-scanned Project Files command', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(
+        ({ publicPath }) => publicPath === 'artifacts.listProjectFiles'
+      )
+    ).toBeUndefined()
+    expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain('artifacts:list-project-files')
+  })
+
   it('keeps the Remote Access probe local-only', () => {
     expect(
       RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === 'remoteAccess.probe')

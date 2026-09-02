@@ -287,7 +287,6 @@ describe('preload bridge — public surface inventory', () => {
       'artifacts.getVersionMessages',
       'artifacts.getVersionProvenance',
       'artifacts.getVersionReview',
-      'artifacts.listProjectFiles',
       'artifacts.openFile',
       'artifacts.readPreview',
       'artifacts.reconcilePendingArtifacts',

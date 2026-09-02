@@ -5739,7 +5739,6 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/previews/PreviewToolContent.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
-      'src/renderer/src/pages/workspace/project-files-library.ts',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
       'src/renderer/src/pages/workspace/session-message-artifact-reference.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
@@ -5749,7 +5748,6 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/session-wait-reason.ts',
       'src/renderer/src/pages/workspace/tool-execution-phase.ts',
       'src/renderer/src/pages/workspace/use-pdf-context-action.ts',
-      'src/renderer/src/pages/workspace/use-project-artifact-files.ts',
       'src/renderer/src/pages/workspace/use-side-chat-controller.ts',
       'src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts',
       'src/renderer/src/pages/workspace/visible-project-sessions.ts',
@@ -5775,6 +5773,15 @@ describe('session store public contract', () => {
       'src/renderer/src/stores/navigation-store.ts',
       'src/renderer/src/stores/preview-workbench-store.ts'
     ])
+  })
+
+  it('does not rebuild Project Files from Session-store consumers', () => {
+    expect(directConsumerPaths()).not.toEqual(
+      expect.arrayContaining([
+        'src/renderer/src/pages/workspace/project-files-library.ts',
+        'src/renderer/src/pages/workspace/use-project-artifact-files.ts'
+      ])
+    )
   })
 
   it('hydrates newest-first while preserving manifest and explicit selection semantics', () => {

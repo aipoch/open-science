@@ -415,10 +415,6 @@ class AcpRuntimeCoordinator {
     return this.findRuntimeForSession(sessionId)?.getSessionFramework(sessionId)
   }
 
-  getActiveArtifactRunIds(): string[] {
-    return Array.from(this.runtimes).flatMap((runtime) => runtime.getActiveArtifactRunIds())
-  }
-
   async connect(request: AcpConnectRequest = {}): Promise<AcpRuntimeState> {
     await this.waitForInitialization()
     const runtime = this.getActiveRuntime()

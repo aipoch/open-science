@@ -886,13 +886,6 @@ class AcpRuntime {
     )
   }
 
-  // Run ids of turns currently in flight, from live in-memory state (not the persisted current-run
-  // handoff, which survives a crash). The artifact orphan scan uses this to exclude files a running
-  // turn is still writing, while a crashed run — absent here — correctly surfaces as orphaned.
-  getActiveArtifactRunIds(): string[] {
-    return this.artifactTurns?.activeRunIds() ?? []
-  }
-
   // Accepts a model selection without interrupting a live generation. The picker may keep changing
   // while work is active; one pending slot deliberately makes the latest selection win. New runtime
   // operations wait on the barrier, while the operation that was already admitted finishes against

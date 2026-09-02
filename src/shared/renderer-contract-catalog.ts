@@ -39,7 +39,6 @@ import type {
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult,
-  ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest,
   ReconcilePendingArtifactsRequest,
@@ -806,9 +805,6 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'artifacts.getVersionReview': callable<
     (request: GetArtifactVersionProvenanceRequest) => Promise<ArtifactVersionReviewProvenance>
   >()('artifacts', ['artifacts:get-version-review']),
-  'artifacts.listProjectFiles': callable<
-    (request: ListProjectArtifactsRequest) => Promise<ArtifactFile[]>
-  >()('artifacts', ['artifacts:list-project-files']),
   'artifacts.openFile': callable<(request: OpenArtifactFileRequest) => Promise<void>>()(
     'artifacts',
     ['artifacts:open-file', LOCAL]

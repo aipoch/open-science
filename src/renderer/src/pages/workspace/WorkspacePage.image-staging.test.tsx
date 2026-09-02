@@ -287,6 +287,53 @@ describe('WorkspacePage image attachment gating', () => {
     expect(conversationProps.composer.view.attachments).toEqual([])
   })
 
+  it('blocks a raster image with missing MIME before staging starts', async () => {
+    setActiveProviderImageSupport(false)
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.stageFiles([
+        new File([new Uint8Array([1, 2, 3])], 'pic.png')
+      ])
+    })
+
+    expect(conversationProps.view.actionError).toBe(IMAGE_BLOCKED_MESSAGE)
+    expect(stageLocalFile).not.toHaveBeenCalled()
+  })
+
+  it('stages and sends SVG as an ordinary file without image input support', async () => {
+    setActiveProviderImageSupport(false)
+    const staged: UploadedAttachment = {
+      id: 'att-svg',
+      sessionId: '.pending',
+      name: 'diagram.svg',
+      originalName: 'diagram.svg',
+      path: '/uploads/diagram.svg',
+      mimeType: 'image/svg+xml',
+      size: 3
+    }
+    stageLocalFile.mockResolvedValue(staged)
+    runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a' })
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.stageFiles([
+        new File([new Uint8Array([1, 2, 3])], 'diagram.svg', { type: 'image/svg+xml' })
+      ])
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(conversationProps.composer.view.attachments).toEqual([staged]))
+    })
+
+    await act(async () => {
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(runtime.sendMessage).toHaveBeenCalledTimes(1))
+    })
+    expect(runtime.sendMessage.mock.calls[0][0].attachments).toEqual([staged])
+  })
+
   it('stages and sends an image through a configured Vision model', async () => {
     setActiveProviderImageSupport(false)
     useSettingsStore.setState((state) => ({

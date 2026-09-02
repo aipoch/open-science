@@ -216,4 +216,46 @@ describe('DownloadSessionArtifactsDialog', () => {
     )
     expect(onClose).not.toHaveBeenCalled()
   })
+
+  it('refuses to close while a download is in flight', async () => {
+    let resolveSave: ((result: unknown) => void) | undefined
+    saveSessionArtifacts.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve
+        })
+    )
+    const onClose = vi.fn()
+    await act(async () => {
+      root.render(<DownloadSessionArtifactsDialog session={session} onClose={onClose} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-testid="download-session-artifacts-confirm"]')
+        ?.click()
+      await Promise.resolve()
+    })
+
+    const closeButton = document.body.querySelector<HTMLButtonElement>('button[aria-label="Close"]')
+    const cancelButton = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent === 'Cancel'
+    )
+    expect(closeButton?.disabled).toBe(true)
+    expect(cancelButton?.disabled).toBe(true)
+    act(() => closeButton?.click())
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(onClose).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveSave?.({ saved: false })
+      await Promise.resolve()
+    })
+    expect(closeButton?.disabled).toBe(false)
+    expect(cancelButton?.disabled).toBe(false)
+  })
 })

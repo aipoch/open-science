@@ -173,10 +173,6 @@ export type ListMessageArtifactsRequest = {
   messageId: string
 }
 
-// Renderer request to enumerate every finalized artifact on disk for one project, so the file library
-// can surface files whose owning Session was deleted.
-export type ListProjectArtifactsRequest = ProjectIdScope
-
 // A copied conversation stores native generated-file Version ids in its messages, not paths or a
 // second file-library entry. Keep this query small because it is issued while historical messages
 // mount in the renderer.

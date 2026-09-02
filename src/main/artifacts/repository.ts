@@ -129,13 +129,6 @@ class ArtifactRepository {
     return this.publicationOwner.reconcilePendingArtifactPaths(request)
   }
 
-  async listProjectArtifacts(
-    projectId: string,
-    activeRunIds: ReadonlySet<string> = new Set()
-  ): Promise<ArtifactFile[]> {
-    return this.compatibilityOwner.listProjectArtifacts(projectId, activeRunIds)
-  }
-
   async listPendingRunPublications(projectId: string): Promise<PendingArtifactRunPublication[]> {
     return this.publicationOwner.listPendingRunPublications(projectId)
   }

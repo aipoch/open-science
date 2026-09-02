@@ -12,6 +12,7 @@ import {
   type Annotation
 } from '../../../../shared/annotations'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
+import { imageAttachmentMimeType } from '../../../../shared/uploads'
 import type {
   ChatMessage,
   ChatSession,
@@ -420,8 +421,9 @@ const useWorkspaceConversationController = (
       if (activeSession && session.lifecycle.isBarrierInFlight(activeSession.id)) return
       if (
         current.supportsImageInput !== true &&
-        (composer.view.attachments.some((attachment) =>
-          attachment.mimeType?.startsWith('image/')
+        (composer.view.attachments.some(
+          (attachment) =>
+            imageAttachmentMimeType(attachment.name, attachment.mimeType) !== undefined
         ) ||
           composer.view.annotations.some(annotationRequiresImageInput))
       ) {

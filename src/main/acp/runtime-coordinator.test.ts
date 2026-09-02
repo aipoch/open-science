@@ -257,7 +257,6 @@ const createFakeRuntime = (options: {
     liveSessionProjectId: (sessionId: string) => sessionProjects.get(sessionId),
     isSessionUsingFramework: (sessionId: string, frameworkId: string) =>
       snapshot.sessionIds.includes(sessionId) && options.frameworkId === frameworkId,
-    getActiveArtifactRunIds: () => [],
     connect,
     createSession,
     resumeSession,

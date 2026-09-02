@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
-import type { UploadedAttachment } from '../../../../shared/uploads'
+import { imageAttachmentMimeType, type UploadedAttachment } from '../../../../shared/uploads'
 import type { Annotation } from '../../../../shared/annotations'
 import type { SessionPdfContextSource } from '../../../../shared/session-persistence'
 
@@ -651,7 +651,10 @@ export const useWorkspaceComposerUploadController = ({
   const stageFiles = useCallback(
     (files: File[]): void => {
       if (!canStageAttachments || files.length === 0) return
-      if (files.some((file) => file.type.startsWith('image/')) && supportsImageInput !== true) {
+      if (
+        files.some((file) => imageAttachmentMimeType(file.name, file.type) !== undefined) &&
+        supportsImageInput !== true
+      ) {
         setError(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
         return
       }

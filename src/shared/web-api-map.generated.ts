@@ -27,7 +27,6 @@ export const WEB_INVOKE_CHANNELS = {
   'artifacts.getVersionMessages': 'artifacts:get-version-messages',
   'artifacts.getVersionProvenance': 'artifacts:get-version-provenance',
   'artifacts.getVersionReview': 'artifacts:get-version-review',
-  'artifacts.listProjectFiles': 'artifacts:list-project-files',
   'artifacts.openFile': 'artifacts:open-file',
   'artifacts.readPreview': 'artifacts:read-preview',
   'artifacts.reconcilePendingArtifacts': 'artifacts:reconcile-pending',

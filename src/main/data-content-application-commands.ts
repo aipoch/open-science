@@ -201,7 +201,6 @@ const dataContentApplicationCommands = Object.freeze({
     'getVersionProvenance'
   ),
   artifactGetVersionReview: artifactCommand('artifacts:get-version-review', 'getVersionReview'),
-  artifactListProjectFiles: artifactCommand('artifacts:list-project-files', 'listProjectFiles'),
   artifactOpenFile: artifactCommand('artifacts:open-file', 'openFile'),
   artifactReadPreview: artifactCommand('artifacts:read-preview', 'readPreview'),
   artifactReconcilePending: artifactCommand(
@@ -362,7 +361,6 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.artifactGetVersionMessages,
     dataContentApplicationCommands.artifactGetVersionProvenance,
     dataContentApplicationCommands.artifactGetVersionReview,
-    dataContentApplicationCommands.artifactListProjectFiles,
     dataContentApplicationCommands.artifactOpenFile,
     dataContentApplicationCommands.artifactReadPreview,
     dataContentApplicationCommands.artifactReconcilePending,
@@ -517,8 +515,6 @@ const registerDataContentApplicationCommands = (
         dependencies.artifacts.getVersionProvenance(args[0]),
       'artifacts:get-version-review': ({ args }) =>
         dependencies.artifacts.getVersionReview(args[0]),
-      'artifacts:list-project-files': ({ args }) =>
-        dependencies.artifacts.listProjectFiles(args[0]),
       'artifacts:open-file': (invocation) => {
         assertLocalCaller(invocation, dataContentApplicationCommands.artifactOpenFile.name)
         return dependencies.artifacts.openFile(invocation.args[0])

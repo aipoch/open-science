@@ -28,7 +28,6 @@ import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { resolveProjectId } from '../../shared/project-scope'
 import type {
   FinalizeRunArtifactsRequest,
-  ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest,
   ReconcilePendingArtifactsRequest
@@ -52,7 +51,6 @@ const log = createLogger('artifacts:finalization')
 
 type ArtifactHandlers = {
   finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
-  listProjectFiles: (request: ListProjectArtifactsRequest) => Promise<ArtifactFile[]>
   reconcilePendingArtifacts: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
   openFile: (request: OpenArtifactFileRequest) => Promise<void>
   readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
@@ -89,9 +87,6 @@ type ArtifactHandlerDependencies = {
   openManagedFileVersion?: (
     request: ReadArtifactPreviewRequest & { versionId: string }
   ) => Promise<ManagedFilePreviewReadLease>
-  // Run ids of turns in flight right now (live runtime state). Their pending files are still being
-  // written, so the orphan scan excludes them; a crashed run is absent here and correctly surfaces.
-  getActiveArtifactRunIds?: () => string[]
   withSessionMutation?: <Result>(
     projectId: string,
     sessionId: string,
@@ -156,14 +151,6 @@ const createArtifactHandlers = (
   const finalizeLocks = new Map<string, Promise<void>>()
   const openPath =
     dependencies.openPath ?? ((filePath: string): Promise<string> => shell.openPath(filePath))
-  const getActiveArtifactRunIds = dependencies.getActiveArtifactRunIds ?? ((): string[] => [])
-
-  // A pending run must be treated as in-flight (not orphaned) for its whole lifecycle: while the prompt
-  // runs (getActiveArtifactRunIds), AND after stop while its claim awaits the renderer's finalize call
-  // (runRegistry unfinalized claims) — the run leaves the runtime's active set at stop, before finalize.
-  const inFlightRunIds = (): Set<string> =>
-    new Set([...getActiveArtifactRunIds(), ...runRegistry.getUnfinalizedRunIds()])
-
   return {
     finalizeRunArtifacts: (request) =>
       withDataRootWrite(() =>
@@ -182,8 +169,6 @@ const createArtifactHandlers = (
             : finalize()
         })
       ),
-    listProjectFiles: (request) =>
-      repository.listProjectArtifacts(resolveProjectId(request), inFlightRunIds()),
     reconcilePendingArtifacts: (request) =>
       withDataRootWrite(() =>
         repository.reconcilePendingArtifactPaths({
@@ -456,7 +441,6 @@ const createDefaultArtifactRepository = (): ArtifactRepository =>
 const registerArtifactIpcHandlers = (
   repository = createDefaultArtifactRepository(),
   runRegistry = new ArtifactRunRegistry(),
-  getActiveArtifactRunIds?: () => string[],
   provenance?: Pick<
     ArtifactProvenanceRepository,
     | 'finalizeRun'
@@ -472,7 +456,6 @@ const registerArtifactIpcHandlers = (
   >,
   withSessionMutation?: ArtifactHandlerDependencies['withSessionMutation'],
   handlers: ArtifactHandlers = createArtifactHandlers(repository, runRegistry, {
-    getActiveArtifactRunIds,
     provenance,
     withSessionMutation
   })
@@ -491,9 +474,6 @@ const registerArtifactIpcHandlers = (
         }
       }
     }
-  )
-  ipcMainHandle('artifacts:list-project-files', (_event, request: ListProjectArtifactsRequest) =>
-    handlers.listProjectFiles(request)
   )
   ipcMainHandle(
     'artifacts:reconcile-pending',
