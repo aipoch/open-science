@@ -1162,7 +1162,13 @@ class TaskRunner {
                   admittedSession = await this.dependencies.agent.withSessionAvailable(
                     run.projectId,
                     session.id,
-                    () => this.dependencies.sessions.save(session)
+                    async () => {
+                      // Once the durable save starts it may commit the Session before a derived
+                      // projection rejects. Retain the admitted aggregate so failure cleanup can
+                      // clear that partially committed active run.
+                      admittedSession = session
+                      return this.dependencies.sessions.save(session)
+                    }
                   )
                 }
               }

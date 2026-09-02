@@ -1706,6 +1706,50 @@ describe('TaskRunner', () => {
     })
   })
 
+  it('cleans up an admitted Task turn when Session persistence commits before rejecting', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      messages: []
+    }
+    let durableSession = existing
+    const save = vi.fn(async (candidate: PersistedChatSession) => {
+      durableSession = candidate
+      throw new Error('index unavailable after durable commit')
+    })
+    const runner = createRunner({
+      sessions: { list: async () => [existing], save },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [existing.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+        }
+      }
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Task API prompt'
+    })
+    const failed = await runner.waitForRun(started.id)
+
+    expect(save).toHaveBeenCalledTimes(2)
+    expect(durableSession).toMatchObject({
+      status: 'error',
+      activeRun: undefined,
+      error: 'index unavailable after durable commit'
+    })
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: 'index unavailable after durable commit'
+    })
+  })
+
   it('rejects a new authored turn while a restored Plan awaits approval', async () => {
     const existing: PersistedChatSession = {
       ...session,
