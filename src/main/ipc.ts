@@ -85,6 +85,7 @@ import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { connectorSkillSourceDir } from './connectors/provision'
 import { registerFileSaveHandlers } from './file-save'
+import { publishUserFile } from './user-file-publisher'
 import { ImmutableInputAuthority } from './immutable-input-authority'
 import { createCliCommandOwner, registerCliInstallIpcHandlers } from './cli-install/ipc'
 
@@ -3306,7 +3307,9 @@ const createApplicationModules = async (
             filters: [{ name: translate('Connector configuration'), extensions: ['json'] }]
           })
           if (selected.canceled || !selected.filePath) return false
-          await writeFile(selected.filePath, contents, 'utf8')
+          await publishUserFile(selected.filePath, (temporaryPath) =>
+            writeFile(temporaryPath, contents, 'utf8')
+          )
           return true
         }
       },

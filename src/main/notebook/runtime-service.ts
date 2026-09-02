@@ -28,6 +28,7 @@ import type {
   NotebookSessionState,
   RunNotebookCellRequest
 } from '../../shared/notebook'
+import { publishUserFile } from '../user-file-publisher'
 import {
   isNotebookRunCursor,
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
@@ -274,7 +275,7 @@ const saveIpynbWithDialog = async (
   })
 
   if (canceled || !filePath) return { saved: false }
-  await writeFile(filePath, data, 'utf8')
+  await publishUserFile(filePath, (temporaryPath) => writeFile(temporaryPath, data, 'utf8'))
   return { saved: true, filePath }
 }
 

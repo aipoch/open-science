@@ -38,13 +38,23 @@ vi.mock('electron', () => ({
 }))
 
 const { registerFileSaveHandlers: registerProductionFileSaveHandlers } = await import('./file-save')
+const { publishUserFile: productionPublishUserFile } = await import('./user-file-publisher')
+const publishDirectly: typeof productionPublishUserFile = async (
+  destinationPath,
+  write,
+  options
+) => {
+  await options?.validateDestination?.()
+  await write(destinationPath)
+}
 const registerFileSaveHandlers = (
-  options: Parameters<typeof registerProductionFileSaveHandlers>[0] = {}
+  options: NonNullable<Parameters<typeof registerProductionFileSaveHandlers>[0]> = {}
 ): void => {
   const openManagedFileVersion = options.openManagedFileVersion ?? options.openLatestManagedFile
   registerProductionFileSaveHandlers({
     ...options,
-    ...(openManagedFileVersion ? { openManagedFileVersion } : {})
+    ...(openManagedFileVersion ? { openManagedFileVersion } : {}),
+    publishUserFile: options.publishUserFile ?? publishDirectly
   })
 }
 
@@ -122,7 +132,7 @@ const registerProjectFileSaveHandlers = (options: TestFileSaveOptions = {}): voi
         }
       : undefined)
 
-  registerProductionFileSaveHandlers({
+  registerFileSaveHandlers({
     ...productionOptions,
     ...(openManagedFileVersion ? { openManagedFileVersion } : {})
   })
@@ -812,6 +822,37 @@ describe('file save IPC handlers', () => {
     expect(close).toHaveBeenCalledTimes(1)
   })
 
+  it('preserves an existing managed-file destination when copying fails after a partial write', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-failure-'))
+    const destinationPath = join(root, 'report.csv')
+    await writeFile(destinationPath, 'existing destination')
+    const copyTo = vi.fn(async (path: string) => {
+      await writeFile(path, 'partial replacement')
+      throw new Error('disk full')
+    })
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({
+      resolveManagedFilePath: vi.fn().mockResolvedValue('/managed/report.csv'),
+      publishUserFile: productionPublishUserFile,
+      openManagedFile: vi.fn().mockResolvedValue({
+        copyTo,
+        close: vi.fn().mockResolvedValue(undefined)
+      })
+    } as never)
+
+    try {
+      await expect(
+        handlers.get('file:save-managed')!(
+          { sender: {} },
+          { source: 'local', path: '/managed/report.csv', suggestedName: 'report.csv' }
+        )
+      ).rejects.toThrow('disk full')
+      await expect(readFile(destinationPath, 'utf8')).resolves.toBe('existing destination')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('does not prompt when managed path validation fails', async () => {
     const resolveManagedFilePath = vi.fn().mockRejectedValue(new Error('outside artifact storage'))
     registerFileSaveHandlers({ resolveManagedFilePath } as never)
@@ -958,6 +999,69 @@ describe('file save IPC handlers', () => {
     }
   })
 
+  it('shows Save As before opening Project Versions and holds only one lease at a time', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-lease-order-'))
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const events: string[] = []
+    let activeLeases = 0
+    let maximumActiveLeases = 0
+    const openManagedFileVersion = vi.fn(
+      async (_source: 'artifact' | 'upload', request: { fileId: string }) => {
+        events.push(`open:${request.fileId}`)
+        activeLeases += 1
+        maximumActiveLeases = Math.max(maximumActiveLeases, activeLeases)
+        return managedVersionHandle(request.fileId, {
+          close: vi.fn(async () => {
+            activeLeases -= 1
+            events.push(`close:${request.fileId}`)
+          })
+        })
+      }
+    )
+    showSaveDialog.mockImplementation(async () => {
+      events.push('dialog')
+      return { canceled: false, filePath: destinationPath }
+    })
+    registerProjectFileSaveHandlers({ openManagedFileVersion })
+
+    try {
+      await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          suggestedArchiveName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              fileId: 'artifact-1',
+              versionId: 'artifact-version-1',
+              suggestedName: 'artifact.txt'
+            },
+            {
+              source: 'upload',
+              sessionId: 'session-1',
+              fileId: 'upload-1',
+              versionId: 'upload-version-1',
+              suggestedName: 'upload.txt'
+            }
+          ]
+        }
+      )
+
+      expect(events).toEqual([
+        'dialog',
+        'open:artifact-1',
+        'close:artifact-1',
+        'open:upload-1',
+        'close:upload-1'
+      ])
+      expect(maximumActiveLeases).toBe(1)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('reads each logical Project file from its selected managed Version', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-current-head-'))
     const destinationPath = join(root, 'Research-artifacts.zip')
@@ -1050,7 +1154,7 @@ describe('file save IPC handlers', () => {
     }
   })
 
-  it('closes a retained Project Version lease when temporary archive setup fails', async () => {
+  it('does not open a Project Version when temporary archive setup fails', async () => {
     const close = vi.fn().mockResolvedValue(undefined)
     const readRange = vi.fn()
     const verifyUnchanged = vi.fn()
@@ -1059,14 +1163,15 @@ describe('file save IPC handlers', () => {
       canceled: false,
       filePath: join(downloadsPath, 'Research-artifacts.zip')
     })
+    const openLatestManagedFile = vi.fn().mockResolvedValue({
+      size: 1,
+      readRange,
+      verifyUnchanged,
+      copyTo: vi.fn(),
+      close
+    })
     registerProjectFileSaveHandlers({
-      openLatestManagedFile: vi.fn().mockResolvedValue({
-        size: 1,
-        readRange,
-        verifyUnchanged,
-        copyTo: vi.fn(),
-        close
-      }),
+      openLatestManagedFile,
       createProjectArtifactTemporaryRoot: vi.fn().mockRejectedValue(temporaryRootError)
     } as never)
 
@@ -1090,7 +1195,8 @@ describe('file save IPC handlers', () => {
     ).rejects.toBe(temporaryRootError)
     expect(readRange).not.toHaveBeenCalled()
     expect(verifyUnchanged).not.toHaveBeenCalled()
-    expect(close).toHaveBeenCalledOnce()
+    expect(openLatestManagedFile).not.toHaveBeenCalled()
+    expect(close).not.toHaveBeenCalled()
   })
 
   it('exports Project Artifacts without reading an entire source into memory', async () => {
@@ -1227,7 +1333,7 @@ describe('file save IPC handlers', () => {
       })
       expect(resolveManagedFilePath).not.toHaveBeenCalled()
       expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
-      expect(showSaveDialog).not.toHaveBeenCalled()
+      expect(showSaveDialog).toHaveBeenCalledOnce()
       await expect(readFile(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       await rm(root, { recursive: true, force: true })
@@ -1241,6 +1347,10 @@ describe('file save IPC handlers', () => {
         code: 'CONTENT_INTEGRITY_FAILED'
       })
     )
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: join(downloadsPath, 'Research-artifacts.zip')
+    })
     registerProjectFileSaveHandlers({
       resolveSessionArtifactFilePath,
       openLatestManagedFile
@@ -1277,7 +1387,7 @@ describe('file save IPC handlers', () => {
       ]
     })
     expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
-    expect(showSaveDialog).not.toHaveBeenCalled()
+    expect(showSaveDialog).toHaveBeenCalledOnce()
   })
 
   it('opens the immutable Project file Version selected in the renderer snapshot', async () => {
@@ -1485,10 +1595,14 @@ describe('file save IPC handlers', () => {
     }
   })
 
-  it('skips the Save As dialog when no Project Artifact resolves', async () => {
+  it('publishes no archive when no Project Artifact resolves after Save As', async () => {
     const resolveSessionArtifactFilePath = vi
       .fn()
       .mockRejectedValue(new Error('Artifact bytes are unavailable.'))
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: join(downloadsPath, 'Research-artifacts.zip')
+    })
     registerProjectFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
 
     const result = await handlers.get('file:save-project-artifacts')!(
@@ -1508,7 +1622,7 @@ describe('file save IPC handlers', () => {
       }
     )
 
-    expect(showSaveDialog).not.toHaveBeenCalled()
+    expect(showSaveDialog).toHaveBeenCalledOnce()
     expect(result).toEqual({
       saved: true,
       failures: [
@@ -1858,6 +1972,10 @@ describe('file save IPC handlers', () => {
   it('reports invalid latest Version sizes without reading them', async () => {
     const close = vi.fn().mockResolvedValue(undefined)
     const readRange = vi.fn()
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: join(downloadsPath, 'Research-artifacts.zip')
+    })
     registerProjectFileSaveHandlers({
       openLatestManagedFile: vi
         .fn()
@@ -1895,7 +2013,7 @@ describe('file save IPC handlers', () => {
       ]
     })
     expect(readRange).not.toHaveBeenCalled()
-    expect(showSaveDialog).not.toHaveBeenCalled()
+    expect(showSaveDialog).toHaveBeenCalledOnce()
     expect(close).toHaveBeenCalledTimes(1)
   })
 

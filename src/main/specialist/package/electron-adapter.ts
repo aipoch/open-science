@@ -5,6 +5,7 @@ import {
   type SpecialistPackageReportSaveResult
 } from '../../../shared/specialist-package'
 import { englishNativeTranslator, type NativeTranslator } from '../../locale/main-process-messages'
+import { publishUserFile } from '../../user-file-publisher'
 
 type SpecialistExportDialog = {
   showSaveDialog: (options: {
@@ -12,6 +13,7 @@ type SpecialistExportDialog = {
     filters: [{ name: string; extensions: ['zip'] }]
   }) => Promise<{ canceled: boolean; filePath?: string }>
   writeFile: (path: string, bytes: Uint8Array) => Promise<unknown>
+  publishUserFile?: typeof publishUserFile
 }
 
 export const saveSpecialistExport = async (
@@ -24,7 +26,9 @@ export const saveSpecialistExport = async (
     filters: [{ name: translate('ZIP archive'), extensions: ['zip'] }]
   })
   if (selected.canceled || !selected.filePath) return { saved: false }
-  await adapter.writeFile(selected.filePath, archive.archiveBytes)
+  await (adapter.publishUserFile ?? publishUserFile)(selected.filePath, async (temporaryPath) => {
+    await adapter.writeFile(temporaryPath, archive.archiveBytes)
+  })
   return { saved: true }
 }
 
@@ -62,6 +66,7 @@ type SpecialistPackageReportDialog = {
     filters: [{ name: string; extensions: ['json'] }]
   }) => Promise<{ canceled: boolean; filePath?: string }>
   writeFile: (path: string, contents: string) => Promise<unknown>
+  publishUserFile?: typeof publishUserFile
 }
 
 export const saveSpecialistPackageReport = async (
@@ -77,6 +82,8 @@ export const saveSpecialistPackageReport = async (
     filters: [{ name: translate('JSON report'), extensions: ['json'] }]
   })
   if (selected.canceled || !selected.filePath) return { saved: false }
-  await adapter.writeFile(selected.filePath, `${JSON.stringify(report, null, 2)}\n`)
+  await (adapter.publishUserFile ?? publishUserFile)(selected.filePath, async (temporaryPath) => {
+    await adapter.writeFile(temporaryPath, `${JSON.stringify(report, null, 2)}\n`)
+  })
   return { saved: true }
 }

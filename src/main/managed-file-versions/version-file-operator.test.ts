@@ -522,6 +522,10 @@ describe('NodeVersionFileOperator', () => {
     const lease = await operator.openImmutable(stored.storageRef, stored)
     expect(lease.localPath).toBe(join(cleanupRoot, ...stored.storageRef.split('/')))
     await expect(lease.readRange(9, 18)).resolves.toEqual(new Uint8Array(Buffer.from('immutable')))
+    await expect(lease.assertCanCopyTo(destinationPath)).resolves.toBeUndefined()
+    await expect(lease.assertCanCopyTo(lease.localPath)).rejects.toMatchObject({
+      code: 'INTEGRITY_FAILED'
+    })
     await lease.copyTo(destinationPath)
     await expect(readFile(destinationPath)).resolves.toEqual(content)
     await lease.verifyUnchanged()

@@ -8,6 +8,7 @@ import {
   type ContributionTemplateExportResult
 } from '../../../shared/specialist-package'
 import { englishNativeTranslator, type NativeTranslator } from '../../locale/main-process-messages'
+import { publishUserFile } from '../../user-file-publisher'
 
 export const CONTRIBUTION_TEMPLATE_FILENAME = 'openscience-specialist-template.zip'
 
@@ -26,6 +27,7 @@ type ContributionTemplateExporterDependencies = {
   }) => Promise<{ canceled: boolean; filePath?: string }>
   readReadme: () => Promise<string>
   writeFile: (filePath: string, bytes: Uint8Array) => Promise<void>
+  publishUserFile?: typeof publishUserFile
   generatePackageId?: () => string
   translate?: NativeTranslator
 }
@@ -98,7 +100,10 @@ export const createContributionTemplateExporter =
         readme,
         packageId: (dependencies.generatePackageId ?? randomUUID)()
       })
-      await dependencies.writeFile(destination.filePath, archive)
+      await (dependencies.publishUserFile ?? publishUserFile)(
+        destination.filePath,
+        (temporaryPath) => dependencies.writeFile(temporaryPath, archive)
+      )
       return { saved: true }
     } catch {
       throw new Error('Could not save contribution template.')
