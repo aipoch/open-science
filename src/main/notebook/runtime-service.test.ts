@@ -3326,6 +3326,63 @@ describe('notebook runtime service', () => {
       expect(entered).toEqual(['first'])
     })
 
+    it('rejects shell admission while Session shutdown owns the registry gate', async () => {
+      const root = await createStorageRoot()
+      let markShutdownStarted!: () => void
+      const shutdownStarted = new Promise<void>((resolve) => {
+        markShutdownStarted = resolve
+      })
+      let releaseShutdown!: () => void
+      const shutdownGate = new Promise<void>((resolve) => {
+        releaseShutdown = resolve
+      })
+      const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue({
+        stdout: 'must not run',
+        stderr: '',
+        exitCode: 0
+      })
+      const executorFactory = vi.fn(() => ({
+        execute: async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => {
+          markShutdownStarted()
+          await shutdownGate
+          return { reaped: true }
+        }
+      }))
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory,
+        shellProcess: { execute }
+      })
+      const request = { sessionId: 'session-1', workspaceCwd: root }
+      await service.state(request)
+
+      const shutdown = service.shutdownSession(request.sessionId)
+      await shutdownStarted
+      const lateShell = service.executeShell({ ...request, command: 'must-not-run' })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      releaseShutdown()
+
+      await expect(shutdown).resolves.toEqual({ sessionId: 'session-1', status: 'shutdown' })
+      await expect(lateShell).resolves.toEqual({
+        stdout: '',
+        stderr: 'Shell command was cancelled.',
+        exitCode: null
+      })
+      expect(execute).not.toHaveBeenCalled()
+      expect(executorFactory).toHaveBeenCalledOnce()
+    })
+
     it('rejects a direct micromamba install before spawning the shell command', async () => {
       const root = await createStorageRoot()
       const service = createShellService(root)

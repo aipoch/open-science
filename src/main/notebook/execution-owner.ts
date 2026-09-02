@@ -691,12 +691,13 @@ class NotebookExecutionOwner {
   }
 
   executeShell(
-    session: NotebookSessionAggregate,
+    lane: NotebookLaneIdentity,
     request: ExecuteShellRequest,
+    loadSession: () => Promise<NotebookSessionAggregate>,
     signal?: AbortSignal
   ): Promise<NotebookShellResult> {
-    const laneKey = notebookLaneKey(session.lane)
-    const sessionKey = shellSessionKey(session.lane)
+    const laneKey = notebookLaneKey(lane)
+    const sessionKey = shellSessionKey(lane)
     if (
       this.shellTeardownActive ||
       this.shellTeardownLaneKeys.has(laneKey) ||
@@ -709,7 +710,17 @@ class NotebookExecutionOwner {
     const executionSignal = signal
       ? AbortSignal.any([signal, controller.signal])
       : controller.signal
-    const promise = this.executeShellRun(session, request, executionSignal)
+    const cancelled = (): NotebookShellResult => ({
+      stdout: '',
+      stderr: SHELL_CANCELLED_MESSAGE,
+      exitCode: null
+    })
+    const promise = Promise.resolve().then(async () => {
+      if (executionSignal.aborted) return cancelled()
+      const session = await loadSession()
+      if (executionSignal.aborted) return cancelled()
+      return this.executeShellRun(session, request, executionSignal)
+    })
     const operation = { controller, promise, sessionKey }
     const operations = this.shellOperationsByLane.get(laneKey) ?? new Set<ShellExecutionOperation>()
     operations.add(operation)

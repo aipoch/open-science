@@ -972,12 +972,12 @@ class NotebookRuntimeService {
     request: ExecuteShellRequest,
     signal?: AbortSignal
   ): Promise<NotebookShellResult> {
-    return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
+    return this.sessionLifecycle.runProjectOperation(request, (deletionSignal) => {
       assertNotebookCodeWithinLimit(request.command)
-      const session = await this.sessionLifecycle.ensure(request)
       return this.executionOwner.executeShell(
-        session,
+        this.sessionLifecycle.laneForRequest(request),
         request,
+        () => this.sessionLifecycle.ensure(request),
         signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
       )
     })
