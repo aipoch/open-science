@@ -1,11 +1,21 @@
 import { createHash } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
-import { chmod, copyFile, lstat, mkdir, realpath, rm } from 'node:fs/promises'
-import { basename, extname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
+import { chmod, copyFile, lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises'
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  posix,
+  relative,
+  resolve,
+  sep
+} from 'node:path'
 
 import type { NotebookPromptInput, NotebookRunInputFile } from '../../shared/notebook'
 import { toSafeUploadFilename } from '../uploads/storage-helpers'
-import { getNotebookDataRoot } from './repository'
+import { getNotebookDataRoot, getNotebookSessionRoot } from './repository'
 
 const INPUTS_DIR = 'inputs'
 const MAX_FILENAME_BYTES = 255
@@ -22,6 +32,12 @@ const isFileExistsError = (error: unknown): boolean =>
   'code' in error &&
   (error as NodeJS.ErrnoException).code === 'EEXIST'
 
+const isMissingFileError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  (error as NodeJS.ErrnoException).code === 'ENOENT'
+
 const inputFilename = (filename: string, checksum: string, fullChecksum = false): string => {
   const safeName = toSafeUploadFilename(filename)
   const extension = extname(safeName)
@@ -31,41 +47,109 @@ const inputFilename = (filename: string, checksum: string, fullChecksum = false)
   return `${stem.slice(0, maxStemBytes)}${suffix}${extension}`
 }
 
-const ensureInputDirectory = async (
+const resolveTrustedDirectory = async (
   storageRoot: string,
-  projectId: string,
-  appSessionId: string
-): Promise<string> => {
-  const dataRoot = getNotebookDataRoot(storageRoot, projectId, appSessionId)
-  const relativeDataRoot = relative(resolve(storageRoot), resolve(dataRoot))
+  target: string,
+  create: boolean
+): Promise<string | undefined> => {
+  const relativeTarget = relative(resolve(storageRoot), resolve(target))
   if (
-    !relativeDataRoot ||
-    relativeDataRoot === '..' ||
-    relativeDataRoot.startsWith(`..${sep}`) ||
-    isAbsolute(relativeDataRoot)
+    !relativeTarget ||
+    relativeTarget === '..' ||
+    relativeTarget.startsWith(`..${sep}`) ||
+    isAbsolute(relativeTarget)
   ) {
     throw new Error('Notebook input path is outside trusted Notebook storage.')
   }
 
-  let current = await realpath(storageRoot)
-  for (const segment of [...relativeDataRoot.split(sep), INPUTS_DIR]) {
+  let current: string
+  try {
+    current = await realpath(storageRoot)
+  } catch (error) {
+    if (!create && isMissingFileError(error)) return undefined
+    throw error
+  }
+  for (const segment of relativeTarget.split(sep)) {
     const candidate = join(current, segment)
-    try {
-      await mkdir(candidate, { mode: 0o700 })
-    } catch (error) {
-      if (!isFileExistsError(error)) throw error
+    if (create) {
+      try {
+        await mkdir(candidate, { mode: 0o700 })
+      } catch (error) {
+        if (!isFileExistsError(error)) throw error
+      }
     }
-    const state = await lstat(candidate)
+    let state
+    try {
+      state = await lstat(candidate)
+    } catch (error) {
+      if (!create && isMissingFileError(error)) return undefined
+      throw error
+    }
     if (!state.isDirectory() || state.isSymbolicLink()) {
+      if (!create) return undefined
       throw new Error('Notebook input path is not trusted Notebook storage.')
     }
     const resolvedCandidate = await realpath(candidate)
     if (relative(current, resolvedCandidate) !== segment) {
+      if (!create) return undefined
       throw new Error('Notebook input path is outside trusted Notebook storage.')
     }
     current = resolvedCandidate
   }
   return current
+}
+
+const ensureInputDirectory = async (
+  storageRoot: string,
+  projectId: string,
+  appSessionId: string
+): Promise<string> => {
+  const inputRoot = await resolveTrustedDirectory(
+    storageRoot,
+    join(getNotebookDataRoot(storageRoot, projectId, appSessionId), INPUTS_DIR),
+    true
+  )
+  if (!inputRoot) throw new Error('Notebook input path is not trusted Notebook storage.')
+  return inputRoot
+}
+
+const deleteNotebookPromptInputDirectory = async (
+  storageRoot: string,
+  sessionRoot: string
+): Promise<void> => {
+  const inputRoot = await resolveTrustedDirectory(
+    storageRoot,
+    join(sessionRoot, 'data', INPUTS_DIR),
+    false
+  )
+  if (inputRoot) await rm(inputRoot, { recursive: true, force: true })
+}
+
+const deleteNotebookSessionPromptInputs = (
+  storageRoot: string,
+  projectId: string,
+  appSessionId: string
+): Promise<void> =>
+  deleteNotebookPromptInputDirectory(
+    storageRoot,
+    getNotebookSessionRoot(storageRoot, projectId, appSessionId)
+  )
+
+const deleteNotebookProjectPromptInputs = async (
+  storageRoot: string,
+  projectId: string
+): Promise<void> => {
+  const projectPath = dirname(getNotebookSessionRoot(storageRoot, projectId, 'session'))
+  const projectRoot = await resolveTrustedDirectory(storageRoot, projectPath, false)
+  if (!projectRoot) return
+  const sessions = await readdir(projectRoot, { withFileTypes: true })
+  await Promise.all(
+    sessions
+      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
+      .map((entry) =>
+        deleteNotebookPromptInputDirectory(storageRoot, join(projectPath, entry.name))
+      )
+  )
 }
 
 const matchesInput = async (path: string, input: NotebookRunInputFile): Promise<boolean> => {
@@ -136,4 +220,8 @@ const materializeNotebookPromptInput = async (request: {
   throw new Error(`Notebook input path conflicts with another file: ${request.input.filename}`)
 }
 
-export { materializeNotebookPromptInput }
+export {
+  deleteNotebookProjectPromptInputs,
+  deleteNotebookSessionPromptInputs,
+  materializeNotebookPromptInput
+}

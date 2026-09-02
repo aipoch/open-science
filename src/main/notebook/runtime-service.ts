@@ -134,6 +134,10 @@ import {
 } from './content-limits'
 import { NotebookHelperModuleHost, type NotebookHelperModuleCatalog } from './helper-module-host'
 import { deleteNotebookProjectInputs, deleteNotebookSessionInputs } from './input-staging'
+import {
+  deleteNotebookProjectPromptInputs,
+  deleteNotebookSessionPromptInputs
+} from './prompt-input-materialization'
 
 // The default stays outside CN mirror routing when no explicit locale is injected.
 const DEFAULT_LOCALE = 'en-US'
@@ -1239,11 +1243,17 @@ class NotebookRuntimeService {
   }
 
   async deleteSessionInputs(projectId: string, sessionId: string): Promise<void> {
-    await deleteNotebookSessionInputs(this.options.dataRoot, projectId, sessionId)
+    await Promise.all([
+      deleteNotebookSessionInputs(this.options.dataRoot, projectId, sessionId),
+      deleteNotebookSessionPromptInputs(this.options.dataRoot, projectId, sessionId)
+    ])
   }
 
   async deleteProjectInputs(projectId: string): Promise<void> {
-    await deleteNotebookProjectInputs(this.options.dataRoot, projectId)
+    await Promise.all([
+      deleteNotebookProjectInputs(this.options.dataRoot, projectId),
+      deleteNotebookProjectPromptInputs(this.options.dataRoot, projectId)
+    ])
   }
 
   beginProjectDeletion(projectId: string): void {

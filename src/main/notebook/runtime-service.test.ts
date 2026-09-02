@@ -18,7 +18,7 @@ import {
 } from './runtime-service'
 import { effectiveMirrorAsync, resetAutoMirrorCache } from './mirror-probe'
 import { getNotebookInputRoot } from './input-staging'
-import { NotebookRunRepository, getRuntimeRoot } from './repository'
+import { getNotebookDataRoot, NotebookRunRepository, getRuntimeRoot } from './repository'
 import { createRootNotebookLane } from './lane-identity'
 import {
   RuntimeOperationJournal,
@@ -209,6 +209,49 @@ const lifecycleCallbackHarness = (
 }
 
 describe('notebook runtime service', () => {
+  it('deletes generated prompt input copies with their Session and Project input caches', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+    const sessionAData = getNotebookDataRoot(root, 'project-a', 'session-a')
+    const sessionBData = getNotebookDataRoot(root, 'project-a', 'session-b')
+    const otherProjectData = getNotebookDataRoot(root, 'project-b', 'session-a')
+    const sessionAPromptInput = join(sessionAData, 'inputs', 'groups-a.csv')
+    const sessionBPromptInput = join(sessionBData, 'inputs', 'groups-b.csv')
+    const otherProjectPromptInput = join(otherProjectData, 'inputs', 'groups-other.csv')
+    const sessionAWorkingFile = join(sessionAData, 'analysis.csv')
+    const sessionBWorkingFile = join(sessionBData, 'analysis.csv')
+    const sessionAStagedInput = join(getNotebookInputRoot(root, 'project-a', 'session-a'), 'staged')
+    const sessionBStagedInput = join(getNotebookInputRoot(root, 'project-a', 'session-b'), 'staged')
+
+    await Promise.all(
+      [
+        sessionAPromptInput,
+        sessionBPromptInput,
+        otherProjectPromptInput,
+        sessionAWorkingFile,
+        sessionBWorkingFile,
+        sessionAStagedInput,
+        sessionBStagedInput
+      ].map(async (path) => {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, path)
+      })
+    )
+
+    await service.deleteSessionInputs('project-a', 'session-a')
+    await expect(readFile(sessionAPromptInput)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(sessionAStagedInput)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(sessionAWorkingFile, 'utf8')).resolves.toBe(sessionAWorkingFile)
+    await expect(readFile(sessionBPromptInput, 'utf8')).resolves.toBe(sessionBPromptInput)
+    await expect(readFile(otherProjectPromptInput, 'utf8')).resolves.toBe(otherProjectPromptInput)
+
+    await service.deleteProjectInputs('project-a')
+    await expect(readFile(sessionBPromptInput)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(sessionBStagedInput)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(sessionBWorkingFile, 'utf8')).resolves.toBe(sessionBWorkingFile)
+    await expect(readFile(otherProjectPromptInput, 'utf8')).resolves.toBe(otherProjectPromptInput)
+  })
+
   it('returns only live-epoch namespace snapshots and does not create a session to inspect', async () => {
     const root = await createStorageRoot()
     const inspectNamespace = vi.fn(async () => ({

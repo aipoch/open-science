@@ -592,13 +592,13 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
     id: 'notebook-input-cache',
     medium: 'filesystem',
-    resources: ['notebook-inputs/<projectId>/'],
+    resources: ['notebook-inputs/<projectId>/', 'notebooks/<projectId>/<sessionId>/data/inputs/'],
     policy: {
       kind: 'coordinator-cleanup',
       effect: 'hard-delete',
       path: 'notebook-input-cache-tail',
       operation: 'NotebookRuntimeService.deleteProjectInputs',
-      note: 'The durable Project deletion intent removes derived, read-only Notebook input copies after runtime quiescence.'
+      note: 'The durable Project deletion intent removes derived, read-only Notebook input copies, including their relative-path projection inside the otherwise retained workspace, after runtime quiescence.'
     }
   },
   {

@@ -269,6 +269,19 @@ describe('Project-owned data catalog architecture', () => {
     ).toEqual(['execution-file-evidence/<projectId>/', 'notebook-file-evidence/<projectId>/'])
   })
 
+  it('catalogs generated Notebook prompt input copies for Project cleanup', () => {
+    expect(
+      PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'notebook-input-cache')
+    ).toMatchObject({
+      resources: ['notebook-inputs/<projectId>/', 'notebooks/<projectId>/<sessionId>/data/inputs/'],
+      policy: {
+        kind: 'coordinator-cleanup',
+        effect: 'hard-delete',
+        operation: 'NotebookRuntimeService.deleteProjectInputs'
+      }
+    })
+  })
+
   it('catalogs retained managed Session workspaces as Project-owned data', () => {
     expect(
       PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'managed-session-workspaces')
