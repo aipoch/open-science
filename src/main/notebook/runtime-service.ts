@@ -1077,11 +1077,11 @@ class NotebookRuntimeService {
       if (target) {
         const { language, environment } = target
         const processKey = dataProcessKey(language, environment)
+        const isDefaultPython = processKey === dataProcessKey('python', DEFAULT_PY_ENV)
+        const restoredKernelStatus = session.restoredKernelStatus()
         const statusBeforeRestart =
           session.kernelStatus(processKey) ??
-          (processKey === dataProcessKey('python', DEFAULT_PY_ENV)
-            ? session.restoredKernelStatus()
-            : undefined)
+          (isDefaultPython && restoredKernelStatus !== 'idle' ? restoredKernelStatus : undefined)
         const wasDurablyTerminated = session.hasDurableKernelTermination(processKey)
         const hasTargetState = statusBeforeRestart !== undefined || wasDurablyTerminated
 
@@ -1090,24 +1090,42 @@ class NotebookRuntimeService {
           this.sessionLifecycle.notifyChanged(session)
         }
 
-        try {
-          await session.drainExecution(processKey)
-          await session.terminateExecutor(language, environment)
-          if (hasTargetState) {
-            await this.sessionLifecycle.persistKernelStatus(session, 'idle', processKey)
+        const restartTransition = (async (): Promise<void> => {
+          try {
+            await session.drainExecution(processKey)
+            await session.terminateExecutor(language, environment)
+            if (hasTargetState) {
+              await this.sessionLifecycle.persistKernelStatus(session, 'idle', processKey)
+            }
+            session.clearKernelTerminated(processKey)
+            this.environmentOperations.clearRestartRecommendations([processKey])
+          } catch (error) {
+            if (hasTargetState) {
+              const failureStatus =
+                statusBeforeRestart === 'terminated' || wasDurablyTerminated
+                  ? 'terminated'
+                  : 'error'
+              try {
+                if (failureStatus === 'terminated' || isDefaultPython) {
+                  await this.sessionLifecycle.persistKernelStatus(
+                    session,
+                    failureStatus,
+                    processKey
+                  )
+                } else {
+                  session.setKernelStatus(processKey, failureStatus)
+                }
+              } catch {
+                // Keep the original restart failure while retaining the best available live state.
+                session.setKernelStatus(processKey, failureStatus)
+              }
+            }
+            this.sessionLifecycle.notifyChanged(session)
+            throw error
           }
-          session.clearKernelTerminated(processKey)
-          this.environmentOperations.clearRestartRecommendations([processKey])
-        } catch (error) {
-          if (hasTargetState) {
-            session.setKernelStatus(
-              processKey,
-              statusBeforeRestart === 'terminated' || wasDurablyTerminated ? 'terminated' : 'error'
-            )
-          }
-          this.sessionLifecycle.notifyChanged(session)
-          throw error
-        }
+        })()
+        session.blockKernelExecutionUntil(processKey, restartTransition)
+        await restartTransition
 
         this.sessionLifecycle.notifyChanged(session)
         await this.runTerminalization.reconcilePending(session)
