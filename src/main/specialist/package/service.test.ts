@@ -2605,6 +2605,7 @@ describe('SpecialistPackageService', () => {
       /not found/i
     )
     await expect(userSkills.list()).resolves.toEqual([])
+    const unrelated = await new SpecialistService(repository).create({ name: 'Unrelated Edit' })
 
     await new SpecialistPackageService(options).recover()
 
@@ -2612,6 +2613,10 @@ describe('SpecialistPackageService', () => {
     expect(onSpecialistDeleted).toHaveBeenLastCalledWith('cleanup-owner')
     expect(onSkillsDeleted).toHaveBeenCalledWith([skillId])
     expect(onResourcesDeleted).toHaveBeenCalledWith('cleanup-owner', [skillId])
+    await expect(new SpecialistService(repository).getById(unrelated.id)).resolves.toMatchObject({
+      id: unrelated.id,
+      name: 'Unrelated Edit'
+    })
   })
 
   it('does not roll back a committed deletion when transaction cleanup fails', async () => {

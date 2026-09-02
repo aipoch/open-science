@@ -111,7 +111,13 @@ export class SpecialistPackageTransaction {
       if (journal.phase === 'committed') {
         const current = await this.repository.getAll()
         const currentDigest = documentDigest(current)
-        if (typeof journal.afterDigest !== 'string' || currentDigest !== journal.afterDigest) {
+        const committedDeletionStillAbsent =
+          journal.deleteSkillIds !== undefined &&
+          !current.specialists.some((specialist) => specialist.id === journal.specialistId)
+        if (
+          !committedDeletionStillAbsent &&
+          (typeof journal.afterDigest !== 'string' || currentDigest !== journal.afterDigest)
+        ) {
           const { before, after } = await this.readTransactionData(journal)
           const beforeDigest = journal.beforeDigest ?? documentDigest(before)
           const afterDigest = journal.afterDigest ?? documentDigest(after)
