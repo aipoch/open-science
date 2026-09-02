@@ -142,6 +142,8 @@ class HeadlessTaskApi {
           throw new Error('Task Compute preference control is unavailable.')
         }
       },
+      runWithLifecycleContext: (operation) =>
+        this.callerContexts.run(TASK_CALLER_CONTEXT, operation),
       createId: dependencies.createId ?? randomUUID,
       now: dependencies.now ?? Date.now
     } satisfies TaskRunnerDependencies)

@@ -760,6 +760,67 @@ describe('HeadlessTaskApi adapter', () => {
     ])
   })
 
+  it('keeps deferred Session admission alive after remote authorization expires', async () => {
+    const existing: PersistedChatSession = {
+      id: 'session-admission-context',
+      projectId: project.id,
+      title: 'Admission context',
+      cwd: '/workspace/admission-context',
+      status: 'idle',
+      permissionProfile: 'ask',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    let authorizationCurrent = true
+    const context = createTaskCallerContext({
+      location: 'remote',
+      isAuthorizationCurrent: () => authorizationCurrent
+    })
+    const invoke = vi.fn(
+      async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
+        if (channel === 'projects:list') return [project]
+        if (channel === 'sessions:load-all') {
+          return { sessions: [existing], manifest: { version: 1 } }
+        }
+        if (channel === 'sessions:save-session') return args[0]
+        throw new Error(`Unexpected RPC channel: ${channel}`)
+      }
+    )
+    const agent = createAgent({
+      listAttachedSessionIds: vi.fn(async () => [existing.id]),
+      prompt: vi.fn(async (_request, observer) => {
+        authorizationCurrent = false
+        await observer?.onPromptAdmitted?.()
+        observer?.onProviderPromptAccepted?.()
+      })
+    })
+    const ids = ['admission-user', 'admission-run', 'admission-agent']
+    const api = new HeadlessTaskApi(
+      { commands: commandsFrom(invoke), agent },
+      { createId: () => ids.shift() ?? 'generated-id' }
+    )
+
+    const run = await api.runWithCallerContext(context, () =>
+      api.startRun({
+        project: project.id,
+        sessionId: existing.id,
+        prompt: 'Continue after admission.'
+      })
+    )
+
+    await expect(api.waitForRun(run.id)).resolves.toMatchObject({ status: 'completed' })
+    expect(invoke).toHaveBeenCalledWith('sessions:save-session', taskCallerContext(), [
+      expect.objectContaining({
+        id: existing.id,
+        status: 'running',
+        activeRun: expect.objectContaining({ promptMessageId: 'admission-user' })
+      })
+    ])
+    expect(authorizationCurrent).toBe(false)
+    await api.dispose()
+  })
+
   it('resumes a detached session through the direct Agent port with its durable binding', async () => {
     const existing: PersistedChatSession = {
       id: 'session-detached',

@@ -93,6 +93,7 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
         throw new Error('Unexpected Compute preference update.')
       }
     },
+    runWithLifecycleContext: (operation) => operation(),
     createId: () => 'generated-id',
     now: () => 1,
     ...overrides,

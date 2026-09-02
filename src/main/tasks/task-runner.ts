@@ -179,6 +179,7 @@ type TaskRunnerDependencies = {
   specialists: TaskSpecialistPort
   reviewer: TaskReviewerPort
   computePreferences: TaskComputePreferencePort
+  runWithLifecycleContext<Result>(operation: () => Result): Result
   createId: () => string
   now: () => number
 }
@@ -1172,6 +1173,16 @@ class TaskRunner {
     }
   }
 
+  private withLifecycleSessionAvailable<Result>(
+    projectId: string,
+    sessionId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    return this.dependencies.runWithLifecycleContext(() =>
+      this.dependencies.agent.withSessionAvailable(projectId, sessionId, operation)
+    )
+  }
+
   private async executeRun(
     run: MutableTaskRun,
     session: PersistedChatSession,
@@ -1211,40 +1222,34 @@ class TaskRunner {
           ...(persistOnPromptAdmission
             ? {
                 onPromptAdmitted: async () => {
-                  return this.dependencies.agent.withSessionAvailable(
-                    run.projectId,
-                    session.id,
-                    async () => {
-                      const latestSession = (await this.dependencies.sessions.list()).find(
-                        (candidate) => candidate.id === session.id
-                      )
-                      if (!latestSession || latestSession.projectId !== run.projectId) {
-                        throw new Error(
-                          `Session not found for Task prompt admission: ${session.id}`
-                        )
-                      }
-                      const sessionToSave = rebaseTaskTurnOntoLatestSession(
-                        latestSession,
-                        session,
-                        contextReset === true
-                      )
-                      // Once the durable save starts it may commit the Session before a derived
-                      // projection rejects. Retain the admitted aggregate so failure cleanup can
-                      // clear that partially committed active run.
-                      admittedSession = sessionToSave
-                      try {
-                        const saved = await this.dependencies.sessions.save(sessionToSave)
-                        admittedSession = saved
-                        return getActiveConversationContext(
-                          materializeSessionConversationGraph(saved).conversationGraph,
-                          promptMessageId
-                        )
-                      } catch (error) {
-                        admissionPersistenceError = error
-                        throw error
-                      }
+                  return this.withLifecycleSessionAvailable(run.projectId, session.id, async () => {
+                    const latestSession = (await this.dependencies.sessions.list()).find(
+                      (candidate) => candidate.id === session.id
+                    )
+                    if (!latestSession || latestSession.projectId !== run.projectId) {
+                      throw new Error(`Session not found for Task prompt admission: ${session.id}`)
                     }
-                  )
+                    const sessionToSave = rebaseTaskTurnOntoLatestSession(
+                      latestSession,
+                      session,
+                      contextReset === true
+                    )
+                    // Once the durable save starts it may commit the Session before a derived
+                    // projection rejects. Retain the admitted aggregate so failure cleanup can
+                    // clear that partially committed active run.
+                    admittedSession = sessionToSave
+                    try {
+                      const saved = await this.dependencies.sessions.save(sessionToSave)
+                      admittedSession = saved
+                      return getActiveConversationContext(
+                        materializeSessionConversationGraph(saved).conversationGraph,
+                        promptMessageId
+                      )
+                    } catch (error) {
+                      admissionPersistenceError = error
+                      throw error
+                    }
+                  })
                 }
               }
             : {}),
@@ -1261,15 +1266,13 @@ class TaskRunner {
     }
 
     if (admissionPersistenceError !== undefined) {
-      await this.dependencies.agent
-        .withSessionAvailable(run.projectId, session.id, async () => {
-          const latestSession = (await this.dependencies.sessions.list()).find(
-            (candidate) => candidate.id === session.id && candidate.projectId === run.projectId
-          )
-          if (latestSession?.activeRun?.promptMessageId !== run.promptMessageId) return
-          await this.failRun(run, latestSession, undefined, admissionPersistenceError)
-        })
-        .catch(() => undefined)
+      await this.withLifecycleSessionAvailable(run.projectId, session.id, async () => {
+        const latestSession = (await this.dependencies.sessions.list()).find(
+          (candidate) => candidate.id === session.id && candidate.projectId === run.projectId
+        )
+        if (latestSession?.activeRun?.promptMessageId !== run.promptMessageId) return
+        await this.failRun(run, latestSession, undefined, admissionPersistenceError)
+      }).catch(() => undefined)
       if (run.status === 'running') {
         await this.failRun(run, session, undefined, admissionPersistenceError, false)
       }
