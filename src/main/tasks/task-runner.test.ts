@@ -1711,6 +1711,68 @@ describe('TaskRunner', () => {
     })
   })
 
+  it('persists detached provider rebinding without a Task turn when admission rejects', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      revision: 1,
+      providerSessionId: 'provider-session-old',
+      providerContinuityToken: 'continuity-old',
+      messages: []
+    }
+    let durableSession = structuredClone(existing)
+    const save = vi.fn(async (candidate: PersistedChatSession) => {
+      durableSession = {
+        ...structuredClone(candidate),
+        revision: (candidate.revision ?? 0) + 1
+      }
+      return structuredClone(durableSession)
+    })
+    const runner = createRunner({
+      sessions: { list: async () => [structuredClone(durableSession)], save },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async () => ({
+          sessionId: existing.id,
+          frameworkId: 'opencode',
+          backendId: 'opencode:provider-new',
+          providerSessionId: 'provider-session-new',
+          providerContinuityToken: 'continuity-new',
+          contextReset: true
+        }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          throw new Error('An ACP interaction is already running for this session')
+        }
+      }
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Task API prompt'
+    })
+    const failed = await runner.waitForRun(started.id)
+
+    expect(save).toHaveBeenCalledOnce()
+    expect(durableSession).toMatchObject({
+      status: existing.status,
+      messages: existing.messages,
+      providerSessionId: 'provider-session-new',
+      providerContinuityToken: 'continuity-new',
+      agentFrameworkId: 'opencode',
+      agentBackendId: 'opencode:provider-new',
+      pendingHistoryReplay: { kind: 'all' }
+    })
+    expect(durableSession).not.toHaveProperty('activeRun')
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: 'An ACP interaction is already running for this session'
+    })
+  })
+
   it('cleans up an admitted Task turn when Session persistence commits before rejecting', async () => {
     let durableSession: PersistedChatSession = {
       ...session,
@@ -2007,8 +2069,10 @@ describe('TaskRunner', () => {
     ])
     const promptRuntimeSegmentId = prompts[0]?.provenanceContext.runtimeSegmentId
     expect(
-      savedSessions[0]?.conversationGraph?.runtimeSegments.some(
-        ({ id }) => id === promptRuntimeSegmentId
+      savedSessions.some(
+        (saved) =>
+          saved.activeRun?.promptMessageId === 'new-user' &&
+          saved.conversationGraph?.runtimeSegments.some(({ id }) => id === promptRuntimeSegmentId)
       )
     ).toBe(true)
   })
@@ -2196,14 +2260,15 @@ describe('TaskRunner', () => {
       })
     ])
     expect(prompts[0]?.historyPreamble).not.toContain('Delete the duplicates')
-    expect(saved[0]).not.toHaveProperty('resumeRecovery')
-    expect(saved[0].pendingHistoryReplay).toEqual({
+    const admitted = saved.find(({ activeRun }) => activeRun?.promptMessageId === 'new-user')
+    expect(admitted).not.toHaveProperty('resumeRecovery')
+    expect(admitted?.pendingHistoryReplay).toEqual({
       kind: 'before-message',
       messageId: 'interrupted-user'
     })
     expect(saved.at(-1)).not.toHaveProperty('pendingHistoryReplay')
     expect(
-      saved[0]?.messages.filter((message) => message.content === 'Delete the duplicates')
+      admitted?.messages.filter((message) => message.content === 'Delete the duplicates')
     ).toHaveLength(1)
   })
 

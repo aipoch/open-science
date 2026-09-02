@@ -1,6 +1,7 @@
 import { constants } from 'node:fs'
 import { access, realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import type { AcpRuntimeEvent, AgentTurnProvenanceContext } from '../../shared/acp'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
@@ -1070,6 +1071,40 @@ class TaskRunner {
         ...(request.cwd ? { cwd: request.cwd } : {}),
         ...(specialistId ? { specialistId } : {})
       })
+    }
+
+    if (existing) {
+      const cwd = sessionInfo.cwd ?? existing.cwd
+      const agentFrameworkId = sessionInfo.frameworkId ?? existing.agentFrameworkId
+      const agentBackendId = sessionInfo.backendId ?? existing.agentBackendId
+      const providerSessionId = sessionInfo.providerSessionId ?? existing.providerSessionId
+      const providerContinuityToken = sessionInfo.providerContinuityToken
+      const agentConfiguration = sessionInfo.agentConfiguration ?? existing.agentConfiguration
+      const persistedPermissionProfile = request.permissionProfile ?? existing.permissionProfile
+      const needsHistoryReplay = sessionInfo.contextReset === true && !existing.pendingHistoryReplay
+      const setupChanged =
+        cwd !== existing.cwd ||
+        persistedPermissionProfile !== existing.permissionProfile ||
+        agentFrameworkId !== existing.agentFrameworkId ||
+        agentBackendId !== existing.agentBackendId ||
+        providerSessionId !== existing.providerSessionId ||
+        providerContinuityToken !== existing.providerContinuityToken ||
+        !isDeepStrictEqual(agentConfiguration, existing.agentConfiguration) ||
+        needsHistoryReplay
+      if (setupChanged) {
+        existing = await this.dependencies.sessions.save({
+          ...existing,
+          cwd,
+          permissionProfile: persistedPermissionProfile,
+          agentFrameworkId,
+          agentBackendId,
+          providerSessionId,
+          providerContinuityToken,
+          agentConfiguration,
+          ...(needsHistoryReplay ? { pendingHistoryReplay: { kind: 'all' } } : {}),
+          updatedAt: now
+        })
+      }
     }
 
     const userMessage = createUserMessage(userMessageId, prompt, now, request.turnIntent)
