@@ -77,7 +77,23 @@ export class SpecialistPackageTransaction {
     this.afterDataPath = join(storageDir, 'specialist-package-transaction.after.json')
   }
 
-  async recover(): Promise<void> {
+  recover(): Promise<void> {
+    return this.withRecoveryBarrier(async () => undefined)
+  }
+
+  withRecoveryBarrier<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(async () => {
+      await this.recoverNow()
+      return operation()
+    })
+    this.queue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
+  private async recoverNow(): Promise<void> {
     if (this.recoveryFailure) throw new SpecialistPackageRecoveryError()
     let raw: string
     try {
@@ -97,6 +113,7 @@ export class SpecialistPackageTransaction {
       throw new SpecialistPackageRecoveryError()
     }
 
+    let retryableCommittedDeletion = false
     try {
       const journal = JSON.parse(raw) as TransactionJournal
       if (
@@ -109,6 +126,7 @@ export class SpecialistPackageTransaction {
         throw new Error('Invalid Specialist package transaction journal.')
       }
       if (journal.phase === 'committed') {
+        retryableCommittedDeletion = journal.deleteSkillIds !== undefined
         const current = await this.repository.getAll()
         const currentDigest = documentDigest(current)
         const committedDeletionStillAbsent =
@@ -149,7 +167,7 @@ export class SpecialistPackageTransaction {
         specialistId: journal.specialistId
       })
     } catch (error) {
-      this.recoveryFailure = error
+      if (!retryableCommittedDeletion) this.recoveryFailure = error
       throw new SpecialistPackageRecoveryError()
     }
   }
@@ -163,7 +181,7 @@ export class SpecialistPackageTransaction {
     options?: { activateAfterInstall?: boolean; origin?: SpecialistOrigin }
   ): Promise<SpecialistView> {
     const run = this.queue.then(async () => {
-      await this.recover()
+      await this.recoverNow()
       const before = await this.repository.getAll()
       const existingIndex = before.specialists.findIndex(
         (specialist) => specialist.id === plan.specialistId
@@ -306,7 +324,7 @@ export class SpecialistPackageTransaction {
     assertDeletionAllowed?: () => Promise<void>
   ): Promise<void> {
     const run = this.queue.then(async () => {
-      await this.recover()
+      await this.recoverNow()
       const before = await this.repository.getAll()
       const existing = before.specialists.find((specialist) => specialist.id === specialistId)
       if (!existing || existing.revision !== expectedRevision) {

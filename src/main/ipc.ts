@@ -513,7 +513,9 @@ const createApplicationModules = async (
   const webSessionPersistenceFlush = createWebSessionPersistenceFlush(applicationEvents)
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
-  const specialistPackageRecovery = { current: undefined as (() => Promise<void>) | undefined }
+  const specialistPackageRecovery = {
+    current: undefined as (<T>(operation: () => Promise<T>) => Promise<T>) | undefined
+  }
   const settingsRepository = new SettingsRepository(
     settingsStore ?? resolveStorageRoot(),
     (operation) => specialistPackageSkillAdapter.runMutationExclusive(operation)
@@ -629,9 +631,8 @@ const createApplicationModules = async (
         await networkProxyRuntime.apply(settings)
         await notebookNetworkSandbox.updateParentProxy()
       },
-      beforeUserSkillOperation: async () => {
-        await specialistPackageRecovery.current?.()
-      },
+      withUserSkillRecoveryBarrier: (operation) =>
+        specialistPackageRecovery.current?.(operation) ?? operation(),
       applyNotebookNetwork: async (settings) => notebookNetworkSandbox.applySettings(settings),
       validatePackageMirror: async (settings) => {
         await resolveNotebookTrustBundle(settings.caBundle)
@@ -1452,9 +1453,7 @@ const createApplicationModules = async (
   const specialistService = new SpecialistService(
     specialistRepository,
     builtinRegistry,
-    async () => {
-      await specialistPackageRecovery.current?.()
-    }
+    (operation) => specialistPackageRecovery.current?.(operation) ?? operation()
   )
   const marketplaceRepository = new MarketplaceRepository(resolveStorageRoot())
   const marketplaceOperationCoordinator = new MarketplaceOperationCoordinator()
@@ -1568,7 +1567,8 @@ const createApplicationModules = async (
       void runtime.requestSkillsReload()
     }
   })
-  specialistPackageRecovery.current = () => specialistPackageService.recover()
+  specialistPackageRecovery.current = (operation) =>
+    specialistPackageService.withRecoveryBarrier(operation)
   const marketplaceService = new MarketplaceService({
     repository: marketplaceRepository,
     operationCoordinator: marketplaceOperationCoordinator,

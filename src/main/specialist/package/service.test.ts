@@ -2607,15 +2607,19 @@ describe('SpecialistPackageService', () => {
       /not found/i
     )
     await expect(userSkills.list()).resolves.toEqual([])
-    const guardedSpecialists = new SpecialistService(repository, undefined, () =>
-      new SpecialistPackageService(options).recover()
+    const recoveryService = new SpecialistPackageService(options)
+    const guardedSpecialists = new SpecialistService(repository, undefined, (operation) =>
+      recoveryService.withRecoveryBarrier(operation)
     )
     await expect(guardedSpecialists.create({ name: 'Cleanup Owner' })).rejects.toThrow(
       /recovery failed/i
     )
     const unrelated = await new SpecialistService(repository).create({ name: 'Unrelated Edit' })
-    const guardedUserSkills = new UserSkillRepository(storageDir, undefined, undefined, () =>
-      new SpecialistPackageService(options).recover()
+    const guardedUserSkills = new UserSkillRepository(
+      storageDir,
+      undefined,
+      undefined,
+      (operation) => recoveryService.withRecoveryBarrier(operation)
     )
 
     await expect(

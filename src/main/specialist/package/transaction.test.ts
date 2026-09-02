@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { SpecialistPackageValidationPlan } from '../../../shared/specialist-package'
 import { emptyFullAccessConfig, emptySelectedConfig } from '../../../shared/specialist'
 import { SpecialistRepository } from '../repository'
+import { NOOP_SPECIALIST_PACKAGE_SKILL_PORT } from './skill-port'
 import { SpecialistPackageTransaction } from './transaction'
 
 const encoder = new TextEncoder()
@@ -62,6 +63,47 @@ afterEach(async () => {
 })
 
 describe('SpecialistPackageTransaction imported setup lifecycle', () => {
+  it('serializes an external recovery barrier behind an active package transaction', async () => {
+    let signalPrepareStarted!: () => void
+    let releasePrepare!: () => void
+    const prepareStarted = new Promise<void>((resolve) => {
+      signalPrepareStarted = resolve
+    })
+    const prepareGate = new Promise<void>((resolve) => {
+      releasePrepare = resolve
+    })
+    const calls: string[] = []
+    const transaction = new SpecialistPackageTransaction(storageDir, repository, randomUUID, {
+      ...NOOP_SPECIALIST_PACKAGE_SKILL_PORT,
+      prepare: async () => {
+        calls.push('prepare')
+        signalPrepareStarted()
+        await prepareGate
+      },
+      commit: async () => {
+        calls.push('commit')
+      }
+    })
+    const installing = transaction.install(
+      plan(),
+      new Date('2026-08-04T00:00:00.000Z'),
+      'archive-digest'
+    )
+    await prepareStarted
+
+    const barrier = transaction.withRecoveryBarrier(async () => {
+      calls.push('barrier')
+    })
+    await Promise.resolve()
+    expect(calls).toEqual(['prepare'])
+
+    releasePrepare()
+    await installing
+    await barrier
+
+    expect(calls).toEqual(['prepare', 'commit', 'barrier'])
+  })
+
   it('persists a new import disabled and pending with inferred bundled Skills selected', async () => {
     const installed = await new SpecialistPackageTransaction(storageDir, repository).install(
       plan(),

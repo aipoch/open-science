@@ -107,7 +107,7 @@ type SkillCatalogModuleOptions = {
   userAgentsDir?: string
   skillRegistry?: SkillRegistry
   userSkills?: UserSkillRepository
-  beforeUserSkillOperation?: () => Promise<void>
+  withUserSkillRecoveryBarrier?: <T>(operation: () => Promise<T>) => Promise<T>
   githubFetch?: FetchLike
   authorizeRegisteredHelper?: (
     skillId: string,
@@ -133,7 +133,7 @@ class SkillCatalogModule {
         options.storageRoot,
         undefined,
         async (list) => this.validatePromotedRegisteredHelpers(await list()),
-        options.beforeUserSkillOperation
+        options.withUserSkillRecoveryBarrier
       )
     this.githubFetch = options.githubFetch ?? netFetch
     this.registeredHelpers = new RegisteredSkillHelperCatalog({

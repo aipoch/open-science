@@ -221,6 +221,10 @@ export class SpecialistPackageService {
     await this.transaction.recover()
   }
 
+  withRecoveryBarrier<T>(operation: () => Promise<T>): Promise<T> {
+    return this.transaction.withRecoveryBarrier(operation)
+  }
+
   private async validationCatalog(): Promise<SpecialistPackageCatalogSnapshot> {
     const [catalog, document] = await Promise.all([
       this.options.catalog(),
