@@ -27,6 +27,7 @@ import {
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
   getExternallyHydratedSessionAuthority,
+  isArtifactFinalizationError,
   isExternallyHydratedSession,
   toPersistedSession,
   useSessionStore
@@ -1006,7 +1007,11 @@ const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<voi
       const current = useSessionStore
         .getState()
         .sessions.find((candidate) => candidate.id === session.id)
-      if (current && pendingArtifactRequests(current).length === 0) {
+      if (
+        current &&
+        isArtifactFinalizationError(current.error) &&
+        pendingArtifactRequests(current).length === 0
+      ) {
         useSessionStore.getState().clearArtifactError(session.id)
       }
     } catch (error) {
