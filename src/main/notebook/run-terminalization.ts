@@ -45,7 +45,7 @@ type NotebookRunTerminalResult = {
 type TerminalizeNotebookRunRequest<Result extends NotebookRunTerminalResult> = {
   session: NotebookRunTerminalizationSession
   runningRun: NotebookRunRecord
-  invoke: () => Promise<Result>
+  invoke: (markRunning: () => Promise<void>) => Promise<Result>
   settleLive?: (result: NotebookRunTerminalResult) => void
 }
 
@@ -131,7 +131,19 @@ class NotebookRunTerminalizationOwner {
 
       let result: Result
       try {
-        result = await request.invoke()
+        let runningPublished = runningRun.status === 'running'
+        const markRunning = async (): Promise<void> => {
+          if (runningPublished) return
+          await this.options.repository.updateRun({
+            projectId: session.projectId,
+            sessionId: session.sessionId,
+            lane,
+            run: { ...runningRun, status: 'running' }
+          })
+          runningPublished = true
+          this.options.notifyChanged(session)
+        }
+        result = await request.invoke(markRunning)
       } catch (error) {
         liveResult = {
           status: 'interrupted',

@@ -210,6 +210,7 @@ describe('notebook run terminal presentation', () => {
   })
 
   it('uses neutral, distinct labels for non-failure terminal states', () => {
+    expect(notebookRunStatusLabel('queued')).toBe('queued')
     expect(notebookRunStatusLabel('timeout')).toBe('limit reached')
     expect(notebookRunStatusLabel('interrupted')).toBe('interrupted')
     expect(notebookRunStatusLabel('cancelled')).toBe('cancelled')

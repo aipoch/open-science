@@ -276,8 +276,7 @@ type NotebookToolContent =
 const notebookRpcSignal = (
   method: string,
   signal: AbortSignal | undefined
-): AbortSignal | undefined =>
-  method === 'executeControl' || method === 'executeShell' ? undefined : signal
+): AbortSignal | undefined => (method === 'executeControl' ? undefined : signal)
 
 // Creates the ACP MCP-server declaration that launches this app bundle in notebook stdio mode.
 const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest): McpServerStdio => {
@@ -365,9 +364,9 @@ const callNotebookRpc = async (
           projectId
         }
       } satisfies RpcRequest),
-      // Control REPL and shell execution do not yet consume cancellation below the RPC boundary.
-      // Keep their transport attached so Agent cancellation cannot report completion while they
-      // continue mutating state. Python/R execution owns its AbortSignal end to end.
+      // Control REPL does not yet consume cancellation below the RPC boundary. Keep its transport
+      // attached so Agent cancellation cannot report completion while it continues mutating state.
+      // Python/R and shell execution own their AbortSignal end to end.
       signal: notebookRpcSignal(method, signal)
     },
     'Notebook RPC'
@@ -386,7 +385,10 @@ const callNotebookRpc = async (
 // needs the transport that omits Undici's response-headers deadline; short methods retain the
 // ordinary transport.
 const resolveNotebookRpcFetch = (method: string): typeof fetchLocalRpc =>
-  method === 'execute' || method === 'executeControl' || method === 'requestNetworkAccess'
+  method === 'execute' ||
+  method === 'executeControl' ||
+  method === 'executeShell' ||
+  method === 'requestNetworkAccess'
     ? fetchLongLivedLocalRpc
     : fetchLocalRpc
 

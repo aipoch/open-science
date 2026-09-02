@@ -966,13 +966,20 @@ class NotebookRuntimeService {
     })
   }
 
-  // Compatibility facade for stateless shell execution. The owner deliberately admits calls without
-  // a per-Session queue while the repository continues to serialize durable run writes.
-  async executeShell(request: ExecuteShellRequest): Promise<NotebookShellResult> {
+  // Compatibility facade for stateless shell execution. The execution owner bounds process admission
+  // across the runtime generation and serializes calls that share one Session workspace.
+  async executeShell(
+    request: ExecuteShellRequest,
+    signal?: AbortSignal
+  ): Promise<NotebookShellResult> {
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       assertNotebookCodeWithinLimit(request.command)
       const session = await this.sessionLifecycle.ensure(request)
-      return this.executionOwner.executeShell(session, request, deletionSignal)
+      return this.executionOwner.executeShell(
+        session,
+        request,
+        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
+      )
     })
   }
 

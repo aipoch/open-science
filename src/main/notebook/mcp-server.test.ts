@@ -752,7 +752,7 @@ describe('notebook_execute tool', () => {
   it.each([
     ['execute', true],
     ['executeControl', false],
-    ['executeShell', false],
+    ['executeShell', true],
     ['state', true]
   ] as const)(
     'forwards MCP cancellation for %s only when the RPC consumes it',
@@ -783,6 +783,7 @@ describe('notebook_execute tool', () => {
   it('uses the unbounded transport for long-running kernel execution', () => {
     expect(resolveNotebookRpcFetch('execute').name).toBe('fetchLongLivedLocalRpc')
     expect(resolveNotebookRpcFetch('executeControl').name).toBe('fetchLongLivedLocalRpc')
+    expect(resolveNotebookRpcFetch('executeShell').name).toBe('fetchLongLivedLocalRpc')
     expect(resolveNotebookRpcFetch('state').name).toBe('fetchLocalRpc')
   })
 
