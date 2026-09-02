@@ -1016,6 +1016,84 @@ describe('Data and content application commands', () => {
     ).rejects.toMatchObject({ code: 'invalid-command-result' })
   })
 
+  it('sanitizes the complete authoritative Session result instead of passing malformed fields', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.sessions.editDetails.mockResolvedValueOnce({
+      ...deps.session,
+      status: 'future-status',
+      revision: -1,
+      createdAt: 'yesterday',
+      updatedAt: Number.NaN,
+      runtimeContext: { version: 1, revision: 'invalid' }
+    } as never)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    const result = await router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionEditDetails,
+      invocation([
+        {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          title: 'Updated title',
+          description: 'Updated description'
+        }
+      ] as const)
+    )
+
+    expect(result).toMatchObject({ status: 'idle', revision: 0, createdAt: 0, updatedAt: 0 })
+    expect(result.runtimeContext).toBeUndefined()
+  })
+
+  it('rejects a malformed Session conversation graph returned by archive', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.sessions.updateArchive.mockResolvedValueOnce({
+      ...deps.session,
+      conversationGraph: { schemaVersion: 1 }
+    } as never)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionUpdateArchive,
+        invocation([
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            archived: true,
+            expectedArchivedAt: null
+          }
+        ] as const)
+      )
+    ).rejects.toMatchObject({ code: 'invalid-command-result' })
+  })
+
+  it('sanitizes a renderer Session once at the main-process save boundary', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.sessions.saveSession.mockImplementationOnce(async (session) => ({
+      created: false,
+      session
+    }))
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    const malformedSession = {
+      ...deps.session,
+      status: 'future-status',
+      revision: -1,
+      createdAt: 'yesterday',
+      runtimeContext: { version: 1, revision: 'invalid' }
+    }
+    await dispatchCommand(router, 'sessionSave', [malformedSession]).result
+
+    expect(deps.sessions.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'idle', revision: 0, createdAt: 0 }),
+      undefined
+    )
+    expect(deps.sessions.saveSession.mock.calls[0]?.[0].runtimeContext).toBeUndefined()
+  })
+
   it('dispatches every remaining Project and Session wrapper to its existing owner', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
@@ -1134,6 +1212,8 @@ describe('Data and content application commands', () => {
       label: 'unknown extra field',
       request: { projectId: 'project-1', sessionId: 'session-1', force: true }
     },
+    { label: 'empty project id', request: { projectId: '', sessionId: 'session-1' } },
+    { label: 'empty session id', request: { projectId: 'project-1', sessionId: '' } },
     { label: 'missing session id', request: { projectId: 'project-1' } },
     { label: 'scalar payload', request: 'session-1' }
   ])(
@@ -1154,6 +1234,53 @@ describe('Data and content application commands', () => {
       expect(deps.events.publish).not.toHaveBeenCalled()
     }
   )
+
+  it.each([
+    {
+      label: 'archive request with a surplus field',
+      command: 'sessionUpdateArchive' as const,
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        archived: true,
+        expectedArchivedAt: null,
+        force: true
+      },
+      owner: 'updateArchive' as const
+    },
+    {
+      label: 'archive request with an invalid timestamp',
+      command: 'sessionUpdateArchive' as const,
+      request: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        archived: false,
+        expectedArchivedAt: Number.NaN
+      },
+      owner: 'updateArchive' as const
+    },
+    {
+      label: 'manifest request with an empty project id',
+      command: 'sessionSaveManifest' as const,
+      request: { lastProjectId: '', lastSessionId: 'session-1' },
+      owner: 'saveManifest' as const
+    },
+    {
+      label: 'manifest request with a surplus field',
+      command: 'sessionSaveManifest' as const,
+      request: { lastProjectId: 'project-1', lastSessionId: 'session-1', path: '/private/data' },
+      owner: 'saveManifest' as const
+    }
+  ])('rejects a malformed Session $label before reaching the owner', async (testCase) => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    const { result: dispatched } = dispatchCommand(router, testCase.command, [testCase.request])
+
+    await expect(dispatched).rejects.toMatchObject({ code: 'invalid-command-arguments' })
+    expect(deps.sessions[testCase.owner]).not.toHaveBeenCalled()
+  })
 
   it('rejects a malformed Session deletion owner result without publishing deletion', async () => {
     const router = createApplicationCommandRouter()
