@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { AlertDialog } from 'radix-ui'
 import {
   AlertTriangle,
   BadgeCheck,
@@ -11,12 +12,18 @@ import {
   ScrollText,
   Settings2,
   ShieldCheck,
-  Trash2
+  Trash2,
+  X
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useDateTimeFormat, useRelativeTimeFormat } from '@/hooks/useDateTimeFormat'
+import {
+  specialistDiagnosticCopy,
+  specialistInstallFailureCopy,
+  type SpecialistInstallFailureCode
+} from '@/lib/specialist-diagnostics'
 import { useMarketplaceStore } from '@/stores/marketplace-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -24,9 +31,21 @@ import type {
   MarketplaceDownloadProgress,
   MarketplaceInstallPreview,
   MarketplaceSourceCandidate,
+  MarketplaceSourceView,
   MarketplaceSpecialistListing,
   MarketplaceSpecialistRelease
 } from '../../../../shared/specialist-marketplace'
+import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
+  dialogCloseButtonClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { SettingsIconAction } from './SettingsLayout'
 import { ConnectorsNavIcon } from './connector-icons'
@@ -120,10 +139,12 @@ const SpecialistIdentity = ({
 
 const MarketplaceError = ({
   message,
-  retry
+  retry,
+  action
 }: {
   message: string
   retry?: () => void
+  action?: { label: string; onClick: () => void }
 }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
@@ -138,6 +159,11 @@ const MarketplaceError = ({
       {retry ? (
         <Button type="button" variant="outline" size="sm" className="mt-3" onClick={retry}>
           {t('Retry')}
+        </Button>
+      ) : null}
+      {action ? (
+        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={action.onClick}>
+          {action.label}
         </Button>
       ) : null}
     </div>
@@ -176,6 +202,8 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   const [sourceCandidate, setSourceCandidate] = useState<MarketplaceSourceCandidate>()
   const [sourceBusy, setSourceBusy] = useState(false)
   const [sourceError, setSourceError] = useState<string>()
+  const [sourcePendingRemoval, setSourcePendingRemoval] = useState<MarketplaceSourceView>()
+  const [sourceRemovalBusy, setSourceRemovalBusy] = useState(false)
   const [release, setRelease] = useState<MarketplaceSpecialistRelease>()
   const [releaseLoading, setReleaseLoading] = useState(view.kind === 'marketplace-release')
   const [releaseError, setReleaseError] = useState<string>()
@@ -186,6 +214,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   const [installBusy, setInstallBusy] = useState(false)
   const [installPreview, setInstallPreview] = useState<MarketplaceInstallPreview>()
   const [installError, setInstallError] = useState<string>()
+  const [installErrorCode, setInstallErrorCode] = useState<SpecialistInstallFailureCode>()
   const [installRecoveryPending, setInstallRecoveryPending] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState<MarketplaceDownloadProgress>()
   const [skillConflictResolutions, setSkillConflictResolutions] =
@@ -193,6 +222,15 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   const sourceCandidateTokenRef = useRef<string | undefined>(undefined)
   const installCandidateTokenRef = useRef<string | undefined>(undefined)
   const installedSpecialists = useSpecialistStore((state) => state.items)
+  const sourceRemovalAffectedSpecialists = sourcePendingRemoval
+    ? installedSpecialists.flatMap((item) =>
+        item.kind === 'custom' &&
+        item.origin === 'marketplace' &&
+        item.marketplaceProvenance?.sourceId === sourcePendingRemoval.id
+          ? [item]
+          : []
+      )
+    : []
   const viewKey =
     view.kind === 'marketplace-release'
       ? `${view.kind}:${view.sourceId}:${view.id}:${view.version}`
@@ -255,6 +293,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
       setConnectorsExpanded(false)
       setInstallPreview(undefined)
       setInstallError(undefined)
+      setInstallErrorCode(undefined)
       setInstallRecoveryPending(false)
       setDownloadProgress(undefined)
       setSkillConflictResolutions({})
@@ -390,12 +429,16 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   }
 
   const removeSource = async (sourceId: string): Promise<void> => {
+    setSourceRemovalBusy(true)
     setSourceError(undefined)
     try {
       await window.api.specialist.removeMarketplaceSource({ sourceId })
+      setSourcePendingRemoval(undefined)
       void refreshMarketplace({ forceRefresh: true })
     } catch {
       setSourceError(t('Could not remove this Marketplace source.'))
+    } finally {
+      setSourceRemovalBusy(false)
     }
   }
 
@@ -406,6 +449,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     setDownloadProgress(undefined)
     setSkillConflictResolutions({})
     setInstallError(undefined)
+    setInstallErrorCode(undefined)
   }
 
   const install = async (): Promise<void> => {
@@ -413,6 +457,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
     const startedViewKey = viewKey
     setInstallBusy(true)
     setInstallError(undefined)
+    setInstallErrorCode(undefined)
     if (!installPreview) setDownloadProgress(undefined)
     try {
       const preview =
@@ -459,7 +504,8 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
         setInstallPreview(undefined)
         setDownloadProgress(undefined)
         setSkillConflictResolutions({})
-        setInstallError(t('Installation failed. Try again.'))
+        setInstallErrorCode(result.code)
+        setInstallError(t(specialistInstallFailureCopy(result.code).body))
         return
       }
       installCandidateTokenRef.current = undefined
@@ -477,11 +523,13 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
             'This Specialist was installed, but Marketplace status is still being recovered. Return to Marketplace or restart the app to finish recovery.'
           )
         )
+        setInstallErrorCode(undefined)
         return
       }
       onNavigate({ kind: 'list' })
     } catch {
       setDownloadProgress(undefined)
+      setInstallErrorCode(undefined)
       setInstallError(t('Could not install this Specialist.'))
     } finally {
       setInstallBusy(false)
@@ -589,7 +637,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
           ) : null}
         </div>
 
-        {sourceError ? (
+        {sourceError && !sourcePendingRemoval ? (
           <div className="mt-4">
             <MarketplaceError message={sourceError} />
           </div>
@@ -624,7 +672,10 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                       label={t('Remove {{name}}', { name: source.name })}
                       icon={Trash2}
                       danger
-                      onClick={() => void removeSource(source.id)}
+                      onClick={() => {
+                        setSourceError(undefined)
+                        setSourcePendingRemoval(source)
+                      }}
                     />
                   ) : null}
                 </li>
@@ -636,6 +687,96 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
             </p>
           )}
         </div>
+
+        <AlertDialog.Root
+          open={sourcePendingRemoval !== undefined}
+          onOpenChange={(open) => {
+            if (!open && !sourceRemovalBusy) setSourcePendingRemoval(undefined)
+          }}
+        >
+          <AlertDialog.Portal>
+            <AlertDialog.Overlay className={dialogOverlayClassName} />
+            <AlertDialog.Content
+              className={dialogPanelClassName('w-[min(520px,calc(100vw-2rem))] p-0')}
+            >
+              <div className={dialogHeaderClassName}>
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  {t('Remove “{{name}}”?', { name: sourcePendingRemoval?.name ?? '' })}
+                </AlertDialog.Title>
+                <AlertDialog.Cancel asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('Close')}
+                    className={dialogCloseButtonClassName}
+                    disabled={sourceRemovalBusy}
+                  >
+                    <X className="size-4" aria-hidden="true" />
+                  </Button>
+                </AlertDialog.Cancel>
+              </div>
+              <div className={dialogBodyClassName}>
+                <AlertDialog.Description className={dialogDescriptionClassName}>
+                  {t(
+                    'The source and its cached listings will be removed. Installed Specialists will remain installed.'
+                  )}
+                </AlertDialog.Description>
+                {sourceRemovalAffectedSpecialists.length > 0 ? (
+                  <div className="mt-4 rounded-lg border border-border p-3">
+                    <p className="text-xs text-muted-foreground">
+                      {t(
+                        'The following installed Specialists will lose Marketplace listings and updates until this source is added again:'
+                      )}
+                    </p>
+                    <ul className="mt-2 list-inside list-disc text-sm text-foreground">
+                      {sourceRemovalAffectedSpecialists.map((item) => (
+                        <li key={item.id}>{item.displayName ?? item.name}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="mt-4 text-xs text-muted-foreground">
+                    {t('No installed Specialists currently use this source.')}
+                  </p>
+                )}
+                {sourceError ? (
+                  <p
+                    role="alert"
+                    className="mt-4 rounded-lg border border-danger-000/30 bg-danger-000/10 p-3 text-xs text-danger-000"
+                  >
+                    {sourceError}
+                  </p>
+                ) : null}
+              </div>
+              <div className={dialogFooterClassName}>
+                <AlertDialog.Cancel asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className={dialogCancelButtonClassName}
+                    disabled={sourceRemovalBusy}
+                  >
+                    {t('Cancel')}
+                  </Button>
+                </AlertDialog.Cancel>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={sourceRemovalBusy || !sourcePendingRemoval}
+                  onClick={() => {
+                    if (sourcePendingRemoval) void removeSource(sourcePendingRemoval.id)
+                  }}
+                >
+                  {sourceRemovalBusy ? (
+                    <Loader2 className="animate-spin" aria-hidden="true" />
+                  ) : null}
+                  {t(sourceRemovalBusy ? 'Removing…' : 'Remove source')}
+                </Button>
+              </div>
+            </AlertDialog.Content>
+          </AlertDialog.Portal>
+        </AlertDialog.Root>
       </div>
     )
   }
@@ -943,12 +1084,20 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                   <ul className="mt-3 rounded-lg border border-danger-000/30 bg-danger-000/10 p-3 text-xs text-danger-000">
                     {installPreview?.package.diagnostics
                       .filter((item) => item.severity === 'error')
-                      .map((item) => (
-                        <li key={`${item.code}-${item.path ?? ''}`}>
-                          <span className="font-medium">{item.code}</span>
-                          <span className="block text-muted-foreground">{item.message}</span>
-                        </li>
-                      ))}
+                      .map((item) => {
+                        const copy = specialistDiagnosticCopy(item)
+                        return (
+                          <li key={`${item.code}-${item.path ?? ''}`}>
+                            <span className="font-medium">{t(copy.title)}</span>
+                            <span className="block text-muted-foreground">{t(copy.body)}</span>
+                            {item.path ? (
+                              <span className="block font-mono text-[10px] text-muted-foreground">
+                                {item.path}
+                              </span>
+                            ) : null}
+                          </li>
+                        )
+                      })}
                   </ul>
                 ) : null}
               </div>
@@ -956,7 +1105,20 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
 
             {installError ? (
               <div className="mt-4">
-                <MarketplaceError message={installError} />
+                <MarketplaceError
+                  message={installError}
+                  action={
+                    installErrorCode && specialistInstallFailureCopy(installErrorCode).previewAgain
+                      ? { label: t('Preview again'), onClick: () => void install() }
+                      : installErrorCode &&
+                          specialistInstallFailureCopy(installErrorCode).revealStorage
+                        ? {
+                            label: t('Open data folder'),
+                            onClick: () => void window.api.storage.revealAppStorage()
+                          }
+                        : undefined
+                  }
+                />
                 {installRecoveryPending ? (
                   <Button
                     type="button"

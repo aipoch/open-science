@@ -1,4 +1,7 @@
-import type { PackageDiagnostic } from '../../../shared/specialist-package'
+import type {
+  PackageDiagnostic,
+  SpecialistPackageInstallResult
+} from '../../../shared/specialist-package'
 import { formatDisplayNumber } from './locale-format'
 
 // Maps raw validation codes (zip-adapter.ts, package/validator.ts) to user-facing
@@ -7,6 +10,73 @@ import { formatDisplayNumber } from './locale-format'
 // for matching findings against the downloaded JSON report.
 
 export type SpecialistDiagnosticCopy = { title: string; body: string }
+export type SpecialistInstallFailureCode = Extract<
+  SpecialistPackageInstallResult,
+  { status: 'failed' }
+>['code']
+
+export type SpecialistInstallFailureCopy = {
+  body: string
+  previewAgain: boolean
+  revealStorage: boolean
+}
+
+const installFailure = (
+  body: string,
+  options: Partial<Pick<SpecialistInstallFailureCopy, 'previewAgain' | 'revealStorage'>> = {}
+): SpecialistInstallFailureCopy => ({
+  body,
+  previewAgain: options.previewAgain ?? false,
+  revealStorage: options.revealStorage ?? false
+})
+
+const INSTALL_FAILURES: Record<SpecialistInstallFailureCode, SpecialistInstallFailureCopy> = {
+  'candidate-invalid': installFailure(
+    'This package request is no longer valid. Preview the ZIP again before installing.',
+    { previewAgain: true }
+  ),
+  'candidate-expired': installFailure(
+    'This package preview expired. Preview the ZIP again before installing.',
+    { previewAgain: true }
+  ),
+  'stale-candidate': installFailure(
+    'The package preview is out of date. Preview the ZIP again before installing.',
+    { previewAgain: true }
+  ),
+  'candidate-not-installable': installFailure(
+    'This package can no longer be installed. Preview the ZIP again and review its diagnostics.',
+    { previewAgain: true }
+  ),
+  'skill-conflict-resolution-required': installFailure(
+    'Choose how to resolve every Skill conflict before installing.'
+  ),
+  'overwrite-confirmation-required': installFailure(
+    'Review and confirm the overwrite before installing.'
+  ),
+  'revision-conflict': installFailure(
+    'This Specialist changed after the preview. Create a fresh preview before installing.',
+    { previewAgain: true }
+  ),
+  'protected-target': installFailure(
+    'This package targets a protected Specialist and cannot be installed.'
+  ),
+  'recovery-failed': installFailure(
+    'Open Science could not recover an earlier package operation. Restart the app before trying again.',
+    { revealStorage: true }
+  ),
+  'rollback-failed': installFailure(
+    'Installation could not be rolled back safely. Restart the app before trying again.',
+    { revealStorage: true }
+  ),
+  'commit-failed': installFailure(
+    'Installation failed and the previous data was restored. Preview the ZIP again before retrying.',
+    { previewAgain: true }
+  )
+}
+
+export const specialistInstallFailureCopy = (
+  code: SpecialistInstallFailureCode
+): SpecialistInstallFailureCopy => INSTALL_FAILURES[code]
 
 const formatBytes = (value: number): string =>
   value >= 1024 * 1024

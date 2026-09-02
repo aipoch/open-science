@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SpecialistMarketplace } from './SpecialistMarketplace'
 import { resetMarketplaceStoreForTests } from '../../stores/marketplace-store'
+import { useSpecialistStore } from '../../stores/specialist-store'
 import type { MarketplaceSnapshot } from '../../../../shared/specialist-marketplace'
+import type { SpecialistListItem } from '../../../../shared/specialist'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -105,6 +107,7 @@ beforeEach(() => {
       removeMarketplaceSource: vi.fn()
     }
   } as never
+  useSpecialistStore.setState({ items: [] })
 })
 
 afterEach(() => {
@@ -419,6 +422,27 @@ describe('Specialist Marketplace settings', () => {
   })
 
   it('uses the shared tooltip-backed danger action for source removal', async () => {
+    const installed: SpecialistListItem = {
+      kind: 'custom',
+      id: 'example-specialist',
+      name: 'EXAMPLE_SPECIALIST',
+      displayName: 'Example Specialist',
+      description: 'Focused research workflows.',
+      systemPrompt: 'Review the evidence.',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+      revision: 1,
+      origin: 'marketplace',
+      marketplaceProvenance: {
+        sourceId: 'github-example',
+        publisher: 'Example Publisher',
+        version: '1.0.0'
+      }
+    }
+    useSpecialistStore.setState({ items: [installed] })
+
     await act(async () => {
       root.render(
         <SpecialistMarketplace view={{ kind: 'marketplace-sources' }} onNavigate={vi.fn()} />
@@ -430,6 +454,26 @@ describe('Specialist Marketplace settings', () => {
     )
     expect(remove?.getAttribute('data-state')).toBe('closed')
     expect(remove?.className).toContain('hover:text-destructive')
+
+    await act(async () => fireEvent.click(remove!))
+    expect(window.api.specialist.removeMarketplaceSource).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'Example Specialist'
+    )
+    expect(document.body.textContent).toContain('will remain installed')
+
+    await act(async () => {
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+          (button) =>
+            button.textContent === 'Remove source' &&
+            button.closest('[role="alertdialog"]') !== null
+        )!
+      )
+    })
+    expect(window.api.specialist.removeMarketplaceSource).toHaveBeenCalledWith({
+      sourceId: 'github-example'
+    })
   })
 
   it('opens an installed Marketplace Specialist instead of starting another install', async () => {
@@ -821,7 +865,10 @@ describe('Specialist Marketplace settings', () => {
       )
     })
 
-    expect(container.textContent).toContain('Installation failed. Try again.')
+    expect(container.textContent).toContain(
+      'Installation failed and the previous data was restored. Preview the ZIP again before retrying.'
+    )
+    expect(container.textContent).toContain('Preview again')
     expect(container.textContent).not.toContain('Package verified')
     expect(container.textContent).toContain('Install Specialist')
     expect(window.api.specialist.cancelMarketplaceCandidate).toHaveBeenCalledWith({
@@ -937,8 +984,11 @@ describe('Specialist Marketplace settings', () => {
       )
     })
 
-    expect(container.textContent).toContain('specialist.description-invalid')
-    expect(container.textContent).toContain('Description must be 1000 characters or fewer.')
+    expect(container.textContent).toContain('Invalid description')
+    expect(container.textContent).toContain(
+      'The description must be a non-empty string within the length limit.'
+    )
+    expect(container.textContent).not.toContain('specialist.description-invalid')
     expect(container.textContent).not.toContain('Package verified')
     expect(
       Array.from(container.querySelectorAll('button')).find((button) =>

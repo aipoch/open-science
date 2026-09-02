@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 · slop: pass */
-import { ArrowLeft, Copy, Download, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Copy, Download, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
@@ -16,24 +16,28 @@ type MarketplaceSpecialist = Extract<SpecialistListItem, { kind: 'custom' }> & {
 type Props = {
   specialist: MarketplaceSpecialist
   update?: MarketplaceSpecialistListing
+  sourceMissing: boolean
   disabled?: boolean
   onBack: () => void
   onAppearanceChange: (patch: { iconKey?: string; colorKey?: string }) => Promise<void>
   onToggle: () => void
   onDuplicate: () => void
   onUpdate: () => void
+  onManageSources: () => void
   onUninstall: () => void
 }
 
 const MarketplaceManagedSpecialistDetail = ({
   specialist,
   update,
+  sourceMissing,
   disabled,
   onBack,
   onAppearanceChange,
   onToggle,
   onDuplicate,
   onUpdate,
+  onManageSources,
   onUninstall
 }: Props): React.JSX.Element => {
   const { t } = useTranslation()
@@ -112,11 +116,41 @@ const MarketplaceManagedSpecialistDetail = ({
           </div>
         </div>
 
-        <div className="mt-5 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm leading-relaxed text-muted-foreground">
-          {t(
-            'This Specialist is managed by Marketplace. Create an editable copy to change its instructions or capabilities.'
-          )}
-        </div>
+        {sourceMissing ? (
+          <div className="mt-5 rounded-lg border border-warning-100/50 bg-warning-100/10 px-4 py-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle
+                className="mt-0.5 size-4 shrink-0 text-warning-900"
+                aria-hidden="true"
+              />
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  {t('Marketplace source removed')}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  {t(
+                    'This Specialist remains installed, but updates are unavailable until its Marketplace source is added again.'
+                  )}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={onManageSources}
+                >
+                  {t('Manage Marketplace sources')}
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-5 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm leading-relaxed text-muted-foreground">
+            {t(
+              'This Specialist is managed by Marketplace. Create an editable copy to change its instructions or capabilities.'
+            )}
+          </div>
+        )}
 
         {update?.updateAvailable ? (
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
