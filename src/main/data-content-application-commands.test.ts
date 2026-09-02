@@ -11,7 +11,10 @@ import {
   createWebCallerContext,
   type CallerContext
 } from './caller-context'
-import { ArtifactOwnershipPersistenceRaceError } from './artifacts/provenance-repository'
+import {
+  ArtifactFinalizationProofError,
+  ArtifactOwnershipPersistenceRaceError
+} from './artifacts/provenance-repository'
 import {
   dataContentApplicationCommandGroups,
   dataContentApplicationCommands,
@@ -748,6 +751,30 @@ describe('Data and content application commands', () => {
       invocation([{ path: 'artifact://report' }] as const)
     )
     expect(deps.artifacts.openFile).toHaveBeenCalledWith({ path: 'artifact://report' })
+  })
+
+  it('classifies permanent artifact finalization proof failures for public transports', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    deps.artifacts.finalizeRunArtifacts.mockRejectedValueOnce(
+      new ArtifactFinalizationProofError(
+        'version-message-conflict',
+        'Artifact Version private-version-id is already finalized to a different message.'
+      )
+    )
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.artifactFinalizeRun,
+        invocation([{ claimId: 'claim-1', messageId: 'message-1' }] as const)
+      )
+    ).rejects.toMatchObject({
+      name: 'ApplicationCommandError',
+      code: 'command-failed',
+      message:
+        'Artifact finalization was rejected because its ownership no longer matches the saved Session.'
+    })
   })
 
   it('publishes project and session mutations after durable owner completion without failing commits', async () => {

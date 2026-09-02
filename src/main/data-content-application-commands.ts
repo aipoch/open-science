@@ -7,7 +7,10 @@ import {
 } from './application-command-router'
 import type { ApplicationEventMap, ApplicationEventPublisher } from './application-events'
 import type { ArtifactHandlers } from './artifacts/ipc'
-import { ArtifactOwnershipPersistenceRaceError } from './artifacts/provenance-repository'
+import {
+  ArtifactFinalizationProofError,
+  ArtifactOwnershipPersistenceRaceError
+} from './artifacts/provenance-repository'
 import type { ProjectFilesHandlers } from './project-files/ipc'
 import type { ProjectHandlers } from './projects/ipc'
 import type { SessionPersistenceHandlers } from './session-persistence/ipc'
@@ -485,12 +488,20 @@ const registerDataContentApplicationCommands = (
             artifacts: await dependencies.artifacts.finalizeRunArtifacts(args[0])
           }
         } catch (error) {
-          if (!(error instanceof ArtifactOwnershipPersistenceRaceError)) throw error
-          return {
-            ok: false as const,
-            code: Artifacts.ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
-            message: error.message
+          if (error instanceof ArtifactOwnershipPersistenceRaceError) {
+            return {
+              ok: false as const,
+              code: Artifacts.ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+              message: error.message
+            }
           }
+          if (error instanceof ArtifactFinalizationProofError) {
+            throw new ApplicationCommandError(
+              'command-failed',
+              'Artifact finalization was rejected because its ownership no longer matches the saved Session.'
+            )
+          }
+          throw error
         }
       },
       'artifacts:generate-code-reconstruction': ({ args }) =>
