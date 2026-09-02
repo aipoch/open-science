@@ -35,13 +35,13 @@ import type {
 } from './side-chat'
 import type { SourcePreviewLoadState } from './source-preview'
 import type {
-  ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest,
   ReconcilePendingArtifactsRequest,
+  ReconcilePendingArtifactsResult,
   ResolveArtifactVersionDescriptorsRequest
 } from './artifacts'
 import type {
@@ -813,7 +813,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   >()('artifacts', ['artifacts:read-preview']),
   'artifacts.reconcilePendingArtifacts': callable<
-    (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
+    (request: ReconcilePendingArtifactsRequest) => Promise<ReconcilePendingArtifactsResult>
   >()('artifacts', ['artifacts:reconcile-pending']),
   'artifacts.resolveVersionDescriptors': callable<
     (request: ResolveArtifactVersionDescriptorsRequest) => Promise<ArtifactVersionDescriptor[]>

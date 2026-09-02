@@ -1583,7 +1583,7 @@ describe('artifact handler edge cases', () => {
     expect(reconcilePendingArtifactPaths).toHaveBeenCalledWith(request)
   })
 
-  it('preserves compatibility-only files when native recovery covers only some pending runs', async () => {
+  it('preserves same-named compatibility files when native recovery covers only some pending runs', async () => {
     const nativeArtifact = {
       id: 'version-1',
       projectId: 'default-project',
@@ -1598,9 +1598,9 @@ describe('artifact handler edge cases', () => {
       id: 'legacy-artifact',
       projectId: 'default-project',
       sessionId: 'session-1',
-      name: 'legacy.txt',
-      path: '/p/session-1/legacy.txt',
-      fileUrl: 'file:///p/session-1/legacy.txt',
+      name: 'native.txt',
+      path: '/p/session-1/native.txt',
+      fileUrl: 'file:///p/session-1/native.txt',
       size: 1,
       mtimeMs: 1
     }
@@ -1618,7 +1618,7 @@ describe('artifact handler edge cases', () => {
       projectId: 'default-project',
       sessionId: 'session-1',
       messageId: 'message-1',
-      pendingPaths: ['/p/.pending/run-native/native.txt', '/p/.pending/run-legacy/legacy.txt']
+      pendingPaths: ['/p/.pending/run-native/native.txt', '/p/.pending/run-legacy/native.txt']
     }
 
     await expect(handlers.reconcilePendingArtifacts(request)).resolves.toEqual([
@@ -1627,7 +1627,42 @@ describe('artifact handler edge cases', () => {
     ])
     expect(reconcilePendingArtifactPaths).toHaveBeenCalledWith({
       ...request,
-      pendingPaths: ['/p/.pending/run-legacy/legacy.txt']
+      pendingPaths: ['/p/.pending/run-legacy/native.txt']
+    })
+  })
+
+  it('returns an invalid recovery proof as a terminal IPC failure result', async () => {
+    const repository = {
+      reconcilePendingArtifactPaths: vi.fn()
+    } as unknown as ArtifactRepository
+    const proofError = Object.assign(new Error('Native Artifact finalization proof is invalid.'), {
+      code: ARTIFACT_FINALIZATION_INVALID_PROOF
+    })
+    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), {
+      recoverPendingArtifacts: vi.fn().mockRejectedValue(proofError)
+    })
+    registerArtifactIpcHandlers(
+      repository,
+      new ArtifactRunRegistry(),
+      undefined,
+      undefined,
+      handlers
+    )
+
+    await expect(
+      ipcHandlers.get('artifacts:reconcile-pending')?.(
+        {},
+        {
+          projectId: 'default-project',
+          sessionId: 'session-1',
+          messageId: 'message-1',
+          pendingPaths: ['/p/.pending/run-1/native.txt']
+        }
+      )
+    ).resolves.toEqual({
+      ok: false,
+      code: ARTIFACT_FINALIZATION_INVALID_PROOF,
+      message: 'Native Artifact finalization proof is invalid.'
     })
   })
 })

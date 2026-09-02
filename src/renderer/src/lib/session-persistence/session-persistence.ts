@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { ArtifactFile, ReconcilePendingArtifactsRequest } from '../../../../shared/artifacts'
+import {
+  ARTIFACT_FINALIZATION_INVALID_PROOF,
+  type ReconcilePendingArtifactsRequest,
+  type ReconcilePendingArtifactsResult
+} from '../../../../shared/artifacts'
 import {
   projectConversationMessage,
   resolveActiveConversationActivities,
@@ -901,8 +905,19 @@ const flushSessionPersistence = async (): Promise<void> => {
 
 // The one artifact command startup reconciliation needs; kept narrow so it is trivial to fake in tests.
 type ArtifactReconcileApi = {
-  reconcilePendingArtifacts: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
+  reconcilePendingArtifacts: (
+    request: ReconcilePendingArtifactsRequest
+  ) => Promise<ReconcilePendingArtifactsResult>
 }
+
+const invalidArtifactFinalizationProofError = (message: string): Error =>
+  Object.assign(new Error(message), { code: ARTIFACT_FINALIZATION_INVALID_PROOF })
+
+const isInvalidArtifactFinalizationProofError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  error.code === ARTIFACT_FINALIZATION_INVALID_PROOF
 
 // A crash between persisting a pending artifact reference and finalizing it strands the file in
 // `.pending/<run>/`. The path segment is stable across OSes, so detect it structurally.
@@ -959,11 +974,13 @@ const reconcileSessionPendingArtifacts = async (
   let firstFailure: unknown
   for (const request of pendingArtifactRequests(session, includeNativeVersions)) {
     try {
-      const finalized = await api.reconcilePendingArtifacts({
+      const result = await api.reconcilePendingArtifacts({
         projectId: session.projectId,
         sessionId: session.id,
         ...request
       })
+      if (!Array.isArray(result)) throw invalidArtifactFinalizationProofError(result.message)
+      const finalized = result
       if (finalized.length > 0) {
         const current = useSessionStore
           .getState()
@@ -1027,7 +1044,9 @@ const retryPendingArtifactFinalization = async (
     useSessionStore.getState().clearArtifactError(sessionId)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    useSessionStore.getState().recordArtifactError(sessionId, message)
+    useSessionStore
+      .getState()
+      .recordArtifactError(sessionId, message, !isInvalidArtifactFinalizationProofError(error))
     reportPersistenceError(error, 'artifact-reconcile')
     throw error
   }

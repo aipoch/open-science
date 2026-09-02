@@ -125,6 +125,7 @@ type ArtifactStorageReconciliationResult = {
   recoveredMessageArtifacts: Array<{ messageId: string; artifacts: ArtifactVersionFile[] }>
   nativeFinalizationRunIds: string[]
   unresolvedNativeFinalizationRunIds: string[]
+  invalidProofNativeFinalizationRunIds?: string[]
 }
 
 type ProjectVersionWriteOperation = {
@@ -682,6 +683,11 @@ class ArtifactProvenanceRepository {
     result.unresolvedNativeFinalizationRunIds.push(
       ...finalizationResult.unresolvedNativeFinalizationRunIds
     )
+    if (finalizationResult.invalidProofNativeFinalizationRunIds?.length) {
+      result.invalidProofNativeFinalizationRunIds = [
+        ...finalizationResult.invalidProofNativeFinalizationRunIds
+      ]
+    }
 
     const unindexedResult = await this.unindexedRecovery.reconcileSession(unindexedSnapshot)
     result.recoveredVersionIds.push(...unindexedResult.recoveredVersionIds)

@@ -198,6 +198,17 @@ export type ReconcilePendingArtifactsRequest = ProjectIdScope & {
   artifactVersionIds?: string[]
 }
 
+// Success remains the historical bare array so an older main process can interoperate during a
+// renderer reload. Terminal proof rejection is explicit because Electron does not preserve custom
+// properties on rejected Error objects.
+export type ReconcilePendingArtifactsResult =
+  | ArtifactFile[]
+  | {
+      ok: false
+      code: typeof ARTIFACT_FINALIZATION_INVALID_PROOF
+      message: string
+    }
+
 // Internal repository list request after the app has resolved the logical project bucket.
 export type ListProjectMessageArtifactsRequest = ListMessageArtifactsRequest & {
   projectId: string

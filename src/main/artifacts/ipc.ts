@@ -9,6 +9,7 @@ import {
   type ArtifactFile,
   type ArtifactPreviewResult,
   type FinalizeRunArtifactsResult,
+  type ReconcilePendingArtifactsResult,
   type ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
 import type {
@@ -193,10 +194,10 @@ const createArtifactHandlers = (
             if (compatibilityPaths.length === 0) return recovered.artifacts
 
             const compatibilityArtifacts = await reconcileCompatibility(compatibilityPaths)
-            const nativeNames = new Set(recovered.artifacts.map((artifact) => artifact.name))
+            const nativePaths = new Set(recovered.artifacts.map((artifact) => artifact.path))
             return [
               ...recovered.artifacts,
-              ...compatibilityArtifacts.filter((artifact) => !nativeNames.has(artifact.name))
+              ...compatibilityArtifacts.filter((artifact) => !nativePaths.has(artifact.path))
             ]
           }
         }
@@ -509,8 +510,29 @@ const registerArtifactIpcHandlers = (
   )
   ipcMainHandle(
     'artifacts:reconcile-pending',
-    (_event, request: ReconcilePendingArtifactsRequest) =>
-      handlers.reconcilePendingArtifacts(request)
+    async (
+      _event,
+      request: ReconcilePendingArtifactsRequest
+    ): Promise<ReconcilePendingArtifactsResult> => {
+      try {
+        return await handlers.reconcilePendingArtifacts(request)
+      } catch (error) {
+        if (
+          typeof error !== 'object' ||
+          error === null ||
+          !('code' in error) ||
+          error.code !== ARTIFACT_FINALIZATION_INVALID_PROOF
+        ) {
+          throw error
+        }
+        return {
+          ok: false,
+          code: ARTIFACT_FINALIZATION_INVALID_PROOF,
+          message:
+            error instanceof Error ? error.message : 'Artifact finalization proof is invalid.'
+        }
+      }
+    }
   )
   ipcMainHandle('artifacts:open-file', (_event, request: OpenArtifactFileRequest) =>
     handlers.openFile(request)

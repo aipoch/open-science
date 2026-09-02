@@ -11,6 +11,7 @@ vi.mock('electron', () => ({
 }))
 
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
+import { ARTIFACT_FINALIZATION_INVALID_PROOF } from '../../shared/artifacts'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createPngInlineSource } from '../artifacts/artifact-test-fixtures'
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
@@ -290,7 +291,7 @@ describe('artifact finalization startup recovery', () => {
           )
         ]
       })
-    ).rejects.toThrow(/remains unresolved/u)
+    ).rejects.toMatchObject({ code: ARTIFACT_FINALIZATION_INVALID_PROOF })
     await expect(
       compatibility.findRunFinalizationMarker(PROJECT_ID, RUN_ID)
     ).resolves.toMatchObject({

@@ -1,7 +1,7 @@
 import { basename, dirname } from 'node:path'
 
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
-import { artifactCreatedAtMs } from '../../shared/artifacts'
+import { ARTIFACT_FINALIZATION_INVALID_PROOF, artifactCreatedAtMs } from '../../shared/artifacts'
 import type { ProjectFileSource } from '../../shared/project-files'
 import {
   materializeSessionConversationGraph,
@@ -64,6 +64,7 @@ type ArtifactStorageReconciler = {
         }>
         nativeFinalizationRunIds?: string[]
         unresolvedNativeFinalizationRunIds?: string[]
+        invalidProofNativeFinalizationRunIds?: string[]
       }
     | undefined
   >
@@ -254,6 +255,14 @@ class SessionPersistenceReconciliationOwner {
 
     const unresolvedRunIds = new Set(artifactRecovery?.unresolvedNativeFinalizationRunIds ?? [])
     if (nativeRunIds.some((runId) => unresolvedRunIds.has(runId))) {
+      const invalidProofRunIds = new Set(
+        artifactRecovery?.invalidProofNativeFinalizationRunIds ?? []
+      )
+      if (nativeRunIds.some((runId) => invalidProofRunIds.has(runId))) {
+        throw Object.assign(new Error('Native Artifact finalization proof is invalid.'), {
+          code: ARTIFACT_FINALIZATION_INVALID_PROOF
+        })
+      }
       throw new Error('Native Artifact finalization remains unresolved.')
     }
 
