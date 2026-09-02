@@ -751,7 +751,7 @@ describe('TaskRunner', () => {
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async () => undefined
+        prompt: async (_request, observer) => observer?.onPromptAdmitted?.()
       }
     })
 
@@ -1304,7 +1304,7 @@ describe('TaskRunner', () => {
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async () => undefined
+        prompt: async (_request, observer) => observer?.onPromptAdmitted?.()
       },
       reviewer: { review },
       createId: () => ids.shift() ?? 'generated-id'
@@ -1659,6 +1659,53 @@ describe('TaskRunner', () => {
     }
   })
 
+  it('does not persist a Task turn when ACP rejects admission for an active desktop turn', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      status: 'running',
+      messages: [
+        {
+          id: 'desktop-prompt',
+          role: 'user',
+          content: 'Desktop prompt',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      activeRun: { promptMessageId: 'desktop-prompt', startedAt: 1 }
+    }
+    const save = vi.fn(async () => undefined)
+    const runner = createRunner({
+      sessions: { list: async () => [existing], save },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [existing.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          throw new Error('An ACP interaction is already running for this session')
+        }
+      }
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Task API prompt'
+    })
+    const failed = await runner.waitForRun(started.id)
+
+    expect(save).not.toHaveBeenCalled()
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: 'An ACP interaction is already running for this session'
+    })
+  })
+
   it('rejects a new authored turn while a restored Plan awaits approval', async () => {
     const existing: PersistedChatSession = {
       ...session,
@@ -1796,7 +1843,8 @@ describe('TaskRunner', () => {
         },
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async (request) => {
+        prompt: async (request, observer) => {
+          await observer?.onPromptAdmitted?.()
           prompts.push(request)
         }
       },
@@ -1868,7 +1916,7 @@ describe('TaskRunner', () => {
         resumeSession,
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async () => undefined
+        prompt: async (_request, observer) => observer?.onPromptAdmitted?.()
       },
       createId: () => ids.shift() ?? 'generated-id'
     })
@@ -1917,7 +1965,7 @@ describe('TaskRunner', () => {
         resumeSession,
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async () => undefined
+        prompt: async (_request, observer) => observer?.onPromptAdmitted?.()
       },
       createId: () => ids.shift() ?? 'generated-id'
     })
@@ -2002,7 +2050,8 @@ describe('TaskRunner', () => {
         }),
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async (request) => {
+        prompt: async (request, observer) => {
+          await observer?.onPromptAdmitted?.()
           prompts.push(request)
         }
       },
@@ -2078,7 +2127,8 @@ describe('TaskRunner', () => {
         resumeSession: async () => ({ sessionId: 'unused' }),
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async (request) => {
+        prompt: async (request, observer) => {
+          await observer?.onPromptAdmitted?.()
           prompts.push(request)
         }
       },
@@ -2146,7 +2196,8 @@ describe('TaskRunner', () => {
         resumeSession: async () => ({ sessionId: 'unused' }),
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async (request) => {
+        prompt: async (request, observer) => {
+          await observer?.onPromptAdmitted?.()
           prompts.push(request)
           throw new Error('provider rejected prompt')
         }

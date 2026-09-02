@@ -698,7 +698,8 @@ describe('HeadlessTaskApi adapter', () => {
     })
     const agent = createAgent({
       listAttachedSessionIds: vi.fn(async () => [existing.id]),
-      prompt: vi.fn(async () => {
+      prompt: vi.fn(async (_request, observer) => {
+        await observer?.onPromptAdmitted?.()
         emitEvent?.({
           id: 'artifact-event',
           timestamp: 10,
@@ -748,7 +749,10 @@ describe('HeadlessTaskApi adapter', () => {
         },
         text: 'Continue research.'
       },
-      { onProviderPromptAccepted: expect.any(Function) }
+      {
+        onPromptAdmitted: expect.any(Function),
+        onProviderPromptAccepted: expect.any(Function)
+      }
     )
     expect(invoke.mock.calls.every(([channel]) => !String(channel).startsWith('acp:'))).toBe(true)
     expect(invoke).toHaveBeenCalledWith('artifacts:finalize-run', taskCallerContext(), [

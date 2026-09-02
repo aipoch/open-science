@@ -20,7 +20,8 @@ type AcpTaskAgentRuntime = {
   sendPrompt(request: AcpPromptRequest): Promise<unknown>
   sendPromptObserved(
     request: AcpPromptRequest,
-    onProviderPromptAccepted: () => void
+    onProviderPromptAccepted: () => void,
+    onPromptAdmitted?: () => Promise<void>
   ): Promise<unknown>
   cancelPrompt(request: { sessionId: string }): Promise<unknown>
 }
@@ -106,8 +107,12 @@ const createAcpTaskAgentPort = (
     const acpRequest = toAcpPromptRequest(request)
     const tracked = notifications?.trackPrompt(acpRequest)
     try {
-      if (observer?.onProviderPromptAccepted) {
-        await runtime.sendPromptObserved(acpRequest, observer.onProviderPromptAccepted)
+      if (observer?.onProviderPromptAccepted || observer?.onPromptAdmitted) {
+        await runtime.sendPromptObserved(
+          acpRequest,
+          observer.onProviderPromptAccepted ?? (() => undefined),
+          observer.onPromptAdmitted
+        )
       } else {
         await runtime.sendPrompt(acpRequest)
       }

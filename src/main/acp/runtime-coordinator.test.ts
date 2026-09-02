@@ -179,9 +179,11 @@ const createFakeRuntime = (options: {
   const shutdownForUpdateGate = vi.fn(async () => ({ reaped: true }))
   const runPrompt = async (
     { sessionId }: { sessionId: string },
-    promptAttemptId?: string
+    promptAttemptId?: string,
+    onPromptAdmitted?: () => Promise<void>
   ): Promise<unknown> => {
     await options.beforePromptStart?.()
+    await onPromptAdmitted?.()
     const turnToken = `turn-${++turnSequence}`
     snapshot = {
       ...snapshot,
@@ -1200,13 +1202,19 @@ describe('AcpRuntimeCoordinator', () => {
       )
       const session = await coordinator.createSession()
       const onProviderPromptAccepted = vi.fn()
+      const onPromptAdmitted = vi.fn(async () => undefined)
 
       await coordinator.sendPromptObserved(
         { sessionId: session.sessionId, text: 'Research this.' },
-        onProviderPromptAccepted
+        onProviderPromptAccepted,
+        onPromptAdmitted
       )
 
+      expect(onPromptAdmitted).toHaveBeenCalledOnce()
       expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
+      expect(onPromptAdmitted.mock.invocationCallOrder[0]).toBeLessThan(
+        onProviderPromptAccepted.mock.invocationCallOrder[0]
+      )
     }
   )
 

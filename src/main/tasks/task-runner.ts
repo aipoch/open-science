@@ -131,6 +131,7 @@ type TaskAgentPromptRequest = {
 }
 
 type TaskAgentPromptObserver = {
+  onPromptAdmitted?: () => Promise<void>
   onProviderPromptAccepted?: () => void
 }
 
@@ -862,7 +863,8 @@ class TaskRunner {
       prompt,
       prepared.historyPreamble,
       prepared.contextReset,
-      prepared.resumeFallback
+      prepared.resumeFallback,
+      prepared.persistOnPromptAdmission
     ).finally(() => this.releaseSession(session.id, runId))
     return cloneRun(run)
   }
@@ -939,6 +941,7 @@ class TaskRunner {
     userMessageId: string
   ): Promise<{
     session: PersistedChatSession
+    persistOnPromptAdmission: boolean
     historyPreamble?: string
     contextReset?: boolean
     resumeFallback?: TaskAgentPromptRequest['resumeFallback']
@@ -1099,12 +1102,16 @@ class TaskRunner {
       }
     }
 
-    const committedSession = await this.dependencies.sessions.save(sessionToCommit)
+    const persistOnPromptAdmission = existing !== undefined
+    const committedSession = persistOnPromptAdmission
+      ? sessionToCommit
+      : await this.dependencies.sessions.save(sessionToCommit)
     const previousHistoryPreamble = existing
       ? createHistoryPreamble(selectTaskHistoryMessages(existing))
       : undefined
     return {
       session: committedSession,
+      persistOnPromptAdmission,
       historyPreamble: contextReset ? previousHistoryPreamble : undefined,
       contextReset,
       resumeFallback:
@@ -1121,10 +1128,14 @@ class TaskRunner {
     prompt: string,
     historyPreamble?: string,
     contextReset?: boolean,
-    resumeFallback?: TaskAgentPromptRequest['resumeFallback']
+    resumeFallback?: TaskAgentPromptRequest['resumeFallback'],
+    persistOnPromptAdmission = false
   ): Promise<void> {
     let promptError: unknown
     let cancellationAtPromptFailure: MutableTaskRun['cancellation'] = undefined
+    let admittedSession: PersistedChatSession | undefined = persistOnPromptAdmission
+      ? undefined
+      : session
     try {
       this.publishProgress(run, 'prompt-dispatched')
       const promptMessageId = session.activeRun!.promptMessageId
@@ -1145,6 +1156,17 @@ class TaskRunner {
           ...(resumeFallback ? { resumeFallback } : {})
         },
         {
+          ...(persistOnPromptAdmission
+            ? {
+                onPromptAdmitted: async () => {
+                  admittedSession = await this.dependencies.agent.withSessionAvailable(
+                    run.projectId,
+                    session.id,
+                    () => this.dependencies.sessions.save(session)
+                  )
+                }
+              }
+            : {}),
           onProviderPromptAccepted: () => {
             if (run.status !== 'running' || run.providerAccepted) return
             run.providerAccepted = true
@@ -1157,8 +1179,32 @@ class TaskRunner {
       cancellationAtPromptFailure = run.cancellation
     }
 
+    if (!admittedSession) {
+      const cancellation = run.cancellation
+      if (cancellation) await cancellation.dispatch.catch(() => undefined)
+      if (cancellationAtPromptFailure?.accepted === true) {
+        run.status = 'cancelled'
+        run.attention = undefined
+        const cancelledAt = this.dependencies.now()
+        run.completedAt = cancelledAt
+        run.cancelledAt = cancelledAt
+        this.stopHeartbeat(run)
+        this.publishProgress(run, 'cancelled')
+      } else {
+        await this.failRun(
+          run,
+          session,
+          undefined,
+          promptError ?? new Error('Task Agent prompt completed without admission.'),
+          false
+        )
+      }
+      run.eventAccumulator = undefined
+      return
+    }
+
     const acceptedSession =
-      promptError === undefined ? consumePendingHistoryReplay(session) : session
+      promptError === undefined ? consumePendingHistoryReplay(admittedSession) : admittedSession
 
     let completed: CompletedTaskSession | undefined
     let completionError: unknown
@@ -1240,7 +1286,8 @@ class TaskRunner {
     run: MutableTaskRun,
     session: PersistedChatSession,
     completed: CompletedTaskSession | undefined,
-    failure: unknown
+    failure: unknown,
+    persistSession = true
   ): Promise<void> {
     const runtimeError = run.eventAccumulator?.runtimeError
     const message = runtimeError?.text?.trim() || toErrorMessage(failure)
@@ -1260,7 +1307,7 @@ class TaskRunner {
     run.completedAt = this.dependencies.now()
     this.stopHeartbeat(run)
     this.publishProgress(run, 'failed')
-    await this.dependencies.sessions.save(failed).catch(() => undefined)
+    if (persistSession) await this.dependencies.sessions.save(failed).catch(() => undefined)
   }
 
   private async completeSession(

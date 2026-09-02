@@ -189,7 +189,11 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
 class AcpPromptTurnWorkflow {
   constructor(private readonly options: AcpPromptTurnWorkflowOptions) {}
 
-  async run(request: AcpPromptRequest, mode: AcpPromptTurnMode): Promise<PromptResponse> {
+  async run(
+    request: AcpPromptRequest,
+    mode: AcpPromptTurnMode,
+    onPromptAdmitted?: () => Promise<void>
+  ): Promise<PromptResponse> {
     let activeSession = this.activeSession(request.sessionId)
     if (!activeSession) throw new Error(`ACP session not found: ${request.sessionId}`)
     this.assertSessionIdle(request.sessionId)
@@ -266,6 +270,9 @@ class AcpPromptTurnWorkflow {
       interaction = this.options.interactions.activatePrompt(reservation)
       const admittedPlan = this.options.plan.admit(request, interaction, plan)
       plan = admittedPlan instanceof Promise ? await admittedPlan : admittedPlan
+      // Admission-dependent state may commit only while this interaction owns the Session. A
+      // rejected commit releases ownership below without publishing prompt start or dispatching.
+      await onPromptAdmitted?.()
       this.options.registry.select(request.sessionId)
       this.options.recordAdmittedPrompt(request)
     } catch (error) {

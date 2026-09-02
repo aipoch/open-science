@@ -844,15 +844,22 @@ class AcpRuntimeCoordinator {
 
   sendPromptObserved(
     request: AcpPromptRequest,
-    onProviderPromptAccepted: () => void
+    onProviderPromptAccepted: () => void,
+    onPromptAdmitted?: () => Promise<void>
   ): ReturnType<AcpRuntime['sendPrompt']> {
-    return this.sendObservedPrompt(request, observePromptAcceptance(onProviderPromptAccepted))
+    return this.sendObservedPrompt(
+      request,
+      observePromptAcceptance(onProviderPromptAccepted),
+      undefined,
+      onPromptAdmitted
+    )
   }
 
   private sendObservedPrompt(
     request: AcpPromptRequest,
     acceptance?: PromptAcceptance,
-    onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
+    onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void,
+    onPromptAdmitted?: () => Promise<void>
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
@@ -864,7 +871,8 @@ class AcpRuntimeCoordinator {
           undefined,
           true,
           undefined,
-          onApplicationPromptAdmitted
+          onApplicationPromptAdmitted,
+          onPromptAdmitted
         ).finally(() => this.delegatedWork?.wakeMessages?.(request.sessionId))
       )
     const admission = this.promptAdmissionGuard?.(request.sessionId)
@@ -1014,7 +1022,8 @@ class AcpRuntimeCoordinator {
     pinnedRuntime?: AcpRuntime,
     retainAsLatestUserPrompt = operation === 'sendPrompt',
     attribution?: MessageAttribution,
-    onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
+    onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void,
+    onPromptAdmitted?: () => Promise<void>
   ): ReturnType<AcpRuntime['sendPrompt']> {
     let dispatchStarted = false
     const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> => {
@@ -1026,7 +1035,8 @@ class AcpRuntimeCoordinator {
         pinnedRuntime,
         retainAsLatestUserPrompt,
         attribution,
-        onApplicationPromptAdmitted
+        onApplicationPromptAdmitted,
+        onPromptAdmitted
       )
     }
     if (!this.promptDispatchAdmissionGuard) return dispatch()
@@ -1046,7 +1056,8 @@ class AcpRuntimeCoordinator {
     pinnedRuntime?: AcpRuntime,
     retainAsLatestUserPrompt = operation === 'sendPrompt',
     attribution?: MessageAttribution,
-    onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
+    onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void,
+    onPromptAdmitted?: () => Promise<void>
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const owner = pinnedRuntime ?? this.findRuntimeForSession(request.sessionId)
@@ -1113,9 +1124,15 @@ class AcpRuntimeCoordinator {
           'ACP prompt start was superseded before provider dispatch'
         )
       }
-      return operation === 'sendApplicationPrompt'
-        ? runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
-        : runtime[operation](taskRequest, attempt.id)
+      if (operation === 'sendApplicationPrompt') {
+        return runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
+      }
+      if (operation === 'sendPrompt') {
+        return onPromptAdmitted
+          ? runtime.sendPrompt(taskRequest, attempt.id, onPromptAdmitted)
+          : runtime.sendPrompt(taskRequest, attempt.id)
+      }
+      return runtime.sendAppContinuation(taskRequest, attempt.id)
     })
     onApplicationPromptAdmitted?.(prompt)
     return prompt

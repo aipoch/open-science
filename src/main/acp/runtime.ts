@@ -1435,7 +1435,11 @@ class AcpRuntime {
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
-  async sendPrompt(request: AcpPromptRequest, promptAttemptId?: string): Promise<PromptResponse> {
+  async sendPrompt(
+    request: AcpPromptRequest,
+    promptAttemptId?: string,
+    onPromptAdmitted?: () => Promise<void>
+  ): Promise<PromptResponse> {
     if (
       request.referencedArtifacts?.some(
         (reference) =>
@@ -1445,10 +1449,14 @@ class AcpRuntime {
       await this.enableLiteratureContext(request.sessionId)
     }
     return this.withOperationLease(() =>
-      this.runPromptTurn(request, {
-        kind: 'user',
-        ...(promptAttemptId === undefined ? {} : { promptAttemptId })
-      })
+      this.runPromptTurn(
+        request,
+        {
+          kind: 'user',
+          ...(promptAttemptId === undefined ? {} : { promptAttemptId })
+        },
+        onPromptAdmitted
+      )
     )
   }
 
@@ -1492,12 +1500,13 @@ class AcpRuntime {
           attribution: MessageAttribution
           promptAttemptId?: string
         }>
-      | Readonly<{ kind: 'app-continuation'; promptAttemptId?: string }>
+      | Readonly<{ kind: 'app-continuation'; promptAttemptId?: string }>,
+    onPromptAdmitted?: () => Promise<void>
   ): Promise<PromptResponse> {
     return withDataRootWrite(async () => {
       let response: PromptResponse | undefined
       try {
-        response = await this.promptTurnWorkflow.run(request, intent)
+        response = await this.promptTurnWorkflow.run(request, intent, onPromptAdmitted)
         return response
       } finally {
         this.schedulePendingAppContinuation(request.sessionId, response?.stopReason)
