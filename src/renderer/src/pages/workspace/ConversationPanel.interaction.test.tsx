@@ -602,6 +602,10 @@ const createPanelDefaults = (): PanelProps => ({
     compact: vi.fn()
   },
   workflows: {
+    artifactFinalization: {
+      running: false,
+      request: vi.fn()
+    },
     review: {
       disabled: false,
       running: false,
@@ -740,6 +744,57 @@ describe('ConversationPanel composer errors', () => {
     expect(alert?.querySelector('section')).not.toBeNull()
     expect(alert?.querySelector('.bg-status-failure-surface')).not.toBeNull()
     expect(alert?.className).not.toContain('bg-red-50')
+  })
+
+  it('offers an immediate retry when Artifact publication fails', () => {
+    const request = vi.fn()
+    const pendingPath = '/data/artifacts/project-a/artifact-session-1/.pending/run-1/report.md'
+    const activeSession: ChatSession = {
+      id: 'session-artifact-retry',
+      projectId: 'project-a',
+      title: 'Artifact retry',
+      cwd: '/workspace',
+      status: 'error',
+      error: 'Generated file finalization failed: disk temporarily unavailable',
+      errorReportable: true,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'agent',
+          content: 'Created the report.',
+          status: 'complete',
+          eventIds: ['artifact-event-1'],
+          artifactIds: ['artifact-session-1:run-1:report.md'],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      artifacts: [
+        {
+          id: 'artifact-session-1:run-1:report.md',
+          kind: 'managed-file',
+          name: 'report.md',
+          path: pendingPath,
+          fileUrl: `file://${pendingPath}`,
+          size: 10,
+          mtimeMs: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    renderPanel({
+      view: { activeSession },
+      workflows: { artifactFinalization: { request } }
+    })
+
+    const retry = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Retry Artifact publication"]'
+    )
+    expect(retry).not.toBeNull()
+    act(() => retry?.click())
+    expect(request).toHaveBeenCalledOnce()
   })
 })
 

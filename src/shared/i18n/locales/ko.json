@@ -1922,6 +1922,7 @@
     "Repair this agent before selecting it.": "선택하기 전에 이 에이전트를 복구하세요.",
     "Report environment": "환경 보고",
     "Report error": "오류 신고",
+    "Retry Artifact publication": "아티팩트 게시 다시 시도",
     "Report this error": "이 오류를 보고하세요",
     "Repos you import from will appear here.": "가져온 저장소가 여기에 표시됩니다.",
     "Repositories ({{count}})_other": "저장소({{count}})",

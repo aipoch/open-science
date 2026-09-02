@@ -1985,6 +1985,7 @@
     "Repair this agent before selecting it.": "請先修復該智能體，然後再選擇它。",
     "Report environment": "報告環境資訊",
     "Report error": "回報錯誤",
+    "Retry Artifact publication": "重試發佈 Artifact",
     "Report this error": "回報此錯誤",
     "Repos you import from will appear here.": "你匯入過的儲存庫會顯示在這裡。",
     "Repositories ({{count}})_other": "儲存庫（{{count}}）",

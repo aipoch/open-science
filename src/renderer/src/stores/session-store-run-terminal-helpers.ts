@@ -20,6 +20,8 @@ import { projectSessionInteractionState } from './session-store-interaction-stat
 import type { ChatMessage, ChatSession, ToolActivity } from './session-store-persistence-owner'
 
 const ARTIFACT_ERROR_PREFIX = 'Generated file finalization failed'
+export const isArtifactFinalizationError = (error: string | undefined): boolean =>
+  error?.startsWith(ARTIFACT_ERROR_PREFIX) ?? false
 const CONVERSATION_GRAPH_SYNC_ERROR =
   'Conversation history could not be finalized safely. Restart the app to restore the last saved conversation state, then report this issue.'
 
@@ -268,7 +270,7 @@ export const projectArtifactError = (session: ChatSession, error: string): ChatS
 })
 
 export const projectArtifactErrorCleared = (session: ChatSession): ChatSession => {
-  if (!session.error?.startsWith(ARTIFACT_ERROR_PREFIX)) return session
+  if (!isArtifactFinalizationError(session.error)) return session
   return {
     ...session,
     status: session.activeRun ? 'running' : 'idle',
@@ -285,7 +287,7 @@ export const projectFinishedRun = (
   contextWindowSample?: RunTerminalContextWindowSample,
   modelCallUsage?: readonly AcpModelCallUsage[]
 ): ChatSession => {
-  const keepArtifactError = session.error?.startsWith(ARTIFACT_ERROR_PREFIX) ?? false
+  const keepArtifactError = isArtifactFinalizationError(session.error)
   const now = Math.max(Date.now(), session.updatedAt + 1)
   const terminalPromptMessageId = promptMessageId ?? session.activeRun?.promptMessageId
   const messages = appendContextWindowSample(

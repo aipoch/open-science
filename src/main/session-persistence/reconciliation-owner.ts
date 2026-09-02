@@ -211,6 +211,29 @@ class SessionPersistenceReconciliationOwner {
     this.permissionGrants = options.permissionGrants
   }
 
+  async retryArtifactFinalization(
+    session: PersistedChatSession,
+    messageId: string
+  ): Promise<ArtifactVersionFile[]> {
+    if (!this.artifactStorage) return []
+
+    const projectReconciliation = await this.artifactStorage.prepareProjectReconciliation(
+      session.projectId
+    )
+    const artifactRecovery = await this.artifactStorage.reconcileSession(
+      session.projectId,
+      session.id,
+      session,
+      {
+        removeOrphanStaging: false,
+        projectReconciliation
+      }
+    )
+    return (artifactRecovery?.recoveredMessageArtifacts ?? []).flatMap((recovery) =>
+      recovery.messageId === messageId ? recovery.artifacts : []
+    )
+  }
+
   async reconcileLoadedSessions(
     input: ReconcileLoadedSessionsInput
   ): Promise<ReconcileLoadedSessionsOutcome> {

@@ -1998,6 +1998,7 @@
     "Repair this agent before selecting it.": "Восстановите этот агент перед выбором.",
     "Report environment": "Отправить информацию об окружении",
     "Report error": "Отправить ошибку",
+    "Retry Artifact publication": "Повторить публикацию артефакта",
     "Report this error": "Отправить эту ошибку",
     "Repos you import from will appear here.": "Репозитории, которые вы импортируете, появятся здесь.",
     "Repositories ({{count}})_one": "Репозитории ({{count}})",

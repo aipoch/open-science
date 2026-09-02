@@ -56,6 +56,55 @@ describe('artifact finalization startup recovery', () => {
     await rm(storageRoot, { recursive: true, force: true })
   })
 
+  it('retries durable finalization in the current Session and remains idempotent', async () => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const { provenance, version } = await prepareRecovery(compatibility)
+    const coordinator = new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      undefined,
+      undefined,
+      provenance
+    )
+    const request = {
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      messageId: 'message-1',
+      pendingPaths: [
+        join(
+          storageRoot,
+          'artifacts',
+          PROJECT_ID,
+          STORAGE_SESSION_ID,
+          '.pending',
+          RUN_ID,
+          'result.png'
+        )
+      ]
+    }
+
+    const finalized = await coordinator.retryArtifactFinalization(request)
+
+    expect(finalized).toEqual([
+      expect.objectContaining({
+        id: version.versionId,
+        artifactId: version.artifactId,
+        versionId: version.versionId,
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID
+      })
+    ])
+    await expect(
+      client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    ).resolves.toMatchObject({ state: 'finalized', messageId: 'message-1' })
+    const durableSession = await sessions.loadSession(PROJECT_ID, SESSION_ID)
+    expect(durableSession?.messages[1].artifactIds).toBeUndefined()
+    expect(durableSession?.artifacts).toBeUndefined()
+
+    await expect(coordinator.retryArtifactFinalization(request)).resolves.toEqual(finalized)
+  })
+
   it('persists an inspectable Message snapshot with the recovered Session attachment', async () => {
     const compatibility = new ArtifactRepository(storageRoot)
     const { provenance, version } = await prepareRecovery(compatibility)

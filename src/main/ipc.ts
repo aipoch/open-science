@@ -3694,7 +3694,9 @@ const createApplicationModules = async (
       ),
     codeReconstruction,
     withSessionMutation: (projectId, sessionId, mutation) =>
-      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
+      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
+    recoverPendingArtifacts: (request) =>
+      sessionPersistenceCoordinator.retryArtifactFinalization(request)
   })
   artifactHandlersRef.current = artifactHandlers
   declareElectronAdapter('artifacts', () =>

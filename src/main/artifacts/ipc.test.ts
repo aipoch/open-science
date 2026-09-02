@@ -991,6 +991,43 @@ describe('artifact IPC handlers', () => {
       versionIds: ['version-1', 'version-1']
     })
   })
+  it('evicts an abandoned Claim after its recovery window expires', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const runRegistry = new ArtifactRunRegistry()
+    const claimId = runRegistry.register({
+      projectId: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-abandoned'
+    })
+
+    now.mockReturnValue(60 * 60 * 1_000)
+    expect(runRegistry.resolve(claimId).runId).toBe('run-abandoned')
+
+    now.mockReturnValue(60 * 60 * 1_000 + 1_000)
+    expect(() => runRegistry.resolve(claimId)).toThrow(/Artifact run claim not found/)
+    now.mockRestore()
+  })
+
+  it('evicts a finalized Claim after its idempotency window expires', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const runRegistry = new ArtifactRunRegistry()
+    const claimId = runRegistry.register({
+      projectId: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-finalized'
+    })
+    runRegistry.markFinalized(claimId, 'message-1')
+
+    now.mockReturnValue(5 * 60 * 1_000)
+    expect(runRegistry.resolve(claimId).finalizedMessageId).toBe('message-1')
+
+    now.mockReturnValue(5 * 60 * 1_000 + 1_000)
+
+    expect(() => runRegistry.resolve(claimId)).toThrow(/Artifact run claim not found/)
+    now.mockRestore()
+  })
 })
 
 describe('artifact IPC handler registration', () => {
@@ -1407,6 +1444,66 @@ describe('artifact handler edge cases', () => {
     }
     await handlers.reconcilePendingArtifacts(request)
 
+    expect(reconcilePendingArtifactPaths).toHaveBeenCalledWith(request)
+  })
+
+  it('uses the Session recovery owner when pending Artifact recovery is configured', async () => {
+    const reconcilePendingArtifactPaths = vi.fn().mockResolvedValue([])
+    const recovered = {
+      id: 'version-1',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      name: 'a.txt',
+      path: '/p/version-1/a.txt',
+      fileUrl: 'file:///p/version-1/a.txt',
+      size: 1,
+      mtimeMs: 1
+    }
+    const recoverPendingArtifacts = vi.fn().mockResolvedValue([recovered])
+    const repository = { reconcilePendingArtifactPaths } as unknown as ArtifactRepository
+    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), {
+      recoverPendingArtifacts
+    })
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      pendingPaths: ['/p/.pending/run-1/a.txt']
+    }
+
+    await expect(handlers.reconcilePendingArtifacts(request)).resolves.toEqual([recovered])
+
+    expect(recoverPendingArtifacts).toHaveBeenCalledWith(request)
+    expect(reconcilePendingArtifactPaths).not.toHaveBeenCalled()
+  })
+
+  it('falls back to compatibility recovery for pending Artifacts without native Versions', async () => {
+    const compatibilityArtifact = {
+      id: 'legacy-artifact',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      name: 'legacy.txt',
+      path: '/p/session-1/legacy.txt',
+      fileUrl: 'file:///p/session-1/legacy.txt',
+      size: 1,
+      mtimeMs: 1
+    }
+    const reconcilePendingArtifactPaths = vi.fn().mockResolvedValue([compatibilityArtifact])
+    const recoverPendingArtifacts = vi.fn().mockResolvedValue([])
+    const repository = { reconcilePendingArtifactPaths } as unknown as ArtifactRepository
+    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), {
+      recoverPendingArtifacts
+    })
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      pendingPaths: ['/p/.pending/run-1/legacy.txt']
+    }
+
+    await expect(handlers.reconcilePendingArtifacts(request)).resolves.toEqual([
+      compatibilityArtifact
+    ])
     expect(reconcilePendingArtifactPaths).toHaveBeenCalledWith(request)
   })
 })

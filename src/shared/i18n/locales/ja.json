@@ -1912,6 +1912,7 @@
     "Repair this agent before selecting it.": "このエージェントを選択する前に修復してください。",
     "Report environment": "レポート環境",
     "Report error": "エラーを報告する",
+    "Retry Artifact publication": "Artifact の公開を再試行",
     "Report this error": "このエラーを報告する",
     "Repos you import from will appear here.": "インポート元のリポジトリがここに表示されます。",
     "Repositories ({{count}})_other": "リポジトリ ({{count}})",

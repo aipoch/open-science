@@ -78,6 +78,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
 import {
+  isArtifactFinalizationError,
   projectSessionActionability,
   useSessionStore,
   type ChatSession
@@ -369,6 +370,10 @@ type ConversationPanelSaveAsSkill = {
 }
 
 type ConversationPanelWorkflows = {
+  artifactFinalization: {
+    running: boolean
+    request: () => void
+  }
   review: ConversationPanelReview
   saveAsSkill: ConversationPanelSaveAsSkill
 }
@@ -733,6 +738,7 @@ const ConversationPanel = ({
   const isRunErrorReportable =
     !hasUnsupportedCodexAcpRunError &&
     (activeSession?.errorReportable ?? isReportableRunFailure(activeSession?.error))
+  const canRetryArtifactFinalization = isArtifactFinalizationError(activeSession?.error)
 
   const activeSpecialist = specialistId
     ? specialistItems.find((item) => item.kind === 'custom' && item.id === specialistId)
@@ -1131,16 +1137,38 @@ const ConversationPanel = ({
                             text and the reported text are always the same error. Shown only for an
                             unknown failure — a recognized one (app guidance or a known provider error)
                             keeps its message but is not a bug worth a GitHub issue. */}
-                        {isRunErrorReportable ? (
-                          <button
-                            type="button"
-                            onClick={openReportDialog}
-                            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-                            aria-label={t('Report this error')}
-                          >
-                            <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
-                            {t('Report error')}
-                          </button>
+                        {canRetryArtifactFinalization || isRunErrorReportable ? (
+                          <div className="flex shrink-0 items-center gap-1">
+                            {canRetryArtifactFinalization ? (
+                              <button
+                                type="button"
+                                onClick={workflows.artifactFinalization.request}
+                                disabled={workflows.artifactFinalization.running}
+                                className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
+                                aria-label={t('Retry Artifact publication')}
+                              >
+                                {workflows.artifactFinalization.running ? (
+                                  <Loader2
+                                    className="size-3 animate-spin"
+                                    strokeWidth={2.2}
+                                    aria-hidden="true"
+                                  />
+                                ) : null}
+                                {t('Retry Artifact publication')}
+                              </button>
+                            ) : null}
+                            {isRunErrorReportable ? (
+                              <button
+                                type="button"
+                                onClick={openReportDialog}
+                                className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
+                                aria-label={t('Report this error')}
+                              >
+                                <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
+                                {t('Report error')}
+                              </button>
+                            ) : null}
+                          </div>
                         ) : null}
                       </div>
                     ) : null}

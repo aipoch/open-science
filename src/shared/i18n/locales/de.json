@@ -1819,6 +1819,7 @@
     "Repair this agent before selecting it.": "Reparieren Sie diesen Agenten, bevor Sie ihn auswählen.",
     "Report environment": "Berichtsumgebung",
     "Report error": "Fehler melden",
+    "Retry Artifact publication": "Artifact-Veröffentlichung erneut versuchen",
     "Report this error": "Melden Sie diesen Fehler",
     "Repos you import from will appear here.": "Repos, aus denen Sie importieren, werden hier angezeigt.",
     "Repositories ({{count}})_one": "Repositorys ({{count}})",

@@ -1990,6 +1990,7 @@
     "Repair this agent before selecting it.": "Repare este agente antes de seleccionarlo.",
     "Report environment": "Entorno de informe",
     "Report error": "Informar error",
+    "Retry Artifact publication": "Reintentar la publicación del artefacto",
     "Report this error": "Informar este error",
     "Repos you import from will appear here.": "Los repositorios desde los que importa aparecerán aquí.",
     "Repositories ({{count}})_one": "Repositorio ({{count}})",

@@ -92,6 +92,7 @@ type ArtifactHandlerDependencies = {
     sessionId: string,
     mutation: () => Promise<Result>
   ) => Promise<Result>
+  recoverPendingArtifacts?: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
   provenance?: Pick<
     ArtifactProvenanceRepository,
     | 'finalizeRun'
@@ -170,14 +171,16 @@ const createArtifactHandlers = (
         })
       ),
     reconcilePendingArtifacts: (request) =>
-      withDataRootWrite(() =>
-        repository.reconcilePendingArtifactPaths({
+      withDataRootWrite(async () => {
+        const recovered = await dependencies.recoverPendingArtifacts?.(request)
+        if (recovered && recovered.length > 0) return recovered
+        return repository.reconcilePendingArtifactPaths({
           projectId: resolveProjectId(request),
           sessionId: request.sessionId,
           messageId: request.messageId,
           pendingPaths: request.pendingPaths
         })
-      ),
+      }),
     openFile: async (request) => {
       // Resolve through the repository first so shell.openPath never sees unmanaged locations.
       const versionIdentity = parseArtifactVersionLocator(request.path)

@@ -1988,6 +1988,7 @@
     "Repair this agent before selecting it.": "请先修复该智能体，然后再选择它。",
     "Report environment": "报告环境信息",
     "Report error": "报告错误",
+    "Retry Artifact publication": "重试发布 Artifact",
     "Report this error": "报告此错误",
     "Repos you import from will appear here.": "你导入过的仓库会显示在这里。",
     "Repositories ({{count}})_other": "仓库（{{count}}）",

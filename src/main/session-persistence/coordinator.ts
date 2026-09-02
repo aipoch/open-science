@@ -1,4 +1,5 @@
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
+import type { ArtifactFile, ReconcilePendingArtifactsRequest } from '../../shared/artifacts'
 import {
   type DelegationPolicy,
   type LoadAllSessionsResult,
@@ -817,6 +818,24 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         // Force the next save to validate Artifact finalization's binding before reusing topology.
         this.stateOwner.invalidateBindingTopology(projectId, sessionId)
       }
+    })
+  }
+
+  retryArtifactFinalization(request: ReconcilePendingArtifactsRequest): Promise<ArtifactFile[]> {
+    return this.operationScheduler.runSession(request.projectId, request.sessionId, async () => {
+      this.assertMutable(request.projectId, request.sessionId, 'mutate')
+      const authority = await this.repository.loadSessionWithDiagnostics(
+        request.projectId,
+        request.sessionId
+      )
+      if (authority.status !== 'found') {
+        throw new Error('Cannot retry Artifact finalization without a readable Session.')
+      }
+
+      return this.reconciliationOwner.retryArtifactFinalization(
+        authority.session,
+        request.messageId
+      )
     })
   }
 

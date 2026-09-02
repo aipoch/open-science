@@ -186,9 +186,9 @@ export type ResolveArtifactVersionDescriptorsRequest = {
   versionIds: string[]
 }
 
-// Renderer request to re-finalize pending artifacts a crash left behind: the persisted message still
-// references `.pending/<run>/<file>` paths whose in-memory finalize claim was lost on restart. Returns
-// the message's finalized files so the renderer can replace the stale pending references.
+// Renderer request to re-finalize pending artifacts after an operational failure or crash: the
+// persisted message still references `.pending/<run>/<file>` paths. Returns the message's finalized
+// files so the renderer can replace the stale pending references.
 export type ReconcilePendingArtifactsRequest = ProjectIdScope & {
   sessionId: string
   messageId: string

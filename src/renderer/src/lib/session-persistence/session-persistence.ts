@@ -908,6 +908,72 @@ type ArtifactReconcileApi = {
 const isPendingArtifactPath = (path: string | undefined): path is string =>
   typeof path === 'string' && path.split(/[\\/]/).includes('.pending')
 
+const pendingArtifactRequests = (
+  session: ChatSession
+): Array<{ messageId: string; pendingPaths: string[] }> => {
+  const artifactsById = new Map(
+    (session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
+  )
+  const messages = session.conversationGraph?.messages ?? session.messages
+  return messages.flatMap((message) => {
+    const pendingPaths = (message.artifactIds ?? [])
+      .map((id) => artifactsById.get(id)?.path)
+      .filter(isPendingArtifactPath)
+    return pendingPaths.length > 0 ? [{ messageId: message.id, pendingPaths }] : []
+  })
+}
+
+const reconcileSessionPendingArtifacts = async (
+  session: ChatSession,
+  api: ArtifactReconcileApi
+): Promise<void> => {
+  if (session.isPending || !session.projectId) return
+
+  for (const request of pendingArtifactRequests(session)) {
+    const finalized = await api.reconcilePendingArtifacts({
+      projectId: session.projectId,
+      sessionId: session.id,
+      ...request
+    })
+    if (finalized.length > 0) {
+      useSessionStore.getState().replaceMessageArtifacts({
+        sessionId: session.id,
+        messageId: request.messageId,
+        artifacts: finalized
+      })
+    }
+  }
+}
+
+const retryPendingArtifactFinalization = async (
+  sessionId: string,
+  api: ArtifactReconcileApi = window.api.artifacts
+): Promise<void> => {
+  const session = useSessionStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === sessionId)
+  if (!session) throw new Error('Session not found.')
+
+  try {
+    if (pendingArtifactRequests(session).length === 0) {
+      throw new Error('No pending Artifact references are available to retry.')
+    }
+    await reconcileSessionPendingArtifacts(session, api)
+    const current = useSessionStore
+      .getState()
+      .sessions.find((candidate) => candidate.id === sessionId)
+    if (current && pendingArtifactRequests(current).length > 0) {
+      throw new Error('Artifact finalization did not resolve all pending files.')
+    }
+    useSessionStore.getState().clearArtifactError(sessionId)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    useSessionStore.getState().recordArtifactError(sessionId, message)
+    reportPersistenceError(error, 'artifact-reconcile')
+    throw error
+  }
+}
+
 // Re-finalizes artifacts a prior crash left in `.pending` after the in-memory finalize claim was lost.
 // For each hydrated message still referencing a pending path, ask the main process to complete the
 // move (idempotent) and replace the message's stale references with the finalized files. Runs once at
@@ -916,38 +982,10 @@ const isPendingArtifactPath = (path: string | undefined): path is string =>
 // readable at its pending path is never dropped.
 const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<void> => {
   for (const session of useSessionStore.getState().sessions) {
-    if (session.isPending || !session.projectId) continue
-
-    const artifactsById = new Map(
-      (session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
-    )
-
-    const messages = session.conversationGraph?.messages ?? session.messages
-    for (const message of messages) {
-      const pendingPaths = (message.artifactIds ?? [])
-        .map((id) => artifactsById.get(id)?.path)
-        .filter(isPendingArtifactPath)
-
-      if (pendingPaths.length === 0) continue
-
-      try {
-        const finalized = await api.reconcilePendingArtifacts({
-          projectId: session.projectId,
-          sessionId: session.id,
-          messageId: message.id,
-          pendingPaths
-        })
-
-        if (finalized.length > 0) {
-          useSessionStore.getState().replaceMessageArtifacts({
-            sessionId: session.id,
-            messageId: message.id,
-            artifacts: finalized
-          })
-        }
-      } catch (error) {
-        reportPersistenceError(error, 'artifact-reconcile')
-      }
+    try {
+      await reconcileSessionPendingArtifacts(session, api)
+    } catch (error) {
+      reportPersistenceError(error, 'artifact-reconcile')
     }
   }
 }
@@ -1823,6 +1861,7 @@ export {
   loadPersistedSession,
   loadPersistedSessions,
   reconcilePendingArtifacts,
+  retryPendingArtifactFinalization,
   resetSessionPersistenceWriteFailuresForTests,
   deriveSessionCatalogRecovery,
   deleteSession,

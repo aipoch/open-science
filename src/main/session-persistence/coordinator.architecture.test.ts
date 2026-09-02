@@ -445,6 +445,7 @@ describe('Session persistence coordinator architecture', () => {
         'recoverInterruptedDelegatedWork',
         'replaceSessionMetadata',
         'repairProjectFiles',
+        'retryArtifactFinalization',
         'runSessionMutation',
         'saveManifest',
         'saveSession',
@@ -667,6 +668,7 @@ describe('Session persistence coordinator architecture', () => {
         'mutateSessionDetailsAuthority',
         'patchSessionRuntimeContext',
         'readSessionRuntimeContext',
+        'retryArtifactFinalization',
         'runSessionMutation',
         'saveSession',
         'saveSessionSpecialistBinding',
@@ -727,7 +729,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(34)
+    expect(expectedSchedulerRoute.size).toBe(35)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
@@ -900,7 +902,7 @@ describe('Session persistence coordinator architecture', () => {
       ].sort()
     )
     expect(methods(reconciliationOwner, 'public')).toEqual(
-      ['reconcileLoadedSessions', 'repairFileProjection'].sort()
+      ['reconcileLoadedSessions', 'repairFileProjection', 'retryArtifactFinalization'].sort()
     )
     expect(methods(reconciliationOwner, 'private')).toEqual([])
     expect(methods(sideChatOwner, 'public')).toEqual(
