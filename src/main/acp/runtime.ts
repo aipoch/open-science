@@ -675,6 +675,7 @@ class AcpRuntime {
     const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
       connect: (request) => this.connect(request),
       disconnect: (emitClosedStatus) => this.disconnect(emitClosedStatus),
+      clearPromptResources: () => this.nativeFollowUp.clear(),
       openAgentConnection: (attempt, onFrameworkResolved) =>
         this.openAgentConnection(attempt, onFrameworkResolved)
     })

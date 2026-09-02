@@ -385,6 +385,23 @@ describe('AcpNativeFollowUpWorkflow', () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
+  it('closes retained prepared resources during workflow teardown', async () => {
+    const close = vi.fn()
+    const { workflow } = createWorkflow({
+      prepareFollowUp: async () => ({
+        prompt: [{ type: 'text' as const, text: 'see file' }],
+        close
+      })
+    })
+
+    await workflow.steerFollowUp({ sessionId: 'app-1', text: 'see file' })
+    expect(close).not.toHaveBeenCalled()
+
+    workflow.clear()
+    workflow.clear()
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it('does not persist unfinalized attachments that session save cannot recover', async () => {
     const { workflow } = createWorkflow()
     await expect(

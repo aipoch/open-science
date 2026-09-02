@@ -201,6 +201,20 @@ class AcpNativeFollowUpWorkflow {
     }
   }
 
+  clear(): void {
+    const retained = [...this.preparedByTurn.values()].flatMap((prepared) => [...prepared])
+    this.preparedByTurn.clear()
+    for (const close of retained) {
+      try {
+        close()
+      } catch (error) {
+        log.info('native follow-up resource cleanup failed', {
+          reason: error instanceof Error ? error.message : String(error)
+        })
+      }
+    }
+  }
+
   async steerSideChatAdvisory(
     request: AcpSteerFollowUpRequest
   ): Promise<SideChatAdvisoryFollowUpResult> {
