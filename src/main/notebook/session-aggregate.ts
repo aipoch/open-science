@@ -506,6 +506,10 @@ export class NotebookSessionAggregate<
     return this.durableTerminatedKernelKeys.has(processKey)
   }
 
+  hasAnyDurableKernelTermination(): boolean {
+    return this.durableUnknownKernelTermination || this.durableTerminatedKernelKeys.size > 0
+  }
+
   markDurableKernelTermination(processKey: string): void {
     this.durableTerminatedKernelKeys.add(processKey)
   }

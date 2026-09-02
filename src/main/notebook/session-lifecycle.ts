@@ -86,6 +86,8 @@ const processKeyFor = (kind: KernelProcessKind | undefined, env: string | undefi
   return `${resolvedKind}:${resolvedEnv}`
 }
 
+const DEFAULT_KERNEL_PROCESS_KEY = processKeyFor('python', DEFAULT_PY_ENV)
+
 const kernelInstanceForProcessKey = (processKey: string): NotebookKernelInstanceIdentity => {
   if (processKey === 'repl') return { kind: 'repl' }
   const separator = processKey.indexOf(':')
@@ -461,6 +463,18 @@ class NotebookSessionLifecycleOwner {
           kernelInstance
         })
         session.clearDurableKernelTermination(processKey)
+      } else if (
+        processKey === DEFAULT_KERNEL_PROCESS_KEY &&
+        !session.hasAnyDurableKernelTermination()
+      ) {
+        // The coarse status represents only the default Python kernel. Persist its recovery from an
+        // error, but never overwrite termination evidence owned by another exact target.
+        await this.options.repository.updateKernelStatus({
+          projectId: session.projectId,
+          sessionId: session.sessionId,
+          lane: session.lane,
+          status
+        })
       }
     } else {
       await this.options.repository.updateKernelStatus({

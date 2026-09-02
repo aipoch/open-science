@@ -1078,8 +1078,8 @@ class NotebookRuntimeService {
         const { language, environment } = target
         const processKey = dataProcessKey(language, environment)
         const statusBeforeRestart = session.kernelStatus(processKey)
-        const hasTargetState =
-          statusBeforeRestart !== undefined || session.hasDurableKernelTermination(processKey)
+        const wasDurablyTerminated = session.hasDurableKernelTermination(processKey)
+        const hasTargetState = statusBeforeRestart !== undefined || wasDurablyTerminated
 
         if (hasTargetState) {
           session.setKernelStatus(processKey, 'restarting')
@@ -1089,15 +1089,16 @@ class NotebookRuntimeService {
         try {
           await session.drainExecution(processKey)
           await session.terminateExecutor(language, environment)
-          await this.sessionLifecycle.clearPersistedKernelTermination(session, processKey)
+          if (hasTargetState) {
+            await this.sessionLifecycle.persistKernelStatus(session, 'idle', processKey)
+          }
           session.clearKernelTerminated(processKey)
           this.environmentOperations.clearRestartRecommendations([processKey])
-          if (hasTargetState) session.setKernelStatus(processKey, 'idle')
         } catch (error) {
           if (hasTargetState) {
             session.setKernelStatus(
               processKey,
-              statusBeforeRestart === 'terminated' ? 'terminated' : 'error'
+              statusBeforeRestart === 'terminated' || wasDurablyTerminated ? 'terminated' : 'error'
             )
           }
           this.sessionLifecycle.notifyChanged(session)
