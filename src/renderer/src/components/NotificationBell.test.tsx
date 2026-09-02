@@ -343,8 +343,8 @@ describe('NotificationBell', () => {
       argsPreview: '{}',
       availableScopes: ['once']
     }))
-    const openSessionById = vi.fn()
-    const openProject = vi.fn()
+    const openSessionById = vi.fn(() => true)
+    const openProject = vi.fn(() => true)
     const markRead = vi.fn(async () => undefined)
     window.api.settings.replayConnectorApproval = replayConnectorApproval
     useNavigationStore.setState({ openSessionById, openProject })
@@ -426,6 +426,30 @@ describe('NotificationBell', () => {
     expect(markAllRead).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps a message unread and the center open when target navigation is rejected', async () => {
+    const openSessionById = vi.fn(() => false)
+    const markRead = vi.fn(async () => undefined)
+    useNavigationStore.setState({ openSessionById })
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      markRead,
+      items: item ? [{ ...item, sessionId: 'session-missing' }] : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const message = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Approval needed')
+    )
+    await act(async () => message?.click())
+
+    expect(openSessionById).toHaveBeenCalledWith('session-missing', 'notification')
+    expect(markRead).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[aria-label="Message center"]')).not.toBeNull()
+  })
+
   it('continues the notification action when marking the message as read fails', async () => {
     const connectorRequest = {
       id: 'request-1',
@@ -436,7 +460,7 @@ describe('NotificationBell', () => {
     } satisfies ConnectorApprovalRequest
     const replayConnectorApproval = vi.fn(async () => connectorRequest)
     const enqueueApproval = vi.fn()
-    const openSessionById = vi.fn()
+    const openSessionById = vi.fn(() => true)
     const markRead = vi.fn(async () => {
       throw new Error('notification write failed')
     })
@@ -466,7 +490,7 @@ describe('NotificationBell', () => {
   })
 
   it('continues navigation when approval replay fails', async () => {
-    const openSessionById = vi.fn()
+    const openSessionById = vi.fn(() => true)
     const markRead = vi.fn(async () => undefined)
     window.api.settings.replayConnectorApproval = vi.fn(async () => {
       throw new Error('approval replay failed')
@@ -493,7 +517,7 @@ describe('NotificationBell', () => {
 
   it('opens a credential wait without replaying it as a connector approval', async () => {
     const replayConnectorApproval = vi.fn(async () => null)
-    const openSessionById = vi.fn()
+    const openSessionById = vi.fn(() => true)
     window.api.settings.replayConnectorApproval = replayConnectorApproval
     useNavigationStore.setState({ openSessionById })
     const item = useNotificationInboxStore.getState().items[0]
@@ -531,7 +555,7 @@ describe('NotificationBell', () => {
           completeMarkRead = resolve
         })
     )
-    const openSessionById = vi.fn()
+    const openSessionById = vi.fn(() => true)
     useNavigationStore.setState({ openSessionById })
     const item = useNotificationInboxStore.getState().items[0]
     useNotificationInboxStore.setState({
@@ -584,7 +608,7 @@ describe('NotificationBell', () => {
       const replayApproval = vi.fn(async () => computeRequest)
       const enqueueConnector = vi.fn()
       const enqueueCompute = vi.fn()
-      const openSessionById = vi.fn()
+      const openSessionById = vi.fn(() => true)
       window.api.settings.replayConnectorApproval = replayConnectorApproval
       window.api.compute.replayApproval = replayApproval
       useSettingsStore.setState({ enqueueApproval: enqueueConnector })

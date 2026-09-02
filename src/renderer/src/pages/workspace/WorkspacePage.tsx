@@ -147,6 +147,9 @@ const WorkspacePage = ({
   const activeProject = useProjectStore((state) =>
     state.projects.find((project) => project.id === scopedProjectId)
   )
+  const isProjectListLoaded = useProjectStore((state) => state.isLoaded)
+  const projectLoadError = useProjectStore((state) => state.loadError)
+  const discardInvalidProject = useNavigationStore((state) => state.discardInvalidProject)
 
   const specialistItems = useSpecialistStore((state) => state.items)
   const specialistCatalogLoaded = useSpecialistStore((state) => state.isLoaded)
@@ -748,6 +751,17 @@ const WorkspacePage = ({
   useEffect(() => {
     if (!activeProjectId) goHome('automatic')
   }, [activeProjectId, goHome])
+
+  useEffect(() => {
+    if (
+      !activeProjectId ||
+      !isProjectListLoaded ||
+      projectLoadError !== undefined ||
+      activeProject !== undefined
+    )
+      return
+    discardInvalidProject(activeProjectId)
+  }, [activeProject, activeProjectId, discardInvalidProject, isProjectListLoaded, projectLoadError])
 
   useEffect(() => {
     if (activeProject?.archivedAt === undefined) return

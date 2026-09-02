@@ -226,11 +226,9 @@ describe('NotificationLiveToast', () => {
     expect(markRead).not.toHaveBeenCalled()
   })
 
-  it('keeps the toast unread when opening its target fails', async () => {
+  it('keeps the toast unread when opening its target is rejected', async () => {
     const markRead = vi.fn(async () => undefined)
-    const openSessionById = vi.fn(() => {
-      throw new Error('navigation failed')
-    })
+    const openSessionById = vi.fn(() => false)
     useNotificationInboxStore.setState({ markRead })
     useNavigationStore.setState({ openSessionById })
     await act(async () => root.render(<NotificationLiveToast />))

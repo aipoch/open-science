@@ -9,7 +9,7 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import { useProjectStore } from '@/stores/project-store'
+import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import {
   createInitialSessionState,
   useSessionStore,
@@ -84,7 +84,7 @@ describe('WorkspacePage notebook entry hydration', () => {
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useSessionStore.setState(createInitialSessionState())
-    useProjectStore.setState({ projects: [] })
+    useProjectStore.setState(createInitialProjectState())
     useNavigationStore.setState({ view: 'workspace', activeProjectId: undefined })
     vi.clearAllMocks()
     getReference = vi.fn(() => Promise.resolve(null))
@@ -96,7 +96,9 @@ describe('WorkspacePage notebook entry hydration', () => {
       },
       preview: {
         load: vi.fn(() => Promise.resolve(undefined)),
-        save: vi.fn(() => Promise.resolve())
+        save: vi.fn(({ expectedRevision }) =>
+          Promise.resolve({ status: 'saved' as const, revision: expectedRevision + 1 })
+        )
       },
       reviewer: {
         onUpdated: vi.fn(() => vi.fn()),
@@ -154,5 +156,44 @@ describe('WorkspacePage notebook entry hydration', () => {
       workspaceCwd: '/workspace/proj-1',
       projectId: 'proj-1'
     })
+  })
+
+  it('returns home and clears an invalid Project after the Project list loads', async () => {
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [
+        {
+          id: 'proj-other',
+          name: 'Other Project',
+          description: '',
+          isExample: false,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        }
+      ],
+      isLoaded: true
+    })
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-missing' })
+    useSessionStore.setState({
+      sessions: [createSession('sess-missing', 'proj-missing', '/workspace/proj-missing')],
+      selectedSessionId: 'sess-missing'
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspacePage
+          isSessionPersistenceHydrated={true}
+          isSessionPersistenceReady={true}
+          canDeleteConversations={true}
+        />
+      )
+    })
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'home',
+      activeProjectId: undefined
+    })
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
   })
 })

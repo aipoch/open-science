@@ -317,10 +317,12 @@ const NotificationBellContent = ({
 
     try {
       if (item.sessionId) {
-        useNavigationStore.getState().openSessionById(item.sessionId, 'notification')
+        const opened = useNavigationStore.getState().openSessionById(item.sessionId, 'notification')
+        if (!opened) return
         setOpen(false)
       } else if (item.projectId) {
-        useNavigationStore.getState().openProject(item.projectId, 'notification')
+        const opened = useNavigationStore.getState().openProject(item.projectId, 'notification')
+        if (!opened) return
         setOpen(false)
       } else if (replayedApproval) {
         setOpen(false)

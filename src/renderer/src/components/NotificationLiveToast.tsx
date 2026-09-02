@@ -193,11 +193,14 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
 
   const { notification, projectName, sessionTitle, detailPreview } = notice.lead
   const openLead = (): void => {
+    let opened = true
     try {
       if (notification.sessionId) {
-        useNavigationStore.getState().openSessionById(notification.sessionId, 'notification')
+        opened = useNavigationStore
+          .getState()
+          .openSessionById(notification.sessionId, 'notification')
       } else if (notification.projectId) {
-        useNavigationStore.getState().openProject(notification.projectId, 'notification')
+        opened = useNavigationStore.getState().openProject(notification.projectId, 'notification')
       } else {
         openVisibleNotificationCenter()
       }
@@ -205,6 +208,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
       // Keep the durable inbox entry unread when its target cannot be opened.
       return
     }
+    if (!opened) return
     if (notification.readAt === undefined) {
       runNotificationTask(() => markRead([notification.id]))
     }

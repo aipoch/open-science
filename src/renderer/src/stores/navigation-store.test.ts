@@ -123,6 +123,35 @@ describe('navigation store', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('b')
   })
 
+  it.each([
+    ['missing', 'project-missing'],
+    ['archived', 'project-archived']
+  ] as const)(
+    'rejects a %s Project destination without changing navigation',
+    (_kind, projectId) => {
+      useProjectStore.setState({
+        projects: [
+          createProject('project-a'),
+          { ...createProject('project-archived'), archivedAt: 2 }
+        ]
+      })
+      useSessionStore.getState().hydrateSessions([createSession({ id: 'a' })], {
+        version: SESSION_MANIFEST_VERSION
+      })
+      useSessionStore.getState().selectSession('a')
+      useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+
+      const opened = useNavigationStore.getState().openProject(projectId, 'notification')
+
+      expect(opened).toBe(false)
+      expect(useNavigationStore.getState()).toMatchObject({
+        view: 'workspace',
+        activeProjectId: 'project-a'
+      })
+      expect(useSessionStore.getState().selectedSessionId).toBe('a')
+    }
+  )
+
   it('atomically switches preview scope when opening a session in another project', () => {
     useSessionStore
       .getState()
@@ -239,16 +268,18 @@ describe('navigation store', () => {
         version: SESSION_MANIFEST_VERSION
       })
 
-    useNavigationStore.getState().openSessionById('a', 'notification')
+    const opened = useNavigationStore.getState().openSessionById('a', 'notification')
 
+    expect(opened).toBe(true)
     expect(useNavigationStore.getState().view).toBe('workspace')
     expect(useNavigationStore.getState().activeProjectId).toBe('project-a')
     expect(useSessionStore.getState().selectedSessionId).toBe('a')
   })
 
   it('stays put when a notification names a session that no longer exists', () => {
-    useNavigationStore.getState().openSessionById('gone', 'notification')
+    const opened = useNavigationStore.getState().openSessionById('gone', 'notification')
 
+    expect(opened).toBe(false)
     expect(useNavigationStore.getState().view).toBe('home')
     expect(useNavigationStore.getState().activeProjectId).toBeUndefined()
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()

@@ -54,7 +54,10 @@ type NavigationStore = {
   openSession: (projectId: string, sessionId: string, origin: NavigationOrigin) => boolean
   // Opens a session knowing only its id (e.g. a desktop-notification click); a no-op when the
   // session no longer exists or hasn't loaded yet.
-  openSessionById: (sessionId: string, origin: NavigationOrigin) => void
+  openSessionById: (sessionId: string, origin: NavigationOrigin) => boolean
+  // Leaves a Workspace whose Project disappeared from the authoritative Project list. This recovery
+  // bypasses preview leave guards because the missing Project is no longer a valid editing scope.
+  discardInvalidProject: (projectId: string) => void
   // Opens a project's New Conversation draft (no Specialist binding) carrying a `/customize` prefill.
   // The intent does not send, create a session, or imply mutation approval; WorkspacePage consumes the
   // prefill once and clears it.
@@ -166,8 +169,9 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
 
   // Enters a project's workspace, selecting its most recent session when one exists. An explicit user
   // open also records the durable last-opened project so `Chat with agent` re-opens it next time.
-  openProject: (projectId, origin) =>
-    requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
+  openProject: (projectId, origin) => {
+    if (!isActiveProject(projectId)) return false
+    return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
       const mostRecentSessionId = findMostRecentSessionId(projectId)
 
       if (mostRecentSessionId) {
@@ -182,7 +186,8 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         navigationState(state, origin, { view: 'workspace', activeProjectId: projectId })
       )
       usePreviewWorkbenchStore.getState().activateProject(projectId, undefined, true)
-    }),
+    })
+  },
 
   // Opens a specific session inside its project's workspace. Returns whether navigation happened,
   // so callers that chain side effects (e.g. closing a modal over the conversation panel) can skip
@@ -209,8 +214,16 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
       .getState()
       .sessions.find((candidate) => candidate.id === sessionId)
 
-    if (!session) return
-    get().openSession(session.projectId, session.id, origin)
+    if (!session) return false
+    return get().openSession(session.projectId, session.id, origin)
+  },
+
+  discardInvalidProject: (projectId) => {
+    const navigation = get()
+    if (navigation.view !== 'workspace' || navigation.activeProjectId !== projectId) return
+
+    useSessionStore.getState().clearSelection()
+    set({ view: 'home', activeProjectId: undefined })
   },
 
   // Opens a project's New Conversation draft carrying a `/customize` prefill. Clears session selection
