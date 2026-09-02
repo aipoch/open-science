@@ -7,6 +7,11 @@ import {
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { Logger } from '../logger'
+import {
+  ProjectDeletionCoordinator,
+  type ProjectDeletionRepository,
+  type ProjectSessionDeletion
+} from '../projects/deletion-coordinator'
 import type { ReviewRepository } from '../reviewer/repository'
 
 const { broadcastLifecycleEvent, getLifecycleClientId, ipcHandlers, registrationFailure } =
@@ -37,6 +42,7 @@ vi.mock('../lifecycle-broadcast', () => ({
 
 import {
   canReconcileSessionAbsences,
+  coordinateSessionPersistenceWithProjectDeletions,
   createSessionPersistenceHandlers,
   createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
@@ -76,6 +82,87 @@ const createMockReviewRepository = (): ReviewRepository =>
   }) as unknown as ReviewRepository
 
 describe('session persistence IPC handlers', () => {
+  it('saves a Session for Project B while Project A cleanup remains failed', async () => {
+    const projects: ProjectDeletionRepository = {
+      get: vi.fn().mockResolvedValue(null),
+      delete: vi.fn().mockResolvedValue(undefined),
+      createDeletionIntent: vi.fn().mockResolvedValue(undefined),
+      deleteDeletionIntent: vi.fn().mockResolvedValue(undefined),
+      listDeletionIntents: vi.fn().mockResolvedValue(['project-a'])
+    }
+    const sessions: ProjectSessionDeletion = {
+      deleteProjectSessions: vi.fn(async (projectId: string) => {
+        if (projectId === 'project-a') throw new Error('Project A derived cleanup failed')
+        return { status: 'completed' as const }
+      }),
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('absent'),
+      completeProjectSessionDeletion: vi.fn().mockResolvedValue(undefined),
+      listLegacyProjectSessionTombstones: vi.fn().mockResolvedValue([])
+    }
+    const projectDeletion = new ProjectDeletionCoordinator(projects, sessions)
+    const projectBSession = { ...createSession(), projectId: 'project-b' }
+    const saveSession = vi.fn(async () => ({ created: false, session: projectBSession }))
+    const repository = coordinateSessionPersistenceWithProjectDeletions(
+      {
+        loadAll: vi.fn(),
+        loadOne: vi.fn(),
+        saveSession,
+        deleteSession: vi.fn(),
+        saveManifest: vi.fn()
+      },
+      projectDeletion
+    )
+
+    await expect(repository.saveSession(projectBSession)).resolves.toEqual({
+      created: false,
+      session: projectBSession
+    })
+    expect(saveSession).toHaveBeenCalledOnce()
+  })
+
+  it('waits only for the Project owned by each Session mutation', async () => {
+    const session = createSession()
+    const waitForProjectOperations = vi.fn().mockResolvedValue(undefined)
+    const projectDeletion = {
+      recoverPendingDeletions: vi
+        .fn()
+        .mockRejectedValue(new Error('strict global recovery must not gate Session mutations')),
+      waitForProjectOperations
+    }
+    const repository = coordinateSessionPersistenceWithProjectDeletions(
+      {
+        loadAll: vi.fn(),
+        loadOne: vi.fn(),
+        saveSession: vi.fn().mockResolvedValue({ created: false, session }),
+        setDelegationPolicy: vi.fn().mockResolvedValue(session),
+        updateArchive: vi.fn().mockResolvedValue(session),
+        deleteSession: vi.fn().mockResolvedValue(undefined),
+        saveManifest: vi.fn().mockResolvedValue(undefined)
+      },
+      projectDeletion
+    )
+
+    await repository.saveSession(session)
+    await repository.setDelegationPolicy?.(session.projectId, session.id, 'allow')
+    await repository.updateArchive?.({
+      projectId: session.projectId,
+      sessionId: session.id,
+      archived: true,
+      expectedArchivedAt: null
+    })
+    await repository.deleteSession(session.projectId, session.id)
+    await repository.saveManifest({ lastProjectId: session.projectId, lastSessionId: session.id })
+
+    expect(waitForProjectOperations.mock.calls).toEqual([
+      [[session.projectId]],
+      [[session.projectId]],
+      [[session.projectId]],
+      [[session.projectId]],
+      [[]]
+    ])
+    expect(projectDeletion.recoverPendingDeletions).not.toHaveBeenCalled()
+  })
+
   it('keeps absence-based reconciliation closed for quarantined Session authority', () => {
     expect(
       canReconcileSessionAbsences({

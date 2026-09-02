@@ -248,7 +248,10 @@ import { withSessionCacheDeletion } from './compute/session-cache-owner'
 import { createMainPromptSideChatRelay } from './side-chat/main-prompt-relay'
 import { registerSideChatIpcHandlers } from './side-chat/ipc'
 import { SideChatRuntimeOwner } from './side-chat/runtime-owner'
-import { type SessionPersistenceBackend } from './session-persistence/ipc'
+import {
+  coordinateSessionPersistenceWithProjectDeletions,
+  type SessionPersistenceBackend
+} from './session-persistence/ipc'
 import { MainMessageAttributionAuthority } from './session-persistence/message-attribution-authority'
 import {
   SessionAuxiliaryTurnUsageRecorder,
@@ -1264,7 +1267,7 @@ const createApplicationModules = async (
     )
     return { ...projection, result }
   }
-  const sessionPersistenceBackend: SessionPersistenceBackend = {
+  const uncoordinatedSessionPersistenceBackend: SessionPersistenceBackend = {
     loadAll: loadAllSessions,
     list: async () => {
       const projection = await ensureSessionProjection()
@@ -1294,7 +1297,6 @@ const createApplicationModules = async (
         : session
     },
     saveSession: async (session, options) => {
-      await projectDeletionCoordinator.recoverPendingDeletions()
       const created =
         (await sessionRepository.loadSession(session.projectId, session.id)) === undefined
       let durableSession = created
@@ -1323,24 +1325,24 @@ const createApplicationModules = async (
       return { created, session: durableSession }
     },
     setDelegationPolicy: async (projectId, sessionId, policy) => {
-      await projectDeletionCoordinator.recoverPendingDeletions()
       return sessionPersistenceCoordinator.setSessionDelegationPolicy(projectId, sessionId, policy)
     },
     updateArchive: async (request) => {
-      await projectDeletionCoordinator.recoverPendingDeletions()
       return archiveCoordinator.updateSessionArchive(request)
     },
     deleteSession: async (projectId, sessionId) => {
-      await projectDeletionCoordinator.recoverPendingDeletions()
       const result = await sessionPersistenceCoordinator.deleteSession(projectId, sessionId)
       await permissionGrantRegistry.prune({ kind: 'session', projectId, sessionId })
       return result
     },
     saveManifest: async (request) => {
-      await projectDeletionCoordinator.recoverPendingDeletions()
       return sessionPersistenceCoordinator.saveManifest(request)
     }
   }
+  const sessionPersistenceBackend = coordinateSessionPersistenceWithProjectDeletions(
+    uncoordinatedSessionPersistenceBackend,
+    projectDeletionCoordinator
+  )
   let backendTeardownOwnedByCoordinator = false
   const provisioningRoot = runtimeRoot(resolveDataRoot())
   // One runner owns Windows integrity/preflight/fallback state for every production micromamba
