@@ -286,3 +286,18 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   setArtifactMentionAvailability: (availability) =>
     set({ artifactMentionAvailability: availability })
 }))
+
+// Notification surfaces can appear before the startup Project query finishes. Wait for an
+// authoritative list before accepting or rejecting the target so a transient empty cache neither
+// loses a valid click nor consumes a notification for a deleted or archived Project.
+export const openNotificationProject = async (projectId: string): Promise<boolean> => {
+  const projectState = useProjectStore.getState()
+  if (!projectState.isLoaded || projectState.loadError !== undefined) {
+    await projectState.loadProjects()
+  }
+
+  const loadedProjectState = useProjectStore.getState()
+  if (!loadedProjectState.isLoaded || loadedProjectState.loadError !== undefined) return false
+
+  return useNavigationStore.getState().openProject(projectId, 'notification')
+}

@@ -239,6 +239,7 @@ describe('NotificationLiveToast', () => {
     const open = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
       (button) => button.textContent === 'Open'
     )
+    expect(open).toBeDefined()
     await act(async () => open?.click())
 
     expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')

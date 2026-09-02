@@ -4,10 +4,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeApprovalRequest } from '../../../shared/compute'
+import type { Project } from '../../../shared/projects'
 import type { ConnectorApprovalRequest } from '../../../shared/settings'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { useComputeStore } from '@/stores/compute-store'
+import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { NotificationBell } from './NotificationBell'
 
@@ -333,6 +335,44 @@ describe('NotificationBell', () => {
 
     expect(document.body.textContent).toContain('Answered')
     expect(document.body.textContent).not.toContain('Waiting for your answer')
+  })
+
+  it('loads Projects before deciding whether a project notification target is valid', async () => {
+    const targetProject = { id: 'project-2', name: 'Fresh project' } as Project
+    const listProjects = vi.fn(async () => [targetProject])
+    window.api = {
+      ...window.api,
+      projects: { list: listProjects }
+    } as unknown as Window['api']
+    useProjectStore.setState(createInitialProjectState())
+    const markRead = vi.fn(async () => undefined)
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      markRead,
+      items: item ? [{ ...item, projectId: targetProject.id, sessionId: undefined }] : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const message = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.includes('Approval needed')
+    )
+    expect(message).toBeDefined()
+    await act(async () => {
+      message?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(listProjects).toHaveBeenCalledOnce()
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: targetProject.id
+    })
+    expect(markRead).toHaveBeenCalledWith(['message-1'])
+    expect(document.body.querySelector('[aria-label="Message center"]')).toBeNull()
   })
 
   it('makes target invalidation override pending labels, replay, and navigation', async () => {
