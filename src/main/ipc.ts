@@ -1449,7 +1449,13 @@ const createApplicationModules = async (
     protectedSpecialistIds: ['reviewer'],
     protectedSpecialistNames: ['Reviewer']
   })
-  const specialistService = new SpecialistService(specialistRepository, builtinRegistry)
+  const specialistService = new SpecialistService(
+    specialistRepository,
+    builtinRegistry,
+    async () => {
+      await specialistPackageRecovery.current?.()
+    }
+  )
   const marketplaceRepository = new MarketplaceRepository(resolveStorageRoot())
   const marketplaceOperationCoordinator = new MarketplaceOperationCoordinator()
   await specialistService.ensureBuiltinCatalogReady()

@@ -237,7 +237,8 @@ export class SpecialistService {
 
   constructor(
     private readonly repo: SpecialistRepository,
-    private readonly builtinRegistry?: { load(): Promise<BuiltinSpecialistRegistryResult> }
+    private readonly builtinRegistry?: { load(): Promise<BuiltinSpecialistRegistryResult> },
+    private readonly beforeCreate?: () => Promise<void>
   ) {}
 
   private async builtinEntries(): Promise<readonly BuiltinSpecialistRegistryEntry[]> {
@@ -368,6 +369,7 @@ export class SpecialistService {
   }
 
   async create(input: CreateSpecialistInput): Promise<SpecialistView> {
+    await this.beforeCreate?.()
     assertCreateInputShape(input)
     await this.assertCreatableName(input.name)
 
