@@ -3,11 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { createProjectDbClient } from '../projects/prisma-client'
 import { adaptMigrationOperationsForCurrentSchema } from './legacy-baseline-adapter'
-import { migrationSqlExecutor } from './migration-sql-executor'
 import { RUNTIME_SCHEMA_TABLE_DDL_BY_NAME } from './migrations/0001-runtime-schema-baseline'
 import { databaseJsonConstraintsMigration } from './migrations/0008-database-json-constraints'
 import { applySqliteMigrationOperations } from './sqlite-schema-migrations'
@@ -422,40 +421,6 @@ describe('application database migrations', () => {
     await migrateApplicationDatabase(client)
 
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
-  })
-
-  it('uses quick integrity checks only for an already-current startup', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-integrity-policy-'))
-    client = createProjectDbClient(storageRoot)
-    const query = vi.spyOn(migrationSqlExecutor, 'query')
-    const integrityPragmas = (): string[] =>
-      query.mock.calls
-        .map(([, statement]) => statement)
-        .filter((statement) => /^PRAGMA (?:quick_check|integrity_check)$/u.test(statement))
-
-    try {
-      await migrateApplicationDatabase(client)
-      expect(integrityPragmas()).toContain('PRAGMA integrity_check')
-
-      query.mockClear()
-      await migrateApplicationDatabase(client)
-      expect(integrityPragmas()).toEqual(['PRAGMA quick_check'])
-
-      query.mockClear()
-      await migrateApplicationDatabaseWithManifest(client, [
-        ...MIGRATION_MANIFEST,
-        futureTestMigration()
-      ])
-      expect(integrityPragmas()).toContain('PRAGMA integrity_check')
-      expect(integrityPragmas()).not.toContain('PRAGMA quick_check')
-
-      query.mockClear()
-      await verifyCurrentApplicationSchema(client)
-      expect(integrityPragmas()).toContain('PRAGMA integrity_check')
-      expect(integrityPragmas()).not.toContain('PRAGMA quick_check')
-    } finally {
-      query.mockRestore()
-    }
   })
 
   it('rejects the obsolete pre-release agent memory ledger without rewriting it', async () => {

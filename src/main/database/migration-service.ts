@@ -14,8 +14,7 @@ import {
   verifyCurrentRuntimeSchema,
   verifyCurrentRuntimeSchemaTables,
   verifyRuntimeSchemaBaseline,
-  type AllowedSuffixCheckConstraints,
-  type RuntimeSchemaIntegrityCheck
+  type AllowedSuffixCheckConstraints
 } from './legacy-baseline-adapter'
 import { DatabaseValidationError } from './database-validation-error'
 import { migrationSqlExecutor } from './migration-sql-executor'
@@ -936,21 +935,14 @@ const runMigrationVerifiers = async (
   }
 }
 
-const verifyCurrentApplicationSchema = async (
-  client: PrismaClient,
-  integrityCheck: RuntimeSchemaIntegrityCheck = 'full'
-): Promise<void> => {
+const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<void> => {
   const memoryTriggerNames = MEMORY_AUXILIARY_SCHEMA_OBJECTS.flatMap(({ type, name }) =>
     type === 'trigger' ? [name] : []
   )
-  await verifyCurrentRuntimeSchema(
-    client,
-    {
-      tableNames: MEMORY_AUXILIARY_TABLE_NAMES,
-      triggerNames: memoryTriggerNames
-    },
-    integrityCheck
-  )
+  await verifyCurrentRuntimeSchema(client, {
+    tableNames: MEMORY_AUXILIARY_TABLE_NAMES,
+    triggerNames: memoryTriggerNames
+  })
   await runMigrationVerifiers(client, agentMemoryProjectScopeMigration.verifiers)
   await runMigrationVerifiers(client, sessionAuxiliaryTurnUsageMigration.verifiers)
   await runMigrationVerifiers(client, sessionUsageAttributionMigration.verifiers)
@@ -1638,8 +1630,7 @@ const migrateApplicationDatabaseWithManifest = async (
   const latest = manifest.at(-1)!
   const complete = async (result: SchemaMigrationResult): Promise<SchemaMigrationResult> => {
     try {
-      // A migration can change every page it touches; keep the full audit for that boundary.
-      await verifyCurrentApplicationSchema(client, result.applied.length === 0 ? 'quick' : 'full')
+      await verifyCurrentApplicationSchema(client)
       if (adoptsManagedFileVersionFoundation) {
         await verifyManagedFileVersionDomain(client)
       }
