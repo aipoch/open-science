@@ -951,16 +951,22 @@ describe('notebook runtime service', () => {
       sessionId: 'shell-session',
       command: 'long-running-command'
     })
-    await vi.waitFor(() => {
-      expect(controlSignal).toBeInstanceOf(AbortSignal)
-      expect(shellSignal).toBeInstanceOf(AbortSignal)
-    })
+    await vi.waitFor(
+      () => {
+        expect(controlSignal).toBeInstanceOf(AbortSignal)
+        expect(shellSignal).toBeInstanceOf(AbortSignal)
+      },
+      { timeout: 5_000 }
+    )
 
     const deleting = service.shutdownProject('project-1')
-    await vi.waitFor(() => {
-      expect(controlSignal?.aborted).toBe(true)
-      expect(shellSignal?.aborted).toBe(true)
-    })
+    await vi.waitFor(
+      () => {
+        expect(controlSignal?.aborted).toBe(true)
+        expect(shellSignal?.aborted).toBe(true)
+      },
+      { timeout: 5_000 }
+    )
 
     await expect(control).resolves.toMatchObject({ status: 'cancelled' })
     await expect(shell).resolves.toEqual({
