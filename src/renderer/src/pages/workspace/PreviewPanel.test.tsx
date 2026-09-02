@@ -198,12 +198,12 @@ describe('PreviewPanel', () => {
 
   const menuCommands = (): string[] =>
     Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).map(
-      (item) => item.dataset.command ?? ''
+      (item) => item.dataset.actionId ?? ''
     )
 
   const clickMenuCommand = async (command: string): Promise<void> => {
     const menuItem = document.body.querySelector<HTMLElement>(
-      `[role="menuitem"][data-command="${command}"]`
+      `[role="menuitem"][data-action-id="${command}"]`
     )
     if (!menuItem) throw new Error(`menu item not found: ${command}`)
     await act(async () => {
@@ -1259,7 +1259,7 @@ describe('PreviewPanel', () => {
     await openTabContextMenu(0)
     expect(menuCommands()[0]).toBe('toggle-pdf-context')
     expect(
-      document.body.querySelector('[data-command="toggle-pdf-context"]')?.textContent
+      document.body.querySelector('[data-action-id="toggle-pdf-context"]')?.textContent
     ).toContain('Read with agent')
 
     await clickMenuCommand('toggle-pdf-context')
@@ -1401,7 +1401,7 @@ describe('PreviewPanel', () => {
 
     await openTabContextMenu(0)
 
-    const command = document.body.querySelector('[data-command="toggle-pdf-context"]')
+    const command = document.body.querySelector('[data-action-id="toggle-pdf-context"]')
     expect(command?.textContent).toContain('Remove PDF from context')
     // Unlink is reversible, so it never takes the danger styling.
     expect(command?.className).not.toContain('danger')
@@ -1442,7 +1442,7 @@ describe('PreviewPanel', () => {
     ])
     expect(
       document.body
-        .querySelector<HTMLElement>('[role="menuitem"][data-command="close-others"]')
+        .querySelector<HTMLElement>('[role="menuitem"][data-action-id="close-others"]')
         ?.getAttribute('aria-disabled')
     ).toBe('true')
   })

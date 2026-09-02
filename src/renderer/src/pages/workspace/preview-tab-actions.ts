@@ -19,12 +19,26 @@ import {
 } from 'lucide-react'
 
 import type { PreviewFileItem, PreviewItem } from '@/stores/preview-workbench-store'
+import type {
+  ActionMenuBinding,
+  ActionMenuDefinition,
+  ActionMenuRecipeEntry
+} from '@/components/action-menu'
 import type { SaveManagedFileRequest } from '../../../../shared/file-save'
 
 import type { PdfContextLinkState } from './use-pdf-context-action'
 
 export type PreviewTabActionCommand =
   'toggle-pdf-context' | 'close' | 'close-others' | 'download' | 'copy-path' | 'save-as-artifact'
+
+export const PREVIEW_TAB_ACTION_CATALOG: Record<PreviewTabActionCommand, ActionMenuDefinition> = {
+  'toggle-pdf-context': { labelKey: 'Read with agent', icon: BookOpen },
+  close: { labelKey: 'Close', icon: X },
+  'close-others': { labelKey: 'Close others', icon: CircleX, danger: true },
+  download: { labelKey: 'Download', icon: Download },
+  'copy-path': { labelKey: 'Copy path', icon: ClipboardCopy },
+  'save-as-artifact': { labelKey: 'Save as artifact', icon: PackagePlus }
+}
 
 export type PreviewTabAction = {
   command: PreviewTabActionCommand
@@ -146,6 +160,44 @@ export const getPreviewTabActionGroups = (
   specific: item.type === 'file' ? fileSpecificActions(item) : []
 })
 
+export const getPreviewTabActionRecipe = (
+  item: PreviewItem,
+  context: PreviewTabActionContext
+): readonly ActionMenuRecipeEntry<PreviewTabActionCommand>[] => {
+  const groups = getPreviewTabActionGroups(item, context)
+  return [groups.pdfContext, groups.shared, groups.specific]
+    .filter((group) => group.length > 0)
+    .flatMap((group, index) => [
+      ...(index > 0 ? [{ kind: 'separator' as const }] : []),
+      ...group.map((action) => ({ kind: 'action' as const, action: action.command }))
+    ])
+}
+
+export const createPreviewTabActionBindings = (
+  context: PreviewTabActionContext,
+  deps: PreviewTabActionDeps
+): Partial<Record<PreviewTabActionCommand, ActionMenuBinding<PreviewItem>>> => ({
+  close: { execute: (item) => runPreviewTabAction('close', item, deps) },
+  'close-others': {
+    execute: (item) => runPreviewTabAction('close-others', item, deps),
+    disabled: context.tabCount <= 1
+  },
+  download: { execute: (item) => runPreviewTabAction('download', item, deps) },
+  'copy-path': { execute: (item) => runPreviewTabAction('copy-path', item, deps) },
+  'save-as-artifact': {
+    execute: (item) => runPreviewTabAction('save-as-artifact', item, deps)
+  },
+  ...(context.pdfContext && deps.togglePdfContext
+    ? {
+        'toggle-pdf-context': {
+          execute: (item: PreviewItem) => runPreviewTabAction('toggle-pdf-context', item, deps),
+          labelKey: context.pdfContext === 'remove' ? 'Remove PDF from context' : 'Read with agent',
+          icon: context.pdfContext === 'remove' ? Link2Off : BookOpen
+        }
+      }
+    : {})
+})
+
 const downloadManagedFile = async (
   item: PreviewFileItem,
   deps: PreviewTabActionDeps
@@ -172,7 +224,7 @@ export const runPreviewTabAction = (
   command: PreviewTabActionCommand,
   item: PreviewItem,
   deps: PreviewTabActionDeps
-): void => {
+): void | Promise<void> => {
   if (command === 'close') {
     deps.closeTab(item.id)
     return
@@ -191,17 +243,15 @@ export const runPreviewTabAction = (
   }
 
   if (command === 'download') {
-    void downloadManagedFile(item, deps).catch((error: unknown) => {
+    return downloadManagedFile(item, deps).catch((error: unknown) => {
       console.error(`Failed to download ${item.name} from the tab menu`, error)
     })
-    return
   }
 
   if (command === 'copy-path') {
-    void deps
+    return deps
       .copyText(item.path)
       .catch((error: unknown) => console.error(`Failed to copy the path of ${item.name}`, error))
-    return
   }
 
   if (command === 'save-as-artifact') {
@@ -209,13 +259,14 @@ export const runPreviewTabAction = (
     // matching the local-file header menu's behavior.
     if (!deps.stageLocalPath) return
 
-    void deps
+    return deps
       .stageLocalPath({
         transferId: crypto.randomUUID(),
         name: item.name,
         sourcePath: item.path,
         ...(deps.activeProjectId ? { projectId: deps.activeProjectId } : {})
       })
+      .then(() => undefined)
       .catch((error: unknown) => {
         console.error(`Failed to save ${item.name} as an artifact from the tab menu`, error)
       })

@@ -13,7 +13,7 @@ import type { PreviewDownloadVersionContext } from './preview-runtime-context'
 const highlightSpy = vi.hoisted(() => vi.fn())
 const registerPreviewFrameSpy = vi.hoisted(() => vi.fn())
 
-vi.mock('../preview-actions/preview-action-context', () => ({
+vi.mock('../preview-actions/preview-action-adapter', () => ({
   useRegisterPreviewContextMenuFrame: registerPreviewFrameSpy
 }))
 

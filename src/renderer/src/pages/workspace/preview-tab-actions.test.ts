@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { resolveActionMenuEntries } from '@/components/action-menu'
 import type { PreviewFileItem, PreviewToolItem } from '@/stores/preview-workbench-store'
 
 import {
+  createPreviewTabActionBindings,
+  getPreviewTabActionRecipe,
   getPreviewTabActionGroups,
+  PREVIEW_TAB_ACTION_CATALOG,
   runPreviewTabAction,
   type PreviewTabActionDeps
 } from './preview-tab-actions'
@@ -38,6 +42,42 @@ const specificCommandsOf = (groups: ReturnType<typeof getPreviewTabActionGroups>
 
 const pdfContextCommandsOf = (groups: ReturnType<typeof getPreviewTabActionGroups>): string[] =>
   groups.pdfContext.map((action) => action.command)
+
+describe('Preview tab Action Menu spec', () => {
+  it('resolves the established PDF, shared, and local action order from catalog and bindings', () => {
+    const item = createFileItem({ source: 'local', format: 'pdf' })
+    const deps: PreviewTabActionDeps = {
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      saveManagedFile: vi.fn(),
+      copyText: vi.fn(),
+      stageLocalPath: vi.fn(),
+      togglePdfContext: vi.fn(),
+      activeProjectId: 'project-1'
+    }
+
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'file-1',
+        catalog: PREVIEW_TAB_ACTION_CATALOG,
+        recipe: getPreviewTabActionRecipe(item, { tabCount: 2, pdfContext: 'link' }),
+        bindings: createPreviewTabActionBindings({ tabCount: 2, pdfContext: 'link' }, deps)
+      },
+      item
+    )
+
+    expect(entries.map((entry) => (entry.kind === 'action' ? entry.action : 'separator'))).toEqual([
+      'toggle-pdf-context',
+      'separator',
+      'close',
+      'close-others',
+      'separator',
+      'copy-path',
+      'download',
+      'save-as-artifact'
+    ])
+  })
+})
 
 describe('getPreviewTabActionGroups', () => {
   it('offers close actions on every tab type', () => {

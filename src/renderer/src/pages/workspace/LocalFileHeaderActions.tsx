@@ -8,6 +8,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ActionToast } from '@/components/ActionToast'
+import { ActionMenuItems } from '@/components/action-menu'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -18,8 +19,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { errorDetail } from '@/lib/error-detail'
-import { PreviewMenuItems } from './preview-actions/PreviewActionMenus'
-import { usePreviewActions } from './preview-actions/preview-action-context'
+import { usePreviewActions } from './preview-actions/preview-action-adapter'
 
 export type LocalFileActionFailure = Readonly<{
   title: string
@@ -113,18 +113,14 @@ export const LocalFileHeaderActions = ({
   const previewActions = usePreviewActions()
   // The content menu has additional window actions; the header overflow keeps its established
   // Copy path -> On this machine grouping without duplicating the adjacent full-screen/close UI.
-  const headerEntries = [
-    ...previewActions.entries.filter(
-      (entry) => entry.kind === 'action' && entry.capability === 'copy-path'
-    ),
-    { kind: 'separator' as const },
-    ...previewActions.entries.filter(
-      (entry) => entry.kind === 'action' && entry.capability === 'download'
-    ),
-    ...previewActions.entries.filter(
-      (entry) => entry.kind === 'action' && entry.capability === 'save-as-artifact'
-    )
-  ]
+  const identityEntries = previewActions.entries.filter(
+    (entry) => entry.kind === 'action' && entry.action === 'copy-path'
+  )
+  const machineEntries = previewActions.entries.filter(
+    (entry) =>
+      entry.kind === 'action' &&
+      (entry.action === 'download' || entry.action === 'save-as-artifact')
+  )
 
   return (
     <>
@@ -179,16 +175,18 @@ export const LocalFileHeaderActions = ({
             </div>
           </div>
           <DropdownMenuSeparator />
-          <PreviewMenuItems
-            entries={headerEntries}
-            getActionId={(entry) => entry.capability}
+          <ActionMenuItems
+            entries={identityEntries}
             onSelect={previewActions.execute}
             compact={false}
-            renderSeparator={() => (
-              <DropdownMenuLabel className="px-1 text-[10px] font-medium uppercase tracking-wider">
-                {t('On this machine')}
-              </DropdownMenuLabel>
-            )}
+          />
+          <DropdownMenuLabel className="px-1 text-[10px] font-medium uppercase tracking-wider">
+            {t('On this machine')}
+          </DropdownMenuLabel>
+          <ActionMenuItems
+            entries={machineEntries}
+            onSelect={previewActions.execute}
+            compact={false}
           />
         </DropdownMenuContent>
       </DropdownMenu>

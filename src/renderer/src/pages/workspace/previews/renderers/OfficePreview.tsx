@@ -20,7 +20,7 @@ import {
 import {
   usePreviewActions,
   useRegisterPreviewContextMenuFrame
-} from '../../preview-actions/preview-action-context'
+} from '../../preview-actions/preview-action-adapter'
 
 import { LocalFileFallbackAction } from '../../LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from '../../ManagedFileDownloadButton'

@@ -2,10 +2,12 @@
 import { describe, expect, it } from 'vitest'
 import { Check } from 'lucide-react'
 
+import { resolveActionMenuEntries } from '@/components/action-menu'
+
 import {
   LOCAL_PREVIEW_MENU_RECIPE,
   MANAGED_PREVIEW_MENU_RECIPE,
-  resolvePreviewMenuEntries,
+  PREVIEW_CAPABILITY_CATALOG,
   shouldHandlePreviewContextMenu,
   type PreviewActionBindings,
   type PreviewMenuRecipeEntry
@@ -25,11 +27,17 @@ describe('preview action model', () => {
   }
 
   it('puts local-only capabilities above the shared preview actions', () => {
-    const entries = resolvePreviewMenuEntries(LOCAL_PREVIEW_MENU_RECIPE, allBindings)
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'local-preview',
+        catalog: PREVIEW_CAPABILITY_CATALOG,
+        recipe: LOCAL_PREVIEW_MENU_RECIPE,
+        bindings: allBindings
+      },
+      undefined
+    )
 
-    expect(
-      entries.map((entry) => (entry.kind === 'action' ? entry.capability : entry.kind))
-    ).toEqual([
+    expect(entries.map((entry) => (entry.kind === 'action' ? entry.action : entry.kind))).toEqual([
       'copy-path',
       'save-as-artifact',
       'separator',
@@ -42,49 +50,77 @@ describe('preview action model', () => {
   })
 
   it('keeps managed shared capabilities in the requested order', () => {
-    const entries = resolvePreviewMenuEntries(MANAGED_PREVIEW_MENU_RECIPE, allBindings)
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'managed-preview',
+        catalog: PREVIEW_CAPABILITY_CATALOG,
+        recipe: MANAGED_PREVIEW_MENU_RECIPE,
+        bindings: allBindings
+      },
+      undefined
+    )
 
-    expect(
-      entries.map((entry) => (entry.kind === 'action' ? entry.capability : entry.kind))
-    ).toEqual(['provenance', 'view-in-context', 'open-fullscreen', 'download', 'close'])
+    expect(entries.map((entry) => (entry.kind === 'action' ? entry.action : entry.kind))).toEqual([
+      'provenance',
+      'view-in-context',
+      'open-fullscreen',
+      'download',
+      'close'
+    ])
   })
 
   it('removes separators left empty by hidden or unbound capabilities', () => {
     const execute = (): void => undefined
     const recipe: readonly PreviewMenuRecipeEntry[] = [
       { kind: 'separator' },
-      { kind: 'action', capability: 'copy-path' },
+      { kind: 'action', action: 'copy-path' },
       { kind: 'separator' },
       { kind: 'separator' },
-      { kind: 'action', capability: 'download' },
+      { kind: 'action', action: 'download' },
       { kind: 'separator' },
-      { kind: 'action', capability: 'save-as-artifact' },
+      { kind: 'action', action: 'save-as-artifact' },
       { kind: 'separator' }
     ]
 
-    const entries = resolvePreviewMenuEntries(recipe, {
-      'copy-path': { execute, hidden: true },
-      download: { execute }
-    })
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'preview',
+        catalog: PREVIEW_CAPABILITY_CATALOG,
+        recipe,
+        bindings: {
+          'copy-path': { execute, hidden: true },
+          download: { execute }
+        }
+      },
+      undefined
+    )
 
     expect(entries.map((entry) => entry.kind)).toEqual(['action'])
-    expect(entries[0]).toMatchObject({ kind: 'action', capability: 'download' })
+    expect(entries[0]).toMatchObject({ kind: 'action', action: 'download' })
   })
 
   it('applies transient presentation and respects disabled bindings', () => {
-    const entries = resolvePreviewMenuEntries(LOCAL_PREVIEW_MENU_RECIPE, {
-      'copy-path': {
-        execute: (): void => undefined,
-        disabled: true,
-        labelKey: 'Copied',
-        icon: Check
-      }
-    })
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'preview',
+        catalog: PREVIEW_CAPABILITY_CATALOG,
+        recipe: LOCAL_PREVIEW_MENU_RECIPE,
+        bindings: {
+          'copy-path': {
+            execute: (): void => undefined,
+            disabled: true,
+            labelKey: 'Copied',
+            icon: Check
+          }
+        }
+      },
+      undefined
+    )
 
     expect(entries).toHaveLength(1)
     expect(entries[0]).toMatchObject({
       kind: 'action',
-      capability: 'copy-path',
+      action: 'copy-path',
       labelKey: 'Copied',
       icon: Check,
       disabled: true

@@ -22,7 +22,7 @@ const previewActionSpies = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../preview-actions/preview-action-context', () => ({
+vi.mock('../../preview-actions/preview-action-adapter', () => ({
   usePreviewActions: () => ({ openContextMenu: previewActionSpies.currentOpenContextMenu }),
   useRegisterPreviewContextMenuFrame: previewActionSpies.registerFrame
 }))
