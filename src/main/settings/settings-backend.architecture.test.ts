@@ -764,6 +764,9 @@ describe('Settings backend ownership architecture', () => {
     )
     expect(mainIpc).toContain('settingsStore ?? resolveStorageRoot()')
     expect(mainIpc).toContain('await settingsService.migrateAgentHomeSkillIdentities()')
+    expect(mainIpc.indexOf('specialistPackageRecovery.current =')).toBeLessThan(
+      mainIpc.indexOf('await settingsService.migrateAgentHomeSkillIdentities()')
+    )
     expect(mainIpc).toContain(
       'capability: new SettingsService({\n      repository: settingsRepository,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      openAlexFetch: netFetchStandard,\n      applyNetworkProxy:'
     )
