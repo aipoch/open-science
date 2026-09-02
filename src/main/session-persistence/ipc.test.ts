@@ -88,7 +88,8 @@ describe('session persistence IPC handlers', () => {
       delete: vi.fn().mockResolvedValue(undefined),
       createDeletionIntent: vi.fn().mockResolvedValue(undefined),
       deleteDeletionIntent: vi.fn().mockResolvedValue(undefined),
-      listDeletionIntents: vi.fn().mockResolvedValue(['project-a'])
+      listDeletionIntents: vi.fn().mockResolvedValue(['project-a']),
+      listDeletionCleanupProjects: vi.fn().mockResolvedValue([{ projectId: 'project-a' }])
     }
     const sessions: ProjectSessionDeletion = {
       deleteProjectSessions: vi.fn(async (projectId: string) => {
@@ -151,7 +152,7 @@ describe('session persistence IPC handlers', () => {
       expectedArchivedAt: null
     })
     await repository.deleteSession(session.projectId, session.id)
-    await repository.saveManifest({ lastProjectId: session.projectId, lastSessionId: session.id })
+    await repository.saveManifest({ lastSessionId: session.id })
 
     expect(waitForProjectOperations.mock.calls).toEqual([
       [[session.projectId]],
