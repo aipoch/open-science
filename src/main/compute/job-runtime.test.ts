@@ -204,6 +204,49 @@ describe('createComputeJobRuntime', () => {
     expect(events).toEqual(['reconciliation-stopping', 'reconciliation-stopped', 'poller-stopped'])
   })
 
+  it('does not reopen queue reconciliation when stop overlaps poller startup', async () => {
+    let releasePollerStart!: () => void
+    const pollerStart = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releasePollerStart = resolve
+        })
+    )
+    const startQueueReconciliation = vi.fn(async () => undefined)
+    const stopQueueReconciliation = vi.fn(async () => undefined)
+    const runtime = createComputeJobRuntime(
+      {
+        computeService: {
+          handleJobUpdated: vi.fn(),
+          handleJobCancellationConfirmed: vi.fn(async () => undefined),
+          startQueueReconciliation,
+          stopQueueReconciliation
+        },
+        hostRepository: {} as ComputeHostRepository,
+        jobRepository: {} as ComputeJobRepository,
+        connectionBroker: {} as ComputeConnectionBroker,
+        storageRoot: '/data'
+      },
+      {
+        createPoller: () => ({
+          start: pollerStart,
+          stop: vi.fn(async () => undefined),
+          pause: vi.fn(async () => undefined),
+          resume: vi.fn()
+        })
+      }
+    )
+
+    const starting = runtime.start()
+    await vi.waitFor(() => expect(pollerStart).toHaveBeenCalledOnce())
+    const stopping = runtime.stop()
+    await vi.waitFor(() => expect(stopQueueReconciliation).toHaveBeenCalledOnce())
+    releasePollerStart()
+    await Promise.all([starting, stopping])
+
+    expect(startQueueReconciliation).not.toHaveBeenCalled()
+  })
+
   it('cancels in-flight polling and harvest work when the runtime stops', async () => {
     const runningJob = {
       job_id: 'job-running',

@@ -108,10 +108,13 @@ export const createComputeJobRuntime = (
   }
   const unbindDeletionRuntime = deps.jobDeletionOwner?.bindRuntime(deletionRuntime)
   let startTask: Promise<void> | undefined
+  let stopRequested = false
   return {
     start: () => {
+      if (stopRequested) return
       startTask ??= (async () => {
         await Promise.all([poller.start(), cancellationReaper?.start()])
+        if (stopRequested) return
         try {
           await deps.computeService.startQueueReconciliation()
         } catch (error) {
@@ -124,6 +127,7 @@ export const createComputeJobRuntime = (
       return startTask
     },
     stop: async () => {
+      stopRequested = true
       unbindDeletionRuntime?.()
       await deps.computeService.stopQueueReconciliation()
       await startTask
