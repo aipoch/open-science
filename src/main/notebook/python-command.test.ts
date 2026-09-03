@@ -286,6 +286,43 @@ describe('validateNotebookHelperExports', () => {
     ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
   })
 
+  it('matches Python runtime bindings created by future imports', async () => {
+    const python = await resolvePythonCommand()
+    const legacyPython = {
+      ...python,
+      baseArgs: [...python.baseArgs, '-c', 'import sys; del sys.addaudithook; exec(sys.argv[-1])']
+    }
+
+    const source =
+      'from __future__ import annotations\ndef compose_figure(value=annotations):\n    return value\n'
+
+    await expect(
+      validateNotebookHelperExports('figure-composer', source, ['compose_figure'], { python })
+    ).resolves.toBeUndefined()
+    await expect(
+      validateNotebookHelperExports('figure-composer', source, ['compose_figure'], {
+        python: legacyPython
+      })
+    ).resolves.toBeUndefined()
+  })
+
+  it('accepts the same safe built-in references on legacy Python', async () => {
+    const python = await resolvePythonCommand()
+    const legacyPython = {
+      ...python,
+      baseArgs: [...python.baseArgs, '-c', 'import sys; del sys.addaudithook; exec(sys.argv[-1])']
+    }
+
+    await expect(
+      validateNotebookHelperExports(
+        'figure-composer',
+        'def compose_figure(value: callable = range):\n    return value\n',
+        ['compose_figure'],
+        { python: legacyPython }
+      )
+    ).resolves.toBeUndefined()
+  })
+
   it('validates UTF-8 helper source when the interpreter defaults stdin to a legacy encoding', async () => {
     const python = await resolvePythonCommand()
 

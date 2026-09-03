@@ -165,13 +165,13 @@ def deny(event, args):
         raise PermissionError("host access is unavailable during helper validation")
 
 request = json.loads(base64.b64decode(sys.stdin.read()).decode("utf-8"))
+safe_names = (
+    "__build_class__", "abs", "all", "any", "bool", "bytes", "callable", "dict", "enumerate",
+    "Exception", "float", "int", "isinstance", "len", "list", "map", "max", "min", "object",
+    "range", "repr", "reversed", "set", "slice", "sorted", "str", "sum", "tuple", "ValueError", "zip"
+)
 if hasattr(sys, "addaudithook"):
     sys.addaudithook(deny)
-    safe_names = (
-        "__build_class__", "abs", "all", "any", "bool", "bytes", "callable", "dict", "enumerate",
-        "Exception", "float", "int", "isinstance", "len", "list", "map", "max", "min", "object",
-        "range", "repr", "reversed", "set", "slice", "sorted", "str", "sum", "tuple", "ValueError", "zip"
-    )
     safe_builtins = {name: getattr(builtins, name) for name in safe_names}
     safe_builtins["__import__"] = restricted_import
     namespace = {"__builtins__": safe_builtins, "__name__": "__open_science_helper_validation__"}
@@ -216,10 +216,7 @@ else:
             if isinstance(expression, ast.Name):
                 if expression.id in visible_bindings:
                     return True, visible_bindings[expression.id]
-                if expression.id in {
-                    "bool", "bytes", "dict", "Exception", "float", "int", "list", "object",
-                    "set", "str", "tuple", "ValueError"
-                }:
+                if expression.id in safe_names:
                     return True, getattr(builtins, expression.id)
                 return False, None
             if isinstance(expression, ast.Attribute):
