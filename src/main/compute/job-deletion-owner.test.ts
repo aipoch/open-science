@@ -379,6 +379,44 @@ describe('ComputeJobDeletionOwner', () => {
     expect(harness.lifecycle.deleteOwnerRows).toHaveBeenCalledOnce()
   })
 
+  it.skipIf(process.platform === 'win32')(
+    'refuses to clean a submitted Job whose existing workdir has no PID witness',
+    async () => {
+      const scratchRoot = mkdtempSync(join(tmpdir(), 'compute-submitted-cleanup-'))
+      const workdir = join(scratchRoot, '.openscience', 'jobs', 'job-1')
+      mkdirSync(workdir, { recursive: true })
+      const harness = createHarness([
+        job({ status: 'submitted', remote_handle: undefined, remote_workdir: workdir })
+      ])
+      harness.runner.run.mockImplementationOnce(async (_host, command) => {
+        const result = spawnSync('/bin/sh', ['-c', command])
+        return {
+          exitCode: result.status ?? 1,
+          stdout: '',
+          stderr: result.stderr.toString(),
+          truncated: false,
+          timedOut: false
+        }
+      })
+
+      try {
+        await expect(
+          harness.owner.cleanupJobRemote({
+            jobId: 'job-1',
+            providerId: 'ssh:cluster',
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            disposition: 'cleaned'
+          })
+        ).rejects.toThrow(/remote compute job cleanup failed/i)
+        expect(existsSync(workdir)).toBe(true)
+        expect(harness.jobRepository.settleRemoteCleanup).not.toHaveBeenCalled()
+      } finally {
+        rmSync(scratchRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('removes terminal Job directories during Project deletion', async () => {
     const harness = createHarness([
       job({ status: 'success', remote_handle: undefined, notified_at: 10 })

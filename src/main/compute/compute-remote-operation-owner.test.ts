@@ -868,6 +868,11 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
         expect.stringContaining("stat -f '%z %i %.9Fm'"),
         expect.anything()
       )
+      expect(run).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('find -L '),
+        expect.anything()
+      )
     }
   )
 

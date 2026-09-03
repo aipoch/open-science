@@ -82,7 +82,11 @@ const activeRemoteHandle = (job: ComputeJob, workdir: string): RemoteHandle | un
   return handle
 }
 
-const cleanupCommand = (workdir: string, handle: RemoteHandle | undefined): string => {
+const cleanupCommand = (
+  workdir: string,
+  handle: RemoteHandle | undefined,
+  requirePidWitness = false
+): string => {
   const marker = '/.openscience/jobs/'
   const markerIndex = workdir.lastIndexOf(marker)
   if (markerIndex < 0) throw new Error('Unsafe remote Compute Job cleanup path.')
@@ -121,6 +125,9 @@ const cleanupCommand = (workdir: string, handle: RemoteHandle | undefined): stri
     '}'
   ]
   if (handle) lines.push(`cleanup_job_pid ${handle.pid} || exit 1`)
+  if (requirePidWitness) {
+    lines.push(`[ -z "$workdir" ] || [ -f ${quotedPidFile} ] || exit 1`)
+  }
   lines.push(
     `if [ -f ${quotedPidFile} ]; then cleanup_job_pid "$(cat ${quotedPidFile} 2>/dev/null || true)" || exit 1; fi`,
     'if [ -n "$workdir" ]; then rm -rf -- "$workdir"; fi',
@@ -508,7 +515,7 @@ class ComputeJobDeletionOwner {
     return {
       jobId: job.job_id,
       providerId: job.provider_id,
-      command: cleanupCommand(workdir, handle)
+      command: cleanupCommand(workdir, handle, job.status === 'submitted' && !handle)
     }
   }
 

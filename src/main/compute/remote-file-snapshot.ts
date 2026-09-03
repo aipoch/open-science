@@ -15,7 +15,7 @@ const remoteFileStatCommand = (remotePath: string): string => {
   const quoted = quoteRemotePath(remotePath)
   return [
     `if [ -f ${quoted} ]; then`,
-    `  fields=$(LC_ALL=C find ${quoted} -maxdepth 0 -printf '%s %i %T@' 2>/dev/null)`,
+    `  fields=$(LC_ALL=C find -L ${quoted} -maxdepth 0 -printf '%s %i %T@' 2>/dev/null)`,
     `  [ -n "$fields" ] || fields=$(LC_ALL=C stat -f '%z %i %.9Fm' ${quoted}) || exit 1`,
     `  printf 'f %s\n' "$fields"`,
     `elif [ -d ${quoted} ]; then`,
