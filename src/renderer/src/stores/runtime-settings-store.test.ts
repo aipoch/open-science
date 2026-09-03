@@ -34,6 +34,19 @@ beforeEach(() => {
 })
 
 describe('runtime settings store', () => {
+  it('records a safe load error while preserving the original rejection', async () => {
+    const diagnostic = new Error('SQLITE_BUSY while reading /private/data/runtimes.db')
+    setRuntimeApi({
+      listEnvironments: vi.fn().mockRejectedValue(diagnostic),
+      getEnablement: vi.fn().mockResolvedValue(enablement),
+      getAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true)
+    })
+
+    await expect(useRuntimeSettingsStore.getState().load()).rejects.toBe(diagnostic)
+
+    expect(useRuntimeSettingsStore.getState().error).toBe('Could not load runtimes.')
+  })
+
   it('retains discovery and package counts across later panel loads', async () => {
     const runtime = {
       listEnvironments: vi.fn().mockResolvedValue({ python: [python], r: [] }),

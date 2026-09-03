@@ -148,9 +148,8 @@ const NetworkPanel = ({
     try {
       await setPackageMirror(draft)
       onNavigate({ kind: 'list' })
-    } catch (error) {
-      // An IPC-supplied error message is passed through verbatim; only the fallback is translated.
-      setMessage(error instanceof Error ? error.message : t('Could not save the package mirror.'))
+    } catch {
+      setMessage('Could not save the package mirror.')
     } finally {
       setIsSaving(false)
     }
@@ -406,7 +405,7 @@ const NetworkPanel = ({
 
               {message ? (
                 <p className="text-xs text-destructive" role="alert">
-                  {message}
+                  {t('Could not save the package mirror.')}
                 </p>
               ) : null}
 

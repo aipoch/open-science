@@ -115,4 +115,26 @@ describe('NetworkPanel mirror view', () => {
     switchTo('zh-Hant')
     expect(placeholders()).toContain('/path/to/corp-ca-bundle.pem')
   })
+
+  it('translates a safe save failure without exposing backend details', async () => {
+    const diagnostic = 'EACCES: open /Users/researcher/private/ca-bundle.pem'
+    useSettingsStore.setState({
+      setPackageMirror: async () => {
+        throw new Error(diagnostic)
+      }
+    })
+    render(<NetworkPanel view={{ kind: 'mirror' }} onNavigate={noop} />)
+    switchTo('zh-Hans')
+
+    const save = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === '保存'
+    )
+    await act(async () => save?.click())
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('无法保存软件包镜像。')
+    expect(container.textContent).not.toContain(diagnostic)
+
+    switchTo('zh-Hant')
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('無法儲存套件鏡像。')
+  })
 })

@@ -244,13 +244,15 @@ describe('RuntimesPanel', () => {
     expect(recheck?.disabled).toBe(false)
   })
 
-  it('shows discovery failures instead of rendering an empty registry and recovers on Recheck', async () => {
-    listEnvironments.mockRejectedValueOnce(new Error('runtime discovery unavailable'))
+  it('shows a safe discovery failure instead of backend details and recovers on Recheck', async () => {
+    const diagnostic = 'SQLITE_BUSY while reading /private/data/runtimes.db'
+    listEnvironments.mockRejectedValueOnce(new Error(diagnostic))
     await render()
 
-    expect(container.querySelector('[data-testid="runtimes-error"]')?.textContent).toContain(
-      'runtime discovery unavailable'
+    expect(container.querySelector('[data-testid="runtimes-error"]')?.textContent).toBe(
+      'Could not load runtimes.'
     )
+    expect(container.textContent).not.toContain(diagnostic)
     expect(container.textContent).not.toContain('Detecting runtimes…')
     expect(container.querySelectorAll('[data-testid="runtime-card"]')).toHaveLength(0)
 
@@ -267,9 +269,10 @@ describe('RuntimesPanel', () => {
     getEnablement.mockRejectedValueOnce(new Error('runtime enablement unavailable'))
     await render()
 
-    expect(container.querySelector('[data-testid="runtimes-error"]')?.textContent).toContain(
-      'runtime enablement unavailable'
+    expect(container.querySelector('[data-testid="runtimes-error"]')?.textContent).toBe(
+      'Could not load runtimes.'
     )
+    expect(container.textContent).not.toContain('runtime enablement unavailable')
     expect(container.querySelectorAll('[data-testid="runtime-card"]')).toHaveLength(0)
     expect(container.querySelector('[aria-label="Enable Python 3.12 (managed)"]')).toBeNull()
   })
@@ -284,9 +287,10 @@ describe('RuntimesPanel', () => {
     )
     await click(recheck ?? null)
 
-    expect(container.querySelector('[data-testid="runtimes-error"]')?.textContent).toContain(
-      'runtime recheck unavailable'
+    expect(container.querySelector('[data-testid="runtimes-error"]')?.textContent).toBe(
+      'Could not re-check runtimes.'
     )
+    expect(container.textContent).not.toContain('runtime recheck unavailable')
     expect(container.querySelectorAll('[data-testid="runtime-card"]')).toHaveLength(4)
     expect(container.textContent).toContain('System Python')
     expect(container.querySelector('[data-testid="runtime-packages-count"]')?.textContent).toBe('2')

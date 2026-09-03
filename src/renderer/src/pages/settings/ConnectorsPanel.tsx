@@ -296,10 +296,8 @@ export function ConnectorsPanel({
     setOperationError(null)
     try {
       await retryCustomServer(id)
-    } catch (error) {
-      setOperationError(
-        error instanceof Error ? error.message : 'Could not reconnect this Connector.'
-      )
+    } catch {
+      setOperationError('Could not reconnect this Connector.')
     } finally {
       setRetryingIds((current) => {
         const next = new Set(current)
@@ -315,12 +313,8 @@ export function ConnectorsPanel({
     setOperationError(null)
     try {
       await retryConnectorProjection()
-    } catch (error) {
-      setOperationError(
-        error instanceof Error
-          ? error.message
-          : 'Could not refresh the Agent Skill documents for Connectors.'
-      )
+    } catch {
+      setOperationError('Could not refresh the Agent Skill documents for Connectors.')
     } finally {
       setRetryingProjection(false)
     }
@@ -376,8 +370,8 @@ export function ConnectorsPanel({
     try {
       await removeCustomServer(removal.server.id)
       setRemoval(null)
-    } catch (error) {
-      setRemovalError(error instanceof Error ? error.message : 'Could not remove this Connector.')
+    } catch {
+      setRemovalError('Could not remove this Connector.')
     } finally {
       setRemoving(false)
     }
@@ -675,7 +669,13 @@ export function ConnectorsPanel({
             role="alert"
           >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{t(operationError)}</span>
+            <span>
+              {operationError === 'Could not reconnect this Connector.'
+                ? t('Could not reconnect this Connector.')
+                : operationError === 'Could not refresh the Agent Skill documents for Connectors.'
+                  ? t('Could not refresh the Agent Skill documents for Connectors.')
+                  : t(operationError)}
+            </span>
           </div>
         ) : null}
         {showFeatured
@@ -994,7 +994,7 @@ export function ConnectorsPanel({
                   className="mt-4 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
                 >
                   <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                  <span>{t(removalError)}</span>
+                  <span>{t('Could not remove this Connector.')}</span>
                 </div>
               ) : null}
             </div>

@@ -133,7 +133,7 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
           set({
             loaded: true,
             busy: false,
-            error: error instanceof Error ? error.message : 'Could not load runtimes.'
+            error: 'Could not load runtimes.'
           })
         }
         throw error

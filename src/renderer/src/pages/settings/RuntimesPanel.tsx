@@ -186,8 +186,8 @@ const RuntimesPanel = ({
     setError(null)
     try {
       await recheckRuntimeSettings()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t('Could not re-check runtimes.'))
+    } catch {
+      setError('Could not re-check runtimes.')
     }
   }
 
@@ -627,7 +627,11 @@ const RuntimesPanel = ({
         ) : null}
         {error !== null && (
           <p role="alert" className="text-sm text-destructive" data-testid="runtimes-error">
-            {error === 'Could not load runtimes.' ? t('Could not load runtimes.') : error}
+            {error === 'Could not load runtimes.'
+              ? t('Could not load runtimes.')
+              : error === 'Could not re-check runtimes.'
+                ? t('Could not re-check runtimes.')
+                : error}
           </p>
         )}
         {!loading && envs !== null ? (

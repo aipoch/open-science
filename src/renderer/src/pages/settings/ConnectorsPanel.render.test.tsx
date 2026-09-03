@@ -453,6 +453,25 @@ describe('ConnectorsPanel (groups)', () => {
     expect(retryConnectorProjection).toHaveBeenCalledOnce()
   })
 
+  it('shows a safe Skill projection retry failure instead of backend details', async () => {
+    const diagnostic = 'EACCES: write /Users/researcher/private/generated-skill/SKILL.md'
+    useSettingsStore.setState({
+      skillProjectionStatus: 'degraded',
+      retryConnectorProjection: vi.fn().mockRejectedValue(new Error(diagnostic))
+    })
+    await act(async () => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    await act(async () => retry?.click())
+
+    expect(document.body.textContent).toContain(
+      'Could not refresh the Agent Skill documents for Connectors.'
+    )
+    expect(document.body.textContent).not.toContain(diagnostic)
+  })
+
   it('reports a rejected Connector access change after rollback', async () => {
     useSettingsStore.setState({
       setConnectorEnabled: vi.fn().mockRejectedValue(new Error('write failed'))
@@ -747,6 +766,32 @@ describe('ConnectorsPanel (groups)', () => {
     expect(document.body.textContent).toContain('Checking…')
 
     await act(async () => finishRetry())
+  })
+
+  it('shows a safe retry failure instead of backend details', async () => {
+    const diagnostic = 'spawn /Users/researcher/private/mcp-server ENOENT'
+    useSettingsStore.setState({
+      retryCustomServer: vi.fn().mockRejectedValue(new Error(diagnostic)),
+      customServers: [
+        {
+          id: 'offline-mcp',
+          name: 'offline-mcp',
+          displayName: 'Offline MCP',
+          transport: 'stdio',
+          enabled: true,
+          command: 'mcp',
+          availability: 'unavailable'
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    await act(async () => clickButtonByText('Retry'))
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not reconnect this Connector.'
+    )
+    expect(document.body.textContent).not.toContain(diagnostic)
   })
 
   it('directs invalid custom Connector configurations to Edit without offering Retry', () => {
