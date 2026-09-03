@@ -85,6 +85,7 @@ export type ComposerSendSnapshot = {
   pendingPdfContextAttachmentIds?: string[]
   pendingPdfContextVersions?: Array<{
     sourceKind: 'artifact-version' | 'upload-version'
+    sourceFileId: string
     sourceVersionId: string
   }>
 }
@@ -213,8 +214,9 @@ const useWorkspaceComposerController = ({
   )
   const durableReadingSources = useMemo(
     () =>
-      durableReadingBindings.map(({ sourceKind, sourceVersionId }) => ({
+      durableReadingBindings.map(({ sourceKind, sourceFileId, sourceVersionId }) => ({
         sourceKind,
+        sourceFileId,
         sourceVersionId
       })),
     [durableReadingBindings]
@@ -436,7 +438,11 @@ const useWorkspaceComposerController = ({
       }
       const currentSources = (
         readingMutationRuntimeRef.current?.runtimeContext.pdfContext?.bindings ?? []
-      ).map(({ sourceKind, sourceVersionId }) => ({ sourceKind, sourceVersionId }))
+      ).map(({ sourceKind, sourceFileId, sourceVersionId }) => ({
+        sourceKind,
+        sourceFileId,
+        sourceVersionId
+      }))
       if (samePdfContextSources(uniqueSources, currentSources)) return Promise.resolve()
 
       const operationSessionId = activeSession.id
@@ -486,7 +492,11 @@ const useWorkspaceComposerController = ({
           const currentBindings =
             readingMutationRuntimeRef.current?.runtimeContext.pdfContext?.bindings ?? []
           readingContextSourcesRef.current = currentBindings.map(
-            ({ sourceKind, sourceVersionId }) => ({ sourceKind, sourceVersionId })
+            ({ sourceKind, sourceFileId, sourceVersionId }) => ({
+              sourceKind,
+              sourceFileId,
+              sourceVersionId
+            })
           )
           setError(error instanceof Error ? error.message : String(error))
           throw error
@@ -919,6 +929,7 @@ const useWorkspaceComposerController = ({
           ? [
               {
                 sourceKind: pendingPdfContextSelection.sourceKind,
+                sourceFileId: pendingPdfContextSelection.sourceFileId,
                 sourceVersionId: pendingPdfContextSelection.sourceVersionId
               }
             ]

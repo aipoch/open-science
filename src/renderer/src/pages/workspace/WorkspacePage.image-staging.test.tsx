@@ -478,6 +478,7 @@ describe('WorkspacePage image attachment gating', () => {
     const manualSelection = {
       kind: 'version' as const,
       sourceKind: 'artifact-version' as const,
+      sourceFileId: 'artifact-9',
       sourceVersionId: 'version-9',
       previewItemId: 'other-preview'
     }

@@ -1268,7 +1268,13 @@ describe('PreviewPanel', () => {
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
     expect(linkPdfContext).toHaveBeenCalledWith(
       expect.objectContaining({
-        sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+        sources: [
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'item-1',
+            sourceVersionId: 'version-1'
+          }
+        ]
       })
     )
     expect(focusListener).toHaveBeenCalled()
@@ -1326,6 +1332,7 @@ describe('PreviewPanel', () => {
     await vi.waitFor(() =>
       expect(onLinkReadingContext).toHaveBeenCalledWith({
         sourceKind: 'artifact-version',
+        sourceFileId: 'item-1',
         sourceVersionId: 'version-1'
       })
     )

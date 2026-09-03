@@ -212,7 +212,13 @@ describe('branchWorkspaceSessionFromMessage', () => {
       projectId: 'project-1',
       sessionId: 'branched-session',
       expectedRevision: 0,
-      sources: [{ sourceKind: 'upload-version', sourceVersionId: 'version-1' }]
+      sources: [
+        {
+          sourceKind: 'upload-version',
+          sourceFileId: 'file-1',
+          sourceVersionId: 'version-1'
+        }
+      ]
     })
     expect(
       useSessionStore.getState().sessions.find((session) => session.id === 'branched-session')

@@ -2149,7 +2149,13 @@ describe('PreviewFileSurface PDF context action matrix', () => {
       projectId: 'project-1',
       sessionId: 'active-session',
       expectedRevision: 3,
-      sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+      sources: [
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1'
+        }
+      ]
     })
     // Linking is "Read with agent": the composer takes focus so the user can ask immediately.
     expect(focusListener).toHaveBeenCalled()
@@ -2177,6 +2183,7 @@ describe('PreviewFileSurface PDF context action matrix', () => {
 
     expect(onLinkReadingContext).toHaveBeenCalledWith({
       sourceKind: 'artifact-version',
+      sourceFileId: 'artifact-1',
       sourceVersionId: 'version-1'
     })
     expect(direct.linkPdfContext).not.toHaveBeenCalled()
@@ -2227,7 +2234,13 @@ describe('PreviewFileSurface PDF context action matrix', () => {
       projectId: 'project-1',
       sessionId: 'active-session',
       expectedRevision: 3,
-      sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+      sources: [
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1'
+        }
+      ]
     })
   })
 
@@ -2310,6 +2323,7 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']).toEqual({
       kind: 'version',
       sourceKind: 'artifact-version',
+      sourceFileId: 'artifact-1',
       sourceVersionId: 'version-1',
       previewItemId: 'artifact-1'
     })
@@ -2343,6 +2357,7 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']).toEqual({
       kind: 'version',
       sourceKind: 'artifact-version',
+      sourceFileId: 'artifact-1',
       sourceVersionId: 'version-1',
       previewItemId: 'artifact-1'
     })
@@ -2355,6 +2370,7 @@ describe('PreviewFileSurface PDF context action matrix', () => {
       ...pdfItem,
       id: 'upload-1',
       artifactId: undefined,
+      managedFileId: 'upload-1',
       selectedVersionId: undefined,
       source: 'upload',
       path: 'upload-version:project-1/source-session/upload-version-1'
@@ -2367,7 +2383,13 @@ describe('PreviewFileSurface PDF context action matrix', () => {
 
     expect(linkPdfContext).toHaveBeenCalledWith(
       expect.objectContaining({
-        sources: [{ sourceKind: 'upload-version', sourceVersionId: 'upload-version-1' }]
+        sources: [
+          {
+            sourceKind: 'upload-version',
+            sourceFileId: 'upload-1',
+            sourceVersionId: 'upload-version-1'
+          }
+        ]
       })
     )
   })
@@ -2528,6 +2550,7 @@ describe('PreviewFileSurface PDF context action matrix', () => {
         sources: [
           {
             sourceKind: 'upload-version',
+            sourceFileId: 'upload-1',
             sourceVersionId: 'notebook-upload-version-1'
           }
         ]

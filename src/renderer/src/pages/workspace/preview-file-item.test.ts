@@ -285,6 +285,8 @@ describe('preview file item helpers', () => {
       projectId: 'project-1',
       sessionId: 'source-session',
       source: 'upload',
+      managedFileId: 'upload-1',
+      selectedVersionId: 'upload-version-2',
       path: 'upload-version:project-1/source-session/upload-version-2',
       format: 'pdf'
     })

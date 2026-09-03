@@ -15,15 +15,15 @@ import {
 } from '@/stores/preview-workbench-store'
 import { useSessionStore } from '@/stores/session-store'
 import { parseNotebookInputPreviewKey } from '../../../../shared/notebook'
-import { MAX_SESSION_PDF_CONTEXTS } from '../../../../shared/session-persistence'
+import {
+  MAX_SESSION_PDF_CONTEXTS,
+  type SessionPdfContextSource
+} from '../../../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID, parseUploadVersionReference } from '../../../../shared/uploads'
 
 import { requestComposerFocus } from './composer-focus-events'
 
-export type PdfContextTarget = {
-  sourceKind: 'artifact-version' | 'upload-version'
-  sourceVersionId: string
-}
+export type PdfContextTarget = SessionPdfContextSource
 
 // A managed PDF is linkable once it has immutable Version identity; local files never are.
 export const resolvePdfContextTarget = (item: PreviewFileItem): PdfContextTarget | undefined => {
@@ -33,6 +33,7 @@ export const resolvePdfContextTarget = (item: PreviewFileItem): PdfContextTarget
       const identity = parseNotebookInputPreviewKey(item.path)
       return {
         sourceKind: identity.sourceKind,
+        sourceFileId: identity.sourceFileId,
         sourceVersionId: identity.inputFileVersionId
       }
     } catch {
@@ -41,12 +42,14 @@ export const resolvePdfContextTarget = (item: PreviewFileItem): PdfContextTarget
   }
   if (item.source === 'upload') {
     const identity = parseUploadVersionReference(item.path)
-    return identity
-      ? { sourceKind: 'upload-version', sourceVersionId: identity.versionId }
+    const sourceFileId = item.managedFileId ?? identity?.fileId
+    return identity && sourceFileId
+      ? { sourceKind: 'upload-version', sourceFileId, sourceVersionId: identity.versionId }
       : undefined
   }
-  return item.selectedVersionId
-    ? { sourceKind: 'artifact-version', sourceVersionId: item.selectedVersionId }
+  const sourceFileId = item.managedFileId ?? item.artifactId
+  return item.selectedVersionId && sourceFileId
+    ? { sourceKind: 'artifact-version', sourceFileId, sourceVersionId: item.selectedVersionId }
     : undefined
 }
 
@@ -188,6 +191,7 @@ export const usePdfContextAction = (
           : {
               kind: 'version',
               sourceKind: pdfContextTarget!.sourceKind,
+              sourceFileId: pdfContextTarget!.sourceFileId,
               sourceVersionId: pdfContextTarget!.sourceVersionId,
               previewItemId: item!.id
             }

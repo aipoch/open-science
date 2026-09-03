@@ -92,6 +92,7 @@ export type PendingPdfContextSelection =
   | {
       kind: 'version'
       sourceKind: 'artifact-version' | 'upload-version'
+      sourceFileId: string
       sourceVersionId: string
       previewItemId: string
     }

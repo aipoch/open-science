@@ -151,6 +151,7 @@ export type MessagePdfContextSnapshot = SessionPdfContext &
 
 export type SessionPdfContextSource = Readonly<{
   sourceKind: SessionPdfBinding['sourceKind']
+  sourceFileId: string
   sourceVersionId: string
 }>
 
@@ -4566,6 +4567,7 @@ export type OpenSessionRecoveryFolderRequest = {
 const sessionPdfContextSourceSchema = z
   .object({
     sourceKind: z.enum(['artifact-version', 'upload-version']),
+    sourceFileId: z.string().min(1),
     sourceVersionId: z.string().min(1)
   })
   .strict()

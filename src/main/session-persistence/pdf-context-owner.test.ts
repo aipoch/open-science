@@ -2,6 +2,7 @@ import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import type { SessionRuntimeContext } from '../../shared/session-persistence'
+import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 import { SessionPdfContextOwner } from './pdf-context-owner'
 
@@ -80,14 +81,28 @@ describe('SessionPdfContextOwner', () => {
       harness.owner.filterCandidates({
         projectId: 'project-1',
         sources: [
-          { sourceKind: 'artifact-version', sourceVersionId: 'single-page' },
-          { sourceKind: 'artifact-version', sourceVersionId: 'multi-page' },
-          { sourceKind: 'artifact-version', sourceVersionId: 'notes' },
-          { sourceKind: 'artifact-version', sourceVersionId: 'missing' }
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'single-page',
+            sourceVersionId: 'single-page'
+          },
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'multi-page',
+            sourceVersionId: 'multi-page'
+          },
+          { sourceKind: 'artifact-version', sourceFileId: 'notes', sourceVersionId: 'notes' },
+          { sourceKind: 'artifact-version', sourceFileId: 'missing', sourceVersionId: 'missing' }
         ]
       })
     ).resolves.toEqual({
-      sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'multi-page' }],
+      sources: [
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'multi-page',
+          sourceVersionId: 'multi-page'
+        }
+      ],
       pendingAttachmentIds: []
     })
   })
@@ -125,13 +140,20 @@ describe('SessionPdfContextOwner', () => {
       projectId: 'project-1',
       sessionId: 'session-1',
       expectedRevision: 4,
-      sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+      sources: [
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1'
+        }
+      ]
     })
 
     expect(harness.resolveVersion).toHaveBeenCalledWith({
       projectId: 'project-1',
       sourceKind: 'artifact-version',
-      inputFileVersionId: 'version-1'
+      inputFileVersionId: 'version-1',
+      expectedSourceFileId: 'artifact-1'
     })
     expect(harness.patchSessionRuntimeContext).toHaveBeenCalledWith({
       projectId: 'project-1',
@@ -155,6 +177,78 @@ describe('SessionPdfContextOwner', () => {
     expect(context.pdfContext?.bindings[0]?.bindingId).toEqual(expect.any(String))
   })
 
+  it('links a newly finalized upload through its complete immutable Version identity', async () => {
+    const openVersion = vi.fn().mockResolvedValue({
+      path: '/managed/paper.pdf',
+      size: input.sizeBytes,
+      logicalFile: {
+        source: 'upload',
+        id: 'upload-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        displayName: input.filename,
+        currentVersionId: input.inputFileVersionId
+      },
+      version: {
+        id: input.inputFileVersionId,
+        fileId: 'upload-1',
+        versionNumber: 1,
+        contentStorageKey: input.storageKey,
+        filename: input.filename,
+        originalFilename: input.filename,
+        contentType: input.contentType,
+        sizeBytes: BigInt(input.sizeBytes),
+        checksum: input.checksum,
+        createdAt: new Date('2026-09-03T00:00:00.000Z')
+      },
+      verifyUnchanged: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined)
+    })
+    const readSessionRuntimeContext = vi.fn(async () => ({ version: 1 as const, revision: 0 }))
+    const patchSessionRuntimeContext = vi.fn(async (request) => ({
+      version: 1 as const,
+      revision: request.expectedRevision + 1,
+      ...request.patch
+    }))
+    const owner = new SessionPdfContextOwner({
+      inputs: new ImmutableInputAuthority({
+        storageRoot: '/storage',
+        managedFileVersions: { openVersion }
+      } as never),
+      sessions: { readSessionRuntimeContext, patchSessionRuntimeContext }
+    })
+    const source = {
+      sourceKind: 'upload-version' as const,
+      sourceFileId: 'upload-1',
+      sourceVersionId: input.inputFileVersionId
+    }
+
+    await expect(
+      owner.link({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedRevision: 0,
+        sources: [source],
+        excludeSinglePage: true
+      })
+    ).resolves.toMatchObject({
+      revision: 1,
+      pdfContext: {
+        bindings: [
+          expect.objectContaining({
+            sourceKind: 'upload-version',
+            sourceFileId: 'upload-1',
+            sourceVersionId: input.inputFileVersionId
+          })
+        ]
+      }
+    })
+    expect(openVersion).toHaveBeenCalledWith(
+      { source: 'upload', projectId: 'project-1', fileId: 'upload-1' },
+      input.inputFileVersionId
+    )
+  })
+
   it('rejects unavailable and non-PDF versions without mutating the Session', async () => {
     const unavailable = setup(null)
     await expect(
@@ -162,7 +256,13 @@ describe('SessionPdfContextOwner', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         expectedRevision: 4,
-        sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'missing' }]
+        sources: [
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'artifact-1',
+            sourceVersionId: 'missing'
+          }
+        ]
       })
     ).rejects.toThrow('unavailable')
     expect(unavailable.patchSessionRuntimeContext).not.toHaveBeenCalled()
@@ -173,7 +273,13 @@ describe('SessionPdfContextOwner', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         expectedRevision: 4,
-        sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+        sources: [
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'artifact-1',
+            sourceVersionId: 'version-1'
+          }
+        ]
       })
     ).rejects.toThrow('Only PDF')
     expect(nonPdf.patchSessionRuntimeContext).not.toHaveBeenCalled()
@@ -186,7 +292,13 @@ describe('SessionPdfContextOwner', () => {
     await expect(
       harness.owner.filterCandidates({
         projectId: 'project-1',
-        sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+        sources: [
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'artifact-1',
+            sourceVersionId: 'version-1'
+          }
+        ]
       })
     ).resolves.toEqual({ sources: [], pendingAttachmentIds: [] })
     expect(inspectPdfPageCount).not.toHaveBeenCalled()
@@ -196,7 +308,13 @@ describe('SessionPdfContextOwner', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         expectedRevision: 4,
-        sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+        sources: [
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'artifact-1',
+            sourceVersionId: 'version-1'
+          }
+        ]
       })
     ).rejects.toThrow('exceeding the automatic extraction limit')
     expect(harness.patchSessionRuntimeContext).not.toHaveBeenCalled()
@@ -233,7 +351,13 @@ describe('SessionPdfContextOwner', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         expectedRevision: 4,
-        sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+        sources: [
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'artifact-1',
+            sourceVersionId: 'version-1'
+          }
+        ]
       })
     ).resolves.toEqual({ context: current, changed: false })
     expect(harness.patchSessionRuntimeContext).not.toHaveBeenCalled()
@@ -294,7 +418,13 @@ describe('SessionPdfContextOwner', () => {
       projectId: 'project-1',
       sessionId: 'session-1',
       expectedRevision: 4,
-      sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }],
+      sources: [
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1'
+        }
+      ],
       excludeSinglePage: true
     })
     expect(unchanged.pdfContext).toBeUndefined()
@@ -307,7 +437,13 @@ describe('SessionPdfContextOwner', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         expectedRevision: 4,
-        sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+        sources: [
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'artifact-1',
+            sourceVersionId: 'version-1'
+          }
+        ]
       })
     ).rejects.toThrow('multi-page')
   })
@@ -363,8 +499,16 @@ describe('SessionPdfContextOwner', () => {
       sessionId: 'session-1',
       expectedRevision: 4,
       sources: [
-        { sourceKind: 'artifact-version', sourceVersionId: 'single-page' },
-        { sourceKind: 'artifact-version', sourceVersionId: 'version-3' }
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'single-page',
+          sourceVersionId: 'single-page'
+        },
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'version-3',
+          sourceVersionId: 'version-3'
+        }
       ],
       excludeSinglePage: true
     })
