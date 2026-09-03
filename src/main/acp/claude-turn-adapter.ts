@@ -105,6 +105,14 @@ type ClaudeCodeTurnAdapterOptions = Readonly<{
   readTranscriptMessages?: ClaudeTranscriptReader
 }>
 
+// Persistent Claude SDK queries can expose their result roughly 100 ms before the matching
+// Assistant transcript rows are readable. Keep retries bounded and only pay this delay after the
+// live usage has already failed exact coverage.
+const CLAUDE_TRANSCRIPT_RECOVERY_DELAYS_MS = [0, 50, 100, 200] as const
+
+const waitForClaudeTranscript = (milliseconds: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds))
+
 const recoverClaudeModelCalls = async (
   readTranscriptMessages: ClaudeTranscriptReader | undefined,
   input: Readonly<{
@@ -115,43 +123,52 @@ const recoverClaudeModelCalls = async (
     turnUsage: AcpTurnTokenUsage | undefined
   }>
 ): Promise<readonly AcpProviderModelCallUsage[] | undefined> => {
-  if (!readTranscriptMessages || input.observedCalls.length !== input.modelTurnCount) {
+  if (
+    !readTranscriptMessages ||
+    !input.turnUsage ||
+    input.modelTurnCount <= 0 ||
+    input.observedCalls.length !== input.modelTurnCount
+  ) {
     return undefined
   }
   const invocationIds = input.observedCalls.map((call) => call.sourceInvocationId)
   if (invocationIds.some((id) => !id)) return undefined
 
-  let messages: readonly unknown[]
-  try {
-    messages = await readTranscriptMessages({
-      providerSessionId: input.providerSessionId,
-      cwd: input.cwd
-    })
-  } catch {
-    return undefined
-  }
-
   const expectedIds = new Set(invocationIds as string[])
-  const recoveredById = new Map<string, AcpProviderModelCallUsage>()
-  for (const value of messages) {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue
-    const message = value as Record<string, unknown>
-    if (message.type !== 'assistant') continue
-    const call = toClaudeModelStepUsage(message)
-    const id = call?.sourceInvocationId
-    if (!call || !id || !expectedIds.has(id)) continue
-    const previous = recoveredById.get(id)
-    if (previous && !sameClaudeModelCallUsage(previous, call)) return undefined
-    recoveredById.set(id, call)
-  }
+  for (const delayMs of CLAUDE_TRANSCRIPT_RECOVERY_DELAYS_MS) {
+    if (delayMs > 0) await waitForClaudeTranscript(delayMs)
+    let messages: readonly unknown[]
+    try {
+      messages = await readTranscriptMessages({
+        providerSessionId: input.providerSessionId,
+        cwd: input.cwd
+      })
+    } catch {
+      return undefined
+    }
 
-  const recovered = (invocationIds as string[]).flatMap((id) => {
-    const call = recoveredById.get(id)
-    return call ? [call] : []
-  })
-  return hasExactClaudeCallCoverage(recovered, input.modelTurnCount, input.turnUsage)
-    ? recovered
-    : undefined
+    const recoveredById = new Map<string, AcpProviderModelCallUsage>()
+    for (const value of messages) {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) continue
+      const message = value as Record<string, unknown>
+      if (message.type !== 'assistant') continue
+      const call = toClaudeModelStepUsage(message)
+      const id = call?.sourceInvocationId
+      if (!call || !id || !expectedIds.has(id)) continue
+      const previous = recoveredById.get(id)
+      if (previous && !sameClaudeModelCallUsage(previous, call)) return undefined
+      recoveredById.set(id, call)
+    }
+
+    const recovered = (invocationIds as string[]).flatMap((id) => {
+      const call = recoveredById.get(id)
+      return call ? [call] : []
+    })
+    if (hasExactClaudeCallCoverage(recovered, input.modelTurnCount, input.turnUsage)) {
+      return recovered
+    }
+  }
+  return undefined
 }
 
 // ARD-24 owns Runtime probe selection and lifecycle wiring; this leaf only provides the

@@ -234,27 +234,29 @@ describe('Claude Code turn adapter', () => {
   })
 
   it('recovers finalized calls when live MiniMax-M3 messages contain provisional zero usage', async () => {
-    const readTranscriptMessages = vi.fn(async () =>
-      [
-        ['minimax-call-1', 32_837, 128, 116],
-        ['minimax-call-2', 1_195, 33_024, 66],
-        ['minimax-call-3', 898, 34_176, 23]
-      ].flatMap(([id, inputTokens, cachedReadTokens, outputTokens]) => {
-        const message = {
-          id,
-          usage: {
-            input_tokens: inputTokens,
-            cache_read_input_tokens: cachedReadTokens,
-            cache_creation_input_tokens: 0,
-            output_tokens: outputTokens
-          }
+    const transcriptMessages = [
+      ['minimax-call-1', 32_837, 128, 116],
+      ['minimax-call-2', 1_195, 33_024, 66],
+      ['minimax-call-3', 898, 34_176, 23]
+    ].flatMap(([id, inputTokens, cachedReadTokens, outputTokens]) => {
+      const message = {
+        id,
+        usage: {
+          input_tokens: inputTokens,
+          cache_read_input_tokens: cachedReadTokens,
+          cache_creation_input_tokens: 0,
+          output_tokens: outputTokens
         }
-        return [
-          { type: 'assistant', parent_tool_use_id: null, message },
-          { type: 'assistant', parent_tool_use_id: null, message }
-        ]
-      })
-    )
+      }
+      return [
+        { type: 'assistant', parent_tool_use_id: null, message },
+        { type: 'assistant', parent_tool_use_id: null, message }
+      ]
+    })
+    const readTranscriptMessages = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValue(transcriptMessages)
     const adapter = createClaudeCodeTurnAdapter({ readTranscriptMessages })
     const probe = await adapter.begin({
       providerSessionId: 'provider-session-1',
@@ -328,6 +330,7 @@ describe('Claude Code turn adapter', () => {
       providerSessionId: 'provider-session-1',
       cwd: '/workspace'
     })
+    expect(readTranscriptMessages).toHaveBeenCalledTimes(2)
   })
 
   it('rejects conflicting usage replayed under the same provider call id', async () => {
