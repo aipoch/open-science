@@ -1,34 +1,5 @@
 version: 2
 updates:
-  # Track npm lockfile drift and open grouped update PRs weekly. Keeps transitive advisories moving
-  # while bounding routine update noise.
-  - package-ecosystem: npm
-    directory: /
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 2
-    commit-message:
-      prefix: 'build(dependencies): update'
-    pull-request-branch-name:
-      prefix: build
-      template: '{prefix}/{group_name}'
-      branch-name-case: lowercase
-    groups:
-      npm-security-updates:
-        applies-to: security-updates
-        patterns:
-          - '*'
-      npm-production-dependencies:
-        applies-to: version-updates
-        dependency-type: production
-        patterns:
-          - '*'
-      npm-development-dependencies:
-        applies-to: version-updates
-        dependency-type: development
-        patterns:
-          - '*'
-
   # Keep the GitHub Actions used by the workflows current (checkout, setup-node, upload-artifact, ...).
   - package-ecosystem: github-actions
     directory: /

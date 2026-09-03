@@ -289,7 +289,7 @@ describe('PR Gate workflow', () => {
     })
   })
 
-  it('keeps Dependabot pull requests compatible with repository branch and title policy', () => {
+  it('disables npm updates while keeping GitHub Actions updates policy-compatible', () => {
     const npm = dependabot.updates.find(
       (update) => update['package-ecosystem'] === 'npm' && update.directory === '/'
     )
@@ -297,31 +297,7 @@ describe('PR Gate workflow', () => {
       (update) => update['package-ecosystem'] === 'github-actions' && update.directory === '/'
     )
 
-    expect(npm).toMatchObject({
-      'commit-message': { prefix: 'build(dependencies): update' },
-      'open-pull-requests-limit': 2,
-      'pull-request-branch-name': {
-        'branch-name-case': 'lowercase',
-        prefix: 'build',
-        template: '{prefix}/{group_name}'
-      },
-      groups: {
-        'npm-development-dependencies': {
-          'applies-to': 'version-updates',
-          'dependency-type': 'development',
-          patterns: ['*']
-        },
-        'npm-production-dependencies': {
-          'applies-to': 'version-updates',
-          'dependency-type': 'production',
-          patterns: ['*']
-        },
-        'npm-security-updates': {
-          'applies-to': 'security-updates',
-          patterns: ['*']
-        }
-      }
-    })
+    expect(npm).toBeUndefined()
     expect(actions).toMatchObject({
       'commit-message': { prefix: 'ci(dependencies): update' },
       'open-pull-requests-limit': 2,
