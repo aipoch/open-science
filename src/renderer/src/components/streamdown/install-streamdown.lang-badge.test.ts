@@ -48,6 +48,33 @@ describe('code block language badge', () => {
     expect(actions.firstElementChild).toBe(badge)
   })
 
+  it('uses the language-specific monochrome icon when the language is known', async () => {
+    const actions = createCodeBlock('python')
+    await flushMutations()
+
+    const svg = actions.querySelector('[data-lang-icon] svg')
+    expect(svg?.getAttribute('fill')).toBe('currentColor')
+    expect(svg?.querySelector('path')?.getAttribute('d')?.length).toBeGreaterThan(100)
+  })
+
+  it('resolves fence aliases to their language icon', async () => {
+    const actions = createCodeBlock('js')
+    await flushMutations()
+
+    expect(actions.querySelector('[data-lang-icon] svg')?.getAttribute('fill')).toBe('currentColor')
+  })
+
+  it('falls back to the generic code icon for unmapped languages', async () => {
+    const actions = createCodeBlock('cobol')
+    await flushMutations()
+
+    const badge = actions.querySelector('[data-lang-icon]')
+    expect(badge?.getAttribute('title')).toBe('cobol')
+    const svg = badge?.querySelector('svg')
+    expect(svg?.getAttribute('fill')).toBe('none')
+    expect(svg?.getAttribute('stroke')).toBe('currentColor')
+  })
+
   it('skips code blocks without a language', () => {
     const actions = createCodeBlock()
 

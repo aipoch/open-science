@@ -139,7 +139,7 @@
     overflow-anchor: none;
 
     [data-streamdown='table-wrapper'] {
-      @apply relative my-[0.75em] overflow-visible rounded-none border-0! bg-transparent p-0! first:mt-0 last:mb-0;
+      @apply relative my-[0.75em] overflow-visible rounded-none! border-0! bg-transparent p-0! first:mt-0 last:mb-0;
 
       /* Floating action chip: equidistant from the top and right edges, revealed on
          hover/focus-within. */
@@ -156,7 +156,7 @@
          so the table grid itself is the only frame. */
       & > div:has(table),
       & > div:has([data-streamdown='table']) {
-        @apply m-0 block min-h-0 overflow-x-auto overflow-y-visible rounded-none border-0! bg-transparent!;
+        @apply m-0 block min-h-0 overflow-x-auto overflow-y-visible rounded-none! border-0! bg-transparent!;
         height: auto !important;
       }
 
@@ -780,7 +780,7 @@
     }
 
     & pre {
-      @apply m-0 min-w-full w-max max-w-none bg-transparent pb-2.5 pl-3 pr-2.5 pt-1.5 text-sd-ink;
+      @apply m-0 min-w-full w-max max-w-none bg-transparent p-2.5 text-sd-ink;
       white-space: pre !important;
       tab-size: 2;
     }
