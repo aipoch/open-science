@@ -904,6 +904,12 @@ const sendWorkspaceMessage = async (
     if (!prepared) return undefined
     let promptAttachments
     try {
+      const eligiblePendingPdfContext = await filterPendingPdfContext({
+        attachments: effectiveAttachments,
+        pendingPdfContextAttachmentIds: input.pendingPdfContextAttachmentIds,
+        pendingPdfContextVersions: input.pendingPdfContextVersions,
+        projectId
+      })
       promptAttachments = await finalizeWorkspaceAttachments({
         sessionId,
         attachments: effectiveAttachments,
@@ -912,10 +918,10 @@ const sendWorkspaceMessage = async (
       })
       const pdfContextSources = [
         ...finalizedPdfContextSources({
-          attachmentIds: input.pendingPdfContextAttachmentIds ?? [],
+          attachmentIds: eligiblePendingPdfContext.attachmentIds,
           attachments: promptAttachments
         }),
-        ...(input.pendingPdfContextVersions ?? [])
+        ...eligiblePendingPdfContext.versions
       ]
       if (pdfContextSources.length > 0) {
         pdfContext = await linkPdfContextForSend({
@@ -928,7 +934,8 @@ const sendWorkspaceMessage = async (
       }
       if (
         pdfContext &&
-        (input.pendingPdfContextAttachmentIds?.length || input.pendingPdfContextVersions?.length)
+        (eligiblePendingPdfContext.attachmentIds.length > 0 ||
+          eligiblePendingPdfContext.versions.length > 0)
       ) {
         lifecycle.onPdfContextLinked?.(sessionId, pdfContext)
       }
