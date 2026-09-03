@@ -8,6 +8,132 @@ import { inputToMessages, responsesToChatRequest, toolsToChat } from './response
 import { selectExplicitConnectorSkills } from './skill-selector-routing'
 
 describe('Responses-compatible bridge conversion', () => {
+  it('accepts a successful JSON response with a UTF-8 BOM', async () => {
+    const upstreamFetch = vi.fn(
+      async () =>
+        new Response(
+          `\uFEFF${JSON.stringify({
+            id: 'chat-with-bom',
+            model: 'model-a',
+            choices: [{ message: { role: 'assistant', content: 'ok' } }]
+          })}`,
+          { headers: { 'content-type': 'application/json' } }
+        )
+    )
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      upstreamFetch
+    )
+    const connection = await bridge.start()
+
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'model-a', input: 'hello', stream: false })
+      })
+
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toMatchObject({
+        id: 'chat-with-bom',
+        output: [{ content: [{ text: 'ok' }] }]
+      })
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('rejects an oversized successful JSON response before reading its body', async () => {
+    let cancelBody: ReturnType<typeof vi.spyOn> | undefined
+    const upstreamFetch = vi.fn(async () => {
+      const upstream = Response.json(
+        {
+          id: 'chat-oversized',
+          model: 'model-a',
+          choices: [{ message: { role: 'assistant', content: 'too large' } }]
+        },
+        { headers: { 'content-length': String(64 * 1024 * 1024 + 1) } }
+      )
+      cancelBody = vi.spyOn(upstream.body!, 'cancel')
+      return upstream
+    })
+    const { ResponsesBridge } = await import('./responses-bridge')
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      upstreamFetch
+    )
+    const connection = await bridge.start()
+
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'model-a', input: 'hello', stream: false })
+      })
+
+      expect(response.status).toBe(502)
+      await expect(response.json()).resolves.toMatchObject({ error: { type: 'api_error' } })
+      expect(cancelBody).toHaveBeenCalledOnce()
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('fails and cancels a streaming upstream that exceeds the limit after a stop frame', async () => {
+    let cancelled = false
+    const terminalFrame = new TextEncoder().encode(
+      `data: ${JSON.stringify({
+        id: 'chat-oversized-stream',
+        choices: [{ delta: { content: 'done' }, finish_reason: 'stop' }]
+      })}\n\n`
+    )
+    const upstreamFetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(terminalFrame)
+              controller.enqueue(new TextEncoder().encode('x'))
+            },
+            cancel() {
+              cancelled = true
+            }
+          }),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+    )
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      upstreamFetch,
+      { maxResponseBytes: terminalFrame.byteLength }
+    )
+    const connection = await bridge.start()
+
+    try {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'model-a', input: 'hello', stream: true })
+      })
+      const body = await response.text()
+
+      expect(body).toContain('response.failed')
+      expect(body).not.toContain('response.completed')
+      expect(cancelled).toBe(true)
+    } finally {
+      await bridge.close()
+    }
+  })
+
   const legacyReviewerMarker = '<open_science_reviewer_session>'
   it('maps instructions, messages, function calls, and tool results to Chat Completions', () => {
     const request = responsesToChatRequest({
@@ -1921,6 +2047,39 @@ describe('Responses bridge Skill selector', () => {
     { name: 'statistics', description: 'Analyze numerical data.', path: '/private/stats/SKILL.md' },
     { name: 'writing', description: 'Improve prose.', path: '/private/writing/SKILL.md' }
   ]
+
+  it('fails open and cancels an oversized successful selector response', async () => {
+    let cancelBody: ReturnType<typeof vi.spyOn> | undefined
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      vi.fn(async () => {
+        const response = Response.json(
+          {
+            choices: [
+              {
+                message: {
+                  tool_calls: [
+                    {
+                      function: {
+                        name: 'select_skills',
+                        arguments: JSON.stringify({ skill_names: ['mcp-pubmed'] })
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          { headers: { 'content-length': String(64 * 1024 * 1024 + 1) } }
+        )
+        cancelBody = vi.spyOn(response.body!, 'cancel')
+        return response
+      })
+    )
+
+    await expect(bridge.selectSkills('find biomedical papers', catalog)).resolves.toEqual([])
+    expect(cancelBody).toHaveBeenCalledOnce()
+  })
 
   it('sends only current text plus names and descriptions and returns canonical bounded results', async () => {
     let upstreamUrl = ''

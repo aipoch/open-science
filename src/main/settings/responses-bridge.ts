@@ -34,6 +34,11 @@ import {
 } from './provider-error-replay'
 import { fetchProviderRequest } from './provider-fetch'
 import type { SkillSelectorUsageObservation } from '../agent-framework'
+import {
+  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+  readBoundedResponseText,
+  ResponseBodyLimitError
+} from './bounded-response'
 
 // The bridge deliberately keeps protocol payloads open-ended; validation rejects unsupported shapes
 // at the boundary before values reach the upstream request.
@@ -81,6 +86,7 @@ export type ResponsesBridgeSkillCandidate = ChatSkillSelectorCandidate
 export type ResponsesBridgeSkillInput = ChatSkillSelectorInput
 
 export type ResponsesBridgeOptions = {
+  maxResponseBytes?: number
   skillSelectorTimeoutMs?: number
   skillSelectorFailureMode?: 'empty' | 'throw'
   reasoningCacheMaxEntries?: number
@@ -139,9 +145,10 @@ export class ResponsesBridge {
           return
         }
         const bridgeError = error instanceof ResponsesProtocolError ? error : undefined
-        json(response, bridgeError?.status ?? 400, {
+        const responseLimitError = error instanceof ResponseBodyLimitError
+        json(response, bridgeError?.status ?? (responseLimitError ? 502 : 400), {
           error: {
-            type: bridgeError?.type ?? 'invalid_request_error',
+            type: bridgeError?.type ?? (responseLimitError ? 'api_error' : 'invalid_request_error'),
             message: error instanceof Error ? error.message : String(error)
           }
         })
@@ -171,6 +178,7 @@ export class ResponsesBridge {
         },
         fetchImpl: this.fetchImpl,
         timeoutMs: this.options.skillSelectorTimeoutMs ?? 15_000,
+        maxResponseBytes: this.options.maxResponseBytes ?? DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
         ...(signal ? { signal } : {}),
         ...(observeUsage ? { observeUsage } : {})
       })
@@ -487,12 +495,19 @@ export class ResponsesBridge {
         upstream,
         response,
         String(body.model ?? ''),
-        namespacedTools
+        namespacedTools,
+        this.options.maxResponseBytes ?? DEFAULT_MAX_PROVIDER_RESPONSE_BYTES
       )
       this.cacheReasoning(promptCacheKey, reasoning, callIds)
       return
     }
-    const completion = (await upstream.json()) as JsonObject
+    const completion = JSON.parse(
+      await readBoundedResponseText(
+        upstream,
+        this.options.maxResponseBytes ?? DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+        'Chat Completions upstream response'
+      )
+    ) as JsonObject
     const message = (completion.choices?.[0]?.message ?? {}) as JsonObject
     const result = completionToResponse(completion, namespacedTools)
     const outputItems = Array.isArray(result.output) ? (result.output as JsonObject[]) : []

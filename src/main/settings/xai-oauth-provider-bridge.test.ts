@@ -21,6 +21,35 @@ const responsesPayload = {
 }
 
 describe('xAI OAuth provider bridge', () => {
+  it('rejects an oversized successful response before reading its body', async () => {
+    let cancelBody: ReturnType<typeof vi.spyOn> | undefined
+    const upstream = vi.fn<typeof fetch>(async () => {
+      const response = Response.json(responsesPayload, {
+        headers: { 'content-length': String(64 * 1024 * 1024 + 1) }
+      })
+      cancelBody = vi.spyOn(response.body!, 'cancel')
+      return response
+    })
+    const bridge = createXaiOAuthProviderBridge(
+      [{ id: 'active', model: 'grok-4.6' }],
+      'active',
+      'openai',
+      vi.fn(async () => 'access-token'),
+      upstream
+    )
+    bridges.push(bridge)
+    const connection = await bridge.start()
+
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'Hello' }] })
+    })
+
+    expect(response.status).toBe(502)
+    expect(cancelBody).toHaveBeenCalledOnce()
+  })
+
   it('serves Anthropic messages, local token counts, streams, and a forced 401 refresh', async () => {
     const getAccessToken = vi
       .fn<(forceRefresh?: boolean) => Promise<string>>()

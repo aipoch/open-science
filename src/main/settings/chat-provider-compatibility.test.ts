@@ -9,6 +9,41 @@ afterEach(async () => {
 })
 
 describe('ChatProviderCompatibilityBridge', () => {
+  it('rejects an oversized successful JSON response before reading its body', async () => {
+    let cancelBody: ReturnType<typeof vi.spyOn> | undefined
+    const upstream = vi.fn<typeof fetch>(async () => {
+      const response = Response.json(
+        { id: 'resp_oversized', output: [], usage: { input_tokens: 1, output_tokens: 1 } },
+        { headers: { 'content-length': String(64 * 1024 * 1024 + 1) } }
+      )
+      cancelBody = vi.spyOn(response.body!, 'cancel')
+      return response
+    })
+    const bridge = new ChatProviderCompatibilityBridge(
+      {
+        wire: 'responses',
+        endpoint: 'https://provider.example/v1/responses',
+        model: 'upstream-model'
+      },
+      upstream
+    )
+    bridges.push(bridge)
+    const connection = await bridge.start()
+
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hello' }] })
+    })
+
+    expect(response.status).toBe(502)
+    await expect(response.json()).resolves.toMatchObject({ error: { type: 'api_error' } })
+    expect(cancelBody).toHaveBeenCalledOnce()
+  })
+
   it('adapts Chat Completions tool calls to a Responses-only provider', async () => {
     const upstream = vi.fn<typeof fetch>(async () =>
       Response.json({

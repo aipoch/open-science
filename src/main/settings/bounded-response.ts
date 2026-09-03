@@ -9,21 +9,25 @@ class ResponseBodyLimitError extends Error {
   }
 }
 
-const readBoundedResponseText = async (
+const DEFAULT_MAX_PROVIDER_RESPONSE_BYTES = 64 * 1024 * 1024
+const DEFAULT_MAX_PROVIDER_SSE_LINE_BYTES = 8 * 1024 * 1024
+const DEFAULT_MAX_PROVIDER_SSE_EVENT_BYTES = 8 * 1024 * 1024
+
+const consumeBoundedResponseBody = async (
   response: Response,
   maxBytes: number,
-  label: string
-): Promise<string> => {
+  label: string,
+  consume: (chunk: Uint8Array) => void
+): Promise<void> => {
   const declaredLength = response.headers.get('content-length')
   if (declaredLength && /^\d+$/u.test(declaredLength) && Number(declaredLength) > maxBytes) {
     await response.body?.cancel().catch(() => undefined)
     throw new ResponseBodyLimitError(label, maxBytes)
   }
 
-  if (!response.body) return ''
+  if (!response.body) return
 
   const reader = response.body.getReader()
-  const chunks: Buffer[] = []
   let observedBytes = 0
 
   try {
@@ -33,16 +37,48 @@ const readBoundedResponseText = async (
 
       observedBytes += value.byteLength
       if (observedBytes > maxBytes) {
-        await reader.cancel().catch(() => undefined)
         throw new ResponseBodyLimitError(label, maxBytes)
       }
-      chunks.push(Buffer.from(value))
+      consume(value)
     }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined)
+    throw error
   } finally {
     reader.releaseLock()
   }
-
-  return Buffer.concat(chunks, observedBytes).toString('utf8')
 }
 
-export { ResponseBodyLimitError, readBoundedResponseText }
+const readBoundedResponseBytes = async (
+  response: Response,
+  maxBytes: number,
+  label: string,
+  onActivity?: () => void
+): Promise<Buffer> => {
+  const chunks: Buffer[] = []
+  let observedBytes = 0
+  await consumeBoundedResponseBody(response, maxBytes, label, (chunk) => {
+    onActivity?.()
+    observedBytes += chunk.byteLength
+    chunks.push(Buffer.from(chunk))
+  })
+  return Buffer.concat(chunks, observedBytes)
+}
+
+const readBoundedResponseText = async (
+  response: Response,
+  maxBytes: number,
+  label: string,
+  onActivity?: () => void
+): Promise<string> =>
+  new TextDecoder().decode(await readBoundedResponseBytes(response, maxBytes, label, onActivity))
+
+export {
+  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+  DEFAULT_MAX_PROVIDER_SSE_EVENT_BYTES,
+  DEFAULT_MAX_PROVIDER_SSE_LINE_BYTES,
+  ResponseBodyLimitError,
+  consumeBoundedResponseBody,
+  readBoundedResponseBytes,
+  readBoundedResponseText
+}

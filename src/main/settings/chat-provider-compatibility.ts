@@ -1,5 +1,6 @@
 import type { ServerResponse } from 'node:http'
 
+import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from './bounded-response'
 import {
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
@@ -283,7 +284,13 @@ export class ChatProviderCompatibilityBridge {
       body: JSON.stringify(upstreamBody),
       signal: request.signal
     })
-    const payload = (await upstream.json()) as Json
+    const payload = JSON.parse(
+      await readBoundedResponseText(
+        upstream,
+        DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+        'Provider compatibility response'
+      )
+    ) as Json
     if (!upstream.ok) {
       json(response, upstream.status, payload)
       return

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 
 import { createLogger } from '../logger'
+import { consumeBoundedResponseBody, DEFAULT_MAX_PROVIDER_RESPONSE_BYTES } from './bounded-response'
 import type { ResponsesBridgeNamespacedTool } from './responses-protocol-types'
 
 // Upstream protocol payloads are open-ended and validated at this response seam.
@@ -228,7 +229,8 @@ export const streamChatToResponses = async (
   upstream: Response,
   response: ResponsesStreamWriter,
   model: string,
-  namespacedTools: readonly ResponsesBridgeNamespacedTool[] = []
+  namespacedTools: readonly ResponsesBridgeNamespacedTool[] = [],
+  maxResponseBytes = DEFAULT_MAX_PROVIDER_RESPONSE_BYTES
 ): Promise<{ reasoning: string; callIds: string[] }> => {
   if (!upstream.body) throw new Error('Chat Completions upstream returned no body')
   response.writeHead(200, {
@@ -355,12 +357,17 @@ export const streamChatToResponses = async (
 
   let streamError: unknown
   try {
-    for await (const chunk of upstream.body) {
-      buffered += decoder.decode(chunk, { stream: true })
-      const records = buffered.split(/\r?\n\r?\n/)
-      buffered = records.pop() ?? ''
-      for (const record of records) handleRecord(record)
-    }
+    await consumeBoundedResponseBody(
+      upstream,
+      maxResponseBytes,
+      'Chat Completions upstream SSE response',
+      (chunk) => {
+        buffered += decoder.decode(chunk, { stream: true })
+        const records = buffered.split(/\r?\n\r?\n/)
+        buffered = records.pop() ?? ''
+        for (const record of records) handleRecord(record)
+      }
+    )
     buffered += decoder.decode()
     if (buffered.trim()) handleRecord(buffered)
   } catch (error) {
@@ -407,10 +414,6 @@ export const streamChatToResponses = async (
         message: streamError.message
       })
     })
-  } else if (terminalFinishReason === 'stop' || terminalFinishReason === 'tool_calls') {
-    writeEvent(response, 'response.completed', sequence++, {
-      response: responseEnvelope(responseId, model, output, usage)
-    })
   } else if (streamError) {
     log.warn('bridge stream error', {
       model,
@@ -421,6 +424,10 @@ export const streamChatToResponses = async (
         type: 'upstream_error',
         message: 'Upstream stream ended before completion'
       })
+    })
+  } else if (terminalFinishReason === 'stop' || terminalFinishReason === 'tool_calls') {
+    writeEvent(response, 'response.completed', sequence++, {
+      response: responseEnvelope(responseId, model, output, usage)
     })
   } else if (terminalFinishReason) {
     log.warn('bridge stream incomplete', { model, finishReason: terminalFinishReason })

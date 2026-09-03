@@ -24,6 +24,101 @@ afterEach(() => {
 })
 
 describe('native Responses compatibility', () => {
+  it.each([
+    ['JSON', 'application/json', JSON.stringify({ id: 'response', output: [] })],
+    ['binary', 'application/octet-stream', 'binary']
+  ])(
+    'rejects an oversized successful %s response before reading its body',
+    async (_, type, body) => {
+      let cancelBody: ReturnType<typeof vi.spyOn> | undefined
+      const fetchImpl = vi.fn(async () => {
+        const response = new Response(body, {
+          status: 200,
+          headers: {
+            'content-type': type,
+            'content-length': String(64 * 1024 * 1024 + 1)
+          }
+        })
+        cancelBody = vi.spyOn(response.body!, 'cancel')
+        return response
+      })
+      const proxy = new NativeResponsesCompatibilityProxy(
+        { baseUrl: 'https://provider.example.test/v1', model: 'model-a' },
+        fetchImpl
+      )
+      const connection = await proxy.start()
+
+      try {
+        const response = await fetch(`${connection.baseUrl}/responses`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ input: 'hello', stream: false })
+        })
+
+        expect(response.status).toBe(502)
+        await expect(response.json()).resolves.toMatchObject({ error: { type: 'api_error' } })
+        expect(cancelBody).toHaveBeenCalledOnce()
+      } finally {
+        await proxy.close()
+      }
+    }
+  )
+
+  it.each([
+    ['response', ['data: 123\n\n', 'unused'], 10, 16, 24],
+    ['line', ['12345678', '12345678', '12345678', '12345678'], 64, 16, 64],
+    ['event', ['data: 123456\n', 'data: 123456\n', '\n'], 64, 16, 24]
+  ])(
+    'cancels an SSE response whose current %s exceeds its limit while chunks remain active',
+    async (_, chunks, maxResponseBytes, maxSseLineBytes, maxSseEventBytes) => {
+      let cancelled = false
+      let index = 0
+      const encoder = new TextEncoder()
+      const fetchImpl = vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                const chunk = chunks[index++]
+                if (chunk === undefined) controller.close()
+                else controller.enqueue(encoder.encode(chunk))
+              },
+              cancel() {
+                cancelled = true
+              }
+            }),
+            { status: 200, headers: { 'content-type': 'text/event-stream' } }
+          )
+      )
+      const proxy = new NativeResponsesCompatibilityProxy(
+        { baseUrl: 'https://provider.example.test/v1', model: 'model-a' },
+        fetchImpl,
+        { maxResponseBytes, maxSseLineBytes, maxSseEventBytes }
+      )
+      const connection = await proxy.start()
+
+      try {
+        const response = await fetch(`${connection.baseUrl}/responses`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ input: 'hello', stream: true })
+        })
+
+        expect(response.status).toBe(502)
+        await expect(response.json()).resolves.toMatchObject({ error: { type: 'api_error' } })
+        expect(cancelled).toBe(true)
+      } finally {
+        await proxy.close()
+      }
+    }
+  )
+
   it('retargets endpoint, credential, and model without replacing the loopback connection', async () => {
     const fetchImpl = vi.fn(async () =>
       Response.json({ id: 'response', output: [], usage: { input_tokens: 1, output_tokens: 1 } })

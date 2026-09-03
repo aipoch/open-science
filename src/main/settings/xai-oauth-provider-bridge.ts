@@ -2,6 +2,7 @@ import type { ServerResponse } from 'node:http'
 import { createLogger } from '../logger'
 import { netFetchStandard } from '../skills/net-fetch'
 
+import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from './bounded-response'
 import {
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
@@ -159,7 +160,13 @@ export class XaiOAuthProviderBridge {
         : chatToResponses(body, this.target.model)
     let upstream = await this.request(upstreamBody, request, false)
     if (upstream.status === 401) upstream = await this.request(upstreamBody, request, true)
-    const payload = (await upstream.json()) as Record<string, unknown>
+    const payload = JSON.parse(
+      await readBoundedResponseText(
+        upstream,
+        DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+        'xAI Responses upstream response'
+      )
+    ) as Record<string, unknown>
     if (!upstream.ok) {
       log.info('loopback upstream error', {
         wire: this.wire,
