@@ -16,6 +16,10 @@ import {
   resolveVendorModelApiEndpoints,
   type OfficialVendorId
 } from '../../../../shared/provider-registry'
+import {
+  getCustomProviderBaseUrlError,
+  type CustomProviderBaseUrlError
+} from '../../../../shared/provider-base-url'
 import type {
   CustomReasoningEffortTransport,
   ReasoningEffortPresetSetting
@@ -170,6 +174,7 @@ export const defaultProviderKindKey = (
 // typecheck failure at every call site.
 export type ProviderFormErrorKey =
   | 'Base URL is required.'
+  | CustomProviderBaseUrlError
   | 'Model is required.'
   | 'API key is required.'
   | 'Context window must be a positive whole number of tokens.'
@@ -201,6 +206,10 @@ export const getProviderFormErrors = (
 
   if (value.type === 'custom') {
     if (!value.baseUrl.trim()) errors.baseUrl = 'Base URL is required.'
+    else {
+      const baseUrlError = getCustomProviderBaseUrlError(value.baseUrl.trim())
+      if (baseUrlError) errors.baseUrl = baseUrlError
+    }
     if (!value.model.trim()) errors.model = 'Model is required.'
     if (positiveWholeNumberError(value.contextWindow)) {
       errors.contextWindow = 'Context window must be a positive whole number of tokens.'
