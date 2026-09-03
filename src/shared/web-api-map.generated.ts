@@ -252,7 +252,6 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.scanRepoSkills': 'settings:scan-repo-skills',
   'settings.setActiveProvider': 'settings:set-active-provider',
   'settings.setAgentFramework': 'settings:set-agent-framework',
-  'settings.setAgentRouting': 'settings:set-agent-routing',
   'settings.setAppIconVariant': 'settings:set-app-icon-variant',
   'settings.setClosePreference': 'settings:set-close-preference',
   'settings.setConnectorAutoAllow': 'settings:set-connector-auto-allow',
