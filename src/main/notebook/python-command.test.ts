@@ -164,6 +164,14 @@ describe('validateNotebookHelperExports', () => {
     await expect(
       validateNotebookHelperExports(
         'figure-composer',
+        'class FigureComposer:\n    def compose(self):\n        return None\n',
+        ['FigureComposer'],
+        { python: legacyPython }
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      validateNotebookHelperExports(
+        'figure-composer',
         'def another_export():\n    return None\n',
         ['compose_figure'],
         { python: legacyPython }
@@ -182,6 +190,14 @@ describe('validateNotebookHelperExports', () => {
         'figure-composer',
         'open("validation-side-effect", "w")\ndef compose_figure():\n    return None\n',
         ['compose_figure'],
+        { python: legacyPython }
+      )
+    ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
+    await expect(
+      validateNotebookHelperExports(
+        'figure-composer',
+        'class FigureComposer:\n    output = open("validation-side-effect", "w")\n',
+        ['FigureComposer'],
         { python: legacyPython }
       )
     ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')

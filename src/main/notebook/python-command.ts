@@ -221,32 +221,66 @@ else:
             return names
         return None
 
+    def literal_assignment_names(node):
+        if not isinstance(node, ast.Assign) or not is_literal(node.value):
+            return None
+        names = []
+        for target in node.targets:
+            target_names = assignment_names(target)
+            if target_names is None:
+                return None
+            names.extend(target_names)
+        return names
+
+    def is_docstring(node):
+        if not isinstance(node, ast.Expr):
+            return False
+        try:
+            return isinstance(ast.literal_eval(node.value), str)
+        except (SyntaxError, TypeError, ValueError):
+            return False
+
+    def is_static_class(node):
+        if node.decorator_list or node.keywords:
+            return False
+        if node.bases and not (
+            len(node.bases) == 1
+            and isinstance(node.bases[0], ast.Name)
+            and node.bases[0].id == "object"
+        ):
+            return False
+        for index, member in enumerate(node.body):
+            if index == 0 and is_docstring(member):
+                continue
+            if isinstance(member, ast.Pass):
+                continue
+            if isinstance(member, (ast.AsyncFunctionDef, ast.FunctionDef)) and is_static_function(member):
+                continue
+            if isinstance(member, ast.ClassDef) and is_static_class(member):
+                continue
+            if literal_assignment_names(member) is not None:
+                continue
+            return False
+        return True
+
     bindings = {}
     unsafe = []
     for index, node in enumerate(tree.body):
-        if index == 0 and isinstance(node, ast.Expr):
-            try:
-                if isinstance(ast.literal_eval(node.value), str):
-                    continue
-            except (SyntaxError, TypeError, ValueError):
-                pass
+        if index == 0 and is_docstring(node):
+            continue
         if isinstance(node, ast.Pass):
             continue
         if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and is_static_function(node):
             bindings[node.name] = True
             continue
-        if isinstance(node, ast.Assign) and is_literal(node.value):
-            names = []
-            for target in node.targets:
-                target_names = assignment_names(target)
-                if target_names is None:
-                    names = None
-                    break
-                names.extend(target_names)
-            if names is not None:
-                for name in names:
-                    bindings[name] = False
-                continue
+        if isinstance(node, ast.ClassDef) and is_static_class(node):
+            bindings[node.name] = True
+            continue
+        names = literal_assignment_names(node)
+        if names is not None:
+            for name in names:
+                bindings[name] = False
+            continue
         unsafe.append(type(node).__name__)
 
     if unsafe:
