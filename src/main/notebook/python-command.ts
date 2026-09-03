@@ -180,11 +180,81 @@ if hasattr(sys, "addaudithook"):
 else:
     # Python < 3.8 cannot audit validation-time host access, so never execute staged source there.
     tree = ast.parse(request["source"], filename="<registered-helper>")
-    definitions = {
-        node.name for node in tree.body
-        if isinstance(node, (ast.AsyncFunctionDef, ast.ClassDef, ast.FunctionDef))
-    }
-    missing = [name for name in request["exports"] if name not in definitions]
+
+    def is_literal(expression):
+        try:
+            ast.literal_eval(expression)
+            return True
+        except (SyntaxError, TypeError, ValueError):
+            return False
+
+    def is_static_function(node):
+        arguments = (
+            list(getattr(node.args, "posonlyargs", ()))
+            + list(node.args.args)
+            + list(node.args.kwonlyargs)
+        )
+        if node.args.vararg is not None:
+            arguments.append(node.args.vararg)
+        if node.args.kwarg is not None:
+            arguments.append(node.args.kwarg)
+        defaults = list(node.args.defaults) + [
+            default for default in node.args.kw_defaults if default is not None
+        ]
+        annotations = [argument.annotation for argument in arguments] + [node.returns]
+        return (
+            not node.decorator_list
+            and all(is_literal(default) for default in defaults)
+            and all(annotation is None or is_literal(annotation) for annotation in annotations)
+        )
+
+    def assignment_names(target):
+        if isinstance(target, ast.Name):
+            return [target.id]
+        if isinstance(target, (ast.List, ast.Tuple)):
+            names = []
+            for element in target.elts:
+                nested_names = assignment_names(element)
+                if nested_names is None:
+                    return None
+                names.extend(nested_names)
+            return names
+        return None
+
+    bindings = {}
+    unsafe = []
+    for index, node in enumerate(tree.body):
+        if index == 0 and isinstance(node, ast.Expr):
+            try:
+                if isinstance(ast.literal_eval(node.value), str):
+                    continue
+            except (SyntaxError, TypeError, ValueError):
+                pass
+        if isinstance(node, ast.Pass):
+            continue
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and is_static_function(node):
+            bindings[node.name] = True
+            continue
+        if isinstance(node, ast.Assign) and is_literal(node.value):
+            names = []
+            for target in node.targets:
+                target_names = assignment_names(target)
+                if target_names is None:
+                    names = None
+                    break
+                names.extend(target_names)
+            if names is not None:
+                for name in names:
+                    bindings[name] = False
+                continue
+        unsafe.append(type(node).__name__)
+
+    if unsafe:
+        raise TypeError(
+            "legacy helper validation requires side-effect-free definitions: "
+            + ", ".join(unsafe)
+        )
+    missing = [name for name in request["exports"] if not bindings.get(name, False)]
 if missing:
     raise TypeError("missing or non-callable exports: " + ", ".join(missing))
 `

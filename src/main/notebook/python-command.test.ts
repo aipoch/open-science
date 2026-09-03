@@ -156,7 +156,7 @@ describe('validateNotebookHelperExports', () => {
     await expect(
       validateNotebookHelperExports(
         'figure-composer',
-        'def compose_figure():\n    return None\n',
+        'META_GREY = "#888888"\ndef compose_figure():\n    return None\n',
         ['compose_figure'],
         { python: legacyPython }
       )
@@ -169,6 +169,22 @@ describe('validateNotebookHelperExports', () => {
         { python: legacyPython }
       )
     ).rejects.toThrow('missing or non-callable exports: compose_figure')
+    await expect(
+      validateNotebookHelperExports(
+        'figure-composer',
+        'def compose_figure():\n    return None\ncompose_figure = 1\n',
+        ['compose_figure'],
+        { python: legacyPython }
+      )
+    ).rejects.toThrow('missing or non-callable exports: compose_figure')
+    await expect(
+      validateNotebookHelperExports(
+        'figure-composer',
+        'open("validation-side-effect", "w")\ndef compose_figure():\n    return None\n',
+        ['compose_figure'],
+        { python: legacyPython }
+      )
+    ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
   })
 
   it('validates UTF-8 helper source when the interpreter defaults stdin to a legacy encoding', async () => {
