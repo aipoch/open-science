@@ -31,4 +31,36 @@ describe('preview leave guard coordinator', () => {
     deferredAction?.()
     expect(action).toHaveBeenCalledOnce()
   })
+
+  it('bypasses only the approved scope once when a deferred action re-enters its guard', () => {
+    const firstAction = vi.fn()
+    const secondAction = vi.fn()
+    const guard = vi.fn(() => false)
+    previewLeaveGuards.register('workbench:project-1:file-1', guard)
+
+    expect(
+      previewLeaveGuards.runApproved('workbench:project-1:file-1', () =>
+        previewLeaveGuards.request('workbench:project-1:file-1', firstAction)
+      )
+    ).toBe(true)
+    expect(firstAction).toHaveBeenCalledOnce()
+    expect(guard).not.toHaveBeenCalled()
+
+    expect(previewLeaveGuards.request('workbench:project-1:file-1', secondAction)).toBe(false)
+    expect(secondAction).not.toHaveBeenCalled()
+    expect(guard).toHaveBeenCalledOnce()
+  })
+
+  it('does not bypass a different dirty preview scope', () => {
+    const otherAction = vi.fn()
+    const otherGuard = vi.fn(() => false)
+    previewLeaveGuards.register('dialog:project-1:file-2', otherGuard)
+
+    previewLeaveGuards.runApproved('workbench:project-1:file-1', () =>
+      previewLeaveGuards.request('dialog:project-1:file-2', otherAction)
+    )
+
+    expect(otherAction).not.toHaveBeenCalled()
+    expect(otherGuard).toHaveBeenCalledOnce()
+  })
 })

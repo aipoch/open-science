@@ -401,12 +401,10 @@ const getRepairedActiveItemId = (
 const reconcileUploadPreviewItems = (
   items: StoredPreviewItem[],
   uploadByPreviewId: Map<string, UploadedAttachment>,
-  updatedAt: number,
-  excludedPreviewId?: string
+  updatedAt: number
 ): StoredPreviewItem[] => {
   let changed = false
   const reconciledItems = items.map((item) => {
-    if (item.id === excludedPreviewId) return item
     if (item.type !== 'file' || item.source !== 'upload') return item
 
     const upload = uploadByPreviewId.get(item.id)
@@ -496,21 +494,19 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
       activeItem?.type === 'file' && activeItem.source === 'upload'
         ? uploadByPreviewId.get(activeItem.id)
         : undefined
-    const reconcile = (excludedActiveItemId?: string): void =>
+    const reconcile = (
+      activeUploadByPreviewId: Map<string, UploadedAttachment>,
+      stashedUploadByPreviewId = activeUploadByPreviewId
+    ): void =>
       set((state) => {
-        const items = reconcileUploadPreviewItems(
-          state.items,
-          uploadByPreviewId,
-          updatedAt,
-          excludedActiveItemId
-        )
+        const items = reconcileUploadPreviewItems(state.items, activeUploadByPreviewId, updatedAt)
         let byProject = state.byProject
 
         // Repair inactive project slices too without creating tabs for uploads never opened by users.
         for (const [projectId, slice] of Object.entries(state.byProject)) {
           const reconciledItems = reconcileUploadPreviewItems(
             slice.items,
-            uploadByPreviewId,
+            stashedUploadByPreviewId,
             updatedAt
           )
           if (reconciledItems === slice.items) continue
@@ -528,14 +524,20 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
       activeUpload &&
       (getUploadedAttachmentPath(activeUpload, activeItem.projectId) !== activeItem.path ||
         activeUpload.sessionId !== activeItem.sessionId)
-    if (activeUploadChanges) {
+    if (activeUploadChanges && activeUpload) {
       // A dirty active upload may keep its staged path until discard is confirmed. Other visible
       // tabs and inactive project slices are not protected by that draft and must reconcile now.
-      reconcile(activeItem.id)
-      previewLeaveGuards.request(activeWorkbenchGuardScope(current), reconcile)
+      const unprotectedActiveUploads = new Map(uploadByPreviewId)
+      unprotectedActiveUploads.delete(activeItem.id)
+      reconcile(unprotectedActiveUploads, uploadByPreviewId)
+
+      const protectedUpload = new Map([[activeItem.id, activeUpload]])
+      previewLeaveGuards.request(activeWorkbenchGuardScope(current), () =>
+        reconcile(protectedUpload)
+      )
       return
     }
-    reconcile()
+    reconcile(uploadByPreviewId)
   },
 
   setPendingPdfContext: (projectId, selection) => {

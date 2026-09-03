@@ -1303,7 +1303,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             const action = pendingLeaveAction
             setPendingLeaveAction(undefined)
             discardEdit()
-            action?.()
+            if (action) previewLeaveGuards.runApproved(leaveGuardScope, action)
           }}
         />
       </div>

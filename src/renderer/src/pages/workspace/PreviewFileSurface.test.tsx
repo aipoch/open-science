@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, createRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1585,6 +1585,42 @@ describe('PreviewFileSurface managed text versions', () => {
       selectedVersionId: 'upload-v1'
     })
     expect(container.querySelector('textarea')).toBeNull()
+  })
+
+  it('runs an approved deferred workbench mutation without a second confirmation', async () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-1')
+    store.upsertAndActivateItem(managedUploadItem)
+    const surfaceRef = createRef<{
+      requestLeave: (action: () => boolean | void) => boolean
+    }>()
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          ref={surfaceRef}
+          item={managedUploadItem}
+          onClose={vi.fn()}
+          leaveGuardScope="workbench:project-1:upload:upload-file-1"
+          workbenchConnected
+        />
+      )
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+
+    await act(async () => {
+      surfaceRef.current?.requestLeave(() =>
+        usePreviewWorkbenchStore.getState().removeItem(managedUploadItem.id)
+      )
+    })
+    expect(discardConfirmation()).not.toBeNull()
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
+
+    await confirmDiscard()
+
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(0)
+    expect(discardConfirmation()).toBeNull()
   })
 
   it('keeps a dirty draft when a version switch is rejected', async () => {
