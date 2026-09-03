@@ -3470,6 +3470,35 @@ describe('TaskRunner', () => {
     })
   })
 
+  it('recovers a terminal persistence fallback without stale Session commit metadata', async () => {
+    let writes = 0
+    let durableRuns: TaskRunJournalEntry[] = []
+    const runJournal = {
+      load: async () => structuredClone(durableRuns),
+      replace: async (runs: readonly TaskRunJournalEntry[]) => {
+        writes += 1
+        if (writes === 3) throw new Error('terminal write failed once')
+        durableRuns = runs.map((run) => structuredClone(run))
+      }
+    }
+    const runner = createRunner({ runJournal })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Fallback durably.' })
+    await expect(runner.waitForRun(started.id)).resolves.toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('Task Run terminal state could not be persisted.')
+    })
+
+    const recoveredRunner = createRunner({ runJournal })
+    await recoveredRunner.initialize()
+
+    expect(recoveredRunner.getRun(started.id)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('Task Run terminal state could not be persisted.')
+    })
+    expect(durableRuns.find((run) => run.id === started.id)?.sessionCommitStatus).toBeUndefined()
+  })
+
   it('recovers a completed Run when the Session commit precedes automatic review', async () => {
     let durableSession: PersistedChatSession | undefined
     let durableRuns: TaskRun[] = []

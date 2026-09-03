@@ -1913,6 +1913,9 @@ class TaskRunner {
       const persistenceMessage = 'Task Run terminal state could not be persisted.'
       run.status = 'failed'
       run.terminalStatus = 'failed'
+      run.sessionCommit = undefined
+      run.attention = undefined
+      run.cancelledAt = undefined
       run.error = run.error ? `${run.error}\n\n${persistenceMessage}` : persistenceMessage
       log.error(persistenceMessage, { error: toErrorMessage(error), runId: run.id })
       await this.persistRuns()
