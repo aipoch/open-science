@@ -4,28 +4,39 @@ import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 
+const launcherEnvironment = (overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+  const environment: NodeJS.ProcessEnv = {}
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value === undefined) continue
+    const key = name.toLowerCase()
+    // The launcher must not depend on `npm` being on PATH. Windows still needs PATH so
+    // node.exe can load its DLLs. Drop every casing of npm_execpath so the mock path wins.
+    if (key === 'npm_execpath') continue
+    if (process.platform !== 'win32' && key === 'path') continue
+    environment[name] = value
+  }
+  return { ...environment, ...overrides }
+}
+
 describe('runtime profile launcher', () => {
   it('invokes npm through the current Node executable without relying on a shell command', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-runtime-launcher-'))
-    const npmCliPath = join(root, 'mock-npm-cli.mjs')
+    const npmCliPath = join(root, 'mock-npm-cli.cjs')
     const invocationLog = join(root, 'npm-invocations.jsonl')
     await writeFile(
       npmCliPath,
-      `import { appendFileSync } from 'node:fs'
-appendFileSync(process.env.RUNTIME_PROFILE_INVOCATION_LOG, JSON.stringify(process.argv.slice(2)) + '\\n')
+      `'use strict'
+const { appendFileSync } = require('node:fs')
+appendFileSync(
+  process.env.RUNTIME_PROFILE_INVOCATION_LOG,
+  JSON.stringify(process.argv.slice(2)) + '\\n'
+)
+process.exit(0)
 `,
       'utf8'
     )
 
     try {
-      const environment = Object.fromEntries(
-        Object.entries(process.env).filter(([name]) => {
-          // The launcher must not depend on `npm` being on PATH. Windows still needs PATH so
-          // node.exe can load its DLLs; stripping it hangs spawnSync until the timeout.
-          if (process.platform === 'win32') return true
-          return name.toLowerCase() !== 'path'
-        })
-      )
       const result = spawnSync(
         process.execPath,
         [
@@ -39,16 +50,18 @@ appendFileSync(process.env.RUNTIME_PROFILE_INVOCATION_LOG, JSON.stringify(proces
         {
           cwd: process.cwd(),
           encoding: 'utf8',
-          env: {
-            ...environment,
+          env: launcherEnvironment({
             npm_execpath: npmCliPath,
             RUNTIME_PROFILE_INVOCATION_LOG: invocationLog
-          },
-          timeout: 30_000
+          }),
+          killSignal: 'SIGKILL',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 30_000,
+          windowsHide: true
         }
       )
 
-      expect(result.error).toBeUndefined()
+      expect(result.error, result.stderr || result.stdout).toBeUndefined()
       expect(result.status, result.stderr).toBe(0)
       const invocations = (await readFile(invocationLog, 'utf8'))
         .trim()

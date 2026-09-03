@@ -3612,19 +3612,20 @@ describe('notebook runtime service', () => {
       const result = await service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
-        command: 'sleep 5',
+        command: 'sleep 30',
         timeoutMs: 100
       })
       const elapsedMs = Date.now() - startedAt
 
-      // The promise settles on the timeout, not after the full sleep duration.
-      expect(elapsedMs).toBeLessThan(4000)
+      // Settlement waits for the process-tree terminator. Hosted Windows taskkill of PowerShell
+      // Start-Sleep can take a few seconds, so keep the bound well under the full sleep.
+      expect(elapsedMs).toBeLessThan(10_000)
       expect(result.exitCode).not.toBe(0)
 
       const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       expect(state.runs[0]).toMatchObject({
         kernelKind: 'bash',
-        script: 'sleep 5',
+        script: 'sleep 30',
         status: 'timeout'
       })
     })

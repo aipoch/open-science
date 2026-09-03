@@ -83,7 +83,9 @@ const run = (args, environment = process.env) =>
   new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [npmCliPath, ...args], {
       env: environment,
-      stdio: 'inherit',
+      // npm and Playwright do not read this launcher's stdin. Inheriting a piped stdin from
+      // spawnSync/Vitest keeps the Windows child alive until the outer timeout.
+      stdio: ['ignore', 'inherit', 'inherit'],
       windowsHide: true
     })
     child.once('error', rejectRun)
