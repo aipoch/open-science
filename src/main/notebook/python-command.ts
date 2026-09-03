@@ -146,12 +146,12 @@ export const resolvePythonCommand = async (
 }
 
 const CALLABLE_HELPER_VALIDATOR = String.raw`
-import __future__, ast, base64, builtins, collections, datetime, decimal, fractions, functools, itertools, json, math, re, statistics, sys
+import base64, builtins, collections, datetime, decimal, fractions, functools, itertools, json, math, re, statistics, sys
 
 allowed_modules = {
     module.__name__: module
     for module in (
-        __future__, collections, datetime, decimal, fractions, functools, itertools, json, math, re, statistics
+        collections, datetime, decimal, fractions, functools, itertools, json, math, re, statistics
     )
 }
 
@@ -165,290 +165,20 @@ def deny(event, args):
         raise PermissionError("host access is unavailable during helper validation")
 
 request = json.loads(base64.b64decode(sys.stdin.read()).decode("utf-8"))
+if hasattr(sys, "addaudithook"):
+    sys.addaudithook(deny)
+elif not request.get("trustedSource", False):
+    raise PermissionError("external helper validation requires Python audit-hook support")
 safe_names = (
     "__build_class__", "abs", "all", "any", "bool", "bytes", "callable", "dict", "enumerate",
     "Exception", "float", "int", "isinstance", "len", "list", "map", "max", "min", "object",
     "range", "repr", "reversed", "set", "slice", "sorted", "str", "sum", "tuple", "ValueError", "zip"
 )
-if hasattr(sys, "addaudithook"):
-    sys.addaudithook(deny)
-    safe_builtins = {name: getattr(builtins, name) for name in safe_names}
-    safe_builtins["__import__"] = restricted_import
-    namespace = {"__builtins__": safe_builtins, "__name__": "__open_science_helper_validation__"}
-    exec(compile(request["source"], "<registered-helper>", "exec"), namespace, namespace)
-    missing = [name for name in request["exports"] if name not in namespace or not callable(namespace[name])]
-else:
-    # Python < 3.8 cannot audit validation-time host access, so never execute staged source there.
-    compile(request["source"], "<registered-helper>", "exec")
-    tree = ast.parse(request["source"], filename="<registered-helper>")
-    postpone_annotations = any(
-        isinstance(node, ast.ImportFrom)
-        and node.module == "__future__"
-        and any(alias.name == "annotations" for alias in node.names)
-        for node in tree.body
-    )
-
-    def is_literal(expression):
-        try:
-            ast.literal_eval(expression)
-            return True
-        except (SyntaxError, TypeError, ValueError):
-            return False
-
-    def is_static_function(node, visible_bindings=None, postpone_annotation_evaluation=False):
-        if visible_bindings is None:
-            visible_bindings = {}
-        arguments = (
-            list(getattr(node.args, "posonlyargs", ()))
-            + list(node.args.args)
-            + list(node.args.kwonlyargs)
-        )
-        if node.args.vararg is not None:
-            arguments.append(node.args.vararg)
-        if node.args.kwarg is not None:
-            arguments.append(node.args.kwarg)
-        defaults = list(node.args.defaults) + [
-            default for default in node.args.kw_defaults if default is not None
-        ]
-        annotations = [argument.annotation for argument in arguments] + [node.returns]
-
-        def static_reference(expression):
-            if isinstance(expression, ast.Name):
-                if expression.id in visible_bindings:
-                    return True, visible_bindings[expression.id]
-                if expression.id in safe_names:
-                    return True, getattr(builtins, expression.id)
-                return False, None
-            if isinstance(expression, ast.Attribute):
-                found, value = static_reference(expression.value)
-                if not found:
-                    return False, None
-                try:
-                    return True, getattr(value, expression.attr)
-                except Exception:
-                    return False, None
-            return False, None
-
-        def is_static_value(expression):
-            return is_literal(expression) or static_reference(expression)[0]
-
-        return (
-            not node.decorator_list
-            and all(is_static_value(default) for default in defaults)
-            and all(
-                annotation is None
-                or postpone_annotation_evaluation
-                or is_static_value(annotation)
-                for annotation in annotations
-            )
-        )
-
-    def bind_literal_target(target, value):
-        if isinstance(target, ast.Name):
-            return {target.id: value}
-        if isinstance(target, (ast.List, ast.Tuple)):
-            try:
-                values = list(value)
-            except TypeError:
-                return None
-            starred = [
-                index for index, element in enumerate(target.elts)
-                if isinstance(element, ast.Starred)
-            ]
-            if len(starred) > 1:
-                return None
-            if not starred and len(values) != len(target.elts):
-                return None
-            if starred and len(values) < len(target.elts) - 1:
-                return None
-
-            bindings = {}
-            for index, element in enumerate(target.elts):
-                if isinstance(element, ast.Starred):
-                    trailing = len(target.elts) - index - 1
-                    nested_value = values[index:len(values) - trailing if trailing else None]
-                    element = element.value
-                elif starred and index > starred[0]:
-                    nested_value = values[len(values) - (len(target.elts) - index)]
-                else:
-                    nested_value = values[index]
-                nested_bindings = bind_literal_target(element, nested_value)
-                if nested_bindings is None:
-                    return None
-                bindings.update(nested_bindings)
-            return bindings
-        return None
-
-    def literal_assignment_bindings(node):
-        if not isinstance(node, ast.Assign):
-            return None
-        try:
-            value = ast.literal_eval(node.value)
-        except (SyntaxError, TypeError, ValueError):
-            return None
-        bindings = {}
-        for target in node.targets:
-            target_bindings = bind_literal_target(target, value)
-            if target_bindings is None:
-                return None
-            bindings.update(target_bindings)
-        return bindings
-
-    def static_import_bindings(node):
-        bindings = {}
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                module = allowed_modules.get(alias.name)
-                if module is None:
-                    return None
-                bindings[alias.asname or alias.name] = module
-            return bindings
-        if not isinstance(node, ast.ImportFrom) or node.level != 0:
-            return None
-        # Future statements set compiler flags and still emit IMPORT_FROM/STORE_NAME,
-        # so their imported names (including aliases) are runtime bindings too.
-        module = allowed_modules.get(node.module)
-        if module is None:
-            return None
-        for alias in node.names:
-            if alias.name == "*":
-                names = getattr(module, "__all__", None)
-                if names is None:
-                    names = [name for name in dir(module) if not name.startswith("_")]
-                for name in names:
-                    try:
-                        bindings[name] = getattr(module, name)
-                    except AttributeError:
-                        return None
-                continue
-            try:
-                bindings[alias.asname or alias.name] = getattr(module, alias.name)
-            except AttributeError:
-                return None
-        return bindings
-
-    def is_docstring(node):
-        if not isinstance(node, ast.Expr):
-            return False
-        try:
-            return isinstance(ast.literal_eval(node.value), str)
-        except (SyntaxError, TypeError, ValueError):
-            return False
-
-    static_base_types = {
-        name: getattr(builtins, name)
-        for name in (
-            "bytes", "dict", "Exception", "float", "int", "list", "object", "set", "str",
-            "tuple", "ValueError"
-        )
-    }
-
-    def callable_placeholder(*args, **kwargs):
-        return None
-
-    static_classes_with_init_subclass = set()
-
-    def build_static_class(node, visible_bindings=None):
-        if node.decorator_list or node.keywords:
-            return None
-        if visible_bindings is None:
-            visible_bindings = {}
-        bases = []
-        for base in node.bases:
-            if not isinstance(base, ast.Name):
-                return None
-            if base.id in visible_bindings:
-                base_type = visible_bindings[base.id]
-                if not isinstance(base_type, type):
-                    return None
-            else:
-                base_type = static_base_types.get(base.id)
-                if base_type is None:
-                    return None
-            if base_type in static_classes_with_init_subclass:
-                return None
-            bases.append(base_type)
-        if not bases:
-            bases.append(object)
-
-        namespace = {
-            "__module__": "__open_science_helper_validation__",
-            "__qualname__": node.name,
-        }
-        local_bindings = dict(visible_bindings)
-        for index, member in enumerate(node.body):
-            if index == 0 and is_docstring(member):
-                namespace["__doc__"] = ast.literal_eval(member.value)
-                continue
-            if isinstance(member, ast.Pass):
-                continue
-            if (
-                isinstance(member, (ast.AsyncFunctionDef, ast.FunctionDef))
-                and is_static_function(member, local_bindings, postpone_annotations)
-            ):
-                namespace[member.name] = callable_placeholder
-                local_bindings[member.name] = callable_placeholder
-                continue
-            if isinstance(member, ast.ClassDef):
-                nested_class = build_static_class(member, local_bindings)
-                if nested_class is None:
-                    return None
-                namespace[member.name] = nested_class
-                local_bindings[member.name] = nested_class
-                continue
-            class_bindings = literal_assignment_bindings(member)
-            if class_bindings is not None:
-                namespace.update(class_bindings)
-                local_bindings.update(class_bindings)
-                continue
-            imported_bindings = static_import_bindings(member)
-            if imported_bindings is None:
-                return None
-            namespace.update(imported_bindings)
-            local_bindings.update(imported_bindings)
-
-        try:
-            static_class = type(node.name, tuple(bases), namespace)
-        except Exception:
-            return None
-        if "__init_subclass__" in namespace:
-            static_classes_with_init_subclass.add(static_class)
-        return static_class
-
-    bindings = {}
-    unsafe = []
-    for index, node in enumerate(tree.body):
-        if index == 0 and is_docstring(node):
-            continue
-        if isinstance(node, ast.Pass):
-            continue
-        if (
-            isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
-            and is_static_function(node, bindings, postpone_annotations)
-        ):
-            bindings[node.name] = callable_placeholder
-            continue
-        if isinstance(node, ast.ClassDef):
-            static_class = build_static_class(node, bindings)
-            if static_class is not None:
-                bindings[node.name] = static_class
-                continue
-        assignment_bindings = literal_assignment_bindings(node)
-        if assignment_bindings is not None:
-            bindings.update(assignment_bindings)
-            continue
-        imported_bindings = static_import_bindings(node)
-        if imported_bindings is not None:
-            bindings.update(imported_bindings)
-            continue
-        unsafe.append(type(node).__name__)
-
-    if unsafe:
-        raise TypeError(
-            "legacy helper validation requires side-effect-free definitions: "
-            + ", ".join(unsafe)
-        )
-    missing = [name for name in request["exports"] if not callable(bindings.get(name))]
+safe_builtins = {name: getattr(builtins, name) for name in safe_names}
+safe_builtins["__import__"] = restricted_import
+namespace = {"__builtins__": safe_builtins, "__name__": "__open_science_helper_validation__"}
+exec(compile(request["source"], "<registered-helper>", "exec"), namespace, namespace)
+missing = [name for name in request["exports"] if name not in namespace or not callable(namespace[name])]
 if missing:
     raise TypeError("missing or non-callable exports: " + ", ".join(missing))
 `
@@ -457,7 +187,7 @@ export const validateNotebookHelperExports = async (
   helperId: string,
   source: string,
   exports: readonly string[],
-  deps: { python?: PythonCommand; env?: NodeJS.ProcessEnv } = {}
+  deps: { python?: PythonCommand; env?: NodeJS.ProcessEnv; trustedSource?: boolean } = {}
 ): Promise<void> => {
   const python = deps.python ?? (await resolvePythonCommand())
   await new Promise<void>((resolveValidation, rejectValidation) => {
@@ -499,6 +229,11 @@ export const validateNotebookHelperExports = async (
         )
       )
     })
-    child.stdin.end(Buffer.from(JSON.stringify({ source, exports }), 'utf8').toString('base64'))
+    child.stdin.end(
+      Buffer.from(
+        JSON.stringify({ source, exports, trustedSource: deps.trustedSource ?? false }),
+        'utf8'
+      ).toString('base64')
+    )
   })
 }

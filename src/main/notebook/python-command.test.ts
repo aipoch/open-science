@@ -146,181 +146,25 @@ describe('resolvePythonCommand', () => {
 })
 
 describe('validateNotebookHelperExports', () => {
-  it('validates definition-only helpers when Python predates audit hooks', async () => {
+  it('validates trusted bundled helpers when Python lacks audit hooks', async () => {
     const python = await resolvePythonCommand()
     const legacyPython = {
       ...python,
       baseArgs: [...python.baseArgs, '-c', 'import sys; del sys.addaudithook; exec(sys.argv[-1])']
     }
-    const futureSource =
-      'from __future__ import annotations\ndef compose_figure(value: MissingType):\n    return value\n'
+    const source = 'def compose_figure():\n    return None\n'
 
-    await expect(
-      validateNotebookHelperExports('figure-composer', futureSource, ['compose_figure'], { python })
-    ).resolves.toBeUndefined()
-    await expect(
-      validateNotebookHelperExports('figure-composer', futureSource, ['compose_figure'], {
-        python: legacyPython
-      })
-    ).resolves.toBeUndefined()
-
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'META_GREY = "#888888"\nLEFT, RIGHT = (1, 2)\ndef compose_figure(value: int = 1) -> str:\n    return str(value)\n',
-        ['compose_figure'],
-        { python: legacyPython }
-      )
-    ).resolves.toBeUndefined()
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'class FigureComposer:\n    def compose(self):\n        return None\n',
-        ['FigureComposer'],
-        { python: legacyPython }
-      )
-    ).resolves.toBeUndefined()
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'class ComposerBase:\n    pass\nclass FigureComposer(ComposerBase):\n    pass\n',
-        ['FigureComposer'],
-        { python: legacyPython }
-      )
-    ).resolves.toBeUndefined()
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'class ComposerBase:\n    def __init_subclass__(cls):\n        raise RuntimeError()\nclass FigureComposer(ComposerBase):\n    pass\n',
-        ['FigureComposer'],
-        { python: legacyPython }
-      )
-    ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'import json as json_module\nfrom math import sqrt as compose_figure\n',
-        ['compose_figure'],
-        { python: legacyPython }
-      )
-    ).resolves.toBeUndefined()
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'import collections\nfrom collections import OrderedDict\ndef compose_figure(value: OrderedDict = OrderedDict, other: collections.OrderedDict = collections.OrderedDict):\n    return value or other\n',
-        ['compose_figure'],
-        { python: legacyPython }
-      )
-    ).resolves.toBeUndefined()
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'import pathlib\ndef compose_figure():\n    return None\n',
-        ['compose_figure'],
-        { python: legacyPython }
-      )
-    ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'def another_export():\n    return None\n',
-        ['compose_figure'],
-        { python: legacyPython }
-      )
-    ).rejects.toThrow('missing or non-callable exports: compose_figure')
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'def compose_figure():\n    return None\ncompose_figure = 1\n',
-        ['compose_figure'],
-        { python: legacyPython }
-      )
-    ).rejects.toThrow('missing or non-callable exports: compose_figure')
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'open("validation-side-effect", "w")\ndef compose_figure():\n    return None\n',
-        ['compose_figure'],
-        { python: legacyPython }
-      )
-    ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'class FigureComposer:\n    output = open("validation-side-effect", "w")\n',
-        ['FigureComposer'],
-        { python: legacyPython }
-      )
-    ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'class FigureComposer:\n    __slots__ = (1,)\n',
-        ['FigureComposer'],
-        { python: legacyPython }
-      )
-    ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'int = 1\nclass FigureComposer(int):\n    pass\n',
-        ['FigureComposer'],
-        { python: legacyPython }
-      )
-    ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'class FigureComposer:\n    int = 1\n    class Nested(int):\n        pass\n',
-        ['FigureComposer'],
-        { python: legacyPython }
-      )
-    ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
-    await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'LEFT, RIGHT = (1,)\ndef compose_figure():\n    return None\n',
-        ['compose_figure'],
-        { python: legacyPython }
-      )
-    ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
-  })
-
-  it('matches Python runtime bindings created by future imports', async () => {
-    const python = await resolvePythonCommand()
-    const legacyPython = {
-      ...python,
-      baseArgs: [...python.baseArgs, '-c', 'import sys; del sys.addaudithook; exec(sys.argv[-1])']
-    }
-
-    const source =
-      'from __future__ import annotations\ndef compose_figure(value=annotations):\n    return value\n'
-
-    await expect(
-      validateNotebookHelperExports('figure-composer', source, ['compose_figure'], { python })
-    ).resolves.toBeUndefined()
     await expect(
       validateNotebookHelperExports('figure-composer', source, ['compose_figure'], {
-        python: legacyPython
+        python: legacyPython,
+        trustedSource: true
       })
     ).resolves.toBeUndefined()
-  })
-
-  it('accepts the same safe built-in references on legacy Python', async () => {
-    const python = await resolvePythonCommand()
-    const legacyPython = {
-      ...python,
-      baseArgs: [...python.baseArgs, '-c', 'import sys; del sys.addaudithook; exec(sys.argv[-1])']
-    }
-
     await expect(
-      validateNotebookHelperExports(
-        'figure-composer',
-        'def compose_figure(value: callable = range):\n    return value\n',
-        ['compose_figure'],
-        { python: legacyPython }
-      )
-    ).resolves.toBeUndefined()
+      validateNotebookHelperExports('external-helper', source, ['compose_figure'], {
+        python: legacyPython
+      })
+    ).rejects.toThrow('external helper validation requires Python audit-hook support')
   })
 
   it('validates UTF-8 helper source when the interpreter defaults stdin to a legacy encoding', async () => {
