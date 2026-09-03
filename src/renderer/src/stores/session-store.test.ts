@@ -5741,6 +5741,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
       'src/renderer/src/pages/workspace/project-files-library.ts',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
+      'src/renderer/src/pages/workspace/session-action-menu.ts',
       'src/renderer/src/pages/workspace/session-message-artifact-reference.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/active-branch-plan.ts',

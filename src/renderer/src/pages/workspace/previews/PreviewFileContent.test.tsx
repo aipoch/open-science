@@ -814,6 +814,49 @@ describe('PreviewFileContent', () => {
     )
   })
 
+  it.each(['artifact', 'upload'] as const)(
+    'keeps the HTML %s preview usable when its logical identity is missing',
+    async (source) => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+      await renderFile(
+        createFileItem({
+          id: source === 'upload' ? 'upload:legacy-html' : 'legacy-artifact-version',
+          source,
+          format: 'html',
+          name: 'legacy.html',
+          title: 'legacy.html',
+          path: '/managed/must-not-be-read-by-path/legacy.html',
+          managedFileId: undefined
+        })
+      )
+
+      expect(container.querySelector('iframe')).toBeNull()
+      expect(container.textContent).toContain("HTML couldn't be read for preview")
+      expect(container.querySelector('[aria-label="Show rendered HTML"]')).not.toBeNull()
+      expect(container.querySelector('[aria-label="Show HTML source"]')).not.toBeNull()
+      expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
+      expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+      expect(window.api.uploads.readPreview).not.toHaveBeenCalled()
+
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[aria-label="Show HTML source"]')?.click()
+      })
+
+      await vi.waitFor(() =>
+        expect(
+          container.querySelector('[aria-label="Show HTML source"]')?.getAttribute('aria-pressed')
+        ).toBe('true')
+      )
+      expect(container.textContent).toContain("HTML couldn't be read for preview")
+      expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
+      expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+      expect(window.api.uploads.readPreview).not.toHaveBeenCalled()
+
+      consoleError.mockRestore()
+    }
+  )
+
   it('falls back when the managed HTML URL cannot be loaded', async () => {
     await renderFile(createFileItem({ format: 'html', name: 'report.html' }))
     const iframe = container.querySelector('iframe')

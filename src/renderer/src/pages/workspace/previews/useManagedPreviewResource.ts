@@ -48,8 +48,8 @@ const useManagedPreviewResource = (
     let disposed = false
     let acquiredResource: ManagedPreviewResource | undefined
 
-    void window.api.previewResources
-      .acquire(
+    const acquireResource = async (): Promise<ManagedPreviewResource> =>
+      window.api.previewResources.acquire(
         createManagedPreviewRequest({
           source,
           path,
@@ -61,6 +61,8 @@ const useManagedPreviewResource = (
           maxBytes
         })
       )
+
+    void acquireResource()
       .then((resource) => {
         // Release acquisitions that complete after the consumer was unmounted or disabled.
         if (disposed) {
