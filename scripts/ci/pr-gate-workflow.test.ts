@@ -41,8 +41,27 @@ type Workflow = {
   permissions?: Record<string, string>
 }
 
+type DependabotUpdate = {
+  'commit-message'?: { prefix?: string }
+  directory?: string
+  groups?: Record<
+    string,
+    { 'applies-to'?: string; 'dependency-type'?: string; patterns?: string[] }
+  >
+  'open-pull-requests-limit'?: number
+  'package-ecosystem'?: string
+  'pull-request-branch-name'?: {
+    'branch-name-case'?: string
+    prefix?: string
+    template?: string
+  }
+}
+
 const workflowText = readFileSync(join(process.cwd(), '.github/workflows/pr-gate.yml'), 'utf8')
 const workflow = load(workflowText) as Workflow
+const dependabot = load(readFileSync(join(process.cwd(), '.github/dependabot.yml'), 'utf8')) as {
+  updates: DependabotUpdate[]
+}
 const manifest = JSON.parse(
   readFileSync(join(process.cwd(), 'scripts/ci/change-impact.json'), 'utf8')
 ) as { bundleOrder: string[]; laneBundles: Record<string, string>; laneOrder: string[] }
@@ -266,6 +285,60 @@ describe('PR Gate workflow', () => {
         'head-ref': '${{ needs.preflight.outputs.head }}',
         'license-check': false,
         'show-openssf-scorecard': false
+      }
+    })
+  })
+
+  it('keeps Dependabot pull requests compatible with repository branch and title policy', () => {
+    const npm = dependabot.updates.find(
+      (update) => update['package-ecosystem'] === 'npm' && update.directory === '/'
+    )
+    const actions = dependabot.updates.find(
+      (update) => update['package-ecosystem'] === 'github-actions' && update.directory === '/'
+    )
+
+    expect(npm).toMatchObject({
+      'commit-message': { prefix: 'build(dependencies): update' },
+      'open-pull-requests-limit': 2,
+      'pull-request-branch-name': {
+        'branch-name-case': 'lowercase',
+        prefix: 'build',
+        template: '{prefix}/{group_name}'
+      },
+      groups: {
+        'npm-development-dependencies': {
+          'applies-to': 'version-updates',
+          'dependency-type': 'development',
+          patterns: ['*']
+        },
+        'npm-production-dependencies': {
+          'applies-to': 'version-updates',
+          'dependency-type': 'production',
+          patterns: ['*']
+        },
+        'npm-security-updates': {
+          'applies-to': 'security-updates',
+          patterns: ['*']
+        }
+      }
+    })
+    expect(actions).toMatchObject({
+      'commit-message': { prefix: 'ci(dependencies): update' },
+      'open-pull-requests-limit': 2,
+      'pull-request-branch-name': {
+        'branch-name-case': 'lowercase',
+        prefix: 'ci',
+        template: '{prefix}/{group_name}'
+      },
+      groups: {
+        'github-actions-security-updates': {
+          'applies-to': 'security-updates',
+          patterns: ['*']
+        },
+        'github-actions-version-updates': {
+          'applies-to': 'version-updates',
+          patterns: ['*']
+        }
       }
     })
   })

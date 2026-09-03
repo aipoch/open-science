@@ -7,17 +7,27 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 2
+    commit-message:
+      prefix: 'build(dependencies): update'
+    pull-request-branch-name:
+      prefix: build
+      template: '{prefix}/{group_name}'
+      branch-name-case: lowercase
     groups:
-      security-updates:
+      npm-security-updates:
         applies-to: security-updates
         patterns:
           - '*'
-      production-dependencies:
+      npm-production-dependencies:
         applies-to: version-updates
         dependency-type: production
-      development-dependencies:
+        patterns:
+          - '*'
+      npm-development-dependencies:
         applies-to: version-updates
         dependency-type: development
+        patterns:
+          - '*'
 
   # Keep the GitHub Actions used by the workflows current (checkout, setup-node, upload-artifact, ...).
   - package-ecosystem: github-actions
@@ -25,3 +35,18 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 2
+    commit-message:
+      prefix: 'ci(dependencies): update'
+    pull-request-branch-name:
+      prefix: ci
+      template: '{prefix}/{group_name}'
+      branch-name-case: lowercase
+    groups:
+      github-actions-security-updates:
+        applies-to: security-updates
+        patterns:
+          - '*'
+      github-actions-version-updates:
+        applies-to: version-updates
+        patterns:
+          - '*'
