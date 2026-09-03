@@ -161,6 +161,27 @@ describe('codebuddy framework', () => {
     expect(spawnedEnv?.DISABLE_ERROR_REPORTING).toBe('1')
   })
 
+  it('preserves an empty restricted tool set through the Windows command wrapper', () => {
+    const spawnProcess = vi.fn(() => ({}) as ChildProcessWithoutNullStreams)
+    const framework = createCodeBuddyFramework({
+      platform: 'win32',
+      sourceEnv: {},
+      spawnProcess
+    })
+
+    framework.spawn({
+      executablePath: 'C:\\runtime\\codebuddy.cmd',
+      env: {},
+      args: ['--tools', '']
+    })
+
+    expect(spawnProcess).toHaveBeenCalledWith(
+      '"C:\\runtime\\codebuddy.cmd"',
+      ['--acp', '--tools', '""'],
+      expect.objectContaining({ shell: true })
+    )
+  })
+
   it('keeps native Bash absent on Windows too', () => {
     const framework = createCodeBuddyFramework({ platform: 'win32' })
     const config = framework.prepareModelConfig(provider, {
