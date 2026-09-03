@@ -161,6 +161,7 @@ describe('ProviderAccountsModule', () => {
   })
 
   it.each([
+    ['id', 'p'.repeat(129), 'Provider ID must not exceed 128 characters.'],
     ['name', 'n'.repeat(129), 'Provider name must not exceed 128 characters.'],
     [
       'baseUrl',

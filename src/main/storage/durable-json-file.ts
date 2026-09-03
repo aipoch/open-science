@@ -235,11 +235,13 @@ export const readDurableJsonFile = async <Value>(
   options: DurableJsonReadOptions = {}
 ): Promise<DurableJsonReadResult<Value>> => {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
-  const readContents = async (path: string): Promise<string> => {
+  const readContents = async (path: string, recoveryCandidate = false): Promise<string> => {
     if (options.maxBytes !== undefined) {
       const { size } = await dependencies.stat(path)
       if (size > options.maxBytes) {
-        throw new Error(`${basename(path)} exceeds the ${options.maxBytes} byte read limit.`)
+        const message = `${basename(path)} exceeds the ${options.maxBytes} byte read limit.`
+        if (recoveryCandidate) throw new DurableJsonRecoveryBarrierError(message)
+        throw new Error(message)
       }
     }
     return dependencies.readFile(path)
@@ -251,11 +253,13 @@ export const readDurableJsonFile = async <Value>(
     } catch (error) {
       if (!isMissingFileError(error)) throw error
       const candidates = await listTemporaryCandidates(filePath, dependencies)
-      await assertNoRecoveryBarrier(candidates, decode, dependencies, readContents)
+      await assertNoRecoveryBarrier(candidates, decode, dependencies, (path) =>
+        readContents(path, true)
+      )
       for (const candidate of candidates) {
         let candidateContents: string
         try {
-          candidateContents = await readContents(candidate.path)
+          candidateContents = await readContents(candidate.path, true)
         } catch (candidateReadError) {
           if (isMissingFileError(candidateReadError)) continue
           throw candidateReadError
@@ -283,7 +287,9 @@ export const readDurableJsonFile = async <Value>(
 
     const value = decode(primaryContents)
     const candidates = await listTemporaryCandidates(filePath, dependencies)
-    await assertNoRecoveryBarrier(candidates, decode, dependencies, readContents)
+    await assertNoRecoveryBarrier(candidates, decode, dependencies, (path) =>
+      readContents(path, true)
+    )
     await cleanupTemporaryCandidates(candidates, dependencies)
     return { status: 'found', value }
   })

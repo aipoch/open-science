@@ -204,6 +204,28 @@ describe('durable JSON file recovery', () => {
     await expect(readFile(temporaryPath, 'utf8')).resolves.toBe(futureContents)
   })
 
+  it('preserves an oversized recovery temp when a valid primary exists', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'durable-json-primary-oversized-temp-'))
+    roots.push(root)
+    const filePath = join(root, 'settings.json')
+    const temporaryPath = `${filePath}.1700000000000-1.tmp`
+    const primaryContents = '{"ok":true}\n'
+    const oversizedContents = '{"future":"settings that exceed the current limit"}\n'
+    await writeFile(filePath, primaryContents, 'utf8')
+    await writeFile(temporaryPath, oversizedContents, 'utf8')
+
+    await expect(
+      readDurableJsonFile(
+        filePath,
+        JSON.parse,
+        {},
+        { maxBytes: Buffer.byteLength(primaryContents) }
+      )
+    ).rejects.toThrow('settings.json.1700000000000-1.tmp exceeds')
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(primaryContents)
+    await expect(readFile(temporaryPath, 'utf8')).resolves.toBe(oversizedContents)
+  })
+
   it('does not treat an unrelated tmp file as publication residue', async () => {
     const root = await mkdtemp(join(tmpdir(), 'durable-json-unrelated-temp-'))
     roots.push(root)
