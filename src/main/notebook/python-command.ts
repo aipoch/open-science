@@ -188,7 +188,9 @@ else:
         except (SyntaxError, TypeError, ValueError):
             return False
 
-    def is_static_function(node):
+    def is_static_function(node, visible_bindings=None):
+        if visible_bindings is None:
+            visible_bindings = {}
         arguments = (
             list(getattr(node.args, "posonlyargs", ()))
             + list(node.args.args)
@@ -203,20 +205,34 @@ else:
         ]
         annotations = [argument.annotation for argument in arguments] + [node.returns]
 
-        def is_static_annotation(annotation):
-            return is_literal(annotation) or (
-                isinstance(annotation, ast.Name)
-                and annotation.id in {
+        def static_reference(expression):
+            if isinstance(expression, ast.Name):
+                if expression.id in visible_bindings:
+                    return True, visible_bindings[expression.id]
+                if expression.id in {
                     "bool", "bytes", "dict", "Exception", "float", "int", "list", "object",
                     "set", "str", "tuple", "ValueError"
-                }
-            )
+                }:
+                    return True, getattr(builtins, expression.id)
+                return False, None
+            if isinstance(expression, ast.Attribute):
+                found, value = static_reference(expression.value)
+                if not found:
+                    return False, None
+                try:
+                    return True, getattr(value, expression.attr)
+                except Exception:
+                    return False, None
+            return False, None
+
+        def is_static_value(expression):
+            return is_literal(expression) or static_reference(expression)[0]
 
         return (
             not node.decorator_list
-            and all(is_literal(default) for default in defaults)
+            and all(is_static_value(default) for default in defaults)
             and all(
-                annotation is None or is_static_annotation(annotation)
+                annotation is None or is_static_value(annotation)
                 for annotation in annotations
             )
         )
@@ -358,7 +374,10 @@ else:
                 continue
             if isinstance(member, ast.Pass):
                 continue
-            if isinstance(member, (ast.AsyncFunctionDef, ast.FunctionDef)) and is_static_function(member):
+            if (
+                isinstance(member, (ast.AsyncFunctionDef, ast.FunctionDef))
+                and is_static_function(member, local_bindings)
+            ):
                 namespace[member.name] = callable_placeholder
                 local_bindings[member.name] = callable_placeholder
                 continue
@@ -395,7 +414,10 @@ else:
             continue
         if isinstance(node, ast.Pass):
             continue
-        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and is_static_function(node):
+        if (
+            isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+            and is_static_function(node, bindings)
+        ):
             bindings[node.name] = callable_placeholder
             continue
         if isinstance(node, ast.ClassDef):

@@ -196,6 +196,14 @@ describe('validateNotebookHelperExports', () => {
     await expect(
       validateNotebookHelperExports(
         'figure-composer',
+        'import collections\nfrom collections import OrderedDict\ndef compose_figure(value: OrderedDict = OrderedDict, other: collections.OrderedDict = collections.OrderedDict):\n    return value or other\n',
+        ['compose_figure'],
+        { python: legacyPython }
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      validateNotebookHelperExports(
+        'figure-composer',
         'import pathlib\ndef compose_figure():\n    return None\n',
         ['compose_figure'],
         { python: legacyPython }
