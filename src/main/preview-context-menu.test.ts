@@ -138,6 +138,11 @@ describe('preview context menu main-process bridge', () => {
     const send = vi.fn()
     const executeJavaScript = vi.fn().mockResolvedValue(false)
     const frame = { ...childFrame(), executeJavaScript }
+    const params = { ...contextMenuParams(frame), x: 250, y: 125 }
+    Object.defineProperty(params, 'frame', {
+      value: frame,
+      enumerable: false
+    })
     const webContents = {
       mainFrame: {
         ...mainFrame,
@@ -152,9 +157,13 @@ describe('preview context menu main-process bridge', () => {
     } satisfies PreviewContextMenuWebContents & { getZoomFactor: () => number }
 
     installPreviewContextMenuBridge(webContents)
-    listener?.({}, { ...contextMenuParams(frame), x: 250, y: 125 })
+    listener?.({}, params)
 
     await vi.waitFor(() => expect(send).toHaveBeenCalledOnce())
+    expect(Object.keys(params)).not.toContain('frame')
+    expect(Object.getOwnPropertyNames(params)).toContain('frame')
+    expect(params.frame).toBe(frame)
+    expect(executeJavaScript).toHaveBeenCalledOnce()
     expect(executeJavaScript.mock.calls[0]?.[0]).toContain('document.elementFromPoint(150, 75)')
     expect(send).toHaveBeenCalledWith(PREVIEW_CONTEXT_MENU_REQUESTED_CHANNEL, {
       x: 200,

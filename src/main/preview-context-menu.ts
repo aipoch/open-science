@@ -118,7 +118,13 @@ const normalizeContextMenuParams = (
 ): PreviewContextMenuParams => {
   // Electron reports root-view DIPs, while the fixed renderer anchor consumes CSS pixels.
   const scale = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1
-  return scale === 1 ? params : { ...params, x: params.x / scale, y: params.y / scale }
+  return {
+    x: params.x / scale,
+    y: params.y / scale,
+    frame: params.frame,
+    isEditable: params.isEditable,
+    formControlType: params.formControlType
+  }
 }
 
 export const createPreviewContextMenuRequest = (

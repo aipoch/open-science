@@ -126,58 +126,48 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
 
   await page.getByRole('tab', { name: 'Files' }).click()
   await openLocalFile(page, HTML_FILE_NAME)
-  // Reproduce the native Electron coordinate boundary while the renderer uses zoomed CSS pixels.
   await app.setMainWindowZoomFactor(1.25)
-  const localHtmlFrame = page.frameLocator(`iframe[title="Preview of ${HTML_FILE_NAME}"]`)
-  await expect(
-    localHtmlFrame.getByRole('heading', { name: 'Local HTML context menu fixture' })
-  ).toBeVisible()
-  const passthroughBounds = await localHtmlFrame
-    .getByText('Local native context area', { exact: true })
-    .boundingBox()
-  expect(passthroughBounds).not.toBeNull()
-  await app.emitPreviewContextMenuAtCssPoint({
-    x: passthroughBounds!.x + passthroughBounds!.width / 2,
-    y: passthroughBounds!.y + passthroughBounds!.height / 2
-  })
-  await page.waitForTimeout(300)
-  await expect(page.getByTestId('preview-content-context-menu')).toBeHidden()
-  const localHtmlHeading = localHtmlFrame.getByRole('heading', {
-    name: 'Local HTML context menu fixture'
-  })
-  const frameClick = { x: 8, y: 10 }
-  const localHtmlHeadingBounds = await localHtmlHeading.boundingBox()
-  expect(localHtmlHeadingBounds).not.toBeNull()
-  await app.emitPreviewContextMenuAtCssPoint({
-    x: localHtmlHeadingBounds!.x + frameClick.x,
-    y: localHtmlHeadingBounds!.y + frameClick.y
-  })
-  await expectContentMenu(page, ['Copy path', 'Download', 'Save as artifact'])
-  await page.keyboard.press('Escape')
+  try {
+    const localHtmlFrame = page.frameLocator(`iframe[title="Preview of ${HTML_FILE_NAME}"]`)
+    await expect(
+      localHtmlFrame.getByRole('heading', { name: 'Local HTML context menu fixture' })
+    ).toBeVisible()
+    await localHtmlFrame
+      .getByText('Local native context area', { exact: true })
+      .click({ button: 'right' })
+    await page.waitForTimeout(300)
+    await expect(page.getByTestId('preview-content-context-menu')).toBeHidden()
 
-  await localHtmlFrame.locator('body').evaluate(() => {
-    window.location.hash = 'results'
-  })
-  await expect
-    .poll(() => localHtmlFrame.locator('body').evaluate(() => location.hash))
-    .toBe('#results')
-  const navigatedHtmlHeadingBounds = await localHtmlHeading.boundingBox()
-  expect(navigatedHtmlHeadingBounds).not.toBeNull()
-  await app.emitPreviewContextMenuAtCssPoint({
-    x: navigatedHtmlHeadingBounds!.x + frameClick.x,
-    y: navigatedHtmlHeadingBounds!.y + frameClick.y
-  })
-  await expectContentMenu(page, ['Copy path', 'Download', 'Save as artifact'])
-  const hashMenuBounds = await page.getByTestId('preview-content-context-menu').boundingBox()
-  expect(hashMenuBounds).not.toBeNull()
-  expect(
-    Math.abs(hashMenuBounds!.x - (navigatedHtmlHeadingBounds!.x + frameClick.x))
-  ).toBeLessThanOrEqual(1)
-  expect(
-    Math.abs(hashMenuBounds!.y - (navigatedHtmlHeadingBounds!.y + frameClick.y))
-  ).toBeLessThanOrEqual(1)
-  await page.keyboard.press('Escape')
-  await app.setMainWindowZoomFactor(1)
+    const localHtmlHeading = localHtmlFrame.getByRole('heading', {
+      name: 'Local HTML context menu fixture'
+    })
+    const frameClick = { x: 8, y: 10 }
+    const localHtmlHeadingBounds = await localHtmlHeading.boundingBox()
+    expect(localHtmlHeadingBounds).not.toBeNull()
+    await localHtmlHeading.click({ button: 'right', position: frameClick })
+    await expectContentMenu(page, ['Copy path', 'Download', 'Save as artifact'])
+    const menuBounds = await page.getByTestId('preview-content-context-menu').boundingBox()
+    expect(menuBounds).not.toBeNull()
+    expect(
+      Math.abs(menuBounds!.x - (localHtmlHeadingBounds!.x + frameClick.x))
+    ).toBeLessThanOrEqual(1)
+    expect(
+      Math.abs(menuBounds!.y - (localHtmlHeadingBounds!.y + frameClick.y))
+    ).toBeLessThanOrEqual(1)
+    await page.keyboard.press('Escape')
+
+    await localHtmlFrame.locator('body').evaluate(() => {
+      window.location.hash = 'results'
+    })
+    await expect
+      .poll(() => localHtmlFrame.locator('body').evaluate(() => location.hash))
+      .toBe('#results')
+    await localHtmlHeading.click({ button: 'right', position: frameClick })
+    await expectContentMenu(page, ['Copy path', 'Download', 'Save as artifact'])
+    await page.keyboard.press('Escape')
+  } finally {
+    await app.setMainWindowZoomFactor(1)
+  }
 
   await page.getByRole('tab', { name: 'Files' }).click()
   await openLocalFile(page, PDF_FILE_NAME)
