@@ -327,6 +327,30 @@ describe('navigation store', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('a')
   })
 
+  it('runs a session-by-id continuation after deferred preview confirmation', () => {
+    useSessionStore
+      .getState()
+      .hydrateSessions([createSession({ id: 'b', projectId: 'project-b' })], {
+        version: SESSION_MANIFEST_VERSION
+      })
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+    usePreviewWorkbenchStore.setState({ activeProjectId: 'project-a', activeItemId: 'file-1' })
+    let resumeNavigation: (() => boolean | void) | undefined
+    previewLeaveGuards.register(workbenchPreviewGuardScope('project-a', 'file-1')!, (action) => {
+      resumeNavigation = action
+      return false
+    })
+    const afterNavigate = vi.fn()
+
+    const opened = useNavigationStore.getState().openSessionById('b', 'notification', afterNavigate)
+
+    expect(opened).toBe(false)
+    expect(afterNavigate).not.toHaveBeenCalled()
+    resumeNavigation?.()
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-b')
+    expect(afterNavigate).toHaveBeenCalledOnce()
+  })
+
   it('stays put when a notification names a session that no longer exists', () => {
     const opened = useNavigationStore.getState().openSessionById('gone', 'notification')
 

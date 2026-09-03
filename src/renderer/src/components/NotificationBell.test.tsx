@@ -485,9 +485,47 @@ describe('NotificationBell', () => {
     )
     await act(async () => message?.click())
 
-    expect(openSessionById).toHaveBeenCalledWith('session-missing', 'notification')
+    expect(openSessionById).toHaveBeenCalledWith(
+      'session-missing',
+      'notification',
+      expect.any(Function)
+    )
     expect(markRead).not.toHaveBeenCalled()
     expect(document.body.querySelector('[aria-label="Message center"]')).not.toBeNull()
+  })
+
+  it('finishes a notification action after deferred preview confirmation', async () => {
+    let resumeNavigation: (() => void) | undefined
+    const openSessionById = vi.fn(
+      (_sessionId: string, _origin: string, afterNavigate?: () => void) => {
+        resumeNavigation = afterNavigate
+        return false
+      }
+    )
+    const markRead = vi.fn(async () => undefined)
+    useNavigationStore.setState({ openSessionById })
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      markRead,
+      items: item ? [{ ...item, sessionId: 'session-1' }] : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const message = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Approval needed')
+    )
+    await act(async () => message?.click())
+
+    expect(markRead).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[aria-label="Message center"]')).not.toBeNull()
+
+    await act(async () => resumeNavigation?.())
+
+    expect(markRead).toHaveBeenCalledWith(['message-1'])
+    expect(document.body.querySelector('[aria-label="Message center"]')).toBeNull()
   })
 
   it('continues the notification action when marking the message as read fails', async () => {
@@ -525,7 +563,7 @@ describe('NotificationBell', () => {
     expect(markRead).toHaveBeenCalledWith(['message-1'])
     expect(replayConnectorApproval).toHaveBeenCalledWith('request-1')
     expect(enqueueApproval).toHaveBeenCalledWith(connectorRequest)
-    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification', expect.any(Function))
     expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
   })
 
@@ -550,7 +588,7 @@ describe('NotificationBell', () => {
     )
     await act(async () => message?.click())
 
-    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification', expect.any(Function))
     expect(markRead).toHaveBeenCalledWith(['message-1'])
     expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
   })
@@ -584,7 +622,7 @@ describe('NotificationBell', () => {
     await act(async () => message?.click())
 
     expect(replayConnectorApproval).not.toHaveBeenCalled()
-    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification', expect.any(Function))
   })
 
   it('does not wait for the read write before navigating to the notification target', async () => {
@@ -613,7 +651,7 @@ describe('NotificationBell', () => {
     await act(async () => message?.click())
 
     expect(markRead).toHaveBeenCalledWith(['message-1'])
-    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification', expect.any(Function))
     expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
 
     completeMarkRead?.()
@@ -677,7 +715,11 @@ describe('NotificationBell', () => {
         expect(enqueueCompute).toHaveBeenCalledWith(computeRequest)
       }
       if (sessionId) {
-        expect(openSessionById).toHaveBeenCalledWith(sessionId, 'notification')
+        expect(openSessionById).toHaveBeenCalledWith(
+          sessionId,
+          'notification',
+          expect.any(Function)
+        )
       } else {
         expect(openSessionById).not.toHaveBeenCalled()
       }

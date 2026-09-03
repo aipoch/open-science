@@ -512,7 +512,7 @@ describe('App startup routing', () => {
         })
       }
     } as unknown as Window['api']
-    mocks.openSessionById.mockClear()
+    mocks.openSessionById.mockReset()
     mocks.sessions = []
     mocks.navigation.view = 'home'
     mocks.navigation.userNavigationRevision = 0
@@ -1148,9 +1148,16 @@ describe('App startup routing', () => {
     })
   })
 
-  it('opens a remembered permission session from Settings and keeps missing sessions safe', async () => {
+  it('closes Settings only after remembered-session navigation completes', async () => {
     mocks.settings.isLoaded = true
     mocks.settings.isSettingsOpen = true
+    let resumeNavigation: (() => void) | undefined
+    mocks.openSessionById.mockImplementation(
+      (_sessionId: string, _origin: string, afterNavigate?: () => void) => {
+        resumeNavigation = afterNavigate
+        return false
+      }
+    )
     await render()
 
     const openSession = container.querySelector<HTMLButtonElement>(
@@ -1164,7 +1171,15 @@ describe('App startup routing', () => {
     mocks.sessions = [{ id: 'settings-session' }]
     await act(async () => openSession?.click())
 
-    expect(mocks.openSessionById).toHaveBeenCalledWith('settings-session', 'user')
+    expect(mocks.openSessionById).toHaveBeenCalledWith(
+      'settings-session',
+      'user',
+      expect.any(Function)
+    )
+    expect(mocks.settings.closeSettings).not.toHaveBeenCalled()
+
+    act(() => resumeNavigation?.())
+
     expect(mocks.settings.closeSettings).toHaveBeenCalledOnce()
   })
 

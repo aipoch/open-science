@@ -315,17 +315,27 @@ const NotificationBellContent = ({
       // Replaying an optional approval must not block navigation to the durable task.
     }
 
+    let completed = false
+    const completeOpen = (): void => {
+      if (completed) return
+      completed = true
+      setOpen(false)
+      if (item.readAt === undefined) runNotificationTask(() => markRead([item.id]))
+    }
+
     try {
       if (item.sessionId) {
-        const opened = useNavigationStore.getState().openSessionById(item.sessionId, 'notification')
+        const opened = useNavigationStore
+          .getState()
+          .openSessionById(item.sessionId, 'notification', completeOpen)
         if (!opened) return
-        setOpen(false)
+        completeOpen()
       } else if (item.projectId) {
-        const opened = await openNotificationProject(item.projectId)
+        const opened = await openNotificationProject(item.projectId, completeOpen)
         if (!opened) return
-        setOpen(false)
+        completeOpen()
       } else if (replayedApproval) {
-        setOpen(false)
+        completeOpen()
       } else {
         if (item.readAt === undefined) runNotificationTask(() => markRead([item.id]))
         return
@@ -333,7 +343,6 @@ const NotificationBellContent = ({
     } catch {
       return
     }
-    if (item.readAt === undefined) runNotificationTask(() => markRead([item.id]))
   }
 
   return (

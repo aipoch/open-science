@@ -59,7 +59,11 @@ type NavigationStore = {
   ) => boolean
   // Opens a session knowing only its id (e.g. a desktop-notification click); a no-op when the
   // session no longer exists or hasn't loaded yet.
-  openSessionById: (sessionId: string, origin: NavigationOrigin) => boolean
+  openSessionById: (
+    sessionId: string,
+    origin: NavigationOrigin,
+    afterNavigate?: () => void
+  ) => boolean
   // Leaves a Workspace whose Project disappeared from the authoritative Project list. This recovery
   // bypasses preview leave guards because the missing Project is no longer a valid editing scope.
   discardInvalidProject: (projectId: string) => void
@@ -218,13 +222,13 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   // Resolves the session's project from the session store, then navigates exactly like
   // openSession. Unknown ids stay put: a notification for a deleted conversation must not
   // yank the user to a blank workspace.
-  openSessionById: (sessionId, origin) => {
+  openSessionById: (sessionId, origin, afterNavigate) => {
     const session = useSessionStore
       .getState()
       .sessions.find((candidate) => candidate.id === sessionId)
 
     if (!session) return false
-    return get().openSession(session.projectId, session.id, origin)
+    return get().openSession(session.projectId, session.id, origin, afterNavigate)
   },
 
   discardInvalidProject: (projectId) => {
@@ -299,7 +303,10 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
 // Notification surfaces can appear before the startup Project query finishes. Wait for an
 // authoritative list before accepting or rejecting the target so a transient empty cache neither
 // loses a valid click nor consumes a notification for a deleted or archived Project.
-export const openNotificationProject = async (projectId: string): Promise<boolean> => {
+export const openNotificationProject = async (
+  projectId: string,
+  afterNavigate?: () => void
+): Promise<boolean> => {
   const projectState = useProjectStore.getState()
   if (!projectState.isLoaded || projectState.loadError !== undefined) {
     await projectState.loadProjects()
@@ -308,5 +315,5 @@ export const openNotificationProject = async (projectId: string): Promise<boolea
   const loadedProjectState = useProjectStore.getState()
   if (!loadedProjectState.isLoaded || loadedProjectState.loadError !== undefined) return false
 
-  return useNavigationStore.getState().openProject(projectId, 'notification')
+  return useNavigationStore.getState().openProject(projectId, 'notification', afterNavigate)
 }
