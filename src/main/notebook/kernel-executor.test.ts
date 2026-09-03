@@ -3266,14 +3266,19 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
     }
   })
 
-  it.runIf(process.platform === 'darwin')(
+  it.runIf(
+    process.platform === 'darwin' ||
+      (process.platform === 'win32' && process.env.OPEN_SCIENCE_WINDOWS_APP_CONTAINER_TEST === '1')
+  )(
     'executes the repl loop through the production network sandbox',
     async () => {
       cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-sandbox-'))
       const inputRoot = `${cwdDir}-inputs`
       const inputPath = join(inputRoot, 'content')
+      const replLoopPath = join(inputRoot, 'repl_loop.js')
       await mkdir(inputRoot, { recursive: true })
       await writeFile(inputPath, 'verified input')
+      await writeFile(replLoopPath, await readFile(REPL_LOOP))
       const owner = new NotebookNetworkSandboxOwner({
         resourceRoot: resolve(
           import.meta.dirname,
@@ -3284,7 +3289,7 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
         requestDecision: async () => 'deny'
       })
       const executor = new NotebookKernelExecutor({
-        replLoopPath: REPL_LOOP,
+        replLoopPath,
         processSandbox: owner
       })
 
@@ -3375,6 +3380,41 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       }
       expect(child.spawnfile).toBe(process.execPath)
       expect(child.spawnargs).toContain(REPL_LOOP)
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('preserves the Windows repl main module without widening sandbox access', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-windows-main-'))
+    const cleanup = vi.fn()
+    const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => ({
+      executable: invocation.executable,
+      args: invocation.args,
+      env: invocation.env,
+      beginExecution: () => () => undefined,
+      annotateStderr: (stderr) => stderr,
+      cleanup
+    }))
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      platform: 'win32',
+      processSandbox: { wrap }
+    })
+
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'return 1',
+        kind: 'repl',
+        sessionId: 'session-1',
+        projectId: 'project-1'
+      })
+
+      expect(result.status, result.stderr || result.traceback).toBe('completed')
+      expect(wrap).toHaveBeenCalledWith(
+        expect.objectContaining({ args: ['--preserve-symlinks-main', REPL_LOOP] })
+      )
     } finally {
       await executor.shutdown()
     }

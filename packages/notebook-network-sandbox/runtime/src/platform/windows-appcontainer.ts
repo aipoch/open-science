@@ -381,8 +381,13 @@ const windowsLaunch = (
     }),
     'utf8'
   ).toString('base64url')
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...request.env,
+    // CreateProcessW requires this base while applying AppContainer security capabilities. Windows
+    // maps it to the profile's isolated Packages/.../AC directory for the sandboxed child.
+    ...(request.env.LOCALAPPDATA === undefined && process.env.LOCALAPPDATA
+      ? { LOCALAPPDATA: process.env.LOCALAPPDATA }
+      : {}),
     ...proxyEnvironment(request.gatewayPort, request.gatewayCredentials)
   }
   if (request.localRpcSocketPath) {

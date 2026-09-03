@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   connectionProbeSpecification,
@@ -12,6 +12,8 @@ import {
   windowsLaunch,
   windowsStandardLaunch
 } from '../runtime/src/platform/windows-appcontainer.js'
+
+afterEach(() => vi.unstubAllEnvs())
 
 describe('Windows AppContainer network fence probe', () => {
   it('keeps PowerShell catch and finally clauses attached to the try statement', () => {
@@ -55,6 +57,35 @@ describe('Windows AppContainer launch', () => {
     const launch = windowsStandardLaunch(request)
 
     expect(launch.argv).toEqual([request.executable, ...request.args])
+  })
+
+  it('supplies the AppContainer-local data base when the command environment is isolated', () => {
+    const localAppData = join(tmpdir(), 'local-app-data')
+    const runtimeRoot = join(tmpdir(), 'runtime')
+    const appRoot = join(tmpdir(), 'app')
+    const workspaceRoot = join(tmpdir(), 'workspace')
+    vi.stubEnv('LOCALAPPDATA', localAppData)
+
+    const launch = windowsLaunch({
+      command: 'node repl_loop.js',
+      executable: join(runtimeRoot, 'node.exe'),
+      args: [join(appRoot, 'repl_loop.js')],
+      cwd: workspaceRoot,
+      gatewayPort: 49700,
+      gatewayCredentials: { username: 'command', password: 'secret' },
+      env: {},
+      filesystem: {
+        readOnlyRoots: [runtimeRoot, appRoot],
+        readWriteRoots: [workspaceRoot],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      },
+      hostPath: 'C:\\resources\\notebook-sandbox-host.exe',
+      installationId: '0123456789abcdef01234567',
+      ownershipRoot: 'C:\\sandbox'
+    })
+
+    expect(launch.env.LOCALAPPDATA).toBe(localAppData)
   })
 
   it('launches a structured executable directly instead of through PowerShell', () => {
