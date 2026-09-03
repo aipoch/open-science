@@ -253,6 +253,7 @@ describe('renderer contract catalog', () => {
       'compute.changeAuthentication',
       'compute.createPassword',
       'compute.download',
+      'compute.jobsSetRemoteCleanup',
       'compute.passwordCapability',
       'compute.resetPassword',
       'compute.revealInFolder'

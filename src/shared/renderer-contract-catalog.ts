@@ -885,7 +885,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   ),
   'compute.jobsSetRemoteCleanup': callable<
     (request: SetComputeJobRemoteCleanupRequest) => Promise<void>
-  >()('compute', ['compute:jobs:set-remote-cleanup']),
+  >()('compute', ['compute:jobs:set-remote-cleanup', LOCAL]),
   'compute.jobsMarkConsumed': callable<(sessionId: string, jobIds: string[]) => Promise<void>>()(
     'compute',
     ['compute:jobs:mark-consumed']

@@ -63,6 +63,7 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
     approvalReplay: vi.fn(() => null),
     approvalReplayPending: vi.fn(() => undefined),
     jobsList: vi.fn(async () => []),
+    jobsSetRemoteCleanup: vi.fn(async () => undefined),
     jobsPendingNotification: vi.fn(async () => []),
     jobsMarkConsumed: vi.fn(async () => undefined),
     jobsTransitionAnalysis: vi.fn(async () => [])
@@ -390,6 +391,25 @@ describe('Compute application commands', () => {
     const router = createApplicationCommandRouter()
     registerComputeApplicationCommands(router.registrar, dependencies)
     const callerContext = createWebCallerContext('remote-web', { location: 'remote' })
+
+    await expect(
+      router.dispatcher.invoke(
+        computeApplicationCommands.jobsSetRemoteCleanup,
+        invocation(
+          [
+            {
+              jobId: 'job-1',
+              providerId: 'ssh:cluster',
+              projectId: 'project-1',
+              sessionId: 'session-1',
+              disposition: 'cleaned'
+            }
+          ],
+          callerContext
+        )
+      )
+    ).rejects.toThrow('Channel only available from the local app: compute:jobs:set-remote-cleanup')
+    expect(dependencies.compute.jobsSetRemoteCleanup).not.toHaveBeenCalled()
 
     await expect(
       router.dispatcher.invoke(

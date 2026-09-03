@@ -15,7 +15,8 @@ const remoteFileStatCommand = (remotePath: string): string => {
   const quoted = quoteRemotePath(remotePath)
   return [
     `if [ -f ${quoted} ]; then`,
-    `  fields=$(LC_ALL=C stat -c '%s %i %Y' ${quoted} 2>/dev/null) || fields=$(LC_ALL=C stat -f '%z %i %m' ${quoted}) || exit 1`,
+    `  fields=$(LC_ALL=C find ${quoted} -maxdepth 0 -printf '%s %i %T@' 2>/dev/null)`,
+    `  [ -n "$fields" ] || fields=$(LC_ALL=C stat -f '%z %i %.9Fm' ${quoted}) || exit 1`,
     `  printf 'f %s\n' "$fields"`,
     `elif [ -d ${quoted} ]; then`,
     `  echo 'd'`,
@@ -27,8 +28,12 @@ const remoteFileStatCommand = (remotePath: string): string => {
   ].join('\n')
 }
 
-const normalizeRemoteMtimeToken = (value: string): string | undefined =>
-  /^(-?\d+)(?:\.\d+)?$/.exec(value.trim())?.[1]
+const normalizeRemoteMtimeToken = (value: string): string | undefined => {
+  const match = /^(-?\d+)(?:\.(\d+))?$/.exec(value.trim())
+  if (!match) return undefined
+  const fraction = match[2]?.replace(/0+$/, '')
+  return fraction ? `${match[1]}.${fraction}` : match[1]
+}
 
 const parseRemoteFileStat = (stdout: string): RemoteFileStat => {
   const trimmed = stdout.trim()

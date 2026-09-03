@@ -874,6 +874,54 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
     expect(await readdir(tmpDir)).toEqual([])
   })
 
+  it('rejects a same-size download changed on the same inode within one second', async () => {
+    const run = vi
+      .fn<SshRunner['run']>()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'f 10 41 1700000000.100000000',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'f 10 41 1700000000.900000000',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+    const runner: SshRunner = { run }
+    const { repo } = makeRepo()
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async (_bin, args) => {
+        const localPath = args[args.length - 1] as string
+        await writeFile(localPath, 'mixed-data')
+        return { exitCode: 0, stderr: '', timedOut: false }
+      })
+    }
+    const service = makeOwner(runner, repo, undefined, scpRunner, tmpDir)
+
+    await expect(
+      service.download('ssh:biowulf', '/remote/data.csv', { kind: 'os-downloads' })
+    ).rejects.toMatchObject({
+      remoteFsError: { detail: expect.stringMatching(/changed during transfer/i) }
+    })
+    expect(run).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.stringContaining('%T@'),
+      expect.anything()
+    )
+    expect(run).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.stringContaining('%.9Fm'),
+      expect.anything()
+    )
+    expect(await readdir(tmpDir)).toEqual([])
+  })
+
   it('classifies a rejected post-transfer stat as a connection failure', async () => {
     const run = vi
       .fn<SshRunner['run']>()

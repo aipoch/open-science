@@ -495,6 +495,7 @@ describe('Compute service architecture', () => {
       'compute:change-authentication',
       'compute:create-password',
       'compute:download',
+      'compute:jobs:set-remote-cleanup',
       'compute:password-capability',
       'compute:reset-password',
       'compute:reveal-in-folder'

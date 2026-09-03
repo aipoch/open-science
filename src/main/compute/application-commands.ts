@@ -411,8 +411,10 @@ const registerComputeApplicationCommands = (
       },
       'compute:jobs:list': ({ args }) => dependencies.compute.jobsList(args[0]),
       'compute:jobs:cancel': ({ args }) => dependencies.compute.jobsCancel(args[0]),
-      'compute:jobs:set-remote-cleanup': ({ args }) =>
-        dependencies.compute.jobsSetRemoteCleanup(args[0]),
+      'compute:jobs:set-remote-cleanup': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:jobs:set-remote-cleanup')
+        return dependencies.compute.jobsSetRemoteCleanup(args[0])
+      },
       'compute:jobs:pending-notification': ({ args }) =>
         dependencies.compute.jobsPendingNotification(args[0]),
       'compute:jobs:mark-consumed': ({ args }) =>

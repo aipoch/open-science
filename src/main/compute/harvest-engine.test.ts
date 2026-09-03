@@ -291,7 +291,7 @@ describe('getJobHarvestDir', () => {
 // ---------------------------------------------------------------------------
 
 describe('harvestJob — clean harvest', () => {
-  it('matches GNU find fractional mtimes with stat epoch seconds', async () => {
+  it('accepts an unchanged GNU fractional mtime snapshot', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
     const ssh: SshRunner = {
@@ -306,7 +306,7 @@ describe('harvestJob — clean harvest', () => {
                 mtimeToken: '1700000000.1234567890'
               }
             ])
-          : 'f 10 41 1700000000',
+          : 'f 10 41 1700000000.123456789',
         stderr: '',
         truncated: false,
         timedOut: false
@@ -322,6 +322,41 @@ describe('harvestJob — clean harvest', () => {
     })
 
     expect(updates.at(-1)).toMatchObject({ data: { harvestError: null } })
+  })
+
+  it('rejects a same-size harvest file changed on the same inode within one second', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    const ssh: SshRunner = {
+      run: vi.fn(async (_target, command) => ({
+        exitCode: 0,
+        stdout: command.startsWith('find ')
+          ? findOutput([
+              {
+                path: 'run.result',
+                size_bytes: 10,
+                inode: '41',
+                mtimeToken: '1700000000.1000000000'
+              }
+            ])
+          : 'f 10 41 1700000000.900000000',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      }))
+    }
+    const { repo: jobRepo, updates } = makeJobRepo(job)
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(ssh, makeWritingScpRunner()),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: jobRepo,
+      storageRoot
+    })
+
+    expect(updates[0]?.data).toMatchObject({
+      harvestError: expect.stringMatching(/changed during transfer/i)
+    })
   })
 
   it('excludes staged inputs from both current and legacy input manifests', async () => {
