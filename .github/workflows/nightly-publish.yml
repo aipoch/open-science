@@ -97,9 +97,9 @@ jobs:
           test -s artifacts/SHA256SUMS.txt
           test -s artifacts/RELEASE-CERTIFICATION.json
 
-      # Keep one long-lived GitHub Release and only update its tag and assets. Zenodo archives newly
+      # Keep one long-lived GitHub Release and only update its assets and tag. Zenodo archives newly
       # published releases but ignores edits, so deleting and recreating this release would create a
-      # new Zenodo version on every scheduled run.
+      # new Zenodo version on every scheduled run. Advance the tag last so a failed upload is retried.
       - name: Refresh nightly release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -111,14 +111,9 @@ jobs:
             exit 1
           fi
 
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/nightly" > /dev/null 2>"$error_file"; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" \
-              -f sha="$SOURCE_SHA" -F force=true
-          elif grep -Eq 'HTTP 404' "$error_file"; then
-            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-              -f ref='refs/tags/nightly' -f sha="$SOURCE_SHA"
-          else
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/nightly" > /dev/null 2>"$error_file"; then
             cat "$error_file" >&2
+            echo "The long-lived nightly tag is missing; refusing to publish without a retry marker." >&2
             exit 1
           fi
 
@@ -151,3 +146,10 @@ jobs:
             artifacts/*.deb
             artifacts/SHA256SUMS.txt
             artifacts/RELEASE-CERTIFICATION.json
+
+      - name: Advance nightly tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly"
+          -f sha="$SOURCE_SHA" -F force=true
