@@ -88,18 +88,31 @@ const cleanupCommand = (workdir: string, handle: RemoteHandle | undefined): stri
   if (markerIndex < 0) throw new Error('Unsafe remote Compute Job cleanup path.')
   const scratchRoot = markerIndex === 0 ? '/' : workdir.slice(0, markerIndex)
   const workdirSuffix = workdir.slice(markerIndex + 1)
+  const parentSeparatorIndex = workdir.lastIndexOf('/')
+  const workdirParent = workdir.slice(0, parentSeparatorIndex)
+  const workdirParentSuffix = workdirSuffix.slice(0, workdirSuffix.lastIndexOf('/'))
   const quotedScratchRoot = quoteRemotePath(scratchRoot)
   const quotedWorkdirSuffix = quoteRemotePath(workdirSuffix)
+  const quotedWorkdirParent = quoteRemotePath(workdirParent)
+  const quotedWorkdirParentSuffix = quoteRemotePath(workdirParentSuffix)
   const quotedWorkdir = quoteRemotePath(workdir)
   const quotedPidFile = quoteRemotePath(`${workdir}/job.pid`)
   // Retried plans may contain stale PIDs. Signal only while cwd still proves Job ownership;
   // permit stale/absent PIDs, but fail closed when ownership cannot be determined.
   const lines = [
     `[ ! -L ${quotedWorkdir} ] || exit 1`,
-    `scratch_root=$(cd -- ${quotedScratchRoot} 2>/dev/null && pwd -P || true)`,
-    `workdir=$(cd -- ${quotedWorkdir} 2>/dev/null && pwd -P || true)`,
+    `scratch_root=$(cd -- ${quotedScratchRoot} 2>/dev/null && pwd -P) || exit 1`,
+    `workdir_parent=$(cd -- ${quotedWorkdirParent} 2>/dev/null && pwd -P) || exit 1`,
+    'expected_workdir_parent=${scratch_root%/}/' + quotedWorkdirParentSuffix,
+    '[ "$workdir_parent" = "$expected_workdir_parent" ] || exit 1',
+    `if [ -e ${quotedWorkdir} ]; then`,
+    `  [ -d ${quotedWorkdir} ] || exit 1`,
+    `  workdir=$(cd -- ${quotedWorkdir} 2>/dev/null && pwd -P) || exit 1`,
+    'else',
+    '  workdir=',
+    'fi',
     'expected_workdir=${scratch_root%/}/' + quotedWorkdirSuffix,
-    '[ -z "$workdir" ] || { [ -n "$scratch_root" ] && [ "$workdir" = "$expected_workdir" ]; } || exit 1',
+    '[ -z "$workdir" ] || [ "$workdir" = "$expected_workdir" ] || exit 1',
     ...remoteJobPidTerminationFunctionLines(),
     'cleanup_job_pid() {',
     '  kill_job_pid "$1"',
@@ -111,7 +124,7 @@ const cleanupCommand = (workdir: string, handle: RemoteHandle | undefined): stri
   lines.push(
     `if [ -f ${quotedPidFile} ]; then cleanup_job_pid "$(cat ${quotedPidFile} 2>/dev/null || true)" || exit 1; fi`,
     'if [ -n "$workdir" ]; then rm -rf -- "$workdir"; fi',
-    'test -z "$workdir" || test ! -e "$workdir"'
+    `test ! -e ${quotedWorkdir} && test ! -L ${quotedWorkdir}`
   )
   return lines.join('\n')
 }

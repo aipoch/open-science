@@ -1,3 +1,7 @@
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost, ComputeJob } from '../../shared/compute'
@@ -289,9 +293,32 @@ describe('ComputeJobDeletionOwner', () => {
     expect(command).toContain('[ "$workdir" = "$expected_workdir" ]')
     expect(command).toContain('job.pid')
     expect(command).toContain('rm -rf -- "$workdir"')
-    expect(command).toContain('test -z "$workdir" || test ! -e "$workdir"')
+    expect(command).toContain("test ! -e ~/'.openscience/jobs/job-1'")
     expect(command).not.toContain("rm -rf -- ~/'.openscience/jobs/job-1'")
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'distinguishes an invalid remote workdir from an explicitly absent one',
+    () => {
+      const scratchRoot = mkdtempSync(join(tmpdir(), 'compute-cleanup-'))
+      const jobsRoot = join(scratchRoot, '.openscience', 'jobs')
+      const workdir = join(jobsRoot, 'job-1')
+      mkdirSync(jobsRoot, { recursive: true })
+      writeFileSync(workdir, 'not a directory')
+
+      try {
+        const result = spawnSync('/bin/sh', ['-c', cleanupCommand(workdir, undefined)])
+        expect(result.status).not.toBe(0)
+        expect(existsSync(workdir)).toBe(true)
+
+        rmSync(workdir)
+        const missingResult = spawnSync('/bin/sh', ['-c', cleanupCommand(workdir, undefined)])
+        expect(missingResult.status).toBe(0)
+      } finally {
+        rmSync(scratchRoot, { recursive: true, force: true })
+      }
+    }
+  )
 
   it.each(['ssh_config', 'password'] as const)(
     'cancels and cleans up an active %s job only after owner authority commits',
@@ -414,7 +441,7 @@ describe('ComputeJobDeletionOwner', () => {
       '/scratch/scientist/.openscience/jobs/job-1'
     )
     expect(harness.runner.run.mock.calls[0]?.[1]).toContain(
-      "scratch_root=$(cd -- '/scratch/scientist' 2>/dev/null && pwd -P || true)"
+      "scratch_root=$(cd -- '/scratch/scientist' 2>/dev/null && pwd -P) || exit 1"
     )
   })
 
