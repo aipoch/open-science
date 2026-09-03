@@ -532,6 +532,70 @@ describe('WorkspacePage image attachment gating', () => {
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })
 
+  it('routes a follow-up PDF into Reading when the active Session already has PDF context', async () => {
+    setActiveProviderImageSupport(false)
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        createSession({
+          runtimeContext: {
+            version: 1,
+            revision: 1,
+            pdfContext: {
+              version: 1,
+              bindings: [
+                {
+                  version: 1,
+                  bindingId: 'binding-1',
+                  sourceKind: 'upload-version',
+                  sourceFileId: 'pdf-1',
+                  sourceVersionId: 'pdf-version-1',
+                  sourceSessionId: 'sess-a',
+                  name: 'first.pdf',
+                  mimeType: 'application/pdf',
+                  sizeBytes: 3,
+                  checksum: 'a'.repeat(64),
+                  linkedAt: 1
+                }
+              ]
+            }
+          }
+        })
+      ],
+      selectedSessionId: 'sess-a'
+    })
+    const staged = {
+      id: 'pdf-2',
+      sessionId: '.pending',
+      name: 'second.pdf',
+      originalName: 'second.pdf',
+      path: '/uploads/.pending/second.pdf',
+      mimeType: 'application/pdf',
+      size: 3
+    } satisfies UploadedAttachment
+    stageLocalFile.mockResolvedValueOnce(staged)
+    runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a' })
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.stageFiles([pdfFile('second.pdf')])
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(conversationProps.composer.view.attachments).toEqual([staged]))
+    })
+    await act(async () => {
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(runtime.sendMessage).toHaveBeenCalledOnce())
+    })
+
+    expect(runtime.sendMessage.mock.calls[0][0]).toMatchObject({
+      attachments: [staged],
+      pendingPdfContextAttachmentIds: ['pdf-2']
+    })
+  })
+
   it('allows explicitly linking a staged PDF from the preview surface', async () => {
     setActiveProviderImageSupport(false)
     useSessionStore.setState(createInitialSessionState())

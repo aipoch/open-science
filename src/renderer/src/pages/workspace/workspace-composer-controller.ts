@@ -313,11 +313,11 @@ const useWorkspaceComposerController = ({
       : undefined
   const automaticStagedReadingContexts = useMemo(
     () =>
-      !activeSession &&
+      (!activeSession || durableReadingBindings.length > 0) &&
       !pendingPdfContextSelection &&
       transfers.length === 0 &&
       attachments.length >= 1 &&
-      attachments.length <= 3 &&
+      attachments.length <= MAX_SESSION_PDF_CONTEXTS - durableReadingBindings.length &&
       attachments.every(
         (attachment) =>
           getPreviewFormatForFile({ name: attachment.name, mimeType: attachment.mimeType }) ===
@@ -325,7 +325,13 @@ const useWorkspaceComposerController = ({
       )
         ? attachments
         : [],
-    [activeSession, attachments, pendingPdfContextSelection, transfers.length]
+    [
+      activeSession,
+      attachments,
+      durableReadingBindings.length,
+      pendingPdfContextSelection,
+      transfers.length
+    ]
   )
   const versionReadingContextItem = usePreviewWorkbenchStore((state) => {
     if (pendingPdfContextSelection?.kind !== 'version') return undefined
