@@ -713,11 +713,20 @@ class NotebookExecutionOwner {
       stderr: SHELL_CANCELLED_MESSAGE,
       exitCode: null
     })
+    // Enqueue before loadSession so overlapping same-Session calls keep call order. The waiter
+    // resolves inside executeShellRun after the queued Run exists.
+    const admission = this.shellAdmission.acquire(sessionKey, executionSignal)
     const promise = Promise.resolve().then(async () => {
-      if (executionSignal.aborted) return cancelled()
-      const session = await loadSession()
-      if (executionSignal.aborted) return cancelled()
-      return this.executeShellRun(session, request, executionSignal)
+      let handedOff = false
+      try {
+        if (executionSignal.aborted) return cancelled()
+        const session = await loadSession()
+        if (executionSignal.aborted) return cancelled()
+        handedOff = true
+        return await this.executeShellRun(session, request, executionSignal, admission)
+      } finally {
+        if (!handedOff) (await admission)?.()
+      }
     })
     const operation = { controller, promise, sessionKey }
     const operations = this.shellOperationsByLane.get(laneKey) ?? new Set<ShellExecutionOperation>()
@@ -796,7 +805,8 @@ class NotebookExecutionOwner {
   private async executeShellRun(
     session: NotebookSessionAggregate,
     request: ExecuteShellRequest,
-    signal: AbortSignal
+    signal: AbortSignal,
+    admission: Promise<(() => void) | undefined>
   ): Promise<NotebookShellResult> {
     const { runId } = this.options.runTerminalization.allocateRunIdentity()
     const queuedRun: NotebookRunRecord = {
@@ -820,118 +830,123 @@ class NotebookExecutionOwner {
       inputFiles: request.provenanceContext ? (request.registeredInputFiles ?? []) : []
     }
 
-    const { result } = await this.options.runTerminalization.run({
-      session,
-      runningRun: queuedRun,
-      invoke: async (markRunning) => {
-        const release = await this.shellAdmission.acquire(shellSessionKey(session.lane), signal)
-        if (!release || signal?.aborted) {
-          release?.()
-          return {
-            status: 'cancelled' as const,
-            stdout: '',
-            stderr: SHELL_CANCELLED_MESSAGE,
-            traceback: '',
-            cwdAfter: session.cwd,
-            outputs: [
-              { type: 'stream' as const, name: 'stderr' as const, text: SHELL_CANCELLED_MESSAGE }
-            ],
-            workingFiles: [],
-            exitCode: null
+    try {
+      const { result } = await this.options.runTerminalization.run({
+        session,
+        runningRun: queuedRun,
+        invoke: async (markRunning) => {
+          const release = await admission
+          if (!release || signal?.aborted) {
+            release?.()
+            return {
+              status: 'cancelled' as const,
+              stdout: '',
+              stderr: SHELL_CANCELLED_MESSAGE,
+              traceback: '',
+              cwdAfter: session.cwd,
+              outputs: [
+                { type: 'stream' as const, name: 'stderr' as const, text: SHELL_CANCELLED_MESSAGE }
+              ],
+              workingFiles: [],
+              exitCode: null
+            }
           }
-        }
 
-        try {
-          await markRunning()
-          const workingFileObservation = await startWorkingFileObservation({
-            dataRoot: session.dataRoot,
-            notebookSessionRoot: session.notebookSessionRoot,
-            ...this.fileEvidenceLocation(session),
-            runId,
-            signal
-          })
-          let workingFiles: NotebookWorkingFile[] = []
-          let fileEvidence: ExecutionFileEvidenceSummary | undefined
-          const blockedMutation = detectManagedRuntimeMutation({
-            source: request.command,
-            surface: this.options.platform === 'win32' ? 'powershell' : 'bash',
-            runtimeRoot: session.runtimeRoot,
-            cwd: session.cwd,
-            platform: this.options.platform
-          })
-          let shellResult: NotebookShellResult | undefined
           try {
-            shellResult = await (blockedMutation
-              ? Promise.resolve<NotebookShellResult>({
-                  stdout: '',
-                  stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`,
-                  exitCode: 1
-                })
-              : this.shellProcess.execute({
-                  command: request.command,
-                  cwd: session.cwd,
-                  handoffDir: join(session.notebookSessionRoot, 'handoff'),
-                  runtimeRoot: session.runtimeRoot,
-                  notebookSessionRoot: session.notebookSessionRoot,
-                  inputRoot: this.inputRoot(session),
-                  protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
-                  sessionId: session.sessionId,
-                  projectId: session.projectId,
-                  timeoutMs: request.timeoutMs,
-                  signal
-                }))
+            await markRunning()
+            const workingFileObservation = await startWorkingFileObservation({
+              dataRoot: session.dataRoot,
+              notebookSessionRoot: session.notebookSessionRoot,
+              ...this.fileEvidenceLocation(session),
+              runId,
+              signal
+            })
+            let workingFiles: NotebookWorkingFile[] = []
+            let fileEvidence: ExecutionFileEvidenceSummary | undefined
+            const blockedMutation = detectManagedRuntimeMutation({
+              source: request.command,
+              surface: this.options.platform === 'win32' ? 'powershell' : 'bash',
+              runtimeRoot: session.runtimeRoot,
+              cwd: session.cwd,
+              platform: this.options.platform
+            })
+            let shellResult: NotebookShellResult | undefined
+            try {
+              shellResult = await (blockedMutation
+                ? Promise.resolve<NotebookShellResult>({
+                    stdout: '',
+                    stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`,
+                    exitCode: 1
+                  })
+                : this.shellProcess.execute({
+                    command: request.command,
+                    cwd: session.cwd,
+                    handoffDir: join(session.notebookSessionRoot, 'handoff'),
+                    runtimeRoot: session.runtimeRoot,
+                    notebookSessionRoot: session.notebookSessionRoot,
+                    inputRoot: this.inputRoot(session),
+                    protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
+                    sessionId: session.sessionId,
+                    projectId: session.projectId,
+                    timeoutMs: request.timeoutMs,
+                    signal
+                  }))
+            } finally {
+              const observation = await workingFileObservation.finish(
+                shellResult === undefined ||
+                  signal?.aborted ||
+                  shellResult.cancelled ||
+                  shellResult.exitCode === null
+                  ? AbortSignal.abort()
+                  : signal
+              )
+              workingFiles = observation.workingFiles
+              fileEvidence = observation.fileEvidence
+            }
+            if (!shellResult)
+              throw new Error('Notebook shell execution completed without a result.')
+            const status: NotebookRunStatus = shellResult.cancelled
+              ? 'cancelled'
+              : shellResult.exitCode === 0
+                ? 'completed'
+                : shellResult.exitCode === null
+                  ? 'timeout'
+                  : 'failed'
+            const outputs: NotebookOutput[] = [
+              ...(shellResult.stdout
+                ? [{ type: 'stream' as const, name: 'stdout' as const, text: shellResult.stdout }]
+                : []),
+              ...(shellResult.stderr
+                ? [{ type: 'stream' as const, name: 'stderr' as const, text: shellResult.stderr }]
+                : [])
+            ]
+
+            return {
+              status,
+              stdout: shellResult.stdout,
+              stderr: shellResult.stderr,
+              traceback: '',
+              cwdAfter: session.cwd,
+              outputs,
+              truncated: shellResult.truncated,
+              workingFiles,
+              fileEvidence,
+              exitCode: shellResult.exitCode
+            }
           } finally {
-            const observation = await workingFileObservation.finish(
-              shellResult === undefined ||
-                signal?.aborted ||
-                shellResult.cancelled ||
-                shellResult.exitCode === null
-                ? AbortSignal.abort()
-                : signal
-            )
-            workingFiles = observation.workingFiles
-            fileEvidence = observation.fileEvidence
+            release()
           }
-          if (!shellResult) throw new Error('Notebook shell execution completed without a result.')
-          const status: NotebookRunStatus = shellResult.cancelled
-            ? 'cancelled'
-            : shellResult.exitCode === 0
-              ? 'completed'
-              : shellResult.exitCode === null
-                ? 'timeout'
-                : 'failed'
-          const outputs: NotebookOutput[] = [
-            ...(shellResult.stdout
-              ? [{ type: 'stream' as const, name: 'stdout' as const, text: shellResult.stdout }]
-              : []),
-            ...(shellResult.stderr
-              ? [{ type: 'stream' as const, name: 'stderr' as const, text: shellResult.stderr }]
-              : [])
-          ]
-
-          return {
-            status,
-            stdout: shellResult.stdout,
-            stderr: shellResult.stderr,
-            traceback: '',
-            cwdAfter: session.cwd,
-            outputs,
-            truncated: shellResult.truncated,
-            workingFiles,
-            fileEvidence,
-            exitCode: shellResult.exitCode
-          }
-        } finally {
-          release()
         }
-      }
-    })
+      })
 
-    return {
-      stdout: result.stdout,
-      stderr: result.stderr,
-      exitCode: result.exitCode,
-      ...(result.truncated ? { truncated: true } : {})
+      return {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+        ...(result.truncated ? { truncated: true } : {})
+      }
+    } finally {
+      ;(await admission)?.()
     }
   }
 

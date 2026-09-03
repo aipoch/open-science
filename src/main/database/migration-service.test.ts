@@ -43,6 +43,11 @@ const manifestBefore = (id: string): readonly MigrationManifestEntry[] => {
   return MIGRATION_MANIFEST.slice(0, index)
 }
 
+// Hosted Windows runners rebuild tables and copy SQLite backups under disk
+// contention. The Windows full-test workflow default is 60s; rollback suites
+// finish later without hanging.
+const WINDOWS_SQLITE_TEST_TIMEOUT_MS = 120_000
+
 const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_ID = '0009_managed_file_version_foundation'
 const LEGACY_DRAFT_MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM =
   '54d50c127428b47efcea83e18c30f1dd7b94bfe7f37a3b2aae29a1a7ac43a1f8'
@@ -814,34 +819,38 @@ describe('application database migrations', () => {
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
 
-  it('rolls back 0006 when historical rows violate the new contract', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-0006-invalid-'))
-    client = createProjectDbClient(storageRoot)
-    await createDatabaseAtMigration0005(client)
-    await client.$executeRawUnsafe(`INSERT INTO "Review" (
+  it(
+    'rolls back 0006 when historical rows violate the new contract',
+    async () => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-0006-invalid-'))
+      client = createProjectDbClient(storageRoot)
+      await createDatabaseAtMigration0005(client)
+      await client.$executeRawUnsafe(`INSERT INTO "Review" (
       "id", "projectId", "sessionId", "turnMessageId", "lifecycle", "updatedAt"
     ) VALUES ('invalid-review', 'project-1', 'session-1', 'message-1', 'unknown', CURRENT_TIMESTAMP)`)
 
-    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
-      code: 'database_validation_failed',
-      migrationId: '0006_database_domain_constraints'
-    })
-    await expect(
-      client.$queryRaw<Array<{ id: string }>>`
+      await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+        code: 'database_validation_failed',
+        migrationId: '0006_database_domain_constraints'
+      })
+      await expect(
+        client.$queryRaw<Array<{ id: string }>>`
         SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
       `
-    ).resolves.toEqual([{ id: '0005_project_preview_state_owner_fk' }])
-    await expect(
-      client.$queryRaw<Array<{ lifecycle: string }>>`
+      ).resolves.toEqual([{ id: '0005_project_preview_state_owner_fk' }])
+      await expect(
+        client.$queryRaw<Array<{ lifecycle: string }>>`
         SELECT "lifecycle" FROM "Review" WHERE "id" = 'invalid-review'
       `
-    ).resolves.toEqual([{ lifecycle: 'unknown' }])
-    await expect(
-      client.$queryRaw<Array<{ sql: string }>>`
+      ).resolves.toEqual([{ lifecycle: 'unknown' }])
+      await expect(
+        client.$queryRaw<Array<{ sql: string }>>`
         SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'Review'
       `
-    ).resolves.toEqual([{ sql: expect.not.stringContaining('Review_lifecycle_check') }])
-  })
+      ).resolves.toEqual([{ sql: expect.not.stringContaining('Review_lifecycle_check') }])
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
 
   it('rejects schema objects outside the generated current target', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-current-drift-'))
