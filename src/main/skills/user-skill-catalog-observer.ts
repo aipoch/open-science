@@ -141,7 +141,7 @@ class UserSkillCatalogObserver {
     if (this.disposed || this.retryTimer) return
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined
-      void this.enqueueReconcile(false)
+      void this.enqueueReconcile(true)
     }, this.options.reconcileIntervalMs ?? DEFAULT_RECONCILE_INTERVAL_MS)
     this.retryTimer.unref?.()
   }

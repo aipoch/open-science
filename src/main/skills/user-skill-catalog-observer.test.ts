@@ -151,6 +151,38 @@ describe('UserSkillCatalogObserver', () => {
     }
   })
 
+  it('retries a failed forced publication when the catalog is unchanged', async () => {
+    vi.useFakeTimers()
+    const watcher = fakeWatcher()
+    const list = vi.fn<() => Promise<[]>>().mockResolvedValue([])
+    const onCatalogChanged = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('reload failed'))
+      .mockResolvedValue(undefined)
+    const observer = new UserSkillCatalogObserver({
+      storageRoot: await makeStorage(),
+      catalog: { list },
+      onCatalogChanged,
+      watchDirectory: watcher.watchDirectory,
+      reconcileIntervalMs: 100
+    })
+    try {
+      await observer.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onCatalogChanged).toHaveBeenCalledOnce()
+
+      await expect(observer.notifyCatalogChanged()).rejects.toThrow('reload failed')
+      await vi.advanceTimersByTimeAsync(100)
+
+      expect(list).toHaveBeenCalledTimes(3)
+      expect(onCatalogChanged).toHaveBeenCalledTimes(3)
+    } finally {
+      observer.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it('publishes valid direct additions and ignores malformed packages', async () => {
     const storageRoot = await makeStorage()
     const watcher = fakeWatcher()
