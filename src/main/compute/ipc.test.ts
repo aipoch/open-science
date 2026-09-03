@@ -1021,6 +1021,7 @@ describe('host delete guard', () => {
           sessionId: 'session-1',
           status: 'success',
           cancellationStatus: undefined,
+          harvested: false,
           intent: 'completed research',
           createdAt: 1
         }

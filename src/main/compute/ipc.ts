@@ -477,6 +477,7 @@ const createComputeHandlers = (
           sessionId: job.session_id,
           status: job.status,
           cancellationStatus: job.cancellation_status,
+          harvested: job.harvested_at !== undefined,
           intent: job.intent,
           createdAt: job.created_at
         }))

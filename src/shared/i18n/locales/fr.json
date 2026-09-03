@@ -3749,6 +3749,7 @@
     "Hide blocking jobs": "Masquer les tâches bloquantes",
     "View blocking jobs": "Afficher les tâches bloquantes",
     "Clean up remote files": "Nettoyer les fichiers distants",
+    "Finish harvesting before cleaning up remote files.": "Terminez la collecte avant de nettoyer les fichiers distants.",
     "Abandon remote cleanup": "Abandonner le nettoyage à distance",
     "Clean up all remote files": "Nettoyer tous les fichiers distants",
     "Credential missing": "Identifiant manquant",

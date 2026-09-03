@@ -63,6 +63,11 @@ type ComputeJobDeletionOwnerDeps = {
 }
 
 const ACTIVE_STATUSES = new Set<ComputeJob['status']>(['submitted', 'running'])
+const HARVESTABLE_TERMINAL_STATUSES = new Set<ComputeJob['status']>([
+  'success',
+  'failed',
+  'timeout'
+])
 
 const activeRemoteHandle = (job: ComputeJob, workdir: string): RemoteHandle | undefined => {
   if (!ACTIVE_STATUSES.has(job.status)) return undefined
@@ -177,6 +182,9 @@ class ComputeJobDeletionOwner {
         job.remote_cleanup_disposition !== 'pending'
       ) {
         return this.deps.jobRepository.settleRemoteCleanup(request)
+      }
+      if (HARVESTABLE_TERMINAL_STATUSES.has(job.status) && job.harvested_at === undefined) {
+        throw new Error('Compute Job results must be harvested before remote cleanup.')
       }
       const cancellationRequired = ACTIVE_STATUSES.has(job.status) || job.status === 'queued'
       const requestCancellation = this.deps.requestCancellation

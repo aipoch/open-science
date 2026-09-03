@@ -3459,6 +3459,7 @@
     "Hide blocking jobs": "ブロック中の Job を隠す",
     "View blocking jobs": "ブロック中の Job を表示",
     "Clean up remote files": "リモートファイルをクリーンアップ",
+    "Finish harvesting before cleaning up remote files.": "リモートファイルをクリーンアップする前に、結果の収集を完了してください。",
     "Abandon remote cleanup": "リモートクリーンアップを放棄",
     "Clean up all remote files": "すべてのリモートファイルをクリーンアップ",
     "Credential missing": "認証情報がありません",

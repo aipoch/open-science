@@ -202,6 +202,23 @@ describe('ComputeJobDeletionOwner', () => {
     expect(harness.jobRepository.settleRemoteCleanup).toHaveBeenCalledOnce()
   })
 
+  it('does not clean a terminal Job before its remote results are harvested', async () => {
+    const harness = createHarness([job({ status: 'success', harvested_at: undefined })])
+
+    await expect(
+      harness.owner.cleanupJobRemote({
+        jobId: 'job-1',
+        providerId: 'ssh:cluster',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        disposition: 'cleaned'
+      })
+    ).rejects.toThrow('Compute Job results must be harvested before remote cleanup.')
+
+    expect(harness.runner.run).not.toHaveBeenCalled()
+    expect(harness.jobRepository.settleRemoteCleanup).not.toHaveBeenCalled()
+  })
+
   it('requires active Jobs to use cancellation and remote cleanup', async () => {
     const harness = createHarness([job({ status: 'running' })])
 

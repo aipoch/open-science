@@ -246,6 +246,7 @@
     "Hide blocking jobs": "隱藏阻塞作業",
     "View blocking jobs": "檢視阻塞作業",
     "Clean up remote files": "清理遠端檔案",
+    "Finish harvesting before cleaning up remote files.": "請先完成結果收集，再清理遠端檔案。",
     "Abandon remote cleanup": "放棄遠端清理",
     "Clean up all remote files": "清理所有遠端檔案",
     "Credential missing": "憑證缺失",

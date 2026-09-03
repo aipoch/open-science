@@ -3749,6 +3749,7 @@
     "Hide blocking jobs": "Ocultar trabajos bloqueantes",
     "View blocking jobs": "Ver trabajos bloqueantes",
     "Clean up remote files": "Limpiar archivos remotos",
+    "Finish harvesting before cleaning up remote files.": "Finalice la recopilación antes de limpiar los archivos remotos.",
     "Abandon remote cleanup": "Abandonar limpieza remota",
     "Clean up all remote files": "Limpiar todos los archivos remotos",
     "Credential missing": "Falta credencial",

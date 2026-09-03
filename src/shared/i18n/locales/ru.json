@@ -3860,6 +3860,7 @@
     "Hide blocking jobs": "Скрыть блокирующие задания",
     "View blocking jobs": "Показать блокирующие задания",
     "Clean up remote files": "Очистить удалённые файлы",
+    "Finish harvesting before cleaning up remote files.": "Завершите сбор результатов перед очисткой удалённых файлов.",
     "Abandon remote cleanup": "Отказаться от удалённой очистки",
     "Clean up all remote files": "Очистить все удалённые файлы",
     "Credential missing": "Учётные данные отсутствуют",

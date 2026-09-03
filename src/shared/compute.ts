@@ -245,6 +245,8 @@ export type ComputeHostDeletionBlocker = Readonly<{
   sessionId: string
   status: ComputeJobStatus
   cancellationStatus?: ComputeJobCancellationStatus
+  // Optional for additive compatibility; absence fails closed for terminal cleanup.
+  harvested?: boolean
   intent: string
   createdAt: number
 }>

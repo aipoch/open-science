@@ -3469,6 +3469,7 @@
     "Hide blocking jobs": "차단 작업 숨기기",
     "View blocking jobs": "차단 작업 보기",
     "Clean up remote files": "원격 파일 정리",
+    "Finish harvesting before cleaning up remote files.": "원격 파일을 정리하기 전에 결과 수집을 완료하세요.",
     "Abandon remote cleanup": "원격 정리 포기",
     "Clean up all remote files": "모든 원격 파일 정리",
     "Credential missing": "자격 증명 없음",

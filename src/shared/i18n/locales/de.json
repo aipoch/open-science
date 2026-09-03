@@ -3430,6 +3430,7 @@
     "Hide blocking jobs": "Blockierende Jobs ausblenden",
     "View blocking jobs": "Blockierende Jobs anzeigen",
     "Clean up remote files": "Remote-Dateien bereinigen",
+    "Finish harvesting before cleaning up remote files.": "Schließen Sie den Ergebnisabruf ab, bevor Sie die Remote-Dateien bereinigen.",
     "Abandon remote cleanup": "Remote-Bereinigung aufgeben",
     "Clean up all remote files": "Alle Remote-Dateien bereinigen",
     "Credential missing": "Anmeldedaten fehlen",

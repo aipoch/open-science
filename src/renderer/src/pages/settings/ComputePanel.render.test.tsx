@@ -140,6 +140,7 @@ describe('ComputePanel', () => {
           projectId: 'project-1',
           sessionId: 'session-1',
           status: 'success',
+          harvested: true,
           intent: 'completed research',
           createdAt: 1
         }
@@ -191,6 +192,42 @@ describe('ComputePanel', () => {
     })
     expect(confirm?.disabled).toBe(false)
     expect(deleteHost).not.toHaveBeenCalled()
+  })
+
+  it('disables remote cleanup until a terminal Job has been harvested', async () => {
+    vi.mocked(window.api.compute.deletionStatus).mockResolvedValueOnce({
+      blockedByJobs: true,
+      blockingJobs: [
+        {
+          jobId: 'job-1',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          status: 'success',
+          harvested: false,
+          intent: 'unharvested research',
+          createdAt: 1
+        }
+      ]
+    })
+    useComputeStore.setState({ hosts: [host()], isLoaded: true })
+
+    act(() => root.render(<ComputePanel onNavigate={vi.fn()} />))
+    const removeButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.getAttribute('aria-label') === 'Remove biowulf'
+    )
+    await act(async () => removeButton?.click())
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    const viewJobs = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'View blocking jobs'
+    )
+    act(() => viewJobs?.click())
+
+    const cleanJob = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Clean up remote files'
+    )
+    expect(cleanJob?.disabled).toBe(true)
+    expect(dialog?.textContent).toContain('Finish harvesting before cleaning up remote files.')
   })
 
   it('shows an X-triggered deletion failure and keeps the dialog open for retry', async () => {
