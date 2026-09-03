@@ -1614,10 +1614,13 @@ class TaskRunner {
         const persistenceMessage = 'Task Run terminal state could not be persisted.'
         run.error = `${run.error}\n\n${persistenceMessage}`
         log.error(persistenceMessage, { error: toErrorMessage(error), runId: run.id })
-        await this.persistTerminalRun(run, 'failed').finally(() =>
-          this.publishProgress(run, 'failed')
-        )
-        await this.dependencies.sessions.save(failed).catch(() => undefined)
+        try {
+          await this.persistTerminalRun(run, 'failed').finally(() =>
+            this.publishProgress(run, 'failed')
+          )
+        } finally {
+          await this.dependencies.sessions.save(failed).catch(() => undefined)
+        }
         return
       } finally {
         if (run.sessionCommitBarrier === sessionCommitBarrier) {

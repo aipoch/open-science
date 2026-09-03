@@ -3451,7 +3451,15 @@ describe('TaskRunner', () => {
 
   it('does not report completion when the terminal Run record cannot be persisted', async () => {
     let writes = 0
+    let durableSession: PersistedChatSession | undefined
     const runner = createRunner({
+      sessions: {
+        list: async () => (durableSession ? [structuredClone(durableSession)] : []),
+        save: async (value) => {
+          durableSession = structuredClone(value)
+          return value
+        }
+      },
       runJournal: {
         load: async () => [],
         replace: async () => {
@@ -3468,6 +3476,10 @@ describe('TaskRunner', () => {
       status: 'failed',
       error: expect.stringContaining('Task Run terminal state could not be persisted.')
     })
+    await expect(runner.listSessions()).resolves.toEqual([
+      expect.objectContaining({ id: started.sessionId, status: 'error' })
+    ])
+    expect(durableSession?.activeRun).toBeUndefined()
   })
 
   it('recovers a terminal persistence fallback without stale Session commit metadata', async () => {
