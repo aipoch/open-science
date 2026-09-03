@@ -1,6 +1,6 @@
 import { expect, test as base } from '@playwright/test'
 import { spawn } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
@@ -18,6 +18,85 @@ const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs'
 const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.cjs')
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 type E2eWindowMode = 'hidden' | 'normal'
+type LiveProviderSelection = { kind: 'configured'; name: string } | { kind: 'codex-subscription' }
+
+const migrateSafeStorageKeyRef = async (
+  target: ElectronApplication,
+  sourceExecutable: string,
+  sourceKeyRef: string
+): Promise<string> => {
+  const publicKey = await target.evaluate(() => {
+    const crypto = process.getBuiltinModule('node:crypto')
+    const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      publicKeyEncoding: { type: 'spki', format: 'pem' }
+    })
+    ;(
+      globalThis as typeof globalThis & { __openScienceE2eCredentialPrivateKey?: string }
+    ).__openScienceE2eCredentialPrivateKey = privateKey
+    return publicKey
+  })
+
+  const sourceRoot = await mkdtemp(join(tmpdir(), 'open-science-credential-source-'))
+  const sourceApplication = await electron.launch({
+    executablePath: sourceExecutable,
+    args: [
+      ...(sourceExecutable.endsWith('/Electron') ? [APP_ROOT] : []),
+      `--user-data-dir=${join(sourceRoot, 'profile')}`
+    ],
+    env: {
+      ...process.env,
+      OPEN_SCIENCE_STORAGE_ROOT: join(sourceRoot, 'storage'),
+      OPEN_SCIENCE_E2E_STORAGE_ROOT: join(sourceRoot, 'storage'),
+      OPEN_SCIENCE_E2E_WINDOW_MODE: 'hidden'
+    }
+  })
+
+  try {
+    const sealedCredential = await sourceApplication.evaluate(
+      ({ safeStorage }, input) => {
+        const crypto = process.getBuiltinModule('node:crypto')
+        if (!input.keyRef.startsWith('enc:')) throw new Error('Unsupported credential reference.')
+        const plaintext = safeStorage.decryptString(
+          Buffer.from(input.keyRef.slice('enc:'.length), 'base64')
+        )
+        return crypto
+          .publicEncrypt(input.publicKey, Buffer.from(plaintext, 'utf8'))
+          .toString('base64')
+      },
+      { keyRef: sourceKeyRef, publicKey }
+    )
+
+    return await target.evaluate(({ safeStorage }, sealedCredential) => {
+      const crypto = process.getBuiltinModule('node:crypto')
+      const holder = globalThis as typeof globalThis & {
+        __openScienceE2eCredentialPrivateKey?: string
+      }
+      const privateKey = holder.__openScienceE2eCredentialPrivateKey
+      delete holder.__openScienceE2eCredentialPrivateKey
+      if (!privateKey) throw new Error('Credential migration key is unavailable.')
+      const plaintext = crypto.privateDecrypt(privateKey, Buffer.from(sealedCredential, 'base64'))
+      try {
+        return `enc:${safeStorage.encryptString(plaintext.toString('utf8')).toString('base64')}`
+      } finally {
+        plaintext.fill(0)
+      }
+    }, sealedCredential)
+  } finally {
+    await closeElectronApplicationForCleanup(
+      {
+        close: () => sourceApplication.close(),
+        forceClose: async () => {
+          const result = await terminateProcessTree(sourceApplication.process())
+          if (!result.reaped) throw new Error('Credential source process did not exit.')
+        }
+      },
+      { gracefulTimeoutMs: 3_000, forcedTimeoutMs: 3_000 }
+    ).catch(() => undefined)
+    await rm(sourceRoot, { recursive: true, force: true })
+  }
+}
 
 // Keep in sync with GitHubStarBadge. Workspace variant waits 5s, then opens a popover that can
 // swallow the next pointer click (revision navigation, project menus) on macOS and Windows CI.
@@ -122,6 +201,11 @@ type ElectronApp = {
   } | null>
   completeOnboarding: () => Promise<Page>
   configureFakeAgent: () => Promise<Page>
+  configureLiveProviderFromSettings: (input: {
+    model: string
+    provider: LiveProviderSelection
+    sourceSettingsPath: string
+  }) => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
   enableFakeRemoteIt: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
@@ -561,6 +645,137 @@ class ElectronAppHarness implements ElectronApp {
     }
     await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
     await this.launch()
+    return this.page
+  }
+
+  async configureLiveProviderFromSettings(input: {
+    model: string
+    provider: LiveProviderSelection
+    sourceSettingsPath: string
+  }): Promise<Page> {
+    const source = JSON.parse(await readFile(input.sourceSettingsPath, 'utf8')) as {
+      codex?: {
+        nativePath?: unknown
+        nativeVersion?: unknown
+        resolvedPath?: unknown
+        version?: unknown
+      }
+      defaultPermissionProfile?: unknown
+      providers?: Array<Record<string, unknown> & { id?: unknown; name?: unknown }>
+      version?: unknown
+    }
+    const configuredProviderName =
+      input.provider.kind === 'configured' ? input.provider.name : undefined
+    const provider = configuredProviderName
+      ? source.providers?.find((candidate) => candidate.name === configuredProviderName)
+      : undefined
+    if (configuredProviderName && (!provider || typeof provider.id !== 'string')) {
+      throw new Error(
+        `Provider ${configuredProviderName} is not configured in the source settings.`
+      )
+    }
+    if (configuredProviderName && (typeof provider!.keyRef !== 'string' || !provider!.keyRef)) {
+      throw new Error(`Provider ${configuredProviderName} has no stored credential reference.`)
+    }
+    const credentialSourceExecutable = process.env.OPEN_SCIENCE_FIGURE_E2E_CREDENTIAL_EXECUTABLE
+    if (provider && (provider.keyRef as string).startsWith('enc:') && !credentialSourceExecutable) {
+      throw new Error(
+        'OPEN_SCIENCE_FIGURE_E2E_CREDENTIAL_EXECUTABLE is required to migrate the configured provider credential into the isolated Electron profile.'
+      )
+    }
+    const isolatedKeyRef =
+      provider && credentialSourceExecutable
+        ? await migrateSafeStorageKeyRef(
+            this.runningApplication,
+            credentialSourceExecutable,
+            provider.keyRef as string
+          )
+        : undefined
+    await this.close()
+    if (
+      typeof source.codex?.resolvedPath !== 'string' ||
+      typeof source.codex.nativePath !== 'string'
+    ) {
+      throw new Error('The source settings do not contain a managed Codex runtime.')
+    }
+
+    const sourceManagedRoot = resolve(source.codex.resolvedPath, '..', '..', '..')
+    const isolatedManagedRoot = join(this.roots.storageRoot, 'codex-managed')
+    const isolatedAdapterPath = join(isolatedManagedRoot, 'adapter', 'dist', 'index.js')
+    const isolatedNativePath = join(
+      isolatedManagedRoot,
+      relative(sourceManagedRoot, source.codex.nativePath)
+    )
+    await mkdir(resolve(isolatedAdapterPath, '..'), { recursive: true })
+    await mkdir(resolve(isolatedNativePath, '..'), { recursive: true })
+    await copyFile(source.codex.resolvedPath, isolatedAdapterPath)
+    await copyFile(source.codex.nativePath, isolatedNativePath)
+    await chmod(isolatedAdapterPath, 0o755)
+    await chmod(isolatedNativePath, 0o755)
+
+    const dataRoot = join(this.testRoot, 'live-provider-data')
+    await mkdir(dataRoot, { recursive: true })
+    await writeFile(
+      join(this.roots.storageRoot, 'settings.json'),
+      `${JSON.stringify(
+        {
+          version: source.version,
+          providers: provider
+            ? [{ ...provider, ...(isolatedKeyRef ? { keyRef: isolatedKeyRef } : {}) }]
+            : [],
+          ...(provider
+            ? {
+                activeProviderId: provider.id,
+                activeModel: input.model,
+                subagentModel: {
+                  mode: 'fixed',
+                  providerId: provider.id,
+                  model: input.model,
+                  reasoningEffort: 'low'
+                }
+              }
+            : {}),
+          agentFrameworkId: 'codex',
+          codex: {
+            resolvedPath: isolatedAdapterPath,
+            version: source.codex.version,
+            nativePath: isolatedNativePath,
+            nativeVersion: source.codex.nativeVersion
+          },
+          defaultPermissionProfile: source.defaultPermissionProfile ?? 'full',
+          onboardingCompletedAt: Date.now(),
+          localePreference: 'en',
+          dataRoot
+        },
+        null,
+        2
+      )}\n`,
+      'utf8'
+    )
+    await this.launch()
+    if (input.provider.kind === 'codex-subscription') {
+      await this.page.evaluate(
+        async ({ model }) => {
+          const snapshot = await window.api.settings.upsertProvider({ type: 'codex-shared' })
+          const provider = snapshot.providers.find(
+            (candidate) =>
+              candidate.type === 'codex-shared' ||
+              (candidate.type === 'codex-isolated' && candidate.codexAuthMode === 'imported')
+          )
+          if (!provider) throw new Error('The Codex subscription provider was not imported.')
+          await window.api.settings.setActiveProvider({ id: provider.id, model })
+          await window.api.settings.setSubagentModel({
+            configuration: {
+              mode: 'fixed',
+              providerId: provider.id,
+              model,
+              reasoningEffort: 'low'
+            }
+          })
+        },
+        { model: input.model }
+      )
+    }
     return this.page
   }
 

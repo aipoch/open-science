@@ -27,6 +27,7 @@ export const VITEST_PROCESS_TEST_GLOBS = [
   'src/main/acp/mcp-http-host.test.ts',
   'src/main/settings/openai-provider-bridge.test.ts',
   'src/main/settings/anthropic-provider-bridge.test.ts',
+  'resources/skills/figure-composer/kernel.test.ts',
   'resources/skills/literature-review/kernel.test.ts'
 ] as const
 
