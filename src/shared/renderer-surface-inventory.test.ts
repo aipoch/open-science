@@ -174,6 +174,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'change-authentication',
     'create-password',
     'download',
+    'jobs:set-remote-cleanup',
     'password-capability',
     'reset-password',
     'reveal-in-folder'
