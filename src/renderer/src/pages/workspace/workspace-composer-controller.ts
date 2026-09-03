@@ -917,13 +917,11 @@ const useWorkspaceComposerController = ({
     (includeReadingContext = true): ComposerSendSnapshot => {
       clearPastedTextUndo()
       clearUndo()
-      const pendingPdfContextAttachmentIds = includeReadingContext
-        ? stagedReadingContext
-          ? [stagedReadingContext.id]
-          : automaticReadingEnabledRef.current
-            ? automaticStagedReadingContexts.map(({ id }) => id)
-            : []
-        : []
+      const pendingPdfContextAttachmentIds = stagedReadingContext
+        ? [stagedReadingContext.id]
+        : automaticReadingEnabledRef.current
+          ? automaticStagedReadingContexts.map(({ id }) => id)
+          : []
       const includedDurableBindings = includeReadingContext ? durableReadingBindings : []
       const occupied = new Set(
         includedDurableBindings.map(
