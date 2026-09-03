@@ -13,6 +13,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { TaskRun } from '../../shared/task-api'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
+import type { TaskRunJournalEntry } from './task-run-journal'
 import {
   TASK_RUN_DISPOSAL_BUDGET_MS,
   TaskRunner,
@@ -3172,6 +3173,79 @@ describe('TaskRunner', () => {
     await expect(cancellation).resolves.toMatchObject({ status: 'cancelled' })
   })
 
+  it('waits for a queued Session commit marker before dispatching cancellation', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let markQueuedWriteStarted: (() => void) | undefined
+    let releaseQueuedWrite: (() => void) | undefined
+    const queuedWriteStarted = new Promise<void>((resolve) => {
+      markQueuedWriteStarted = resolve
+    })
+    const queuedWriteGate = new Promise<void>((resolve) => {
+      releaseQueuedWrite = resolve
+    })
+    let journalWriteCount = 0
+    const cancelPrompt = vi.fn(async () => undefined)
+    const runner = createRunner({
+      runJournal: {
+        load: async () => [],
+        replace: async () => {
+          journalWriteCount += 1
+          if (journalWriteCount === 2) {
+            markQueuedWriteStarted?.()
+            await queuedWriteGate
+          }
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-queued-marker-cancel' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'queued-plan-event',
+            timestamp: 10,
+            kind: 'plan',
+            level: 'info',
+            sessionId: 'session-queued-marker-cancel',
+            text: 'Queue another journal write.',
+            planProjection: {
+              artifactId: 'queued-plan',
+              artifactVersionId: 'queued-plan-version',
+              artifactChecksum: 'queued-plan-checksum',
+              revision: 1,
+              approval: 'pending',
+              lifecycle: 'awaiting_approval'
+            } as never
+          })
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: (() => {
+        const ids = ['queued-user', 'queued-run', 'queued-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Queue completion.' })
+    await queuedWriteStarted
+    const cancellation = runner.cancelRun(started.id)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(cancelPrompt).not.toHaveBeenCalled()
+
+    releaseQueuedWrite?.()
+
+    await expect(cancellation).resolves.toMatchObject({ status: 'cancelled' })
+    expect(cancelPrompt).toHaveBeenCalledOnce()
+  })
+
   it('keeps a real Prompt failure when cancellation is requested afterward', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     let finalizationStarted: (() => void) | undefined
@@ -3394,6 +3468,327 @@ describe('TaskRunner', () => {
       status: 'failed',
       error: expect.stringContaining('Task Run terminal state could not be persisted.')
     })
+  })
+
+  it('recovers a completed Run when the Session commit precedes automatic review', async () => {
+    let durableSession: PersistedChatSession | undefined
+    let durableRuns: TaskRun[] = []
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let markReviewStarted: (() => void) | undefined
+    let releaseReview: (() => void) | undefined
+    const reviewStarted = new Promise<void>((resolve) => {
+      markReviewStarted = resolve
+    })
+    const reviewGate = new Promise<void>((resolve) => {
+      releaseReview = resolve
+    })
+    const sessions: TaskSessionPort = {
+      list: async () => (durableSession ? [structuredClone(durableSession)] : []),
+      save: async (value) => {
+        durableSession = structuredClone(value)
+        return value
+      },
+      setDelegationPolicy: async () => undefined
+    }
+    const runJournal = {
+      load: async () => structuredClone(durableRuns),
+      replace: async (runs: readonly TaskRun[]) => {
+        durableRuns = runs.map((run) => structuredClone(run))
+      }
+    }
+    const ids = ['recovery-user', 'recovery-run', 'recovery-agent']
+    const runner = createRunner({
+      sessions,
+      runJournal,
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-review-recovery' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'recovery-message-event',
+            timestamp: 10,
+            kind: 'message',
+            level: 'info',
+            sessionId: 'session-review-recovery',
+            role: 'assistant',
+            text: 'Durable response.'
+          })
+        }
+      },
+      reviewer: {
+        review: async () => {
+          markReviewStarted?.()
+          await reviewGate
+          return { started: true }
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      prompt: 'Commit before review.',
+      autoReviewEnabled: true
+    })
+    await reviewStarted
+
+    expect(durableSession).toMatchObject({ status: 'idle', activeRun: undefined })
+    expect(durableRuns).toContainEqual(expect.objectContaining({ status: 'running' }))
+    expect(runner.getRun(started.id)).toMatchObject({ status: 'running', output: undefined })
+
+    const recoveredRunner = createRunner({ sessions, runJournal })
+    await recoveredRunner.initialize()
+
+    expect(recoveredRunner.getRun(started.id)).toMatchObject({
+      status: 'completed',
+      output: 'Durable response.'
+    })
+
+    releaseReview?.()
+    await runner.waitForRun(started.id)
+    await recoveredRunner.dispose()
+  })
+
+  it('recovers the original failure when the failed Session commit precedes terminalization', async () => {
+    let durableSession: PersistedChatSession | undefined
+    let durableRuns: TaskRunJournalEntry[] = []
+    let markTerminalWriteStarted: (() => void) | undefined
+    let releaseTerminalWrite: (() => void) | undefined
+    const terminalWriteStarted = new Promise<void>((resolve) => {
+      markTerminalWriteStarted = resolve
+    })
+    const terminalWriteGate = new Promise<void>((resolve) => {
+      releaseTerminalWrite = resolve
+    })
+    let terminalWriteBlocked = false
+    const sessions: TaskSessionPort = {
+      list: async () => (durableSession ? [structuredClone(durableSession)] : []),
+      save: async (value) => {
+        durableSession = structuredClone(value)
+        return value
+      },
+      setDelegationPolicy: async () => undefined
+    }
+    const runJournal = {
+      load: async () => structuredClone(durableRuns),
+      replace: async (runs: readonly TaskRunJournalEntry[]) => {
+        if (
+          !terminalWriteBlocked &&
+          runs.some((run) => run.id === 'failure-run' && run.status === 'failed')
+        ) {
+          terminalWriteBlocked = true
+          markTerminalWriteStarted?.()
+          await terminalWriteGate
+        }
+        durableRuns = runs.map((run) => structuredClone(run))
+      }
+    }
+    const ids = ['failure-user', 'failure-run', 'failure-agent']
+    const runner = createRunner({
+      sessions,
+      runJournal,
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-failure-recovery' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          throw new Error('provider failed')
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Fail durably.' })
+    await terminalWriteStarted
+
+    expect(durableSession).toMatchObject({ status: 'error', error: 'provider failed' })
+    expect(durableRuns).toContainEqual(
+      expect.objectContaining({
+        id: started.id,
+        status: 'running',
+        sessionCommitStatus: 'failed',
+        error: 'provider failed'
+      })
+    )
+
+    const recoveredRunner = createRunner({ sessions, runJournal })
+    await recoveredRunner.initialize()
+
+    expect(recoveredRunner.getRun(started.id)).toMatchObject({
+      status: 'failed',
+      error: 'provider failed',
+      failureCode: undefined
+    })
+
+    releaseTerminalWrite?.()
+    await runner.waitForRun(started.id)
+    await recoveredRunner.dispose()
+  })
+
+  it('does not recover a staged completion before its Session commit', async () => {
+    const runner = createRunner({
+      sessions: {
+        list: async () => [
+          {
+            ...session,
+            status: 'running',
+            activeRun: { promptMessageId: 'staged-prompt', startedAt: 2 }
+          }
+        ]
+      },
+      runJournal: {
+        load: async () => [
+          {
+            id: 'staged-run',
+            sessionId: session.id,
+            projectId: project.id,
+            cwd: session.cwd,
+            status: 'running',
+            startedAt: 2,
+            completedAt: 3,
+            output: 'Not committed yet.',
+            artifacts: [],
+            preferredComputeHostIds: [],
+            promptMessageId: 'staged-prompt',
+            sessionCommitStatus: 'completed'
+          }
+        ],
+        replace: async () => undefined
+      }
+    })
+
+    await runner.initialize()
+
+    expect(runner.getRun('staged-run')).toMatchObject({
+      status: 'failed',
+      failureCode: 'process_restarted'
+    })
+  })
+
+  it('clears stale attention when recovering a committed cancellation', async () => {
+    const runner = createRunner({
+      sessions: {
+        list: async () => [{ ...session, status: 'idle', activeRun: undefined }]
+      },
+      runJournal: {
+        load: async () => [
+          {
+            id: 'cancelled-run',
+            sessionId: session.id,
+            projectId: project.id,
+            cwd: session.cwd,
+            status: 'running',
+            startedAt: 2,
+            completedAt: 3,
+            cancelledAt: 3,
+            artifacts: [],
+            preferredComputeHostIds: [],
+            promptMessageId: 'cancelled-prompt',
+            sessionCommitStatus: 'cancelled',
+            attention: { kind: 'plan-approval', plan: {} as never }
+          }
+        ],
+        replace: async () => undefined
+      }
+    })
+
+    await runner.initialize()
+
+    expect(runner.getRun('cancelled-run')).toMatchObject({
+      status: 'cancelled',
+      attention: undefined
+    })
+  })
+
+  it('rolls back a staged cancellation when its journal write fails', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let markReviewStarted: (() => void) | undefined
+    let releaseReview: (() => void) | undefined
+    const reviewStarted = new Promise<void>((resolve) => {
+      markReviewStarted = resolve
+    })
+    const reviewGate = new Promise<void>((resolve) => {
+      releaseReview = resolve
+    })
+    let journalWriteCount = 0
+    let durableRuns: TaskRunJournalEntry[] = []
+    let sessionCount = 0
+    const ids = ['cancel-user', 'cancel-run', 'cancel-agent', 'next-user', 'next-run', 'next-agent']
+    const runner = createRunner({
+      runJournal: {
+        load: async () => [],
+        replace: async (runs) => {
+          journalWriteCount += 1
+          if (journalWriteCount === 3) throw new Error('cancel journal failed')
+          durableRuns = runs.map((run) => structuredClone(run))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: `session-${++sessionCount}` }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (request) => {
+          emitEvent?.({
+            id: `${request.sessionId}-message`,
+            timestamp: 10,
+            kind: 'message',
+            level: 'info',
+            sessionId: request.sessionId,
+            role: 'assistant',
+            text: 'Durable response.'
+          })
+        }
+      },
+      reviewer: {
+        review: async () => {
+          markReviewStarted?.()
+          await reviewGate
+          return { started: true }
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const first = await runner.startRun({
+      project: project.id,
+      prompt: 'Review before cancellation.',
+      autoReviewEnabled: true
+    })
+    await reviewStarted
+    await expect(runner.cancelRun(first.id)).rejects.toThrow('cancel journal failed')
+
+    const next = await runner.startRun({ project: project.id, prompt: 'Persist another Run.' })
+    await runner.waitForRun(next.id)
+
+    expect(durableRuns.find((run) => run.id === first.id)).toMatchObject({
+      status: 'running',
+      sessionCommitStatus: 'completed'
+    })
+
+    releaseReview?.()
+    await expect(runner.waitForRun(first.id)).resolves.toMatchObject({ status: 'completed' })
   })
 
   it('excludes a failed initial Run from snapshots queued behind its rejected write', async () => {
