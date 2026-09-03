@@ -115,6 +115,8 @@ class HeadlessTaskApi {
           this.withCurrentCaller(() => this.ports.agent.resumeSession(request)),
         setPermissionProfile: (sessionId, profile) =>
           this.withCurrentCaller(() => this.ports.agent.setPermissionProfile(sessionId, profile)),
+        setMemoryEnabled: (sessionId, enabled) =>
+          this.withCurrentCaller(() => this.ports.agent.setMemoryEnabled(sessionId, enabled)),
         prompt: (request, observer) =>
           this.withCurrentCaller(() => this.ports.agent.prompt(request, observer)),
         cancelPrompt: (sessionId) =>

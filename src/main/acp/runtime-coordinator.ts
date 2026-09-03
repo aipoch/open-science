@@ -1334,6 +1334,10 @@ class AcpRuntimeCoordinator {
     return this.getState()
   }
 
+  setMemoryEnabled(sessionId: string, enabled: boolean): void {
+    this.runtimeForSession(sessionId).setMemoryEnabled(sessionId, enabled)
+  }
+
   async revokePermissionGrant(request: AcpRevokePermissionGrantRequest): Promise<AcpRuntimeState> {
     await this.runtimeForSession(request.sessionId).revokePermissionGrant(request)
     return this.getState()

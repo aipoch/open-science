@@ -17,6 +17,7 @@ type AcpTaskAgentRuntime = {
   getSnapshot(): { sessionIds: string[] }
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<unknown>
+  setMemoryEnabled(sessionId: string, enabled: boolean): void
   sendPrompt(request: AcpPromptRequest): Promise<unknown>
   sendPromptObserved(
     request: AcpPromptRequest,
@@ -106,6 +107,7 @@ const createAcpTaskAgentPort = (
   },
   setPermissionProfile: (sessionId, profile) =>
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),
+  setMemoryEnabled: async (sessionId, enabled) => runtime.setMemoryEnabled(sessionId, enabled),
   prompt: async (request, observer) => {
     const acpRequest = toAcpPromptRequest(request)
     const tracked = notifications?.trackPrompt(acpRequest)

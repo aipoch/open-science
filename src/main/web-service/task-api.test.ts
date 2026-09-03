@@ -69,6 +69,7 @@ const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => (
     sessionId: request.sessionId
   })),
   setPermissionProfile: vi.fn<TaskAgentPort['setPermissionProfile']>(async () => undefined),
+  setMemoryEnabled: vi.fn<TaskAgentPort['setMemoryEnabled']>(async () => undefined),
   prompt: vi.fn<TaskAgentPort['prompt']>(async () => undefined),
   cancelPrompt: vi.fn<TaskAgentPort['cancelPrompt']>(async () => undefined),
   ...overrides
@@ -873,6 +874,7 @@ describe('HeadlessTaskApi adapter', () => {
       cwd: '/workspace/attached',
       status: 'idle',
       permissionProfile: 'ask',
+      memoryEnabled: false,
       messages: [],
       createdAt: 1,
       updatedAt: 1
@@ -923,6 +925,7 @@ describe('HeadlessTaskApi adapter', () => {
 
     expect(agent.listAttachedSessionIds).toHaveBeenCalledOnce()
     expect(agent.setPermissionProfile).toHaveBeenCalledWith(existing.id, 'auto')
+    expect(agent.setMemoryEnabled).toHaveBeenCalledWith(existing.id, false)
     expect(agent.prompt).toHaveBeenCalledWith(
       {
         sessionId: existing.id,

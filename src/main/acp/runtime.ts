@@ -833,6 +833,13 @@ class AcpRuntime {
     return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().memoryEnabled ?? false
   }
 
+  setMemoryEnabled(sessionId: string, enabled: boolean): void {
+    const aggregate = this.sessionRegistry.lookup(sessionId)?.aggregate
+    if (!aggregate) throw new Error(`ACP session not found: ${sessionId}`)
+    aggregate.setMemoryEnabled(enabled)
+    this.emitState()
+  }
+
   liveSessionProjectId(sessionId: string): string | undefined {
     return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectId
   }

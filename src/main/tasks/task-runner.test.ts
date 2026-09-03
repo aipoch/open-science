@@ -17,6 +17,7 @@ import type { TaskRunJournalEntry } from './task-run-journal'
 import {
   TASK_RUN_DISPOSAL_BUDGET_MS,
   TaskRunner,
+  type TaskAgentPort,
   type TaskPreviewResourcePort,
   type TaskProjectPort,
   type TaskRunnerDependencies,
@@ -90,7 +91,8 @@ const configuredSettings: SettingsSnapshot = {
 
 class RetainedRunEventPayload {}
 
-type TaskRunnerOverrides = Omit<Partial<TaskRunnerDependencies>, 'sessions'> & {
+type TaskRunnerOverrides = Omit<Partial<TaskRunnerDependencies>, 'agent' | 'sessions'> & {
+  agent?: Partial<TaskAgentPort>
   sessions?: Omit<
     Partial<TaskSessionPort>,
     'save' | 'stageCompletion' | 'settleCompletion' | 'failRun'
@@ -166,6 +168,16 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
     },
     setDelegationPolicy: async () => undefined
   }
+  const defaultAgent: TaskAgentPort = {
+    withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+    listAttachedSessionIds: async () => [],
+    createSession: async () => ({ sessionId: 'session-created' }),
+    resumeSession: async (request) => ({ sessionId: request.sessionId }),
+    setPermissionProfile: async () => undefined,
+    setMemoryEnabled: async () => undefined,
+    cancelPrompt: async () => undefined,
+    prompt: async () => undefined
+  }
   return new TaskRunner({
     projects: {
       list: async () => [project],
@@ -174,15 +186,6 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
     previewResources: {
       acquire: async () => ({ id: 'resource-1', url: 'preview://resource-1', size: 0 }),
       release: async () => undefined
-    },
-    agent: {
-      withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
-      listAttachedSessionIds: async () => [],
-      createSession: async () => ({ sessionId: 'session-created' }),
-      resumeSession: async (request) => ({ sessionId: request.sessionId }),
-      setPermissionProfile: async () => undefined,
-      cancelPrompt: async () => undefined,
-      prompt: async () => undefined
     },
     artifacts: {
       finalizeRun: async () => ({ ok: true, artifacts: [] })
@@ -201,6 +204,7 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
     createId: () => 'generated-id',
     now: () => 1,
     ...overrides,
+    agent: { ...defaultAgent, ...overrides.agent },
     sessions: {
       ...defaultSessions,
       ...overrides.sessions,
@@ -228,9 +232,14 @@ describe('TaskRunner', () => {
       return current
     })
     const validate = vi.fn(async (providerIds: readonly string[]) => [...new Set(providerIds)])
+    const setMemoryEnabled = vi.fn(async () => undefined)
     const runner = createRunner({
       sessions: { list: async () => [current], save },
       settings: { get: async () => configuredSettings },
+      agent: {
+        listAttachedSessionIds: async () => [session.id],
+        setMemoryEnabled
+      },
       computePreferences: {
         withReservation: async (providerIds, operation) => operation([...new Set(providerIds)]),
         set: async () => current,
@@ -265,6 +274,7 @@ describe('TaskRunner', () => {
       }
     })
     expect(save).toHaveBeenCalledOnce()
+    expect(setMemoryEnabled).toHaveBeenCalledWith(session.id, false)
     expect(validate).toHaveBeenCalledWith(['ssh:alpha', 'ssh:alpha'])
   })
 

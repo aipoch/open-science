@@ -5649,6 +5649,23 @@ describe('ACP runtime session management', () => {
     expect(reconfigure.mock.calls.map(([request]) => request.memoryEnabled)).toEqual([false, false])
   })
 
+  it('updates Memory on an attached Session without replacing its provider Session', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['remote-session-1'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', memoryEnabled: true })
+
+    runtime.setMemoryEnabled(session.sessionId, false)
+
+    expect(runtime.isSessionMemoryEnabled(session.sessionId)).toBe(false)
+    expect(fakeAgent.newSessions).toHaveLength(1)
+    expect(fakeAgent.resumedSessions).toEqual([])
+  })
+
   it('adds the hidden Plan mode context only to the requested turn and preserves user Messages', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])
@@ -21732,6 +21749,7 @@ describe('ACP runtime session management', () => {
         getSnapshot: () => runtime.getSnapshot(),
         resumeSession: (request) => runtime.resumeSession(request),
         setPermissionProfile: (request) => runtime.setPermissionProfile(request),
+        setMemoryEnabled: (sessionId, enabled) => runtime.setMemoryEnabled(sessionId, enabled),
         sendPrompt: (request) => runtime.sendPrompt(request),
         sendPromptObserved: async (request, onProviderPromptAccepted) => {
           onProviderPromptAccepted()

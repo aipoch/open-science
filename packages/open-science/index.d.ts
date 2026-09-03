@@ -18,6 +18,19 @@ export type ProjectSessionDefaults = {
   specialistId?: string
   computeHosts?: ComputeHosts
 }
+export type ProjectSessionDefaultsPatch = {
+  agentConfiguration?: {
+    providerId?: string
+    model?: string | null
+    reasoningEffort?: ReasoningEffort
+  } | null
+  permissionProfile?: PermissionProfile | null
+  autoReviewEnabled?: boolean | null
+  memoryEnabled?: boolean | null
+  delegationPolicy?: DelegationPolicy | null
+  specialistId?: string | null
+  computeHosts?: ComputeHosts | null
+}
 export type ModelRouting =
   | { mode: 'inherit' }
   | {
@@ -293,7 +306,7 @@ export class OpenScienceClient {
     projectId: string,
     request: {
       expectedUpdatedAt: number
-      patch: Partial<{ [Key in keyof ProjectSessionDefaults]: ProjectSessionDefaults[Key] | null }>
+      patch: ProjectSessionDefaultsPatch
     },
     options?: RequestOptions
   ): ReturnType<OpenScienceClient['getProjectSessionDefaults']>

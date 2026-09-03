@@ -191,6 +191,7 @@ type TaskAgentPort = {
   createSession(request: TaskAgentCreateSessionRequest): Promise<TaskAgentSession>
   resumeSession(request: TaskAgentResumeSessionRequest): Promise<TaskAgentSession>
   setPermissionProfile(sessionId: string, profile: PermissionProfileId): Promise<void>
+  setMemoryEnabled(sessionId: string, enabled: boolean): Promise<void>
   prompt(request: TaskAgentPromptRequest, observer?: TaskAgentPromptObserver): Promise<void>
   cancelPrompt(sessionId: string): Promise<void>
 }
@@ -1065,6 +1066,12 @@ class TaskRunner {
       }
       throw error
     }
+    if (
+      patch.memoryEnabled !== undefined &&
+      (await this.dependencies.agent.listAttachedSessionIds()).includes(session.id)
+    ) {
+      await this.dependencies.agent.setMemoryEnabled(session.id, patch.memoryEnabled)
+    }
     return this.getSessionConfiguration(sessionId)
   }
 
@@ -1676,6 +1683,10 @@ class TaskRunner {
         !existing.agentBackendId
       ) {
         await this.dependencies.agent.setPermissionProfile(existing.id, permissionProfile)
+        await this.dependencies.agent.setMemoryEnabled(
+          existing.id,
+          existing.memoryEnabled !== false
+        )
         sessionInfo = {
           sessionId: existing.id,
           cwd: existing.cwd,

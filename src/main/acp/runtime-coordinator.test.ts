@@ -94,6 +94,7 @@ const createFakeRuntime = (options: {
   beginProviderTurnObservation: ReturnType<typeof vi.fn>
   captureSessionModel: ReturnType<typeof vi.fn>
   setPermissionProfile: ReturnType<typeof vi.fn>
+  setMemoryEnabled: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
   requestUserInput: ReturnType<typeof vi.fn>
   disableLiteratureContext: ReturnType<typeof vi.fn>
@@ -166,6 +167,7 @@ const createFakeRuntime = (options: {
     appliedModel: `${sessionId}:applied`
   }))
   const setPermissionProfile = vi.fn(async () => snapshot)
+  const setMemoryEnabled = vi.fn()
   const respondToPermission = vi.fn((response: AcpPermissionResponse) => {
     options.callbacks.onPermissionSettled?.(
       response.requestId,
@@ -301,6 +303,7 @@ const createFakeRuntime = (options: {
     beginProviderTurnObservation,
     captureSessionModel,
     setPermissionProfile,
+    setMemoryEnabled,
     respondToPermission,
     requestUserInput,
     disableLiteratureContext,
@@ -332,6 +335,7 @@ const createFakeRuntime = (options: {
     beginProviderTurnObservation,
     captureSessionModel,
     setPermissionProfile,
+    setMemoryEnabled,
     respondToPermission,
     requestUserInput,
     disableLiteratureContext,
@@ -1097,6 +1101,9 @@ describe('AcpRuntimeCoordinator', () => {
       profile: 'ask'
     })
     expect(delegated.setPermissionProfile).toHaveBeenCalledWith('session-1', 'ask')
+
+    coordinator.setMemoryEnabled('session-1', false)
+    expect(created[0].setMemoryEnabled).toHaveBeenCalledWith('session-1', false)
 
     await coordinator.cancelPrompt({ sessionId: 'session-1' })
     expect(delegated.stopSession).not.toHaveBeenCalled()
