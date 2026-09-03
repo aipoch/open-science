@@ -810,6 +810,42 @@ describe('ComputeJob repository (SQLite integration)', () => {
     await expect(repo.hasIdentityChangeBlockingJobsForProvider('ssh:other')).resolves.toBe(false)
   })
 
+  it('does not recover harvest for jobs whose remote directory was cleaned', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-cleaned-unharvested-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+
+    for (const disposition of ['cleaned', 'abandoned'] as const) {
+      const id = `job-${disposition}`
+      await repo.create({
+        id,
+        providerId: 'ssh:test',
+        shape: 'direct_ssh',
+        sessionId: 's1',
+        projectId: 'p1',
+        intent: disposition,
+        command: 'sleep 9999',
+        commandHash: `hash-${disposition}`
+      })
+      await repo.update(id, { status: 'failed', finishedAt: new Date() })
+      await repo.settleRemoteCleanup({
+        jobId: id,
+        providerId: 'ssh:test',
+        projectId: 'p1',
+        sessionId: 's1',
+        disposition
+      })
+    }
+
+    expect((await repo.findTerminalUnharvested()).map((job) => job.job_id)).toEqual([
+      'job-abandoned'
+    ])
+  })
+
   it('findPendingNotifications returns jobs with notifiedAt set and notificationConsumedAt null', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-pending-notif-'))
 

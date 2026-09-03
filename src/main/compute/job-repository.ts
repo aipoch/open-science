@@ -303,6 +303,7 @@ export class ComputeJobRepository {
       where: {
         status: { in: ['success', 'failed', 'timeout'] },
         harvestedAt: null,
+        remoteCleanupDisposition: { not: 'cleaned' },
         // A cancellation fulfilled while the Job was still queued has no remote execution to
         // harvest. Submitted/running cancellations keep their normal best-effort harvest path.
         NOT: {
