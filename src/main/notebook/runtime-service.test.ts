@@ -1340,7 +1340,7 @@ describe('notebook runtime service', () => {
               {
                 path: join(root, 'notebooks', 'default-project', 'session-1', 'data', 'result.csv'),
                 relativePath: 'data/result.csv',
-                kind: 'processed-data',
+                kind: 'other',
                 size: 12,
                 mtimeMs: 200
               }
@@ -1406,7 +1406,7 @@ describe('notebook runtime service', () => {
       workingFiles: [
         {
           relativePath: 'data/result.csv',
-          kind: 'processed-data'
+          kind: 'other'
         }
       ],
       environmentCapture: {
@@ -2903,7 +2903,7 @@ describe('notebook runtime service', () => {
     const writtenFile = {
       path: join(root, 'notebooks', 'default-project', 'session-1', 'handoff', 'data.json'),
       relativePath: 'handoff/data.json',
-      kind: 'raw-data' as const
+      kind: 'other' as const
     }
     const fileEvidence = {
       schemaVersion: 1 as const,

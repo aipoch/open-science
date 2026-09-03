@@ -452,6 +452,29 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it('reports malformed authenticated JSON as a bad request', async () => {
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
+    const connection = await server.ensureStarted()
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer secret-token',
+          'content-type': 'application/json'
+        },
+        body: '{'
+      })
+
+      expect(response.status).toBe(400)
+    } finally {
+      await server.close()
+    }
+  })
+
   it('rejects an authenticated request body above the local RPC budget', async () => {
     const server = new NotebookLocalRpcServer({} as never, {
       transport: 'tcp',
@@ -587,7 +610,7 @@ describe('notebook local RPC server', () => {
       )
       await expect(
         call({ source: { path: 'plot.png' }, options: {}, projectId: 'forged' })
-      ).resolves.toMatchObject({ status: 500 })
+      ).resolves.toMatchObject({ status: 400 })
       release()
       connection.release()
       expect(discard).toHaveBeenCalledWith('run-1')
@@ -724,7 +747,7 @@ describe('notebook local RPC server', () => {
         'Notebook RPC request validation test'
       )
 
-      expect(response.status).toBe(500)
+      expect(response.status).toBe(400)
       await expect(response.json()).resolves.toEqual({
         error: expect.stringContaining('Invalid notebook RPC params for execute')
       })
@@ -2681,7 +2704,7 @@ describe('notebook local RPC server', () => {
         writeRequestChecksum: 'a'.repeat(64),
         filename: 'bypass.txt'
       })
-      expect(bypass.status).toBe(500)
+      expect(bypass.status).toBe(400)
       await expect(bypass.json()).resolves.toEqual({
         error: 'Artifact Version creation requires a write reservation.'
       })

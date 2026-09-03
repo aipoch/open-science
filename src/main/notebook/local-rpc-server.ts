@@ -334,11 +334,6 @@ type NotebookLocalRpcServerOptions = {
   }
 }
 
-type NotebookRpcPayload = {
-  method?: unknown
-  params?: unknown
-}
-
 type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'> & {
   allowedMethods: Set<ArtifactRpcMethod>
   expiresAt: number
@@ -421,6 +416,16 @@ class RpcHttpError extends Error {
   }
 }
 
+// Only wrap synchronous request parsers, never an owner/service call: an internal schema or JSON
+// failure must remain a server error rather than being blamed on the caller.
+const parseRpcParams = <Result>(parse: () => Result): Result => {
+  try {
+    return parse()
+  } catch (error) {
+    throw new RpcHttpError(400, error instanceof Error ? error.message : String(error))
+  }
+}
+
 const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
   'artifactReserveWrite',
   'artifactReleaseWrite',
@@ -462,6 +467,16 @@ const DELEGATED_CONTROL_RPC_METHODS = new Set([
 ])
 const SKILL_IMPORT_RPC_METHODS = new Set(['skillImport'])
 const PLAN_RPC_METHODS = new Set(['planCall'])
+
+const RPC_METHODS = new Set<string>([
+  ...NOTEBOOK_LOCAL_RPC_METHODS,
+  ...CONTROL_RPC_METHODS,
+  ...ARTIFACT_RPC_METHODS,
+  ...SKILL_IMPORT_RPC_METHODS,
+  ...PLAN_RPC_METHODS,
+  'delegatedOutputCall',
+  'resolveNotebookInput'
+])
 
 const isArtifactRpcMethod = (method: string): method is ArtifactRpcMethod =>
   ARTIFACT_RPC_METHODS.has(method as ArtifactRpcMethod)
@@ -1000,8 +1015,8 @@ class NotebookLocalRpcServer {
     requestOrRequests: DurableDelegateRequest | readonly DurableDelegateRequest[],
     caller: AuthenticatedDelegateCaller
   ): Promise<DurableDelegateRequest | readonly DurableDelegateRequest[]> {
-    const requests = assertDelegateRequestShape(requestOrRequests)
-    assertDelegateInputShape(requests)
+    const requests = parseRpcParams(() => assertDelegateRequestShape(requestOrRequests))
+    parseRpcParams(() => assertDelegateInputShape(requests))
     const bareIdentityLookups = new Map<string, Promise<string>>()
     const canonicalizeBareIdentity = (identity: string): Promise<string> => {
       const pending = bareIdentityLookups.get(identity)
@@ -1021,7 +1036,7 @@ class NotebookLocalRpcServer {
           item.projectId !== caller.session.projectId ||
           item.sessionId !== caller.session.sessionId
         ) {
-          throw new Error(DELEGATION_INPUT_UNAVAILABLE_MESSAGE)
+          throw new RpcHttpError(403, DELEGATION_INPUT_UNAVAILABLE_MESSAGE)
         }
         return item.source === 'upload'
           ? createUploadVersionReference(item.versionId, {
@@ -1577,10 +1592,25 @@ class NotebookLocalRpcServer {
         writeJson(response, 401, { error: 'Invalid notebook RPC token.' })
         return
       }
-      const payload = await readBoundedJsonBody<NotebookRpcPayload>(request, this.requestBytes)
+      let payload: unknown
+      try {
+        payload = await readBoundedJsonBody(request, this.requestBytes)
+      } catch (error) {
+        if (error instanceof SyntaxError) throw new RpcHttpError(400, error.message)
+        throw error
+      }
       activeRequest.bodyComplete = true
-      const method = typeof payload.method === 'string' ? payload.method : ''
+      if (!isRecord(payload) || typeof payload.method !== 'string' || !payload.method.trim()) {
+        throw new RpcHttpError(400, 'Notebook RPC payload must include a non-empty method string.')
+      }
+      const method = payload.method
       activeRequest.method = method
+      if (!RPC_METHODS.has(method)) {
+        throw new RpcHttpError(404, `Unknown notebook RPC method: ${method}`)
+      }
+      if (payload.params !== undefined && !isRecord(payload.params)) {
+        throw new RpcHttpError(400, 'Notebook RPC params must be an object.')
+      }
       let params = isRecord(payload.params) ? payload.params : {}
       if (method === 'hostSdkHelp') delete params.view_image_available
       let hostCapabilities: HostCapabilityProjection | undefined
@@ -1627,7 +1657,7 @@ class NotebookLocalRpcServer {
                 ? new Set(['op', 'version_id', 'options'])
                 : new Set(['op', 'version_id'])
             if (Object.keys(params).some((key) => !allowedKeys.has(key))) {
-              throw new Error('host.lineage RPC params are invalid.')
+              throw new RpcHttpError(400, 'host.lineage RPC params are invalid.')
             }
           }
           if (method === 'framesCall' && !sessionBinding.isControl) {
@@ -1676,7 +1706,7 @@ class NotebookLocalRpcServer {
               throw new RpcHttpError(403, 'host.viewImage requires a trusted execution workspace.')
             }
             if (Object.keys(params).some((key) => key !== 'source' && key !== 'options')) {
-              throw new Error('host.viewImage RPC params are invalid.')
+              throw new RpcHttpError(400, 'host.viewImage RPC params are invalid.')
             }
           }
           if (
@@ -1964,10 +1994,10 @@ class NotebookLocalRpcServer {
     if (MEMORY_RPC_METHODS.has(method)) {
       if (!this.memoryService) throw new Error('Memory service is not configured.')
       if (typeof params.sessionId !== 'string') {
-        throw new Error('Memory RPC requires a trusted session binding.')
+        throw new RpcHttpError(403, 'Memory RPC requires a trusted session binding.')
       }
       if (typeof params.projectId !== 'string') {
-        throw new Error('Memory RPC requires a trusted project binding.')
+        throw new RpcHttpError(403, 'Memory RPC requires a trusted project binding.')
       }
       const context: MemoryAgentContext = {
         projectId: params.projectId,
@@ -1980,20 +2010,24 @@ class NotebookLocalRpcServer {
       }
       if (method === 'memorySearch') {
         return this.memoryService.searchForAgent(
-          memoryAgentSearchRequestSchema.parse({
-            query: params.query,
-            categoryIds: params.categoryIds,
-            limit: params.limit
-          }),
+          parseRpcParams(() =>
+            memoryAgentSearchRequestSchema.parse({
+              query: params.query,
+              categoryIds: params.categoryIds,
+              limit: params.limit
+            })
+          ),
           context
         )
       }
       return this.memoryService.rememberForAgent(
-        memoryAgentRememberRequestSchema.parse({
-          categoryId: params.categoryId,
-          content: params.content,
-          analysis: params.analysis
-        }),
+        parseRpcParams(() =>
+          memoryAgentRememberRequestSchema.parse({
+            categoryId: params.categoryId,
+            content: params.content,
+            analysis: params.analysis
+          })
+        ),
         context
       )
     }
@@ -2007,7 +2041,7 @@ class NotebookLocalRpcServer {
       }
       const request = params as CreateArtifactVersionRequest
       if (!request.resourceReservationId) {
-        throw new Error('Artifact Version creation requires a write reservation.')
+        throw new RpcHttpError(400, 'Artifact Version creation requires a write reservation.')
       }
       return this.artifactProvenance.createVersion(request, signal)
     }
@@ -2054,7 +2088,8 @@ class NotebookLocalRpcServer {
         typeof params.turnToken !== 'string' ||
         typeof params.attachmentUri !== 'string'
       ) {
-        throw new Error(
+        throw new RpcHttpError(
+          400,
           'Skill import RPC params must include sessionId and exactly one supported source.'
         )
       }
@@ -2073,7 +2108,7 @@ class NotebookLocalRpcServer {
         typeof params.sessionId !== 'string' ||
         !['generate', 'approve', 'reject', 'updateStepStatus'].includes(String(params.operation))
       ) {
-        throw new Error('Session Plan RPC params are invalid.')
+        throw new RpcHttpError(400, 'Session Plan RPC params are invalid.')
       }
       return this.planService.call({
         projectId: params.projectId,
@@ -2086,7 +2121,7 @@ class NotebookLocalRpcServer {
 
     if (method === 'requestUserInput') {
       const request = sanitizeAgentUserChoiceRequest(params)
-      if (!request) throw new Error('Invalid user choice request.')
+      if (!request) throw new RpcHttpError(400, 'Invalid user choice request.')
       if (params.caller_role === 'delegate') {
         if (!this.delegatedWorkService?.requestUserInput) {
           throw new Error('Delegated user input is not configured.')
@@ -2131,14 +2166,14 @@ class NotebookLocalRpcServer {
       const projectId = typeof params.projectId === 'string' ? params.projectId : ''
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
       if (!projectId || !sessionId) {
-        throw new Error('Host Artifact reads require a session-bound Project scope.')
+        throw new RpcHttpError(403, 'Host Artifact reads require a session-bound Project scope.')
       }
       const context = { projectId, sessionId }
       if (params.op === 'list') return this.hostArtifacts.list(params.options, context)
       if (params.op === 'path') {
         return this.hostArtifacts.resolvePath(params.version_id, context)
       }
-      throw new Error('Unknown host Artifact operation.')
+      throw new RpcHttpError(400, 'Unknown host Artifact operation.')
     }
 
     if (method === 'lineageCall') {
@@ -2146,14 +2181,14 @@ class NotebookLocalRpcServer {
       const projectId = typeof params.projectId === 'string' ? params.projectId : ''
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
       if (!projectId || !sessionId) {
-        throw new Error('Host Lineage reads require a session-bound Project scope.')
+        throw new RpcHttpError(403, 'Host Lineage reads require a session-bound Project scope.')
       }
       const context = { projectId, sessionId }
       if (params.op === 'graph') {
         return this.hostLineage.graph(params.version_id, params.options, context)
       }
       if (params.op === 'get') return this.hostLineage.get(params.version_id, context)
-      throw new Error('Unknown host.lineage operation.')
+      throw new RpcHttpError(400, 'Unknown host.lineage operation.')
     }
 
     if (method === 'framesCall') {
@@ -2161,12 +2196,12 @@ class NotebookLocalRpcServer {
       const projectId = typeof params.projectId === 'string' ? params.projectId : ''
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
       if (!projectId || !sessionId) {
-        throw new Error('Host Frame reads require a session-bound Project scope.')
+        throw new RpcHttpError(403, 'Host Frame reads require a session-bound Project scope.')
       }
       const context = { projectId, sessionId }
       if (params.op === 'list') return this.hostFrames.list(params.options, context)
       if (params.op === 'get') return this.hostFrames.get(params.frame_id, params.options, context)
-      throw new Error('Unknown host Frame operation.')
+      throw new RpcHttpError(400, 'Unknown host Frame operation.')
     }
 
     if (method === 'sessionsCall') {
@@ -2174,12 +2209,15 @@ class NotebookLocalRpcServer {
       const projectId = typeof params.projectId === 'string' ? params.projectId : ''
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
       if (!projectId || !sessionId) {
-        throw new Error('Host Session diagnostics require a session-bound Project scope.')
+        throw new RpcHttpError(
+          403,
+          'Host Session diagnostics require a session-bound Project scope.'
+        )
       }
       const context = { projectId, sessionId, callerRole: 'main' as const }
       if (params.op === 'list') return this.hostSessions.list(params.options, context)
       if (params.op === 'inspect') return this.hostSessions.inspect(params.session_id, context)
-      throw new Error('Unknown host Session operation.')
+      throw new RpcHttpError(400, 'Unknown host Session operation.')
     }
 
     if (method === 'llmCall') {
@@ -2249,19 +2287,20 @@ class NotebookLocalRpcServer {
         (sourceKind !== 'upload-version' && sourceKind !== 'artifact-version') ||
         typeof inputFileVersionId !== 'string'
       ) {
-        throw new Error(
+        throw new RpcHttpError(
+          400,
           'Notebook input resolution requires sessionId, inputRunLeaseId, sourceKind and inputFileVersionId.'
         )
       }
       const leases = this.activeInputRunLeases.get(sessionId)
       if (!leases || leases.size === 0) {
-        throw new Error('Notebook input resolution requires an active run lease.')
+        throw new RpcHttpError(403, 'Notebook input resolution requires an active run lease.')
       }
       const lease = [...leases].find(
         (candidate) => this.inputRunLeaseIds.get(candidate) === inputRunLeaseId
       )
       if (!lease) {
-        throw new Error('Notebook input resolution does not match an active run lease.')
+        throw new RpcHttpError(403, 'Notebook input resolution does not match an active run lease.')
       }
       const registered = lease
         .getRunInputFiles()
@@ -2270,7 +2309,10 @@ class NotebookLocalRpcServer {
             input.sourceKind === sourceKind && input.inputFileVersionId === inputFileVersionId
         )
       if (!registered) {
-        throw new Error(`Notebook input is not registered for this run: ${inputFileVersionId}`)
+        throw new RpcHttpError(
+          403,
+          `Notebook input is not registered for this run: ${inputFileVersionId}`
+        )
       }
       return {
         path: await lease.resolve({ sourceKind, inputFileVersionId })
@@ -2283,7 +2325,7 @@ class NotebookLocalRpcServer {
     if (method === 'mcpCall') {
       if (!this.connectorService) throw new Error('Connector service is not configured.')
       if (typeof params.server !== 'string' || typeof params.method !== 'string') {
-        throw new Error('mcpCall requires string server and method names.')
+        throw new RpcHttpError(400, 'mcpCall requires string server and method names.')
       }
       const server = params.server
       const toolMethod = params.method
@@ -2398,7 +2440,7 @@ class NotebookLocalRpcServer {
           })
           return { ok: true }
         }
-        throw new Error(`Unknown details mode: ${mode}`)
+        throw new RpcHttpError(400, `Unknown details mode: ${mode}`)
       }
 
       // op='download' — agent-initiated file download to session-cache (design.md §5).
@@ -2557,7 +2599,7 @@ class NotebookLocalRpcServer {
         return this.computeService.getSessionConcurrencyStatus(sessionId)
       }
 
-      throw new Error(`Unknown computeCall op: ${op}`)
+      throw new RpcHttpError(400, `Unknown computeCall op: ${op}`)
     }
 
     // agentsCall: host.agents control-plane SDK (issue 02). Routes operations to the AgentsService
@@ -2729,7 +2771,7 @@ class NotebookLocalRpcServer {
           params.frame_ids.length === 0 ||
           params.frame_ids.some((candidate) => typeof candidate !== 'string' || !candidate.trim())
         ) {
-          throw new Error('host.stop_child requires one or more frame ids.')
+          throw new RpcHttpError(400, 'host.stop_child requires one or more frame ids.')
         }
         return this.delegatedWorkService.stopChildren(caller, params.frame_ids as string[])
       }
@@ -2742,7 +2784,7 @@ class NotebookLocalRpcServer {
         const message = typeof params.message === 'string' ? params.message : ''
         const rawOptions = params.options === undefined ? {} : params.options
         if (!rawOptions || typeof rawOptions !== 'object' || Array.isArray(rawOptions)) {
-          throw new Error('host.send_frame_message options must be an object.')
+          throw new RpcHttpError(400, 'host.send_frame_message options must be an object.')
         }
         const messageOptions = rawOptions as Record<string, unknown>
         if (
@@ -2750,19 +2792,25 @@ class NotebookLocalRpcServer {
           messageOptions.kind !== 'info' &&
           messageOptions.kind !== 'question'
         )
-          throw new Error('host.send_frame_message kind must be info or question.')
+          throw new RpcHttpError(400, 'host.send_frame_message kind must be info or question.')
         if (
           messageOptions.request_id !== undefined &&
           typeof messageOptions.request_id !== 'string'
         )
-          throw new Error('host.send_frame_message request_id must be a string.')
+          throw new RpcHttpError(400, 'host.send_frame_message request_id must be a string.')
         if (
           messageOptions.reply_to_message_id !== undefined &&
           typeof messageOptions.reply_to_message_id !== 'string'
         )
-          throw new Error('host.send_frame_message reply_to_message_id must be a string.')
+          throw new RpcHttpError(
+            400,
+            'host.send_frame_message reply_to_message_id must be a string.'
+          )
         if (!target || !message.trim()) {
-          throw new Error('host.send_frame_message requires a target Frame and non-empty message.')
+          throw new RpcHttpError(
+            400,
+            'host.send_frame_message requires a target Frame and non-empty message.'
+          )
         }
         return this.delegatedWorkService.sendMessage(caller, target, message, {
           ...(messageOptions.kind ? { kind: messageOptions.kind as 'info' | 'question' } : {}),
@@ -2778,7 +2826,10 @@ class NotebookLocalRpcServer {
         const selector = typeof params.selector === 'string' ? params.selector : ''
         const rawOptions = params.options === undefined ? {} : params.options
         if (!selector || !rawOptions || typeof rawOptions !== 'object' || Array.isArray(rawOptions))
-          throw new Error('host.message_receipt requires a selector and options object.')
+          throw new RpcHttpError(
+            400,
+            'host.message_receipt requires a selector and options object.'
+          )
         const timeout = (rawOptions as Record<string, unknown>).timeout_seconds
         return this.delegatedWorkService.messageReceipt(
           caller,
@@ -2791,7 +2842,10 @@ class NotebookLocalRpcServer {
           throw new Error('host.resolve_message is unavailable.')
         const messageId = typeof params.message_id === 'string' ? params.message_id : ''
         if (!messageId || params.action !== 'acknowledge_uncertain')
-          throw new Error('host.resolve_message requires message_id and acknowledge_uncertain.')
+          throw new RpcHttpError(
+            400,
+            'host.resolve_message requires message_id and acknowledge_uncertain.'
+          )
         return this.delegatedWorkService.resolveMessage(caller, messageId, {
           action: 'acknowledge_uncertain'
         })
@@ -2801,10 +2855,12 @@ class NotebookLocalRpcServer {
           if (!this.delegatedWorkService.collect) {
             throw new Error('host.collect is not configured.')
           }
-          const call = parseCollectRpcCall({
-            selectors: params.selectors ?? params.frame_ids,
-            options: params.options
-          })
+          const call = parseRpcParams(() =>
+            parseCollectRpcCall({
+              selectors: params.selectors ?? params.frame_ids,
+              options: params.options
+            })
+          )
           return this.delegatedWorkService.collect(caller, call.selectors, call.options)
         }
         if (
@@ -2812,7 +2868,7 @@ class NotebookLocalRpcServer {
           (!Array.isArray(params.frame_ids) ||
             params.frame_ids.some((id) => typeof id !== 'string'))
         ) {
-          throw new Error(`host.${op} frame_ids must be an array of strings.`)
+          throw new RpcHttpError(400, `host.${op} frame_ids must be an array of strings.`)
         }
         const frameIds = params.frame_ids as readonly string[] | undefined
         if (op === 'children') {
@@ -2822,8 +2878,8 @@ class NotebookLocalRpcServer {
           return this.delegatedWorkService.children(caller, frameIds)
         }
       }
-      if (op !== 'delegate') throw new Error('Delegated Work operation is invalid.')
-      const call = parseDelegateRpcCall(params)
+      if (op !== 'delegate') throw new RpcHttpError(400, 'Delegated Work operation is invalid.')
+      const call = parseRpcParams(() => parseDelegateRpcCall(params))
       const request = await this.canonicalizeDelegationInputs(call.request, caller)
       return this.delegatedWorkService.delegate(caller, request, call.options)
     }
@@ -2861,7 +2917,9 @@ class NotebookLocalRpcServer {
         }
       }
     }
-    const handler = resolveNotebookLocalRpcHandler(this.service, method, trustedParams)
+    const handler = parseRpcParams(() =>
+      resolveNotebookLocalRpcHandler(this.service, method, trustedParams)
+    )
 
     const projectId =
       typeof params.sessionId === 'string'

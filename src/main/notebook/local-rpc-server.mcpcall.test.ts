@@ -32,7 +32,7 @@ describe('mcpCall RPC', () => {
       body: JSON.stringify({ method: 'settingsCall', params: { workspaceCwd: process.cwd() } })
     })
 
-    expect(response.status).toBe(500)
+    expect(response.status).toBe(404)
     await expect(response.json()).resolves.toEqual({
       error: 'Unknown notebook RPC method: settingsCall'
     })
@@ -161,7 +161,7 @@ describe('mcpCall RPC', () => {
       })
     })
 
-    expect(response.status).toBe(500)
+    expect(response.status).toBe(400)
     await expect(response.json()).resolves.toEqual({
       error: 'mcpCall requires string server and method names.'
     })
@@ -554,7 +554,7 @@ describe('computeCall RPC', () => {
     expect(parsed.error_code).toBe('approval_denied')
   })
 
-  it('returns 500 for unknown op', async () => {
+  it('returns 400 for unknown op', async () => {
     const fakeCompute = { callCommand: async () => ({}) }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
@@ -566,7 +566,7 @@ describe('computeCall RPC', () => {
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ method: 'computeCall', params: { op: 'unknown_op' } })
     })
-    expect(res.status).toBe(500)
+    expect(res.status).toBe(400)
     const body = (await res.json()) as { error: string }
     expect(body.error).toMatch(/unknown computecall op/i)
   })
@@ -956,7 +956,7 @@ describe('computeCall RPC', () => {
     })
   })
 
-  it('returns 500 for unknown details mode', async () => {
+  it('returns 400 for unknown details mode', async () => {
     const fakeCompute = {
       callCommand: async () => ({}),
       list: async () => [],
@@ -977,7 +977,7 @@ describe('computeCall RPC', () => {
         params: { op: 'details', provider_id: 'ssh:biowulf', mode: 'zap' }
       })
     })
-    expect(res.status).toBe(500)
+    expect(res.status).toBe(400)
     const body = (await res.json()) as { error: string }
     expect(body.error).toMatch(/unknown details mode/i)
   })
