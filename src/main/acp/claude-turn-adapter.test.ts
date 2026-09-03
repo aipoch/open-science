@@ -233,7 +233,7 @@ describe('Claude Code turn adapter', () => {
     )
   })
 
-  it('recovers finalized calls when live MiniMax-M3 messages contain provisional zero usage', async () => {
+  it('recovers finalized calls after a transient incomplete MiniMax-M3 transcript read', async () => {
     const transcriptMessages = [
       ['minimax-call-1', 32_837, 128, 116],
       ['minimax-call-2', 1_195, 33_024, 66],
@@ -255,7 +255,7 @@ describe('Claude Code turn adapter', () => {
     })
     const readTranscriptMessages = vi
       .fn()
-      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new SyntaxError('Unexpected end of JSON input'))
       .mockResolvedValue(transcriptMessages)
     const adapter = createClaudeCodeTurnAdapter({ readTranscriptMessages })
     const probe = await adapter.begin({

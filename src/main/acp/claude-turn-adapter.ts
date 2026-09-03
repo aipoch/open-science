@@ -144,7 +144,7 @@ const recoverClaudeModelCalls = async (
         cwd: input.cwd
       })
     } catch {
-      return undefined
+      continue
     }
 
     const recoveredById = new Map<string, AcpProviderModelCallUsage>()
