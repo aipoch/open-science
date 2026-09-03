@@ -97,30 +97,39 @@ jobs:
           test -s artifacts/SHA256SUMS.txt
           test -s artifacts/RELEASE-CERTIFICATION.json
 
-      # API-only: this job has no checkout, so `gh release delete --cleanup-tag` fails
-      # before deleting anything. GitHub also will not move an existing `nightly` tag.
-      - name: Reset nightly release
+      # Keep one long-lived GitHub Release and only update its tag and assets. Zenodo archives newly
+      # published releases but ignores edits, so deleting and recreating this release would create a
+      # new Zenodo version on every scheduled run.
+      - name: Refresh nightly release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          error_file="$RUNNER_TEMP/nightly-reset-error.log"
-          if release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/nightly" --jq .id 2>"$error_file"); then
-            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"
+          error_file="$RUNNER_TEMP/nightly-refresh-error.log"
+          if ! release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/nightly" --jq .id 2>"$error_file"); then
+            cat "$error_file" >&2
+            echo "The long-lived nightly release is missing; refusing to create a new Zenodo-visible release." >&2
+            exit 1
+          fi
+
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/nightly" > /dev/null 2>"$error_file"; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" \
+              -f sha="$SOURCE_SHA" -F force=true
           elif grep -Eq 'HTTP 404' "$error_file"; then
-            echo "No existing nightly release to delete."
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref='refs/tags/nightly' -f sha="$SOURCE_SHA"
           else
             cat "$error_file" >&2
             exit 1
           fi
 
-          if gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" 2>"$error_file"; then
-            echo "Deleted the nightly tag."
-          elif grep -Eq 'HTTP 404' "$error_file"; then
-            echo "No existing nightly tag to delete."
-          else
-            cat "$error_file" >&2
-            exit 1
-          fi
+          asset_file="$RUNNER_TEMP/nightly-assets.txt"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets" \
+            --jq '.[].id' > "$asset_file"
+          while IFS= read -r asset_id; do
+            if [ -n "$asset_id" ]; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            fi
+          done < "$asset_file"
 
       - name: Publish nightly pre-release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3

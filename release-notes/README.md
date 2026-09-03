@@ -16,8 +16,8 @@ release-notes/
     es.md
 ```
 
-The files contain the concise Markdown shown in the update dialog. Keep the full release notes in the
-GitHub Release body and link to them from the dialog as usual.
+The files contain the concise Markdown shown in the update dialog. `en.md` is also the authoritative
+GitHub Release body and Zenodo description, so it must be present before a stable tag is published.
 
 `en.md` is required because it is the fallback for missing translations and the compatibility source
 for electron-updater feeds used by older clients. The eight translated files are optional; when one is

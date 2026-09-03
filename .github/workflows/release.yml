@@ -141,6 +141,18 @@ jobs:
             artifacts/*.AppImage
             artifacts/*.deb
 
+      # Set the final body before GitHub emits the release event consumed by Zenodo. Updating the
+      # GitHub Release afterwards is too late because Zenodo archives the event payload it received.
+      - name: Resolve release notes
+        id: release_notes
+        run: |
+          path="release-notes/${GITHUB_REF_NAME#v}/en.md"
+          if [ ! -s "$path" ]; then
+            echo "Missing release notes: $path" >&2
+            exit 1
+          fi
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+
       # Attach user-facing artifacts + checksums: installers (dmg/exe/AppImage/deb) and the mac
       # portable zips, plus the electron-updater feed files so the manually dispatched website mirror
       # can republish them to the CDN feed: win/linux latest.yml + latest-linux.yml, and the mac feeds.
@@ -152,7 +164,7 @@ jobs:
         with:
           draft: false
           prerelease: false
-          generate_release_notes: true
+          body_path: ${{ steps.release_notes.outputs.path }}
           files: |
             artifacts/*.dmg
             artifacts/*.zip
