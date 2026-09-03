@@ -188,7 +188,9 @@ describe('CloseConfirmModal', () => {
     })
     const row = await findButtonByName(/My Analysis — Fix data loader/)
     act(() => row.click())
-    expect(openSession).toHaveBeenCalledWith('p1', 's1', 'user')
+    expect(openSession).toHaveBeenCalledWith('p1', 's1', 'user', expect.any(Function))
+    expect(sendResponse).not.toHaveBeenCalledWith({ requestId: 'r4', choice: 'cancel' })
+    act(() => openSession.mock.calls[0]?.[3]?.())
     expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r4', choice: 'cancel' })
   })
 

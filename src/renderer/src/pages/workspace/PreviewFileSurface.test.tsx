@@ -3209,4 +3209,37 @@ describe('PreviewFileSurface View in context entry', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
     expect(onViewInContextNavigate).toHaveBeenCalledOnce()
   })
+
+  it('passes the View in context notification as a navigation continuation', async () => {
+    seedWorkspaceStores()
+    const openSession = vi
+      .spyOn(useNavigationStore.getState(), 'openSession')
+      .mockReturnValue(false)
+    const onViewInContextNavigate = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={item}
+          provenanceEntry="trailing"
+          onViewInContextNavigate={onViewInContextNavigate}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await click(container.querySelector('[aria-label="View in context for sin.png"]'))
+
+    expect(openSession).toHaveBeenCalledWith(
+      'project-1',
+      'session-1',
+      'user',
+      onViewInContextNavigate
+    )
+    expect(onViewInContextNavigate).not.toHaveBeenCalled()
+    openSession.mock.calls[0]?.[3]?.()
+    expect(onViewInContextNavigate).toHaveBeenCalledOnce()
+  })
 })

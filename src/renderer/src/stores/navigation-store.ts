@@ -50,8 +50,13 @@ type NavigationStore = {
   artifactMentionAvailability: ArtifactMentionAvailability | undefined
   recordUserNavigation: () => void
   goHome: (origin: NavigationOrigin) => void
-  openProject: (projectId: string, origin: NavigationOrigin) => boolean
-  openSession: (projectId: string, sessionId: string, origin: NavigationOrigin) => boolean
+  openProject: (projectId: string, origin: NavigationOrigin, afterNavigate?: () => void) => boolean
+  openSession: (
+    projectId: string,
+    sessionId: string,
+    origin: NavigationOrigin,
+    afterNavigate?: () => void
+  ) => boolean
   // Opens a session knowing only its id (e.g. a desktop-notification click); a no-op when the
   // session no longer exists or hasn't loaded yet.
   openSessionById: (sessionId: string, origin: NavigationOrigin) => boolean
@@ -168,9 +173,10 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
 
   // Enters a project's workspace, selecting its most recent session when one exists. An explicit user
   // open also records the durable last-opened project so `Chat with agent` re-opens it next time.
-  openProject: (projectId, origin) => {
+  openProject: (projectId, origin, afterNavigate) => {
     if (!isActiveProject(projectId)) return false
     return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
+      if (!isActiveProject(projectId)) return false
       const mostRecentSessionId = findMostRecentSessionId(projectId)
 
       if (mostRecentSessionId) {
@@ -185,15 +191,17 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         navigationState(state, origin, { view: 'workspace', activeProjectId: projectId })
       )
       usePreviewWorkbenchStore.getState().activateProject(projectId, undefined, true)
+      afterNavigate?.()
+      return true
     })
   },
 
-  // Opens a specific session inside its project's workspace. Returns whether navigation happened,
-  // so callers that chain side effects (e.g. closing a modal over the conversation panel) can skip
-  // them when the guard rejects a vanished or archived session.
-  openSession: (projectId, sessionId, origin) => {
+  // Opens a specific session inside its project's workspace. An optional continuation runs only
+  // after navigation, including when a dirty-preview confirmation deferred it.
+  openSession: (projectId, sessionId, origin, afterNavigate) => {
     if (!isActiveSession(projectId, sessionId)) return false
     return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
+      if (!isActiveSession(projectId, sessionId)) return false
       useSessionStore.getState().selectSession(sessionId)
 
       if (origin === 'user') recordLastOpenedProject(projectId)
@@ -202,6 +210,8 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         navigationState(state, origin, { view: 'workspace', activeProjectId: projectId })
       )
       usePreviewWorkbenchStore.getState().activateProject(projectId, undefined, true)
+      afterNavigate?.()
+      return true
     })
   },
 

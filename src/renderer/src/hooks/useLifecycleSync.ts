@@ -300,8 +300,9 @@ const useLifecycleSync = ({
   const dismissNotice = useCallback(() => setNotice(undefined), [])
   const viewNotice = useCallback(() => {
     if (!notice) return
-    useNavigationStore.getState().openSession(notice.projectId, notice.sessionId, 'user')
-    setNotice(undefined)
+    useNavigationStore
+      .getState()
+      .openSession(notice.projectId, notice.sessionId, 'user', () => setNotice(undefined))
   }, [notice])
 
   return { notice, dismissNotice, viewNotice }

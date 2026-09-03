@@ -128,8 +128,7 @@ export const CloseConfirmModal = ({
                     if (!row.projectId) return
                     useNavigationStore
                       .getState()
-                      .openSession(row.projectId, session.sessionId, 'user')
-                    reply('cancel')
+                      .openSession(row.projectId, session.sessionId, 'user', () => reply('cancel'))
                   }
                   return (
                     // title lives on the li, not the button: a disabled button dispatches no hover

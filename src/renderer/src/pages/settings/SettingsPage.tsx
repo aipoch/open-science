@@ -1479,8 +1479,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       view={memoryView}
                       onNavigate={navigateMemory}
                       onOpenProject={(projectId) => {
-                        useNavigationStore.getState().openProject(projectId, 'user')
-                        onClose()
+                        useNavigationStore.getState().openProject(projectId, 'user', onClose)
                       }}
                     />
                   ) : activePanel === 'connectors' ? (

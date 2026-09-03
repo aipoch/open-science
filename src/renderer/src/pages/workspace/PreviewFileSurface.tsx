@@ -842,10 +842,9 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       !originSessionUnavailable
     const viewInContext = (): void => {
       if (!projectId) return
-      const opened = useNavigationStore
+      useNavigationStore
         .getState()
-        .openSession(projectId, previewItem.sessionId, 'user')
-      if (opened) onViewInContextNavigate?.()
+        .openSession(projectId, previewItem.sessionId, 'user', onViewInContextNavigate)
     }
 
     const downloadPreviewFile = (): void => {
