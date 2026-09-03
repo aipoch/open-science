@@ -89,6 +89,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'settings.onConnectorCredentialSettled',
   'settings.previewCustomServerTemplateExport',
   'settings.replayPendingConnectorCredentialRequests',
+  'settings.resolveSkillDocument',
   'settings.respondConnectorCredentialRequest',
   'settings.selectCustomServerTemplate',
   'sideChat.cancel',

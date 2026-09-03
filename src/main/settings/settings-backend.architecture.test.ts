@@ -489,7 +489,7 @@ describe('Settings backend ownership architecture', () => {
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
         provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog rememberCodexAutoHttpsFallback removeCustomServer removeDeviceCredential removeGitHubToken removeNotebookNetwork
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort
-        resolveAdmittedSubagentBackend resolveAgentBackend resolveDeviceOAuthCredential resolveExplicitAgentBackend resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken
+        resolveAdmittedSubagentBackend resolveAgentBackend resolveDeviceOAuthCredential resolveExplicitAgentBackend resolveSkillDocument resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken
         scanRepoSkills setActiveProvider setAgentEnvironmentCreationEnabled setAgentFramework setAppIconVariant setClosePreference
         setComputeBookmarks setConnectorAutoAllow setConnectorEnabled
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
