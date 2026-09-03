@@ -108,12 +108,14 @@ jobs:
           if ! release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/nightly" --jq .id 2>"$error_file"); then
             cat "$error_file" >&2
             echo "The long-lived nightly release is missing; refusing to create a new Zenodo-visible release." >&2
+            echo "Follow the recovery procedure in release-notes/README.md." >&2
             exit 1
           fi
 
           if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/nightly" > /dev/null 2>"$error_file"; then
             cat "$error_file" >&2
             echo "The long-lived nightly tag is missing; refusing to publish without a retry marker." >&2
+            echo "Follow the recovery procedure in release-notes/README.md." >&2
             exit 1
           fi
 

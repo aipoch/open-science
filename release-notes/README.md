@@ -30,3 +30,17 @@ skipping AWS credentials, historical blockmap backfill, and every S3 write.
 For historical releases that predate this directory, the mirror workflow preserves the legacy path:
 it reads and condenses the GitHub Release body into English notes. A historical release therefore does
 not need a repository directory unless localized backfill is wanted.
+
+## Nightly release prerequisite
+
+Nightly publishing reuses one long-lived GitHub prerelease and moves its `nightly` tag only after the
+replacement assets upload successfully. The release and tag must both exist before enabling
+`.github/workflows/nightly-publish.yml`; do not delete or recreate the release during routine
+operation. Creating a GitHub Release while the Zenodo integration is enabled can archive another
+nightly version permanently.
+
+If only the tag is missing, restore it to the commit represented by the current nightly assets before
+rerunning the workflow. If the release is missing, disable the Zenodo integration before recreating
+the long-lived prerelease, verify that Zenodo did not archive it, and then re-enable the integration.
+The workflow intentionally fails closed in either case instead of attempting an unsafe automatic
+bootstrap.
