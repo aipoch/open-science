@@ -1,16 +1,6 @@
-import type { PackageMirror } from '../../shared/mirror'
+import { CURATED_MIRRORS, type PackageMirror } from '../../shared/mirror'
 
-export { MIRROR_HELP_URL } from '../../shared/mirror'
-
-// Curated public mirror table (region-auto default, D10). Centralized here rather than scattered so
-// it is easy to audit and later move to a build var. Public endpoints only — no secrets.
-export const CURATED_MIRRORS = {
-  cn: {
-    condaChannel: 'https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/',
-    pypiIndex: 'https://pypi.tuna.tsinghua.edu.cn/simple',
-    cranMirror: 'https://mirrors.tuna.tsinghua.edu.cn/CRAN/'
-  }
-} as const
+export { CURATED_MIRRORS, MIRROR_HELP_URL } from '../../shared/mirror'
 
 // Cheap locale heuristic: a Chinese locale gets the CN mirror default; everyone else uses public
 // hosts (empty overrides). A more precise speed-based pick is future work (spec §9, §16).

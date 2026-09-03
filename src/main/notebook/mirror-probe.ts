@@ -1,55 +1,15 @@
-import type { PackageMirror } from '../../shared/mirror'
+import {
+  AUTOMATIC_PACKAGE_MIRROR_CANDIDATES,
+  type AutomaticPackageMirrorCandidate,
+  type PackageMirror
+} from '../../shared/mirror'
 import { netFetchStandard } from '../skills/net-fetch'
-import { CURATED_MIRRORS, effectiveMirror } from './mirror'
+import { effectiveMirror } from './mirror'
 
 // A candidate mirror bundle + cheap URLs to measure both required conda channels. Public endpoints
 // only (no secrets). The repodata URLs are HEAD-ed so no body is downloaded.
-export type MirrorCandidate = {
-  name: string
-  mirror: PackageMirror
-  probeUrl: string
-  biocondaProbeUrl: string
-}
-
-const condaRepodata = (base: string): string =>
-  `${base}anaconda/cloud/conda-forge/noarch/repodata.json`
-const biocondaRepodata = (base: string): string =>
-  `${base}anaconda/cloud/bioconda/noarch/repodata.json`
-
-export const MIRROR_CANDIDATES: MirrorCandidate[] = [
-  {
-    name: 'public',
-    mirror: {},
-    probeUrl: 'https://conda.anaconda.org/conda-forge/noarch/repodata.json',
-    biocondaProbeUrl: 'https://conda.anaconda.org/bioconda/noarch/repodata.json'
-  },
-  {
-    name: 'tuna',
-    mirror: { ...CURATED_MIRRORS.cn },
-    probeUrl: condaRepodata('https://mirrors.tuna.tsinghua.edu.cn/'),
-    biocondaProbeUrl: biocondaRepodata('https://mirrors.tuna.tsinghua.edu.cn/')
-  },
-  {
-    name: 'ustc',
-    mirror: {
-      condaChannel: 'https://mirrors.ustc.edu.cn/anaconda/cloud/conda-forge/',
-      pypiIndex: 'https://mirrors.ustc.edu.cn/pypi/web/simple',
-      cranMirror: 'https://mirrors.ustc.edu.cn/CRAN/'
-    },
-    probeUrl: condaRepodata('https://mirrors.ustc.edu.cn/'),
-    biocondaProbeUrl: biocondaRepodata('https://mirrors.ustc.edu.cn/')
-  },
-  {
-    name: 'aliyun',
-    mirror: {
-      condaChannel: 'https://mirrors.aliyun.com/anaconda/cloud/conda-forge/',
-      pypiIndex: 'https://mirrors.aliyun.com/pypi/simple',
-      cranMirror: 'https://mirrors.aliyun.com/CRAN/'
-    },
-    probeUrl: condaRepodata('https://mirrors.aliyun.com/'),
-    biocondaProbeUrl: biocondaRepodata('https://mirrors.aliyun.com/')
-  }
-]
+export type MirrorCandidate = AutomaticPackageMirrorCandidate
+export const MIRROR_CANDIDATES = AUTOMATIC_PACKAGE_MIRROR_CANDIDATES
 
 // Measures one URL's latency (ms), rejecting on error/timeout. Injectable so the selection logic is
 // testable without network.
