@@ -5,7 +5,9 @@ import type { ToolActivity } from '@/stores/session-store'
 // mcp__skills__load_skill (Claude), mcp.skills.load_skill (Codex), or a flattened underscore form.
 const SKILL_LOAD_TOOL_PATTERN = /^(?:mcp__|mcp\.)?skills(?:__|\.|_)load_skill$/iu
 
-const SKILL_NAME_PATTERN = /^(?:loading|loaded)\s+skill:\s*(.+?)\s*$/iu
+// Providers project either the imperative ("Load skill: …") or the lifecycle ("Loading/Loaded
+// skill: …") title variant; all three carry the canonical invocation name.
+const SKILL_NAME_PATTERN = /^(?:load|loading|loaded)\s+skill:\s*(.+?)\s*$/iu
 
 // load_skill results prepend the runtime-resolved package root before the SKILL.md document. The
 // prefix is server-added transport context (and an absolute local path), never document content.

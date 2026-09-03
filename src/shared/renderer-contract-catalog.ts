@@ -323,6 +323,8 @@ import type {
   PreviewAgentHomeSkillRequest,
   PreviewGitHubSkillRequest,
   PreviewSkillZipRequest,
+  ResolveSkillDocumentRequest,
+  ResolvedSkillDocument,
   SkillBundlePreviewResult,
   SkillImportPreviewContent,
   ScanRepoRequest,
@@ -1663,6 +1665,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.getSkillDetail': callable<(id: string) => Promise<SkillDetailView>>()('settings', [
     'settings:get-skill-detail'
   ]),
+  // Electron-only: the connector-skill document sources live on the main-process filesystem, so
+  // the web adapter does not project this member — renderer callers must guard its presence.
+  'settings.resolveSkillDocument': callable<
+    (request: ResolveSkillDocumentRequest) => Promise<ResolvedSkillDocument | null>
+  >()('settings', ['settings:resolve-skill-document', ELECTRON]),
   'settings.importAgentHomeSkills': callable<
     (request: ImportAgentHomeSkillsRequest) => Promise<ImportAgentHomeSkillsResult>
   >()('settings', ['settings:import-agent-home-skills', MAPPED_ELECTRON]),

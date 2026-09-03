@@ -3908,6 +3908,74 @@ describe('SettingsService: skills', () => {
     expect(detail.body).toContain('demo body')
   })
 
+  it('resolves a managed-catalog skill document by canonical name', async () => {
+    const service = await createSkillService()
+
+    await expect(service.resolveSkillDocument({ name: 'demo' })).resolves.toEqual({
+      name: 'demo',
+      displayName: 'Demo',
+      description: 'A demo skill.',
+      body: 'demo body'
+    })
+  })
+
+  it('resolves an enabled bundled connector skill from its generated document', async () => {
+    const service = await createSkillService()
+
+    // Bundled connectors are default-on, so mcp-molecule resolves without any settings change.
+    const resolved = await service.resolveSkillDocument({ name: 'mcp-molecule' })
+    expect(resolved).toMatchObject({ name: 'mcp-molecule', displayName: 'Molecule Viewer' })
+    expect(resolved?.description).toContain('chemical structure')
+    expect(resolved?.body).toContain('## Tools')
+    expect(resolved?.body).not.toContain('name: mcp-molecule')
+  })
+
+  it('does not resolve a disabled bundled connector skill', async () => {
+    const service = await createSkillService()
+    await service.setConnectorEnabled({ id: 'molecule', enabled: false })
+
+    await expect(service.resolveSkillDocument({ name: 'mcp-molecule' })).resolves.toBeNull()
+  })
+
+  it('resolves a materialized custom connector skill from the provisioned source dir', async () => {
+    const service = await createSkillService()
+    service.setCustomServerRuntimeProjectionProvider({
+      materializedSkillNames: () => ['mcp-custom'],
+      availability: () => undefined,
+      isRefreshing: () => false
+    })
+    const dir = join(storageRoot, 'runtime-support', 'connector-skills', 'mcp-custom')
+    await mkdir(dir, { recursive: true })
+    await writeFile(
+      join(dir, 'SKILL.md'),
+      [
+        '---',
+        'name: mcp-custom',
+        'description: Custom server tools.',
+        '---',
+        '',
+        'custom body'
+      ].join('\n'),
+      'utf8'
+    )
+
+    await expect(service.resolveSkillDocument({ name: 'mcp-custom' })).resolves.toEqual({
+      name: 'mcp-custom',
+      description: 'Custom server tools.',
+      body: 'custom body'
+    })
+  })
+
+  it('returns null for unknown, unprovisioned, and unsafe skill names', async () => {
+    const service = await createSkillService()
+
+    await expect(service.resolveSkillDocument({ name: 'unknown-skill' })).resolves.toBeNull()
+    // A custom-skill-shaped name that was never provisioned must not read the filesystem.
+    await expect(service.resolveSkillDocument({ name: 'mcp-not-real' })).resolves.toBeNull()
+    await expect(service.resolveSkillDocument({ name: '../outside' })).resolves.toBeNull()
+    await expect(service.resolveSkillDocument({ name: 'Bad Name' })).resolves.toBeNull()
+  })
+
   it('keeps a Main-disabled installed Skill in the Specialist catalog', async () => {
     const service = await createSkillService()
     await service.setSkillEnabled({ id: 'demo', enabled: false })

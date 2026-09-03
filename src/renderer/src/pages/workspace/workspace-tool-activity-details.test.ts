@@ -60,6 +60,17 @@ describe('workspace tool activity details', () => {
     expect(buildToolActivityDetails(activity)).toBeUndefined()
   })
 
+  it('recognizes the imperative Claude Skill activity title variant', () => {
+    const activity = createActivity({
+      providerToolName: 'Skill',
+      title: 'Load skill: self-awareness'
+    })
+
+    expect(isSkillActivity(activity)).toBe(true)
+    expect(getLoadedSkillName(activity)).toBe('self-awareness')
+    expect(buildToolActivityDetails(activity)).toBeUndefined()
+  })
+
   it('labels a load_skill MCP row with the loaded Skill name and keeps its generic details', () => {
     const activity = createActivity({
       providerToolName: 'mcp__skills__load_skill',

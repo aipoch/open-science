@@ -199,9 +199,18 @@ const catalogSkill: SkillView = {
 }
 
 const installSkillDetail = (body: string): ReturnType<typeof vi.fn> => {
-  const getSkillDetail = vi.fn().mockResolvedValue({ body })
+  const getSkillDetail = vi
+    .fn()
+    .mockResolvedValue({ ...catalogSkill, body, references: [], packageFiles: [] })
   window.api = { settings: { getSkillDetail } } as unknown as Window['api']
   return getSkillDetail
+}
+
+const installSkillDocumentResolver = (
+  resolveSkillDocument: ReturnType<typeof vi.fn>
+): ReturnType<typeof vi.fn> => {
+  window.api = { settings: { resolveSkillDocument } } as unknown as Window['api']
+  return resolveSkillDocument
 }
 
 const renderControls = (): string =>
@@ -1033,22 +1042,46 @@ describe('PermissionApprovalControls', () => {
     expect(host.querySelector('[data-testid="permission-code-toggle"]')).toBeNull()
   })
 
-  it('keeps the generic JSON input when the skill is not in the catalog', () => {
+  it('resolves the skill document through the main-process resolver on a catalog miss', async () => {
     useSettingsStore.setState({ skills: [], skillsLoaded: true })
-    const getSkillDetail = installSkillDetail('# unused')
-
-    const html = renderToStaticMarkup(
-      <PermissionApprovalControls
-        requests={[skillLoadPermissionRequest]}
-        onRespond={() => undefined}
-      />
+    const resolveSkillDocument = installSkillDocumentResolver(
+      vi.fn().mockResolvedValue({
+        name: 'mcp-pubmed',
+        displayName: 'PubMed Connector',
+        body: '# mcp-pubmed\n\nConnector-provided document.'
+      })
     )
 
-    expect(html).toContain('data-testid="permission-code-toggle"')
-    expect(html).toContain('External service input')
-    expect(html).toContain('mcp-pubmed')
-    expect(html).not.toContain('permission-skill-toggle')
-    expect(getSkillDetail).not.toHaveBeenCalled()
+    const host = await mountControls(skillLoadPermissionRequest)
+
+    expect(resolveSkillDocument).toHaveBeenCalledWith({ name: 'mcp-pubmed' })
+
+    const toggle = host.querySelector('[data-testid="permission-skill-toggle"]')
+    expect(toggle).not.toBeNull()
+    expect(toggle?.textContent).toContain('PubMed Connector')
+    expect(host.querySelector('h1')?.textContent).toBe('mcp-pubmed')
+    expect(host.textContent).toContain('Connector-provided document.')
+    // The resolved document replaces the raw JSON input.
+    expect(host.querySelector('[data-testid="permission-code-toggle"]')).toBeNull()
+    expect(host.querySelector('[data-testid="tool-code-block"]')).toBeNull()
+  })
+
+  it('keeps the raw JSON input inside the skill section when no source provides the skill', async () => {
+    useSettingsStore.setState({ skills: [], skillsLoaded: true })
+    const resolveSkillDocument = installSkillDocumentResolver(vi.fn().mockResolvedValue(null))
+
+    const host = await mountControls(skillLoadPermissionRequest)
+
+    expect(resolveSkillDocument).toHaveBeenCalledWith({ name: 'mcp-pubmed' })
+
+    const toggle = host.querySelector('[data-testid="permission-skill-toggle"]')
+    expect(toggle).not.toBeNull()
+    expect(toggle?.textContent).toContain('mcp-pubmed')
+    // The unavailable document falls back to the reviewable raw input inside the same section.
+    const codeBlock = host.querySelector('[data-testid="tool-code-block"]')
+    expect(codeBlock).not.toBeNull()
+    expect(codeBlock?.textContent).toContain('"skill"')
+    expect(codeBlock?.textContent).toContain('mcp-pubmed')
   })
 
   it('offers a retry when the skill document fetch fails', async () => {

@@ -47,14 +47,32 @@ const seedFixtureSkill = async (page: Page): Promise<void> => {
   await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
 }
 
+const clickPermissionDecision = async (page: Page, decision: 'allow' | 'deny'): Promise<void> => {
+  const button = page
+    .getByTestId('permission-actions')
+    .getByTestId(decision === 'allow' ? 'allow-primary' : 'deny-button')
+  await expect(button).toBeEnabled()
+  // Same rationale as workspace-conversation.spec.ts: activate through the DOM click handler so an
+  // overlay can never swallow the pointer click.
+  await button.evaluate((element: HTMLButtonElement) => {
+    element.click()
+  })
+}
+
+const sendSkillPermissionPrompt = async (page: Page): Promise<void> => {
+  const composer = page.getByRole('textbox', { name: 'Ask anything' })
+  await expect(composer).toBeVisible()
+  await composer.fill(SKILL_PERMISSION_PROMPT)
+  await page.getByRole('button', { name: 'Send message' }).click()
+}
+
 test('renders the SKILL.md document in the skill load permission card', async ({ app }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await seedFixtureSkill(page)
   await createProject(page)
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(SKILL_PERMISSION_PROMPT)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await sendSkillPermissionPrompt(page)
 
   const card = page.getByTestId('permission-card')
   await expect(card).toBeVisible()
@@ -74,9 +92,21 @@ test('renders the SKILL.md document in the skill load permission card', async ({
   await expect(card.getByText('Review fixture evidence carefully.')).toBeHidden()
   await card.screenshot({ path: join(SCREENSHOT_ROOT, 'skill-permission-card-collapsed.png') })
 
-  // The approval flow still completes through the new section.
-  const allow = page.getByTestId('permission-actions').getByTestId('allow-primary')
-  await expect(allow).toBeEnabled()
-  await allow.evaluate((element: HTMLButtonElement) => element.click())
+  // The approval flow still completes through the new section, on the Deny path too.
+  await clickPermissionDecision(page, 'deny')
+  await expect(page.getByText('Fixture skill permission denied.', { exact: true })).toBeVisible()
+
+  // Regression guard: a repeated load_skill approval must keep the skill document section rather
+  // than regressing to the generic JSON input.
+  await sendSkillPermissionPrompt(page)
+  const secondToggle = page.getByTestId('permission-skill-toggle')
+  await expect(secondToggle).toBeVisible()
+  await expect(secondToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(
+    page.getByTestId('permission-card').getByText('Review fixture evidence carefully.')
+  ).toBeVisible()
+  await expect(page.getByTestId('permission-code-toggle')).toHaveCount(0)
+
+  await clickPermissionDecision(page, 'allow')
   await expect(page.getByText('Fixture skill permission allowed.', { exact: true })).toBeVisible()
 })

@@ -94,6 +94,7 @@ type FakeSettingsService = Record<
   | 'setNotebookNetwork'
   | 'listSkills'
   | 'getSkillDetail'
+  | 'resolveSkillDocument'
   | 'buildSkillExport'
   | 'setSkillEnabled'
   | 'setSkillsEnabled'
@@ -233,6 +234,7 @@ const createFakeService = (): FakeSettingsService => ({
     enabled: true,
     body: 'b'
   }),
+  resolveSkillDocument: vi.fn().mockResolvedValue(null),
   buildSkillExport: vi.fn().mockResolvedValue({
     fileName: 'my-skill.zip',
     archiveBytes: new Uint8Array([1, 2, 3])
@@ -861,6 +863,9 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:get-skill-detail', 'demo')
     expect(service.getSkillDetail).toHaveBeenCalledWith('demo')
+
+    await invoke('settings:resolve-skill-document', { name: 'demo' })
+    expect(service.resolveSkillDocument).toHaveBeenCalledWith({ name: 'demo' })
 
     await invoke('settings:set-skill-enabled', { id: 'demo', enabled: false })
     expect(service.setSkillEnabled).toHaveBeenCalledWith({ id: 'demo', enabled: false })

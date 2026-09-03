@@ -21,7 +21,7 @@ import {
   getSkillLoadDocument,
   isSkillActivity
 } from './workspace-tool-activity-details'
-import { getLoadedSkillName } from './workspace-skill-load'
+import { getLoadedSkillName, isSkillLoadActivity } from './workspace-skill-load'
 import {
   formatActivityGroupElapsed,
   formatActivityGroupPresentationTitle,
@@ -185,11 +185,16 @@ const WorkspaceActivityGroup = ({
               // Search rows get bespoke query/result details; other tools reuse the shared builder.
               const isSearch = isSearchActivity(activity, group.activities, activityIndex)
               const searchDetails = isSearch ? formatWebSearchDetails(activity) : undefined
-              // A completed load_skill expands into its rendered SKILL.md; while the document
-              // is unavailable (running, failed, or old sessions) it keeps the generic row.
+              // A completed load_skill expands into its rendered SKILL.md when the output carries
+              // the document; without it (payload stripped, running, failed, or old sessions) the
+              // IPC-capable skill row resolves the document by invocation name instead of showing
+              // the generic input/output JSON.
               const skillLoadDocument = !isSearch ? getSkillLoadDocument(activity) : undefined
+              const skillLoadWithoutDocument = !skillLoadDocument && isSkillLoadActivity(activity)
               const toolDetails =
-                isSearch || skillLoadDocument ? undefined : buildToolActivityDetails(activity, t)
+                isSearch || skillLoadDocument || skillLoadWithoutDocument
+                  ? undefined
+                  : buildToolActivityDetails(activity, t)
               // All tool rows — notebook cells included — default collapsed (meaningful title
               // only); clicking the title reveals the code and output. A user toggle still wins.
               const isRowExpanded = expansionOverrides[activity.id] ?? false
@@ -225,6 +230,16 @@ const WorkspaceActivityGroup = ({
                       phase={phase}
                       skillName={getLoadedSkillName(activity)}
                       markdown={skillLoadDocument}
+                      isExpanded={isRowExpanded}
+                      onToggle={handleToggleRow}
+                    />
+                  ) : skillLoadWithoutDocument ? (
+                    // load_skill without a document payload: the row resolves the SKILL.md from
+                    // the skills catalog or the connector-aware resolver, keeping the raw JSON out
+                    // of the transcript; it stays compact when no source provides the name.
+                    <WorkspaceSkillActivityRow
+                      activity={activity}
+                      phase={phase}
                       isExpanded={isRowExpanded}
                       onToggle={handleToggleRow}
                     />

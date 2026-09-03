@@ -46,6 +46,13 @@ describe('workspace skill load helpers', () => {
     expect(getLoadedSkillName(activity)).toBe('pubmed')
   })
 
+  it('parses the imperative Load skill title variant', () => {
+    expect(getLoadedSkillName(createActivity({ title: 'Load skill: self-awareness' }))).toBe(
+      'self-awareness'
+    )
+    expect(getLoadedSkillName(createActivity({ title: 'Loading skill: pubmed' }))).toBe('pubmed')
+  })
+
   it('strips the base-directory prefix and YAML frontmatter from a skill document', () => {
     const output =
       'Base directory for this skill: /repo/.claude/skills/mcp-pubmed\n\n' +
