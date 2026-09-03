@@ -200,7 +200,9 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
       if (notification.readAt === undefined) {
         runNotificationTask(() => markRead([notification.id]))
       }
-      setNotice(undefined)
+      setNotice((current) =>
+        current?.lead.notification.id === notification.id ? undefined : current
+      )
     }
     let opened = true
     try {
