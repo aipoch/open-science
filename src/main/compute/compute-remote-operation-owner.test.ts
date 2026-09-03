@@ -776,7 +776,7 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
   it('downloads a file to os-downloads and returns LocalFile', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 1024',
+      stdout: 'f 1024 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -809,7 +809,7 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
   it('rejects a truncated OS download whose local size is smaller than the pre-transfer stat', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 10',
+      stdout: 'f 10 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -835,12 +835,51 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
     expect(await readdir(tmpDir)).toEqual([])
   })
 
+  it('rejects a same-size download when the remote file identity changes during transfer', async () => {
+    const run = vi
+      .fn<SshRunner['run']>()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'f 10 41 1700000000.000000000',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'f 10 42 1700000001.000000000',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+    const runner: SshRunner = { run }
+    const { repo } = makeRepo()
+    const scpRunner: ScpRunner = {
+      copy: vi.fn(async (_bin, args) => {
+        const localPath = args[args.length - 1] as string
+        await writeFile(localPath, 'mixed-data')
+        return { exitCode: 0, stderr: '', timedOut: false }
+      })
+    }
+    const service = makeOwner(runner, repo, undefined, scpRunner, tmpDir)
+
+    const error = await service
+      .download('ssh:biowulf', '/remote/data.csv', { kind: 'os-downloads' })
+      .catch((cause) => cause)
+
+    expect(error.remoteFsError).toMatchObject({
+      remoteKind: 'not_a_file',
+      detail: expect.stringMatching(/changed during transfer/i)
+    })
+    expect(await readdir(tmpDir)).toEqual([])
+  })
+
   it('classifies a rejected post-transfer stat as a connection failure', async () => {
     const run = vi
       .fn<SshRunner['run']>()
       .mockResolvedValueOnce({
         exitCode: 0,
-        stdout: 'f 10',
+        stdout: 'f 10 1 0',
         stderr: '',
         truncated: false,
         timedOut: false
@@ -874,7 +913,7 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
   it('renames colliding file with (1) suffix', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 10',
+      stdout: 'f 10 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -900,7 +939,7 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
   it('keeps the final Downloads names untouched and cleans staging when transfer fails', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 100',
+      stdout: 'f 100 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -928,7 +967,7 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
     const bigSize = 2 * 1024 * 1024 * 1024 + 1
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: `f ${bigSize}`,
+      stdout: `f ${bigSize} 1 0`,
       stderr: '',
       truncated: false,
       timedOut: false
@@ -948,7 +987,7 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
   it('throws connection error when scp fails with exit 255', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 100',
+      stdout: 'f 100 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -970,7 +1009,7 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
   it('throws when host is not found', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 100',
+      stdout: 'f 100 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -987,7 +1026,7 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
     const scpCopy = vi.fn(() => Promise.resolve({ exitCode: 0, stderr: '', timedOut: false }))
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 100',
+      stdout: 'f 100 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1019,7 +1058,7 @@ describe('ComputeRemoteOperationOwner.download (artifact)', () => {
     // stat command returns: is_file=1 size=4096
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 4096',
+      stdout: 'f 4096 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1047,7 +1086,7 @@ describe('ComputeRemoteOperationOwner.download (artifact)', () => {
     // stat returns size=0 → empty file rejected
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 0',
+      stdout: 'f 0 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1065,7 +1104,7 @@ describe('ComputeRemoteOperationOwner.download (artifact)', () => {
     const bigSize = 50 * 1024 * 1024 + 1
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: `f ${bigSize}`,
+      stdout: `f ${bigSize} 1 0`,
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1082,7 +1121,7 @@ describe('ComputeRemoteOperationOwner.download (artifact)', () => {
   it('throws outside_roots when path has glob chars', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 100',
+      stdout: 'f 100 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1118,7 +1157,7 @@ describe('ComputeRemoteOperationOwner.download (artifact)', () => {
     const runner: SshRunner = {
       run: vi.fn(async (_target, command) => ({
         exitCode: 0,
-        stdout: command.includes("echo 'm 0'") ? 'm 0' : '? 0',
+        stdout: command.includes("echo 'm'") ? 'm' : '?',
         stderr: '',
         truncated: false,
         timedOut: false
@@ -1146,7 +1185,7 @@ describe('ComputeRemoteOperationOwner.download (artifact)', () => {
     // Pre-transfer stat: 100 bytes; post-transfer actual file: 200 bytes (growth detected)
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 100',
+      stdout: 'f 100 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1171,7 +1210,7 @@ describe('ComputeRemoteOperationOwner.download (artifact)', () => {
   it('rejects a truncated artifact whose local size is smaller than the pre-transfer stat', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 10',
+      stdout: 'f 10 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1230,7 +1269,7 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
     const acquire = vi.fn(async () => ({
       run: vi.fn(async () => ({
         exitCode: 0,
-        stdout: 'f 7',
+        stdout: 'f 7 1 0',
         stderr: '',
         truncated: false,
         timedOut: false
@@ -1266,7 +1305,7 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
   it('downloads to session cache and returns LocalFile when approved', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 7',
+      stdout: 'f 7 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1306,14 +1345,14 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
       .fn()
       .mockResolvedValueOnce({
         exitCode: 0,
-        stdout: 'f 7',
+        stdout: 'f 7 1 0',
         stderr: '',
         truncated: false,
         timedOut: false
       })
       .mockResolvedValueOnce({
         exitCode: 0,
-        stdout: 'f 6',
+        stdout: 'f 6 1 0',
         stderr: '',
         truncated: false,
         timedOut: false
@@ -1347,7 +1386,7 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
   it('removes the session-cache directory immediately when the transfer fails', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 7',
+      stdout: 'f 7 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1400,7 +1439,7 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
       })
       const run = vi.fn(async () => ({
         exitCode: 0,
-        stdout: 'f 7',
+        stdout: 'f 7 1 0',
         stderr: '',
         truncated: false,
         timedOut: false
@@ -1465,7 +1504,7 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
     })
     const run = vi.fn(async () => ({
       exitCode: 0,
-      stdout: 'f 7',
+      stdout: 'f 7 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1502,7 +1541,7 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
   it('throws download_denied when broker denies session-cache download', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 4',
+      stdout: 'f 4 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1550,7 +1589,7 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
 
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 4',
+      stdout: 'f 4 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1590,7 +1629,7 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
   it('uses requestWithContext when session/project context is supplied', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 4',
+      stdout: 'f 4 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
@@ -1624,7 +1663,7 @@ describe('ComputeRemoteOperationOwner.download (session-cache)', () => {
   it('does NOT trigger approval for os-downloads', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
-      stdout: 'f 100',
+      stdout: 'f 100 1 0',
       stderr: '',
       truncated: false,
       timedOut: false
