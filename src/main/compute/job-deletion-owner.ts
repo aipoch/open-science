@@ -427,6 +427,12 @@ class ComputeJobDeletionOwner {
   }
 
   private async prepareRemoteCleanup(job: ComputeJob): Promise<PreparedRemoteCleanup | undefined> {
+    if (
+      job.remote_cleanup_disposition !== undefined &&
+      job.remote_cleanup_disposition !== 'pending'
+    ) {
+      return undefined
+    }
     if (job.status === 'queued') return undefined
     const host = await this.deps.hostRepository.get(job.provider_id)
     const fallbackWorkdir = host ? computeRemoteWorkdir(host.scratchRoot, job.job_id) : undefined

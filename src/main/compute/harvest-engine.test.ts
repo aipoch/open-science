@@ -291,6 +291,39 @@ describe('getJobHarvestDir', () => {
 // ---------------------------------------------------------------------------
 
 describe('harvestJob — clean harvest', () => {
+  it('matches GNU find fractional mtimes with stat epoch seconds', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    const ssh: SshRunner = {
+      run: vi.fn(async (_target, command) => ({
+        exitCode: 0,
+        stdout: command.startsWith('find ')
+          ? findOutput([
+              {
+                path: 'run.result',
+                size_bytes: 10,
+                inode: '41',
+                mtimeToken: '1700000000.1234567890'
+              }
+            ])
+          : 'f 10 41 1700000000',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      }))
+    }
+    const { repo: jobRepo, updates } = makeJobRepo(job)
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(ssh, makeWritingScpRunner()),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: jobRepo,
+      storageRoot
+    })
+
+    expect(updates.at(-1)).toMatchObject({ data: { harvestError: null } })
+  })
+
   it('excludes staged inputs from both current and legacy input manifests', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob({

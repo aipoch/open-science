@@ -323,6 +323,27 @@ describe('ComputeJobDeletionOwner', () => {
     expect(harness.runner.run).toHaveBeenCalledOnce()
   })
 
+  it.each(['cleaned', 'abandoned'] as const)(
+    'deletes an owner without repeating %s remote cleanup after Host removal',
+    async (remoteCleanupDisposition) => {
+      const harness = createHarness([
+        job({
+          status: 'success',
+          remote_handle: undefined,
+          remote_cleanup_disposition: remoteCleanupDisposition
+        })
+      ])
+      harness.hostRepository.get.mockResolvedValue(null)
+
+      await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
+      await harness.owner.commitSessionJobDeletion('project-1', 'session-1')
+
+      expect(harness.hostRepository.get).not.toHaveBeenCalled()
+      expect(harness.connectionBroker.acquire).not.toHaveBeenCalled()
+      expect(harness.lifecycle.deleteOwnerRows).toHaveBeenCalledOnce()
+    }
+  )
+
   it('derives a legacy Job work directory from the retained host scratch root', async () => {
     const harness = createHarness([
       job({ status: 'success', remote_workdir: undefined, remote_handle: undefined })

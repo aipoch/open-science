@@ -59,6 +59,7 @@ import { toErrorMessage } from '../error-message'
 import { workspaceRelativePath } from './workspace-path'
 import { createLogger, errorLogFields } from '../logger'
 import {
+  normalizeRemoteMtimeToken,
   parseRemoteFileStat,
   remoteFileStatCommand,
   sameRemoteFileSnapshot,
@@ -212,7 +213,7 @@ export const enumerateRemoteFiles = async (
     const path = trimmed.slice(0, sizeTab)
     const sizeStr = trimmed.slice(sizeTab + 1, inodeTab)
     const inode = trimmed.slice(inodeTab + 1, mtimeTab)
-    const mtimeToken = trimmed.slice(mtimeTab + 1)
+    const mtimeToken = normalizeRemoteMtimeToken(trimmed.slice(mtimeTab + 1))
     const size_bytes = Number.parseInt(sizeStr, 10)
     if (!path || !inode || !mtimeToken || !Number.isSafeInteger(size_bytes) || size_bytes < 0)
       continue
