@@ -2088,8 +2088,10 @@ describe('application database migrations', () => {
     `
     await client.$executeRawUnsafe('VACUUM INTO ?', backupPath)
 
+    // `PRAGMA writable_schema` applies per connection; cap the pool so the tamper below cannot
+    // land on a different pooled connection than the pragma (flaky under coverage load).
     const backupWriter = new PrismaClient({
-      datasources: { db: { url: `file:${backupPath.replaceAll('\\', '/')}` } }
+      datasources: { db: { url: `file:${backupPath.replaceAll('\\', '/')}?connection_limit=1` } }
     })
     try {
       const roots = await backupWriter.$queryRawUnsafe<Array<{ name: string; rootpage: bigint }>>(`
