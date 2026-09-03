@@ -7,6 +7,7 @@ import {
   materializeSessionConversationGraph,
   normalizeDelegationPolicy,
   sanitizeSessionRuntimeContext,
+  SessionConfigurationBusyError,
   sessionRevision,
   type DelegationPolicy,
   type PersistedChatMessage,
@@ -480,6 +481,12 @@ class SessionPersistenceStateOwner {
     const loaded = await loadAuthority(this.options.repository, session.projectId, session.id)
     if (loaded.status !== 'found') {
       throw new Error(`Cannot update configuration for a ${loaded.status} Session.`)
+    }
+    if (
+      loaded.session.activeRun ||
+      (loaded.session.status !== 'idle' && loaded.session.status !== 'error')
+    ) {
+      throw new SessionConfigurationBusyError(session.id)
     }
     const durableSession: PersistedChatSession = {
       ...loaded.session,

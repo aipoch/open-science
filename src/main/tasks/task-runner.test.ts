@@ -9,7 +9,11 @@ import type { AcpRuntimeEvent } from '../../shared/acp'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { Project } from '../../shared/projects'
 import type { SettingsSnapshot } from '../../shared/settings'
-import { normalizeSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
+import {
+  normalizeSessionFile,
+  SessionConfigurationBusyError,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 import type { TaskRun } from '../../shared/task-api'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
@@ -302,6 +306,24 @@ describe('TaskRunner', () => {
       })
     ).rejects.toMatchObject({ code: 'session_busy' })
     expect(save).not.toHaveBeenCalled()
+  })
+
+  it('maps an authoritative concurrent-start rejection to session_busy', async () => {
+    const current = { ...session, revision: 3 }
+    const updateConfiguration = vi.fn(async (): Promise<PersistedChatSession> => {
+      throw new SessionConfigurationBusyError(current.id)
+    })
+    const runner = createRunner({
+      sessions: { list: async () => [current], updateConfiguration }
+    })
+
+    await expect(
+      runner.updateSessionConfiguration(current.id, {
+        expectedRevision: 3,
+        memoryEnabled: false
+      })
+    ).rejects.toMatchObject({ code: 'session_busy' })
+    expect(updateConfiguration).toHaveBeenCalledOnce()
   })
 
   it('requires an explicit model decision when changing providers', async () => {

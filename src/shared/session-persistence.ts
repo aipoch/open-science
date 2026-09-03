@@ -942,6 +942,26 @@ export const isSessionRevisionConflictError = (
     error.code === SESSION_REVISION_CONFLICT_ERROR_CODE) ||
   (error instanceof Error && error.message.includes('Session revision conflict:'))
 
+export class SessionConfigurationBusyError extends Error {
+  readonly code = 'session-configuration-busy' as const
+
+  constructor(readonly sessionId: string) {
+    super(`Session has active work: ${sessionId}`)
+    this.name = 'SessionConfigurationBusyError'
+  }
+}
+
+export const isSessionConfigurationBusyError = (
+  error: unknown
+): error is Readonly<{ code: SessionConfigurationBusyError['code']; message: string }> =>
+  error instanceof SessionConfigurationBusyError ||
+  (typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'session-configuration-busy' &&
+    'message' in error &&
+    typeof error.message === 'string')
+
 // Restored interrupted sessions carry this error verbatim; the renderer keys its resume banner off it.
 export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
 export const INTERRUPTED_TURN_ERROR = 'This turn was interrupted. Resume to continue.'

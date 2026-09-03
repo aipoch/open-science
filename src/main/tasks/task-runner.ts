@@ -54,6 +54,7 @@ import type {
   SettingsSnapshot
 } from '../../shared/settings'
 import {
+  isSessionConfigurationBusyError,
   materializeSessionConversationGraph,
   type DelegationPolicy,
   type FailTaskSessionRunRequest,
@@ -1060,6 +1061,9 @@ class TaskRunner {
       )
       this.dependencies.computePreferences.project?.(persisted)
     } catch (error) {
+      if (isSessionConfigurationBusyError(error)) {
+        throw new TaskRunnerError('session_busy', error.message)
+      }
       if (
         typeof error === 'object' &&
         error !== null &&

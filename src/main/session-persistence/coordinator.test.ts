@@ -2158,6 +2158,32 @@ describe('SessionPersistenceCoordinator', () => {
     })
   })
 
+  it('rejects a configuration update after a Run wins the Session lane', async () => {
+    const durable = createSession({
+      revision: 5,
+      status: 'running',
+      activeRun: { promptMessageId: 'prompt-1', startedAt: 3 }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      }))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.updateSessionConfiguration(
+        { ...durable, memoryEnabled: false, status: 'idle', activeRun: undefined },
+        5
+      )
+    ).rejects.toMatchObject({
+      code: 'session-configuration-busy',
+      sessionId: durable.id
+    })
+    expect(repository.saveSession).not.toHaveBeenCalled()
+  })
+
   it('preserves main-owned delegation policy on an ordinary existing-Session save', async () => {
     let durable = createSession({ delegationPolicy: 'deny' })
     const repository = createSessionRepository({
