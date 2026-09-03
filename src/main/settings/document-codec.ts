@@ -178,23 +178,34 @@ const sanitizeRuntimeEnablement = (
 const sanitizeSettings = (value: unknown): StoredSettings => {
   if (!isRecord(value)) return createEmptySettings()
 
+  const legacyActiveProviderId = asString(value.activeProviderId)
   const sanitizedProviders: StoredProvider[] = []
   const sanitizedProviderIds = new Set<string>()
+  let selectedCodexProvider: StoredProvider | undefined
   if (Array.isArray(value.providers)) {
     for (const candidate of value.providers) {
       const provider = sanitizeProvider(candidate)
-      if (!provider || sanitizedProviderIds.has(provider.id)) continue
+      if (!provider) continue
+      if (isCodexSubscriptionProvider(provider.type)) {
+        if (
+          !selectedCodexProvider ||
+          (provider.id === legacyActiveProviderId &&
+            selectedCodexProvider.id !== legacyActiveProviderId)
+        ) {
+          selectedCodexProvider = provider
+        }
+        continue
+      }
+      if (
+        sanitizedProviders.length >= PROVIDER_RESOURCE_LIMITS.providers ||
+        sanitizedProviderIds.has(provider.id)
+      ) {
+        continue
+      }
       sanitizedProviderIds.add(provider.id)
       sanitizedProviders.push(provider)
-      if (sanitizedProviders.length >= PROVIDER_RESOURCE_LIMITS.providers) break
     }
   }
-  const legacyActiveProviderId = asString(value.activeProviderId)
-  const codexProviders = sanitizedProviders.filter((provider) =>
-    isCodexSubscriptionProvider(provider.type)
-  )
-  const selectedCodexProvider =
-    codexProviders.find((provider) => provider.id === legacyActiveProviderId) ?? codexProviders[0]
   const migratedCodexProvider = selectedCodexProvider
     ? {
         ...selectedCodexProvider,
@@ -212,8 +223,11 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     delete migratedCodexProvider.expiresAt
   }
 
+  const nonCodexProviderLimit = PROVIDER_RESOURCE_LIMITS.providers - (migratedCodexProvider ? 1 : 0)
   const migratedProviders = [
-    ...sanitizedProviders.filter((provider) => !isCodexSubscriptionProvider(provider.type)),
+    ...sanitizedProviders
+      .filter((provider) => provider.id !== migratedCodexProvider?.id)
+      .slice(0, nonCodexProviderLimit),
     ...(migratedCodexProvider ? [migratedCodexProvider] : [])
   ]
   const providerIds = new Set<string>()

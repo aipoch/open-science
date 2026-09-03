@@ -39,6 +39,28 @@ describe('settings document codec', () => {
     expect(settings.providers.at(-1)?.id).toBe(`provider-${PROVIDER_RESOURCE_LIMITS.providers - 1}`)
   })
 
+  it('preserves a Codex provider that follows the non-Codex provider cap', () => {
+    const providers = [
+      ...Array.from({ length: PROVIDER_RESOURCE_LIMITS.providers }, (_, index) => ({
+        id: `provider-${index}`,
+        type: 'custom',
+        name: `Provider ${index}`
+      })),
+      {
+        id: 'builtin-codex-shared',
+        type: 'codex-shared',
+        name: 'Legacy Codex'
+      }
+    ]
+
+    const settings = sanitizeSettings({ providers })
+
+    expect(settings.providers).toHaveLength(PROVIDER_RESOURCE_LIMITS.providers)
+    expect(settings.providers).toContainEqual(
+      expect.objectContaining({ id: CODEX_SUBSCRIPTION_PROVIDER_ID, type: 'codex-isolated' })
+    )
+  })
+
   it('preserves current durable settings families and drops retired Runtime selections', () => {
     const dataRoot = resolve('portable-settings-data')
     const settings = sanitizeSettings({
