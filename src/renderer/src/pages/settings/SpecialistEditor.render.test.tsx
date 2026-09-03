@@ -44,6 +44,88 @@ afterEach(() => {
 })
 
 describe('SpecialistEditor', () => {
+  it('keeps unavailable Skill references removable without offering them', async () => {
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'selected-conflict',
+          name: 'Selected conflict package',
+          displayName: 'Selected conflict package',
+          description: '',
+          source: 'personal',
+          enabled: true,
+          updatedAt: '',
+          available: false,
+          availability: 'identity-conflict'
+        },
+        {
+          id: 'add-conflict',
+          name: 'Add conflict package',
+          displayName: 'Add conflict package',
+          description: '',
+          source: 'imported',
+          enabled: true,
+          updatedAt: '',
+          available: false,
+          availability: 'identity-conflict'
+        },
+        {
+          id: 'usable',
+          name: 'Usable Skill',
+          displayName: 'Usable Skill',
+          description: '',
+          source: 'featured',
+          enabled: true,
+          updatedAt: ''
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(
+        <SpecialistEditor
+          editSpecialist={{
+            id: 'conflict-bot',
+            name: 'Conflict Bot',
+            description: '',
+            systemPrompt: '',
+            enabled: true,
+            capabilityMode: 'selected',
+            fullAccess: {
+              excludedSkillIds: [],
+              excludedConnectorIds: [],
+              connectorTools: []
+            },
+            selectedCapabilities: {
+              skillIds: ['selected-conflict'],
+              connectorIds: [],
+              connectorTools: []
+            },
+            revision: 1
+          }}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onSaveEdit={vi.fn()}
+        />
+      )
+    })
+
+    expect(document.body.textContent).toContain('selected-conflict')
+    expect(document.body.textContent).toContain('Missing · unavailable')
+    expect(document.body.textContent).not.toContain('Selected conflict package')
+
+    await act(async () => {
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+          (button) => button.textContent === '＋ Add a skill'
+        )!
+      )
+    })
+
+    expect(document.body.textContent).toContain('Usable Skill')
+    expect(document.body.textContent).not.toContain('Add conflict package')
+  })
+
   it('edits Skill scopes independently, shows Main-disabled and missing IDs, and preserves the other mode', async () => {
     const onSaveEdit = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({

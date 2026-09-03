@@ -32,8 +32,10 @@ const WorkspaceSkillActivityRow = ({
   // The runtime materializes enabled skills, so an enabled catalog entry wins a name collision.
   const skillId = useSettingsStore((state) =>
     skillName
-      ? (state.skills.find((skill) => skill.name === skillName && skill.enabled)?.id ??
-        state.skills.find((skill) => skill.name === skillName)?.id)
+      ? (state.skills.find(
+          (skill) => skill.available !== false && skill.name === skillName && skill.enabled
+        )?.id ??
+        state.skills.find((skill) => skill.available !== false && skill.name === skillName)?.id)
       : undefined
   )
   // Keyed by catalog id so a re-imported or renamed skill cannot show a stale body.

@@ -136,7 +136,11 @@ const WorkspacePage = ({
     (state) => state.providers.find((provider) => provider.id === activeProviderId)?.type
   )
   const defaultPermissionProfile = useSettingsStore((state) => state.defaultPermissionProfile)
-  const catalogSkills = useSettingsStore((state) => state.skills)
+  const settingsSkills = useSettingsStore((state) => state.skills)
+  const catalogSkills = useMemo(
+    () => settingsSkills.filter((skill) => skill.available !== false),
+    [settingsSkills]
+  )
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
   const selectedAgentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
