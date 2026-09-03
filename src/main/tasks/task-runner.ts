@@ -1735,8 +1735,9 @@ class TaskRunner {
   private persistRuns(): Promise<void> {
     const journal = this.dependencies.runJournal
     if (!journal) return Promise.resolve()
-    const snapshot = [...this.runs.values()].map(cloneRunForJournal)
-    const write = this.journalWriteTail.then(() => journal.replace(snapshot))
+    const write = this.journalWriteTail.then(() =>
+      journal.replace([...this.runs.values()].map(cloneRunForJournal))
+    )
     this.journalWriteTail = write.catch(() => undefined)
     return write
   }

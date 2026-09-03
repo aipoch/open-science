@@ -10,6 +10,7 @@ import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { Project } from '../../shared/projects'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { TaskRun } from '../../shared/task-api'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
 import {
@@ -3393,5 +3394,61 @@ describe('TaskRunner', () => {
       status: 'failed',
       error: expect.stringContaining('Task Run terminal state could not be persisted.')
     })
+  })
+
+  it('excludes a failed initial Run from snapshots queued behind its rejected write', async () => {
+    let releaseFirstWrite: (() => void) | undefined
+    let markFirstWriteStarted: (() => void) | undefined
+    let finishPrompt: (() => void) | undefined
+    const firstWriteStarted = new Promise<void>((resolve) => {
+      markFirstWriteStarted = resolve
+    })
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve
+    })
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const snapshots: (readonly TaskRun[])[] = []
+    let writeCount = 0
+    let sessionCount = 0
+    const ids = ['user-1', 'run-1', 'user-2', 'run-2']
+    const runner = createRunner({
+      runJournal: {
+        load: async () => [],
+        replace: async (runs) => {
+          writeCount += 1
+          if (writeCount === 1) {
+            markFirstWriteStarted?.()
+            await firstWriteGate
+            throw new Error('initial journal write failed')
+          }
+          snapshots.push(structuredClone(runs))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: `session-${++sessionCount}` }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => promptGate
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const rejectedStart = runner.startRun({ project: project.id, prompt: 'First Run.' })
+    await firstWriteStarted
+    const acceptedStart = runner.startRun({ project: project.id, prompt: 'Second Run.' })
+    await vi.waitFor(() => expect(() => runner.getRun('run-2')).not.toThrow())
+    releaseFirstWrite?.()
+
+    await expect(rejectedStart).rejects.toThrow('initial journal write failed')
+    const accepted = await acceptedStart
+    expect(snapshots[0]?.map(({ id }) => id)).toEqual(['run-2'])
+
+    finishPrompt?.()
+    await runner.waitForRun(accepted.id)
   })
 })
