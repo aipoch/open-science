@@ -127,7 +127,7 @@ describe('getProviderFormErrors', () => {
     expect(hasProviderFormErrors(errors)).toBe(true)
   })
 
-  it('allows non-credential query parameters and token metrics', () => {
+  it('rejects non-credential query parameters because provider endpoints append paths', () => {
     const errors = getProviderFormErrors(
       createEmptyProviderFormValue({
         type: 'custom',
@@ -137,7 +137,8 @@ describe('getProviderFormErrors', () => {
       })
     )
 
-    expect(errors).toEqual({})
+    expect(errors.baseUrl).toBe('Base URL must not include query parameters.')
+    expect(hasProviderFormErrors(errors)).toBe(true)
   })
 
   it('lets an edit keep a stored key by leaving the key blank', () => {

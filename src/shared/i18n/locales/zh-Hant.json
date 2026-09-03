@@ -574,6 +574,7 @@
     "Base URL": "基礎 URL",
     "Base URL is required.": "必須填寫基礎 URL。",
     "Base URL must be a valid HTTP or HTTPS URL.": "基礎 URL 必須是有效的 HTTP 或 HTTPS URL。",
+    "Base URL must not include query parameters.": "基礎 URL 不得包含查詢參數。",
     "Base URL, key, and model for a Messages or Chat Completions endpoint": "為 Messages 或 Chat Completions 端點填寫基礎 URL、金鑰和模型",
     "Beta": "測試版",
     "Binary": "二進位",

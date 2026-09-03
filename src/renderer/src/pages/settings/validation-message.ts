@@ -31,6 +31,8 @@ const localizeProviderResourceMessage = (message: string, t: TFunction): string 
   switch (message) {
     case 'Base URL must be a valid HTTP or HTTPS URL.':
       return t('Base URL must be a valid HTTP or HTTPS URL.')
+    case 'Base URL must not include query parameters.':
+      return t('Base URL must not include query parameters.')
     case 'Remove credentials from the Base URL and use the API key field.':
       return t('Remove credentials from the Base URL and use the API key field.')
     case 'Provider name must not exceed 128 characters.':
