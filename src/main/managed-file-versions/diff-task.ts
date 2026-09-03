@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { Worker } from 'node:worker_threads'
 
 import {
@@ -5,6 +6,7 @@ import {
   MANAGED_DIFF_MAX_OUTPUT_LINES,
   type ManagedFileVersionDiffLine
 } from '../../shared/managed-file-versions'
+import { createLogger } from '../logger'
 import { ManagedFileVersionError } from './error'
 
 type DiffTask = { requestId: string; before: string; after: string }
@@ -29,10 +31,25 @@ const DIFF_WORKER_RESOURCE_LIMITS: DiffWorkerResourceLimits = {
   maxYoungGenerationSizeMb: 8,
   stackSizeMb: 2
 }
+const diffLog = createLogger('managed-file-versions')
+
+// An eval worker has no referencing file, so a bare require('diff') inside it resolves from the
+// process CWD. A packaged app launched from Finder or Dock runs with CWD=/, where that resolution
+// fails and every diff rejects with CONTENT_INTEGRITY_FAILED. Resolve the module here — anchored
+// to this bundle, which sits next to the packaged node_modules — and hand the worker an absolute
+// path. Falls back to the bare specifier where resolution is unavailable.
+const resolveDiffModulePath = (): string | undefined => {
+  try {
+    return createRequire(import.meta.url).resolve('diff')
+  } catch {
+    return undefined
+  }
+}
+const DIFF_MODULE_PATH = resolveDiffModulePath()
 
 const WORKER_SOURCE = String.raw`
 const { parentPort, workerData } = require('node:worker_threads')
-const { diffArrays, diffChars, diffLines } = require('diff')
+const { diffArrays, diffChars, diffLines } = require(workerData.diffModulePath || 'diff')
 const LINE_ALIGNMENT_MAX_LINES = 400
 const LINE_ALIGNMENT_MAX_CHARACTERS = 50000
 const LINE_ALIGNMENT_MAX_EDIT_LENGTH = 1000
@@ -575,7 +592,8 @@ class ManagedTextDiffTaskRunner {
           before: task.before,
           after: task.after,
           maxOutputLines: MANAGED_DIFF_MAX_OUTPUT_LINES,
-          maxOutputBytes: MANAGED_DIFF_MAX_OUTPUT_BYTES
+          maxOutputBytes: MANAGED_DIFF_MAX_OUTPUT_BYTES,
+          diffModulePath: DIFF_MODULE_PATH
         }
       })
     return new Promise((resolve, reject) => {
@@ -626,6 +644,8 @@ class ManagedTextDiffTaskRunner {
       })
       worker.once('error', (error: Error) => {
         if (!clear()) return
+        // The renderer only sees a generic failure, so keep the underlying cause observable here.
+        diffLog.warn('diff worker failed', { requestId: task.requestId, error: String(error) })
         reject(
           new ManagedFileVersionError('CONTENT_INTEGRITY_FAILED', 'Diff task failed.', {
             cause: error
@@ -634,6 +654,7 @@ class ManagedTextDiffTaskRunner {
       })
       worker.once('exit', (code: number) => {
         if (code === 0 || !clear()) return
+        diffLog.warn('diff worker exited unexpectedly', { requestId: task.requestId, code })
         reject(
           new ManagedFileVersionError('CONTENT_INTEGRITY_FAILED', 'Diff task exited unexpectedly.')
         )
@@ -651,4 +672,4 @@ class ManagedTextDiffTaskRunner {
   }
 }
 
-export { ManagedTextDiffTaskRunner }
+export { ManagedTextDiffTaskRunner, resolveDiffModulePath }
