@@ -3192,6 +3192,25 @@ describe('normalizeSessionFile with activities', () => {
     expect(restored?.error).toBeUndefined()
   })
 
+  it.each(['approved', 'rejected'] as const)(
+    'does not restore a %s Plan as still waiting for approval',
+    (approval) => {
+      const restored = normalizeSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 4,
+          plan: { ...createRuntimePlan(), approval }
+        }
+      })
+
+      expect(restored?.status).toBe('idle')
+      expect(restored?.activeRun).toBeUndefined()
+    }
+  )
+
   it('drops unknown or damaged runtime context without losing the conversation', () => {
     const unknown = normalizeSessionFile({
       ...createSessionWithActivity(undefined),
@@ -3516,50 +3535,53 @@ describe('normalizeSessionFile with activities', () => {
     })
   })
 
-  it('discards stale app-restart recovery after the prompt has a successful completed response', () => {
-    const restored = normalizeSessionFile({
-      id: 'session-1',
-      projectId: 'project-a',
-      title: 'Completed session',
-      cwd: '/workspace',
-      status: 'idle',
-      resumeRecovery: {
-        kind: 'resume-required',
-        cause: 'app-restart',
-        promptMessageId: 'prompt-1'
-      },
-      messages: [
-        {
-          id: 'prompt-1',
-          role: 'user',
-          content: 'Complete the task',
-          status: 'complete',
-          interrupted: true,
-          eventIds: [],
-          createdAt: 5,
-          updatedAt: 5
+  it.each(['app-restart', 'cancelled', 'connection-lost'] as const)(
+    'discards stale %s recovery after the prompt has a successful completed response',
+    (cause) => {
+      const restored = normalizeSessionFile({
+        id: 'session-1',
+        projectId: 'project-a',
+        title: 'Completed session',
+        cwd: '/workspace',
+        status: 'idle',
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause,
+          promptMessageId: 'prompt-1'
         },
-        {
-          id: 'response-1',
-          role: 'agent',
-          content: 'Task completed.',
-          status: 'complete',
-          responseToMessageId: 'prompt-1',
-          eventIds: [],
-          createdAt: 6,
-          completedAt: 7,
-          updatedAt: 7
-        }
-      ],
-      createdAt: 1,
-      updatedAt: 7
-    })
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Complete the task',
+            status: 'complete',
+            interrupted: true,
+            eventIds: [],
+            createdAt: 5,
+            updatedAt: 5
+          },
+          {
+            id: 'response-1',
+            role: 'agent',
+            content: 'Task completed.',
+            status: 'complete',
+            responseToMessageId: 'prompt-1',
+            eventIds: [],
+            createdAt: 6,
+            completedAt: 7,
+            updatedAt: 7
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 7
+      })
 
-    expect(restored).toMatchObject({ status: 'idle' })
-    expect(restored?.resumeRecovery).toBeUndefined()
-    expect(restored?.error).toBeUndefined()
-    expect(restored?.messages[0]).toMatchObject({ id: 'prompt-1', interrupted: true })
-  })
+      expect(restored).toMatchObject({ status: 'idle' })
+      expect(restored?.resumeRecovery).toBeUndefined()
+      expect(restored?.error).toBeUndefined()
+      expect(restored?.messages[0]).toMatchObject({ id: 'prompt-1', interrupted: true })
+    }
+  )
 
   it('discards stale recovery when the canonical active Branch has a completed response', () => {
     const messages: PersistedChatMessage[] = [
