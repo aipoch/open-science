@@ -251,6 +251,25 @@ describe('PR Gate workflow', () => {
     })
   })
 
+  it('rejects newly introduced high-severity dependency vulnerabilities', () => {
+    const review = workflow.jobs.policy.steps?.find(
+      ({ name }) => name === 'Review dependency changes'
+    )
+
+    expect(review).toMatchObject({
+      if: "${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}",
+      uses: 'actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294',
+      with: {
+        'base-ref': '${{ needs.preflight.outputs.base }}',
+        'fail-on-severity': 'high',
+        'fail-on-scopes': 'runtime, development',
+        'head-ref': '${{ needs.preflight.outputs.head }}',
+        'license-check': false,
+        'show-openssf-scorecard': false
+      }
+    })
+  })
+
   it('pins every third-party action to an immutable commit', () => {
     for (const job of Object.values(workflow.jobs)) {
       for (const step of job.steps ?? []) {
