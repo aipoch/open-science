@@ -394,9 +394,11 @@ const PermissionSkillSection = ({
         </span>
       </button>
       {expanded && (
-        <div className="mx-1 mb-1.5 md:ml-[30px]">
+        // The sheet caps at a 16:9 height of its own width (56.25cqw against this container),
+        // so the preview scales with the card instead of a fixed pixel ceiling.
+        <div className="@container mx-1 mb-1.5 md:ml-[30px]">
           {markdown ? (
-            <SkillDocumentSheet markdown={markdown} maxHeightClassName="max-h-[480px]" />
+            <SkillDocumentSheet markdown={markdown} maxHeightClassName="max-h-[56.25cqw]" />
           ) : failed ? (
             <button
               type="button"
