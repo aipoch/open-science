@@ -7,8 +7,8 @@ import { test } from './fixtures/electron-app'
 const PROJECT_NAME = 'Skill permission project'
 const SKILL_PERMISSION_PROMPT = 'Request fixture skill permission.'
 const SKILL_NAME = 'fixture-skill'
-// Long enough to exceed the transcript sheet's 320px cap, so the permission card's roomier
-// 480px sheet is what the expanded screenshot exercises.
+// Long enough to exceed the transcript sheet's 320px cap, so the permission card's width-scaled
+// sheet (37.5cqw ≈ 292px at the e2e window width) is what the expanded screenshot exercises.
 const SKILL_BODY = [
   '# Fixture Skill',
   '',
