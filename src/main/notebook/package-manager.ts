@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { Transform, type TransformCallback } from 'node:stream'
 import { finished } from 'node:stream/promises'
 
-import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
+import { PROD_SESSION_DIR_NAME } from '../session-persistence/paths'
 import type { OptionalProjectIdScope } from '../../shared/project-scope'
 import type { RuntimeTargetReceipt } from '../../shared/notebook-runtime'
 import type {

@@ -5,7 +5,7 @@ import {
   MANAGED_DIFF_MAX_OUTPUT_LINES,
   type ManagedFileVersionDiffLine
 } from '../../shared/managed-file-versions'
-import { ManagedFileVersionError } from './service'
+import { ManagedFileVersionError } from './error'
 
 type DiffTask = { requestId: string; before: string; after: string }
 type WorkerLike = {

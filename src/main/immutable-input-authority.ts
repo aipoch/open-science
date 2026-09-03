@@ -4,10 +4,10 @@ import { chmod, lstat, mkdir, realpath, rename, rm, stat } from 'node:fs/promise
 import { join, sep } from 'node:path'
 
 import type { NotebookRunInputFile } from '../shared/notebook'
-import {
-  ManagedFileVersionError,
-  type ManagedFileReadLease,
-  type ManagedFileVersionService
+import { ManagedFileVersionError } from './managed-file-versions/error'
+import type {
+  ManagedFileReadLease,
+  ManagedFileVersionService
 } from './managed-file-versions/service'
 import { getNotebookInputRoot } from './notebook/input-staging'
 

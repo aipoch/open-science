@@ -40,6 +40,7 @@ import type {
   SpecialistDeleteResult
 } from '../../shared/specialist-package'
 import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
+import { applyNameOrIdFilter } from './name-or-id-filter'
 
 // The minimal read surface this adapter needs from the settings/connectors catalog. Keeping it
 // narrow avoids pulling the whole SettingsService into the SDK contract and lets tests stub it.
@@ -469,37 +470,4 @@ export const projectConnectorsFromStored = (
   return [...bundled, ...custom]
 }
 
-// ---------------------------------------------------------------------------
-// name-or-id resolution (shared by the catalog reads AND the mutation module)
-// ---------------------------------------------------------------------------
-
-type Nameable = { id: string; name?: string; displayName?: string }
-
-export function applyNameOrIdFilter<T extends Nameable>(
-  entries: T[],
-  nameOrId: unknown,
-  method: string
-): T[] {
-  const ref = asString(nameOrId)
-  if (!ref) return entries
-
-  // 1. Exact stable ID wins.
-  const byId = entries.filter((entry) => entry.id === ref)
-  if (byId.length > 0) return byId
-
-  // 2. Otherwise match a unique immutable public name. Display labels are never references.
-  const byName = entries.filter((entry) => entry.name === ref)
-  if (byName.length === 0) {
-    throw agentsPublicError(
-      `No catalog entry matches "${ref}". Use the stable id from listSkills()/listConnectors().`
-    )
-  }
-  if (byName.length > 1) {
-    // Ambiguous immutable name: instruct the caller to use the stable id instead of guessing.
-    const ids = byName.map((entry) => entry.id).join(', ')
-    throw agentsPublicError(
-      `Multiple catalog entries match name "${ref}" (${ids}). Use the stable id from ${method} instead.`
-    )
-  }
-  return byName
-}
+export { applyNameOrIdFilter }

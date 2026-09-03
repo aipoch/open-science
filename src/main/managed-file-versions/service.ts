@@ -19,6 +19,7 @@ import {
   type SaveTextEditResult
 } from '../../shared/managed-file-versions'
 import { ManagedTextDiffTaskRunner } from './diff-task'
+import { ManagedFileVersionError } from './error'
 import {
   NodeVersionFileOperator,
   VersionFileOperatorError,
@@ -147,18 +148,6 @@ type AdoptedLegacyArtifact = {
 
 type WriteOperationRecord = Prisma.ManagedFileVersionWriteOperationGetPayload<object>
 type LegacyArtifactVersionRecord = Prisma.ArtifactVersionGetPayload<object>
-
-class ManagedFileVersionError extends Error {
-  readonly name = 'ManagedFileVersionError'
-
-  constructor(
-    readonly code: ManagedFileVersionErrorCode,
-    message: string,
-    options?: ErrorOptions
-  ) {
-    super(message, options)
-  }
-}
 
 const operationError = (code: ManagedFileVersionErrorCode, message: string): never => {
   throw new ManagedFileVersionError(code, message)

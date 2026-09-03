@@ -56,7 +56,7 @@ import {
 } from '../notebook/working-file-observer'
 import { withDataRootWrite } from '../storage/migration-state'
 import { toErrorMessage } from '../error-message'
-import { workspaceRelativePath } from './workspace-path'
+import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
 import { createLogger, errorLogFields } from '../logger'
 
 const MIB_BYTES = 1024 * 1024
@@ -125,30 +125,6 @@ const pathExists = async (path: string): Promise<boolean> =>
     () => true,
     () => false
   )
-// ---------------------------------------------------------------------------
-// Public path helper
-// ---------------------------------------------------------------------------
-
-/**
- * Returns the local harvest directory for a job:
- *   <storageRoot>/notebooks/<project>/<sessionId>/hpc/<jobId>/
- *
- * This is inside the session workspace (alongside ./handoff, ./data) so the
- * agent's data kernel can directly open('hpc/<jobId>/out.result') (design §4).
- * Delegates path-segment validation to getNotebookSessionRoot which rejects
- * traversal attempts.
- */
-export const getJobHarvestDir = (
-  storageRoot: string,
-  project: string,
-  sessionId: string,
-  jobId: string
-): string => {
-  // getNotebookSessionRoot validates project and sessionId (throws on traversal).
-  const workspaceCwd = getNotebookSessionRoot(storageRoot, project, sessionId)
-  return join(workspaceCwd, 'hpc', jobId)
-}
-
 // ---------------------------------------------------------------------------
 // Remote enumeration
 // ---------------------------------------------------------------------------
@@ -800,3 +776,5 @@ const harvestJobUnchecked = async (
   const updatedJob = await finalize(harvestError, JSON.stringify(leftOnRemote))
   if (deps.broadcast) await notify(updatedJob)
 }
+
+export { getJobHarvestDir }

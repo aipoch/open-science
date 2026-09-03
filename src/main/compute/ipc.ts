@@ -47,9 +47,8 @@ import { ComputeConnectionError, type ComputeConnectionBroker } from './connecti
 import { dispatchJob } from './job-dispatcher'
 import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
 import { deleteComputeHost, type DeleteComputeHostOptions } from './compute-host-deletion-owner'
-import { getJobHarvestDir } from './harvest-engine'
 import { SessionCacheOwner } from './session-cache-owner'
-import { workspaceRelativePath } from './workspace-path'
+import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import {
   createComputePermissionGrantAdapter,
