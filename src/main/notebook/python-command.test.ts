@@ -152,6 +152,17 @@ describe('validateNotebookHelperExports', () => {
       ...python,
       baseArgs: [...python.baseArgs, '-c', 'import sys; del sys.addaudithook; exec(sys.argv[-1])']
     }
+    const futureSource =
+      'from __future__ import annotations\ndef compose_figure(value: MissingType):\n    return value\n'
+
+    await expect(
+      validateNotebookHelperExports('figure-composer', futureSource, ['compose_figure'], { python })
+    ).resolves.toBeUndefined()
+    await expect(
+      validateNotebookHelperExports('figure-composer', futureSource, ['compose_figure'], {
+        python: legacyPython
+      })
+    ).resolves.toBeUndefined()
 
     await expect(
       validateNotebookHelperExports(

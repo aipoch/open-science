@@ -146,12 +146,12 @@ export const resolvePythonCommand = async (
 }
 
 const CALLABLE_HELPER_VALIDATOR = String.raw`
-import ast, base64, builtins, collections, datetime, decimal, fractions, functools, itertools, json, math, re, statistics, sys
+import __future__, ast, base64, builtins, collections, datetime, decimal, fractions, functools, itertools, json, math, re, statistics, sys
 
 allowed_modules = {
     module.__name__: module
     for module in (
-        collections, datetime, decimal, fractions, functools, itertools, json, math, re, statistics
+        __future__, collections, datetime, decimal, fractions, functools, itertools, json, math, re, statistics
     )
 }
 
@@ -179,7 +179,14 @@ if hasattr(sys, "addaudithook"):
     missing = [name for name in request["exports"] if name not in namespace or not callable(namespace[name])]
 else:
     # Python < 3.8 cannot audit validation-time host access, so never execute staged source there.
+    compile(request["source"], "<registered-helper>", "exec")
     tree = ast.parse(request["source"], filename="<registered-helper>")
+    postpone_annotations = any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "__future__"
+        and any(alias.name == "annotations" for alias in node.names)
+        for node in tree.body
+    )
 
     def is_literal(expression):
         try:
@@ -188,7 +195,7 @@ else:
         except (SyntaxError, TypeError, ValueError):
             return False
 
-    def is_static_function(node, visible_bindings=None):
+    def is_static_function(node, visible_bindings=None, postpone_annotation_evaluation=False):
         if visible_bindings is None:
             visible_bindings = {}
         arguments = (
@@ -232,7 +239,9 @@ else:
             not node.decorator_list
             and all(is_static_value(default) for default in defaults)
             and all(
-                annotation is None or is_static_value(annotation)
+                annotation is None
+                or postpone_annotation_evaluation
+                or is_static_value(annotation)
                 for annotation in annotations
             )
         )
@@ -376,7 +385,7 @@ else:
                 continue
             if (
                 isinstance(member, (ast.AsyncFunctionDef, ast.FunctionDef))
-                and is_static_function(member, local_bindings)
+                and is_static_function(member, local_bindings, postpone_annotations)
             ):
                 namespace[member.name] = callable_placeholder
                 local_bindings[member.name] = callable_placeholder
@@ -416,7 +425,7 @@ else:
             continue
         if (
             isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
-            and is_static_function(node, bindings)
+            and is_static_function(node, bindings, postpone_annotations)
         ):
             bindings[node.name] = callable_placeholder
             continue
