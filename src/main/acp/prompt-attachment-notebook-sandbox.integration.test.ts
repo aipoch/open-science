@@ -117,7 +117,7 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
           dataRoot: storageRoot,
           projectId,
           mcpEntryPath: '/mcp',
-          managedFileVersions: { openLatest, openVersion: vi.fn() }
+          managedFileVersions: { openLatest, openVersion: vi.fn(), openUnpublishedVersion: vi.fn() }
         },
         uploads: {
           repository: {

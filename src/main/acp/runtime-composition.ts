@@ -127,7 +127,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   >
   managedFileVersions: Pick<
     import('../managed-file-versions/service').ManagedFileVersionService,
-    'openLatest' | 'openVersion'
+    'openLatest' | 'openVersion' | 'openUnpublishedVersion'
   >
   onSessionTurnStarted?: (sessionId: string, turnToken: string) => void
   onSessionTurnEnded?: (sessionId: string, turnToken: string) => void

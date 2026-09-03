@@ -101,7 +101,7 @@ describe('ACP Runtime base composition', () => {
         dataRoot: '/data',
         projectId: 'project-1',
         mcpEntryPath: '/mcp',
-        managedFileVersions: { openLatest, openVersion: vi.fn() }
+        managedFileVersions: { openLatest, openVersion: vi.fn(), openUnpublishedVersion: vi.fn() }
       },
       uploads: {
         repository: {
