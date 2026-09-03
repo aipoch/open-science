@@ -7,8 +7,17 @@ import { test } from './fixtures/electron-app'
 const PROJECT_NAME = 'Skill permission project'
 const SKILL_PERMISSION_PROMPT = 'Request fixture skill permission.'
 const SKILL_NAME = 'fixture-skill'
-const SKILL_BODY =
-  '# Fixture Skill\n\nReview fixture evidence carefully.\n\n## Steps\n\n1. Load the skill.\n2. Check the details.'
+// Long enough to exceed the transcript sheet's 320px cap, so the permission card's roomier
+// 480px sheet is what the expanded screenshot exercises.
+const SKILL_BODY = [
+  '# Fixture Skill',
+  '',
+  'Review fixture evidence carefully.',
+  '',
+  '## Steps',
+  '',
+  ...Array.from({ length: 18 }, (_, index) => `${index + 1}. Check fixture detail ${index + 1}.`)
+].join('\n')
 // PR-summary screenshots land in the git-ignored test-results root, outside the per-test outputDir.
 const SCREENSHOT_ROOT = resolve(process.cwd(), 'test-results')
 

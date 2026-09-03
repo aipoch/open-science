@@ -396,7 +396,7 @@ const PermissionSkillSection = ({
       {expanded && (
         <div className="mx-1 mb-1.5 md:ml-[30px]">
           {markdown ? (
-            <SkillDocumentSheet markdown={markdown} />
+            <SkillDocumentSheet markdown={markdown} maxHeightClassName="max-h-[480px]" />
           ) : failed ? (
             <button
               type="button"
