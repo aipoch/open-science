@@ -104,6 +104,14 @@ describe('getProviderFormErrors', () => {
     [
       'https://gateway.example/v1?username=researcher',
       'Remove credentials from the Base URL and use the API key field.'
+    ],
+    [
+      'https://gateway.example/v1?secret_key=secret-key',
+      'Remove credentials from the Base URL and use the API key field.'
+    ],
+    [
+      'https://gateway.example/v1?signature=signed-credential',
+      'Remove credentials from the Base URL and use the API key field.'
     ]
   ])('flags an unsafe custom provider Base URL: %s', (baseUrl, error) => {
     const errors = getProviderFormErrors(
@@ -117,6 +125,19 @@ describe('getProviderFormErrors', () => {
 
     expect(errors.baseUrl).toBe(error)
     expect(hasProviderFormErrors(errors)).toBe(true)
+  })
+
+  it('allows non-credential query parameters and token metrics', () => {
+    const errors = getProviderFormErrors(
+      createEmptyProviderFormValue({
+        type: 'custom',
+        baseUrl: 'https://gateway.example/v1?tenant=lab&token_limit=1000',
+        key: 'secret-key',
+        model: 'lab-model'
+      })
+    )
+
+    expect(errors).toEqual({})
   })
 
   it('lets an edit keep a stored key by leaving the key blank', () => {
