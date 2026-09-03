@@ -50,6 +50,7 @@ import {
   managedFileVersionFoundationCurrentSchemaAdoptionStatements,
   managedFileVersionFoundationMigration
 } from './migrations/0025-managed-file-version-foundation'
+import { computeJobRemoteCleanupMigration } from './migrations/0026-compute-job-remote-cleanup'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -340,6 +341,12 @@ const COMPUTE_JOB_FILE_EVIDENCE_CHECKSUM = checksumMigrationPayload(
   computeJobFileEvidenceMigration.verifiers,
   computeJobFileEvidenceMigration.operations
 )
+const COMPUTE_JOB_REMOTE_CLEANUP_CHECKSUM = checksumMigrationPayload(
+  computeJobRemoteCleanupMigration.id,
+  computeJobRemoteCleanupMigration.statements,
+  computeJobRemoteCleanupMigration.verifiers,
+  computeJobRemoteCleanupMigration.operations
+)
 const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
   computeJobSensitiveDataEncryptionMigration.id,
   computeJobSensitiveDataEncryptionMigration.statements,
@@ -597,6 +604,12 @@ const MIGRATION_MANIFEST = [
     backupOnApply: 'required',
     backupRetention: 'retain',
     foreignKeysDuringApply: 'disabled'
+  },
+  {
+    ...computeJobRemoteCleanupMigration,
+    checksum: COMPUTE_JOB_REMOTE_CLEANUP_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs

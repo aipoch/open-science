@@ -23,6 +23,7 @@ import type {
   CreatePasswordComputeHostResult,
   ResetPasswordComputeHostRequest,
   ResetPasswordComputeHostResult,
+  SetComputeJobRemoteCleanupRequest,
   DetailsAuthor,
   ProbeResult
 } from '../../shared/compute'
@@ -201,6 +202,7 @@ type ComputeHandlers = {
   computeService: ComputeService
   connectionBroker: ComputeConnectionBroker
   concurrencyManager?: ConcurrencyManager
+  jobDeletionOwner?: ComputeJobDeletionOwner
   // Responds to a pending approval request from the renderer with a canonical app-owned scope.
   approvalRespond: (id: string, decision: ComputeApprovalDecision) => void
   approvalReplay: (id: string) => ComputeApprovalRequest | null
@@ -218,6 +220,7 @@ type ComputeHandlers = {
   jobsCancel: (
     request: CancelComputeJobRequest
   ) => Promise<import('../../shared/compute').JobStatusResult>
+  jobsSetRemoteCleanup: (request: SetComputeJobRemoteCleanupRequest) => Promise<void>
   // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
   jobsPendingNotification: (filter: ComputeJobsPendingNotificationFilter) => Promise<JobSummary[]>
   // Marks the given job ids as notification-consumed. Idempotent (issue 05).
@@ -366,6 +369,38 @@ const createComputeHandlers = (
       connectionBroker,
       credentialVault
     })
+  const jobDeletionOwner = jobRepository
+    ? createComputeJobDeletionOwner({
+        jobRepository,
+        hostRepository: repository,
+        connectionBroker,
+        queueManager: concurrencyManager,
+        requestCancellation: async (job) => {
+          await service.cancelJob(job.job_id, {
+            projectId: job.project_id,
+            sessionId: job.session_id,
+            providerId: job.provider_id
+          })
+        },
+        confirmCancellation: async (job) => {
+          if (!operationRepository) {
+            throw new Error('Compute Job operation repository is unavailable.')
+          }
+          const confirmed = await operationRepository.fulfillCancellationAfterRemoteCleanup(
+            job.job_id,
+            {
+              projectId: job.project_id,
+              sessionId: job.session_id,
+              providerId: job.provider_id
+            },
+            new Date()
+          )
+          if (!confirmed) return
+          const current = await jobRepository.get(job.job_id)
+          if (current) await service.handleJobCancellationConfirmed(current)
+        }
+      })
+    : undefined
   const listHostNames = async (): Promise<Map<string, string>> => {
     try {
       const hosts = await repository.list()
@@ -432,9 +467,21 @@ const createComputeHandlers = (
       }
     },
     passwordCapability: async () => credentialVault.capability(),
-    deletionStatus: async (providerId) => ({
-      blockedByJobs: (await jobRepository?.hasDeletionBlockingJobsForProvider(providerId)) ?? false
-    }),
+    deletionStatus: async (providerId) => {
+      const jobs = (await jobRepository?.findDeletionBlockingJobsForProvider(providerId)) ?? []
+      return {
+        blockedByJobs: jobs.length > 0,
+        blockingJobs: jobs.map((job) => ({
+          jobId: job.job_id,
+          projectId: job.project_id,
+          sessionId: job.session_id,
+          status: job.status,
+          cancellationStatus: job.cancellation_status,
+          intent: job.intent,
+          createdAt: job.created_at
+        }))
+      }
+    },
     delete: (providerId, options = { allowPasswordCredentialDeletion: true }) =>
       runHostLifecycleMutation(() =>
         deleteComputeHost(
@@ -504,6 +551,14 @@ const createComputeHandlers = (
         sessionId: request.sessionId,
         providerId: request.providerId
       }),
+    jobsSetRemoteCleanup: async (request) => {
+      if (!jobDeletionOwner) throw new Error('Compute Job cleanup owner is unavailable.')
+      if (request.disposition === 'cleaned') {
+        await jobDeletionOwner.cleanupJobRemote(request)
+      } else {
+        await jobDeletionOwner.abandonJobRemoteCleanup(request)
+      }
+    },
     jobsPendingNotification: async (filter) => {
       if (!jobRepository || !storageRoot) return []
       const hostNameMap = await listHostNames()
@@ -540,7 +595,8 @@ const createComputeHandlers = (
           toJobSummary(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)
         )
       )
-    }
+    },
+    jobDeletionOwner
   }
 }
 
@@ -659,12 +715,8 @@ const createComputeIpcModule = (
     sessionCacheOwner,
     operationRepository
   )
-  const jobDeletionOwner = createComputeJobDeletionOwner({
-    jobRepository,
-    hostRepository: repository,
-    connectionBroker: handlers.connectionBroker,
-    queueManager: handlers.concurrencyManager
-  })
+  const jobDeletionOwner = handlers.jobDeletionOwner
+  if (!jobDeletionOwner) throw new Error('Compute Job deletion owner is unavailable.')
 
   return {
     handlers,

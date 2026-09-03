@@ -206,7 +206,8 @@ describe('application database (integration)', () => {
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
-        '0025_managed_file_version_foundation'
+        '0025_managed_file_version_foundation',
+        '0026_compute_job_remote_cleanup'
       ]
     })
 
@@ -687,6 +688,9 @@ describe('application database (integration)', () => {
     await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
+    await client.$executeRawUnsafe(
+      'ALTER TABLE "ComputeJob" DROP COLUMN "remoteCleanupDisposition"'
+    )
 
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
@@ -772,6 +776,9 @@ describe('application database (integration)', () => {
     await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
+    await client.$executeRawUnsafe(
+      'ALTER TABLE "ComputeJob" DROP COLUMN "remoteCleanupDisposition"'
+    )
 
     await migrateApplicationDatabase(client)
 
@@ -1252,7 +1259,8 @@ describe('application database (integration)', () => {
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
-        '0025_managed_file_version_foundation'
+        '0025_managed_file_version_foundation',
+        '0026_compute_job_remote_cleanup'
       ]
     })
 

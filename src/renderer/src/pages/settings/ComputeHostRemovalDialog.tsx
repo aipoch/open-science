@@ -3,7 +3,12 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertDialog } from 'radix-ui'
 
-import type { ComputeHost } from '../../../../shared/compute'
+import type {
+  ComputeHost,
+  ComputeHostDeletionBlocker,
+  ComputeHostDeletionStatus
+} from '../../../../shared/compute'
+import { JobStatusBadge } from '@/components/JobStatusBadge'
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
@@ -31,16 +36,80 @@ export function ComputeHostRemovalDialog({
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
-  const [blocked, setBlocked] = useState<boolean | undefined>(undefined)
+  const [deletionStatus, setDeletionStatus] = useState<ComputeHostDeletionStatus | undefined>()
+  const [showJobs, setShowJobs] = useState(false)
 
   const openConfirmation = (): void => {
     setOpen(true)
     setError(undefined)
-    setBlocked(undefined)
+    setDeletionStatus(undefined)
+    setShowJobs(false)
     void window.api.compute
       .deletionStatus({ providerId: host.providerId })
-      .then(({ blockedByJobs }) => setBlocked(blockedByJobs))
+      .then(setDeletionStatus)
       .catch(() => setError(t('Could not check whether this Host can be removed.')))
+  }
+
+  const settleRemoteCleanup = async (
+    job: ComputeHostDeletionBlocker,
+    disposition: 'cleaned' | 'abandoned'
+  ): Promise<void> => {
+    setBusy(true)
+    setError(undefined)
+    try {
+      await window.api.compute.jobsSetRemoteCleanup({
+        jobId: job.jobId,
+        providerId: host.providerId,
+        projectId: job.projectId,
+        sessionId: job.sessionId,
+        disposition
+      })
+      setDeletionStatus((current) => {
+        const blockingJobs = (current?.blockingJobs ?? []).filter(
+          (candidate) => candidate.jobId !== job.jobId
+        )
+        return { blockedByJobs: blockingJobs.length > 0, blockingJobs }
+      })
+    } catch {
+      setError(t('Could not update remote cleanup for this Compute Job.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const cleanJob = (job: ComputeHostDeletionBlocker): void => {
+    const active = ['queued', 'submitted', 'running'].includes(job.status)
+    if (
+      active &&
+      !window.confirm(t('This Compute Job is active. Cancel it and remove its remote files?'))
+    ) {
+      return
+    }
+    void settleRemoteCleanup(job, 'cleaned')
+  }
+
+  const abandonJob = (job: ComputeHostDeletionBlocker): void => {
+    if (
+      !window.confirm(
+        t(
+          'Abandon remote cleanup? The Job history stays local, but its remote files may remain permanently.'
+        )
+      )
+    ) {
+      return
+    }
+    void settleRemoteCleanup(job, 'abandoned')
+  }
+
+  const cleanAllJobs = async (): Promise<void> => {
+    const jobs = deletionStatus?.blockingJobs ?? []
+    if (
+      jobs.some((job) => ['queued', 'submitted', 'running'].includes(job.status)) &&
+      !window.confirm(t('Cancel active Compute Jobs and remove all listed remote files?'))
+    ) {
+      return
+    }
+    for (const job of jobs) await settleRemoteCleanup(job, 'cleaned')
   }
 
   const removeHost = async (): Promise<void> => {
@@ -100,12 +169,69 @@ export function ComputeHostRemovalDialog({
                   )
                 : t('The local Compute Host will be deleted. The remote SSH account is unchanged.')}
             </AlertDialog.Description>
-            {blocked ? (
-              <p role="alert" className="mt-3 text-sm text-destructive">
-                {t(
-                  'This Host cannot be removed while Compute Jobs are active or still need harvesting or remote cleanup.'
-                )}
-              </p>
+            {deletionStatus?.blockedByJobs ? (
+              <div className="mt-3 space-y-3">
+                <p role="alert" className="text-sm text-destructive">
+                  {t('This Host cannot be removed while Compute Jobs still need remote cleanup.')}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => setShowJobs((visible) => !visible)}
+                >
+                  {showJobs ? t('Hide blocking jobs') : t('View blocking jobs')}
+                </Button>
+                {showJobs ? (
+                  <div className="max-h-64 space-y-2 overflow-y-auto">
+                    {(deletionStatus.blockingJobs ?? []).map((job) => (
+                      <div key={job.jobId} className="rounded-md border p-3 text-sm">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{job.intent || job.jobId}</p>
+                            <p className="truncate text-xs text-muted-foreground">{job.jobId}</p>
+                          </div>
+                          <JobStatusBadge
+                            status={job.status}
+                            cancellationStatus={job.cancellationStatus}
+                          />
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={busy}
+                            onClick={() => cleanJob(job)}
+                          >
+                            {t('Clean up remote files')}
+                          </Button>
+                          {!['queued', 'submitted', 'running'].includes(job.status) ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={busy}
+                              onClick={() => abandonJob(job)}
+                            >
+                              {t('Abandon remote cleanup')}
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => void cleanAllJobs()}
+                    >
+                      {t('Clean up all remote files')}
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
             {error ? (
               <p role="alert" className="mt-3 text-sm text-destructive">
@@ -122,7 +248,7 @@ export function ComputeHostRemovalDialog({
             <Button
               type="button"
               variant="destructive"
-              disabled={busy || blocked !== false}
+              disabled={busy || deletionStatus?.blockedByJobs !== false}
               onClick={() => void removeHost()}
             >
               {busy ? t('Removing…') : t('Remove Host')}

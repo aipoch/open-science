@@ -68,7 +68,16 @@ const createHarness = (jobs: ComputeJob[]) => {
   }
   const jobRepository = {
     findByOwner: vi.fn(async () => jobs),
-    listOwners: vi.fn(async () => [{ projectId: 'project-1', sessionId: 'session-1' }])
+    listOwners: vi.fn(async () => [{ projectId: 'project-1', sessionId: 'session-1' }]),
+    get: vi.fn(
+      async (jobId: string) => jobs.find((candidate) => candidate.job_id === jobId) ?? null
+    ),
+    settleRemoteCleanup: vi.fn(
+      async (request: { jobId: string; disposition: 'cleaned' | 'abandoned' }) => ({
+        ...jobs.find((candidate) => candidate.job_id === request.jobId)!,
+        remote_cleanup_disposition: request.disposition
+      })
+    )
   }
   const hostRepository = { get: vi.fn(async (): Promise<ComputeHost | null> => host) }
   const runner = {
@@ -118,13 +127,21 @@ const createHarness = (jobs: ComputeJob[]) => {
       }))
     }))
   }
+  const requestCancellation = vi.fn(async () => {
+    order.push('cancel-requested')
+  })
+  const confirmCancellation = vi.fn(async () => {
+    order.push('cancel-confirmed')
+  })
   const owner = new ComputeJobDeletionOwner({
     jobRepository,
     lifecycle,
     queueManager,
     hostRepository,
     connectionBroker,
-    dispatchTracker
+    dispatchTracker,
+    requestCancellation,
+    confirmCancellation
   })
   owner.bindRuntime(runtime)
   return {
@@ -137,11 +154,68 @@ const createHarness = (jobs: ComputeJob[]) => {
     dispatchTracker,
     runtime,
     queueManager,
-    connectionBroker
+    connectionBroker,
+    requestCancellation,
+    confirmCancellation
   }
 }
 
 describe('ComputeJobDeletionOwner', () => {
+  it('persists cancellation before cleaning an active Job and settles only after success', async () => {
+    const harness = createHarness([job()])
+
+    await expect(
+      harness.owner.cleanupJobRemote({
+        jobId: 'job-1',
+        providerId: 'ssh:cluster',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        disposition: 'cleaned'
+      })
+    ).resolves.toMatchObject({ remote_cleanup_disposition: 'cleaned' })
+
+    expect(harness.order).toEqual([
+      'cancel-requested',
+      'dispatch-drained',
+      'remote-cleanup',
+      'cancel-confirmed'
+    ])
+    expect(harness.jobRepository.settleRemoteCleanup).toHaveBeenCalledOnce()
+  })
+
+  it('settles an explicitly abandoned cleanup without touching the remote Job', async () => {
+    const harness = createHarness([job({ status: 'success' })])
+
+    await expect(
+      harness.owner.abandonJobRemoteCleanup({
+        jobId: 'job-1',
+        providerId: 'ssh:cluster',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        disposition: 'abandoned'
+      })
+    ).resolves.toMatchObject({ remote_cleanup_disposition: 'abandoned' })
+
+    expect(harness.order).toEqual([])
+    expect(harness.jobRepository.settleRemoteCleanup).toHaveBeenCalledOnce()
+  })
+
+  it('requires active Jobs to use cancellation and remote cleanup', async () => {
+    const harness = createHarness([job({ status: 'running' })])
+
+    await expect(
+      harness.owner.abandonJobRemoteCleanup({
+        jobId: 'job-1',
+        providerId: 'ssh:cluster',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        disposition: 'abandoned'
+      })
+    ).rejects.toThrow('Active Compute Jobs must be cancelled and cleaned remotely.')
+
+    expect(harness.jobRepository.settleRemoteCleanup).not.toHaveBeenCalled()
+  })
+
   it('kills only a process still owned by the generated directory, then removes it', () => {
     const rawHandle = job().remote_handle ?? ''
     const handle = JSON.parse(rawHandle) as Parameters<typeof cleanupCommand>[1]

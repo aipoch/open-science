@@ -314,6 +314,7 @@ describe('preload bridge — public surface inventory', () => {
       'compute.jobsList',
       'compute.jobsMarkConsumed',
       'compute.jobsPendingNotification',
+      'compute.jobsSetRemoteCleanup',
       'compute.jobsTransitionAnalysis',
       'compute.list',
       'compute.listDir',

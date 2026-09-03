@@ -36,7 +36,8 @@ beforeEach(() => {
   useComputeStore.setState({ ...createInitialComputeState(), isLoaded: true, loadHosts: vi.fn() })
   ;(window as unknown as { api: { compute: Record<string, unknown> } }).api = {
     compute: {
-      deletionStatus: vi.fn().mockResolvedValue({ blockedByJobs: false })
+      deletionStatus: vi.fn().mockResolvedValue({ blockedByJobs: false }),
+      jobsSetRemoteCleanup: vi.fn().mockResolvedValue(undefined)
     }
   }
 })
@@ -131,7 +132,19 @@ describe('ComputePanel', () => {
   })
 
   it('blocks X-triggered removal while Compute Jobs still need attention', async () => {
-    vi.mocked(window.api.compute.deletionStatus).mockResolvedValueOnce({ blockedByJobs: true })
+    vi.mocked(window.api.compute.deletionStatus).mockResolvedValueOnce({
+      blockedByJobs: true,
+      blockingJobs: [
+        {
+          jobId: 'job-1',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          status: 'success',
+          intent: 'completed research',
+          createdAt: 1
+        }
+      ]
+    })
     const deleteHost = vi.fn(async () => undefined)
     useComputeStore.setState({ hosts: [host()], isLoaded: true, deleteHost })
 
@@ -147,9 +160,36 @@ describe('ComputePanel', () => {
       (button) => button.textContent?.trim() === 'Remove Host'
     )
     expect(dialog?.textContent).toContain(
-      'This Host cannot be removed while Compute Jobs are active or still need harvesting or remote cleanup.'
+      'This Host cannot be removed while Compute Jobs still need remote cleanup.'
     )
-    expect(confirm?.disabled).toBe(true)
+    expect(
+      Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).some(
+        (button) => button.textContent?.trim() === 'View blocking jobs' && !button.disabled
+      )
+    ).toBe(true)
+    const viewJobs = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'View blocking jobs'
+    )
+    act(() => viewJobs?.click())
+    expect(dialog?.textContent).toContain('completed research')
+    expect(dialog?.textContent).toContain('Clean up remote files')
+    expect(dialog?.textContent).toContain('Abandon remote cleanup')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const abandonCleanup = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent?.trim() === 'Abandon remote cleanup')
+    await act(async () => {
+      abandonCleanup?.click()
+      await Promise.resolve()
+    })
+    expect(window.api.compute.jobsSetRemoteCleanup).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      providerId: 'ssh:biowulf',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      disposition: 'abandoned'
+    })
+    expect(confirm?.disabled).toBe(false)
     expect(deleteHost).not.toHaveBeenCalled()
   })
 

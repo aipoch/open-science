@@ -1,4 +1,4 @@
-import type { ComputeJob } from '../../shared/compute'
+import type { ComputeJob, SetComputeJobRemoteCleanupRequest } from '../../shared/compute'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { computeRemoteWorkdir, quoteRemotePath, type RemoteHandle } from './job-dispatcher'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
@@ -15,7 +15,10 @@ import {
 import { remoteJobPidTerminationFunctionLines } from './remote-job-process'
 import { parseRemoteJobHandle, parseRemoteJobWorkdir } from './remote-job-handle'
 
-type ComputeJobDeletionRepository = Pick<ComputeJobRepository, 'findByOwner' | 'listOwners'>
+type ComputeJobDeletionRepository = Pick<
+  ComputeJobRepository,
+  'findByOwner' | 'listOwners' | 'get' | 'settleRemoteCleanup'
+>
 type ComputeJobOwnerLiveness = boolean | 'unknown'
 
 type ComputeJobDeletionLifecycle = Pick<
@@ -55,6 +58,8 @@ type ComputeJobDeletionOwnerDeps = {
   hostRepository: Pick<ComputeHostRepository, 'get'>
   connectionBroker: ComputeConnectionBrokerAcquirer
   dispatchTracker?: Pick<DispatchTracker, 'waitFor'>
+  requestCancellation?: (job: ComputeJob) => Promise<void>
+  confirmCancellation?: (job: ComputeJob) => Promise<void>
 }
 
 const ACTIVE_STATUSES = new Set<ComputeJob['status']>(['submitted', 'running'])
@@ -146,6 +151,71 @@ class ComputeJobDeletionOwner {
 
   restoreProjectJobDeletion(projectId: string): Promise<void> {
     return this.enqueue(() => this.armOwner({ projectId }, true))
+  }
+
+  cleanupJobRemote(request: SetComputeJobRemoteCleanupRequest): Promise<ComputeJob> {
+    return this.enqueue(async () => {
+      const job = await this.deps.jobRepository.get(request.jobId)
+      if (
+        !job ||
+        job.provider_id !== request.providerId ||
+        job.project_id !== request.projectId ||
+        job.session_id !== request.sessionId
+      ) {
+        throw new Error('Compute Job cleanup scope does not match.')
+      }
+      if (request.disposition !== 'cleaned') {
+        throw new Error('Remote cleanup requires the cleaned disposition.')
+      }
+      if (
+        job.remote_cleanup_disposition !== undefined &&
+        job.remote_cleanup_disposition !== 'pending'
+      ) {
+        return this.deps.jobRepository.settleRemoteCleanup(request)
+      }
+      const cancellationRequired = ACTIVE_STATUSES.has(job.status) || job.status === 'queued'
+      const requestCancellation = this.deps.requestCancellation
+      const confirmCancellation = this.deps.confirmCancellation
+      let cancellation:
+        | {
+            request: (job: ComputeJob) => Promise<void>
+            confirm: (job: ComputeJob) => Promise<void>
+          }
+        | undefined
+      if (cancellationRequired && (!requestCancellation || !confirmCancellation)) {
+        throw new Error('Compute Job cancellation is unavailable.')
+      }
+      if (requestCancellation && confirmCancellation && cancellationRequired) {
+        cancellation = { request: requestCancellation, confirm: confirmCancellation }
+      }
+      await cancellation?.request(job)
+      await this.dispatchTracker.waitFor([job.job_id])
+      const cleanup = await this.prepareRemoteCleanup(job)
+      if (cleanup) await this.runRemoteCleanup(cleanup)
+      await cancellation?.confirm(job)
+      return this.deps.jobRepository.settleRemoteCleanup(request)
+    })
+  }
+
+  abandonJobRemoteCleanup(request: SetComputeJobRemoteCleanupRequest): Promise<ComputeJob> {
+    return this.enqueue(async () => {
+      if (request.disposition !== 'abandoned') {
+        throw new Error('Abandoning remote cleanup requires the abandoned disposition.')
+      }
+      const job = await this.deps.jobRepository.get(request.jobId)
+      if (
+        !job ||
+        job.provider_id !== request.providerId ||
+        job.project_id !== request.projectId ||
+        job.session_id !== request.sessionId
+      ) {
+        throw new Error('Compute Job cleanup scope does not match.')
+      }
+      if (ACTIVE_STATUSES.has(job.status) || job.status === 'queued') {
+        throw new Error('Active Compute Jobs must be cancelled and cleaned remotely.')
+      }
+      return this.deps.jobRepository.settleRemoteCleanup(request)
+    })
   }
 
   restoreOrphanJobDeletionBarriers(

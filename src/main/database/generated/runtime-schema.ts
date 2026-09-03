@@ -539,6 +539,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "timeoutSeconds" INTEGER,
     "remoteWorkdir" TEXT,
     "remoteHandle" TEXT,
+    "remoteCleanupDisposition" TEXT NOT NULL DEFAULT 'pending',
     "exitCode" INTEGER,
     "stdoutTail" TEXT,
     "stderrTail" TEXT,

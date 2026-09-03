@@ -652,57 +652,58 @@ model ReviewScopeSnapshot {
 // Security: free-form execution data is encrypted when OS secure storage is available; commandHash
 // remains plaintext for deduplication. Credentials use the separate ComputeCredential store.
 model ComputeJob {
-  id                     String    @id @default(cuid())
-  providerId             String
-  shape                  String
-  sessionId              String
-  projectId              String
-  status                 String    @default("submitted")
-  intent                 String
-  command                String
-  commandHash            String
+  id                       String                @id @default(cuid())
+  providerId               String
+  shape                    String
+  sessionId                String
+  projectId                String
+  status                   String                @default("submitted")
+  intent                   String
+  command                  String
+  commandHash              String
   // NULL marks historical plaintext rows; false marks disclosed plaintext fallback; true marks
   // rows whose free-form execution data must be decrypted through OS secure storage.
-  sensitiveDataEncrypted Boolean?
-  environment            String?
-  resourceRequest        String?
-  inputManifest          String?
+  sensitiveDataEncrypted   Boolean?
+  environment              String?
+  resourceRequest          String?
+  inputManifest            String?
   // Trusted Notebook Run that submitted this Job. NULL for historical/non-Notebook Jobs.
-  producerRunId          String?
+  producerRunId            String?
   // Validated execution-file-evidence summary JSON. Full relations remain in the sidecar.
-  fileEvidence           String?
-  outputManifest         String?
-  harvestConfig          String?
-  timeoutSeconds         Int?
-  remoteWorkdir          String?
-  remoteHandle           String?
-  exitCode               Int?
-  stdoutTail             String?
-  stderrTail             String?
-  errorCode              String?
+  fileEvidence             String?
+  outputManifest           String?
+  harvestConfig            String?
+  timeoutSeconds           Int?
+  remoteWorkdir            String?
+  remoteHandle             String?
+  remoteCleanupDisposition String                @default("pending")
+  exitCode                 Int?
+  stdoutTail               String?
+  stderrTail               String?
+  errorCode                String?
   // lastPollError: set when SSH connectivity fails during a poll tick (design.md §8 boundary 2).
   // The job status is NOT changed — this field surfaces the transient error to the UI.
   // Cleared on the next successful poll. retry_after_user_action is always true for this field.
-  lastPollError          String?
+  lastPollError            String?
   // 3b harvest columns (compute-harvest issue 01): pure-additive, null until Phase 3b fills them.
   // harvestError: summary of a harvest_failed outcome; non-null means harvest completed with errors.
-  harvestError           String?
+  harvestError             String?
   // leftOnRemote: JSON [{uri, size_mb, reason}] — files left on the remote side after harvest.
-  leftOnRemote           String?
+  leftOnRemote             String?
   // notifiedAt: set when the compute_done notification has been enqueued to the inbox.
-  notifiedAt             DateTime?
+  notifiedAt               DateTime?
   // notificationConsumedAt: set by wait_for_notification when the notification is consumed.
-  notificationConsumedAt DateTime?
+  notificationConsumedAt   DateTime?
   // Durable automatic-analysis delivery state. NULL preserves historical pending/consumed rows.
-  analysisState          String?
-  analysisMessageId      String?
-  analysisUpdatedAt      DateTime?
-  createdAt              DateTime  @default(now())
-  submittedAt            DateTime?
-  startedAt              DateTime?
-  finishedAt             DateTime?
-  harvestedAt            DateTime?
-  operations             ComputeJobOperation[]
+  analysisState            String?
+  analysisMessageId        String?
+  analysisUpdatedAt        DateTime?
+  createdAt                DateTime              @default(now())
+  submittedAt              DateTime?
+  startedAt                DateTime?
+  finishedAt               DateTime?
+  harvestedAt              DateTime?
+  operations               ComputeJobOperation[]
 
   @@index([providerId])
   @@index([sessionId])
