@@ -1,4 +1,5 @@
-type PreviewLeaveGuard = () => boolean
+type PreviewLeaveAction = () => boolean | void
+type PreviewLeaveGuard = (action: PreviewLeaveAction) => boolean
 
 class PreviewLeaveGuardCoordinator {
   private readonly guards = new Map<string, PreviewLeaveGuard>()
@@ -10,10 +11,10 @@ class PreviewLeaveGuardCoordinator {
     }
   }
 
-  request(scope: string | undefined, action: () => void): boolean {
-    if (scope && this.guards.get(scope)?.() === false) return false
-    action()
-    return true
+  request(scope: string | undefined, action: PreviewLeaveAction): boolean {
+    const guard = scope ? this.guards.get(scope) : undefined
+    if (guard && !guard(action)) return false
+    return action() !== false
   }
 
   clear(): void {

@@ -16,4 +16,19 @@ describe('preview leave guard coordinator', () => {
     expect(previewLeaveGuards.request('workbench:project-1:file-1', action)).toBe(true)
     expect(action).toHaveBeenCalledOnce()
   })
+
+  it('lets a guard resume the exact deferred action after confirmation', () => {
+    const action = vi.fn()
+    let deferredAction: (() => boolean | void) | undefined
+    previewLeaveGuards.register('workbench:project-1:file-1', (requestedAction) => {
+      deferredAction = requestedAction
+      return false
+    })
+
+    expect(previewLeaveGuards.request('workbench:project-1:file-1', action)).toBe(false)
+    expect(action).not.toHaveBeenCalled()
+
+    deferredAction?.()
+    expect(action).toHaveBeenCalledOnce()
+  })
 })

@@ -154,6 +154,21 @@ const click = async (element: HTMLElement | null): Promise<void> => {
   await act(async () => element.click())
 }
 
+const discardConfirmation = (): HTMLElement | null =>
+  document.body.querySelector('[data-testid="discard-preview-changes-confirmation"]')
+
+const confirmDiscard = async (): Promise<void> => {
+  await click(
+    discardConfirmation()?.querySelector<HTMLButtonElement>('button:last-of-type') ?? null
+  )
+}
+
+const cancelDiscard = async (): Promise<void> => {
+  await click(
+    discardConfirmation()?.querySelector<HTMLButtonElement>('button:first-of-type') ?? null
+  )
+}
+
 const changeTextarea = async (textarea: HTMLTextAreaElement, value: string): Promise<void> => {
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
   await act(async () => {
@@ -666,7 +681,6 @@ describe('PreviewFileSurface managed text versions', () => {
   })
 
   it('localizes the dirty-draft confirmation', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     const leaveAction = vi.fn()
 
     await act(async () => {
@@ -683,9 +697,13 @@ describe('PreviewFileSurface managed text versions', () => {
     await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
     await act(async () => i18next.changeLanguage('zh-Hans'))
 
-    expect(previewLeaveGuards.request('localized-dirty-draft', leaveAction)).toBe(false)
-    expect(confirm).toHaveBeenCalledWith('要放弃未保存的更改吗？')
+    await act(async () => {
+      expect(previewLeaveGuards.request('localized-dirty-draft', leaveAction)).toBe(false)
+    })
+    expect(discardConfirmation()?.textContent).toContain('要放弃未保存的更改吗？')
+    expect(discardConfirmation()?.textContent).toContain('对此文件的未保存编辑将丢失。')
     expect(leaveAction).not.toHaveBeenCalled()
+    await cancelDiscard()
 
     await act(async () => i18next.changeLanguage('en'))
   })
@@ -929,7 +947,6 @@ describe('PreviewFileSurface managed text versions', () => {
         resolveSave = resolve
       })
     )
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     await act(async () => {
       root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       await Promise.resolve()
@@ -938,7 +955,8 @@ describe('PreviewFileSurface managed text versions', () => {
     await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
     await click(container.querySelector('[aria-label="Save changes"]'))
     await click(container.querySelector('[aria-label="Previous file version"]'))
-    expect(confirm).toHaveBeenCalledOnce()
+    expect(discardConfirmation()).not.toBeNull()
+    await confirmDiscard()
 
     await act(async () => {
       resolveSave({
@@ -1546,7 +1564,6 @@ describe('PreviewFileSurface managed text versions', () => {
   it('uses one workbench guard for an atomic connected version switch', async () => {
     usePreviewWorkbenchStore.getState().activateProject('project-1')
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(managedUploadItem)
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(true).mockReturnValueOnce(false)
     await act(async () => {
       root.render(
         <PreviewFileSurface
@@ -1561,8 +1578,9 @@ describe('PreviewFileSurface managed text versions', () => {
     await click(container.querySelector('[aria-label="Edit README.md"]'))
     await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
     await click(container.querySelector('[aria-label="Previous file version"]'))
+    expect(discardConfirmation()).not.toBeNull()
+    await confirmDiscard()
 
-    expect(confirm).toHaveBeenCalledOnce()
     expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
       selectedVersionId: 'upload-v1'
     })
@@ -1570,7 +1588,6 @@ describe('PreviewFileSurface managed text versions', () => {
   })
 
   it('keeps a dirty draft when a version switch is rejected', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     await act(async () => {
       root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       await Promise.resolve()
@@ -1579,8 +1596,9 @@ describe('PreviewFileSurface managed text versions', () => {
     await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
 
     await click(container.querySelector('[aria-label="Previous file version"]'))
+    expect(discardConfirmation()).not.toBeNull()
+    await cancelDiscard()
 
-    expect(confirm).toHaveBeenCalledOnce()
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
     expect(
       container.querySelector('[data-testid="managed-preview-version-navigation"]')?.textContent
@@ -1590,7 +1608,6 @@ describe('PreviewFileSurface managed text versions', () => {
   it('does not guard again when a connected save publishes its new version', async () => {
     usePreviewWorkbenchStore.getState().activateProject('project-1')
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(managedUploadItem)
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const version = { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 }
     window.api.managedFileVersions.saveTextEdit = vi.fn().mockResolvedValue({
       ok: true,
@@ -1611,7 +1628,7 @@ describe('PreviewFileSurface managed text versions', () => {
     await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Saved\n')
     await click(container.querySelector('[aria-label="Save changes"]'))
 
-    expect(confirm).not.toHaveBeenCalled()
+    expect(discardConfirmation()).toBeNull()
     expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
       selectedVersionId: 'upload-v3'
     })

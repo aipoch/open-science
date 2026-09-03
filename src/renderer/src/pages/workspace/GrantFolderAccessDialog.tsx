@@ -24,6 +24,7 @@ import {
   validateLocalPath
 } from '../../../../shared/local-fs'
 import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import {
   dialogCancelButtonClassName,
   dialogCloseButtonClassName,
@@ -193,6 +194,7 @@ const GrantFolderAccessDialogContent = ({
   }
   const [access, setAccess] = useState<GrantedLocalRootAccess>('ro')
   const [grantFailed, setGrantFailed] = useState(false)
+  const [grantConfirmationOpen, setGrantConfirmationOpen] = useState(false)
   const [isGranting, setIsGranting] = useState(false)
   const grantingRef = useRef(false)
   const grantAttemptRef = useRef(0)
@@ -300,12 +302,6 @@ const GrantFolderAccessDialogContent = ({
 
   const handleGrant = async (): Promise<void> => {
     if (grantingRef.current) return
-    if (
-      window.confirm(
-        t('Changing Notebook file access will stop active Notebook kernels. Continue?')
-      ) === false
-    )
-      return
     grantingRef.current = true
     const attempt = ++grantAttemptRef.current
     setIsGranting(true)
@@ -327,6 +323,7 @@ const GrantFolderAccessDialogContent = ({
       if (attempt === grantAttemptRef.current) {
         grantingRef.current = false
         setIsGranting(false)
+        setGrantConfirmationOpen(false)
         onGrantingChange(false)
       }
     }
@@ -638,7 +635,7 @@ const GrantFolderAccessDialogContent = ({
               type="button"
               data-testid="grant-access-grant"
               disabled={isHome || isGranting}
-              onClick={() => void handleGrant()}
+              onClick={() => setGrantConfirmationOpen(true)}
               className="bg-primary text-primary-foreground hover:bg-primary/80 disabled:bg-primary disabled:text-primary-foreground disabled:opacity-40"
             >
               {t('Grant this folder')}
@@ -646,6 +643,20 @@ const GrantFolderAccessDialogContent = ({
           </div>
         </div>
       </Dialog.Content>
+      <ConfirmActionDialog
+        open={grantConfirmationOpen}
+        title={t('Grant folder access')}
+        description={t(
+          'Changing Notebook file access will stop active Notebook kernels. Continue?'
+        )}
+        cancelLabel={t('Cancel')}
+        confirmLabel={t('Grant this folder')}
+        loadingLabel={t('Working…')}
+        loading={isGranting}
+        testId="grant-folder-access-confirmation"
+        onCancel={() => setGrantConfirmationOpen(false)}
+        onConfirm={() => void handleGrant()}
+      />
     </>
   )
 }

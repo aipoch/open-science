@@ -133,11 +133,10 @@ const requestPreviewLeaveForNavigation = (
     preview.fileDialogItem?.projectId,
     preview.fileDialogItem?.id
   )
-  if (!previewLeaveGuards.request(dialogScope, () => undefined)) return false
   const workbenchScope = workbenchPreviewGuardScope(preview.activeProjectId, preview.activeItemId)
-  if (!previewLeaveGuards.request(workbenchScope, () => undefined)) return false
-  action()
-  return true
+  return previewLeaveGuards.request(dialogScope, () =>
+    previewLeaveGuards.request(workbenchScope, action)
+  )
 }
 
 // Owns which top-level screen is visible and which project the workspace is scoped to. Session

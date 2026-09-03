@@ -491,7 +491,10 @@ const PreviewFilePanel = ({
   const previewSurfaceRef = useRef<PreviewFileSurfaceHandle | null>(null)
 
   const closeFullScreen = useCallback((checkGuard = true): void => {
-    if (checkGuard && previewSurfaceRef.current?.confirmLeave() === false) return
+    if (checkGuard && previewSurfaceRef.current) {
+      previewSurfaceRef.current.requestLeave(() => setIsFullScreenOpen(false))
+      return
+    }
     setIsFullScreenOpen(false)
   }, [])
 

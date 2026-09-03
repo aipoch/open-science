@@ -351,15 +351,18 @@ const ProjectFilesViewContent = ({
   const runGrantedRootMutation = (
     kind: GrantedRootMutationKind,
     mutation: () => Promise<unknown>
-  ): void => {
+  ): Promise<void> => {
     setGrantedRootMutationError(undefined)
-    void mutation().catch((error: unknown) => {
-      setGrantedRootMutationError({
-        kind,
-        detail: errorDetail(error),
-        retry: mutation
-      })
-    })
+    return mutation().then(
+      () => undefined,
+      (error: unknown) => {
+        setGrantedRootMutationError({
+          kind,
+          detail: errorDetail(error),
+          retry: mutation
+        })
+      }
+    )
   }
 
   // Load the granted folders once so the filter menu can list them; localFs is absent outside
@@ -851,7 +854,10 @@ const ProjectFilesViewContent = ({
           actionLabel={t('Retry')}
           dismissLabel={t('Close')}
           onAction={() =>
-            runGrantedRootMutation(grantedRootMutationError.kind, grantedRootMutationError.retry)
+            void runGrantedRootMutation(
+              grantedRootMutationError.kind,
+              grantedRootMutationError.retry
+            )
           }
           onDismiss={() => setGrantedRootMutationError(undefined)}
           testId="granted-root-error-toast"

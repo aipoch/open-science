@@ -19,21 +19,22 @@ const GrantedRootMenuRow = ({
   isSelected,
   onSelect,
   onCloseMenu,
-  onMutation
+  onRequestMutation
 }: {
   root: GrantedLocalRoot
   isSelected: boolean
   onSelect: (root: GrantedLocalRoot) => void
   onCloseMenu: () => void
-  onMutation: (kind: 'change' | 'remove', mutation: () => Promise<unknown>) => void
+  onRequestMutation: (
+    kind: 'change' | 'remove',
+    mutation: () => Promise<unknown>,
+    confirmLabel: string,
+    loadingLabel: string
+  ) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const setAccess = useGrantedFoldersStore((state) => state.setAccess)
   const remove = useGrantedFoldersStore((state) => state.remove)
-  const confirmPolicyChange = (): boolean =>
-    window.confirm(
-      t('Changing Notebook file access will stop active Notebook kernels. Continue?')
-    ) !== false
 
   // The whole row is the submenu trigger: hovering it opens the manage submenu (Radix hover
   // intent), while clicking still selects the folder. Clicking a sub-trigger would normally open
@@ -90,7 +91,12 @@ const GrantedRootMenuRow = ({
             className="gap-2"
             data-testid={`granted-root-allow-writes-${root.id}`}
             onSelect={() => {
-              if (confirmPolicyChange()) onMutation('change', () => setAccess(root.id, 'rw'))
+              onRequestMutation(
+                'change',
+                () => setAccess(root.id, 'rw'),
+                t('Allow writes'),
+                t('Changing access mode…')
+              )
             }}
           >
             <LockOpen
@@ -105,7 +111,12 @@ const GrantedRootMenuRow = ({
             className="gap-2"
             data-testid={`granted-root-make-read-only-${root.id}`}
             onSelect={() => {
-              if (confirmPolicyChange()) onMutation('change', () => setAccess(root.id, 'ro'))
+              onRequestMutation(
+                'change',
+                () => setAccess(root.id, 'ro'),
+                t('Make read-only'),
+                t('Changing access mode…')
+              )
             }}
           >
             <Lock className="size-4 shrink-0 text-text-300" strokeWidth={1.8} aria-hidden="true" />
@@ -116,7 +127,7 @@ const GrantedRootMenuRow = ({
           className="gap-2 text-danger-000 data-[highlighted]:text-danger-000"
           data-testid={`granted-root-remove-${root.id}`}
           onSelect={() => {
-            if (confirmPolicyChange()) onMutation('remove', () => remove(root.id))
+            onRequestMutation('remove', () => remove(root.id), t('Remove access'), t('Removing…'))
           }}
         >
           <Trash2 className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />

@@ -8,25 +8,27 @@ import {
   type PreviewFileItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import { dialogPreviewGuardScope, previewLeaveGuards } from '@/stores/preview-leave-guard'
+import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const previewSurfaceHarness = vi.hoisted(() => ({ confirmLeave: vi.fn(() => true) }))
+const previewSurfaceHarness = vi.hoisted(() => ({
+  requestLeave: vi.fn<(action: () => void) => boolean>()
+}))
 
 vi.mock('./PreviewFileSurface', async () => {
   const React = await vi.importActual<typeof import('react')>('react')
   const MockPreviewFileSurface = React.forwardRef<
-    { confirmLeave: () => boolean },
+    { requestLeave: (action: () => void) => boolean },
     { item: PreviewFileItem; onClose: () => void }
   >(({ item, onClose }, ref) => {
-    React.useImperativeHandle(ref, () => ({ confirmLeave: previewSurfaceHarness.confirmLeave }))
+    React.useImperativeHandle(ref, () => ({ requestLeave: previewSurfaceHarness.requestLeave }))
     return (
       <button
         type="button"
         data-testid="preview-surface"
         onClick={() => {
-          if (previewSurfaceHarness.confirmLeave()) onClose()
+          previewSurfaceHarness.requestLeave(onClose)
         }}
       >
         {item.title}
@@ -56,8 +58,11 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
-  previewSurfaceHarness.confirmLeave.mockReset()
-  previewSurfaceHarness.confirmLeave.mockReturnValue(true)
+  previewSurfaceHarness.requestLeave.mockReset()
+  previewSurfaceHarness.requestLeave.mockImplementation((action) => {
+    action()
+    return true
+  })
   previewLeaveGuards.clear()
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   container = document.createElement('div')
@@ -92,7 +97,7 @@ describe('FilePreviewDialog Escape dismissal', () => {
   })
 
   it('keeps the dialog open when its dirty surface refuses Escape dismissal', async () => {
-    previewSurfaceHarness.confirmLeave.mockReturnValue(false)
+    previewSurfaceHarness.requestLeave.mockReturnValue(false)
     const onClose = vi.fn()
     await act(async () => root.render(<FilePreviewDialog item={item} onClose={onClose} />))
     const surface = document.body.querySelector<HTMLButtonElement>(
@@ -116,11 +121,6 @@ describe('FilePreviewDialog Escape dismissal', () => {
     async (_label, action) => {
       const dialogItem = { ...item, projectId: 'project-1' }
       usePreviewWorkbenchStore.getState().openFileDialog(dialogItem)
-      previewSurfaceHarness.confirmLeave.mockReturnValueOnce(true).mockReturnValueOnce(false)
-      previewLeaveGuards.register(
-        dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)!,
-        previewSurfaceHarness.confirmLeave
-      )
       await act(async () =>
         root.render(
           <FilePreviewDialog
@@ -142,7 +142,7 @@ describe('FilePreviewDialog Escape dismissal', () => {
         }
       })
 
-      expect(previewSurfaceHarness.confirmLeave).toHaveBeenCalledOnce()
+      expect(previewSurfaceHarness.requestLeave).toHaveBeenCalledOnce()
       expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
     }
   )

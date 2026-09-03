@@ -7,6 +7,7 @@ import type { NetworkConnectionType, NetworkInfo } from '../../../../shared/netw
 import type { EnvironmentCheckItem } from '../../../../shared/settings'
 import { EnvironmentCheckRow, PendingCheckRow } from '@/components/environment-check-row'
 import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { useNetworkStore } from '@/stores/network-store'
@@ -69,6 +70,7 @@ const NetworkPanel = ({
   const isConfiguring = view.kind === 'mirror'
   const [draft, setDraft] = useState<PackageMirror>({})
   const [isSaving, setIsSaving] = useState(false)
+  const [saveConfirmationOpen, setSaveConfirmationOpen] = useState(false)
   const [message, setMessage] = useState<string | undefined>(undefined)
   const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null)
   const [networkInfoError, setNetworkInfoError] = useState(false)
@@ -135,24 +137,30 @@ const NetworkPanel = ({
     onNavigate({ kind: 'list' })
   }
 
-  const handleSave = async (): Promise<void> => {
-    if (
-      packageMirror?.caBundle !== draft.caBundle &&
-      window.confirm(t('Changing the CA bundle will stop active Notebook kernels. Continue?')) ===
-        false
-    )
-      return
+  const savePackageMirror = async (): Promise<void> => {
+    if (isSaving) return
     setIsSaving(true)
     setMessage(undefined)
 
+    let saved = false
     try {
       await setPackageMirror(draft)
-      onNavigate({ kind: 'list' })
+      saved = true
     } catch {
-      setMessage('Could not save the package mirror.')
+      setMessage(t('Could not save the package mirror.'))
     } finally {
       setIsSaving(false)
+      setSaveConfirmationOpen(false)
     }
+    if (saved) onNavigate({ kind: 'list' })
+  }
+
+  const handleSave = (): void => {
+    if (packageMirror?.caBundle !== draft.caBundle) {
+      setSaveConfirmationOpen(true)
+      return
+    }
+    void savePackageMirror()
   }
 
   // Connection type + IP fold into the check row's detail line, e.g. "Wi-Fi · 192.168.1.42".
@@ -420,7 +428,7 @@ const NetworkPanel = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => void handleSave()}
+                  onClick={handleSave}
                   disabled={isSaving}
                   className="rounded-lg border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
                 >
@@ -435,6 +443,18 @@ const NetworkPanel = ({
           <ExternalTextLink href={MIRROR_HELP_URL}>{t('View available mirrors')}</ExternalTextLink>
         </p>
       </section>
+      <ConfirmActionDialog
+        open={saveConfirmationOpen}
+        title={t('Package mirror')}
+        description={t('Changing the CA bundle will stop active Notebook kernels. Continue?')}
+        cancelLabel={t('Cancel')}
+        confirmLabel={t('Continue')}
+        loadingLabel={t('Saving…')}
+        loading={isSaving}
+        testId="package-mirror-confirmation"
+        onCancel={() => setSaveConfirmationOpen(false)}
+        onConfirm={() => void savePackageMirror()}
+      />
     </div>
   )
 }

@@ -4143,7 +4143,6 @@ describe('ProjectFilesView — granted local folders', () => {
     grantRoot = vi.fn().mockResolvedValue([grantedRoot])
     setGrantedRootAccess = vi.fn().mockResolvedValue([{ ...grantedRoot, access: 'rw' }])
     removeGrantedRoot = vi.fn().mockResolvedValue([])
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
       previewResources: {
@@ -4249,6 +4248,17 @@ describe('ProjectFilesView — granted local folders', () => {
     })
   }
 
+  const rootMutationConfirmation = (): Element | null =>
+    document.body.querySelector('[data-testid="granted-root-mutation-confirmation"]')
+
+  const confirmRootMutation = async (): Promise<void> => {
+    await clickElement(rootMutationConfirmation()?.querySelector('button:last-of-type'))
+  }
+
+  const cancelRootMutation = async (): Promise<void> => {
+    await clickElement(rootMutationConfirmation()?.querySelector('button:first-of-type'))
+  }
+
   // Radix's submenu trigger opens on pointermove only when pointerType is 'mouse' (whenMouse
   // guard); jsdom has no PointerEvent, so forge one from a MouseEvent.
   const hoverElement = async (element: Element | null | undefined): Promise<void> => {
@@ -4293,6 +4303,10 @@ describe('ProjectFilesView — granted local folders', () => {
     await clickElement(
       document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
     )
+    expect(rootMutationConfirmation()?.textContent).toContain(
+      'Changing Notebook file access will stop active Notebook kernels.'
+    )
+    await confirmRootMutation()
     expect(setGrantedRootAccess).toHaveBeenCalledWith({ id: 'root-1', access: 'rw' })
     expect(useGrantedFoldersStore.getState().roots[0]?.access).toBe('rw')
 
@@ -4308,12 +4322,12 @@ describe('ProjectFilesView — granted local folders', () => {
     )
 
     await clickElement(document.body.querySelector('[data-testid="granted-root-remove-root-1"]'))
+    await confirmRootMutation()
     expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })
     expect(useGrantedFoldersStore.getState().roots).toEqual([])
   })
 
   it('keeps granted-root access unchanged when the kernel-stop confirmation is cancelled', async () => {
-    vi.mocked(window.confirm).mockReturnValue(false)
     await renderFilesView()
     await openFilterMenu()
     await hoverElement(document.body.querySelector('[data-testid="granted-root-root-1"]'))
@@ -4326,6 +4340,7 @@ describe('ProjectFilesView — granted local folders', () => {
     await clickElement(
       document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
     )
+    await cancelRootMutation()
 
     expect(setGrantedRootAccess).not.toHaveBeenCalled()
     expect(useGrantedFoldersStore.getState().roots[0]?.access).toBe('ro')
@@ -4345,6 +4360,7 @@ describe('ProjectFilesView — granted local folders', () => {
     await clickElement(
       document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
     )
+    await confirmRootMutation()
     expect(setGrantedRootAccess).toHaveBeenCalledWith({ id: 'root-1', access: 'rw' })
 
     await waitFor(() => {
@@ -4378,6 +4394,7 @@ describe('ProjectFilesView — granted local folders', () => {
       ).not.toBeNull()
     })
     await clickElement(document.body.querySelector('[data-testid="granted-root-remove-root-1"]'))
+    await confirmRootMutation()
     expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })
 
     await waitFor(() => {
@@ -4446,6 +4463,11 @@ describe('ProjectFilesView — granted local folders', () => {
 
     await clickElement(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
     await clickElement(document.body.querySelector('[data-testid="grant-access-grant"]'))
+    await clickElement(
+      document.body
+        .querySelector('[data-testid="grant-folder-access-confirmation"]')
+        ?.querySelector('button:last-of-type')
+    )
 
     expect(grantRoot).toHaveBeenCalledWith({ path: '/Users/roxi/Projects', access: 'ro' })
     // Dialog closed; the new root is selected in the local browser.
