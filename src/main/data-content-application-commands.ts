@@ -678,11 +678,12 @@ const registerDataContentApplicationCommands = (
         return dependencies.withDataRootWrite(async () => {
           let result: Awaited<ReturnType<SessionPersistenceHandlers['saveSession']>>
           try {
-            result = await dependencies.sessions.saveSession(
-              invocation.args[0],
-              invocation.args[1],
-              { taskRunCommit: invocation.callerContext.surface === 'task' }
-            )
+            result =
+              invocation.callerContext.surface === 'task'
+                ? await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1], {
+                    taskRunCommit: true
+                  })
+                : await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1])
           } catch (error) {
             if (SessionPersistence.isSessionRevisionConflictError(error)) {
               throw new ApplicationCommandError(

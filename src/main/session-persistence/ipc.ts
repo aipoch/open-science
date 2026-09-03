@@ -186,9 +186,10 @@ const createSessionPersistenceHandlersWithAttributionAuthority = (
         sessionId: session.id
       })
       const authorized = messageAttributionAuthority.authorizeSessionProjection(session, durable)
+      if (authority) return repository.saveSession(authorized, options, authority)
       return options
-        ? repository.saveSession(authorized, options, authority)
-        : repository.saveSession(authorized, undefined, authority)
+        ? repository.saveSession(authorized, options)
+        : repository.saveSession(authorized)
     },
     setDelegationPolicy: (projectId, sessionId, policy) => {
       if (!repository.setDelegationPolicy) {
@@ -227,9 +228,8 @@ const coordinateSessionPersistenceWithProjectDeletions = (
     ...repository,
     saveSession: async (session, options, authority) => {
       await projectDeletion.waitForProjectOperations([session.projectId])
-      return options
-        ? repository.saveSession(session, options, authority)
-        : repository.saveSession(session, undefined, authority)
+      if (authority) return repository.saveSession(session, options, authority)
+      return options ? repository.saveSession(session, options) : repository.saveSession(session)
     },
     deleteSession: async (projectId, sessionId) => {
       await projectDeletion.waitForProjectOperations([projectId])

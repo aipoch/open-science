@@ -1318,16 +1318,18 @@ const createApplicationModules = async (
     saveSession: async (session, options, authority) => {
       const created =
         (await sessionRepository.loadSession(session.projectId, session.id)) === undefined
+      const save = (candidate: PersistedChatSession): Promise<PersistedChatSession> =>
+        authority
+          ? sessionPersistenceCoordinator.saveSession(candidate, options, authority)
+          : sessionPersistenceCoordinator.saveSession(candidate, options)
       let durableSession = created
         ? await (() => {
             if (!sessionEnabledComputeHostsOwnerRef.current) {
               throw new Error('Session enabled Compute Host ownership is not initialized.')
             }
-            return sessionEnabledComputeHostsOwnerRef.current.createSession(session, (candidate) =>
-              sessionPersistenceCoordinator.saveSession(candidate, options, authority)
-            )
+            return sessionEnabledComputeHostsOwnerRef.current.createSession(session, save)
           })()
-        : await sessionPersistenceCoordinator.saveSession(session, options, authority)
+        : await save(session)
       // Flush any approved host.agents.switch binding stashed while this session was not yet durable,
       // so the approved target survives a restart before the next message (the in-memory binding
       // alone does not persist across restart).
@@ -4103,7 +4105,9 @@ const createApplicationModules = async (
         },
         editDetails: (request) => sessionDetailsOwner.edit(request),
         saveSession: async (session, options, authority) => {
-          const result = await sessionPersistenceHandlers.saveSession(session, options, authority)
+          const result = authority
+            ? await sessionPersistenceHandlers.saveSession(session, options, authority)
+            : await sessionPersistenceHandlers.saveSession(session, options)
           sessionDetailsOwner.afterSessionSaved(result.session)
           return result
         },

@@ -1125,8 +1125,7 @@ describe('Data and content application commands', () => {
 
     expect(deps.sessions.saveSession).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'idle', revision: 0, createdAt: 0 }),
-      undefined,
-      { taskRunCommit: false }
+      undefined
     )
     const savedSession = (
       deps.sessions.saveSession.mock.calls as unknown as Array<readonly [Record<string, unknown>]>
