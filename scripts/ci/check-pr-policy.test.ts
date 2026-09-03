@@ -62,6 +62,21 @@ describe('pull request policy', () => {
     ).toEqual([])
   })
 
+  it('allows comment-only schema documentation changes without a migration', () => {
+    expect(
+      checkDatabaseMigrationPolicy({
+        changes: [{ path: 'prisma/schema.prisma', status: 'modified' }],
+        baseMigrationPaths: baselineMigrations,
+        baseFiles: {
+          'prisma/schema.prisma': '// Phase 1 placeholder\nmodel Project { id String @id }\n'
+        },
+        headFiles: {
+          'prisma/schema.prisma': '// Current project record.\nmodel Project { id String @id }\n'
+        }
+      })
+    ).toEqual([])
+  })
+
   it('keeps released migrations immutable', () => {
     expect(
       checkDatabaseMigrationPolicy({
