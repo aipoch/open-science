@@ -360,6 +360,7 @@ describe('Settings backend ownership architecture', () => {
       'setActiveProvider',
       'setAgentEnvironmentCreationEnabled',
       'setAgentFramework',
+      'setAgentRouting',
       'setAppIconVariant',
       'setClaudeInfo',
       'setClosePreference',
@@ -490,7 +491,7 @@ describe('Settings backend ownership architecture', () => {
         provisionedConnectorSkillNames publishHostSkill refreshProviderModels registeredHelperCatalog rememberCodexAutoHttpsFallback removeCustomServer removeDeviceCredential removeGitHubToken removeNotebookNetwork
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort
         resolveAdmittedSubagentBackend resolveAgentBackend resolveDeviceOAuthCredential resolveExplicitAgentBackend resolveSkillDocument resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken
-        scanRepoSkills setActiveProvider setAgentEnvironmentCreationEnabled setAgentFramework setAppIconVariant setClosePreference
+        scanRepoSkills setActiveProvider setAgentEnvironmentCreationEnabled setAgentFramework setAgentRouting setAppIconVariant setClosePreference
         setComputeBookmarks setConnectorAutoAllow setConnectorEnabled
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized

@@ -90,7 +90,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings runtime application commands', () => {
-  it('installs the exact 20-command inventory and dispatches a remote-safe selection', async () => {
+  it('installs the exact 21-command inventory and keeps Task-only routing off renderer IPC', async () => {
     const { dependencies, workflowMethod } = createDependencies()
     const selected = { activeProviderId: 'provider-1' }
     workflowMethod('setActiveProvider').mockResolvedValue(selected)
@@ -103,7 +103,12 @@ describe('Settings runtime application commands', () => {
     expect(settingsRuntimeApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedChannels
     )
-    expect(settingsChannels).toEqual(expect.arrayContaining([...expectedChannels]))
+    expect(settingsChannels).toEqual(
+      expect.arrayContaining(
+        expectedChannels.filter((channel) => channel !== 'settings:set-agent-routing')
+      )
+    )
+    expect(settingsChannels).not.toContain('settings:set-agent-routing')
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     await expect(
       router.dispatcher.invoke(

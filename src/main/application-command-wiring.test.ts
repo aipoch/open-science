@@ -256,7 +256,7 @@ describe('production application command wiring', () => {
     expect(occurrences(ipcSource, 'applicationCommands')).toBe(2)
     expect(indexSource).toContain('applicationCommands,')
     expect(startup).toContain('applicationCommands,')
-    expect(startup).toContain('taskControls, computePreferences }')
+    expect(startup).toContain('taskControls, computePreferences, detectActiveSessions }')
     expect(compact(ipcSource)).toContain(
       "computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>"
     )
@@ -269,7 +269,7 @@ describe('production application command wiring', () => {
       "Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>"
     )
     expect(compact(webServiceSource)).toContain(
-      '{ commands: applicationCommands.task, agent: taskAgent, controls: taskControls, computePreferences }'
+      '{ commands: applicationCommands.task, agent: taskAgent, controls: taskControls, computePreferences, detectActiveSessions }'
     )
     expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
     expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')
