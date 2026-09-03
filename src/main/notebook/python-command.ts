@@ -272,6 +272,37 @@ else:
             bindings.update(target_bindings)
         return bindings
 
+    def static_import_bindings(node):
+        bindings = {}
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module = allowed_modules.get(alias.name)
+                if module is None:
+                    return None
+                bindings[alias.asname or alias.name] = module
+            return bindings
+        if not isinstance(node, ast.ImportFrom) or node.level != 0:
+            return None
+        module = allowed_modules.get(node.module)
+        if module is None:
+            return None
+        for alias in node.names:
+            if alias.name == "*":
+                names = getattr(module, "__all__", None)
+                if names is None:
+                    names = [name for name in dir(module) if not name.startswith("_")]
+                for name in names:
+                    try:
+                        bindings[name] = getattr(module, name)
+                    except AttributeError:
+                        return None
+                continue
+            try:
+                bindings[alias.asname or alias.name] = getattr(module, alias.name)
+            except AttributeError:
+                return None
+        return bindings
+
     def is_docstring(node):
         if not isinstance(node, ast.Expr):
             return False
@@ -339,10 +370,15 @@ else:
                 local_bindings[member.name] = nested_class
                 continue
             class_bindings = literal_assignment_bindings(member)
-            if class_bindings is None:
+            if class_bindings is not None:
+                namespace.update(class_bindings)
+                local_bindings.update(class_bindings)
+                continue
+            imported_bindings = static_import_bindings(member)
+            if imported_bindings is None:
                 return None
-            namespace.update(class_bindings)
-            local_bindings.update(class_bindings)
+            namespace.update(imported_bindings)
+            local_bindings.update(imported_bindings)
 
         try:
             static_class = type(node.name, tuple(bases), namespace)
@@ -370,6 +406,10 @@ else:
         assignment_bindings = literal_assignment_bindings(node)
         if assignment_bindings is not None:
             bindings.update(assignment_bindings)
+            continue
+        imported_bindings = static_import_bindings(node)
+        if imported_bindings is not None:
+            bindings.update(imported_bindings)
             continue
         unsafe.append(type(node).__name__)
 

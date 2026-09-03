@@ -188,6 +188,22 @@ describe('validateNotebookHelperExports', () => {
     await expect(
       validateNotebookHelperExports(
         'figure-composer',
+        'import json as json_module\nfrom math import sqrt as compose_figure\n',
+        ['compose_figure'],
+        { python: legacyPython }
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      validateNotebookHelperExports(
+        'figure-composer',
+        'import pathlib\ndef compose_figure():\n    return None\n',
+        ['compose_figure'],
+        { python: legacyPython }
+      )
+    ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
+    await expect(
+      validateNotebookHelperExports(
+        'figure-composer',
         'def another_export():\n    return None\n',
         ['compose_figure'],
         { python: legacyPython }
