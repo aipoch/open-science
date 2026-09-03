@@ -16,6 +16,7 @@ import {
 } from '../../shared/conversation-graph'
 import {
   materializeSessionConversationGraph,
+  SessionRevisionConflictError,
   type PersistedArtifact,
   type PersistedChatMessage,
   type PersistedChatSession,
@@ -2089,6 +2090,72 @@ describe('SessionPersistenceCoordinator', () => {
     expect(onDelegationPolicyUpdated).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ id: 'session-1', delegationPolicy: 'deny' })
     )
+  })
+
+  it('updates Main-owned Session configuration in one revision-checked commit', async () => {
+    let durable = createSession({
+      revision: 4,
+      title: 'Authoritative title',
+      memoryEnabled: true,
+      delegationPolicy: 'allow',
+      enabledComputeHosts: ['ssh:old'],
+      selectedComputeHosts: ['ssh:old']
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session, expectedRevision) => {
+        const revision = expectedRevision ?? session.revision ?? 0
+        if (revision !== durable.revision) {
+          throw new SessionRevisionConflictError(revision, durable.revision ?? 0)
+        }
+        durable = structuredClone({ ...session, revision: revision + 1 })
+        return durable
+      })
+    })
+    const onDelegationPolicyUpdated = vi.fn()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onDelegationPolicyUpdated
+    )
+    const candidate = createSession({
+      ...durable,
+      title: 'Untrusted replacement title',
+      permissionProfile: 'full',
+      memoryEnabled: false,
+      delegationPolicy: 'deny',
+      enabledComputeHosts: ['ssh:new'],
+      selectedComputeHosts: ['ssh:new']
+    })
+
+    await expect(coordinator.updateSessionConfiguration(candidate, 4)).resolves.toMatchObject({
+      revision: 5,
+      title: 'Authoritative title',
+      permissionProfile: 'full',
+      memoryEnabled: false,
+      delegationPolicy: 'deny',
+      enabledComputeHosts: ['ssh:new'],
+      selectedComputeHosts: ['ssh:new']
+    })
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+    expect(onDelegationPolicyUpdated).toHaveBeenCalledOnce()
+
+    await expect(coordinator.updateSessionConfiguration(candidate, 4)).rejects.toMatchObject({
+      code: 'session-revision-conflict',
+      expectedRevision: 4,
+      actualRevision: 5
+    })
   })
 
   it('preserves main-owned delegation policy on an ordinary existing-Session save', async () => {

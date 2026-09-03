@@ -4109,6 +4109,8 @@ const createApplicationModules = async (
         settleTaskCompletion: (request) =>
           sessionPersistenceCoordinator.settleTaskCompletion(request),
         failTaskRun: (request) => sessionPersistenceCoordinator.failTaskRun(request),
+        updateSessionConfiguration: (session, expectedRevision) =>
+          sessionPersistenceCoordinator.updateSessionConfiguration(session, expectedRevision),
         saveSession: async (session, options, authority) => {
           const result = authority
             ? await sessionPersistenceHandlers.saveSession(session, options, authority)

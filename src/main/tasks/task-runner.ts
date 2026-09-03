@@ -101,6 +101,10 @@ type TaskSessionPort = {
   stageCompletion(request: StageTaskSessionCompletionRequest): Promise<PersistedChatSession>
   settleCompletion(request: SettleTaskSessionCompletionRequest): Promise<PersistedChatSession>
   failRun(request: FailTaskSessionRunRequest): Promise<PersistedChatSession>
+  updateConfiguration(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession>
   setDelegationPolicy(projectId: string, sessionId: string, policy: DelegationPolicy): Promise<void>
 }
 
@@ -1050,7 +1054,10 @@ class TaskRunner {
       updatedAt: Math.max(session.updatedAt + 1, this.dependencies.now())
     }
     try {
-      const persisted = await this.dependencies.sessions.save(next)
+      const persisted = await this.dependencies.sessions.updateConfiguration(
+        next,
+        request.expectedRevision
+      )
       this.dependencies.computePreferences.project?.(persisted)
     } catch (error) {
       if (

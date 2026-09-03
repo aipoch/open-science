@@ -324,6 +324,12 @@ describe('task CLI', () => {
         'ssh:alpha'
       ])
     ).toThrow('Use only one of Compute Host selection options or --clear-compute-hosts.')
+    expect(() =>
+      parseCliArgs(['run', '--session', 'session-1', '--enable-compute-host', 'ssh:alpha'])
+    ).toThrow('--enable-compute-host cannot update an existing Session; use session config update.')
+    expect(() => parseCliArgs(['run', '--session', 'session-1', '--clear-compute-hosts'])).toThrow(
+      '--clear-compute-hosts cannot update an existing Session; use session config update.'
+    )
   })
 
   it('dispatches atomic configuration updates with their concurrency tokens', async () => {
@@ -435,6 +441,37 @@ describe('task CLI', () => {
       computeHostIds: ['ssh:alpha', 'ssh:beta', 'ssh:alpha']
     })
     expect(JSON.parse(log.mock.calls[0][0]).preferredComputeHostIds).toEqual(['ssh:authority'])
+  })
+
+  it('clears inherited Compute Host access and selection for a new Session', async () => {
+    const client = {
+      listProjects,
+      startRun: vi
+        .fn()
+        .mockResolvedValue({ id: 'run-1', sessionId: 'session-1', status: 'running' })
+    }
+
+    await runTaskCommand(
+      {
+        command: 'run',
+        options: {
+          project: 'project-1',
+          prompt: 'Run locally.',
+          clearComputeHosts: true,
+          wait: false,
+          json: true,
+          jsonl: false
+        }
+      },
+      { connect: vi.fn().mockResolvedValue(client), log: vi.fn(), stdinIsTTY: true }
+    )
+
+    expect(client.startRun).toHaveBeenCalledWith({
+      project: 'project-1',
+      prompt: 'Run locally.',
+      enabledComputeHostIds: [],
+      computeHostIds: []
+    })
   })
 
   it('parses application update output and rejects positional arguments', () => {

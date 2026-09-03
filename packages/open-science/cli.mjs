@@ -383,6 +383,16 @@ export const parseCliArgs = (argv) => {
   const isProjectDefaultsUpdate = projectDefaultsAction === 'update'
   const isAgentRoutingUpdate = agentRoutingAction === 'update'
   const isRun = command === 'run' && !subcommand
+  if (isRun && options.session && options.enabledComputeHosts !== undefined) {
+    throw new CliUsageError(
+      '--enable-compute-host cannot update an existing Session; use session config update.'
+    )
+  }
+  if (isRun && options.session && options.clearComputeHosts) {
+    throw new CliUsageError(
+      '--clear-compute-hosts cannot update an existing Session; use session config update.'
+    )
+  }
   const runOnlyOptions = [
     ['--plan-first', options.planFirst],
     ['--skill', options.skills !== undefined]
@@ -1615,10 +1625,16 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
           ? { agentConfiguration: agentConfigurationPatch(options) }
           : {}),
         ...(options.memoryEnabled !== undefined ? { memoryEnabled: options.memoryEnabled } : {}),
-        ...(options.enabledComputeHosts !== undefined
-          ? { enabledComputeHostIds: options.enabledComputeHosts }
-          : {}),
-        ...(options.computeHosts !== undefined ? { computeHostIds: options.computeHosts } : {})
+        ...(options.clearComputeHosts
+          ? { enabledComputeHostIds: [], computeHostIds: [] }
+          : {
+              ...(options.enabledComputeHosts !== undefined
+                ? { enabledComputeHostIds: options.enabledComputeHosts }
+                : {}),
+              ...(options.computeHosts !== undefined
+                ? { computeHostIds: options.computeHosts }
+                : {})
+            })
       })
       runRef.current = { runId: started.id, sessionId: started.sessionId }
       for (const event of runRef.pending.splice(0)) {

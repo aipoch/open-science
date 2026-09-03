@@ -4734,6 +4734,20 @@ const saveSessionArgsCodec: RuntimeCodec<
   }
 })
 
+const updateSessionConfigurationArgsCodec: RuntimeCodec<
+  readonly [session: PersistedChatSession, expectedRevision: number]
+> = Object.freeze({
+  parse: (value) => {
+    if (!Array.isArray(value) || value.length !== 2) {
+      throw new Error('Invalid Session configuration update arguments.')
+    }
+    return [
+      persistedChatSessionCodec.parse(value[0]),
+      z.number().int().nonnegative().parse(value[1])
+    ]
+  }
+})
+
 // Runtime-validated contracts for Electron-facing Session commands. Request schemas double as wire
 // types, while Session-bearing commands share the recursive persistence codec above.
 export const sessionApplicationCommandContracts = Object.freeze({
@@ -4766,6 +4780,10 @@ export const sessionApplicationCommandContracts = Object.freeze({
     persistedChatSessionCodec
   ),
   save: defineApplicationCommandContract(saveSessionArgsCodec, persistedChatSessionCodec),
+  updateConfiguration: defineApplicationCommandContract(
+    updateSessionConfigurationArgsCodec,
+    persistedChatSessionCodec
+  ),
   editDetails: defineApplicationCommandContract(
     validationCodec(z.tuple([editSessionDetailsRequestSchema])),
     persistedChatSessionCodec

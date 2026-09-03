@@ -177,6 +177,7 @@ const createDependencies = () => {
     settleTaskCompletion: vi.fn(async () => session),
     failTaskRun: vi.fn(async () => session),
     setDelegationPolicy: vi.fn(async () => session),
+    updateSessionConfiguration: vi.fn(async () => session),
     deleteSession: vi.fn(async (): Promise<SessionDeletionResult> => ({
       status: 'deleted',
       runtimeDetached: true
@@ -262,6 +263,7 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionSettleTaskCompletion',
   'sessionFailTaskRun',
   'sessionSetDelegationPolicy',
+  'sessionUpdateConfiguration',
   'sessionUnlinkPdfContext',
   'uploadStageLocalFile',
   'uploadStageLocalPath'
@@ -342,6 +344,7 @@ describe('Data and content application commands', () => {
         'sessions:settle-task-completion',
         'sessions:fail-task-run',
         'sessions:set-delegation-policy',
+        'sessions:update-configuration',
         'uploads:abort-transfer',
         'uploads:append-transfer',
         'uploads:begin-transfer',
@@ -1068,6 +1071,62 @@ describe('Data and content application commands', () => {
         ] as const)
       )
     ).rejects.toMatchObject({ code: 'invalid-command-result' })
+  })
+
+  it('allows only Task automation to atomically update authoritative Session configuration', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const configured = {
+      ...deps.session,
+      revision: 5,
+      memoryEnabled: false,
+      delegationPolicy: 'deny' as const,
+      enabledComputeHosts: ['ssh:alpha'],
+      selectedComputeHosts: ['ssh:alpha']
+    }
+    deps.sessions.updateSessionConfiguration.mockResolvedValueOnce(configured)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionUpdateConfiguration,
+        invocation([configured, 4] as const, createTaskCallerContext())
+      )
+    ).resolves.toEqual(configured)
+    expect(deps.sessions.updateSessionConfiguration).toHaveBeenCalledWith(configured, 4)
+    expect(deps.events.publish).toHaveBeenCalledWith('session:updated', {
+      session: configured,
+      originClientId: 'web:headless-task-api'
+    })
+
+    for (const rejectedCaller of [electronCaller, callerContext, remoteCaller]) {
+      await expect(
+        router.dispatcher.invoke(
+          dataContentApplicationCommands.sessionUpdateConfiguration,
+          invocation([configured, 5] as const, rejectedCaller)
+        )
+      ).rejects.toThrow(
+        'Channel only available from Task automation: sessions:update-configuration'
+      )
+    }
+    expect(deps.sessions.updateSessionConfiguration).toHaveBeenCalledOnce()
+  })
+
+  it('preserves configuration revision conflicts across the Task command boundary', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.sessions.updateSessionConfiguration.mockRejectedValueOnce(
+      new SessionRevisionConflictError(4, 5)
+    )
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionUpdateConfiguration,
+        invocation([{ ...deps.session, revision: 4 }, 4] as const, createTaskCallerContext())
+      )
+    ).rejects.toMatchObject({ code: 'session-revision-conflict' })
+    expect(deps.events.publish).not.toHaveBeenCalled()
   })
 
   it('sanitizes the complete authoritative Session result instead of passing malformed fields', async () => {

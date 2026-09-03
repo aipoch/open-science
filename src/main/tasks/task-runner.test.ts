@@ -166,6 +166,7 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
         updatedAt: request.updatedAt
       })
     },
+    updateConfiguration: async (value) => save(value),
     setDelegationPolicy: async () => undefined
   }
   const defaultAgent: TaskAgentPort = {
@@ -227,14 +228,14 @@ describe('TaskRunner', () => {
         reasoningEffort: 'default'
       }
     }
-    const save = vi.fn(async (value: PersistedChatSession) => {
+    const updateConfiguration = vi.fn(async (value: PersistedChatSession) => {
       current = { ...value, revision: (value.revision ?? 0) + 1 }
       return current
     })
     const validate = vi.fn(async (providerIds: readonly string[]) => [...new Set(providerIds)])
     const setMemoryEnabled = vi.fn(async () => undefined)
     const runner = createRunner({
-      sessions: { list: async () => [current], save },
+      sessions: { list: async () => [current], updateConfiguration },
       settings: { get: async () => configuredSettings },
       agent: {
         listAttachedSessionIds: async () => [session.id],
@@ -273,7 +274,7 @@ describe('TaskRunner', () => {
         computeHosts: { 'ssh:alpha': { available: true } }
       }
     })
-    expect(save).toHaveBeenCalledOnce()
+    expect(updateConfiguration).toHaveBeenCalledWith(expect.any(Object), 4)
     expect(setMemoryEnabled).toHaveBeenCalledWith(session.id, false)
     expect(validate).toHaveBeenCalledWith(['ssh:alpha', 'ssh:alpha'])
   })
@@ -887,6 +888,7 @@ describe('TaskRunner', () => {
     const sessions: TaskRunnerOverrides['sessions'] = {
       list: async () => [session],
       save: async (value) => value,
+      updateConfiguration: async (value) => value,
       setDelegationPolicy: async () => undefined
     }
     const runner = createRunner({ projects, sessions })
@@ -4051,6 +4053,7 @@ describe('TaskRunner', () => {
         }
         return value
       },
+      updateConfiguration: async (value) => value,
       setDelegationPolicy: async () => undefined
     }
     const runJournal = {
@@ -4123,6 +4126,7 @@ describe('TaskRunner', () => {
         durableSession = structuredClone(value)
         return value
       },
+      updateConfiguration: async (value) => value,
       setDelegationPolicy: async () => undefined
     }
     const runJournal = {
@@ -4192,6 +4196,7 @@ describe('TaskRunner', () => {
         durableSession = structuredClone(value)
         return value
       },
+      updateConfiguration: async (value) => value,
       setDelegationPolicy: async () => undefined
     }
     const runJournal = {
@@ -4468,6 +4473,7 @@ describe('TaskRunner', () => {
         durableSession = structuredClone(persisted)
         return persisted
       },
+      updateConfiguration: async (value) => value,
       setDelegationPolicy: async () => undefined
     }
     const runJournal = {
@@ -4559,6 +4565,7 @@ describe('TaskRunner', () => {
         durableSession = structuredClone(persisted)
         return persisted
       },
+      updateConfiguration: async (value) => value,
       setDelegationPolicy: async () => undefined
     }
     const runJournal = {

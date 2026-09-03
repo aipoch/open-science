@@ -237,6 +237,53 @@ const createComputePreferenceHarness = (
 }
 
 describe('HeadlessTaskApi adapter', () => {
+  it('routes Session configuration updates through the Task-only atomic command', async () => {
+    const existing: PersistedChatSession = {
+      id: 'session-config',
+      projectId: project.id,
+      title: 'Configurable Session',
+      cwd: '/workspace',
+      status: 'idle',
+      revision: 4,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    let durable = existing
+    const invoke = vi.fn(
+      async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
+        if (channel === 'sessions:load-all') {
+          return { sessions: [durable], manifest: { version: 1 } }
+        }
+        if (channel === 'sessions:update-configuration') {
+          durable = { ...(args[0] as PersistedChatSession), revision: 5 }
+          return durable
+        }
+        throw new Error(`Unexpected Task command: ${channel}`)
+      }
+    )
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+
+    await expect(
+      api.updateSessionConfiguration(existing.id, {
+        expectedRevision: 4,
+        memoryEnabled: false,
+        delegationPolicy: 'deny'
+      })
+    ).resolves.toMatchObject({
+      revision: 5,
+      persisted: { memoryEnabled: false, delegationPolicy: 'deny' }
+    })
+    expect(invoke).toHaveBeenCalledWith('sessions:update-configuration', taskCallerContext(), [
+      expect.objectContaining({
+        id: existing.id,
+        memoryEnabled: false,
+        delegationPolicy: 'deny'
+      }),
+      4
+    ])
+  })
+
   it('creates a new Session when persistence and Task share one Compute preference owner', async () => {
     const durableSessions = new Map<string, PersistedChatSession>()
     const registry = new EnabledComputeHostsRegistry()

@@ -222,12 +222,14 @@ open-science run --project <project-id> --prompt-file ./task.md \
   --compute-host ssh:cluster-a --compute-host ssh:cluster-b --wait --json
 ```
 
-On a new Session, the explicit list enables and selects those hosts. With `--session`, an explicit
-list replaces the selected target pool and enables any newly named hosts without disabling other
-Available hosts. Omitting every `--compute-host` preserves both access and selection. The CLI does
-not provide a clear-selection flag; SDK and Task API callers can explicitly send an empty
-`computeHostIds` array to clear Selected while preserving Enabled hosts. JSON output uses the
-server's compatibility-named
+On a new Session, `--enable-compute-host` adds Available hosts, `--compute-host` enables and selects
+its explicit list, and `--clear-compute-hosts` overrides Project defaults with empty Enabled and
+Selected lists. With `--session`, `--compute-host` replaces the selected target pool and enables any
+newly named hosts without disabling other Available hosts. Existing-Session runs reject
+`--enable-compute-host` and `--clear-compute-hosts`; use `session config update` for those access
+changes. Omitting every Compute Host option preserves both access and selection. SDK and Task API
+callers can explicitly send an empty `computeHostIds` array to clear Selected while preserving
+Enabled hosts. JSON output uses the server's compatibility-named
 `preferredComputeHostIds` authority result, not a copy inferred from the command line.
 
 When the selection is non-empty, the agent is instructed to run tool-backed task work on one of

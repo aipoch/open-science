@@ -791,6 +791,16 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
+  updateSessionConfiguration(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
+      await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
+      return this.stateOwner.updateSessionConfiguration(session, expectedRevision)
+    })
+  }
+
   setSessionComputeConcurrencyLimit(
     projectId: string,
     sessionId: string,

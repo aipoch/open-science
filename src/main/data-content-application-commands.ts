@@ -110,6 +110,10 @@ type SessionApplicationCommandOwner = Omit<SessionPersistenceHandlers, 'deleteSe
   editDetails(
     request: SessionPersistence.EditSessionDetailsRequest
   ): Promise<SessionPersistence.PersistedChatSession>
+  updateSessionConfiguration(
+    session: SessionPersistence.PersistedChatSession,
+    expectedRevision: number
+  ): Promise<SessionPersistence.PersistedChatSession>
   deleteSession(
     request: SessionPersistence.DeleteSessionRequest
   ): Promise<SessionPersistence.SessionDeletionResult>
@@ -367,6 +371,14 @@ const dataContentApplicationCommands = Object.freeze({
     'sessions:set-delegation-policy',
     SessionPersistence.sessionApplicationCommandContracts.setDelegationPolicy
   ),
+  sessionUpdateConfiguration: defineApplicationCommand<
+    'sessions:update-configuration',
+    readonly [session: SessionPersistence.PersistedChatSession, expectedRevision: number],
+    SessionPersistence.PersistedChatSession
+  >(
+    'sessions:update-configuration',
+    SessionPersistence.sessionApplicationCommandContracts.updateConfiguration
+  ),
   uploadAbortTransfer: uploadCommand('uploads:abort-transfer', 'abortTransfer'),
   uploadAppendTransfer: uploadCommand('uploads:append-transfer', 'appendTransfer'),
   uploadBeginTransfer: uploadCommand('uploads:begin-transfer', 'beginTransfer'),
@@ -447,7 +459,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionStageTaskCompletion,
     dataContentApplicationCommands.sessionSettleTaskCompletion,
     dataContentApplicationCommands.sessionFailTaskRun,
-    dataContentApplicationCommands.sessionSetDelegationPolicy
+    dataContentApplicationCommands.sessionSetDelegationPolicy,
+    dataContentApplicationCommands.sessionUpdateConfiguration
   ] as const),
   defineApplicationCommandGroup('uploads', [
     dataContentApplicationCommands.uploadAbortTransfer,
@@ -489,6 +502,15 @@ const assertSessionDelegationPolicyCaller = (
   const { callerContext } = invocation
   if (!canMutateSessionDelegationPolicy(callerContext)) {
     throw new Error(`Channel only available from current human or Task automation: ${name}`)
+  }
+}
+
+const assertTaskCaller = (
+  invocation: ApplicationInvocation<readonly unknown[]>,
+  name: string
+): void => {
+  if (invocation.callerContext.surface !== 'task') {
+    throw new Error(`Channel only available from Task automation: ${name}`)
   }
 }
 
@@ -778,6 +800,32 @@ const registerDataContentApplicationCommands = (
           publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
             session,
             originClientId: MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
+          })
+          return session
+        })
+      },
+      'sessions:update-configuration': (invocation) => {
+        assertTaskCaller(invocation, dataContentApplicationCommands.sessionUpdateConfiguration.name)
+        const originClientId = invocation.callerContext.lifecycleClientId
+        return dependencies.withDataRootWrite(async () => {
+          let session: SessionPersistence.PersistedChatSession
+          try {
+            session = await dependencies.sessions.updateSessionConfiguration(
+              invocation.args[0],
+              invocation.args[1]
+            )
+          } catch (error) {
+            if (SessionPersistence.isSessionRevisionConflictError(error)) {
+              throw new ApplicationCommandError(
+                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                error instanceof Error ? error.message : 'Session revision conflict.'
+              )
+            }
+            throw error
+          }
+          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+            session,
+            originClientId
           })
           return session
         })
