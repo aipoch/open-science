@@ -747,6 +747,45 @@ const installFullscreenDialogAdapter = (): (() => void) => {
   }
 }
 
+/* --- Code block language badge --- */
+
+const CODE_BLOCK_ACTIONS = `${AGENT_MARKDOWN_ROOT_SELECTOR} [data-streamdown="code-block-actions"]`
+
+const CODE_ICON_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>'
+
+const decorateCodeBlockChips = (): void => {
+  for (const actions of document.querySelectorAll(`${CODE_BLOCK_ACTIONS}:not([data-lang-badge])`)) {
+    actions.setAttribute('data-lang-badge', '')
+    const language = actions
+      .closest('[data-streamdown="code-block"]')
+      ?.getAttribute('data-language')
+      ?.trim()
+    if (!language) continue
+
+    const badge = document.createElement('span')
+    badge.setAttribute('data-lang-icon', '')
+    badge.title = language
+    badge.setAttribute('aria-label', language)
+    badge.innerHTML = CODE_ICON_SVG
+    actions.prepend(badge)
+  }
+}
+
+const installCodeLanguageBadges = (): (() => void) => {
+  decorateCodeBlockChips()
+  const observer = new MutationObserver(decorateCodeBlockChips)
+  observer.observe(document.body, { childList: true, subtree: true })
+
+  return () => {
+    observer.disconnect()
+    for (const badge of document.querySelectorAll('[data-lang-icon]')) badge.remove()
+    for (const actions of document.querySelectorAll(`${CODE_BLOCK_ACTIONS}[data-lang-badge]`)) {
+      actions.removeAttribute('data-lang-badge')
+    }
+  }
+}
+
 /* --- Public entry --- */
 
 let installCount = 0
@@ -760,7 +799,8 @@ const installStreamdown = (): (() => void) => {
       installMermaidDownload(),
       installFullscreenDialogAdapter(),
       installTableActions(),
-      installTableFullscreenFix()
+      installTableFullscreenFix(),
+      installCodeLanguageBadges()
     )
   }
 

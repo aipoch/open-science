@@ -18,6 +18,8 @@
   --color-sd-surface-warm: var(--sd-surface-warm);
   --color-sd-table-head: var(--sd-table-head);
   --color-sd-code-bg: var(--sd-code-bg);
+  --color-sd-code-actions-bg: var(--sd-code-actions-bg);
+  --color-sd-code-actions-hover: var(--sd-code-actions-hover);
   --color-sd-link: var(--sd-link);
   --color-sd-link-strong: var(--sd-link-strong);
   --color-sd-prose-muted: var(--sd-prose-muted);
@@ -58,8 +60,12 @@
   --sd-surface: #ffffff;
   --sd-surface-subtle: #f7f4ee;
   --sd-surface-warm: #faf8f4;
-  --sd-table-head: hsl(45 12% 93%);
-  --sd-code-bg: #f5f2f0;
+  --sd-table-head: hsl(60 11% 97%);
+  --sd-code-bg: #f5f5f5;
+  /* Floating action chip on rich blocks (code, table, mermaid): a slightly deeper neutral gray
+     than the block surface so the hover-revealed controls stay readable over content. */
+  --sd-code-actions-bg: hsl(0 0% 92%);
+  --sd-code-actions-hover: rgb(0 0 0 / 6%);
   --sd-link: #b95538;
   --sd-link-strong: #c95f3f;
   --sd-prose-muted: #6f655a;
@@ -104,8 +110,10 @@
   --sd-surface: #26251f;
   --sd-surface-subtle: #201f1a;
   --sd-surface-warm: #2b2a23;
-  --sd-table-head: hsl(48 3% 22%);
-  --sd-code-bg: #201f1a;
+  --sd-table-head: hsl(50 3% 21%);
+  --sd-code-bg: #1f1f1f;
+  --sd-code-actions-bg: hsl(0 0% 9%);
+  --sd-code-actions-hover: rgb(255 255 255 / 8%);
   --sd-link: #e08a6a;
   --sd-link-strong: #ec9a78;
   --sd-prose-muted: #a29a8d;
@@ -131,15 +139,24 @@
     overflow-anchor: none;
 
     [data-streamdown='table-wrapper'] {
-      @apply my-[0.75em] overflow-visible rounded-xl border border-border-200 bg-bg-000 p-2.5 first:mt-0 last:mb-0;
+      @apply relative my-[0.75em] overflow-visible rounded-none border-0! bg-transparent p-0! first:mt-0 last:mb-0;
 
+      /* Floating action chip: equidistant from the top and right edges, revealed on
+         hover/focus-within. */
       & > div:first-child:not(:has(table)) {
-        @apply relative z-10 flex h-7 items-center justify-end gap-1;
+        @apply absolute right-2 top-2 z-10 flex h-7 items-center justify-end gap-0.5 rounded-lg border-0 bg-sd-code-actions-bg px-1 py-0.5 opacity-0 shadow-none transition-opacity duration-150;
       }
 
+      &:hover > div:first-child:not(:has(table)),
+      &:focus-within > div:first-child:not(:has(table)) {
+        @apply opacity-100;
+      }
+
+      /* Streamdown's scroll viewport carries its own rounded/border/bg chrome — neutralize it
+         so the table grid itself is the only frame. */
       & > div:has(table),
       & > div:has([data-streamdown='table']) {
-        @apply block min-h-0 overflow-x-auto overflow-y-visible;
+        @apply m-0 block min-h-0 overflow-x-auto overflow-y-visible rounded-none border-0! bg-transparent!;
         height: auto !important;
       }
 
@@ -246,9 +263,17 @@
       [data-streamdown='mermaid-block-actions'] .relative > button,
       [data-streamdown='code-block'] > div:first-child button
     ) {
-    @apply inline-flex size-7 shrink-0 items-center justify-center p-0;
+    @apply inline-flex size-7 shrink-0 items-center justify-center rounded-md p-0 text-sd-muted!;
     transform: none;
     transition-property: color, background-color, opacity;
+
+    &:hover {
+      @apply bg-sd-code-actions-hover text-sd-ink!;
+    }
+
+    &:focus-visible {
+      @apply bg-sd-code-actions-hover text-sd-ink!;
+    }
   }
 
   /* --- Streamdown modal overlays (link safety + table fullscreen) --- */
@@ -617,24 +642,40 @@
   }
 
   [data-streamdown='code-block'] {
-    @apply relative my-[0.75em] min-w-0 max-w-full gap-2 rounded-xl border border-border-200 bg-bg-000! p-2.5 first:mt-0 last:mb-0;
+    @apply relative my-[0.75em] min-w-0 max-w-full gap-0! overflow-hidden rounded-xl border border-border-200 bg-sd-code-bg! p-0! first:mt-0 last:mb-0;
   }
 
   [data-streamdown='code-block-header'] {
-    @apply flex min-h-8 items-center px-1 text-[11px] text-sd-muted;
-
-    & span {
-      @apply font-mono lowercase;
-    }
+    @apply hidden!;
   }
 
+  /* Floating action chip: equidistant from the block's top and right edges, revealed on
+     hover/focus-within. */
   :is([data-streamdown='code-block'] > div.sticky, [data-streamdown='mermaid-block'] > div.sticky) {
-    @apply pointer-events-none absolute! right-2.5! top-2.5! left-auto! z-[5] m-0! h-8! w-auto!;
+    @apply pointer-events-none absolute! right-2! top-2! left-auto! z-[5] m-0! h-7! w-auto! opacity-0 transition-opacity duration-150;
     transform: none !important;
   }
 
+  :is([data-streamdown='code-block'], [data-streamdown='mermaid-block']):is(:hover, :focus-within)
+    > div.sticky {
+    @apply opacity-100;
+  }
+
   :is([data-streamdown='code-block-actions'], [data-streamdown='mermaid-block-actions']) {
-    @apply pointer-events-auto gap-1 rounded-lg border border-sd-border bg-sd-surface/90 px-1 py-0.5 shadow-sm backdrop-blur-sm;
+    @apply pointer-events-auto gap-0.5! rounded-lg border-0! bg-sd-code-actions-bg! px-1! py-0.5! shadow-none! backdrop-blur-none!;
+  }
+
+  /* Monochrome language icon prepended by install-streamdown's badge installer; the language
+     label rides on the element's native title attribute. */
+  [data-streamdown='code-block-actions'] > [data-lang-icon] {
+    @apply inline-flex h-7 w-5 cursor-default select-none items-center justify-center text-sd-muted;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :is([data-streamdown='code-block'], [data-streamdown='mermaid-block']) > div.sticky,
+    .agent-markdown-root [data-streamdown='table-wrapper'] > div:first-child:not(:has(table)) {
+      transition: none;
+    }
   }
 
   [data-streamdown='mermaid-block-actions'] .relative > .absolute {
@@ -689,10 +730,15 @@
   }
 
   [data-streamdown='mermaid-block'] {
-    @apply relative my-[0.75em] min-w-0 max-w-full gap-2 overflow-visible rounded-xl p-2.5 first:mt-0 last:mb-0;
+    @apply relative my-[0.75em] min-w-0 max-w-full gap-0! overflow-visible rounded-xl border-border-200! bg-bg-000! p-0! first:mt-0 last:mb-0;
 
     & > div:first-child {
-      @apply min-h-8 px-1 text-[11px] text-sd-muted;
+      @apply hidden!;
+    }
+
+    /* Neutralize Streamdown's own viewport chrome (rounded/border/bg) — the block frame wins. */
+    & > div:not(.sticky):not(:first-child) {
+      @apply rounded-none! border-0! bg-transparent!;
     }
   }
 
@@ -701,7 +747,7 @@
   }
 
   [data-streamdown='mermaid'] {
-    @apply mt-0.5 max-w-full min-w-0 rounded-lg;
+    @apply m-2.5 max-w-full min-w-0 rounded-lg;
   }
 
   :where(:not([class~='not-prose'], [class~='not-prose'] *)) {
@@ -716,7 +762,7 @@
   }
 
   [data-streamdown='code-block-body'] {
-    @apply mt-0.5 w-full max-w-full min-w-0 overflow-x-scroll! overflow-y-hidden rounded-lg border border-border-200 bg-bg-200 overscroll-x-contain;
+    @apply mt-0 w-full max-w-full min-w-0 overflow-x-scroll! overflow-y-hidden rounded-none! border-0! bg-transparent! p-0! overscroll-x-contain;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
     scrollbar-color: var(--color-sd-scrollbar-thumb) var(--color-sd-scrollbar-track);
@@ -734,9 +780,18 @@
     }
 
     & pre {
-      @apply m-0 min-w-full w-max max-w-none bg-transparent px-3 py-2.5 text-sd-ink;
+      @apply m-0 min-w-full w-max max-w-none bg-transparent pb-2.5 pl-3 pr-2.5 pt-1.5 text-sd-ink;
       white-space: pre !important;
       tab-size: 2;
+    }
+
+    /* Compact left-aligned line-number gutter so the left whitespace matches the block padding.
+       Line spans carry the counter via Streamdown's generated before: classes — there is no
+       `.line` class, so match the generated class attribute instead. */
+    & code > span[class*='counter(line)']::before {
+      width: 2ch !important;
+      margin-right: 0.5ch !important;
+      text-align: left !important;
     }
 
     & code,
@@ -951,7 +1006,7 @@
       }
 
       :where(th) {
-        @apply bg-bg-200 font-semibold;
+        @apply bg-sd-table-head font-semibold;
       }
     }
 
