@@ -305,6 +305,8 @@ else:
             return bindings
         if not isinstance(node, ast.ImportFrom) or node.level != 0:
             return None
+        # Future statements set compiler flags and still emit IMPORT_FROM/STORE_NAME,
+        # so their imported names (including aliases) are runtime bindings too.
         module = allowed_modules.get(node.module)
         if module is None:
             return None
