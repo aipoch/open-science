@@ -146,6 +146,31 @@ describe('resolvePythonCommand', () => {
 })
 
 describe('validateNotebookHelperExports', () => {
+  it('validates definition-only helpers when Python predates audit hooks', async () => {
+    const python = await resolvePythonCommand()
+    const legacyPython = {
+      ...python,
+      baseArgs: [...python.baseArgs, '-c', 'import sys; del sys.addaudithook; exec(sys.argv[-1])']
+    }
+
+    await expect(
+      validateNotebookHelperExports(
+        'figure-composer',
+        'def compose_figure():\n    return None\n',
+        ['compose_figure'],
+        { python: legacyPython }
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      validateNotebookHelperExports(
+        'figure-composer',
+        'def another_export():\n    return None\n',
+        ['compose_figure'],
+        { python: legacyPython }
+      )
+    ).rejects.toThrow('missing or non-callable exports: compose_figure')
+  })
+
   it('validates UTF-8 helper source when the interpreter defaults stdin to a legacy encoding', async () => {
     const python = await resolvePythonCommand()
 

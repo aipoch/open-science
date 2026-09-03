@@ -146,7 +146,7 @@ export const resolvePythonCommand = async (
 }
 
 const CALLABLE_HELPER_VALIDATOR = String.raw`
-import base64, builtins, collections, datetime, decimal, fractions, functools, itertools, json, math, re, statistics, sys
+import ast, base64, builtins, collections, datetime, decimal, fractions, functools, itertools, json, math, re, statistics, sys
 
 allowed_modules = {
     module.__name__: module
@@ -164,18 +164,27 @@ def deny(event, args):
     if event == "open" or event == "import" or event.startswith(("socket.", "subprocess.", "os.system", "os.exec", "os.spawn")):
         raise PermissionError("host access is unavailable during helper validation")
 
-sys.addaudithook(deny)
 request = json.loads(base64.b64decode(sys.stdin.read()).decode("utf-8"))
-safe_names = (
-    "__build_class__", "abs", "all", "any", "bool", "bytes", "callable", "dict", "enumerate",
-    "Exception", "float", "int", "isinstance", "len", "list", "map", "max", "min", "object",
-    "range", "repr", "reversed", "set", "slice", "sorted", "str", "sum", "tuple", "ValueError", "zip"
-)
-safe_builtins = {name: getattr(builtins, name) for name in safe_names}
-safe_builtins["__import__"] = restricted_import
-namespace = {"__builtins__": safe_builtins, "__name__": "__open_science_helper_validation__"}
-exec(compile(request["source"], "<registered-helper>", "exec"), namespace, namespace)
-missing = [name for name in request["exports"] if name not in namespace or not callable(namespace[name])]
+if hasattr(sys, "addaudithook"):
+    sys.addaudithook(deny)
+    safe_names = (
+        "__build_class__", "abs", "all", "any", "bool", "bytes", "callable", "dict", "enumerate",
+        "Exception", "float", "int", "isinstance", "len", "list", "map", "max", "min", "object",
+        "range", "repr", "reversed", "set", "slice", "sorted", "str", "sum", "tuple", "ValueError", "zip"
+    )
+    safe_builtins = {name: getattr(builtins, name) for name in safe_names}
+    safe_builtins["__import__"] = restricted_import
+    namespace = {"__builtins__": safe_builtins, "__name__": "__open_science_helper_validation__"}
+    exec(compile(request["source"], "<registered-helper>", "exec"), namespace, namespace)
+    missing = [name for name in request["exports"] if name not in namespace or not callable(namespace[name])]
+else:
+    # Python < 3.8 cannot audit validation-time host access, so never execute staged source there.
+    tree = ast.parse(request["source"], filename="<registered-helper>")
+    definitions = {
+        node.name for node in tree.body
+        if isinstance(node, (ast.AsyncFunctionDef, ast.ClassDef, ast.FunctionDef))
+    }
+    missing = [name for name in request["exports"] if name not in definitions]
 if missing:
     raise TypeError("missing or non-callable exports: " + ", ".join(missing))
 `
