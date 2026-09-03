@@ -166,6 +166,7 @@ export class NotebookEnvironmentOperations {
     sessionId: string
     ensureRecovered: () => Promise<void>
     assertRecoverable: () => void
+    assertCreationAllowed?: () => Promise<void> | void
   }): Promise<void> {
     const provisioner = this.provisioner
     if (!provisioner) return
@@ -178,6 +179,7 @@ export class NotebookEnvironmentOperations {
         ? rReady(input.runtimeRoot, DEFAULT_ENV_VERSION)
         : pythonReady(input.runtimeRoot, DEFAULT_ENV_VERSION)
     if (ready) return
+    await input.assertCreationAllowed?.()
 
     const report = (progress: ProvisionProgress): void => {
       const scoped = { ...progress, scope: input.language, sessionId: input.sessionId }

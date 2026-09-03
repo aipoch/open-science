@@ -1,6 +1,10 @@
 import { useRef, useState, type FormEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import type { EditSessionDetailsRequest } from '../../../../shared/session-persistence'
+import {
+  isSessionDetailsConflictError,
+  type EditSessionDetailsRequest
+} from '../../../../shared/session-persistence'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import {
   hydratePersistedSessionIfPresent,
@@ -12,6 +16,7 @@ type SessionDetailsDialog = {
   titleDraft: string
   descriptionDraft: string
   isSaving: boolean
+  error: string | null
 }
 
 type WorkspaceSessionDetailsController = {
@@ -21,13 +26,14 @@ type WorkspaceSessionDetailsController = {
   changeTitle: (draft: string) => void
   changeDescription: (draft: string) => void
   confirm: (event: FormEvent<HTMLFormElement>) => void
-  rename: (session: ChatSession, title: string) => void
+  rename: (session: ChatSession, title: string, expectedTitle?: string) => Promise<boolean>
 }
 
 const useWorkspaceSessionDetailsController = (
   isPersistenceReady: boolean,
   onLoadFailure: () => void
 ): WorkspaceSessionDetailsController => {
+  const { t } = useTranslation()
   const [dialog, setDialog] = useState<SessionDetailsDialog | null>(null)
   const dialogIntentRef = useRef(0)
   const open = (session: ChatSession): void => {
@@ -38,7 +44,8 @@ const useWorkspaceSessionDetailsController = (
         session: authoritative,
         titleDraft: authoritative.title,
         descriptionDraft: authoritative.description ?? '',
-        isSaving: false
+        isSaving: false,
+        error: null
       })
     if (session.contentLoaded !== false) {
       show(session)
@@ -62,10 +69,12 @@ const useWorkspaceSessionDetailsController = (
     const request: EditSessionDetailsRequest = {
       projectId: dialog.session.projectId,
       sessionId,
+      expectedTitle: dialog.session.title,
+      expectedDescription: dialog.session.description ?? '',
       title: dialog.titleDraft,
       description: dialog.descriptionDraft
     }
-    setDialog((current) => (current ? { ...current, isSaving: true } : current))
+    setDialog((current) => (current ? { ...current, isSaving: true, error: null } : current))
     void window.api.sessions
       .editDetails(request)
       .then((persisted) => {
@@ -76,9 +85,14 @@ const useWorkspaceSessionDetailsController = (
       })
       .catch((error: unknown) => {
         console.warn('editSessionDetails failed', error)
+        const message = isSessionDetailsConflictError(error)
+          ? t(
+              "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details."
+            )
+          : t('Could not save session details.')
         setDialog((current) =>
           intent === dialogIntentRef.current && current?.session.id === sessionId
-            ? { ...current, isSaving: false }
+            ? { ...current, isSaving: false, error: message }
             : current
         )
       })
@@ -87,36 +101,46 @@ const useWorkspaceSessionDetailsController = (
   // owner's editDetails mutation — like the Edit dialog — so the durable title is marked
   // sessionDetailsSource 'manual' and a later details generation cannot overwrite it. The
   // authoritative session is loaded first when needed so its description is preserved verbatim.
-  const rename = (session: ChatSession, title: string): void => {
-    if (!isPersistenceReady) return
+  const rename = (
+    session: ChatSession,
+    title: string,
+    expectedTitle = session.title
+  ): Promise<boolean> => {
+    if (!isPersistenceReady) return Promise.resolve(true)
     const trimmedTitle = title.trim()
-    if (!trimmedTitle || trimmedTitle === session.title) return
-    const submit = (authoritative: ChatSession): void => {
-      void window.api.sessions
+    if (!trimmedTitle || trimmedTitle === expectedTitle) return Promise.resolve(true)
+    const submit = (authoritative: ChatSession): Promise<boolean> =>
+      window.api.sessions
         .editDetails({
           projectId: authoritative.projectId,
           sessionId: authoritative.id,
+          expectedTitle,
+          expectedDescription: authoritative.description ?? '',
           title: trimmedTitle,
           description: authoritative.description ?? ''
         })
         .then((persisted) => {
           useSessionStore.getState().upsertPersistedSession(persisted)
+          return true
         })
-        .catch((error: unknown) => {
-          console.warn('renameSessionTitle failed', error)
-        })
-    }
     if (session.contentLoaded !== false) {
-      submit(session)
-      return
+      return submit(session)
     }
-    void loadPersistedSession({ projectId: session.projectId, sessionId: session.id })
+    const authoritative = loadPersistedSession({
+      projectId: session.projectId,
+      sessionId: session.id
+    })
       .then((persisted) => {
         if (!persisted) throw new Error('Selected Session JSON is missing.')
         const hydrated = hydratePersistedSessionIfPresent(persisted)
-        if (hydrated) submit(hydrated)
+        if (!hydrated) throw new Error('Selected Session JSON is invalid.')
+        return hydrated
       })
-      .catch(onLoadFailure)
+      .catch(() => {
+        onLoadFailure()
+        return undefined
+      })
+    return authoritative.then((loaded) => (loaded ? submit(loaded) : false))
   }
   return {
     dialog,

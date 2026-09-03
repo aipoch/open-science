@@ -94,6 +94,63 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('canonicalizes caller-controlled notebook run sources to Agent authority', async () => {
+    const beginCodeCell = vi.fn(async (request: unknown) => request)
+    const runCell = vi.fn(async (request: unknown) => request)
+    const execute = vi.fn(async (request: unknown) => request)
+    const server = new NotebookLocalRpcServer({ beginCodeCell, runCell, execute } as never, {
+      transport: 'tcp'
+    })
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'project-1',
+      'root-frame-session-1'
+    )
+
+    try {
+      for (const [method, methodParams] of [
+        ['beginCodeCell', {}],
+        ['runCell', { cellId: 'cell-1' }],
+        ['execute', { code: 'print(1)' }]
+      ] as const) {
+        const response = await fetchLocalRpc(
+          connection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method,
+              params: {
+                sessionId: 'session-1',
+                workspaceCwd: '/workspace',
+                source: 'user',
+                ...methodParams
+              }
+            })
+          },
+          'Notebook source authority test'
+        )
+        expect(response.status).toBe(200)
+        await expect(response.json()).resolves.toMatchObject({ result: { source: 'agent' } })
+      }
+      expect(beginCodeCell).toHaveBeenCalledWith(expect.objectContaining({ source: 'agent' }))
+      expect(runCell).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'agent' }),
+        expect.any(AbortSignal)
+      )
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'agent' }),
+        expect.any(AbortSignal)
+      )
+    } finally {
+      connection.release?.()
+      await server.close()
+    }
+  })
+
   it('routes memory search through a main-only capability after trusted session binding', async () => {
     const memoryResult = {
       id: 'entry-1',
@@ -2276,7 +2333,7 @@ describe('notebook local RPC server', () => {
       token: 'secret-token',
       agentsService: { read: agentsRead },
       inputRegistry: {
-        registerTurn: vi.fn(async () => undefined),
+        registerTurn: vi.fn(async () => []),
         getTurnInputs: vi.fn(() => [
           {
             inputFileVersionId: 'upload-version-1',
@@ -3050,7 +3107,7 @@ describe('notebook local RPC server', () => {
       transport: 'tcp',
       token: 'secret-token',
       inputRegistry: {
-        registerTurn: async () => undefined,
+        registerTurn: async () => [],
         getTurnInputs: () => [registeredInput],
         openRun,
         clearSession: () => undefined
@@ -3438,7 +3495,7 @@ describe('notebook local RPC server', () => {
       transport: 'tcp',
       token: 'secret-token',
       inputRegistry: {
-        registerTurn: vi.fn().mockResolvedValue(undefined),
+        registerTurn: vi.fn().mockResolvedValue([]),
         getTurnInputs: () => [registeredInput],
         openRun: vi.fn().mockResolvedValue({
           getRunInputFiles: () => [registeredInput],

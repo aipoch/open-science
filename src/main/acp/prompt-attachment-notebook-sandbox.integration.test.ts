@@ -1,14 +1,17 @@
 import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { UploadedAttachment } from '../../shared/uploads'
+import type { NotebookRunInputFile } from '../../shared/notebook'
 import { getNotebookInputRoot } from '../notebook/input-staging'
+import { NotebookInputRegistry } from '../notebook/input-registry'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 
 const roots: string[] = []
@@ -21,13 +24,15 @@ const run = (
   argv: readonly string[],
   cwd: string,
   env: NodeJS.ProcessEnv
-): Promise<{ code: number | null; stderr: string }> =>
+): Promise<{ code: number | null; stdout: string; stderr: string }> =>
   new Promise((resolveRun, reject) => {
     const child = spawn(argv[0]!, argv.slice(1), { cwd, env, shell: false })
+    let stdout = ''
     let stderr = ''
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk))
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk))
     child.on('error', reject)
-    child.on('close', (code) => resolveRun({ code, stderr }))
+    child.on('close', (code) => resolveRun({ code, stdout, stderr }))
   })
 
 const contentBlocks = (content: string | ContentBlock[]): ContentBlock[] => {
@@ -38,7 +43,7 @@ const contentBlocks = (content: string | ContentBlock[]): ContentBlock[] => {
 describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
   'ACP attachment access from Notebook',
   () => {
-    it('lets Notebook copy the exact managed upload snapshot advertised to the Agent', async ({
+    it('lets Notebook read the exact managed upload Version through its advertised relative path', async ({
       skip
     }) => {
       const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-attachment-sandbox-'))
@@ -50,6 +55,7 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
       await mkdir(notebookDataRoot, { recursive: true })
 
       const bytes = Buffer.from('sample,group\n1,Ctrl\n2,IRI\n')
+      const checksum = createHash('sha256').update(bytes).digest('hex')
       const attachment: UploadedAttachment = {
         id: 'upload-file-1',
         versionId: 'upload-version-1',
@@ -60,7 +66,7 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
         path: 'upload-version:stale',
         mimeType: 'text/csv',
         size: bytes.byteLength,
-        checksum: '1'.repeat(64),
+        checksum,
         createdAt: '2026-09-02T00:00:00.000Z'
       }
       const openLatest = vi.fn(async () => ({
@@ -96,7 +102,7 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
           originalFilename: attachment.originalName,
           contentType: 'text/csv',
           sizeBytes: BigInt(bytes.byteLength),
-          checksum: '1'.repeat(64),
+          checksum,
           createdAt: new Date('2026-09-02T00:00:00.000Z')
         },
         versionToken: 1,
@@ -141,7 +147,53 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
       expect(isAbsolute(advertisedRelativePath)).toBe(false)
       expect(advertisedRelativePath).not.toBe('..')
       expect(advertisedRelativePath).not.toMatch(/^\.\.(?:[/\\]|$)/)
-      const destination = join(notebookDataRoot, 'samples.csv')
+      const registeredInput: NotebookRunInputFile = {
+        inputFileVersionId: 'upload-version-1',
+        sourceKind: 'upload-version',
+        sourceFileId: attachment.id,
+        sourceVersionNumber: 1,
+        sourceProjectId: projectId,
+        sourceSessionId: sessionId,
+        filename: attachment.originalName,
+        contentType: attachment.mimeType,
+        sizeBytes: bytes.byteLength,
+        checksum,
+        storageKey: 'uploads/project-1/session-1/upload-file-1/content',
+        association: 'turn-attached'
+      }
+      const stagedPath = join(notebookInputRoot, registeredInput.sourceKind, checksum, 'content')
+      const inputRegistry = new NotebookInputRegistry({
+        storageRoot,
+        inputAuthority: {
+          resolveVersion: vi.fn(async () => registeredInput),
+          validateVersion: vi.fn(async () => ({
+            state: 'available' as const,
+            input: registeredInput
+          })),
+          openContent: vi.fn(),
+          stageContent: vi.fn(async () => {
+            await mkdir(dirname(stagedPath), { recursive: true })
+            await writeFile(stagedPath, bytes)
+            await chmod(stagedPath, 0o444)
+            return stagedPath
+          })
+        }
+      })
+      const promptInputs = await inputRegistry.registerTurn({
+        projectId,
+        appSessionId: sessionId,
+        promptMessageId: 'prompt-1',
+        uploads: prepared.turnInputs!.uploads,
+        references: prepared.turnInputs!.references
+      })
+      expect(promptInputs).toEqual([
+        expect.objectContaining({
+          filename: 'samples.csv',
+          notebookPath: expect.stringMatching(/^inputs[/\\]samples-[a-f0-9]{12}\.csv$/)
+        })
+      ])
+      expect(isAbsolute(promptInputs[0]!.notebookPath)).toBe(false)
+      expect(promptInputs[0]!.notebookPath).not.toContain('..')
       const sandbox = new NotebookNetworkSandbox({
         policy: { allowedDomains: [], deniedDomains: [] },
         resources: {
@@ -156,11 +208,11 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
         }
         await sandbox.initialize()
         const wrapped = await sandbox.wrap({
-          command: `/bin/cp ${JSON.stringify(advertisedPath)} ${JSON.stringify(destination)}`,
+          command: `/bin/cat ${JSON.stringify(promptInputs[0]!.notebookPath)}`,
           cwd: notebookDataRoot,
           env: { PATH: '/usr/bin:/bin' },
           filesystem: {
-            readOnlyRoots: ['/bin', '/usr/bin', notebookInputRoot, dirname('/bin/cp')],
+            readOnlyRoots: ['/bin', '/usr/bin', notebookInputRoot, dirname('/bin/cat')],
             readWriteRoots: [notebookDataRoot],
             deniedReadRoots: [],
             deniedWriteRoots: []
@@ -172,10 +224,13 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
         wrapped.cleanup()
 
         expect(result.code, diagnostic).toBe(0)
-        await expect(readFile(destination, 'utf8')).resolves.toBe(bytes.toString('utf8'))
+        expect(result.stdout).toBe(bytes.toString('utf8'))
         await expect(readFile(advertisedPath, 'utf8')).resolves.toBe(bytes.toString('utf8'))
         prepared.close()
         await expect(readFile(advertisedPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(
+          readFile(join(notebookDataRoot, promptInputs[0]!.notebookPath), 'utf8')
+        ).resolves.toBe(bytes.toString('utf8'))
       } finally {
         prepared.close()
         await sandbox.dispose()

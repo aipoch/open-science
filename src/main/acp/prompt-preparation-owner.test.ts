@@ -439,6 +439,59 @@ describe('AcpPromptPreparationOwner', () => {
     ])
   })
 
+  it('advertises materialized Notebook inputs as short relative paths before dispatch', async () => {
+    const fixture = setup()
+    fixture.promptContent.prepare.mockResolvedValueOnce({
+      content: [
+        {
+          type: 'resource_link',
+          uri: 'file:///private/internal/turn/samples.csv',
+          name: 'samples.csv'
+        }
+      ],
+      historyImageCount: 0,
+      turnInputs: {
+        uploads: [
+          {
+            id: 'upload-1',
+            versionId: 'upload-version-1',
+            versionNumber: 1,
+            sessionId: 'session-1',
+            name: 'samples.csv',
+            originalName: 'samples.csv',
+            path: 'upload-version:upload-version-1',
+            size: 10
+          }
+        ],
+        references: []
+      },
+      close: fixture.promptClose
+    })
+    fixture.registerTurnInputs.mockResolvedValueOnce([
+      {
+        sourceKind: 'upload-version',
+        inputFileVersionId: 'upload-version-1',
+        filename: 'samples.csv',
+        notebookPath: 'inputs/samples-123456789abc.csv'
+      }
+    ])
+
+    const handle = await fixture.prepare()
+
+    expect(handle.status).toBe('ready')
+    if (handle.status !== 'ready') throw new Error('Expected a prepared prompt.')
+    expect(handle.content).toEqual([
+      expect.objectContaining({ type: 'resource_link', name: 'samples.csv' }),
+      {
+        type: 'text',
+        text: expect.stringContaining('"notebookPath":"inputs/samples-123456789abc.csv"')
+      }
+    ])
+    expect(JSON.stringify(handle.content)).toContain('Do not copy inputs to /tmp')
+    expect(JSON.stringify(handle.content)).toContain('including its inputs/ prefix')
+    handle.close()
+  })
+
   it('injects recalled memory as untrusted user context immediately before the current task', async () => {
     const recallForPrompt = vi.fn(async () =>
       [

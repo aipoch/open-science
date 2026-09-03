@@ -3704,8 +3704,8 @@ describe('Korean binding terminology', () => {
     ['Add interpreter…', '인터프리터 추가…'],
     ['Could not add that interpreter.', '해당 인터프리터를 추가할 수 없습니다.'],
     [
-      'Enable the environments each notebook language may run in. The app-managed environment is on by default; enable your own interpreters to make them available to the agent.',
-      '각 Notebook 언어가 실행될 수 있는 환경을 활성화합니다. 앱 관리 환경은 기본적으로 켜져 있습니다. 에이전트가 사용할 수 있도록 자체 인터프리터를 활성화하세요.'
+      'Choose which Python and R environments notebooks and the Agent can use. App-managed environments are enabled by default.',
+      'Notebook과 에이전트가 사용할 Python 및 R 환경을 선택합니다. 앱 관리 환경은 기본적으로 활성화됩니다.'
     ],
     ['Token usage for this response', '이 응답의 토큰 사용량'],
     ['Token usage unavailable for this response', '이 응답의 토큰 사용량을 확인할 수 없습니다.'],

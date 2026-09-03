@@ -36,7 +36,7 @@ const ResourceAvailability = ({
   const scope = resourceScope(mainEnabled, usages)
 
   return (
-    <section className="mt-6 border-t border-border pt-4" aria-label={t('Availability')}>
+    <section className="mt-6" aria-label={t('Availability')}>
       <h2 className="text-sm font-semibold text-foreground">{t('Availability')}</h2>
       <p className="text-xs text-muted-foreground">
         {t('Specialist access is configured on each Specialist.')}

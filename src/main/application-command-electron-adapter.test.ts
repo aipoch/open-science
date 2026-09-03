@@ -37,6 +37,7 @@ const validatedChannels = [
   'projects:update',
   'projects:update-archive',
   'sessions:delete-session',
+  'sessions:edit-details',
   'sessions:filter-pdf-context-candidates',
   'sessions:link-pdf-context',
   'sessions:set-delegation-policy',

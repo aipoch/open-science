@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -484,7 +485,10 @@ const ProjectFilesFilterMenu = ({
   onBrowseLocal: () => void
   onAddFolder: () => void
   onSelectGrantedRoot: (root: GrantedLocalRoot) => void
-  onGrantedRootMutation: (kind: 'change' | 'remove', mutation: () => Promise<unknown>) => void
+  onGrantedRootMutation: (
+    kind: 'change' | 'remove',
+    mutation: () => Promise<unknown>
+  ) => Promise<void>
   localMachineName: string | undefined
   isLocalSelected: boolean
   selectedLocalRootId: string | undefined
@@ -512,6 +516,24 @@ const ProjectFilesFilterMenu = ({
   }, [canLoadMoreOptions, onLoadMoreOptions, showAllSessions])
 
   const [menuOpen, setMenuOpen] = useState(false)
+  const [pendingRootMutation, setPendingRootMutation] = useState<{
+    kind: 'change' | 'remove'
+    mutation: () => Promise<unknown>
+    confirmLabel: string
+    loadingLabel: string
+  }>()
+  const [rootMutationRunning, setRootMutationRunning] = useState(false)
+
+  const confirmRootMutation = async (): Promise<void> => {
+    if (!pendingRootMutation || rootMutationRunning) return
+    setRootMutationRunning(true)
+    try {
+      await onGrantedRootMutation(pendingRootMutation.kind, pendingRootMutation.mutation)
+      setPendingRootMutation(undefined)
+    } finally {
+      setRootMutationRunning(false)
+    }
+  }
 
   return (
     <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
@@ -633,7 +655,9 @@ const ProjectFilesFilterMenu = ({
               isSelected={root.id === selectedLocalRootId}
               onSelect={onSelectGrantedRoot}
               onCloseMenu={() => setMenuOpen(false)}
-              onMutation={onGrantedRootMutation}
+              onRequestMutation={(kind, mutation, confirmLabel, loadingLabel) => {
+                setPendingRootMutation({ kind, mutation, confirmLabel, loadingLabel })
+              }}
             />
           ))}
           <DropdownMenuItem
@@ -688,6 +712,21 @@ const ProjectFilesFilterMenu = ({
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>
+      <ConfirmActionDialog
+        open={pendingRootMutation !== undefined}
+        title={t('Change Notebook file access?')}
+        description={t(
+          'Changing Notebook file access will stop active Notebook kernels. Continue?'
+        )}
+        cancelLabel={t('Cancel')}
+        confirmLabel={pendingRootMutation?.confirmLabel ?? t('Continue')}
+        loadingLabel={pendingRootMutation?.loadingLabel}
+        loading={rootMutationRunning}
+        destructive={pendingRootMutation?.kind === 'remove'}
+        testId="granted-root-mutation-confirmation"
+        onCancel={() => setPendingRootMutation(undefined)}
+        onConfirm={() => void confirmRootMutation()}
+      />
     </DropdownMenu>
   )
 }

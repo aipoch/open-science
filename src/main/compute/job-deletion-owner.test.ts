@@ -1,3 +1,7 @@
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost, ComputeJob } from '../../shared/compute'
@@ -68,7 +72,16 @@ const createHarness = (jobs: ComputeJob[]) => {
   }
   const jobRepository = {
     findByOwner: vi.fn(async () => jobs),
-    listOwners: vi.fn(async () => [{ projectId: 'project-1', sessionId: 'session-1' }])
+    listOwners: vi.fn(async () => [{ projectId: 'project-1', sessionId: 'session-1' }]),
+    get: vi.fn(
+      async (jobId: string) => jobs.find((candidate) => candidate.job_id === jobId) ?? null
+    ),
+    settleRemoteCleanup: vi.fn(
+      async (request: { jobId: string; disposition: 'cleaned' | 'abandoned' }) => ({
+        ...jobs.find((candidate) => candidate.job_id === request.jobId)!,
+        remote_cleanup_disposition: request.disposition
+      })
+    )
   }
   const hostRepository = { get: vi.fn(async (): Promise<ComputeHost | null> => host) }
   const runner = {
@@ -118,13 +131,21 @@ const createHarness = (jobs: ComputeJob[]) => {
       }))
     }))
   }
+  const requestCancellation = vi.fn(async () => {
+    order.push('cancel-requested')
+  })
+  const confirmCancellation = vi.fn(async () => {
+    order.push('cancel-confirmed')
+  })
   const owner = new ComputeJobDeletionOwner({
     jobRepository,
     lifecycle,
     queueManager,
     hostRepository,
     connectionBroker,
-    dispatchTracker
+    dispatchTracker,
+    requestCancellation,
+    confirmCancellation
   })
   owner.bindRuntime(runtime)
   return {
@@ -137,11 +158,122 @@ const createHarness = (jobs: ComputeJob[]) => {
     dispatchTracker,
     runtime,
     queueManager,
-    connectionBroker
+    connectionBroker,
+    requestCancellation,
+    confirmCancellation
   }
 }
 
 describe('ComputeJobDeletionOwner', () => {
+  it('persists cancellation before cleaning an active Job and settles only after success', async () => {
+    const harness = createHarness([job()])
+
+    await expect(
+      harness.owner.cleanupJobRemote({
+        jobId: 'job-1',
+        providerId: 'ssh:cluster',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        disposition: 'cleaned'
+      })
+    ).resolves.toMatchObject({ remote_cleanup_disposition: 'cleaned' })
+
+    expect(harness.order).toEqual([
+      'queue-paused',
+      'poller-paused',
+      'cancel-requested',
+      'dispatch-drained',
+      'remote-cleanup',
+      'cancel-confirmed',
+      'poller-resumed',
+      'queue-resumed'
+    ])
+    expect(harness.jobRepository.settleRemoteCleanup).toHaveBeenCalledOnce()
+  })
+
+  it('cleans a queued Job that is promoted while cleanup pauses its owner', async () => {
+    const jobs = [job({ status: 'queued', remote_handle: undefined })]
+    const harness = createHarness(jobs)
+    harness.queueManager.pauseOwner.mockImplementationOnce(async () => {
+      harness.order.push('queue-paused')
+      jobs[0] = job()
+    })
+
+    await expect(
+      harness.owner.cleanupJobRemote({
+        jobId: 'job-1',
+        providerId: 'ssh:cluster',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        disposition: 'cleaned'
+      })
+    ).resolves.toMatchObject({ remote_cleanup_disposition: 'cleaned' })
+
+    expect(harness.jobRepository.get).toHaveBeenCalledTimes(2)
+    expect(harness.runner.run).toHaveBeenCalledOnce()
+    expect(String(harness.runner.run.mock.calls[0]?.[1])).toContain('cleanup_job_pid 123 || exit 1')
+    expect(harness.order).toEqual([
+      'queue-paused',
+      'poller-paused',
+      'cancel-requested',
+      'dispatch-drained',
+      'remote-cleanup',
+      'cancel-confirmed',
+      'poller-resumed',
+      'queue-resumed'
+    ])
+  })
+
+  it('settles an explicitly abandoned cleanup without touching the remote Job', async () => {
+    const harness = createHarness([job({ status: 'success' })])
+
+    await expect(
+      harness.owner.abandonJobRemoteCleanup({
+        jobId: 'job-1',
+        providerId: 'ssh:cluster',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        disposition: 'abandoned'
+      })
+    ).resolves.toMatchObject({ remote_cleanup_disposition: 'abandoned' })
+
+    expect(harness.order).toEqual([])
+    expect(harness.jobRepository.settleRemoteCleanup).toHaveBeenCalledOnce()
+  })
+
+  it('does not clean a terminal Job before its remote results are harvested', async () => {
+    const harness = createHarness([job({ status: 'success', harvested_at: undefined })])
+
+    await expect(
+      harness.owner.cleanupJobRemote({
+        jobId: 'job-1',
+        providerId: 'ssh:cluster',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        disposition: 'cleaned'
+      })
+    ).rejects.toThrow('Compute Job results must be harvested before remote cleanup.')
+
+    expect(harness.runner.run).not.toHaveBeenCalled()
+    expect(harness.jobRepository.settleRemoteCleanup).not.toHaveBeenCalled()
+  })
+
+  it('requires active Jobs to use cancellation and remote cleanup', async () => {
+    const harness = createHarness([job({ status: 'running' })])
+
+    await expect(
+      harness.owner.abandonJobRemoteCleanup({
+        jobId: 'job-1',
+        providerId: 'ssh:cluster',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        disposition: 'abandoned'
+      })
+    ).rejects.toThrow('Active Compute Jobs must be cancelled and cleaned remotely.')
+
+    expect(harness.jobRepository.settleRemoteCleanup).not.toHaveBeenCalled()
+  })
+
   it('kills only a process still owned by the generated directory, then removes it', () => {
     const rawHandle = job().remote_handle ?? ''
     const handle = JSON.parse(rawHandle) as Parameters<typeof cleanupCommand>[1]
@@ -150,8 +282,10 @@ describe('ComputeJobDeletionOwner', () => {
     expect(command).toContain('process_workdir=$(readlink "/proc/$pid/cwd"')
     expect(command).toContain('command -v lsof')
     expect(command).toContain('lsof -a -p "$pid" -d cwd -Fn')
-    expect(command).toContain('job_pid_is_owned "$pid" || return 0')
-    expect(command).toContain('kill_job_pid 123')
+    expect(command).not.toContain('job_pid_is_owned "$pid" || return 0')
+    expect(command).toContain('cleanup_job_pid() {')
+    expect(command).toContain('case $ownership in 0|1|3) return 0 ;; *) return 2 ;; esac')
+    expect(command).toContain('cleanup_job_pid 123 || exit 1')
     expect(command).not.toContain('kill -TERM -- -123')
     expect(command).toContain('[ ! -L ')
     expect(command).toContain('scratch_root=')
@@ -159,9 +293,32 @@ describe('ComputeJobDeletionOwner', () => {
     expect(command).toContain('[ "$workdir" = "$expected_workdir" ]')
     expect(command).toContain('job.pid')
     expect(command).toContain('rm -rf -- "$workdir"')
-    expect(command).toContain('test -z "$workdir" || test ! -e "$workdir"')
+    expect(command).toContain("test ! -e ~/'.openscience/jobs/job-1'")
     expect(command).not.toContain("rm -rf -- ~/'.openscience/jobs/job-1'")
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'distinguishes an invalid remote workdir from an explicitly absent one',
+    () => {
+      const scratchRoot = mkdtempSync(join(tmpdir(), 'compute-cleanup-'))
+      const jobsRoot = join(scratchRoot, '.openscience', 'jobs')
+      const workdir = join(jobsRoot, 'job-1')
+      mkdirSync(jobsRoot, { recursive: true })
+      writeFileSync(workdir, 'not a directory')
+
+      try {
+        const result = spawnSync('/bin/sh', ['-c', cleanupCommand(workdir, undefined)])
+        expect(result.status).not.toBe(0)
+        expect(existsSync(workdir)).toBe(true)
+
+        rmSync(workdir)
+        const missingResult = spawnSync('/bin/sh', ['-c', cleanupCommand(workdir, undefined)])
+        expect(missingResult.status).toBe(0)
+      } finally {
+        rmSync(scratchRoot, { recursive: true, force: true })
+      }
+    }
+  )
 
   it.each(['ssh_config', 'password'] as const)(
     'cancels and cleans up an active %s job only after owner authority commits',
@@ -195,7 +352,7 @@ describe('ComputeJobDeletionOwner', () => {
         intent: 'job_cleanup'
       })
       const cleanup = String(harness.runner.run.mock.calls[0]?.[1])
-      expect(cleanup).toContain('kill_job_pid 123')
+      expect(cleanup).toContain('cleanup_job_pid 123 || exit 1')
       expect(cleanup).toContain('rm -rf -- "$workdir"')
     }
   )
@@ -217,10 +374,48 @@ describe('ComputeJobDeletionOwner', () => {
 
     expect(harness.runner.run).toHaveBeenCalledOnce()
     const cleanup = String(harness.runner.run.mock.calls[0]?.[1])
-    expect(cleanup).not.toContain('kill_job_pid 123')
-    expect(cleanup).toContain('kill_job_pid "$(cat ')
+    expect(cleanup).not.toContain('cleanup_job_pid 123')
+    expect(cleanup).toContain('cleanup_job_pid "$(cat ')
     expect(harness.lifecycle.deleteOwnerRows).toHaveBeenCalledOnce()
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses to clean a submitted Job whose existing workdir has no PID witness',
+    async () => {
+      const scratchRoot = mkdtempSync(join(tmpdir(), 'compute-submitted-cleanup-'))
+      const workdir = join(scratchRoot, '.openscience', 'jobs', 'job-1')
+      mkdirSync(workdir, { recursive: true })
+      const harness = createHarness([
+        job({ status: 'submitted', remote_handle: undefined, remote_workdir: workdir })
+      ])
+      harness.runner.run.mockImplementationOnce(async (_host, command) => {
+        const result = spawnSync('/bin/sh', ['-c', command])
+        return {
+          exitCode: result.status ?? 1,
+          stdout: '',
+          stderr: result.stderr.toString(),
+          truncated: false,
+          timedOut: false
+        }
+      })
+
+      try {
+        await expect(
+          harness.owner.cleanupJobRemote({
+            jobId: 'job-1',
+            providerId: 'ssh:cluster',
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            disposition: 'cleaned'
+          })
+        ).rejects.toThrow(/remote compute job cleanup failed/i)
+        expect(existsSync(workdir)).toBe(true)
+        expect(harness.jobRepository.settleRemoteCleanup).not.toHaveBeenCalled()
+      } finally {
+        rmSync(scratchRoot, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('removes terminal Job directories during Project deletion', async () => {
     const harness = createHarness([
@@ -249,6 +444,27 @@ describe('ComputeJobDeletionOwner', () => {
     expect(harness.runner.run).toHaveBeenCalledOnce()
   })
 
+  it.each(['cleaned', 'abandoned'] as const)(
+    'deletes an owner without repeating %s remote cleanup after Host removal',
+    async (remoteCleanupDisposition) => {
+      const harness = createHarness([
+        job({
+          status: 'success',
+          remote_handle: undefined,
+          remote_cleanup_disposition: remoteCleanupDisposition
+        })
+      ])
+      harness.hostRepository.get.mockResolvedValue(null)
+
+      await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
+      await harness.owner.commitSessionJobDeletion('project-1', 'session-1')
+
+      expect(harness.hostRepository.get).not.toHaveBeenCalled()
+      expect(harness.connectionBroker.acquire).not.toHaveBeenCalled()
+      expect(harness.lifecycle.deleteOwnerRows).toHaveBeenCalledOnce()
+    }
+  )
+
   it('derives a legacy Job work directory from the retained host scratch root', async () => {
     const harness = createHarness([
       job({ status: 'success', remote_workdir: undefined, remote_handle: undefined })
@@ -263,7 +479,7 @@ describe('ComputeJobDeletionOwner', () => {
       '/scratch/scientist/.openscience/jobs/job-1'
     )
     expect(harness.runner.run.mock.calls[0]?.[1]).toContain(
-      "scratch_root=$(cd -- '/scratch/scientist' 2>/dev/null && pwd -P || true)"
+      "scratch_root=$(cd -- '/scratch/scientist' 2>/dev/null && pwd -P) || exit 1"
     )
   })
 

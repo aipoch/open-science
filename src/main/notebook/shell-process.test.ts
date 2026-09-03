@@ -1,5 +1,4 @@
 import type { ChildProcess } from 'node:child_process'
-import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -160,7 +159,7 @@ describe('notebook shell process behavior', () => {
       expect(env.OPEN_SCIENCE_TEST_SECRET).toBeUndefined()
     })
 
-    it('uses the Windows process-tree terminator for a timed-out shell command', () => {
+    it('waits for process-tree termination before settling a timed-out shell command', async () => {
       const child = {} as ChildProcess
       let finishTermination: ((result: { reaped: boolean }) => void) | undefined
       const terminateTree = vi.fn(
@@ -170,52 +169,18 @@ describe('notebook shell process behavior', () => {
           })
       )
 
-      const termination = terminateShellOnTimeout(child, 'win32', terminateTree)
+      let settled = false
+      const termination = terminateShellOnTimeout(child, terminateTree).then(() => {
+        settled = true
+      })
 
       expect(termination).toBeInstanceOf(Promise)
       expect(terminateTree).toHaveBeenCalledWith(child)
+      await Promise.resolve()
+      expect(settled).toBe(false)
+
       finishTermination?.({ reaped: true })
-      return expect(termination).resolves.toBe(true)
-    })
-
-    it('terminates the dedicated POSIX process group even after its shell leader exits', async () => {
-      vi.useFakeTimers()
-      const signal = vi.spyOn(process, 'kill').mockImplementation(() => true)
-      const child = Object.assign(new EventEmitter(), { pid: 4321 }) as unknown as ChildProcess
-      const terminateTree = vi.fn(async () => ({ reaped: true }))
-
-      try {
-        await expect(terminateShellOnTimeout(child, 'linux', terminateTree)).resolves.toBe(false)
-        expect(signal).toHaveBeenCalledWith(-4321, 'SIGTERM')
-        expect(terminateTree).not.toHaveBeenCalled()
-
-        child.emit('exit', 0, 'SIGTERM')
-        await vi.advanceTimersByTimeAsync(2_000)
-
-        expect(signal).toHaveBeenCalledWith(-4321, 'SIGKILL')
-      } finally {
-        vi.useRealTimers()
-        signal.mockRestore()
-      }
-    })
-
-    it('never derives a POSIX process-group id from a missing or non-positive child pid', async () => {
-      vi.useFakeTimers()
-      const signal = vi.spyOn(process, 'kill').mockImplementation(() => true)
-      const kill = vi.fn(() => true)
-      const child = { pid: 0, kill } as unknown as ChildProcess
-
-      try {
-        await expect(terminateShellOnTimeout(child, 'darwin')).resolves.toBe(false)
-        expect(signal).not.toHaveBeenCalled()
-        expect(kill).toHaveBeenCalledWith('SIGTERM')
-
-        await vi.advanceTimersByTimeAsync(2_000)
-        expect(kill).toHaveBeenCalledWith('SIGKILL')
-      } finally {
-        vi.useRealTimers()
-        signal.mockRestore()
-      }
+      await expect(termination).resolves.toBeUndefined()
     })
   })
 

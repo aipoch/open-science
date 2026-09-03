@@ -27,7 +27,7 @@ import type { PackageMirror } from '../../shared/mirror'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
-import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type { LanguagePreference } from '../../shared/locale'
 import type { AgentFrameworkId } from '../agent-framework'
@@ -281,14 +281,13 @@ export type StoredSettings = {
   // visible OpenScience folder" prompt (by moving, choosing another folder, or declining). Absent
   // means it has never been answered, so an eligible legacy install may still be offered the prompt.
   legacyDataMovePromptDismissedAt?: number
-  // Per-language notebook runtime choice: the app-managed conda env, or the user's own interpreter
-  // (BYO). Absent for a language means "not chosen yet" -> resolves to the managed default. See
-  // RuntimeSelection (shared/notebook-runtime.ts). R is managed-only in v1.
-  notebookRuntimes?: Partial<Record<NotebookLanguage, RuntimeSelection>>
   // Per-language v4 environment enablement: an explicit per-env enabled override map plus the separate
   // per-env package-install authorization, both keyed by envId (interpreter real path). Absent means
   // "use the provenance default" (app-managed/agent-created ON, user-own OFF). See RuntimeEnablement.
   notebookRuntimeEnablement?: Partial<Record<NotebookLanguage, RuntimeEnablement>>
+  // Global policy for Agent-created Notebook Runtime Environments. Absent in historical documents
+  // preserves the former behavior (allowed); only an explicit false blocks Agent-triggered creation.
+  agentEnvironmentCreationEnabled?: boolean
   // Per-language catalog of interpreter paths the user added manually via "Add interpreter…". These
   // are merged into environment discovery (probed + classified user-own) so a manually-picked
   // interpreter shows up as an enable-able runtime card even when it is not on PATH / in a conda root.

@@ -268,36 +268,31 @@ describe('electron renderer contract adapter', () => {
     const port = createPort()
     const adapter = createElectronRendererContractAdapter(port)
 
-    await adapter.invoke('runtime.setSelection', 'python', { kind: 'managed' })
     await adapter.invoke('runtime.listPackages', 'python', 'science')
     await adapter.invoke('runtime.getEnablement', 'r')
     await adapter.invoke('runtime.setEnvironmentEnabled', 'r', 'renv', true, false)
     await adapter.invoke('runtime.setInstallAuthorized', 'python', 'science', true)
     await adapter.invoke('runtime.registerInterpreter', 'python', '/usr/bin/python3')
 
-    expect(port.invoke).toHaveBeenNthCalledWith(1, 'runtime:set-selection', {
-      language: 'python',
-      selection: { kind: 'managed' }
-    })
-    expect(port.invoke).toHaveBeenNthCalledWith(2, 'runtime:list-packages', {
+    expect(port.invoke).toHaveBeenNthCalledWith(1, 'runtime:list-packages', {
       language: 'python',
       envId: 'science'
     })
-    expect(port.invoke).toHaveBeenNthCalledWith(3, 'runtime:get-enablement', {
+    expect(port.invoke).toHaveBeenNthCalledWith(2, 'runtime:get-enablement', {
       language: 'r'
     })
-    expect(port.invoke).toHaveBeenNthCalledWith(4, 'runtime:set-environment-enabled', {
+    expect(port.invoke).toHaveBeenNthCalledWith(3, 'runtime:set-environment-enabled', {
       language: 'r',
       envId: 'renv',
       enabled: true,
       force: false
     })
-    expect(port.invoke).toHaveBeenNthCalledWith(5, 'runtime:set-install-authorized', {
+    expect(port.invoke).toHaveBeenNthCalledWith(4, 'runtime:set-install-authorized', {
       language: 'python',
       envId: 'science',
       authorized: true
     })
-    expect(port.invoke).toHaveBeenNthCalledWith(6, 'runtime:register-interpreter', {
+    expect(port.invoke).toHaveBeenNthCalledWith(5, 'runtime:register-interpreter', {
       language: 'python',
       path: '/usr/bin/python3'
     })

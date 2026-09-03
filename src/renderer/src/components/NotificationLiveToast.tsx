@@ -193,14 +193,25 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
 
   const { notification, projectName, sessionTitle, detailPreview } = notice.lead
   const openLead = async (): Promise<void> => {
+    let completed = false
+    const completeOpen = (): void => {
+      if (completed) return
+      completed = true
+      if (notification.readAt === undefined) {
+        runNotificationTask(() => markRead([notification.id]))
+      }
+      setNotice((current) =>
+        current?.lead.notification.id === notification.id ? undefined : current
+      )
+    }
     let opened = true
     try {
       if (notification.sessionId) {
         opened = useNavigationStore
           .getState()
-          .openSessionById(notification.sessionId, 'notification')
+          .openSessionById(notification.sessionId, 'notification', completeOpen)
       } else if (notification.projectId) {
-        opened = await openNotificationProject(notification.projectId)
+        opened = await openNotificationProject(notification.projectId, completeOpen)
       } else {
         openVisibleNotificationCenter()
       }
@@ -209,10 +220,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
       return
     }
     if (!opened) return
-    if (notification.readAt === undefined) {
-      runNotificationTask(() => markRead([notification.id]))
-    }
-    setNotice(undefined)
+    completeOpen()
   }
 
   return (

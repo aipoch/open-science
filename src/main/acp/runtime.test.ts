@@ -10541,7 +10541,7 @@ describe('ACP runtime session management', () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'], { supportsResume: true })
     const sessionOptions = {
-      settings: '/app/claude/settings.json',
+      settings: { apiKeyHelper: '/app/claude/api-key-helper' },
       plugins: [{ type: 'local', path: '/app/claude' }]
     }
     const runtime = new AcpRuntime({
@@ -10559,10 +10559,28 @@ describe('ACP runtime session management', () => {
     await runtime.resumeSession({ sessionId: 'remote-session-2', cwd: '/workspace' })
 
     expect(fakeAgent.newSessions[0]._meta).toMatchObject({
-      claudeCode: { options: { ...sessionOptions, settingSources: ['user'] } }
+      claudeCode: {
+        options: {
+          plugins: [{ type: 'local', path: '/app/claude' }],
+          settingSources: ['user'],
+          settings: {
+            apiKeyHelper: '/app/claude/api-key-helper',
+            env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' }
+          }
+        }
+      }
     })
     expect(fakeAgent.resumedSessions[0]._meta).toMatchObject({
-      claudeCode: { options: { ...sessionOptions, settingSources: ['user'] } }
+      claudeCode: {
+        options: {
+          plugins: [{ type: 'local', path: '/app/claude' }],
+          settingSources: ['user'],
+          settings: {
+            apiKeyHelper: '/app/claude/api-key-helper',
+            env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' }
+          }
+        }
+      }
     })
   })
 
@@ -16516,7 +16534,13 @@ describe('ACP runtime session management', () => {
               },
               env: {
                 CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
+                CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
                 CLAUDE_CODE_DISABLE_WORKFLOWS: '1'
+              },
+              settings: {
+                env: {
+                  CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'
+                }
               }
             }
           },
@@ -21028,63 +21052,6 @@ describe('ACP runtime session management', () => {
       repository.findRunFinalizationMarker('project-1', claim.runId)
     ).resolves.toMatchObject({ artifactVersionIds: ['version-1'] })
   })
-
-  it.each([
-    { outcome: 'success' as const, promptError: undefined },
-    { outcome: 'failure' as const, promptError: new Error('agent failed after opening the run') }
-  ])(
-    'exposes an active artifact run only while its current-run handoff is live after $outcome',
-    async ({ promptError }) => {
-      const storageRoot = await createTemporaryRoot()
-      const process = new FakeAgentProcess()
-      let currentRunFile = ''
-      let activeRunIds: string[] = []
-      let handoffRunId: string | undefined
-      const fakeAgent = startFakeAgent(process, ['remote-session-1'], {
-        onPrompt: async () => {
-          const handoff = JSON.parse(await readFile(currentRunFile, 'utf8')) as {
-            artifactRunId?: string
-          }
-          handoffRunId = handoff.artifactRunId
-          activeRunIds = runtime.getActiveArtifactRunIds()
-          if (promptError) throw promptError
-        }
-      })
-      const runtime = new AcpRuntime({
-        appVersion: '0.1.0',
-        defaultCwd: '/workspace',
-        spawnAgent: () => asAgentProcess(process),
-        artifacts: {
-          configRoot: storageRoot,
-          dataRoot: storageRoot,
-          projectId: 'default-project',
-          mcpEntryPath: '/app/out/main/index.js',
-          repository: new ArtifactRepository(storageRoot)
-        }
-      })
-
-      const session = await runtime.createSession({ cwd: '/workspace' })
-      currentRunFile = getEnvValue(
-        fakeAgent.newSessions[0].mcpServers[0],
-        'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE'
-      )
-      const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'make a file' })
-
-      if (promptError) {
-        await expect(prompt).rejects.toMatchObject({
-          code: -32603,
-          data: { details: promptError.message }
-        })
-      } else {
-        await expect(prompt).resolves.toBeDefined()
-      }
-
-      expect(handoffRunId).toMatch(/^artifact-run-/)
-      expect(activeRunIds).toEqual([handoffRunId])
-      expect(runtime.getActiveArtifactRunIds()).toEqual([])
-      await expect(readFile(currentRunFile, 'utf8')).resolves.toBe(`${JSON.stringify({})}\n`)
-    }
-  )
 
   it('emits an artifact event with pending files before a prompt stops', async () => {
     const storageRoot = await createTemporaryRoot()

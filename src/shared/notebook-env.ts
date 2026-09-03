@@ -33,9 +33,9 @@ export type ProvisionStatus = {
   version: number
   provisioning: boolean
   bundleSource?: RuntimeBundleSource
-  // True when crash-recovery quarantined the language's app-managed default prefix (an interrupted
-  // worker couldn't be confirmed stopped). The env may still read as ready, so the UI needs this
-  // explicit signal to surface the Reset affordance instead of a normal, healthy-looking card.
+  // True when recovery quarantined the language's app-managed default prefix, or an explicit repair
+  // left its durable marker armed after failing. The env may still read as ready or may be absent, so
+  // the UI needs this signal to surface Reset instead of a healthy card or an ordinary setup retry.
   pythonRecoveryBlocked?: boolean
   rRecoveryBlocked?: boolean
 }

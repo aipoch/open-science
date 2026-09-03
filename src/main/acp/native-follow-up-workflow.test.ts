@@ -651,10 +651,25 @@ describe('AcpNativeFollowUpWorkflow', () => {
     expect(published).toEqual([])
   })
 
-  it('registers notebook inputs only after steering injects', async () => {
-    const registerTurnInputs = vi.fn(async () => undefined)
-    const request = vi.fn(async () => {
-      expect(registerTurnInputs).not.toHaveBeenCalled()
+  it('materializes and advertises notebook inputs before steering, then commits after injection', async () => {
+    const registerTurnInputs = vi.fn(async (input: { materializeOnly?: boolean }) =>
+      input.materializeOnly
+        ? [
+            {
+              sourceKind: 'upload-version' as const,
+              inputFileVersionId: 'upload-version-1',
+              filename: 'samples.csv',
+              notebookPath: 'inputs/samples-123456789abc.csv'
+            }
+          ]
+        : undefined
+    )
+    const request = vi.fn(async (_method: string, params: unknown) => {
+      expect(registerTurnInputs).toHaveBeenCalledWith(
+        expect.objectContaining({ materializeOnly: true })
+      )
+      expect(JSON.stringify(params)).toContain('inputs/samples-123456789abc.csv')
+      expect(JSON.stringify(params)).toContain('use only the exact notebookPath')
       return { outcome: 'injected' }
     })
     const { workflow } = createWorkflow({
@@ -678,7 +693,15 @@ describe('AcpNativeFollowUpWorkflow', () => {
         messageId: 'message-steer-1'
       }
     )
-    expect(registerTurnInputs).toHaveBeenCalledWith({
+    expect(registerTurnInputs).toHaveBeenNthCalledWith(1, {
+      projectId: 'project-1',
+      appSessionId: 'app-1',
+      promptMessageId: 'prompt-live',
+      uploads: [],
+      references: [],
+      materializeOnly: true
+    })
+    expect(registerTurnInputs).toHaveBeenNthCalledWith(2, {
       projectId: 'project-1',
       appSessionId: 'app-1',
       promptMessageId: 'prompt-live',
@@ -716,7 +739,10 @@ describe('AcpNativeFollowUpWorkflow', () => {
       transport: 'acp-steering',
       messageId: 'message-steer-1'
     })
-    expect(registerTurnInputs).not.toHaveBeenCalled()
+    expect(registerTurnInputs).toHaveBeenCalledOnce()
+    expect(registerTurnInputs).toHaveBeenCalledWith(
+      expect.objectContaining({ materializeOnly: true })
+    )
     expect(published).toEqual([{ sessionId: 'app-1', messageId: 'message-steer-1', text: 'late' }])
   })
 
@@ -748,7 +774,7 @@ describe('AcpNativeFollowUpWorkflow', () => {
     ])
   })
 
-  it('does not register notebook inputs when steering is refused', async () => {
+  it('does not commit notebook inputs when steering is refused', async () => {
     const registerTurnInputs = vi.fn(async () => undefined)
     const { workflow } = createWorkflow({
       request: vi.fn(async () => ({})),
@@ -767,7 +793,10 @@ describe('AcpNativeFollowUpWorkflow', () => {
     await expect(workflow.steerFollowUp({ sessionId: 'app-1', text: 'see file' })).resolves.toEqual(
       { injected: false, reason: 'unrecognized-success' }
     )
-    expect(registerTurnInputs).not.toHaveBeenCalled()
+    expect(registerTurnInputs).toHaveBeenCalledOnce()
+    expect(registerTurnInputs).toHaveBeenCalledWith(
+      expect.objectContaining({ materializeOnly: true })
+    )
     expect(published).toEqual([])
   })
 })

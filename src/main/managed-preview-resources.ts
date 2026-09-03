@@ -13,8 +13,16 @@ import type {
   ReleaseManagedPreviewRequest
 } from '../shared/preview-resources'
 import type { ManagedFileReadLease } from './managed-file-versions/service'
+import {
+  exceedsDecodedImagePixelLimit,
+  isPixelLimitedRasterMimeType,
+  MAX_DECODED_IMAGE_PIXELS,
+  readRasterImageDimensions,
+  type RasterImageDimensions
+} from './raster-image-safety'
 
 const MAX_PREVIEW_RANGE_BYTES = 1024 * 1024
+const MAX_IMAGE_HEADER_BYTES = 1024 * 1024
 const MAX_RELEASED_RESOURCE_TOMBSTONES = 1024
 const PREVIEW_SCHEME = 'open-science-preview'
 const MANAGED_PREVIEW_SCHEME = {
@@ -251,13 +259,65 @@ class ManagedPreviewResources {
         throw new Error('Managed preview file changed after admission.')
       }
 
+      const mimeType = inferMimeType(filePath, request.mimeType)
+      // Reused below as the resource's width/height, so consumers learn the exact geometry from
+      // the same header read that enforces the decoded-pixel limit.
+      let imageDimensions: RasterImageDimensions | undefined
+      if (isPixelLimitedRasterMimeType(mimeType)) {
+        const headerLength = Math.min(fileSnapshot.size, MAX_IMAGE_HEADER_BYTES)
+        let header: Buffer
+        if (trustedLease) {
+          const bytes = await trustedLease.readRange(0, headerLength)
+          if (bytes.byteLength !== headerLength) {
+            throw new Error('Image preview changed while reading its dimensions.')
+          }
+          header = Buffer.from(bytes)
+          await trustedLease.verifyUnchanged()
+        } else {
+          const fileHandle = await open(filePath, 'r')
+          try {
+            const before = snapshotFileStat(await fileHandle.stat({ bigint: true }))
+            if (
+              before.size !== fileSnapshot.size ||
+              before.mtimeNs !== fileSnapshot.mtimeNs ||
+              before.dev !== fileSnapshot.dev ||
+              before.ino !== fileSnapshot.ino
+            ) {
+              throw new Error('Image preview changed before reading its dimensions.')
+            }
+            header = Buffer.allocUnsafe(headerLength)
+            if (headerLength > 0) await readExactRange(fileHandle, header, 0)
+            const after = snapshotFileStat(await fileHandle.stat({ bigint: true }))
+            if (
+              after.size !== fileSnapshot.size ||
+              after.mtimeNs !== fileSnapshot.mtimeNs ||
+              after.dev !== fileSnapshot.dev ||
+              after.ino !== fileSnapshot.ino
+            ) {
+              throw new Error('Image preview changed while reading its dimensions.')
+            }
+          } finally {
+            await fileHandle.close()
+          }
+        }
+        const dimensions = readRasterImageDimensions(header, mimeType)
+        if (!dimensions) throw new Error('Could not read image preview dimensions safely.')
+        if (exceedsDecodedImagePixelLimit(dimensions)) {
+          throw new Error(
+            `Image preview exceeds the ${MAX_DECODED_IMAGE_PIXELS.toLocaleString('en-US')}-pixel limit.`
+          )
+        }
+        imageDimensions = dimensions
+      }
+
       const id = this.createId()
       const resource: ManagedPreviewResource = {
         id,
         url: `${PREVIEW_SCHEME}://${id}/${encodeURIComponent(basename(filePath))}`,
         size: fileSnapshot.size,
-        mimeType: inferMimeType(filePath, request.mimeType),
-        version: fileSnapshot.version
+        mimeType,
+        version: fileSnapshot.version,
+        ...(imageDimensions ? { width: imageDimensions.width, height: imageDimensions.height } : {})
       }
 
       this.releasedOwners.delete(id)

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ARTIFACT_FINALIZATION_INVALID_PROOF } from '../../../../shared/artifacts'
 import {
   activateConversationBranch,
   createLinearConversationGraph,
@@ -30,6 +31,7 @@ import {
   loadPersistedSession,
   loadPersistedSessions,
   reconcilePendingArtifacts,
+  retryPendingArtifactFinalization,
   saveSessionInOrder,
   type SessionPersistenceApi
 } from './session-persistence'
@@ -106,6 +108,9 @@ describe('reconcilePendingArtifacts', () => {
       createPersistedSession({
         id: 'session-1',
         projectId: 'proj-1',
+        status: 'error',
+        error: 'Generated file finalization failed: disk temporarily unavailable',
+        errorReportable: true,
         messages: [
           {
             id: 'message-1',
@@ -156,6 +161,11 @@ describe('reconcilePendingArtifacts', () => {
     const session = useSessionStore.getState().sessions.find((item) => item.id === 'session-1')
     expect(session?.messages[0].artifactIds).toEqual(['session-1:message-1:chart.png'])
     expect(session?.artifacts?.map((artifact) => artifact.path)).toEqual([finalized.path])
+    expect(session).toMatchObject({
+      status: 'idle',
+      error: undefined,
+      errorReportable: undefined
+    })
   })
 
   it('leaves messages without pending artifacts untouched', async () => {
@@ -165,6 +175,411 @@ describe('reconcilePendingArtifacts', () => {
     await reconcilePendingArtifacts(api)
 
     expect(api.reconcilePendingArtifacts).not.toHaveBeenCalled()
+  })
+
+  it('preserves already-published message artifacts when native recovery returns only new files', async () => {
+    const pendingPath = '/data/artifacts/proj-1/session-1/.pending/run-1/new.txt'
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'done',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['published-artifact', 'pending-artifact'],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        artifacts: [
+          {
+            id: 'published-artifact',
+            kind: 'managed-file',
+            path: '/data/artifacts/proj-1/session-1/message-1/published.txt',
+            name: 'published.txt'
+          },
+          { id: 'pending-artifact', kind: 'managed-file', path: pendingPath, name: 'new.txt' }
+        ]
+      })
+    ])
+    const finalized = {
+      id: 'version-1',
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      name: 'new.txt',
+      path: '/data/artifacts/proj-1/session-1/version-1/new.txt',
+      fileUrl: 'file:///data/artifacts/proj-1/session-1/version-1/new.txt',
+      size: 3,
+      mtimeMs: 2
+    }
+
+    await reconcilePendingArtifacts({
+      reconcilePendingArtifacts: vi.fn().mockResolvedValue([finalized])
+    })
+
+    expect(useSessionStore.getState().sessions[0].messages[0].artifactIds).toEqual([
+      'published-artifact',
+      'version-1'
+    ])
+  })
+
+  it('continues recovering later Messages when an earlier pending Artifact fails', async () => {
+    const firstPath = '/data/artifacts/proj-1/session-1/.pending/run-1/first.txt'
+    const secondPath = '/data/artifacts/proj-1/session-1/.pending/run-2/second.txt'
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'first',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['pending-first'],
+            createdAt: 1,
+            updatedAt: 1
+          },
+          {
+            id: 'message-2',
+            role: 'agent',
+            content: 'second',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['pending-second'],
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ],
+        artifacts: [
+          { id: 'pending-first', kind: 'managed-file', path: firstPath, name: 'first.txt' },
+          { id: 'pending-second', kind: 'managed-file', path: secondPath, name: 'second.txt' }
+        ]
+      })
+    ])
+    const finalized = {
+      id: 'version-2',
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: 'message-2',
+      name: 'second.txt',
+      path: '/data/artifacts/proj-1/session-1/version-2/second.txt',
+      fileUrl: 'file:///data/artifacts/proj-1/session-1/version-2/second.txt',
+      size: 3,
+      mtimeMs: 3
+    }
+    const api = {
+      reconcilePendingArtifacts: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('first recovery failed'))
+        .mockResolvedValueOnce([finalized])
+    }
+
+    await reconcilePendingArtifacts(api)
+
+    expect(api.reconcilePendingArtifacts).toHaveBeenCalledTimes(2)
+    expect(useSessionStore.getState().sessions[0].messages[1].artifactIds).toEqual(['version-2'])
+  })
+
+  it('clears the Artifact error after an explicit retry replaces every pending reference', async () => {
+    const pendingPath = '/data/artifacts/proj-1/session-1/.pending/run-1/chart.png'
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        status: 'error',
+        error: 'Generated file finalization failed: disk temporarily unavailable',
+        errorReportable: true,
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'done',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['pending-artifact'],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        artifacts: [
+          {
+            id: 'pending-artifact',
+            kind: 'managed-file',
+            path: pendingPath,
+            name: 'chart.png'
+          }
+        ]
+      })
+    ])
+    const finalized = {
+      id: 'version-1',
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      name: 'chart.png',
+      path: '/data/artifacts/proj-1/session-1/version-1/chart.png',
+      fileUrl: 'file:///data/artifacts/proj-1/session-1/version-1/chart.png',
+      size: 3,
+      mtimeMs: 2
+    }
+    const api = { reconcilePendingArtifacts: vi.fn().mockResolvedValue([finalized]) }
+
+    await retryPendingArtifactFinalization('session-1', api)
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      error: undefined,
+      errorReportable: undefined,
+      messages: [{ artifactIds: ['version-1'] }]
+    })
+  })
+
+  it('retries a native provenance Artifact by its durable Version identity', async () => {
+    const nativePath =
+      '/data/artifacts/proj-1/.provenance/artifacts/artifact-1/versions/version-1/chart.png'
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        status: 'error',
+        error: 'Generated file finalization failed: disk temporarily unavailable',
+        errorReportable: true,
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'done',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['version-1'],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        artifacts: [
+          {
+            id: 'version-1',
+            artifactId: 'artifact-1',
+            versionId: 'version-1',
+            kind: 'managed-file',
+            path: nativePath,
+            name: 'chart.png'
+          }
+        ]
+      })
+    ])
+    const finalized = {
+      id: 'version-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1',
+      runId: 'run-1',
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      name: 'chart.png',
+      path: nativePath,
+      fileUrl: `file://${nativePath}`,
+      size: 3,
+      mtimeMs: 2
+    }
+    const api = { reconcilePendingArtifacts: vi.fn().mockResolvedValue([finalized]) }
+
+    await retryPendingArtifactFinalization('session-1', api)
+
+    expect(api.reconcilePendingArtifacts).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      pendingPaths: [],
+      artifactVersionIds: ['version-1']
+    })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      error: undefined,
+      errorReportable: undefined,
+      messages: [{ artifactIds: ['version-1'] }]
+    })
+  })
+
+  it('records an invalid native recovery proof as a terminal failure', async () => {
+    const nativePath =
+      '/data/artifacts/proj-1/.provenance/artifacts/artifact-1/versions/version-1/chart.png'
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        status: 'error',
+        error: 'Generated file finalization failed: disk temporarily unavailable',
+        errorReportable: true,
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'done',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['version-1'],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        artifacts: [
+          {
+            id: 'version-1',
+            artifactId: 'artifact-1',
+            versionId: 'version-1',
+            kind: 'managed-file',
+            path: nativePath,
+            name: 'chart.png'
+          }
+        ]
+      })
+    ])
+    const api = {
+      reconcilePendingArtifacts: vi.fn().mockResolvedValue({
+        ok: false,
+        code: ARTIFACT_FINALIZATION_INVALID_PROOF,
+        message: 'Native Artifact finalization proof is invalid.'
+      })
+    } as never
+
+    await expect(retryPendingArtifactFinalization('session-1', api)).rejects.toMatchObject({
+      code: ARTIFACT_FINALIZATION_INVALID_PROOF
+    })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error:
+        'Generated file finalization cannot be retried: Native Artifact finalization proof is invalid.',
+      errorReportable: true
+    })
+  })
+
+  it('keeps native-only recovery unresolved when startup and manual retries return no Version', async () => {
+    const nativePath =
+      '/data/artifacts/proj-1/.provenance/artifacts/artifact-1/versions/version-1/chart.png'
+    const originalError = 'Generated file finalization failed: disk temporarily unavailable'
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        status: 'error',
+        error: originalError,
+        errorReportable: true,
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'done',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['version-1'],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        artifacts: [
+          {
+            id: 'version-1',
+            artifactId: 'artifact-1',
+            versionId: 'version-1',
+            kind: 'managed-file',
+            path: nativePath,
+            name: 'chart.png'
+          }
+        ]
+      })
+    ])
+    const api = { reconcilePendingArtifacts: vi.fn().mockResolvedValue([]) }
+
+    await reconcilePendingArtifacts(api)
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: originalError,
+      errorReportable: true
+    })
+    await expect(retryPendingArtifactFinalization('session-1', api)).rejects.toThrow(
+      /did not resolve all native Versions/u
+    )
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error:
+        'Generated file finalization failed: Artifact finalization did not resolve all native Versions.',
+      errorReportable: true
+    })
+  })
+
+  it('keeps an unresolved compatibility reference when native recovery succeeds', async () => {
+    const nativePath =
+      '/data/artifacts/proj-1/.provenance/artifacts/artifact-1/versions/version-1/chart.png'
+    const pendingPath = '/data/artifacts/proj-1/session-1/.pending/run-2/report.md'
+    useSessionStore.getState().hydrateSessions([
+      createPersistedSession({
+        id: 'session-1',
+        projectId: 'proj-1',
+        status: 'error',
+        error: 'Generated file finalization failed: disk temporarily unavailable',
+        errorReportable: true,
+        messages: [
+          {
+            id: 'message-1',
+            role: 'agent',
+            content: 'done',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: ['version-1', 'pending-report'],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        artifacts: [
+          {
+            id: 'version-1',
+            artifactId: 'artifact-1',
+            versionId: 'version-1',
+            kind: 'managed-file',
+            path: nativePath,
+            name: 'chart.png'
+          },
+          {
+            id: 'pending-report',
+            kind: 'managed-file',
+            path: pendingPath,
+            name: 'report.md'
+          }
+        ]
+      })
+    ])
+    const finalizedNative = {
+      id: 'version-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1',
+      runId: 'run-1',
+      projectId: 'proj-1',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      name: 'chart.png',
+      path: nativePath,
+      fileUrl: `file://${nativePath}`,
+      size: 3,
+      mtimeMs: 2
+    }
+    const api = { reconcilePendingArtifacts: vi.fn().mockResolvedValue([finalizedNative]) }
+
+    await expect(retryPendingArtifactFinalization('session-1', api)).rejects.toThrow(
+      /did not resolve all pending files/u
+    )
+
+    expect(useSessionStore.getState().sessions[0].messages[0].artifactIds).toEqual(
+      expect.arrayContaining(['version-1', 'pending-report'])
+    )
   })
 
   it('re-finalizes pending artifacts referenced only by an inactive conversation Branch', async () => {
@@ -2744,9 +3159,10 @@ describe('renderer session persistence bridge', () => {
   })
 
   it('rebases an explicit Session save over a disjoint concurrent main-process update', async () => {
-    const base = createPersistedSession({ revision: 8 })
+    const base = createPersistedSession({ revision: 8, computeConcurrencyLimit: 1 })
     const submitted = createPersistedSession({
       revision: 8,
+      computeConcurrencyLimit: 2,
       messages: [
         {
           id: 'message-1',
@@ -2762,6 +3178,7 @@ describe('renderer session persistence bridge', () => {
     })
     const latest = createPersistedSession({
       revision: 9,
+      computeConcurrencyLimit: 3,
       runtimeContext: {
         version: 1,
         revision: 1,
@@ -2810,6 +3227,7 @@ describe('renderer session persistence bridge', () => {
     await expect(explicitSave).resolves.toMatchObject({
       revision: 10,
       messages: submitted.messages,
+      computeConcurrencyLimit: latest.computeConcurrencyLimit,
       runtimeContext: latest.runtimeContext
     })
     await expect(laterSave).resolves.toMatchObject({
@@ -2820,6 +3238,7 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession.mock.calls[1][0]).toMatchObject({
       revision: 9,
       messages: submitted.messages,
+      computeConcurrencyLimit: latest.computeConcurrencyLimit,
       runtimeContext: latest.runtimeContext
     })
     expect(saveSession.mock.calls[2][0]).toMatchObject({

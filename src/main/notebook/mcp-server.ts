@@ -49,7 +49,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Retry once at most; repeated kernel-process failures mean stop Notebook tools and report the failure.',
   'After OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED, call `request_network_access` with the exact hostname, runtime, reason, and failed bash command when applicable. Never call speculatively; retry only after an allowed result.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',
-  'For final files, call `write_artifact_file` from `open-science-artifacts` first with `source: { "kind": "localPath", "path": "plot.png" }`, the SAME relative filename you saved with, and `producerRunId` set to the exact `runId` returned by the execution. Inline only small text.',
+  'Call `write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })` from `open-science-artifacts`. Reuse saved relative filename and runId; inline small text. On validation errors, correct once; never repeat identical failed arguments.',
   '</open_science_notebook_instructions>'
 ].join('\n')
 
@@ -276,8 +276,7 @@ type NotebookToolContent =
 const notebookRpcSignal = (
   method: string,
   signal: AbortSignal | undefined
-): AbortSignal | undefined =>
-  method === 'executeControl' || method === 'executeShell' ? undefined : signal
+): AbortSignal | undefined => (method === 'executeControl' ? undefined : signal)
 
 // Creates the ACP MCP-server declaration that launches this app bundle in notebook stdio mode.
 const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest): McpServerStdio => {
@@ -365,9 +364,9 @@ const callNotebookRpc = async (
           projectId
         }
       } satisfies RpcRequest),
-      // Control REPL and shell execution do not yet consume cancellation below the RPC boundary.
-      // Keep their transport attached so Agent cancellation cannot report completion while they
-      // continue mutating state. Python/R execution owns its AbortSignal end to end.
+      // Control REPL does not yet consume cancellation below the RPC boundary. Keep its transport
+      // attached so Agent cancellation cannot report completion while it continues mutating state.
+      // Python/R and shell execution own their AbortSignal end to end.
       signal: notebookRpcSignal(method, signal)
     },
     'Notebook RPC'
@@ -386,7 +385,10 @@ const callNotebookRpc = async (
 // needs the transport that omits Undici's response-headers deadline; short methods retain the
 // ordinary transport.
 const resolveNotebookRpcFetch = (method: string): typeof fetchLocalRpc =>
-  method === 'execute' || method === 'executeControl' || method === 'requestNetworkAccess'
+  method === 'execute' ||
+  method === 'executeControl' ||
+  method === 'executeShell' ||
+  method === 'requestNetworkAccess'
     ? fetchLongLivedLocalRpc
     : fetchLocalRpc
 

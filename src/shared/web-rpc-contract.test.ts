@@ -81,6 +81,7 @@ describe('Web RPC contract', () => {
       'compute.jobsList',
       'compute.jobsMarkConsumed',
       'compute.jobsPendingNotification',
+      'compute.jobsSetRemoteCleanup',
       'compute.jobsTransitionAnalysis',
       'compute.list',
       'compute.listDir',
@@ -135,16 +136,16 @@ describe('Web RPC contract', () => {
     ])
     expect(invokePaths.filter((path) => path.startsWith('runtime.'))).toEqual([
       'runtime.describeUsage',
+      'runtime.getAgentEnvironmentCreationEnabled',
       'runtime.getEnablement',
       'runtime.listEnvironments',
       'runtime.listPackageCounts',
       'runtime.listPackages',
       'runtime.pickInterpreter',
       'runtime.registerInterpreter',
+      'runtime.setAgentEnvironmentCreationEnabled',
       'runtime.setEnvironmentEnabled',
       'runtime.setInstallAuthorized',
-      'runtime.setSelection',
-      'runtime.survey',
       'runtime.unregisterInterpreter'
     ])
     expect(eventPaths.filter((path) => path.startsWith('notebook.'))).toEqual([

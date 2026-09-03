@@ -863,6 +863,85 @@ describe('SpecialistsPanel', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'research-synth' })
   })
 
+  it.each([
+    {
+      code: 'candidate-expired' as const,
+      copy: 'This package preview expired. Preview the ZIP again before installing.',
+      action: 'Preview again'
+    },
+    {
+      code: 'revision-conflict' as const,
+      copy: 'This Specialist changed after the preview. Create a fresh preview before installing.',
+      action: 'Preview again'
+    },
+    {
+      code: 'recovery-failed' as const,
+      copy: 'Open Science could not recover an earlier package operation. Restart the app before trying again.',
+      action: 'Open data folder'
+    },
+    {
+      code: 'rollback-failed' as const,
+      copy: 'Installation could not be rolled back safely. Restart the app before trying again.',
+      action: 'Open data folder'
+    }
+  ])(
+    'explains $code without exposing the internal package code',
+    async ({ code, copy, action }) => {
+      const packagePreview = {
+        candidateToken: `candidate-${code}`,
+        summary: {
+          id: 'research-synth',
+          version: '1.0.0',
+          name: 'Research Synthesizer',
+          description: 'Synthesizes evidence.',
+          source: 'zip' as const,
+          bundledSkillIds: [],
+          requiredSkillIds: [],
+          builtinSkillIds: [],
+          connectorIds: [],
+          skills: []
+        },
+        diagnostics: [],
+        installable: true
+      }
+      const installPackage = vi.fn().mockResolvedValue({ status: 'failed', code })
+      const cancelPackage = vi.fn().mockImplementation(async () => {
+        useSpecialistStore.setState({ packagePreview: undefined })
+      })
+      const selectPackage = vi.fn().mockResolvedValue({ cancelled: true })
+      useSpecialistStore.setState({
+        packagePreview,
+        installPackage,
+        cancelPackage,
+        selectPackage
+      })
+
+      await act(async () => {
+        root.render(<SpecialistsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+      })
+      await act(async () => {
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+          .find((button) => button.textContent === 'Next')
+          ?.click()
+      })
+
+      expect(document.body.textContent).toContain(copy)
+      expect(document.body.textContent).not.toContain(code)
+      const recoveryAction = Array.from(
+        document.body.querySelectorAll<HTMLButtonElement>('button')
+      ).find((button) => button.textContent === action)
+      expect(recoveryAction).toBeDefined()
+
+      await act(async () => recoveryAction?.click())
+      if (action === 'Preview again') {
+        expect(cancelPackage).toHaveBeenCalledOnce()
+        expect(selectPackage).toHaveBeenCalledOnce()
+      } else {
+        expect(window.api.storage.revealAppStorage).toHaveBeenCalledOnce()
+      }
+    }
+  )
+
   it('requires the approved destructive second confirmation for an overwrite', async () => {
     const preview = {
       candidateToken: 'overwrite-1',
@@ -1897,6 +1976,51 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).toContain(
       'This removes the Marketplace Specialist from this device.'
     )
+  })
+
+  it('marks a Marketplace Specialist whose source was removed and links source management', async () => {
+    const managed = {
+      ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),
+      id: 'managed-specialist',
+      origin: 'marketplace' as const,
+      packageVersion: '1.0.0',
+      marketplaceProvenance: {
+        sourceId: 'github-removed',
+        publisher: 'Example Publisher',
+        version: '1.0.0'
+      }
+    }
+    useSpecialistStore.setState({ items: [managed, { kind: 'reviewer', id: 'reviewer' }] })
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [managed, { kind: 'reviewer', id: 'reviewer' }],
+      integrity: { status: 'ok' }
+    })
+    useMarketplaceStore.setState({
+      snapshot: { sources: [], specialists: [], failures: [] }
+    })
+    const onNavigate = vi.fn()
+
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    })
+    expect(document.body.textContent).toContain('Source removed')
+
+    await act(async () => {
+      root.render(
+        <SpecialistsPanel view={{ kind: 'edit', id: managed.id }} onNavigate={onNavigate} />
+      )
+    })
+
+    expect(document.body.textContent).toContain('Marketplace source removed')
+    expect(document.body.textContent).toContain(
+      'This Specialist remains installed, but updates are unavailable until its Marketplace source is added again.'
+    )
+    const manageSources = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent === 'Manage Marketplace sources')
+    expect(manageSources).toBeDefined()
+    fireEvent.click(manageSources!)
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'marketplace-sources' })
   })
 })
 

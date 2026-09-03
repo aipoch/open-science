@@ -51,6 +51,7 @@ type ConnectorIntegrationWorkflows = Pick<
   | 'authenticateCustomServer'
   | 'cancelCustomServerAuthentication'
   | 'disconnectCustomServer'
+  | 'retryConnectorProjection'
   | 'retryCustomServer'
 >
 
@@ -218,6 +219,11 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     OwnerArgs<ConnectorIntegrationWorkflows, 'disconnectCustomServer'>,
     OwnerResult<ConnectorIntegrationWorkflows, 'disconnectCustomServer'>
   >('settings:disconnect-custom-server'),
+  retryConnectorProjection: defineApplicationCommand<
+    'settings:retry-connector-projection',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'retryConnectorProjection'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'retryConnectorProjection'>
+  >('settings:retry-connector-projection'),
   retryCustomServer: defineApplicationCommand<
     'settings:retry-custom-server',
     OwnerArgs<ConnectorIntegrationWorkflows, 'retryCustomServer'>,
@@ -285,6 +291,7 @@ const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
     settingsIntegrationApplicationCommands.authenticateCustomServer,
     settingsIntegrationApplicationCommands.cancelCustomServerAuthentication,
     settingsIntegrationApplicationCommands.disconnectCustomServer,
+    settingsIntegrationApplicationCommands.retryConnectorProjection,
     settingsIntegrationApplicationCommands.retryCustomServer
   ] as const
 )
@@ -404,6 +411,10 @@ const registerIntegrationSettingsApplicationCommands = (
       'settings:disconnect-custom-server': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:disconnect-custom-server')
         return dependencies.connectors.disconnectCustomServer(args[0])
+      },
+      'settings:retry-connector-projection': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:retry-connector-projection')
+        return dependencies.connectors.retryConnectorProjection()
       },
       'settings:retry-custom-server': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:retry-custom-server')

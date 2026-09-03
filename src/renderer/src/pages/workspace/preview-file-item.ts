@@ -234,7 +234,8 @@ export const createPreviewFileItemFromPdfContext = (
     size: context.sizeBytes,
     source: isArtifact ? undefined : 'upload',
     artifactId: isArtifact ? context.sourceFileId : undefined,
-    selectedVersionId: isArtifact ? context.sourceVersionId : undefined
+    managedFileId: context.sourceFileId,
+    selectedVersionId: context.sourceVersionId
   })
 }
 

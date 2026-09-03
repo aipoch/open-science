@@ -45,6 +45,9 @@ const CLAUDE_CODE_NATIVE_DELEGATION_TOOLS = Object.freeze([
 // Shell execution is app-owned so every framework follows the Notebook runtime's managed working
 // directory, environment-mutation guard, permission identity, and durable Run recording contract.
 const CLAUDE_CODE_NATIVE_EXECUTION_TOOLS = Object.freeze(['Bash'] as const)
+const CLAUDE_CODE_DISABLED_AUTO_MEMORY_ENV = Object.freeze({
+  CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'
+})
 
 const recordValue = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -155,8 +158,28 @@ export const claudeCodeFramework: AgentFramework = {
       disableWorkflows: true,
       workflowKeywordTriggerEnabled: false
     })
+    const configuredSettings = sessionOptions.settings
+    // The ACP adapter resolves string paths against the later session cwd, after this synchronous
+    // boundary has lost the chance to enforce settings.env. Require callers to resolve files first
+    // so app-owned policy cannot be reopened by a higher-priority settings file.
+    if (typeof configuredSettings === 'string') {
+      throw new Error(
+        'Claude Code session settings must be resolved before building ACP session metadata.'
+      )
+    }
+    const settingsValues = recordValue(configuredSettings)
+    // Claude applies settings.env after the subprocess env, so enforce the same session-only flag
+    // in the programmatic settings tier while preserving app-owned settings and their environment.
+    const settings = Object.freeze({
+      ...settingsValues,
+      env: Object.freeze({
+        ...recordValue(settingsValues.env),
+        ...CLAUDE_CODE_DISABLED_AUTO_MEMORY_ENV
+      })
+    })
     const env = Object.freeze({
       ...recordValue(sessionOptions.env),
+      ...CLAUDE_CODE_DISABLED_AUTO_MEMORY_ENV,
       CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
       CLAUDE_CODE_DISABLE_WORKFLOWS: '1'
     })
@@ -174,6 +197,7 @@ export const claudeCodeFramework: AgentFramework = {
           ...(hooks !== undefined ? { hooks } : {}),
           disallowedTools,
           managedSettings,
+          settings,
           env,
           ...(ctx.skillWhitelist !== undefined ? { skills: ctx.skillWhitelist } : {})
         }

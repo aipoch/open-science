@@ -311,7 +311,7 @@ const PermissionsPanel = ({
         ) : null}
       </SettingsSection>
 
-      <div className="sticky top-0 z-10 -mx-5 mt-5 mb-2 border-t border-border bg-card px-5 py-5">
+      <div className="sticky top-0 z-10 -mx-5 mt-5 mb-2 bg-card px-5 py-5">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-base font-semibold text-foreground">
@@ -430,7 +430,6 @@ const PermissionsPanel = ({
                     </Button>
                   }
                   aria-labelledby={`permission-family-${id}`}
-                  className="border-b border-border pb-4 last:border-b-0 last:pb-0"
                   headerClassName="flex-col gap-3 sm:flex-row sm:items-start"
                   actionClassName="self-start"
                   contentClassName="mt-1"

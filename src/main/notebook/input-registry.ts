@@ -1,10 +1,15 @@
 import type { FileReference } from '../../shared/artifacts'
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
-import { parseNotebookInputPreviewKey, type NotebookRunInputFile } from '../../shared/notebook'
+import {
+  parseNotebookInputPreviewKey,
+  type NotebookPromptInput,
+  type NotebookRunInputFile
+} from '../../shared/notebook'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
 import type { ImmutableInputContentLease } from '../immutable-input-authority'
 import { readBoundedManagedFilePreviewLease } from '../managed-file-preview'
+import { materializeNotebookPromptInput } from './prompt-input-materialization'
 
 type RegisterNotebookTurnInputsRequest = {
   projectId: string
@@ -12,6 +17,7 @@ type RegisterNotebookTurnInputsRequest = {
   promptMessageId: string
   uploads: UploadedAttachment[]
   references: FileReference[]
+  materializeOnly?: boolean
 }
 
 type GetNotebookTurnInputsRequest = Pick<
@@ -45,6 +51,7 @@ type NotebookInputPreviewTarget = {
 }
 
 type NotebookInputRegistryOptions = {
+  storageRoot: string
   inputAuthority: Pick<
     ImmutableInputAuthority,
     'openContent' | 'resolveVersion' | 'stageContent' | 'validateVersion'
@@ -110,7 +117,7 @@ class NotebookInputRegistry {
 
   constructor(private readonly options: NotebookInputRegistryOptions) {}
 
-  async registerTurn(request: RegisterNotebookTurnInputsRequest): Promise<void> {
+  async registerTurn(request: RegisterNotebookTurnInputsRequest): Promise<NotebookPromptInput[]> {
     const inputs: NotebookRunInputFile[] = []
     for (const upload of request.uploads) {
       if (!upload.versionId) {
@@ -155,7 +162,19 @@ class NotebookInputRegistry {
     if (existing && existing.fingerprint !== fingerprint) {
       throw new Error('Notebook turn inputs conflict with an existing immutable registration.')
     }
-    this.turns.set(key, { fingerprint, inputs: deduplicated })
+    const promptInputs = await Promise.all(
+      deduplicated.map(async (input) =>
+        materializeNotebookPromptInput({
+          storageRoot: this.options.storageRoot,
+          projectId: request.projectId,
+          appSessionId: request.appSessionId,
+          input,
+          stagedPath: await this.options.inputAuthority.stageContent(input, request.appSessionId)
+        })
+      )
+    )
+    if (!request.materializeOnly) this.turns.set(key, { fingerprint, inputs: deduplicated })
+    return promptInputs
   }
 
   getTurnInputs(request: GetNotebookTurnInputsRequest): NotebookRunInputFile[] {

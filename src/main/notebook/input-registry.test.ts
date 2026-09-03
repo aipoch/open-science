@@ -1,7 +1,17 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -12,6 +22,7 @@ import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { NotebookInputRegistry } from './input-registry'
 import { createNotebookInputPreviewKey } from '../../shared/notebook'
 import { getNotebookInputRoot } from './input-staging'
+import { getNotebookDataRoot } from './repository'
 
 // Hosted Windows runners migrate a fresh database for each case under disk
 // contention. The Windows full-test workflow default is 60s; the heavier
@@ -143,7 +154,7 @@ const createArtifact = async (input: {
 }
 
 const setup = async (): Promise<NotebookInputRegistry> => {
-  storageRoot = await mkdtemp(join(tmpdir(), 'open-science-input-registry-'))
+  storageRoot = await realpath(await mkdtemp(join(tmpdir(), 'open-science-input-registry-')))
   client = createProjectDbClient(storageRoot)
   await migrateApplicationDatabase(client)
   await client.project.createMany({
@@ -153,6 +164,7 @@ const setup = async (): Promise<NotebookInputRegistry> => {
     ]
   })
   return new NotebookInputRegistry({
+    storageRoot,
     inputAuthority: new ImmutableInputAuthority({
       storageRoot,
       managedFileVersions: new ManagedFileVersionService({
@@ -175,6 +187,85 @@ const setup = async (): Promise<NotebookInputRegistry> => {
 }
 
 describe('NotebookInputRegistry', () => {
+  it('rejects a replaced Notebook data-root symlink before materializing prompt inputs', async () => {
+    const registry = await setup()
+    await createUpload({
+      projectId: 'project-1',
+      sessionId: 'source-session-1',
+      uploadFileId: 'upload-1',
+      versionId: 'upload-version-1',
+      filename: 'groups.csv',
+      content: 'group\nA\n'
+    })
+    const dataRoot = getNotebookDataRoot(storageRoot!, 'project-1', 'active-session')
+    const outsideRoot = join(storageRoot!, 'outside')
+    await mkdir(dirname(dataRoot), { recursive: true })
+    await mkdir(outsideRoot)
+    await symlink(outsideRoot, dataRoot, process.platform === 'win32' ? 'junction' : 'dir')
+
+    await expect(
+      registry.registerTurn({
+        projectId: 'project-1',
+        appSessionId: 'active-session',
+        promptMessageId: 'prompt-1',
+        uploads: [
+          {
+            id: 'upload-1',
+            versionId: 'upload-version-1',
+            versionNumber: 1,
+            sessionId: 'source-session-1',
+            name: 'groups.csv',
+            originalName: 'groups.csv',
+            path: '/untrusted-renderer-path',
+            size: 8
+          }
+        ],
+        references: []
+      })
+    ).rejects.toThrow('trusted Notebook storage')
+    await expect(
+      readFile(join(outsideRoot, 'inputs', 'groups-dbdc13461d5e.csv'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('materializes prompt inputs without committing a refused turn registration', async () => {
+    const registry = await setup()
+    await createUpload({
+      projectId: 'project-1',
+      sessionId: 'source-session-1',
+      uploadFileId: 'upload-1',
+      versionId: 'upload-version-1',
+      filename: 'groups.csv',
+      content: 'group\nA\n'
+    })
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'active-session',
+      promptMessageId: 'prompt-1',
+      uploads: [
+        {
+          id: 'upload-1',
+          versionId: 'upload-version-1',
+          versionNumber: 1,
+          sessionId: 'source-session-1',
+          name: 'groups.csv',
+          originalName: 'groups.csv',
+          path: '/untrusted-renderer-path',
+          size: 8
+        }
+      ],
+      references: []
+    }
+
+    await expect(registry.registerTurn({ ...request, materializeOnly: true })).resolves.toEqual([
+      expect.objectContaining({ notebookPath: 'inputs/groups-dbdc13461d5e.csv' })
+    ])
+    expect(registry.getTurnInputs(request)).toEqual([])
+
+    await registry.registerTurn(request)
+    expect(registry.getTurnInputs(request)).toHaveLength(1)
+  })
+
   it('freezes exact Upload and Artifact Versions in turn order without exposing absolute paths', async () => {
     const registry = await setup()
     await createUpload({
@@ -194,7 +285,7 @@ describe('NotebookInputRegistry', () => {
       content: 'value\n1\n'
     })
 
-    await registry.registerTurn({
+    const promptInputs = await registry.registerTurn({
       projectId: 'project-1',
       appSessionId: 'active-session',
       promptMessageId: 'prompt-1',
@@ -221,6 +312,41 @@ describe('NotebookInputRegistry', () => {
         }
       ]
     })
+
+    expect(promptInputs).toEqual([
+      {
+        sourceKind: 'upload-version',
+        inputFileVersionId: 'upload-version-1',
+        filename: 'groups.csv',
+        notebookPath: 'inputs/groups-dbdc13461d5e.csv'
+      },
+      {
+        sourceKind: 'artifact-version',
+        inputFileVersionId: 'artifact-version-1',
+        filename: 'normalized.csv',
+        notebookPath: 'inputs/normalized-1a8098611195.csv'
+      }
+    ])
+    expect(promptInputs.every(({ notebookPath }) => !isAbsolute(notebookPath))).toBe(true)
+    expect(promptInputs.every(({ notebookPath }) => !notebookPath.includes('..'))).toBe(true)
+    await expect(
+      readFile(
+        join(
+          getNotebookDataRoot(storageRoot!, 'project-1', 'active-session'),
+          promptInputs[0]!.notebookPath
+        ),
+        'utf8'
+      )
+    ).resolves.toBe('group\nA\n')
+    await expect(
+      readFile(
+        join(
+          getNotebookDataRoot(storageRoot!, 'project-1', 'active-session'),
+          promptInputs[1]!.notebookPath
+        ),
+        'utf8'
+      )
+    ).resolves.toBe('value\n1\n')
 
     const inputs = registry.getTurnInputs({
       projectId: 'project-1',
@@ -284,7 +410,12 @@ describe('NotebookInputRegistry', () => {
           }
         ]
       })
-    ).resolves.toBeUndefined()
+    ).resolves.toEqual([
+      expect.objectContaining({
+        inputFileVersionId: 'artifact-version-1',
+        notebookPath: 'inputs/normalized-1a8098611195.csv'
+      })
+    ])
 
     expect(
       registry.getTurnInputs({
@@ -298,6 +429,98 @@ describe('NotebookInputRegistry', () => {
         inputFileVersionId: 'artifact-version-1'
       })
     ])
+  })
+
+  it('keeps same-name input Versions distinct without nested or parent-relative paths', async () => {
+    const registry = await setup()
+    await createUpload({
+      projectId: 'project-1',
+      sessionId: 'source-session-1',
+      uploadFileId: 'upload-1',
+      versionId: 'upload-version-1',
+      filename: 'groups.csv',
+      content: 'group\nA\n'
+    })
+    await createUpload({
+      projectId: 'project-1',
+      sessionId: 'source-session-2',
+      uploadFileId: 'upload-2',
+      versionId: 'upload-version-2',
+      filename: 'groups.csv',
+      content: 'group\nB\n'
+    })
+
+    const promptInputs = await registry.registerTurn({
+      projectId: 'project-1',
+      appSessionId: 'active-session',
+      promptMessageId: 'prompt-1',
+      uploads: [
+        {
+          id: 'upload-1',
+          versionId: 'upload-version-1',
+          versionNumber: 1,
+          sessionId: 'source-session-1',
+          name: 'groups.csv',
+          originalName: 'groups.csv',
+          path: '/ignored-a',
+          size: 8
+        },
+        {
+          id: 'upload-2',
+          versionId: 'upload-version-2',
+          versionNumber: 1,
+          sessionId: 'source-session-2',
+          name: 'groups.csv',
+          originalName: 'groups.csv',
+          path: '/ignored-b',
+          size: 8
+        }
+      ],
+      references: []
+    })
+
+    expect(promptInputs.map(({ notebookPath }) => notebookPath)).toEqual([
+      'inputs/groups-dbdc13461d5e.csv',
+      'inputs/groups-872ae8afd45b.csv'
+    ])
+    expect(promptInputs.every(({ notebookPath }) => notebookPath.split('/').length === 2)).toBe(
+      true
+    )
+  })
+
+  it('keeps a near-limit input name portable after adding its immutable suffix', async () => {
+    const registry = await setup()
+    const filename = `${'a'.repeat(240)}.csv`
+    await createUpload({
+      projectId: 'project-1',
+      sessionId: 'source-session-1',
+      uploadFileId: 'upload-1',
+      versionId: 'upload-version-1',
+      filename,
+      content: 'group\nA\n'
+    })
+
+    const [promptInput] = await registry.registerTurn({
+      projectId: 'project-1',
+      appSessionId: 'active-session',
+      promptMessageId: 'prompt-1',
+      uploads: [
+        {
+          id: 'upload-1',
+          versionId: 'upload-version-1',
+          versionNumber: 1,
+          sessionId: 'source-session-1',
+          name: filename,
+          originalName: filename,
+          path: '/ignored',
+          size: 8
+        }
+      ],
+      references: []
+    })
+
+    expect(Buffer.byteLength(promptInput!.notebookPath.split('/').at(-1)!)).toBeLessThanOrEqual(255)
+    expect(promptInput!.notebookPath).toMatch(/^inputs\/a+-dbdc13461d5e\.csv$/)
   })
 
   it('upgrades only resolver-used Versions on an execution-scoped run lease', async () => {

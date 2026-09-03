@@ -182,14 +182,14 @@ const SkillDetailView = ({
       />
 
       {/* Files: the rendered SKILL.md body. */}
-      <section className="mt-6 border-t border-border pt-4">
+      <section className="mt-6">
         <h2 className="mb-3 text-sm font-semibold text-foreground">{t('Files')}</h2>
         <AgentMarkdown content={detail.body} />
       </section>
 
       {/* Details: frontmatter metadata (author, license, third-party notices, ...). */}
       {detail.author || detail.license || detail.thirdParty || genericMetadata.length > 0 ? (
-        <section className="mt-6 border-t border-border pt-4">
+        <section className="mt-6">
           <h2 className="mb-1 text-sm font-semibold text-foreground">{t('Details')}</h2>
           {detail.author ? <DetailRow label={t('Author')} value={detail.author} /> : null}
           {detail.license ? <DetailRow label={t('License')} value={detail.license} /> : null}

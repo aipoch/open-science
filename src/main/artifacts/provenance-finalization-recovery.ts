@@ -11,6 +11,7 @@ import {
 } from '../../shared/session-persistence'
 import {
   ArtifactFinalizationProofError,
+  ArtifactOwnershipPersistenceRaceError,
   ArtifactProvenanceMessageFinalizer,
   validateDurableMessageOwnership
 } from './provenance-message-finalization'
@@ -38,6 +39,9 @@ type PreparedArtifactFinalizationContext = Pick<
 type ArtifactFinalizationRecoveryResult = {
   recoveredVersionIds: string[]
   recoveredMessageArtifacts: Array<{ messageId: string; artifacts: ArtifactVersionFile[] }>
+  nativeFinalizationRunIds: string[]
+  unresolvedNativeFinalizationRunIds: string[]
+  invalidProofNativeFinalizationRunIds?: string[]
 }
 
 type ArtifactProvenanceFinalizationRecoveryOptions = {
@@ -143,12 +147,16 @@ class ArtifactProvenanceFinalizationRecovery {
     projectId: string,
     appSessionId: string,
     durableSession?: PersistedChatSession,
-    snapshot?: ArtifactProjectReconciliationSnapshot
+    snapshot?: ArtifactProjectReconciliationSnapshot,
+    artifactRunIds?: readonly string[],
+    artifactVersionIds?: readonly string[]
   ): Promise<ArtifactFinalizationRecoveryResult> {
     this.validateProjectReconciliation(projectId, snapshot)
     const result: ArtifactFinalizationRecoveryResult = {
       recoveredVersionIds: [],
-      recoveredMessageArtifacts: []
+      recoveredMessageArtifacts: [],
+      nativeFinalizationRunIds: [],
+      unresolvedNativeFinalizationRunIds: []
     }
     const compatibilityRepository = this.options.compatibilityRepository
     if (
@@ -170,21 +178,34 @@ class ArtifactProvenanceFinalizationRecovery {
         }
       })
     ).map(requireAgentArtifactVersion)
+    const requestedRunIds = artifactRunIds ? new Set(artifactRunIds) : undefined
+    const requestedVersionIds = artifactVersionIds ? new Set(artifactVersionIds) : undefined
+    const isScopedRetry = requestedRunIds !== undefined || requestedVersionIds !== undefined
     const candidateVersions = allFinalizationVersions.filter(
       (version) =>
-        version.state === 'pending' ||
-        (version.messageId !== null &&
-          !isArtifactLinkedToDurableMessage(durableSession, version.messageId, version.id))
+        (!isScopedRetry ||
+          requestedRunIds?.has(version.artifactRunId) ||
+          requestedVersionIds?.has(version.id)) &&
+        (isScopedRetry ||
+          version.state === 'pending' ||
+          (version.messageId !== null &&
+            !isArtifactLinkedToDurableMessage(durableSession, version.messageId, version.id)))
     )
+    result.nativeFinalizationRunIds = [
+      ...new Set(candidateVersions.map((version) => version.artifactRunId))
+    ]
+    const unresolvedNativeFinalizationRunIds = new Set(result.nativeFinalizationRunIds)
+    const invalidProofNativeFinalizationRunIds = new Set<string>()
     // Native Session linkage proves only that immutable Provenance content is attached. A single
     // project scan adds the much narrower set whose compatibility publication is physically
     // unfinished, without replaying every historical finalized run or rescanning Sessions per run.
     // Direct callers deliberately get a fresh scan. Startup supplies one opaque Project snapshot
     // to every Session, avoiding repeated scans without persisting stale repository state.
     const prepared = snapshot?.[artifactProjectReconciliationState]
-    const unfinishedCompatibilityPublications =
-      prepared?.unfinishedCompatibilityPublications ??
-      (await compatibilityRepository.listPendingRunPublications(projectId))
+    const unfinishedCompatibilityPublications = isScopedRetry
+      ? []
+      : (prepared?.unfinishedCompatibilityPublications ??
+        (await compatibilityRepository.listPendingRunPublications(projectId)))
     const publicationByRunId = new Map(
       unfinishedCompatibilityPublications.map((publication) => [publication.runId, publication])
     )
@@ -236,7 +257,13 @@ class ArtifactProvenanceFinalizationRecovery {
           })
           proof = { messageId }
         }
-      } catch {
+      } catch (error) {
+        if (
+          error instanceof ArtifactFinalizationProofError &&
+          !(error instanceof ArtifactOwnershipPersistenceRaceError)
+        ) {
+          invalidProofNativeFinalizationRunIds.add(artifactRunId)
+        }
         // Leave the pending Version visible and retryable; an unproven marker is never guessed.
       }
       if (!proof) continue
@@ -266,7 +293,12 @@ class ArtifactProvenanceFinalizationRecovery {
           durableSession
         )
       } catch (error) {
-        if (error instanceof ArtifactFinalizationProofError) continue
+        if (error instanceof ArtifactFinalizationProofError) {
+          if (!(error instanceof ArtifactOwnershipPersistenceRaceError)) {
+            invalidProofNativeFinalizationRunIds.add(artifactRunId)
+          }
+          continue
+        }
         throw error
       }
       // Replay unconditionally after the durable Version commit: a bound marker may have survived a
@@ -296,6 +328,11 @@ class ArtifactProvenanceFinalizationRecovery {
           artifacts: finalized
         })
       }
+      unresolvedNativeFinalizationRunIds.delete(artifactRunId)
+    }
+    result.unresolvedNativeFinalizationRunIds = [...unresolvedNativeFinalizationRunIds]
+    if (invalidProofNativeFinalizationRunIds.size > 0) {
+      result.invalidProofNativeFinalizationRunIds = [...invalidProofNativeFinalizationRunIds]
     }
     return result
   }

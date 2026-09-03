@@ -83,6 +83,7 @@ import {
   envPrefix,
   legacyDefaultEnvPrefix,
   logicalEnvNameFromDirectory,
+  isRepairRequired,
   needsRepair,
   pkgsCache,
   pythonBin,
@@ -872,20 +873,22 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
 
   status(): ProvisionStatus {
     const marker = readReadyMarker(this.deps.root)
+    const recoveryBlocked = (environment: string): boolean | undefined => {
+      const blocked = this.deps.isPrefixBlocked?.(
+        envPrefix(this.deps.root, environment, this.platform)
+      )
+      return blocked === true || isRepairRequired(this.deps.root, environment) ? true : blocked
+    }
     return {
       pythonReady: pythonReady(this.deps.root, DEFAULT_ENV_VERSION, this.platform),
       rReady: rReady(this.deps.root, DEFAULT_ENV_VERSION, this.platform),
       version: marker?.defaultEnvVersion ?? 0,
       provisioning: this.provisioning,
       bundleSource: this.deps.bundleSource,
-      // Surface a recovery quarantine so the UI can offer Reset even when the interpreter/marker still
-      // read as ready (recovery blocks the prefix in memory without touching the marker).
-      pythonRecoveryBlocked: this.deps.isPrefixBlocked?.(
-        envPrefix(this.deps.root, DEFAULT_PY_ENV, this.platform)
-      ),
-      rRecoveryBlocked: this.deps.isPrefixBlocked?.(
-        envPrefix(this.deps.root, DEFAULT_R_ENV, this.platform)
-      )
+      // Surface both in-memory recovery quarantine and the durable explicit-repair marker so the UI
+      // offers Reset whether the interpreter still reads ready or the failed rebuild removed it.
+      pythonRecoveryBlocked: recoveryBlocked(DEFAULT_PY_ENV),
+      rRecoveryBlocked: recoveryBlocked(DEFAULT_R_ENV)
     }
   }
 
@@ -1073,7 +1076,19 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
             rmSync(rReadyMarkerPath(this.deps.root), { force: true })
             await this.doProvisionR(onProgress)
           }
-          await opts?.onVerified?.()
+          try {
+            await opts?.onVerified?.()
+          } catch (error) {
+            // Verification succeeded, but the repaired runtime is not usable until stale bindings are
+            // durably replaced. Keep lifecycle readiness fail-closed so startup/Reset can recover.
+            rmSync(
+              lang === 'python'
+                ? readyMarkerPath(this.deps.root)
+                : rReadyMarkerPath(this.deps.root),
+              { force: true }
+            )
+            throw error
+          }
         } finally {
           this.uninterruptible.delete(lang)
         }

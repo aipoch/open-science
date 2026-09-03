@@ -241,7 +241,13 @@ describe('ACP Session presentation policy', () => {
               },
               env: {
                 CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
+                CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
                 CLAUDE_CODE_DISABLE_WORKFLOWS: '1'
+              },
+              settings: {
+                env: {
+                  CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'
+                }
               },
               skills: []
             }

@@ -837,6 +837,7 @@ describe('startWebHttpServer', () => {
 
     for (const [code, expectedStatus] of [
       ['command-unavailable', 404],
+      ['session-details-conflict', 409],
       ['session-revision-conflict', 409]
     ] as const) {
       directInvoke.mockRejectedValueOnce(new ApplicationCommandError(code, `Rejected: ${code}`))
@@ -2909,7 +2910,6 @@ describe('startWebHttpServer', () => {
       `http://127.0.0.1:${server.port}/rpc/${encodeURIComponent(channel)}`
     const bootstrapUrl = `http://127.0.0.1:${server.port}/api/bootstrap`
 
-    expect(REMOTE_LOCAL_ONLY_RPC_CHANNELS).toContain('runtime:set-selection')
     for (const channel of [
       'settings:login-isolated-claude',
       'settings:login-isolated-claude-browser',
@@ -3029,20 +3029,20 @@ describe('startWebHttpServer', () => {
     expect(localOnly(runtimeChannels)).toEqual([
       'runtime:pick-interpreter',
       'runtime:register-interpreter',
+      'runtime:set-agent-environment-creation-enabled',
       'runtime:set-environment-enabled',
       'runtime:set-install-authorized',
-      'runtime:set-selection',
       'runtime:unregister-interpreter'
     ])
     expect(
       runtimeChannels.filter((channel) => !localOnly(runtimeChannels).includes(channel))
     ).toEqual([
       'runtime:describe-usage',
+      'runtime:get-agent-environment-creation-enabled',
       'runtime:get-enablement',
       'runtime:list-environments',
       'runtime:list-package-counts',
-      'runtime:list-packages',
-      'runtime:survey'
+      'runtime:list-packages'
     ])
   })
 
@@ -4026,6 +4026,20 @@ describe('startWebHttpServer', () => {
         message: 'Session already has an active run: session-1'
       }
     })
+
+    for (const [code, message] of [
+      ['session_archived', 'Restore this archived Session before continuing.'],
+      ['project_archived', 'Restore this archived Project before continuing.']
+    ] as const) {
+      tasks.startRun.mockRejectedValueOnce(new TaskApiError(code, message))
+      const archived = await fetch(`${base}/api/v1/runs`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ project: 'project-1', sessionId: 'session-1', prompt: 'Again' })
+      })
+      expect(archived.status).toBe(409)
+      expect(await archived.json()).toEqual({ error: { code, message } })
+    }
 
     tasks.startRun.mockRejectedValueOnce(
       new TaskApiError('project_not_found', 'Project not found: missing')

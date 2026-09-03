@@ -7,7 +7,7 @@ import {
   DEV_SESSION_DIR_NAME,
   PROD_SESSION_DIR_NAME,
   getSessionPersistenceDir
-} from './session-persistence/repository'
+} from './session-persistence/paths'
 import { MIGRATABLE_DATA_DIRS } from './storage/data-directories'
 
 const resolveE2eStorageRoot = (): string | undefined => {

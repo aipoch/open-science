@@ -35,6 +35,10 @@ type SessionMetadataSnapshot = Readonly<{
   isComplete: boolean
 }>
 
+type SessionSaveAuthority = Readonly<{
+  taskRunCommit: boolean
+}>
+
 type PatchSessionRuntimeContextCommand = Readonly<{
   projectId: string
   sessionId: string
@@ -489,6 +493,30 @@ class SessionPersistenceStateOwner {
     return persisted
   }
 
+  async setComputeConcurrencyLimit(
+    projectId: string,
+    sessionId: string,
+    limit: number
+  ): Promise<PersistedChatSession> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error(
+        `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
+      )
+    }
+    this.options.assertMutable(projectId, sessionId, 'mutate')
+    const loaded = await loadAuthority(this.options.repository, projectId, sessionId)
+    if (loaded.status !== 'found') {
+      throw new Error(`Cannot update Compute concurrency for a ${loaded.status} Session.`)
+    }
+    const persisted = await saveSessionWithRevision(this.options.repository, {
+      ...loaded.session,
+      computeConcurrencyLimit: limit,
+      updatedAt: Math.max(loaded.session.updatedAt + 1, Date.now())
+    })
+    this.recordSession(persisted)
+    return persisted
+  }
+
   async pruneEnabledComputeHosts(
     sessions: readonly PersistedChatSession[],
     validProviderIds: ReadonlySet<string>
@@ -549,9 +577,10 @@ class SessionPersistenceStateOwner {
 
   async saveSession(
     session: PersistedChatSession,
-    options: SaveSessionOptions = {}
+    options: SaveSessionOptions = {},
+    authority: SessionSaveAuthority = { taskRunCommit: false }
   ): Promise<PersistedChatSession> {
-    return this.saveSessionWithAuthority(session, options)
+    return this.saveSessionWithAuthority(session, options, authority)
   }
 
   async saveSessionSpecialistBinding(
@@ -571,7 +600,8 @@ class SessionPersistenceStateOwner {
 
   private async saveSessionWithAuthority(
     session: PersistedChatSession,
-    options: MainSaveSessionOptions = {}
+    options: MainSaveSessionOptions = {},
+    saveAuthority: SessionSaveAuthority = { taskRunCommit: false }
   ): Promise<PersistedChatSession> {
     this.options.assertMutable(session.projectId, session.id, 'save')
     const { projectId, id: sessionId } = session
@@ -591,6 +621,13 @@ class SessionPersistenceStateOwner {
     const rendererOwnedSession: PersistedChatSession = { ...submittedSession }
     delete rendererOwnedSession.runtimeContext
     delete rendererOwnedSession.archivedAt
+    const taskRunCommitId =
+      saveAuthority.taskRunCommit && rendererOwnedSession.taskRunCommitId
+        ? rendererOwnedSession.taskRunCommitId
+        : authority?.taskRunCommitId
+    // This witness participates in Task's cross-file commit protocol. Whole-Session saves from
+    // renderer/web surfaces may preserve it, but only the Task surface may advance it.
+    delete rendererOwnedSession.taskRunCommitId
     const specialistBindingOwnedByCaller =
       options.conflictRebaseFields?.includes('specialistId') === true &&
       options.conflictRebaseFields.includes('specialistBindingPending')
@@ -607,6 +644,7 @@ class SessionPersistenceStateOwner {
       delete rendererOwnedSession.specialistBindingPending
     }
     if (authority) delete rendererOwnedSession.delegationPolicy
+    if (authority) delete rendererOwnedSession.computeConcurrencyLimit
     const permissionOwnedStatus =
       authority?.runtimeContext?.permission?.state === 'pending'
         ? 'waiting-permission'
@@ -641,6 +679,7 @@ class SessionPersistenceStateOwner {
       ...mainOwnedSessionDetails,
       ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
+      ...(taskRunCommitId ? { taskRunCommitId } : {}),
       ...(authority && !specialistBindingOwnedByCaller
         ? {
             specialistId: authority.specialistId,
@@ -661,6 +700,7 @@ class SessionPersistenceStateOwner {
               : undefined
           }
         : {}),
+      ...(authority ? { computeConcurrencyLimit: authority.computeConcurrencyLimit } : {}),
       ...(mainOwnedStatus ? { status: mainOwnedStatus } : {}),
       // Merging unchanged Main-owned authority is storage maintenance, not conversation activity.
       // Preserve the newest real activity time so opening a lazily loaded Session cannot move it into
@@ -767,5 +807,6 @@ export type {
   AppendUserMessageToInteractionCommand,
   PatchSessionRuntimeContextCommand,
   SessionMetadata,
-  SessionMetadataSnapshot
+  SessionMetadataSnapshot,
+  SessionSaveAuthority
 }

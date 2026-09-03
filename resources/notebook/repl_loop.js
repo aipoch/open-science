@@ -143,6 +143,8 @@ const capturedRpcFetch = (input, init = {}) => {
         let body = ''
         response.setEncoding('utf8')
         response.on('data', (chunk) => (body += chunk))
+        response.once('aborted', () => reject(new Error('RPC response was interrupted')))
+        response.once('error', reject)
         response.once('end', () => {
           const status = response.statusCode || 500
           resolve({

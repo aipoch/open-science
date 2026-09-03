@@ -7,6 +7,7 @@ export type RequestOptions = {
   timeoutMs?: number
 }
 export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+export type RunFailureCode = 'process_restarted'
 export type RunProgressPhase =
   | 'accepted'
   | 'session-ready'
@@ -130,6 +131,7 @@ export type Run = {
   completedAt?: number
   output?: string
   error?: string
+  failureCode?: RunFailureCode
   artifacts: Artifact[]
   attention?: RunAttention
   review?: {
@@ -155,6 +157,8 @@ export type Session = {
   autoReviewEnabled: boolean
   specialistId?: string
   delegationPolicy: DelegationPolicy
+  pinned: boolean
+  archivedAt?: number
   createdAt: number
   updatedAt: number
   output?: string

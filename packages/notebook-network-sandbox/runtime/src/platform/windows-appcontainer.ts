@@ -16,6 +16,8 @@ type WindowsShell = Readonly<{ kind: 'powershell' | 'cmd'; path: string }>
 
 type WindowsLaunchRequest = Readonly<{
   command: string
+  executable?: string
+  args?: readonly string[]
   shell?: string | WindowsShell
   cwd: string
   gatewayPort: number
@@ -27,6 +29,37 @@ type WindowsLaunchRequest = Readonly<{
   installationId: string
   ownershipRoot: string
 }>
+
+const WINDOWS_BATCH_FILE = /\.(?:cmd|bat)$/i
+const CMD_META_CHARACTER = /([()\][%!^"`<>&|;, *?])/g
+
+// Ported from cross-spawn's Windows non-shell parser. Batch files require cmd.exe, while escaping
+// each token and asking the native host to preserve the resulting command line prevents cmd syntax
+// in an interpreter path or argument from becoming a second command.
+const escapeCmdCommand = (value: string): string => value.replace(CMD_META_CHARACTER, '^$1')
+
+const escapeCmdArgument = (value: string, doubleEscapeMetaCharacters: boolean): string => {
+  let escaped = value.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"').replace(/(?=(\\+?)?)\1$/, '$1$1')
+  escaped = `"${escaped}"`.replace(CMD_META_CHARACTER, '^$1')
+  return doubleEscapeMetaCharacters ? escaped.replace(CMD_META_CHARACTER, '^$1') : escaped
+}
+
+const windowsBatchInvocation = (
+  executable: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv
+): Readonly<{ executable: string; args: string[]; verbatimArguments: true }> => {
+  const command = [
+    escapeCmdCommand(executable),
+    // cmd.exe parses the invocation once and a batch file parses its expanded arguments again.
+    ...args.map((argument) => escapeCmdArgument(argument, true))
+  ].join(' ')
+  return {
+    executable: env.ComSpec ?? env.COMSPEC ?? 'cmd.exe',
+    args: ['/d', '/s', '/c', `"${command}"`],
+    verbatimArguments: true
+  }
+}
 
 type WindowsStandardLaunchRequest = Readonly<
   Pick<
@@ -320,11 +353,19 @@ const windowsLaunch = (
     shell.kind === 'powershell'
       ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command]
       : ['/d', '/s', '/c', request.command]
+  const directInvocation = request.executable
+    ? WINDOWS_BATCH_FILE.test(request.executable)
+      ? windowsBatchInvocation(request.executable, request.args ?? [], request.env)
+      : { executable: request.executable, args: [...(request.args ?? [])] }
+    : { executable: shell.path, args: childArgs }
   const layout = normalizeFilesystemLayout(request.filesystem)
   const specification = Buffer.from(
     JSON.stringify({
-      executable: shell.path,
-      arguments: childArgs,
+      executable: directInvocation.executable,
+      arguments: directInvocation.args,
+      ...('verbatimArguments' in directInvocation
+        ? { verbatimArguments: directInvocation.verbatimArguments }
+        : {}),
       cwd: request.cwd,
       readOnlyRoots: layout.readOnlyRoots,
       readWriteRoots: layout.readWriteRoots,

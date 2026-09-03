@@ -1,7 +1,7 @@
 import { mkdir, readdir } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { app, dialog, shell } from 'electron'
 
@@ -48,7 +48,8 @@ import {
   validateNewDataRoot
 } from './migration-service'
 import { readMigrationMarker } from './migration-marker'
-import { availableBytes, computeStorageUsage } from './usage'
+import { availableBytes } from './usage'
+import { computeStorageUsageWithOwnership } from './usage-ownership'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { MIGRATABLE_DATA_DIRS } from './data-directories'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
@@ -120,6 +121,8 @@ type StorageCommandOwnerDeps = {
   notifyDataRootHandoffAborted?: () => void
   cleanupJournal?: DataRootCleanupJournal
   hasAnyExistingPath?: typeof hasAnyExistingPath
+  // Injectable for candidate-capacity tests; production uses the same statfs probe as getInfo.
+  availableBytes?: typeof availableBytes
 }
 
 type StorageParentRequest = Readonly<{ parent: string }>
@@ -198,6 +201,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   const pauseDataRootWritersImpl = deps.pauseDataRootWriters ?? pauseDataRootWriters
   const classifyDataRootImpl = deps.classifyDataRoot ?? classifyDataRoot
   const validateNewDataRootImpl = deps.validateNewDataRoot ?? validateNewDataRoot
+  const availableBytesImpl = deps.availableBytes ?? availableBytes
   const cleanupJournal = deps.cleanupJournal ?? new DataRootCleanupJournal(resolveConfigRoot())
   const unsafeLogger = deps.logger ?? createLogger('storage:ipc')
   const emitSafely = (level: keyof Logger, message: string, data?: unknown): void => {
@@ -300,7 +304,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     const { status, canAutoSelectDataDrive } = await getStatusSnapshot()
     let available = 0
     try {
-      available = await availableBytes(status.dataRoot)
+      available = await availableBytesImpl(status.dataRoot)
     } catch (err) {
       logger.warn('available storage lookup failed', diagnosticErrorFields(err))
     }
@@ -308,7 +312,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     return {
       ...status,
       canAutoSelectDataDrive,
-      usage: await computeStorageUsage(status.dataRoot),
+      usage: await computeStorageUsageWithOwnership(status.dataRoot),
       availableBytes: available
     }
   }
@@ -791,11 +795,13 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
 
       let outcome: MigrationOutcome
       try {
+        const currentDataRoot = resolveDataRoot()
         outcome = await commitDataRootSwitch(
           {
-            currentDataRoot: resolveDataRoot(),
+            currentDataRoot,
             // Arrow-wrapped so setDataRoot is called as a method (it reads `this.repository`).
-            setDataRoot: (path) => deps.settingsService.setDataRoot(path),
+            setDataRoot: (path) =>
+              deps.settingsService.setDataRoot(path, { previousDataRoot: currentDataRoot }),
             // Prove the on-disk copy is the one this session staged (guards against a stale marker).
             expectedToken: staged.token,
             cleanupJournal,
@@ -870,14 +876,25 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       if (typeof request?.parent !== 'string') throw new Error('The selected folder is not usable.')
       dataRoot = dataRootForPicked(request.parent)
       const result = await classifyDataRootImpl(request.parent, resolveDataRoot())
-      if (result.kind === 'move') {
-        return {
-          ...result,
-          dataRoot,
-          targetWasAbsent: await isDataRootMissing(dataRoot)
-        }
+      if (result.kind === 'invalid') return { ...result, dataRoot }
+
+      const targetWasAbsent = result.kind === 'move' ? await isDataRootMissing(dataRoot) : undefined
+      const capacityPath = targetWasAbsent ? resolve(request.parent) : dataRoot
+
+      let targetAvailableBytes: number | undefined
+      try {
+        const available = await availableBytesImpl(capacityPath)
+        if (Number.isFinite(available) && available >= 0) targetAvailableBytes = available
+      } catch (error) {
+        logger.warn('candidate storage capacity lookup failed', diagnosticErrorFields(error))
       }
-      return { ...result, dataRoot }
+
+      return {
+        ...result,
+        dataRoot,
+        ...(targetWasAbsent === undefined ? {} : { targetWasAbsent }),
+        ...(targetAvailableBytes === undefined ? {} : { targetAvailableBytes })
+      }
     } catch (err) {
       logger.warn('data root inspection boundary failed', diagnosticErrorFields(err))
       return {
@@ -1032,7 +1049,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       }
       operation.phase('persist-pointer', { mode: classification.kind })
       await deps.settingsService.setDataRoot(target, {
-        completeOnboarding: request.markOnboarding === true
+        completeOnboarding: request.markOnboarding === true,
+        previousDataRoot: resolveDataRoot()
       })
       pointerCommitted = true
       quitOperation.markCommitted()

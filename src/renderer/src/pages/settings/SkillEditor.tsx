@@ -695,7 +695,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-card px-5 py-3">
+      <div className="flex shrink-0 items-center justify-end gap-2 bg-card px-5 py-3">
         <Button type="button" variant="ghost" onClick={onCancel}>
           {tCommon('Cancel')}
         </Button>

@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -96,7 +97,7 @@ describe('exportRuntimeLocks', () => {
     expect(capture).not.toHaveBeenCalled()
   })
 
-  it('skips leftovers with no interpreter and locks with no package URLs', async () => {
+  it('ignores leftovers with no interpreter but rejects a materialized env with no package URLs', async () => {
     const from = await makeRoot()
     const to = await makeRoot()
     // A dir without any bin — mid-creation leftover.
@@ -105,15 +106,15 @@ describe('exportRuntimeLocks', () => {
     await seedEnv(from, 'default-r', 'r')
 
     const capture = vi.fn().mockResolvedValue('@EXPLICIT\n')
-    const exported = await exportRuntimeLocks(from, to, { mm: '/mm', capture })
-
-    expect(exported).toEqual([])
+    await expect(exportRuntimeLocks(from, to, { mm: '/mm', capture })).rejects.toThrow(
+      'no package URLs'
+    )
     // capture only runs for the env with an interpreter, never the leftover.
     expect(capture).toHaveBeenCalledTimes(1)
     await expect(readdir(envsLockDir(runtimeRoot(to)))).rejects.toThrow()
   })
 
-  it('skips an env whose export throws but still exports the others', async () => {
+  it('publishes no bundle when any materialized env export fails', async () => {
     const from = await makeRoot()
     const to = await makeRoot()
     await seedEnv(from, 'default-python', 'python')
@@ -123,9 +124,31 @@ describe('exportRuntimeLocks', () => {
       if (argv.includes(envPrefix(runtimeRoot(from), 'broken'))) throw new Error('list failed')
       return LOCK_STDOUT
     })
-    const exported = await exportRuntimeLocks(from, to, { mm: '/mm', capture })
+    await expect(exportRuntimeLocks(from, to, { mm: '/mm', capture })).rejects.toThrow(
+      'list failed'
+    )
+    await expect(readdir(envsLockDir(runtimeRoot(to)))).rejects.toThrow()
+  })
 
-    expect(exported).toEqual(['default-python'])
-    expect(await readdir(envsLockDir(runtimeRoot(to)))).toEqual(['default-python.lock'])
+  it('removes the unpublished bundle when writing any lock fails', async () => {
+    const from = await makeRoot()
+    const to = await makeRoot()
+    await seedEnv(from, 'default-python', 'python')
+    await seedEnv(from, 'my-analysis', 'python')
+
+    const writeLock = vi.fn((path: string, contents: string) => {
+      if (path.endsWith('my-analysis.lock')) throw new Error('disk full')
+      writeFileSync(path, contents, 'utf8')
+    })
+
+    await expect(
+      exportRuntimeLocks(from, to, {
+        mm: '/mm',
+        capture: vi.fn().mockResolvedValue(LOCK_STDOUT),
+        writeLock
+      })
+    ).rejects.toThrow('disk full')
+    await expect(readdir(envsLockDir(runtimeRoot(to)))).rejects.toThrow()
+    expect(await readdir(runtimeRoot(to))).toEqual([])
   })
 })

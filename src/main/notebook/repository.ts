@@ -345,7 +345,7 @@ const normalizeWorkingFiles = (
     }
   })
 
-// Fills optional run fields so old or partial records always have the current shape. Legacy
+// Fills active optional run fields while preserving retired historical fields as written. Legacy
 // records predate kernelKind and were always python/r, so default (never overwrite) to 'python'.
 const normalizeRun = (sessionRoot: string, run: NotebookRunRecord): NotebookRunRecord => {
   const fileEvidence = run.fileEvidence
@@ -359,7 +359,6 @@ const normalizeRun = (sessionRoot: string, run: NotebookRunRecord): NotebookRunR
     kernelKind: run.kernelKind ?? 'python',
     text: run.text ?? emptyText(),
     outputs: run.outputs ?? [],
-    artifacts: run.artifacts ?? [],
     workingFiles: normalizeWorkingFiles(sessionRoot, run.runId, run.workingFiles),
     ...(fileEvidence
       ? { fileEvidence: { ...fileEvidence, reasonCodes: [...fileEvidence.reasonCodes] } }

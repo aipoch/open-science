@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { SpecialistPackageValidationPlan } from '../../../shared/specialist-package'
 import { emptyFullAccessConfig, emptySelectedConfig } from '../../../shared/specialist'
 import { SpecialistRepository } from '../repository'
+import { NOOP_SPECIALIST_PACKAGE_SKILL_PORT } from './skill-port'
 import { SpecialistPackageTransaction } from './transaction'
 
 const encoder = new TextEncoder()
@@ -62,6 +63,93 @@ afterEach(async () => {
 })
 
 describe('SpecialistPackageTransaction imported setup lifecycle', () => {
+  it('releases the Skill mutation lock before committed relationship cleanup', async () => {
+    await repository.insert({
+      id: 'imported-specialist',
+      name: 'IMPORTED_SPECIALIST',
+      displayName: 'Imported Specialist',
+      description: 'Imported description.',
+      systemPrompt: 'Imported instructions.',
+      enabled: false,
+      setupPending: false,
+      capabilityMode: 'selected',
+      fullAccess: emptyFullAccessConfig(),
+      selectedCapabilities: emptySelectedConfig(),
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'imported',
+      ownedSkillIds: []
+    })
+    let skillMutationLocked = false
+    const calls: string[] = []
+    const transaction = new SpecialistPackageTransaction(
+      storageDir,
+      repository,
+      randomUUID,
+      {
+        ...NOOP_SPECIALIST_PACKAGE_SKILL_PORT,
+        beginMutation: async () => {
+          calls.push('lock')
+          skillMutationLocked = true
+        },
+        endMutation: async () => {
+          calls.push('unlock')
+          skillMutationLocked = false
+        }
+      },
+      async () => {
+        calls.push('cleanup')
+        expect(skillMutationLocked).toBe(false)
+      }
+    )
+
+    await expect(
+      transaction.deleteSpecialist('imported-specialist', 1, [])
+    ).resolves.toBeUndefined()
+    expect(calls).toEqual(['lock', 'unlock', 'cleanup'])
+  })
+
+  it('serializes an external recovery barrier behind an active package transaction', async () => {
+    let signalPrepareStarted!: () => void
+    let releasePrepare!: () => void
+    const prepareStarted = new Promise<void>((resolve) => {
+      signalPrepareStarted = resolve
+    })
+    const prepareGate = new Promise<void>((resolve) => {
+      releasePrepare = resolve
+    })
+    const calls: string[] = []
+    const transaction = new SpecialistPackageTransaction(storageDir, repository, randomUUID, {
+      ...NOOP_SPECIALIST_PACKAGE_SKILL_PORT,
+      prepare: async () => {
+        calls.push('prepare')
+        signalPrepareStarted()
+        await prepareGate
+      },
+      commit: async () => {
+        calls.push('commit')
+      }
+    })
+    const installing = transaction.install(
+      plan(),
+      new Date('2026-08-04T00:00:00.000Z'),
+      'archive-digest'
+    )
+    await prepareStarted
+
+    const barrier = transaction.withRecoveryBarrier(async () => {
+      calls.push('barrier')
+    })
+    await Promise.resolve()
+    expect(calls).toEqual(['prepare'])
+
+    releasePrepare()
+    await installing
+    await barrier
+
+    expect(calls).toEqual(['prepare', 'commit', 'barrier'])
+  })
+
   it('persists a new import disabled and pending with inferred bundled Skills selected', async () => {
     const installed = await new SpecialistPackageTransaction(storageDir, repository).install(
       plan(),

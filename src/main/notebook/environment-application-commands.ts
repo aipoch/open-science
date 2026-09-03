@@ -69,7 +69,7 @@ const installNotebookEnvironmentApplicationCommands = (
       },
       'notebook-env:repair': (invocation) => {
         assertLocalCaller(invocation.callerContext, notebookEnvironmentRepairCommand.name)
-        return lifecycle.repair(invocation.args[0], invocation.args[1])
+        return lifecycle.repair(invocation.args[0], invocation.args[1], invocation.args[2])
       },
       'notebook-env:cancel': (invocation) => {
         assertLocalCaller(invocation.callerContext, notebookEnvironmentCancelCommand.name)

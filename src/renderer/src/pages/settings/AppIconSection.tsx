@@ -44,7 +44,6 @@ const AppIconSection = (): React.JSX.Element => {
         'Choose the built-in icon shown in app windows. On Windows, the tray follows the same choice.'
       )}
       aria-label={t('App icon')}
-      separated
     >
       <RadioGroup.Root
         aria-label={t('App icon')}

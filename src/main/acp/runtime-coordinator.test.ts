@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   AcpPermissionRequest,
   AcpPermissionResponse,
+  AcpPromptRequest,
   AcpRuntimeEvent,
   AcpStateSnapshot,
   AcpStateUpdate
@@ -179,9 +180,11 @@ const createFakeRuntime = (options: {
   const shutdownForUpdateGate = vi.fn(async () => ({ reaped: true }))
   const runPrompt = async (
     { sessionId }: { sessionId: string },
-    promptAttemptId?: string
+    promptAttemptId?: string,
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<unknown> => {
     await options.beforePromptStart?.()
+    await onPromptAdmitted?.()
     const turnToken = `turn-${++turnSequence}`
     snapshot = {
       ...snapshot,
@@ -257,7 +260,6 @@ const createFakeRuntime = (options: {
     liveSessionProjectId: (sessionId: string) => sessionProjects.get(sessionId),
     isSessionUsingFramework: (sessionId: string, frameworkId: string) =>
       snapshot.sessionIds.includes(sessionId) && options.frameworkId === frameworkId,
-    getActiveArtifactRunIds: () => [],
     connect,
     createSession,
     resumeSession,
@@ -1195,19 +1197,32 @@ describe('AcpRuntimeCoordinator', () => {
   ] as const)(
     'observes provider acceptance through %s without changing completion',
     async (_route, frameworkId) => {
-      const coordinator = new AcpRuntimeCoordinator(
-        (callbacks) =>
-          createFakeRuntime({ frameworkId, sessionIds: ['session-1'], callbacks }).runtime
-      )
+      let created!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({ frameworkId, sessionIds: ['session-1'], callbacks })
+        return created.runtime
+      })
       const session = await coordinator.createSession()
       const onProviderPromptAccepted = vi.fn()
+      const admittedProvenance = {
+        promptMessageId: 'prompt-1',
+        messageBranchId: 'branch-2',
+        runtimeSegmentId: 'runtime-segment-2'
+      }
+      const onPromptAdmitted = vi.fn(async () => admittedProvenance)
 
       await coordinator.sendPromptObserved(
         { sessionId: session.sessionId, text: 'Research this.' },
-        onProviderPromptAccepted
+        onProviderPromptAccepted,
+        onPromptAdmitted
       )
 
+      expect(onPromptAdmitted).toHaveBeenCalledOnce()
       expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
+      expect(onPromptAdmitted.mock.invocationCallOrder[0]).toBeLessThan(
+        onProviderPromptAccepted.mock.invocationCallOrder[0]
+      )
+      expect(created.sendPrompt.mock.calls[0]?.[0].provenanceContext).toEqual(admittedProvenance)
     }
   )
 

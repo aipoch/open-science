@@ -33,6 +33,7 @@ export type AcpBackendGenerationView = Readonly<{
     supportsImageInput: boolean
   }>
   adapter: Readonly<{
+    claudeConfigDir?: string
     codexHome?: string
     nativeMcpEnabled: boolean
     bridgeMcpAliasesEnabled: boolean
@@ -68,6 +69,10 @@ const deepFreeze = <T>(value: T): T => {
 }
 
 const generationView = (backend: ResolvedAgentBackend): AcpBackendGenerationView => {
+  const claudeConfigDir =
+    backend.framework.id === 'claude-code' && backend.env.CLAUDE_CONFIG_DIR?.trim()
+      ? backend.env.CLAUDE_CONFIG_DIR
+      : undefined
   const codexHome =
     backend.framework.id === 'codex' && typeof backend.env.CODEX_HOME === 'string'
       ? backend.env.CODEX_HOME
@@ -103,6 +108,7 @@ const generationView = (backend: ResolvedAgentBackend): AcpBackendGenerationView
       supportsImageInput: backend.supportsImageInput === true
     }),
     adapter: Object.freeze({
+      ...(claudeConfigDir ? { claudeConfigDir } : {}),
       ...(codexHome ? { codexHome } : {}),
       nativeMcpEnabled: backend.framework.id !== 'codex' || !bridgeMcpAliasesEnabled,
       bridgeMcpAliasesEnabled

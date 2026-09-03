@@ -107,11 +107,13 @@ export type FinalizeRunArtifactsRequest = {
   messageId: string
 }
 
-// The only finalization failure the renderer may recover inside one event delivery. Other failures
-// remain rejected IPC calls so proof and compatibility errors cannot accidentally become retryable.
+// Ownership races may retry inside one event delivery. Invalid proof is returned only so the
+// renderer can keep that terminal failure from offering a manual retry; operational failures reject.
 export const ARTIFACT_OWNERSHIP_PERSISTENCE_RACE = 'ownership-persistence-race' as const
+export const ARTIFACT_FINALIZATION_INVALID_PROOF = 'invalid-proof' as const
 
-export type ArtifactFinalizationErrorCode = typeof ARTIFACT_OWNERSHIP_PERSISTENCE_RACE
+export type ArtifactFinalizationErrorCode =
+  typeof ARTIFACT_OWNERSHIP_PERSISTENCE_RACE | typeof ARTIFACT_FINALIZATION_INVALID_PROOF
 
 export type FinalizeRunArtifactsResult =
   | { ok: true; artifacts: ArtifactFile[] }
@@ -173,10 +175,6 @@ export type ListMessageArtifactsRequest = {
   messageId: string
 }
 
-// Renderer request to enumerate every finalized artifact on disk for one project, so the file library
-// can surface files whose owning Session was deleted.
-export type ListProjectArtifactsRequest = ProjectIdScope
-
 // A copied conversation stores native generated-file Version ids in its messages, not paths or a
 // second file-library entry. Keep this query small because it is issued while historical messages
 // mount in the renderer.
@@ -190,14 +188,26 @@ export type ResolveArtifactVersionDescriptorsRequest = {
   versionIds: string[]
 }
 
-// Renderer request to re-finalize pending artifacts a crash left behind: the persisted message still
-// references `.pending/<run>/<file>` paths whose in-memory finalize claim was lost on restart. Returns
-// the message's finalized files so the renderer can replace the stale pending references.
+// Renderer request to re-finalize artifacts after an operational failure or crash. Compatibility
+// files retain `.pending/<run>/<file>` paths; native provenance files retain immutable Version ids.
+// Returns the message's finalized files so the renderer can replace stale pending references.
 export type ReconcilePendingArtifactsRequest = ProjectIdScope & {
   sessionId: string
   messageId: string
   pendingPaths: string[]
+  artifactVersionIds?: string[]
 }
+
+// Success remains the historical bare array so an older main process can interoperate during a
+// renderer reload. Terminal proof rejection is explicit because Electron does not preserve custom
+// properties on rejected Error objects.
+export type ReconcilePendingArtifactsResult =
+  | ArtifactFile[]
+  | {
+      ok: false
+      code: typeof ARTIFACT_FINALIZATION_INVALID_PROOF
+      message: string
+    }
 
 // Internal repository list request after the app has resolved the logical project bucket.
 export type ListProjectMessageArtifactsRequest = ListMessageArtifactsRequest & {

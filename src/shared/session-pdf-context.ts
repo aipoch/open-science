@@ -17,6 +17,7 @@ export const sessionPdfBindingToFileReference = (
   context.sourceKind === 'artifact-version'
     ? {
         id: context.sourceFileId,
+        sourceFileId: context.sourceFileId,
         name: context.name,
         source: 'artifact',
         path: createArtifactVersionLocator({
@@ -34,6 +35,7 @@ export const sessionPdfBindingToFileReference = (
       }
     : {
         id: context.sourceFileId,
+        sourceFileId: context.sourceFileId,
         name: context.name,
         source: 'upload',
         path: createUploadVersionReference(context.sourceVersionId, {

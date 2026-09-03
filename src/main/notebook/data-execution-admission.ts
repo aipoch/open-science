@@ -45,6 +45,7 @@ type NotebookDataExecutionAdmissionOwnerOptions = {
   >
   ensureRecovered: () => Promise<void>
   resolveRuntimeEnablement: (language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>
+  isAgentEnvironmentCreationEnabled: () => Promise<boolean>
   repairPolicy: Pick<NotebookRuntimeRepairPolicy, 'blockKey' | 'requirement'>
   platform?: NodeJS.Platform
 }
@@ -120,7 +121,8 @@ class NotebookDataExecutionAdmissionOwner {
 
   async admit(
     session: NotebookSessionAggregate,
-    cell: Readonly<NotebookCell>
+    cell: Readonly<NotebookCell>,
+    agentInitiated = true
   ): Promise<NotebookDataExecutionAdmission> {
     const route = this.route(session, cell.language)
     const runtimeRoot = this.options.runtimeRoot
@@ -166,7 +168,12 @@ class NotebookDataExecutionAdmissionOwner {
               'list_notebook_runtimes then notebook_bind_runtime, before running cells.'
           )
         }
-        await this.ensureDefaultEnvironmentReady(session, cell.language, route.environment)
+        await this.ensureDefaultEnvironmentReady(
+          session,
+          cell.language,
+          route.environment,
+          agentInitiated
+        )
       } catch (error) {
         rejection = error
       }
@@ -252,7 +259,8 @@ class NotebookDataExecutionAdmissionOwner {
   private ensureDefaultEnvironmentReady(
     session: NotebookSessionAggregate,
     language: NotebookLanguage,
-    environment: string
+    environment: string,
+    agentInitiated: boolean
   ): Promise<void> {
     return this.options.environmentOperations.ensureDefaultEnvironmentReady({
       language,
@@ -260,6 +268,18 @@ class NotebookDataExecutionAdmissionOwner {
       runtimeRoot: session.runtimeRoot,
       sessionId: session.sessionId,
       ensureRecovered: this.options.ensureRecovered,
+      ...(agentInitiated
+        ? {
+            assertCreationAllowed: async () => {
+              if (!(await this.options.isAgentEnvironmentCreationEnabled())) {
+                throw new Error(
+                  'AGENT_ENVIRONMENT_CREATION_DISABLED: the Agent cannot prepare a missing Runtime ' +
+                    'Environment because creation is disabled in Settings → Runtimes.'
+                )
+              }
+            }
+          }
+        : {}),
       assertRecoverable: () => {
         const prefix = envPrefix(session.runtimeRoot, environment, this.options.platform)
         if (this.options.recovery.isPrefixBlocked(prefix)) {

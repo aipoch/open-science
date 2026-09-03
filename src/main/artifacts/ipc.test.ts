@@ -8,6 +8,7 @@ import {
   type ArtifactVersionFile
 } from '../../shared/artifact-provenance'
 import {
+  ARTIFACT_FINALIZATION_INVALID_PROOF,
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
   type ArtifactWriteSource
@@ -991,48 +992,42 @@ describe('artifact IPC handlers', () => {
       versionIds: ['version-1', 'version-1']
     })
   })
-
-  it('excludes both prompt-active runs and unfinalized claims from the orphan scan', async () => {
-    const listProjectArtifacts = vi.fn().mockResolvedValue([])
-    const repository = { listProjectArtifacts } as unknown as ArtifactRepository
-    const runRegistry = new ArtifactRunRegistry()
-
-    // A run whose files were emitted and are awaiting the renderer's finalize call — it has left the
-    // runtime's prompt-active set but must still be treated as in-flight, not orphaned.
-    runRegistry.register({
-      projectId: 'default-project',
-      artifactSessionId: 'artifact-session-1',
-      sessionId: 'session-1',
-      runId: 'run-awaiting-finalize'
-    })
-
-    const handlers = createArtifactHandlers(repository, runRegistry, {
-      getActiveArtifactRunIds: () => ['run-in-prompt']
-    })
-
-    await handlers.listProjectFiles({ projectId: 'default-project' })
-
-    const passedSet = listProjectArtifacts.mock.calls[0][1] as Set<string>
-    expect([...passedSet].sort()).toEqual(['run-awaiting-finalize', 'run-in-prompt'])
-  })
-
-  it('drops a run from the exclusion set once its claim is finalized', async () => {
-    const listProjectArtifacts = vi.fn().mockResolvedValue([])
-    const repository = { listProjectArtifacts } as unknown as ArtifactRepository
+  it('evicts an abandoned Claim after its recovery window expires', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
     const runRegistry = new ArtifactRunRegistry()
     const claimId = runRegistry.register({
       projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
-      runId: 'run-done'
+      runId: 'run-abandoned'
+    })
+
+    now.mockReturnValue(60 * 60 * 1_000)
+    expect(runRegistry.resolve(claimId).runId).toBe('run-abandoned')
+
+    now.mockReturnValue(60 * 60 * 1_000 + 1_000)
+    expect(() => runRegistry.resolve(claimId)).toThrow(/Artifact run claim not found/)
+    now.mockRestore()
+  })
+
+  it('evicts a finalized Claim after its idempotency window expires', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const runRegistry = new ArtifactRunRegistry()
+    const claimId = runRegistry.register({
+      projectId: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-finalized'
     })
     runRegistry.markFinalized(claimId, 'message-1')
 
-    const handlers = createArtifactHandlers(repository, runRegistry)
-    await handlers.listProjectFiles({ projectId: 'default-project' })
+    now.mockReturnValue(5 * 60 * 1_000)
+    expect(runRegistry.resolve(claimId).finalizedMessageId).toBe('message-1')
 
-    const passedSet = listProjectArtifacts.mock.calls[0][1] as Set<string>
-    expect(passedSet.has('run-done')).toBe(false)
+    now.mockReturnValue(5 * 60 * 1_000 + 1_000)
+
+    expect(() => runRegistry.resolve(claimId)).toThrow(/Artifact run claim not found/)
+    now.mockRestore()
   })
 })
 
@@ -1064,12 +1059,17 @@ describe('artifact IPC handler registration', () => {
       'artifacts:get-version-messages',
       'artifacts:get-version-provenance',
       'artifacts:get-version-review',
-      'artifacts:list-project-files',
       'artifacts:open-file',
       'artifacts:read-preview',
       'artifacts:reconcile-pending',
       'artifacts:resolve-version-descriptors'
     ])
+  })
+
+  it('does not register the obsolete Project artifact directory scan', () => {
+    registerArtifactIpcHandlers()
+
+    expect(ipcHandlers.has('artifacts:list-project-files')).toBe(false)
   })
 
   it('shares the injected artifact finalization lock with application commands', async () => {
@@ -1089,7 +1089,7 @@ describe('artifact IPC handler registration', () => {
       runId: 'run-1'
     })
     const injected = createArtifactHandlers(repository, runRegistry)
-    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, undefined, injected)
+    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, injected)
     const request = { claimId, messageId: 'message-1' }
 
     const applicationFinalize = injected.finalizeRunArtifacts(request)
@@ -1109,7 +1109,6 @@ describe('artifact IPC handler registration', () => {
     const failure = new Error('registration failed')
     const injected: ArtifactHandlers = {
       finalizeRunArtifacts: vi.fn(),
-      listProjectFiles: vi.fn().mockResolvedValue([]),
       reconcilePendingArtifacts: vi.fn(),
       openFile: vi.fn(),
       readPreview: vi.fn(),
@@ -1126,21 +1125,18 @@ describe('artifact IPC handler registration', () => {
     registrationFailure.error = failure
 
     expect(() =>
-      registerArtifactIpcHandlers(undefined, undefined, undefined, undefined, undefined, injected)
+      registerArtifactIpcHandlers(undefined, undefined, undefined, undefined, injected)
     ).toThrow(failure)
 
     registrationFailure.channel = undefined
     registrationFailure.error = undefined
-    registerArtifactIpcHandlers(undefined, undefined, undefined, undefined, undefined, injected)
-    await ipcHandlers.get('artifacts:list-project-files')?.({}, { projectId: 'default-project' })
-    expect(injected.listProjectFiles).toHaveBeenCalledOnce()
+    registerArtifactIpcHandlers(undefined, undefined, undefined, undefined, injected)
   })
 
   it('delegates each registered channel to the matching handler implementation', async () => {
     // Register with lightweight repositories whose methods are spies — this exercises the entire
     // ipcMain.handle -> createArtifactHandlers -> method chain for every channel.
     const finalizeRunArtifacts = vi.fn().mockResolvedValue([])
-    const listProjectArtifacts = vi.fn().mockResolvedValue([])
     const reconcilePendingArtifactPaths = vi.fn().mockResolvedValue([])
     const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/inside.txt')
     const readManagedFilePreview = vi.fn().mockResolvedValue({
@@ -1151,7 +1147,6 @@ describe('artifact IPC handler registration', () => {
     })
     const repository = {
       finalizeRunArtifacts,
-      listProjectArtifacts,
       reconcilePendingArtifactPaths,
       resolveManagedFilePath,
       readManagedFilePreview
@@ -1167,7 +1162,7 @@ describe('artifact IPC handler registration', () => {
       sessionId: 'session-1',
       runId: 'run-1'
     })
-    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, undefined, handlers)
+    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, handlers)
 
     const finalizeResult = await ipcHandlers.get('artifacts:finalize-run')?.(
       {},
@@ -1184,14 +1179,6 @@ describe('artifact IPC handler registration', () => {
       runId: 'run-1',
       messageId: 'message-1'
     })
-
-    await ipcHandlers.get('artifacts:list-project-files')?.(
-      {},
-      {
-        projectId: 'default-project'
-      }
-    )
-    expect(listProjectArtifacts).toHaveBeenCalledWith('default-project', expect.any(Set))
 
     await ipcHandlers.get('artifacts:reconcile-pending')?.(
       {},
@@ -1261,7 +1248,7 @@ describe('artifact IPC handler registration', () => {
     const handlers = createArtifactHandlers(repository, runRegistry, {
       codeReconstruction: { get, generate }
     })
-    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, undefined, handlers)
+    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, handlers)
 
     await expect(
       ipcHandlers.get('artifacts:get-code-reconstruction')?.({}, request)
@@ -1302,14 +1289,7 @@ describe('artifact IPC handler registration', () => {
       provenance: provenance as never,
       logger: diagnosticLogger
     })
-    registerArtifactIpcHandlers(
-      repository,
-      runRegistry,
-      undefined,
-      provenance as never,
-      undefined,
-      handlers
-    )
+    registerArtifactIpcHandlers(repository, runRegistry, provenance as never, undefined, handlers)
 
     await expect(
       ipcHandlers.get('artifacts:finalize-run')?.({}, { claimId, messageId: 'message-1' })
@@ -1328,6 +1308,46 @@ describe('artifact IPC handler registration', () => {
         artifactVersionCount: 1
       })
     )
+  })
+
+  it('returns invalid provenance proof as a terminal IPC failure result', async () => {
+    const repository = { finalizeRunArtifacts: vi.fn() } as unknown as ArtifactRepository
+    const provenance = {
+      finalizeRun: vi
+        .fn()
+        .mockRejectedValue(
+          new ArtifactFinalizationProofError(
+            'execution-snapshot-corrupt',
+            'Artifact Version provenance proof is invalid.'
+          )
+        )
+    }
+    const runRegistry = new ArtifactRunRegistry()
+    const claimId = runRegistry.register({
+      projectId: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'prompt-1',
+      artifactVersionIds: ['version-1']
+    })
+    const handlers = createArtifactHandlers(repository, runRegistry, {
+      provenance: provenance as never
+    })
+    registerArtifactIpcHandlers(repository, runRegistry, provenance as never, undefined, handlers)
+
+    await expect(
+      ipcHandlers.get('artifacts:finalize-run')?.({}, { claimId, messageId: 'message-1' })
+    ).resolves.toEqual({
+      ok: false,
+      code: ARTIFACT_FINALIZATION_INVALID_PROOF,
+      message: 'Artifact Version provenance proof is invalid.'
+    })
+    expect(repository.finalizeRunArtifacts).not.toHaveBeenCalled()
   })
 
   it('uses a legacy Version locator only to open the latest logical Artifact preview', async () => {
@@ -1426,27 +1446,6 @@ describe('artifact IPC handler registration', () => {
     expect(resolveVersionContent).not.toHaveBeenCalled()
     expect(close).toHaveBeenCalledOnce()
   })
-
-  it('threads a live getActiveArtifactRunIds closure into list-project-files', async () => {
-    // Without getActiveArtifactRunIds the in-flight set defaults to empty. The registry-based
-    // unfinalized-claim exclusion is exercised in the main suite; here we pin the runtime-side
-    // thread (default vs. supplied) so a regression that loses the dependency is caught.
-    const listProjectArtifacts = vi.fn().mockResolvedValue([])
-    const repository = { listProjectArtifacts } as unknown as ArtifactRepository
-    const activeIds = vi.fn().mockReturnValue(['run-active'])
-
-    registerArtifactIpcHandlers(repository, new ArtifactRunRegistry(), activeIds)
-    await ipcHandlers.get('artifacts:list-project-files')?.(
-      {},
-      {
-        projectId: 'default-project'
-      }
-    )
-
-    expect(activeIds).toHaveBeenCalled()
-    const passedSet = listProjectArtifacts.mock.calls[0][1] as Set<string>
-    expect([...passedSet]).toEqual(['run-active'])
-  })
 })
 
 describe('artifact handler edge cases', () => {
@@ -1487,5 +1486,183 @@ describe('artifact handler edge cases', () => {
     await handlers.reconcilePendingArtifacts(request)
 
     expect(reconcilePendingArtifactPaths).toHaveBeenCalledWith(request)
+  })
+
+  it('uses the Session recovery owner when pending Artifact recovery is configured', async () => {
+    const reconcilePendingArtifactPaths = vi.fn().mockResolvedValue([])
+    const recovered = {
+      id: 'version-1',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      name: 'a.txt',
+      path: '/p/version-1/a.txt',
+      fileUrl: 'file:///p/version-1/a.txt',
+      size: 1,
+      mtimeMs: 1
+    }
+    const recoverPendingArtifacts = vi.fn().mockResolvedValue({
+      artifacts: [recovered],
+      nativeRunIds: ['run-1']
+    })
+    const repository = { reconcilePendingArtifactPaths } as unknown as ArtifactRepository
+    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), {
+      recoverPendingArtifacts
+    })
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      pendingPaths: ['/p/.pending/run-1/a.txt']
+    }
+
+    await expect(handlers.reconcilePendingArtifacts(request)).resolves.toEqual([recovered])
+
+    expect(recoverPendingArtifacts).toHaveBeenCalledWith(request)
+    expect(reconcilePendingArtifactPaths).not.toHaveBeenCalled()
+  })
+
+  it('does not bypass native recovery when its authoritative result is empty', async () => {
+    const reconcilePendingArtifactPaths = vi.fn().mockResolvedValue([
+      {
+        id: 'compatibility-artifact',
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        name: 'a.txt',
+        path: '/p/session-1/a.txt',
+        fileUrl: 'file:///p/session-1/a.txt',
+        size: 1,
+        mtimeMs: 1
+      }
+    ])
+    const recoverPendingArtifacts = vi.fn().mockResolvedValue({
+      artifacts: [],
+      nativeRunIds: ['run-1']
+    })
+    const repository = { reconcilePendingArtifactPaths } as unknown as ArtifactRepository
+    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), {
+      recoverPendingArtifacts
+    })
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      pendingPaths: ['/p/.pending/run-1/a.txt']
+    }
+
+    await expect(handlers.reconcilePendingArtifacts(request)).resolves.toEqual([])
+    expect(reconcilePendingArtifactPaths).not.toHaveBeenCalled()
+  })
+
+  it('falls back to compatibility recovery for pending Artifacts without native Versions', async () => {
+    const compatibilityArtifact = {
+      id: 'legacy-artifact',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      name: 'legacy.txt',
+      path: '/p/session-1/legacy.txt',
+      fileUrl: 'file:///p/session-1/legacy.txt',
+      size: 1,
+      mtimeMs: 1
+    }
+    const reconcilePendingArtifactPaths = vi.fn().mockResolvedValue([compatibilityArtifact])
+    const recoverPendingArtifacts = vi.fn().mockResolvedValue(undefined)
+    const repository = { reconcilePendingArtifactPaths } as unknown as ArtifactRepository
+    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), {
+      recoverPendingArtifacts
+    })
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      pendingPaths: ['/p/.pending/run-1/legacy.txt']
+    }
+
+    await expect(handlers.reconcilePendingArtifacts(request)).resolves.toEqual([
+      compatibilityArtifact
+    ])
+    expect(reconcilePendingArtifactPaths).toHaveBeenCalledWith(request)
+  })
+
+  it('preserves same-named compatibility files when native recovery covers only some pending runs', async () => {
+    const nativeArtifact = {
+      id: 'version-1',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      name: 'native.txt',
+      path: '/p/version-1/native.txt',
+      fileUrl: 'file:///p/version-1/native.txt',
+      size: 1,
+      mtimeMs: 1
+    }
+    const compatibilityArtifact = {
+      id: 'legacy-artifact',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      name: 'native.txt',
+      path: '/p/session-1/native.txt',
+      fileUrl: 'file:///p/session-1/native.txt',
+      size: 1,
+      mtimeMs: 1
+    }
+    const reconcilePendingArtifactPaths = vi
+      .fn()
+      .mockResolvedValue([{ ...nativeArtifact, id: 'compatibility-native' }, compatibilityArtifact])
+    const repository = { reconcilePendingArtifactPaths } as unknown as ArtifactRepository
+    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), {
+      recoverPendingArtifacts: vi.fn().mockResolvedValue({
+        artifacts: [nativeArtifact],
+        nativeRunIds: ['run-native']
+      })
+    })
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      pendingPaths: ['/p/.pending/run-native/native.txt', '/p/.pending/run-legacy/native.txt']
+    }
+
+    await expect(handlers.reconcilePendingArtifacts(request)).resolves.toEqual([
+      nativeArtifact,
+      compatibilityArtifact
+    ])
+    expect(reconcilePendingArtifactPaths).toHaveBeenCalledWith({
+      ...request,
+      pendingPaths: ['/p/.pending/run-legacy/native.txt']
+    })
+  })
+
+  it('returns an invalid recovery proof as a terminal IPC failure result', async () => {
+    const repository = {
+      reconcilePendingArtifactPaths: vi.fn()
+    } as unknown as ArtifactRepository
+    const proofError = Object.assign(new Error('Native Artifact finalization proof is invalid.'), {
+      code: ARTIFACT_FINALIZATION_INVALID_PROOF
+    })
+    const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), {
+      recoverPendingArtifacts: vi.fn().mockRejectedValue(proofError)
+    })
+    registerArtifactIpcHandlers(
+      repository,
+      new ArtifactRunRegistry(),
+      undefined,
+      undefined,
+      handlers
+    )
+
+    await expect(
+      ipcHandlers.get('artifacts:reconcile-pending')?.(
+        {},
+        {
+          projectId: 'default-project',
+          sessionId: 'session-1',
+          messageId: 'message-1',
+          pendingPaths: ['/p/.pending/run-1/native.txt']
+        }
+      )
+    ).resolves.toEqual({
+      ok: false,
+      code: ARTIFACT_FINALIZATION_INVALID_PROOF,
+      message: 'Native Artifact finalization proof is invalid.'
+    })
   })
 })

@@ -24,7 +24,7 @@ describe('Compute Job operation migration', () => {
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe(`DROP TABLE "ComputeJobOperation"`)
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation')`
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup')`
     )
     const [{ sql: computeJobSqlBefore }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
       `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
@@ -40,7 +40,7 @@ describe('Compute Job operation migration', () => {
       client.$queryRawUnsafe<Array<{ id: string }>>(
         `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1`
       )
-    ).resolves.toEqual([{ id: '0025_managed_file_version_foundation' }])
+    ).resolves.toEqual([{ id: '0026_compute_job_remote_cleanup' }])
   })
 
   it('adds a constrained operation sidecar without rebuilding historical ComputeJob rows', async () => {

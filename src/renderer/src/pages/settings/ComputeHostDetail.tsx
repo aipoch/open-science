@@ -662,7 +662,6 @@ export function ComputeHostDetail({
       {/* Details document block */}
       <SettingsSection
         className="mt-5"
-        separated
         title={t('Details')}
         description={t(
           'Free-form notes about this provider. Open Science reads and adds to them as it learns.'

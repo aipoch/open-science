@@ -10,7 +10,7 @@ import type {
   SaveTextEditResult
 } from '../../shared/managed-file-versions'
 import { ipcMainHandle } from '../ipc-handler-registry'
-import { ManagedFileVersionError } from './service'
+import { ManagedFileVersionError } from './error'
 
 type ManagedFileVersionIpcService = {
   inspect(request: ManagedFileVersionInspectRequest): Promise<ManagedFileVersionInspectResult>

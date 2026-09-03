@@ -82,7 +82,7 @@ const AppVersionSection = ({
   })()
 
   return (
-    <SettingsSection title={t('About')} aria-label={t('App version')} separated>
+    <SettingsSection title={t('About')} aria-label={t('App version')}>
       <SettingsRow
         label={
           <div className="flex min-w-0 items-center gap-3">
@@ -133,7 +133,7 @@ const AppVersionSection = ({
         </div>
       </SettingsRow>
 
-      <div className="divide-y divide-border border-t border-border">
+      <div>
         <ExternalTextLink
           href={APP.links.docs}
           aria-label={t('Open Help Center in your browser')}

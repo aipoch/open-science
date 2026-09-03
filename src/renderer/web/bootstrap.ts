@@ -16,7 +16,11 @@ import {
   WEB_EVENT_SURFACE_ATTRIBUTE,
   type WebEventConnectionPhase
 } from '../../shared/web-event-connection'
-import { WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME } from '../../shared/file-save'
+import {
+  WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME,
+  type SaveManagedFileRequest
+} from '../../shared/file-save'
+import type { AcquireManagedPreviewRequest } from '../../shared/preview-resources'
 import { installWebRendererContracts } from './api-installer'
 import { i18next, initI18n } from '@/i18n'
 import { applyHtmlLang, resolveInitialLocale } from '@/lib/locale-preference'
@@ -435,11 +439,7 @@ const installWebApi = async (): Promise<EventCursor> => {
         downloadBlob(new Blob([request.data], { type: request.mimeType }), request.suggestedName)
         return Promise.resolve({ saved: true })
       },
-      saveManagedFile: async (request: {
-        source: 'artifact' | 'upload'
-        path: string
-        suggestedName: string
-      }) => {
+      saveManagedFile: async (request: SaveManagedFileRequest) => {
         const showSaveFilePicker = (
           window as unknown as { showSaveFilePicker?: BrowserSaveFilePicker }
         ).showSaveFilePicker
@@ -458,8 +458,24 @@ const installWebApi = async (): Promise<EventCursor> => {
 
         let resource: { id: string; url: string; size: number } | undefined
         try {
+          let previewRequest: AcquireManagedPreviewRequest
+          switch (request.source) {
+            case 'artifact':
+            case 'upload':
+              previewRequest = {
+                source: request.source,
+                projectId: request.projectId,
+                fileId: request.fileId,
+                ...(request.versionId ? { versionId: request.versionId } : {})
+              }
+              break
+            case 'notebook-input':
+            case 'local':
+              previewRequest = { source: request.source, path: request.path }
+              break
+          }
           const acquiredResource = (await invoke('preview-resources:acquire', [
-            { source: request.source, path: request.path }
+            previewRequest
           ])) as { id: string; url: string; size: number }
           resource = acquiredResource
           if (!writable && acquiredResource.size > WEB_BLOB_DOWNLOAD_MAX_BYTES) {

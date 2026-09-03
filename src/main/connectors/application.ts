@@ -102,7 +102,8 @@ const createConnectorApplication = (
   deps.settings.setCustomServerRuntimeProjectionProvider({
     materializedSkillNames: () => runtimeSettings.materializedCustomSkillNames(),
     availability: (id) => runtimeSettings.customServerAvailability(id),
-    isRefreshing: (id) => runtimeSettings.isRefreshing(id)
+    isRefreshing: (id) => runtimeSettings.isRefreshing(id),
+    isDegraded: () => runtimeSettings.isDegraded()
   })
   deps.settings.setCustomServerAuthenticator(
     async (serverId) => {

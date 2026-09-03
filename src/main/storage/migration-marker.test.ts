@@ -43,6 +43,12 @@ describe('migration-marker read/write/remove', () => {
         fileCount: 2,
         totalBytes: 10,
         digest: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+      },
+      runtimeLockInventory: {
+        dirs: ['runtime/envs.lock'],
+        fileCount: 1,
+        totalBytes: 20,
+        digest: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
       }
     })
     await writeMigrationMarker(root, marker)
@@ -76,6 +82,33 @@ describe('migration-marker read/write/remove', () => {
     await writeFile(
       join(root, MIGRATION_MARKER_FILENAME),
       JSON.stringify({ ...sampleMarker({ status: 'verified' }), inventory: { fileCount: -1 } })
+    )
+
+    expect(await readMigrationMarker(root)).toBeNull()
+  })
+
+  it('accepts a legacy verified marker without a runtime lock receipt', async () => {
+    const marker = sampleMarker({
+      status: 'verified',
+      inventory: {
+        dirs: [],
+        fileCount: 0,
+        totalBytes: 0,
+        digest: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+      }
+    })
+    await writeMigrationMarker(root, marker)
+
+    expect(await readMigrationMarker(root)).toEqual(marker)
+  })
+
+  it('returns null when the runtime lock receipt is malformed', async () => {
+    await writeFile(
+      join(root, MIGRATION_MARKER_FILENAME),
+      JSON.stringify({
+        ...sampleMarker({ status: 'verified' }),
+        runtimeLockInventory: { dirs: ['runtime/envs.lock'], fileCount: 1, digest: 'bad' }
+      })
     )
 
     expect(await readMigrationMarker(root)).toBeNull()

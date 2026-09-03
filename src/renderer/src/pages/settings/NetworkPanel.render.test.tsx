@@ -5,9 +5,11 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { NetworkPanel } from './NetworkPanel'
 import { useNetworkStore } from '@/stores/network-store'
+import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 let container: HTMLDivElement
 let root: Root
+const originalSetPackageMirror = useSettingsStore.getState().setPackageMirror
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -16,6 +18,10 @@ beforeEach(() => {
   root = createRoot(container)
   Object.defineProperty(window.navigator, 'onLine', { value: false, configurable: true })
   useNetworkStore.setState({ isOnline: false, connectivity: 'unreachable' })
+  useSettingsStore.setState({
+    ...createInitialSettingsState(),
+    setPackageMirror: originalSetPackageMirror
+  })
 })
 
 afterEach(() => {
@@ -32,7 +38,71 @@ const buttonWithText = (text: string): HTMLButtonElement =>
     button.textContent?.includes(text)
   ) as HTMLButtonElement
 
+const changeInput = async (input: HTMLInputElement, value: string): Promise<void> => {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  await act(async () => {
+    setter?.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
 describe('NetworkPanel offline retry', () => {
+  it('confirms a CA bundle change and shows progress while saving', async () => {
+    let resolveSave!: () => void
+    const setPackageMirror = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve
+        })
+    )
+    const onNavigate = vi.fn()
+    useSettingsStore.setState({
+      packageMirror: { caBundle: '/certs/old.pem' },
+      setPackageMirror
+    })
+    await act(async () => {
+      root.render(<NetworkPanel view={{ kind: 'mirror' }} onNavigate={onNavigate} />)
+      await Promise.resolve()
+    })
+
+    await changeInput(
+      container.querySelector<HTMLInputElement>('[aria-label="CA bundle path"]')!,
+      '/certs/new.pem'
+    )
+    await act(async () => buttonWithText('Save').click())
+
+    const confirmation = (): HTMLElement | null =>
+      document.body.querySelector('[data-testid="package-mirror-confirmation"]')
+    expect(confirmation()?.textContent).toContain(
+      'Changing the CA bundle will stop active Notebook kernels. Continue?'
+    )
+    expect(setPackageMirror).not.toHaveBeenCalled()
+
+    await act(async () => {
+      confirmation()?.querySelector<HTMLButtonElement>('button:first-of-type')?.click()
+    })
+    expect(confirmation()).toBeNull()
+    expect(setPackageMirror).not.toHaveBeenCalled()
+
+    await act(async () => buttonWithText('Save').click())
+    await act(async () => {
+      confirmation()?.querySelector<HTMLButtonElement>('button:last-of-type')?.click()
+      await Promise.resolve()
+    })
+    expect(setPackageMirror).toHaveBeenCalledWith({ caBundle: '/certs/new.pem' })
+    expect(confirmation()?.textContent).toContain('Saving…')
+    expect(confirmation()?.querySelector<HTMLButtonElement>('button:last-of-type')?.disabled).toBe(
+      true
+    )
+
+    await act(async () => {
+      resolveSave()
+      await Promise.resolve()
+    })
+    expect(confirmation()).toBeNull()
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
+  })
+
   it('hides unavailable Notebook network controls and falls back from the domains view', async () => {
     const onNavigate = vi.fn()
     await act(async () => {

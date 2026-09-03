@@ -171,7 +171,9 @@ describe('notebook-env-store', () => {
     useNotebookEnvStore.setState({ statusError: 'status unavailable' })
 
     await useNotebookEnvStore.getState().provision('r')
-    await useNotebookEnvStore.getState().reset('python')
+    await useNotebookEnvStore
+      .getState()
+      .reset('python', 'default-python', 'Could not reset the runtime.')
 
     expect(api.provision).not.toHaveBeenCalled()
     expect(api.repair).not.toHaveBeenCalled()
@@ -624,8 +626,10 @@ describe('notebook-env-store', () => {
     useNotebookEnvStore.setState({
       byLang: { python: { preparing: false, error: 'RUNTIME_RECOVERY_BLOCKED: …' } }
     })
-    await useNotebookEnvStore.getState().reset('python')
-    expect(repair).toHaveBeenCalledWith('python', expect.any(String)) // force-recovery via repair IPC
+    await useNotebookEnvStore
+      .getState()
+      .reset('python', 'default-python', 'Could not reset the runtime.')
+    expect(repair).toHaveBeenCalledWith('python', 'default-python', expect.any(String)) // force-recovery via repair IPC
     const { python } = useNotebookEnvStore.getState().byLang
     expect(python?.preparing).toBe(false)
     expect(python?.error).toBeUndefined() // cleared on success

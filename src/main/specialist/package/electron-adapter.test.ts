@@ -29,7 +29,13 @@ describe('saveSpecialistExport', () => {
 
     await expect(
       saveSpecialistExport(
-        { showSaveDialog, writeFile },
+        {
+          showSaveDialog,
+          writeFile,
+          publishUserFile: async (destinationPath, write) => {
+            await write(destinationPath)
+          }
+        },
         { fileName: 'research-synth-1.3.0.zip', archiveBytes: new Uint8Array([1, 2, 3]) }
       )
     ).resolves.toEqual({ saved: true })
@@ -114,7 +120,16 @@ describe('saveSpecialistPackageReport', () => {
     }
 
     await expect(
-      saveSpecialistPackageReport({ showSaveDialog, writeFile }, report)
+      saveSpecialistPackageReport(
+        {
+          showSaveDialog,
+          writeFile,
+          publishUserFile: async (destinationPath, write) => {
+            await write(destinationPath)
+          }
+        },
+        report
+      )
     ).resolves.toEqual({ saved: true })
     expect(showSaveDialog).toHaveBeenCalledWith({
       defaultPath: 'safe-specialist-1.0.0-diagnostics.json',

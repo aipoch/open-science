@@ -28,8 +28,7 @@ import { join } from 'node:path'
 import type { ComputeJob, JobSummary } from '../../shared/compute'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
-import { getJobHarvestDir } from './harvest-engine'
-import { workspaceRelativePath } from './workspace-path'
+import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
 
 // ---------------------------------------------------------------------------
 // Types

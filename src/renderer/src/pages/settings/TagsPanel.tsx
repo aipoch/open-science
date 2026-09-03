@@ -303,12 +303,14 @@ const TagsList = ({
 
   const resources = useMemo<TagResourceRow[]>(
     () => [
-      ...skills.map((skill) => ({
-        resourceType: 'catalog.skill' as const,
-        resourceId: skill.id,
-        title: skill.displayName,
-        subtitle: skill.description.trim() || undefined
-      })),
+      ...skills
+        .filter((skill) => skill.available !== false)
+        .map((skill) => ({
+          resourceType: 'catalog.skill' as const,
+          resourceId: skill.id,
+          title: skill.displayName,
+          subtitle: skill.description.trim() || undefined
+        })),
       ...connectors.map((connector) => ({
         resourceType: 'catalog.connector' as const,
         resourceId: connector.id,

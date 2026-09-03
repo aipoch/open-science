@@ -50,6 +50,7 @@ const { initDataRoot } = await import('../storage-root')
 const { SettingsDocumentStore } = await import('../settings/document-store')
 const { SettingsRepository } = await import('../settings/repository')
 const { SettingsPreferencesModule } = await import('../settings/preferences')
+const { NotebookRuntimeSettingsModule } = await import('../settings/notebook-runtime-settings')
 const { createStorageCommandOwner } = await import('./command-owner')
 
 describe('storage command owner onboarding persistence', () => {
@@ -80,8 +81,17 @@ describe('storage command owner onboarding persistence', () => {
     const store = new SettingsDocumentStore(join(currentParent, 'settings'))
     const repository = new SettingsRepository(store)
     const preferences = new SettingsPreferencesModule(repository, () => 1_234)
+    const notebookSettings = new NotebookRuntimeSettingsModule(repository)
+    const managedPythonId = (root: string): string =>
+      process.platform === 'win32'
+        ? join(root, 'runtime', 'envs', 'analysis', 'python.exe')
+        : join(root, 'runtime', 'envs', 'analysis', 'bin', 'python')
+    const oldRuntimeId = managedPythonId(currentDataRoot)
+    const relocatedRuntimeId = managedPythonId(targetDataRoot)
+    await notebookSettings.setEnvironmentEnabled('python', oldRuntimeId, false)
     // A split implementation reaches this second publish after dataRoot is already durable. The
     // combined mutation never performs it, so both fields survive together in the first document.
+    fsFaults.settingsRenameCount = 0
     fsFaults.failSecondSettingsRename = true
 
     const owner = createStorageCommandOwner({
@@ -113,19 +123,22 @@ describe('storage command owner onboarding persistence', () => {
       markOnboarding: true
     })
     const persisted = await repository.getSettings()
+    const runtimeEnablement = (await notebookSettings.getSnapshot('python')).runtimeEnablement
 
     expect({
       result,
       persisted: {
         dataRoot: persisted.dataRoot,
         onboardingCompletedAt: persisted.onboardingCompletedAt
-      }
+      },
+      relocatedRuntimeDisabled: runtimeEnablement.enabled[relocatedRuntimeId]
     }).toEqual({
       result: { ok: true },
       persisted: {
         dataRoot: targetDataRoot,
         onboardingCompletedAt: 1_234
-      }
+      },
+      relocatedRuntimeDisabled: false
     })
   })
 })

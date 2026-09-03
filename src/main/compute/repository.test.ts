@@ -524,6 +524,40 @@ describe('compute host repository', () => {
     })
   })
 
+  it('rechecks pending remote cleanup inside the authentication-change transaction', async () => {
+    const count = vi.fn(async () => 1)
+    const transaction = {
+      computeAuthOperation: { findUnique: vi.fn(async () => null) },
+      computeHost: { findUnique: vi.fn(async () => createRow()) },
+      computeJob: { count }
+    }
+    const client = {
+      $transaction: vi.fn(async (operation: (value: typeof transaction) => unknown) =>
+        operation(transaction)
+      )
+    } as unknown as ComputeHostClient
+    const repository = new ComputeHostRepository(async () => client)
+
+    await expect(
+      repository.changeAuthentication({
+        providerId: 'ssh:biowulf',
+        expectedRevision: 1,
+        operationId: 'change-operation',
+        requestFingerprint: 'test-protected-fingerprint',
+        authenticationMode: 'ssh_config',
+        username: 'researcher',
+        port: 22,
+        verifiedAt: new Date('2026-08-17T01:00:00.000Z')
+      })
+    ).rejects.toMatchObject({ code: 'credential_change_blocked_by_jobs' })
+    expect(count).toHaveBeenCalledWith({
+      where: {
+        providerId: 'ssh:biowulf',
+        OR: expect.arrayContaining([{ remoteCleanupDisposition: 'pending' }])
+      }
+    })
+  })
+
   it('does not record a reset operation when the credential transaction fails', async () => {
     const current = createRow({
       authenticationMode: 'password',

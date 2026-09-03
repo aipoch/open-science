@@ -138,6 +138,7 @@ describe('production application command wiring', () => {
     )
     expect(ipcSource).not.toContain('registerSessionDeletionIpcHandler')
     expect(ipcSource).not.toContain("declareElectronAdapter('session-deletion'")
+    expect(ipcSource).not.toContain("ipcMainHandle('sessions:edit-details'")
     expect(ipcSource).not.toContain('registerProjectIpcHandlers')
     expect(legacyAdapterBlock).toContain('registerPreviewStateIpcHandlers(previewStateRepository)')
 

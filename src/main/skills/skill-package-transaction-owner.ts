@@ -36,6 +36,8 @@ export type StagedSkillPackage = Readonly<{
   generation: string
 }>
 
+type ExternalRecoveryBarrier = <T>(operation: () => Promise<T>) => Promise<T>
+
 // Owns the one writable-Skill transaction protocol: shared locking, crash recovery, sibling staging,
 // atomic promotion/rollback, cleanup, and the private source manifest. Callers decide what package
 // bytes mean; this owner decides when they become live and how an interrupted replace is recovered.
@@ -45,13 +47,18 @@ export class SkillPackageTransactionOwner {
 
   constructor(
     private readonly storageRoot: string,
-    mutationOwner: SkillMutationOwner = skillMutationOwnerFor(storageRoot)
+    mutationOwner: SkillMutationOwner = skillMutationOwnerFor(storageRoot),
+    private readonly withExternalRecoveryBarrier?: ExternalRecoveryBarrier
   ) {
     this.mutationOwner = mutationOwner
   }
 
   setPromotedValidator(validate: (staged: StagedSkillPackage) => Promise<void>): void {
     this.validatePromoted = validate
+  }
+
+  isHeldByCurrentContext(): boolean {
+    return this.mutationOwner.isHeldByCurrentContext()
   }
 
   runExclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -61,6 +68,21 @@ export class SkillPackageTransactionOwner {
   runRecovered<T>(
     operation: () => Promise<T>,
     sources: readonly WritableSkillSource[] = WRITABLE_SOURCES
+  ): Promise<T> {
+    return this.runAfterRecovery(operation, sources)
+  }
+
+  runMutationRecovered<T>(
+    operation: () => Promise<T>,
+    sources: readonly WritableSkillSource[] = WRITABLE_SOURCES
+  ): Promise<T> {
+    const run = (): Promise<T> => this.runAfterRecovery(operation, sources)
+    return this.withExternalRecoveryBarrier ? this.withExternalRecoveryBarrier(run) : run()
+  }
+
+  private runAfterRecovery<T>(
+    operation: () => Promise<T>,
+    sources: readonly WritableSkillSource[]
   ): Promise<T> {
     return this.runExclusive(async () => {
       for (const source of sources) await this.recover(source)

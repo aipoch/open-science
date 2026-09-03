@@ -107,6 +107,7 @@ type SkillCatalogModuleOptions = {
   userAgentsDir?: string
   skillRegistry?: SkillRegistry
   userSkills?: UserSkillRepository
+  withUserSkillRecoveryBarrier?: <T>(operation: () => Promise<T>) => Promise<T>
   githubFetch?: FetchLike
   authorizeRegisteredHelper?: (
     skillId: string,
@@ -128,8 +129,11 @@ class SkillCatalogModule {
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
     this.userSkills =
       options.userSkills ??
-      new UserSkillRepository(options.storageRoot, undefined, async (list) =>
-        this.validatePromotedRegisteredHelpers(await list())
+      new UserSkillRepository(
+        options.storageRoot,
+        undefined,
+        async (list) => this.validatePromotedRegisteredHelpers(await list()),
+        options.withUserSkillRecoveryBarrier
       )
     this.githubFetch = options.githubFetch ?? netFetch
     this.registeredHelpers = new RegisteredSkillHelperCatalog({
@@ -294,6 +298,24 @@ class SkillCatalogModule {
     return (await this.catalog()).filter((skill) => skill.exposure !== 'internal')
   }
 
+  private async settingsCatalog(): Promise<
+    Array<{ skill: BundledSkill; available: boolean; catalogEntryKey: string }>
+  > {
+    const [featured, user] = await Promise.all([this.skillRegistry.list(), this.listUserSkills()])
+    const available = new Set(this.mergeCatalog(featured, user))
+    return [...featured, ...user].flatMap((skill, index) =>
+      skill.exposure === 'internal'
+        ? []
+        : [
+            {
+              skill,
+              available: available.has(skill),
+              catalogEntryKey: `${skill.source}:${skill.id}:${index}`
+            }
+          ]
+    )
+  }
+
   // Main-process adapter for host.skills. This intentionally includes internal bundled Skills so
   // /Customize can load skill-creator, while user-facing projections below use managedCatalog().
   async listHostSkills(): Promise<BundledSkill[]> {
@@ -304,6 +326,9 @@ class SkillCatalogModule {
   // second production transaction facade while excluding immutable bundled packages from each
   // writable-directory reconciliation.
   async listUserSkills(): Promise<BundledSkill[]> {
+    // A scan started outside the owner can be queued behind a mutation. Reads inside that
+    // mutation must bypass the shared Promise so a guard cannot wait on its own lock.
+    if (this.userSkills.isMutationOwnerContext?.()) return this.userSkills.list()
     if (this.userSkillCatalogRead) return this.userSkillCatalogRead
     const read = this.userSkills.list().finally(() => {
       if (this.userSkillCatalogRead === read) this.userSkillCatalogRead = undefined
@@ -335,12 +360,17 @@ class SkillCatalogModule {
   }
 
   async listSkills(): Promise<SkillView[]> {
-    const [skills, settings] = await Promise.all([
-      this.managedCatalog(),
+    const [entries, settings] = await Promise.all([
+      this.settingsCatalog(),
       this.options.repository.getSettings()
     ])
     const disabled = new Set(settings.disabledSkillIds ?? [])
-    return skills.map((skill) => this.toSkillView(skill, disabled))
+    return entries.map(({ skill, available, catalogEntryKey }) => ({
+      ...this.toSkillView(skill, disabled),
+      available,
+      catalogEntryKey,
+      ...(available ? {} : { availability: 'identity-conflict' as const })
+    }))
   }
 
   async listSpecialistSkillCatalog(options: { bundledOnly?: boolean } = {}): Promise<
@@ -1113,6 +1143,7 @@ class SkillCatalogModule {
       source: skill.source,
       updatedAt: skill.updatedAt,
       enabled: !disabled.has(skill.id),
+      available: true,
       author: skill.author,
       license: skill.license,
       thirdParty: skill.thirdParty

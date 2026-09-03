@@ -237,7 +237,8 @@ export class SpecialistService {
 
   constructor(
     private readonly repo: SpecialistRepository,
-    private readonly builtinRegistry?: { load(): Promise<BuiltinSpecialistRegistryResult> }
+    private readonly builtinRegistry?: { load(): Promise<BuiltinSpecialistRegistryResult> },
+    private readonly withCreateRecoveryBarrier?: <T>(operation: () => Promise<T>) => Promise<T>
   ) {}
 
   private async builtinEntries(): Promise<readonly BuiltinSpecialistRegistryEntry[]> {
@@ -367,7 +368,12 @@ export class SpecialistService {
     return this.getByName(name)
   }
 
-  async create(input: CreateSpecialistInput): Promise<SpecialistView> {
+  create(input: CreateSpecialistInput): Promise<SpecialistView> {
+    const run = (): Promise<SpecialistView> => this.createAfterRecovery(input)
+    return this.withCreateRecoveryBarrier ? this.withCreateRecoveryBarrier(run) : run()
+  }
+
+  private async createAfterRecovery(input: CreateSpecialistInput): Promise<SpecialistView> {
     assertCreateInputShape(input)
     await this.assertCreatableName(input.name)
 

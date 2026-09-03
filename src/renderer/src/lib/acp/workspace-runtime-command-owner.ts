@@ -402,6 +402,7 @@ const finalizedPdfContextSources = ({
   }
   return selected.map((attachment) => ({
     sourceKind: 'upload-version',
+    sourceFileId: attachment!.id,
     sourceVersionId: attachment!.versionId!
   }))
 }
@@ -427,7 +428,11 @@ const filterPendingPdfContext = async (
     const attachment = request.attachments.find((candidate) => candidate.id === attachmentId)
     if (!attachment) throw new Error('The staged PDF is no longer attached to this message.')
     if (attachment.versionId) {
-      versions.push({ sourceKind: 'upload-version', sourceVersionId: attachment.versionId })
+      versions.push({
+        sourceKind: 'upload-version',
+        sourceFileId: attachment.id,
+        sourceVersionId: attachment.versionId
+      })
       continue
     }
     pendingAttachments.push({
@@ -734,7 +739,11 @@ const sendWorkspaceMessage = async (
         ...(pdfContext
           ? {
               pendingPdfContextVersions: pdfContext.bindings.map(
-                ({ sourceKind, sourceVersionId }) => ({ sourceKind, sourceVersionId })
+                ({ sourceKind, sourceFileId, sourceVersionId }) => ({
+                  sourceKind,
+                  sourceFileId,
+                  sourceVersionId
+                })
               ),
               pdfReadingPosition: pdfContext.readingPosition
             }

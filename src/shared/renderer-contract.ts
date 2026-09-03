@@ -1,7 +1,7 @@
 export type RendererContractKind = 'method' | 'event'
 
 // prettier-ignore
-export type RendererParameterCodec = 'positional' | 'default-empty-object' | 'default-empty-object-absent-only' | 'optional-argument-slot' | 'storage-parent-object' | 'storage-data-root-object' | 'runtime-selection-object' | 'runtime-language-environment-object' | 'runtime-language-object' | 'runtime-enablement-object' | 'runtime-install-authorization-object' | 'runtime-interpreter-path-object' | 'native-file-upload-request' | 'session-save-optional-argument' | 'session-save-json-undefined' | 'event-listener' | 'surface-native'
+export type RendererParameterCodec = 'positional' | 'default-empty-object' | 'default-empty-object-absent-only' | 'optional-argument-slot' | 'storage-parent-object' | 'storage-data-root-object' | 'runtime-language-environment-object' | 'runtime-language-object' | 'runtime-enablement-object' | 'runtime-install-authorization-object' | 'runtime-interpreter-path-object' | 'native-file-upload-request' | 'session-save-optional-argument' | 'session-save-json-undefined' | 'event-listener' | 'surface-native'
 
 export type RendererSurfaceInstallation =
   'preload' | 'web-rpc' | 'web-event' | 'browser-native' | 'rejecting-stub' | 'unavailable'

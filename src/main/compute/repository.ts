@@ -631,7 +631,8 @@ class ComputeHostRepository {
             {
               status: { in: ['success', 'failed', 'timeout'] },
               harvestedAt: null
-            }
+            },
+            { remoteCleanupDisposition: 'pending' }
           ]
         }
       })

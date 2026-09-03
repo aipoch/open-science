@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { createServer, connect, type Socket } from 'node:net'
 import { createServer as createHttpServer, request } from 'node:http'
 import { createServer as createTlsServer } from 'node:tls'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -17,6 +17,88 @@ const credentials = { username: 'command-a', password: 'secret-a' }
 const authorization = `Basic ${Buffer.from('command-a:secret-a').toString('base64')}`
 const execFileAsync = promisify(execFile)
 const openssl = ['/usr/bin/openssl', '/opt/homebrew/bin/openssl'].find(existsSync)
+
+type ChildResult = Readonly<{
+  exitCode: number | null
+  signal: NodeJS.Signals | null
+  stderr: string
+  stdout: string
+}>
+
+const runResetTunnelChild = (
+  resetPoint: 'before-routing' | 'client' | 'destination'
+): Promise<ChildResult> =>
+  new Promise((resolve, reject) => {
+    const gatewayModuleUrl = new URL('../runtime/src/gateway/command-gateway.ts', import.meta.url)
+      .href
+    const script = `
+      import { once } from 'node:events'
+      import { connect, createServer } from 'node:net'
+      import { CommandGateway } from ${JSON.stringify(gatewayModuleUrl)}
+
+      process.on('uncaughtExceptionMonitor', (error) => {
+        process.stderr.write('MONITORED:' + error.code + ':' + error.message + '\\n')
+      })
+
+      const listen = async (server) => {
+        server.listen(0, '127.0.0.1')
+        await once(server, 'listening')
+        return server.address().port
+      }
+      let resolveOriginConnection
+      const originConnection = new Promise((resolve) => (resolveOriginConnection = resolve))
+      const origin = createServer((socket) => {
+        socket.on('error', () => undefined)
+        resolveOriginConnection(socket)
+      })
+      const originPort = await listen(origin)
+      const reservation = createServer()
+      const sharedPort = await listen(reservation)
+      await new Promise((resolve) => reservation.close(resolve))
+      const gateway = await CommandGateway.open({
+        decide: async () => ({ allowed: true, address: '127.0.0.1' }),
+        sharedPort,
+        credentials: { username: 'command', password: 'secret' }
+      })
+      const client = connect({ host: '127.0.0.1', port: gateway.port })
+      await once(client, 'connect')
+      if (${JSON.stringify(resetPoint)} === 'before-routing') {
+        client.resetAndDestroy()
+      } else {
+        const authorization = Buffer.from('command:secret').toString('base64')
+        client.write(
+          'CONNECT example.invalid:' + originPort + ' HTTP/1.1\\r\\n' +
+          'Host: example.invalid:' + originPort + '\\r\\n' +
+          'Proxy-Authorization: Basic ' + authorization + '\\r\\n\\r\\n'
+        )
+        const [response] = await once(client, 'data')
+        if (!response.toString('latin1').includes('200 Connection Established')) {
+          throw new Error('Gateway tunnel did not open.')
+        }
+        if (${JSON.stringify(resetPoint)} === 'client') client.resetAndDestroy()
+        else (await originConnection).resetAndDestroy()
+      }
+
+      setTimeout(async () => {
+        await gateway.close()
+        await new Promise((resolve) => origin.close(resolve))
+        process.stdout.write('NO_UNCAUGHT_EXCEPTION\\n')
+      }, 250)
+    `
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+      env: { ...process.env, NODE_OPTIONS: '' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+    let stderr = ''
+    let stdout = ''
+    child.stderr.setEncoding('utf8')
+    child.stdout.setEncoding('utf8')
+    child.stderr.on('data', (chunk: string) => (stderr += chunk))
+    child.stdout.on('data', (chunk: string) => (stdout += chunk))
+    child.once('error', reject)
+    child.once('close', (exitCode, signal) => resolve({ exitCode, signal, stderr, stdout }))
+  })
 
 afterEach(async () => {
   await Promise.all(closeTasks.splice(0).map((close) => close()))
@@ -70,6 +152,22 @@ const readHttpHeader = (socket: Socket): Promise<string> =>
   })
 
 describe('Notebook command gateway', () => {
+  it.each([
+    ['client before routing', 'before-routing'],
+    ['client after routing', 'client'],
+    ['destination after routing', 'destination']
+  ] as const)(
+    'does not raise an uncaught exception when the %s resets the connection',
+    async (_description, resetPoint) => {
+      const result = await runResetTunnelChild(resetPoint)
+
+      expect(result.exitCode, result.stderr).toBe(0)
+      expect(result.signal).toBeNull()
+      expect(result.stderr).not.toContain('MONITORED:ECONNRESET:read ECONNRESET')
+      expect(result.stdout).toContain('NO_UNCAUGHT_EXCEPTION')
+    }
+  )
+
   it('routes concurrent commands by credentials through one shared port', async () => {
     const reservation = await listen(() => undefined)
     await reservation.close()

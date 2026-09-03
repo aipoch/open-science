@@ -124,7 +124,7 @@ type PreloadApi = {
   notebookEnv: {
     cancel: (language?: unknown) => unknown
     provision: (language: unknown, operationId?: unknown) => unknown
-    repair: (language: unknown, operationId?: unknown) => unknown
+    repair: (language: unknown, runtimeIdentity: unknown, operationId?: unknown) => unknown
   }
   notifications: {
     peekPendingOpenSession: () => unknown
@@ -287,7 +287,6 @@ describe('preload bridge — public surface inventory', () => {
       'artifacts.getVersionMessages',
       'artifacts.getVersionProvenance',
       'artifacts.getVersionReview',
-      'artifacts.listProjectFiles',
       'artifacts.openFile',
       'artifacts.readPreview',
       'artifacts.reconcilePendingArtifacts',
@@ -315,6 +314,7 @@ describe('preload bridge — public surface inventory', () => {
       'compute.jobsList',
       'compute.jobsMarkConsumed',
       'compute.jobsPendingNotification',
+      'compute.jobsSetRemoteCleanup',
       'compute.jobsTransitionAnalysis',
       'compute.list',
       'compute.listDir',
@@ -460,16 +460,16 @@ describe('preload bridge — public surface inventory', () => {
       'reviewer.onUpdated',
       'reviewer.run',
       'runtime.describeUsage',
+      'runtime.getAgentEnvironmentCreationEnabled',
       'runtime.getEnablement',
       'runtime.listEnvironments',
       'runtime.listPackageCounts',
       'runtime.listPackages',
       'runtime.pickInterpreter',
       'runtime.registerInterpreter',
+      'runtime.setAgentEnvironmentCreationEnabled',
       'runtime.setEnvironmentEnabled',
       'runtime.setInstallAuthorized',
-      'runtime.setSelection',
-      'runtime.survey',
       'runtime.unregisterInterpreter',
       'saveBlobFile',
       'saveManagedFile',
@@ -577,6 +577,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.respondConnectorApproval',
       'settings.respondConnectorCredentialRequest',
       'settings.respondSkillImportApproval',
+      'settings.retryConnectorProjection',
       'settings.retryCustomServer',
       'settings.saveGitHubToken',
       'settings.scanRepoSkills',
@@ -776,7 +777,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
     await api.notebookEnv.cancel()
     await api.notebookEnv.cancel(undefined)
     await api.notebookEnv.provision('r', 'provision-operation')
-    await api.notebookEnv.repair('python', 'repair-operation')
+    await api.notebookEnv.repair('python', 'default-python', 'repair-operation')
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, 'acp:connect', {})
     expect(invokeMock).toHaveBeenNthCalledWith(2, 'acp:connect', {})
@@ -792,6 +793,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
       6,
       'notebook-env:repair',
       'python',
+      'default-python',
       'repair-operation'
     )
   })
@@ -1039,6 +1041,21 @@ describe('preload bridge — core renderer contract catalog', () => {
     expect(invokeMock).toHaveBeenCalledWith('sessions:save-session', { id: 'session-1' })
   })
 
+  it('restores a details-conflict rejection from the Session edit IPC outcome', async () => {
+    invokeMock.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'session-details-conflict',
+        message: 'Session details changed elsewhere. Reopen the editor and try again.'
+      }
+    })
+
+    await expect(api.sessions.editDetails(sampleEditSessionDetails)).rejects.toMatchObject({
+      code: 'session-details-conflict'
+    })
+    expect(invokeMock).toHaveBeenCalledWith('sessions:edit-details', sampleEditSessionDetails)
+  })
+
   it('returns null without IPC when native upload path extraction fails', async () => {
     const file = { name: 'clipboard.csv' } as File
     getPathForFileMock.mockReturnValue('')
@@ -1165,6 +1182,8 @@ const sampleDeleteSession = { projectId: 'p-1', sessionId: 's-1' }
 const sampleEditSessionDetails = {
   projectId: 'p-1',
   sessionId: 's-1',
+  expectedTitle: 'Original',
+  expectedDescription: 'Original description',
   title: 'Edited',
   description: 'Description'
 }

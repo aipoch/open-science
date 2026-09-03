@@ -41,8 +41,27 @@ type Workflow = {
   permissions?: Record<string, string>
 }
 
+type DependabotUpdate = {
+  'commit-message'?: { prefix?: string }
+  directory?: string
+  groups?: Record<
+    string,
+    { 'applies-to'?: string; 'dependency-type'?: string; patterns?: string[] }
+  >
+  'open-pull-requests-limit'?: number
+  'package-ecosystem'?: string
+  'pull-request-branch-name'?: {
+    'branch-name-case'?: string
+    prefix?: string
+    template?: string
+  }
+}
+
 const workflowText = readFileSync(join(process.cwd(), '.github/workflows/pr-gate.yml'), 'utf8')
 const workflow = load(workflowText) as Workflow
+const dependabot = load(readFileSync(join(process.cwd(), '.github/dependabot.yml'), 'utf8')) as {
+  updates: DependabotUpdate[]
+}
 const manifest = JSON.parse(
   readFileSync(join(process.cwd(), 'scripts/ci/change-impact.json'), 'utf8')
 ) as { bundleOrder: string[]; laneBundles: Record<string, string>; laneOrder: string[] }
@@ -248,6 +267,55 @@ describe('PR Gate workflow', () => {
       HEAD_SHA:
         '${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}',
       POLICY_SCOPE: 'commits'
+    })
+  })
+
+  it('rejects newly introduced high-severity dependency vulnerabilities', () => {
+    const review = workflow.jobs.policy.steps?.find(
+      ({ name }) => name === 'Review dependency changes'
+    )
+
+    expect(review).toMatchObject({
+      if: "${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}",
+      uses: 'actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294',
+      with: {
+        'base-ref': '${{ needs.preflight.outputs.base }}',
+        'fail-on-severity': 'high',
+        'fail-on-scopes': 'runtime, development',
+        'head-ref': '${{ needs.preflight.outputs.head }}',
+        'license-check': false,
+        'show-openssf-scorecard': false
+      }
+    })
+  })
+
+  it('disables npm updates while keeping GitHub Actions updates policy-compatible', () => {
+    const npm = dependabot.updates.find(
+      (update) => update['package-ecosystem'] === 'npm' && update.directory === '/'
+    )
+    const actions = dependabot.updates.find(
+      (update) => update['package-ecosystem'] === 'github-actions' && update.directory === '/'
+    )
+
+    expect(npm).toBeUndefined()
+    expect(actions).toMatchObject({
+      'commit-message': { prefix: 'ci(dependencies): update' },
+      'open-pull-requests-limit': 2,
+      'pull-request-branch-name': {
+        'branch-name-case': 'lowercase',
+        prefix: 'ci',
+        template: '{prefix}/{group_name}'
+      },
+      groups: {
+        'github-actions-security-updates': {
+          'applies-to': 'security-updates',
+          patterns: ['*']
+        },
+        'github-actions-version-updates': {
+          'applies-to': 'version-updates',
+          patterns: ['*']
+        }
+      }
     })
   })
 

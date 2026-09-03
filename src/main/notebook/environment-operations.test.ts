@@ -168,6 +168,31 @@ describe('NotebookEnvironmentOperations', () => {
     })
   })
 
+  it('checks Agent creation policy only when the managed default is missing', async () => {
+    const { owner } = await createOwner()
+    const provisionPython = vi.fn(async () => undefined)
+    const assertCreationAllowed = vi.fn(async () => {
+      throw new Error('AGENT_ENVIRONMENT_CREATION_DISABLED')
+    })
+    owner.setDefaultEnvProvisioner({
+      provisionPython,
+      provisionR: async () => undefined
+    })
+
+    await expect(
+      owner.ensureDefaultEnvironmentReady({
+        language: 'python',
+        environment: 'default-python',
+        runtimeRoot: join(storageRoot!, 'runtime'),
+        sessionId: 'session-1',
+        ensureRecovered: async () => undefined,
+        assertRecoverable: () => undefined,
+        assertCreationAllowed
+      })
+    ).rejects.toThrow('AGENT_ENVIRONMENT_CREATION_DISABLED')
+    expect(provisionPython).not.toHaveBeenCalled()
+  })
+
   it('marks a binding unavailable before tracking its background revocation drain', async () => {
     let releaseDrain!: () => void
     const terminations: string[] = []

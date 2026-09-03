@@ -489,7 +489,7 @@ class AgentHomeSkillOwner {
       )
     }
 
-    return this.transactions.runRecovered(async () => {
+    return this.transactions.runMutationRecovered(async () => {
       const existingDirectoryName = await this.findImportedDirectoryNameByAgentHome(
         skill,
         options.aliases ?? []

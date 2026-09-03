@@ -1600,6 +1600,19 @@ describe('ConnectorSettingsModule', () => {
     expect(server).toMatchObject({ id, enabled: true, checking: true })
   })
 
+  it('surfaces a degraded Connector Skill projection without changing persisted settings', async () => {
+    service.setCustomServerRuntimeProjectionProvider({
+      materializedSkillNames: () => [],
+      availability: () => undefined,
+      isRefreshing: () => false,
+      isDegraded: () => true
+    })
+
+    await expect(service.listConnectors()).resolves.toMatchObject({
+      skillProjectionStatus: 'degraded'
+    })
+  })
+
   it('projects checking only for the custom server currently being refreshed', async () => {
     const first = await service.addCustomServer({
       name: 'refreshing-server',

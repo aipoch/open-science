@@ -229,7 +229,7 @@ export const createConversationExportTurns = (
   })
 }
 
-const selectConversationExportMessages = (
+export const selectConversationExportMessages = (
   messages: readonly PersistedChatMessage[],
   selectedPromptMessageIds?: readonly string[]
 ): PersistedChatMessage[] => {

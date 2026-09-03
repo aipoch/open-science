@@ -28,7 +28,7 @@ import {
   type NetworkProxySettings
 } from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook'
-import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type { LanguagePreference } from '../../shared/locale'
 import {
@@ -55,10 +55,15 @@ import {
   buildSubagentModelMutation,
   buildVisionModelMutation
 } from './subagent-model-settings'
+import { relocateManagedRuntimeEnablement } from '../notebook/managed-runtime-relocation'
 
 type SkillMutationGuard = <T>(operation: () => Promise<T>) => Promise<T>
 type Write = Promise<StoredSettings>
-type DataRootUpdate = Readonly<{ dataRoot: string; onboardingCompletedAt?: number }>
+type DataRootUpdate = Readonly<{
+  dataRoot: string
+  onboardingCompletedAt?: number
+  previousDataRoot?: string
+}>
 
 // Stable mutation facade; the document store owns atomic IO, and secrets stay above this layer.
 class SettingsRepository {
@@ -559,43 +564,28 @@ class SettingsRepository {
     )
   }
 
-  // Persists the relocatable data root, optionally with the idempotent onboarding marker.
+  // Persists the relocatable data root, optional onboarding marker, and fail-closed managed-runtime
+  // disable overrides in one atomic document mutation. Old keys remain for safe retry/rollback;
+  // matching new-root keys are additive and idempotent.
   async setDataRoot(update: DataRootUpdate): Promise<StoredSettings> {
-    return this.mutate((settings) => ({ ...update, ...settings, dataRoot: update.dataRoot }))
-  }
-
-  // Sets (or clears, when `selection` is null) the persisted runtime choice for one language. The
-  // value is run through the SAME sanitizer used on read, so a bad selection can never be persisted;
-  // external R is rejected here too (managed-only in v1, mirroring sanitizeNotebookRuntimes). Clearing
-  // deletes the language's entry and drops the whole `notebookRuntimes` map when it becomes empty, so
-  // an absent map keeps meaning "use the managed default".
-  async setRuntimeSelection(
-    language: NotebookLanguage,
-    selection: RuntimeSelection | null
-  ): Promise<StoredSettings> {
-    const sanitized =
-      selection === null
-        ? null
-        : sanitizeSettings({ notebookRuntimes: { python: selection } }).notebookRuntimes?.python
-
-    if (selection !== null && !sanitized) {
-      throw new Error('Invalid runtime selection.')
-    }
-    if (sanitized && language === 'r' && sanitized.source === 'external') {
-      throw new Error('R only supports the managed runtime.')
-    }
-
     return this.mutate((settings) => {
-      const current: Partial<Record<NotebookLanguage, RuntimeSelection>> = {
-        ...settings.notebookRuntimes
+      let notebookRuntimeEnablement = settings.notebookRuntimeEnablement
+      if (update.previousDataRoot) {
+        notebookRuntimeEnablement = relocateManagedRuntimeEnablement({
+          enablement: notebookRuntimeEnablement,
+          fromDataRoot: update.previousDataRoot,
+          toDataRoot: update.dataRoot,
+          platform: process.platform
+        })
       }
-
-      if (sanitized === null) delete current[language]
-      else current[language] = sanitized
-
-      const notebookRuntimes = Object.keys(current).length > 0 ? current : undefined
-
-      return { ...settings, notebookRuntimes }
+      return {
+        ...(update.onboardingCompletedAt === undefined
+          ? {}
+          : { onboardingCompletedAt: update.onboardingCompletedAt }),
+        ...settings,
+        ...(notebookRuntimeEnablement ? { notebookRuntimeEnablement } : {}),
+        dataRoot: update.dataRoot
+      }
     })
   }
 
@@ -621,6 +611,10 @@ class SettingsRepository {
           Object.keys(notebookRuntimeEnablement).length > 0 ? notebookRuntimeEnablement : undefined
       }
     })
+  }
+
+  async setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, agentEnvironmentCreationEnabled: enabled }))
   }
 
   // Applies one catalog change to the latest persisted paths inside the write queue.

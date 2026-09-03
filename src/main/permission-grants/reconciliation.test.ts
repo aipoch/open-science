@@ -63,16 +63,20 @@ describe('reconcilePermissionGrantOwners', () => {
     const completeCustomServerDeletion = vi.fn(async (serverId: string) => {
       calls.push(`complete:${serverId}`)
     })
+    const removeTagsForConnector = vi.fn(async (serverId: string) => {
+      calls.push(`tags:${serverId}`)
+    })
 
     await reconcilePendingCustomServerDeletions(
       { prune },
       {
         pendingCustomServerDeletionIds: ['rna-reviewer'],
-        completeCustomServerDeletion
+        completeCustomServerDeletion,
+        removeTagsForConnector
       }
     )
 
-    expect(calls).toEqual(['prune:rna-reviewer', 'complete:rna-reviewer'])
+    expect(calls).toEqual(['prune:rna-reviewer', 'tags:rna-reviewer', 'complete:rna-reviewer'])
   })
 
   it('leaves a journaled Connector deletion pending when grant pruning fails', async () => {
@@ -83,10 +87,28 @@ describe('reconcilePermissionGrantOwners', () => {
         { prune: vi.fn().mockRejectedValue(new Error('grant cleanup failed')) },
         {
           pendingCustomServerDeletionIds: ['rna-reviewer'],
+          removeTagsForConnector: vi.fn(),
           completeCustomServerDeletion
         }
       )
     ).rejects.toThrow('grant cleanup failed')
+
+    expect(completeCustomServerDeletion).not.toHaveBeenCalled()
+  })
+
+  it('leaves a journaled Connector deletion pending when Tag cleanup fails', async () => {
+    const completeCustomServerDeletion = vi.fn()
+
+    await expect(
+      reconcilePendingCustomServerDeletions(
+        { prune: vi.fn().mockResolvedValue(undefined) },
+        {
+          pendingCustomServerDeletionIds: ['rna-reviewer'],
+          completeCustomServerDeletion,
+          removeTagsForConnector: vi.fn().mockRejectedValue(new Error('Tag cleanup failed'))
+        }
+      )
+    ).rejects.toThrow('Tag cleanup failed')
 
     expect(completeCustomServerDeletion).not.toHaveBeenCalled()
   })

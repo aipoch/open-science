@@ -113,7 +113,7 @@ const useManagedVersionWorkflow = ({
 
   useEffect(() => {
     let active = true
-    if (!identity || !requestKey || typeof window.api.managedFileVersions.inspect !== 'function')
+    if (!identity || !requestKey || typeof window.api.managedFileVersions?.inspect !== 'function')
       return
     const leaveDiffMode = (): void =>
       resetDiff((current) => (current === 'diff' ? 'view' : current))

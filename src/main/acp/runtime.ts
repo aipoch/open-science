@@ -70,7 +70,7 @@ import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
-import type { NotebookExecutionRpcMethod } from '../../shared/notebook'
+import type { NotebookExecutionRpcMethod, NotebookPromptInput } from '../../shared/notebook'
 import type { SkillImportRpcConnection } from '../skills/mcp-server'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
@@ -367,7 +367,8 @@ type AcpRuntimeNotebookOptions = {
     promptMessageId: string
     uploads: UploadedAttachment[]
     references: FileReference[]
-  }) => Promise<void>
+    materializeOnly?: boolean
+  }) => Promise<readonly NotebookPromptInput[] | void>
   peekHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
 }
 
@@ -883,13 +884,6 @@ class AcpRuntime {
         ...this.appContinuations.sessionIds()
       ])
     )
-  }
-
-  // Run ids of turns currently in flight, from live in-memory state (not the persisted current-run
-  // handoff, which survives a crash). The artifact orphan scan uses this to exclude files a running
-  // turn is still writing, while a crashed run — absent here — correctly surfaces as orphaned.
-  getActiveArtifactRunIds(): string[] {
-    return this.artifactTurns?.activeRunIds() ?? []
   }
 
   // Accepts a model selection without interrupting a live generation. The picker may keep changing
@@ -1441,7 +1435,11 @@ class AcpRuntime {
   }
 
   // Sends one prompt turn to the targeted session and streams updates until stop.
-  async sendPrompt(request: AcpPromptRequest, promptAttemptId?: string): Promise<PromptResponse> {
+  async sendPrompt(
+    request: AcpPromptRequest,
+    promptAttemptId?: string,
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+  ): Promise<PromptResponse> {
     if (
       request.referencedArtifacts?.some(
         (reference) =>
@@ -1451,10 +1449,14 @@ class AcpRuntime {
       await this.enableLiteratureContext(request.sessionId)
     }
     return this.withOperationLease(() =>
-      this.runPromptTurn(request, {
-        kind: 'user',
-        ...(promptAttemptId === undefined ? {} : { promptAttemptId })
-      })
+      this.runPromptTurn(
+        request,
+        {
+          kind: 'user',
+          ...(promptAttemptId === undefined ? {} : { promptAttemptId })
+        },
+        onPromptAdmitted
+      )
     )
   }
 
@@ -1498,12 +1500,13 @@ class AcpRuntime {
           attribution: MessageAttribution
           promptAttemptId?: string
         }>
-      | Readonly<{ kind: 'app-continuation'; promptAttemptId?: string }>
+      | Readonly<{ kind: 'app-continuation'; promptAttemptId?: string }>,
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
     return withDataRootWrite(async () => {
       let response: PromptResponse | undefined
       try {
-        response = await this.promptTurnWorkflow.run(request, intent)
+        response = await this.promptTurnWorkflow.run(request, intent, onPromptAdmitted)
         return response
       } finally {
         this.schedulePendingAppContinuation(request.sessionId, response?.stopReason)

@@ -356,6 +356,17 @@ export const ArtifactPreview = ({
   // Renderer selection is source-neutral; source remains relevant only to the nested file reader.
   const format = getArtifactPreviewFormat(artifact)
 
+  // Managed readers build their acquire request inside effects, where a missing logical identity
+  // throws. Cards for artifacts persisted before editable versions carry no identity — show the
+  // static file-type tile instead of unmounting the whole tree through the uncaught effect error.
+  // Only the reader-mounting branches need the gate; csv/fasta/text render the already-fetched
+  // preview prop and never acquire.
+  const readerMountsManagedAcquire =
+    (source === 'artifact' || source === 'upload') && !(projectId && managedFileId)
+  if (readerMountsManagedAcquire && ['pdf', 'image', 'tiff'].includes(format)) {
+    return <FileTypePreview artifact={artifact} />
+  }
+
   // PDFs render only their first page through the managed range transport.
   if (format === 'pdf') {
     return (

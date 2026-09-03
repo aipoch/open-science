@@ -1,4 +1,4 @@
-import type { ComputeJob } from '../../shared/compute'
+import type { ComputeJob, SetComputeJobRemoteCleanupRequest } from '../../shared/compute'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { computeRemoteWorkdir, quoteRemotePath, type RemoteHandle } from './job-dispatcher'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
@@ -15,7 +15,10 @@ import {
 import { remoteJobPidTerminationFunctionLines } from './remote-job-process'
 import { parseRemoteJobHandle, parseRemoteJobWorkdir } from './remote-job-handle'
 
-type ComputeJobDeletionRepository = Pick<ComputeJobRepository, 'findByOwner' | 'listOwners'>
+type ComputeJobDeletionRepository = Pick<
+  ComputeJobRepository,
+  'findByOwner' | 'listOwners' | 'get' | 'settleRemoteCleanup'
+>
 type ComputeJobOwnerLiveness = boolean | 'unknown'
 
 type ComputeJobDeletionLifecycle = Pick<
@@ -55,9 +58,16 @@ type ComputeJobDeletionOwnerDeps = {
   hostRepository: Pick<ComputeHostRepository, 'get'>
   connectionBroker: ComputeConnectionBrokerAcquirer
   dispatchTracker?: Pick<DispatchTracker, 'waitFor'>
+  requestCancellation?: (job: ComputeJob) => Promise<void>
+  confirmCancellation?: (job: ComputeJob) => Promise<void>
 }
 
 const ACTIVE_STATUSES = new Set<ComputeJob['status']>(['submitted', 'running'])
+const HARVESTABLE_TERMINAL_STATUSES = new Set<ComputeJob['status']>([
+  'success',
+  'failed',
+  'timeout'
+])
 
 const activeRemoteHandle = (job: ComputeJob, workdir: string): RemoteHandle | undefined => {
   if (!ACTIVE_STATUSES.has(job.status)) return undefined
@@ -72,31 +82,56 @@ const activeRemoteHandle = (job: ComputeJob, workdir: string): RemoteHandle | un
   return handle
 }
 
-const cleanupCommand = (workdir: string, handle: RemoteHandle | undefined): string => {
+const cleanupCommand = (
+  workdir: string,
+  handle: RemoteHandle | undefined,
+  requirePidWitness = false
+): string => {
   const marker = '/.openscience/jobs/'
   const markerIndex = workdir.lastIndexOf(marker)
   if (markerIndex < 0) throw new Error('Unsafe remote Compute Job cleanup path.')
   const scratchRoot = markerIndex === 0 ? '/' : workdir.slice(0, markerIndex)
   const workdirSuffix = workdir.slice(markerIndex + 1)
+  const parentSeparatorIndex = workdir.lastIndexOf('/')
+  const workdirParent = workdir.slice(0, parentSeparatorIndex)
+  const workdirParentSuffix = workdirSuffix.slice(0, workdirSuffix.lastIndexOf('/'))
   const quotedScratchRoot = quoteRemotePath(scratchRoot)
   const quotedWorkdirSuffix = quoteRemotePath(workdirSuffix)
+  const quotedWorkdirParent = quoteRemotePath(workdirParent)
+  const quotedWorkdirParentSuffix = quoteRemotePath(workdirParentSuffix)
   const quotedWorkdir = quoteRemotePath(workdir)
   const quotedPidFile = quoteRemotePath(`${workdir}/job.pid`)
   // Retried plans may contain stale PIDs. Signal only while cwd still proves Job ownership;
-  // without that evidence, skip process mutation and keep directory removal idempotent.
+  // permit stale/absent PIDs, but fail closed when ownership cannot be determined.
   const lines = [
     `[ ! -L ${quotedWorkdir} ] || exit 1`,
-    `scratch_root=$(cd -- ${quotedScratchRoot} 2>/dev/null && pwd -P || true)`,
-    `workdir=$(cd -- ${quotedWorkdir} 2>/dev/null && pwd -P || true)`,
+    `scratch_root=$(cd -- ${quotedScratchRoot} 2>/dev/null && pwd -P) || exit 1`,
+    `workdir_parent=$(cd -- ${quotedWorkdirParent} 2>/dev/null && pwd -P) || exit 1`,
+    'expected_workdir_parent=${scratch_root%/}/' + quotedWorkdirParentSuffix,
+    '[ "$workdir_parent" = "$expected_workdir_parent" ] || exit 1',
+    `if [ -e ${quotedWorkdir} ]; then`,
+    `  [ -d ${quotedWorkdir} ] || exit 1`,
+    `  workdir=$(cd -- ${quotedWorkdir} 2>/dev/null && pwd -P) || exit 1`,
+    'else',
+    '  workdir=',
+    'fi',
     'expected_workdir=${scratch_root%/}/' + quotedWorkdirSuffix,
-    '[ -z "$workdir" ] || { [ -n "$scratch_root" ] && [ "$workdir" = "$expected_workdir" ]; } || exit 1',
-    ...remoteJobPidTerminationFunctionLines()
+    '[ -z "$workdir" ] || [ "$workdir" = "$expected_workdir" ] || exit 1',
+    ...remoteJobPidTerminationFunctionLines(),
+    'cleanup_job_pid() {',
+    '  kill_job_pid "$1"',
+    '  ownership=$?',
+    '  case $ownership in 0|1|3) return 0 ;; *) return 2 ;; esac',
+    '}'
   ]
-  if (handle) lines.push(`kill_job_pid ${handle.pid}`)
+  if (handle) lines.push(`cleanup_job_pid ${handle.pid} || exit 1`)
+  if (requirePidWitness) {
+    lines.push(`[ -z "$workdir" ] || [ -f ${quotedPidFile} ] || exit 1`)
+  }
   lines.push(
-    `if [ -f ${quotedPidFile} ]; then kill_job_pid "$(cat ${quotedPidFile} 2>/dev/null || true)"; fi`,
+    `if [ -f ${quotedPidFile} ]; then cleanup_job_pid "$(cat ${quotedPidFile} 2>/dev/null || true)" || exit 1; fi`,
     'if [ -n "$workdir" ]; then rm -rf -- "$workdir"; fi',
-    'test -z "$workdir" || test ! -e "$workdir"'
+    `test ! -e ${quotedWorkdir} && test ! -L ${quotedWorkdir}`
   )
   return lines.join('\n')
 }
@@ -146,6 +181,112 @@ class ComputeJobDeletionOwner {
 
   restoreProjectJobDeletion(projectId: string): Promise<void> {
     return this.enqueue(() => this.armOwner({ projectId }, true))
+  }
+
+  cleanupJobRemote(request: SetComputeJobRemoteCleanupRequest): Promise<ComputeJob> {
+    return this.enqueue(async () => {
+      const job = await this.deps.jobRepository.get(request.jobId)
+      if (
+        !job ||
+        job.provider_id !== request.providerId ||
+        job.project_id !== request.projectId ||
+        job.session_id !== request.sessionId
+      ) {
+        throw new Error('Compute Job cleanup scope does not match.')
+      }
+      if (request.disposition !== 'cleaned') {
+        throw new Error('Remote cleanup requires the cleaned disposition.')
+      }
+      if (
+        job.remote_cleanup_disposition !== undefined &&
+        job.remote_cleanup_disposition !== 'pending'
+      ) {
+        return this.deps.jobRepository.settleRemoteCleanup(request)
+      }
+      if (HARVESTABLE_TERMINAL_STATUSES.has(job.status) && job.harvested_at === undefined) {
+        throw new Error('Compute Job results must be harvested before remote cleanup.')
+      }
+      const cancellationRequired = ACTIVE_STATUSES.has(job.status) || job.status === 'queued'
+      const runtime = this.runtime
+      if (cancellationRequired && !runtime) {
+        throw new Error('Compute Job cancellation runtime is unavailable.')
+      }
+      const queueManager = this.deps.queueManager
+      if (cancellationRequired && !queueManager) {
+        throw new Error('Compute Job cancellation queue manager is unavailable.')
+      }
+      const owner = { projectId: job.project_id, sessionId: job.session_id }
+      let queuePaused = false
+      let runtimePaused = false
+      try {
+        let currentJob = job
+        if (cancellationRequired && runtime && queueManager) {
+          await queueManager.pauseOwner(owner)
+          queuePaused = true
+          await runtime.pause()
+          runtimePaused = true
+          const refreshedJob = await this.deps.jobRepository.get(request.jobId)
+          if (
+            !refreshedJob ||
+            refreshedJob.provider_id !== request.providerId ||
+            refreshedJob.project_id !== request.projectId ||
+            refreshedJob.session_id !== request.sessionId
+          ) {
+            throw new Error('Compute Job cleanup scope does not match.')
+          }
+          currentJob = refreshedJob
+          if (
+            currentJob.remote_cleanup_disposition !== undefined &&
+            currentJob.remote_cleanup_disposition !== 'pending'
+          ) {
+            return await this.deps.jobRepository.settleRemoteCleanup(request)
+          }
+          if (
+            HARVESTABLE_TERMINAL_STATUSES.has(currentJob.status) &&
+            currentJob.harvested_at === undefined
+          ) {
+            throw new Error('Compute Job results must be harvested before remote cleanup.')
+          }
+        }
+        const currentCancellationRequired =
+          ACTIVE_STATUSES.has(currentJob.status) || currentJob.status === 'queued'
+        const requestCancellation = this.deps.requestCancellation
+        const confirmCancellation = this.deps.confirmCancellation
+        if (currentCancellationRequired && (!requestCancellation || !confirmCancellation)) {
+          throw new Error('Compute Job cancellation is unavailable.')
+        }
+        if (currentCancellationRequired) await requestCancellation?.(currentJob)
+        await this.dispatchTracker.waitFor([currentJob.job_id])
+        const cleanup = await this.prepareRemoteCleanup(currentJob)
+        if (cleanup) await this.runRemoteCleanup(cleanup)
+        if (currentCancellationRequired) await confirmCancellation?.(currentJob)
+        return await this.deps.jobRepository.settleRemoteCleanup(request)
+      } finally {
+        if (runtimePaused) runtime?.resume()
+        if (queuePaused) queueManager?.resumeOwner(owner)
+      }
+    })
+  }
+
+  abandonJobRemoteCleanup(request: SetComputeJobRemoteCleanupRequest): Promise<ComputeJob> {
+    return this.enqueue(async () => {
+      if (request.disposition !== 'abandoned') {
+        throw new Error('Abandoning remote cleanup requires the abandoned disposition.')
+      }
+      const job = await this.deps.jobRepository.get(request.jobId)
+      if (
+        !job ||
+        job.provider_id !== request.providerId ||
+        job.project_id !== request.projectId ||
+        job.session_id !== request.sessionId
+      ) {
+        throw new Error('Compute Job cleanup scope does not match.')
+      }
+      if (ACTIVE_STATUSES.has(job.status) || job.status === 'queued') {
+        throw new Error('Active Compute Jobs must be cancelled and cleaned remotely.')
+      }
+      return this.deps.jobRepository.settleRemoteCleanup(request)
+    })
   }
 
   restoreOrphanJobDeletionBarriers(
@@ -357,6 +498,12 @@ class ComputeJobDeletionOwner {
   }
 
   private async prepareRemoteCleanup(job: ComputeJob): Promise<PreparedRemoteCleanup | undefined> {
+    if (
+      job.remote_cleanup_disposition !== undefined &&
+      job.remote_cleanup_disposition !== 'pending'
+    ) {
+      return undefined
+    }
     if (job.status === 'queued') return undefined
     const host = await this.deps.hostRepository.get(job.provider_id)
     const fallbackWorkdir = host ? computeRemoteWorkdir(host.scratchRoot, job.job_id) : undefined
@@ -368,7 +515,7 @@ class ComputeJobDeletionOwner {
     return {
       jobId: job.job_id,
       providerId: job.provider_id,
-      command: cleanupCommand(workdir, handle)
+      command: cleanupCommand(workdir, handle, job.status === 'submitted' && !handle)
     }
   }
 

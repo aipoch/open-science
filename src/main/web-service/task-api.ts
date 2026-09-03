@@ -27,6 +27,7 @@ import type { ApplicationCommandByNameDispatcher } from '../application-command-
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
+import type { TaskRunJournal } from '../tasks/task-run-journal'
 import {
   TaskRunner,
   TaskRunnerError,
@@ -49,6 +50,7 @@ type TaskApiDependencies = {
   createId: () => string
   now: () => number
   subscribeEvents: (listener: (event: AcpRuntimeEvent) => void) => () => void
+  runJournal: TaskRunJournal
 }
 
 class HeadlessTaskApi {
@@ -112,6 +114,8 @@ class HeadlessTaskApi {
             url: string
             size: number
             mimeType?: string
+            width?: number
+            height?: number
           }>,
         // Capability cleanup must remain available if request authorization is revoked while a
         // response stream drains. The fixed local automation context grants no new access.
@@ -142,9 +146,16 @@ class HeadlessTaskApi {
           throw new Error('Task Compute preference control is unavailable.')
         }
       },
+      runWithLifecycleContext: (operation) =>
+        this.callerContexts.run(TASK_CALLER_CONTEXT, operation),
+      runJournal: dependencies.runJournal,
       createId: dependencies.createId ?? randomUUID,
       now: dependencies.now ?? Date.now
     } satisfies TaskRunnerDependencies)
+  }
+
+  initialize(): Promise<void> {
+    return this.runner.initialize()
   }
 
   async dispose(): Promise<void> {

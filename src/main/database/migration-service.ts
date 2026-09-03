@@ -50,6 +50,7 @@ import {
   managedFileVersionFoundationCurrentSchemaAdoptionStatements,
   managedFileVersionFoundationMigration
 } from './migrations/0025-managed-file-version-foundation'
+import { computeJobRemoteCleanupMigration } from './migrations/0026-compute-job-remote-cleanup'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -340,6 +341,12 @@ const COMPUTE_JOB_FILE_EVIDENCE_CHECKSUM = checksumMigrationPayload(
   computeJobFileEvidenceMigration.verifiers,
   computeJobFileEvidenceMigration.operations
 )
+const COMPUTE_JOB_REMOTE_CLEANUP_CHECKSUM = checksumMigrationPayload(
+  computeJobRemoteCleanupMigration.id,
+  computeJobRemoteCleanupMigration.statements,
+  computeJobRemoteCleanupMigration.verifiers,
+  computeJobRemoteCleanupMigration.operations
+)
 const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
   computeJobSensitiveDataEncryptionMigration.id,
   computeJobSensitiveDataEncryptionMigration.statements,
@@ -597,6 +604,12 @@ const MIGRATION_MANIFEST = [
     backupOnApply: 'required',
     backupRetention: 'retain',
     foreignKeysDuringApply: 'disabled'
+  },
+  {
+    ...computeJobRemoteCleanupMigration,
+    checksum: COMPUTE_JOB_REMOTE_CLEANUP_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1661,8 +1674,11 @@ const migrateApplicationDatabaseWithManifest = async (
     }
   }
 
-  const backupBeforeMigration = async (migration: MigrationManifestEntry): Promise<void> => {
-    if (migration.backupOnApply !== 'required') return
+  // ponytail: one snapshot per invocation bounds upgrade I/O; add explicit checkpoints only if
+  // recovery replay from the batch start is measured to be too slow.
+  let migrationBatchBackedUp = false
+  const ensureBackupBeforeMigration = async (migration: MigrationManifestEntry): Promise<void> => {
+    if (migrationBatchBackedUp || migration.backupOnApply !== 'required') return
     const migrationId = migration.id
     if (!(await readHadApplicationTablesAtStart())) return
     let backup: DatabaseMigrationBackup
@@ -1684,6 +1700,7 @@ const migrateApplicationDatabaseWithManifest = async (
       throughMigrationId: migrationId,
       includeDeleteAfterSuccess: false
     })
+    migrationBatchBackedUp = true
   }
 
   const applied: string[] = []
@@ -1764,7 +1781,7 @@ const migrateApplicationDatabaseWithManifest = async (
   if (nextIndex === 0) {
     const baseline = manifest[0]!
     options.onProgress?.({ phase: 'migrating', migrationId: baseline.id })
-    await backupBeforeMigration(baseline)
+    await ensureBackupBeforeMigration(baseline)
     await applyBaselineMigration(
       client,
       baseline,
@@ -1791,7 +1808,7 @@ const migrateApplicationDatabaseWithManifest = async (
 
   for (const migration of manifest.slice(nextIndex)) {
     options.onProgress?.({ phase: 'migrating', migrationId: migration.id })
-    await backupBeforeMigration(migration)
+    await ensureBackupBeforeMigration(migration)
     await applyManifestMigration(client, migration, {
       repairVisionEvidenceReference:
         migration.id === managedFileVersionFoundationMigration.id &&

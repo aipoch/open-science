@@ -4,6 +4,7 @@ import type {
   ComputeJobAnalysisState,
   ComputeJobAnalysisTransition,
   ComputeJobIntegrityIssue,
+  ComputeJobRemoteCleanupDisposition,
   ComputeJobStatus
 } from '../../shared/compute'
 import { classifyComputeJobIntegrity, isKnownComputeJobStatus } from './compute-job-integrity'
@@ -62,6 +63,13 @@ const asAnalysisState = (value: string | null): ComputeJobAnalysisState | undefi
   return valid.includes(value as ComputeJobAnalysisState)
     ? (value as ComputeJobAnalysisState)
     : undefined
+}
+
+const asRemoteCleanupDisposition = (value: string): ComputeJobRemoteCleanupDisposition => {
+  const valid: ComputeJobRemoteCleanupDisposition[] = ['pending', 'cleaned', 'abandoned']
+  return valid.includes(value as ComputeJobRemoteCleanupDisposition)
+    ? (value as ComputeJobRemoteCleanupDisposition)
+    : 'pending'
 }
 
 export type CreateJobRequest = {
@@ -295,6 +303,7 @@ export class ComputeJobRepository {
       where: {
         status: { in: ['success', 'failed', 'timeout'] },
         harvestedAt: null,
+        remoteCleanupDisposition: { not: 'cleaned' },
         // A cancellation fulfilled while the Job was still queued has no remote execution to
         // harvest. Submitted/running cancellations keep their normal best-effort harvest path.
         NOT: {
@@ -460,21 +469,71 @@ export class ComputeJobRepository {
         providerId,
         OR: [
           { status: { in: ['queued', 'submitted', 'running'] } },
-          { status: { in: ['success', 'failed', 'timeout'] }, harvestedAt: null }
+          { status: { in: ['success', 'failed', 'timeout'] }, harvestedAt: null },
+          { remoteCleanupDisposition: 'pending' }
         ]
       }
     })
     return count > 0
   }
 
-  // Host deletion must retain authentication while any Job row remains. Even a dispatch-error Job
-  // can have created remote state before its workdir was persisted, and the owner-deletion workflow
-  // derives that cleanup path from the Host when needed.
+  // Host deletion retains authentication until each Job's remote cleanup is proven or explicitly
+  // abandoned. Even a dispatch-error Job can have created remote state before persisting its workdir.
   async hasDeletionBlockingJobsForProvider(providerId: string): Promise<boolean> {
     return this.runMutation(async () => {
       const client = await this.getClient()
-      const count = await client.computeJob.count({ where: { providerId } })
+      const count = await client.computeJob.count({
+        where: { providerId, remoteCleanupDisposition: 'pending' }
+      })
       return count > 0
+    })
+  }
+
+  async findDeletionBlockingJobsForProvider(providerId: string): Promise<ComputeJob[]> {
+    const client = await this.getClient()
+    const rows = await client.computeJob.findMany({
+      where: { providerId, remoteCleanupDisposition: 'pending' },
+      include: { operations: { where: { kind: 'cancel' } } },
+      orderBy: { createdAt: 'asc' }
+    })
+    return rows.map(this.toJob)
+  }
+
+  async settleRemoteCleanup(
+    request: Readonly<{
+      jobId: string
+      providerId: string
+      projectId: string
+      sessionId: string
+      disposition: Exclude<ComputeJobRemoteCleanupDisposition, 'pending'>
+    }>
+  ): Promise<ComputeJob> {
+    return this.runMutation(async () => {
+      const client = await this.getClient()
+      const existing = await client.computeJob.findUnique({ where: { id: request.jobId } })
+      if (
+        !existing ||
+        existing.providerId !== request.providerId ||
+        existing.projectId !== request.projectId ||
+        existing.sessionId !== request.sessionId
+      ) {
+        throw new Error('Compute Job cleanup scope does not match.')
+      }
+      if (existing.remoteCleanupDisposition !== 'pending') {
+        if (existing.remoteCleanupDisposition !== request.disposition) {
+          throw new Error('Compute Job remote cleanup is already settled.')
+        }
+      } else {
+        await client.computeJob.update({
+          where: { id: request.jobId },
+          data: { remoteCleanupDisposition: request.disposition }
+        })
+      }
+      const row = await client.computeJob.findUniqueOrThrow({
+        where: { id: request.jobId },
+        include: { operations: { where: { kind: 'cancel' } } }
+      })
+      return this.toJob(row)
     })
   }
 
@@ -694,6 +753,7 @@ export class ComputeJobRepository {
       timeout_seconds: row.timeoutSeconds ?? undefined,
       remote_workdir: sensitive.remoteWorkdir,
       remote_handle: sensitive.remoteHandle,
+      remote_cleanup_disposition: asRemoteCleanupDisposition(row.remoteCleanupDisposition),
       exit_code: row.exitCode ?? undefined,
       stdout_tail: sensitive.stdoutTail,
       stderr_tail: sensitive.stderrTail,

@@ -32,6 +32,7 @@ const toSource = (file: ProjectFileItem): SessionPdfContextSource | undefined =>
   file.sourceVersionId
     ? {
         sourceKind: file.source === 'upload' ? 'upload-version' : 'artifact-version',
+        sourceFileId: file.sourceFileId,
         sourceVersionId: file.sourceVersionId
       }
     : undefined

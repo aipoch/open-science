@@ -238,6 +238,7 @@ export const docToPdfContextSources = (doc: ComposerDoc): SessionPdfContextSourc
   for (const reference of docToArtifactRefs(doc)) {
     if (
       reference.source === 'linked-folder' ||
+      !reference.sourceFileId ||
       !reference.versionId ||
       (reference.mimeType?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/pdf' &&
         !reference.name.toLowerCase().endsWith('.pdf'))
@@ -246,6 +247,7 @@ export const docToPdfContextSources = (doc: ComposerDoc): SessionPdfContextSourc
     }
     const source: SessionPdfContextSource = {
       sourceKind: reference.source === 'upload' ? 'upload-version' : 'artifact-version',
+      sourceFileId: reference.sourceFileId,
       sourceVersionId: reference.versionId
     }
     const identity = `${source.sourceKind}:${source.sourceVersionId}`

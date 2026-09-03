@@ -189,6 +189,28 @@ describe('normalizePersistedPreviewState item sanitization', () => {
     expect(stringTitle.items[0]?.title).toBe(validItem.name)
     expect(badPath.items).toEqual([])
   })
+
+  it('drops oversized required strings and omits oversized optional strings', () => {
+    const state = normalizePersistedPreviewState({
+      items: [
+        { ...validItem, id: 'i'.repeat(513) },
+        { ...validItem, path: `/${'p'.repeat(8192)}` },
+        {
+          ...validItem,
+          title: 't'.repeat(1025),
+          source: 's'.repeat(257),
+          mimeType: 'm'.repeat(257),
+          managedFileId: 'f'.repeat(513)
+        }
+      ]
+    })
+
+    expect(state.items).toHaveLength(1)
+    expect(state.items[0]).toMatchObject({ title: validItem.name })
+    expect(state.items[0]).not.toHaveProperty('source')
+    expect(state.items[0]).not.toHaveProperty('mimeType')
+    expect(state.items[0]).not.toHaveProperty('managedFileId')
+  })
 })
 
 describe('normalizePersistedPreviewState top-level normalization', () => {
@@ -255,5 +277,24 @@ describe('normalizePersistedPreviewState top-level normalization', () => {
     const state = normalizePersistedPreviewState({ items: [validItem], activeItemId: 123 })
 
     expect(state.activeItemId).toBeUndefined()
+  })
+
+  it('keeps only the most recent 100 serialized items', () => {
+    const items = Array.from({ length: 101 }, (_, index) => ({
+      ...validItem,
+      id: `item-${index}`,
+      path: `/project/report-${index}.md`,
+      name: `report-${index}.md`
+    }))
+
+    const state = normalizePersistedPreviewState({
+      items,
+      activeItemId: 'item-100'
+    })
+
+    expect(state.items).toHaveLength(100)
+    expect(state.items[0]?.id).toBe('item-1')
+    expect(state.items.at(-1)?.id).toBe('item-100')
+    expect(state.activeItemId).toBe('item-100')
   })
 })

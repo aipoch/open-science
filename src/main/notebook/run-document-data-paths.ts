@@ -54,13 +54,15 @@ const decodeWorkingFile = (
   dataRoot: string | undefined
 ): NotebookWorkingFile => ({ ...file, path: decodeDataPath(file.path, dataRoot) as string })
 
-// Encodes/decodes one run record's cwd fields plus its nested working files and artifacts.
+// Encodes/decodes one run record's cwd fields plus working files and historical artifacts.
 const encodeRun = (run: NotebookRunRecord, dataRoot: string | undefined): NotebookRunRecord => ({
   ...run,
   cwdBefore: encodeDataPath(run.cwdBefore, dataRoot),
   cwdAfter: encodeDataPath(run.cwdAfter, dataRoot),
   workingFiles: run.workingFiles.map((file) => encodeWorkingFile(file, dataRoot)),
-  artifacts: run.artifacts.map((artifact) => encodeArtifact(artifact, dataRoot))
+  ...(run.artifacts
+    ? { artifacts: run.artifacts.map((artifact) => encodeArtifact(artifact, dataRoot)) }
+    : {})
 })
 
 const decodeRun = (run: NotebookRunRecord, dataRoot: string | undefined): NotebookRunRecord => ({
@@ -68,7 +70,9 @@ const decodeRun = (run: NotebookRunRecord, dataRoot: string | undefined): Notebo
   cwdBefore: decodeDataPath(run.cwdBefore, dataRoot),
   cwdAfter: decodeDataPath(run.cwdAfter, dataRoot),
   workingFiles: (run.workingFiles ?? []).map((file) => decodeWorkingFile(file, dataRoot)),
-  artifacts: (run.artifacts ?? []).map((artifact) => decodeArtifact(artifact, dataRoot))
+  ...(run.artifacts
+    ? { artifacts: run.artifacts.map((artifact) => decodeArtifact(artifact, dataRoot)) }
+    : {})
 })
 
 // Encodes a notebook run.json document's data-root paths (roots, cwds, working files, artifacts)

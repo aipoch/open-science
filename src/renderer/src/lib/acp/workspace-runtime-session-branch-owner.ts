@@ -98,7 +98,11 @@ export const branchWorkspaceSessionFromMessage = async (
         ...new Map(
           pdfContext.bindings.map((binding) => [
             `${binding.sourceKind}:${binding.sourceVersionId}`,
-            { sourceKind: binding.sourceKind, sourceVersionId: binding.sourceVersionId }
+            {
+              sourceKind: binding.sourceKind,
+              sourceFileId: binding.sourceFileId,
+              sourceVersionId: binding.sourceVersionId
+            }
           ])
         ).values()
       ]

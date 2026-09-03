@@ -1,6 +1,10 @@
 import { z } from 'zod'
 
-import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
+import {
+  defineApplicationCommandContract,
+  type RuntimeCodec,
+  validationCodec
+} from './application-command-contract'
 import type { PersistedUploadedAttachment } from './uploads'
 import type { FileReference } from './artifacts'
 import { sanitizeAnnotations, type Annotation } from './annotations'
@@ -147,6 +151,7 @@ export type MessagePdfContextSnapshot = SessionPdfContext &
 
 export type SessionPdfContextSource = Readonly<{
   sourceKind: SessionPdfBinding['sourceKind']
+  sourceFileId: string
   sourceVersionId: string
 }>
 
@@ -682,12 +687,18 @@ export type PersistedSessionDetailsGeneration =
         | (SessionDetailsAdmission & SessionDetailsOptionalUsage)
       ))
 
-export type EditSessionDetailsRequest = Readonly<{
+type EditSessionDetailsRequestBase = Readonly<{
   projectId: string
   sessionId: string
   title: string
   description: string
 }>
+
+export type EditSessionDetailsRequest = EditSessionDetailsRequestBase &
+  (
+    | Readonly<{ expectedTitle: string; expectedDescription: string }>
+    | Readonly<{ expectedTitle?: never; expectedDescription?: never }>
+  )
 
 export type PersistedChatSession = {
   id: string
@@ -745,6 +756,9 @@ export type PersistedChatSession = {
   // enabled hosts. An explicit empty array distinguishes the new Available-only state from legacy
   // Session files where a missing field means every enabled host was selected.
   selectedComputeHosts?: string[]
+  // Durable Session-level Compute concurrency limit. Historical Sessions omit it and continue to
+  // use only their Compute Host ceilings.
+  computeConcurrencyLimit?: number
   // Pins the conversation to a dedicated section at the top of the sidebar. Absent (older files) or
   // non-true restores as unpinned; only an explicit true keeps it pinned across restarts.
   pinned?: boolean
@@ -772,6 +786,9 @@ export type PersistedChatSession = {
   activities?: PersistedToolActivity[]
   activityGroups?: PersistedActivityGroup[]
   activeRun?: PersistedActiveRun
+  // Main-owned witness for the latest terminal Task Run whose Session projection was committed.
+  // Historical files omit it; Task Run recovery then fails closed.
+  taskRunCommitId?: string
   // Survives renderer/app restarts so a failed Resume remains retryable without reconstructing the
   // state from an error string or re-sending the interrupted prompt.
   resumeRecovery?: PersistedSessionResumeRecovery
@@ -852,6 +869,25 @@ export type SaveSessionOptions = {
 }
 
 export const SESSION_REVISION_CONFLICT_ERROR_CODE = 'session-revision-conflict' as const
+export const SESSION_DETAILS_CONFLICT_ERROR_CODE = 'session-details-conflict' as const
+
+export class SessionDetailsConflictError extends Error {
+  readonly code = SESSION_DETAILS_CONFLICT_ERROR_CODE
+
+  constructor() {
+    super('Session details changed elsewhere. Reopen the editor and try again.')
+    this.name = 'SessionDetailsConflictError'
+  }
+}
+
+export const isSessionDetailsConflictError = (
+  error: unknown
+): error is Readonly<{ code: typeof SESSION_DETAILS_CONFLICT_ERROR_CODE }> =>
+  error instanceof SessionDetailsConflictError ||
+  (typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === SESSION_DETAILS_CONFLICT_ERROR_CODE)
 
 export class SessionRevisionConflictError extends Error {
   readonly code = SESSION_REVISION_CONFLICT_ERROR_CODE
@@ -2863,7 +2899,7 @@ const normalizeSessionAfterRestore = (
   const hasCompletedResponse =
     session.status === 'idle' &&
     session.error === undefined &&
-    session.resumeRecovery?.cause === 'app-restart' &&
+    session.resumeRecovery !== undefined &&
     latestRecoveredPromptResponse?.status === 'complete'
   if (options.reconcileCompletedRecovery && hasCompletedResponse) {
     return {
@@ -4067,6 +4103,7 @@ const sanitizeSession = (
     updatedAt: asNumber(session.updatedAt) ?? 0
   }
   const activeRun = sanitizeActiveRun(session.activeRun)
+  const taskRunCommitId = asString(session.taskRunCommitId)
   const resumeRecovery = sanitizeSessionResumeRecovery(session.resumeRecovery)
   const branchSource = sanitizeSessionBranchSource(session.branchSource)
   const pendingHistoryReplay =
@@ -4113,8 +4150,18 @@ const sanitizeSession = (
   const selectedComputeHosts = selectedComputeHostCandidates.filter((providerId) =>
     enabledComputeHostSet.has(providerId)
   )
+  const computeConcurrencyLimit = asNumber(session.computeConcurrencyLimit)
+  if (
+    session.computeConcurrencyLimit !== undefined &&
+    (!Number.isInteger(computeConcurrencyLimit) ||
+      (computeConcurrencyLimit ?? 0) < 1 ||
+      (computeConcurrencyLimit ?? 0) > 500)
+  ) {
+    return undefined
+  }
 
   if (activeRun) sanitized.activeRun = activeRun
+  if (taskRunCommitId) sanitized.taskRunCommitId = taskRunCommitId
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
   if (branchSource) sanitized.branchSource = branchSource
   if (pendingHistoryReplay) sanitized.pendingHistoryReplay = pendingHistoryReplay
@@ -4150,6 +4197,9 @@ const sanitizeSession = (
   if (hasSelectedComputeHosts || enabledComputeHosts.length > 0) {
     sanitized.selectedComputeHosts = selectedComputeHosts
   }
+  if (computeConcurrencyLimit !== undefined) {
+    sanitized.computeConcurrencyLimit = computeConcurrencyLimit
+  }
   // Specialist ID: accept any non-empty string. The main process validates it against SpecialistService
   // at send time; the sanitizer only ensures the value is safe to re-persist.
   const specialistId = asString(session.specialistId)
@@ -4163,9 +4213,12 @@ const sanitizeSession = (
   if (runtimeContext) sanitized.runtimeContext = runtimeContext
   const planHistoryProjections = sanitizePlanHistoryProjections(session.planHistoryProjections)
   if (planHistoryProjections) sanitized.planHistoryProjections = planHistoryProjections
-  if (sanitized.status === 'waiting-plan-approval' && runtimeContext?.plan === undefined) {
+  if (
+    sanitized.status === 'waiting-plan-approval' &&
+    runtimeContext?.plan?.approval !== 'pending'
+  ) {
     // Approval waiting is meaningful only with restorable main-owned Plan authority. A corrupt or
-    // unknown context must not leave the conversation permanently blocked with nothing to approve.
+    // settled context must not leave the conversation permanently blocked with nothing to approve.
     sanitized.status = 'idle'
     sanitized.activeRun = undefined
   }
@@ -4390,6 +4443,59 @@ export const normalizeSessionFile = (
   return decoded.status === 'ok' ? decoded.session : undefined
 }
 
+const matchesSanitizedProjection = (
+  value: unknown,
+  sanitized: unknown,
+  allowMissingSanitizedFields = false
+): boolean => {
+  if (Object.is(value, sanitized)) return true
+  if (Array.isArray(value)) {
+    return (
+      Array.isArray(sanitized) &&
+      value.length === sanitized.length &&
+      value.every((item, index) => matchesSanitizedProjection(item, sanitized[index]))
+    )
+  }
+  if (!isRecord(value) || !isRecord(sanitized)) return false
+  if (!allowMissingSanitizedFields && Object.keys(value).length !== Object.keys(sanitized).length) {
+    return false
+  }
+  return Object.entries(value).every(
+    ([key, item]) =>
+      Object.hasOwn(sanitized, key) && matchesSanitizedProjection(item, sanitized[key])
+  )
+}
+
+const hasRequiredSessionFields = (value: unknown): value is PersistedChatSession =>
+  isRecord(value) &&
+  Object.hasOwn(value, 'id') &&
+  Object.hasOwn(value, 'projectId') &&
+  Object.hasOwn(value, 'title') &&
+  Object.hasOwn(value, 'cwd') &&
+  Object.hasOwn(value, 'status') &&
+  Object.hasOwn(value, 'messages') &&
+  Object.hasOwn(value, 'createdAt') &&
+  Object.hasOwn(value, 'updatedAt')
+
+// The wire boundary uses the same recursive decoder as durable Session files, but preserves live
+// runtime state instead of applying restart recovery. This keeps one source of truth for every
+// nested message, graph, activity and runtime-context field while upgrading historical shapes.
+export const persistedChatSessionCodec: RuntimeCodec<PersistedChatSession> = Object.freeze({
+  parse: (value): PersistedChatSession => {
+    const decoded = decodeSessionFile(value, {
+      preserveLegacyUploadPaths: true,
+      preserveRuntimeState: true
+    })
+    if (decoded.status !== 'ok' || decoded.session.projectId.length === 0) {
+      throw new Error('Invalid Session payload.')
+    }
+    return hasRequiredSessionFields(value) &&
+      matchesSanitizedProjection(value, decoded.session, true)
+      ? value
+      : decoded.session
+  }
+})
+
 // Tiny app-level pointer restoring the last-open Session after a restart.
 export type PersistedSessionManifest = {
   version: typeof SESSION_MANIFEST_VERSION
@@ -4469,6 +4575,7 @@ export type OpenSessionRecoveryFolderRequest = {
 const sessionPdfContextSourceSchema = z
   .object({
     sourceKind: z.enum(['artifact-version', 'upload-version']),
+    sourceFileId: z.string().min(1),
     sourceVersionId: z.string().min(1)
   })
   .strict()
@@ -4517,20 +4624,35 @@ export const unlinkSessionPdfContextRequestSchema = z
   .strict()
 
 export const deleteSessionRequestSchema = z
-  .object({ projectId: z.string(), sessionId: z.string() })
+  .object({ projectId: z.string().min(1), sessionId: z.string().min(1) })
   .strict()
 
 // Manual details edits mutate only authority-owned display fields server-side, so they carry no
 // whole-Session revision: concurrent unrelated writes advance that revision constantly and must
 // not fence the edit.
-export const editSessionDetailsRequestSchema = z
-  .object({
-    projectId: z.string().min(1),
-    sessionId: z.string().min(1),
-    title: z.string(),
-    description: z.string()
-  })
-  .strict()
+const editSessionDetailsRequestFields = {
+  projectId: z.string().min(1),
+  sessionId: z.string().min(1),
+  title: z.string(),
+  description: z.string()
+} as const
+
+// Web RPC v1 originally exposed this command without optimistic edit baselines. Accept that exact
+// legacy shape alongside the protected shape; a partial baseline is neither valid nor useful.
+export const editSessionDetailsRequestSchema = z.union([
+  z
+    .object({
+      ...editSessionDetailsRequestFields,
+      expectedTitle: z.string(),
+      expectedDescription: z.string()
+    })
+    .strict(),
+  z
+    .object({
+      ...editSessionDetailsRequestFields
+    })
+    .strict()
+])
 
 export type DeleteSessionRequest = z.infer<typeof deleteSessionRequestSchema>
 
@@ -4556,29 +4678,38 @@ export const sessionDeletionResultSchema = z.union([
 
 export type SessionDeletionResult = z.infer<typeof sessionDeletionResultSchema>
 
-export type UpdateSessionArchiveRequest = {
-  projectId: string
-  sessionId: string
-  archived: boolean
-  expectedArchivedAt: number | null
-}
+export const updateSessionArchiveRequestSchema = z
+  .object({
+    projectId: z.string().min(1),
+    sessionId: z.string().min(1),
+    archived: z.boolean(),
+    expectedArchivedAt: z.number().int().positive().nullable()
+  })
+  .strict()
 
-export type SaveSessionManifestRequest = {
-  lastSessionId?: string
-}
+export const saveSessionManifestRequestSchema = z
+  .object({
+    lastSessionId: z.string().min(1).optional()
+  })
+  .strict()
 
-const persistedChatSessionResultSchema = z.custom<PersistedChatSession>(
-  (value) =>
-    isRecord(value) &&
-    typeof value.id === 'string' &&
-    typeof value.projectId === 'string' &&
-    typeof value.title === 'string' &&
-    Array.isArray(value.messages)
-)
+export type UpdateSessionArchiveRequest = z.infer<typeof updateSessionArchiveRequestSchema>
+export type SaveSessionManifestRequest = z.infer<typeof saveSessionManifestRequestSchema>
 
-// Runtime-validated contract for the Electron-facing terminal Session deletion command. The request
-// and result schemas double as the wire types so the router enforces exactly the union the
-// SessionDeletionOwner can produce.
+const saveSessionArgsCodec: RuntimeCodec<
+  readonly [session: PersistedChatSession, options?: SaveSessionOptions]
+> = Object.freeze({
+  parse: (value) => {
+    if (!Array.isArray(value) || value.length < 1 || value.length > 2) {
+      throw new Error('Invalid Session save arguments.')
+    }
+    const session = persistedChatSessionCodec.parse(value[0])
+    return value.length === 1 ? [session] : [session, value[1] as SaveSessionOptions | undefined]
+  }
+})
+
+// Runtime-validated contracts for Electron-facing Session commands. Request schemas double as wire
+// types, while Session-bearing commands share the recursive persistence codec above.
 export const sessionApplicationCommandContracts = Object.freeze({
   filterPdfContextCandidates: defineApplicationCommandContract(
     validationCodec(z.tuple([filterSessionPdfContextCandidatesRequestSchema])),
@@ -4600,12 +4731,21 @@ export const sessionApplicationCommandContracts = Object.freeze({
     validationCodec(z.tuple([deleteSessionRequestSchema])),
     validationCodec(sessionDeletionResultSchema)
   ),
+  saveManifest: defineApplicationCommandContract(
+    validationCodec(z.tuple([saveSessionManifestRequestSchema])),
+    validationCodec(z.void())
+  ),
+  updateArchive: defineApplicationCommandContract(
+    validationCodec(z.tuple([updateSessionArchiveRequestSchema])),
+    persistedChatSessionCodec
+  ),
+  save: defineApplicationCommandContract(saveSessionArgsCodec, persistedChatSessionCodec),
   editDetails: defineApplicationCommandContract(
     validationCodec(z.tuple([editSessionDetailsRequestSchema])),
-    validationCodec(persistedChatSessionResultSchema)
+    persistedChatSessionCodec
   ),
   setDelegationPolicy: defineApplicationCommandContract(
     validationCodec(z.tuple([z.string(), z.string(), delegationPolicySchema])),
-    validationCodec(persistedChatSessionResultSchema)
+    persistedChatSessionCodec
   )
 })

@@ -769,7 +769,7 @@ describe('GlobalSearchDialog', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
-  it('keeps search open and does not open a cross-project preview when leaving is rejected', async () => {
+  it('opens a cross-project preview after deferred leave confirmation resumes navigation', async () => {
     vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue({
       primary: { items: [], totalCount: 0 },
       other: [
@@ -790,7 +790,11 @@ describe('GlobalSearchDialog', () => {
       activeProjectId: 'project-a',
       activeItemId: 'dirty-file'
     })
-    previewLeaveGuards.register('workbench:project-a:dirty-file', () => false)
+    let resumeNavigation: (() => boolean | void) | undefined
+    previewLeaveGuards.register('workbench:project-a:dirty-file', (action) => {
+      resumeNavigation = action
+      return false
+    })
     const onOpenChange = vi.fn()
     await act(async () => {
       root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
@@ -821,6 +825,15 @@ describe('GlobalSearchDialog', () => {
     expect(useNavigationStore.getState().activeProjectId).toBe('project-a')
     expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
     expect(onOpenChange).not.toHaveBeenCalledWith(false)
+
+    await act(async () => resumeNavigation?.())
+
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-b')
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
+      artifactId: 'artifact-2',
+      projectId: 'project-b'
+    })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
   it('uses the indexed current Version time instead of the older source message time', async () => {

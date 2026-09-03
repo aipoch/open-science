@@ -71,11 +71,13 @@ describe('MarketplaceManagedSpecialistDetail', () => {
             installedVersion: '1.0.0',
             updateAvailable: true
           }}
+          sourceMissing={false}
           onBack={vi.fn()}
           onAppearanceChange={vi.fn().mockResolvedValue(undefined)}
           onToggle={onToggle}
           onDuplicate={onDuplicate}
           onUpdate={onUpdate}
+          onManageSources={vi.fn()}
           onUninstall={onUninstall}
         />
       )

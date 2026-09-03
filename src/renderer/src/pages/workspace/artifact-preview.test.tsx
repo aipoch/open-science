@@ -89,6 +89,17 @@ describe('artifact preview rendering', () => {
     expect(html).toContain('TIFF')
   })
 
+  it('falls back to the static file-type tile when a managed artifact has no logical identity', () => {
+    // Legacy artifacts without projectId/managedFileId would make the nested reader's acquire
+    // request builder throw inside an effect, unmounting the whole tree (white screen on scroll).
+    const artifact = createArtifact({ name: 'report.pdf', mimeType: 'application/pdf' })
+    const html = renderToStaticMarkup(<ArtifactPreview artifact={artifact} />)
+
+    // FileTypePreview markup, not the PdfThumbnail reader container.
+    expect(html).toContain('flex-col items-center justify-center')
+    expect(html).toContain('PDF')
+  })
+
   it('renders fasta previews as a compact colored sequence grid', () => {
     const artifact = createArtifact({ name: 'nif3_homologs.fasta', mimeType: 'text/plain' })
     const html = renderToStaticMarkup(

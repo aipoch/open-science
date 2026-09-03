@@ -175,6 +175,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'change-authentication',
     'create-password',
     'download',
+    'jobs:set-remote-cleanup',
     'password-capability',
     'reset-password',
     'reveal-in-folder'
@@ -198,9 +199,9 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
   runtime: [
     'pick-interpreter',
     'register-interpreter',
+    'set-agent-environment-creation-enabled',
     'set-environment-enabled',
     'set-install-authorized',
-    'set-selection',
     'unregister-interpreter'
   ],
   settings: [
@@ -237,6 +238,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'remove-custom-server',
     'remove-device-credential',
     'remove-github-token',
+    'retry-connector-projection',
     'retry-custom-server',
     'save-github-token',
     'set-app-icon-variant',

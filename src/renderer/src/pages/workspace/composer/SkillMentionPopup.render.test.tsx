@@ -130,6 +130,37 @@ describe('SkillMentionPopup', () => {
     expect(text).not.toContain('Imported')
   })
 
+  it('omits identity-conflicting Skills from Main and Specialist suggestions', () => {
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'conflicting',
+          name: 'Conflicting Skill',
+          displayName: 'Conflicting Skill',
+          description: 'Cannot be resolved by the runtime catalog',
+          source: 'personal',
+          updatedAt: '2026-09-02T00:00:00.000Z',
+          enabled: true,
+          available: false,
+          availability: 'identity-conflict'
+        }
+      ]
+    })
+
+    act(() => {
+      root.render(
+        <SkillMentionPopup
+          query=""
+          allowedSkillIds={['conflicting']}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      )
+    })
+
+    expect(options()).toHaveLength(0)
+  })
+
   it('keeps the shortcut footer outside the scrollable skill list', () => {
     act(() => {
       root.render(<SkillMentionPopup query="" onSelect={vi.fn()} onClose={vi.fn()} />)

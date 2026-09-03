@@ -353,7 +353,7 @@ function TokenUsagePanel({
             <div className="size-7 rounded-md bg-muted" />
           </div>
 
-          <div className="mt-3 border-y border-border py-5">
+          <div className="mt-3 py-5">
             <div className="grid grid-cols-2 gap-x-5 gap-y-5 lg:grid-cols-4">
               {Array.from({ length: 4 }, (_, index) => (
                 <div key={index} data-slot="token-usage-skeleton-stat" className="space-y-2">
@@ -484,7 +484,7 @@ function TokenUsagePanel({
             </p>
           ) : null}
 
-          <div data-slot="token-usage-summary" className="border-y border-border py-5">
+          <div data-slot="token-usage-summary" className="py-5">
             <div className="grid grid-cols-2 gap-x-5 gap-y-5 lg:grid-cols-4">
               {tokenSummaryItems.map((item) => (
                 <div key={item.label} className="min-w-0">
@@ -576,10 +576,7 @@ function TokenUsagePanel({
           ) : null}
         </section>
 
-        <section
-          aria-labelledby="token-activity-title"
-          className="border-b border-border px-4 py-6 sm:px-5"
-        >
+        <section aria-labelledby="token-activity-title" className="px-4 py-6 sm:px-5">
           <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem] sm:items-end">
             <div className="min-w-0">
               <h2 id="token-activity-title" className="text-base font-semibold text-foreground">

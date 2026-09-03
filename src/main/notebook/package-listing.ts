@@ -10,11 +10,11 @@ import type { MicromambaRunner } from './windows-micromamba-runner'
 import { condaActivatedPath } from './runtime-paths'
 
 // Read-only package inventory for one DISCOVERED environment (Settings → Runtimes "Packages"
-// dialog). Dispatch reuses the package-mutability policy's writer mapping (packageToolFor, shared
-// with runtime-registry): app-owned conda envs (app-managed AND agent-created) are inventoried with
-// the bundled micromamba, the user's own Python with its own pip, and the user's own R with its
-// Rscript. Listing never mutates the env, so the install-authorization gate does not apply: an
-// unauthorized user-own env is still listed read-only.
+// dialog). Dispatch reuses the package-operation writer mapping (packageToolFor): app-owned conda
+// envs (app-managed AND agent-created) are inventoried with the bundled micromamba, the user's own
+// Python with its own pip, and the user's own R with its Rscript. Listing never mutates the env, so
+// the install-authorization gate does not apply: an unauthorized user-own env is still listed
+// read-only.
 
 // Which tool inventories the env — packageToolFor keyed on ownership, with provenance standing in
 // for the managed/external source: app-managed and agent-created envs both live under the app

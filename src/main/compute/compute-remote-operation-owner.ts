@@ -22,9 +22,15 @@ import {
   MAX_IMPORT_BYTES,
   inferMimeType,
   resolveDestFilename,
-  shellSingleQuote,
   validateImportPath
 } from './scp-runner'
+import {
+  parseRemoteFileStat,
+  remoteFileStatCommand,
+  sameRemoteFileSnapshot,
+  type RemoteFileSnapshot,
+  type RemoteFileStat
+} from './remote-file-snapshot'
 
 const CALL_COMMAND_DEFAULT_TIMEOUT_MS = 60_000
 const CALL_COMMAND_MAX_OUTPUT_BYTES = 64 * 1024
@@ -366,13 +372,13 @@ export class ComputeRemoteOperationOwner {
     remotePath: string,
     filename: string
   ): Promise<LocalFile> {
-    const remoteSize = await this.statRemoteFile(host, connection, remotePath)
-    if (remoteSize > MAX_DOWNLOAD_BYTES) {
+    const remoteSnapshot = await this.statRemoteFile(host, connection, remotePath)
+    if (remoteSnapshot.sizeBytes > MAX_DOWNLOAD_BYTES) {
       const fsError = new Error(
-        `File exceeds 2 GiB download limit (${remoteSize} bytes)`
+        `File exceeds 2 GiB download limit (${remoteSnapshot.sizeBytes} bytes)`
       ) as Error & { remoteFsError: RemoteFsError }
       fsError.remoteFsError = {
-        detail: `File size ${remoteSize} bytes exceeds the 2 GiB download limit.`,
+        detail: `File size ${remoteSnapshot.sizeBytes} bytes exceeds the 2 GiB download limit.`,
         remoteKind: 'too_large'
       }
       throw fsError
@@ -390,7 +396,7 @@ export class ComputeRemoteOperationOwner {
         connection,
         remotePath,
         stagingPath,
-        remoteSize
+        remoteSnapshot
       )
       await rename(stagingPath, destPath)
 
@@ -424,22 +430,22 @@ export class ComputeRemoteOperationOwner {
       throw fsError
     }
 
-    const remoteSize = await this.statRemoteFile(host, connection, remotePath)
-    if (remoteSize === 0) {
+    const remoteSnapshot = await this.statRemoteFile(host, connection, remotePath)
+    if (remoteSnapshot.sizeBytes === 0) {
       const fsError = new Error(`Remote file is empty: ${remotePath}`) as Error & {
         remoteFsError: RemoteFsError
       }
       fsError.remoteFsError = { detail: 'Cannot import an empty file.', remoteKind: 'not_a_file' }
       throw fsError
     }
-    if (remoteSize > MAX_IMPORT_BYTES) {
+    if (remoteSnapshot.sizeBytes > MAX_IMPORT_BYTES) {
       const fsError = new Error(
-        `File exceeds 50 MB import limit (${remoteSize} bytes)`
+        `File exceeds 50 MB import limit (${remoteSnapshot.sizeBytes} bytes)`
       ) as Error & {
         remoteFsError: RemoteFsError
       }
       fsError.remoteFsError = {
-        detail: `File size ${remoteSize} bytes exceeds the 50 MB import limit.`,
+        detail: `File size ${remoteSnapshot.sizeBytes} bytes exceeds the 50 MB import limit.`,
         remoteKind: 'too_large'
       }
       throw fsError
@@ -455,7 +461,7 @@ export class ComputeRemoteOperationOwner {
         connection,
         remotePath,
         tempPath,
-        remoteSize
+        remoteSnapshot
       )
 
       return {
@@ -478,13 +484,13 @@ export class ComputeRemoteOperationOwner {
     filename: string,
     context: { sessionId: string; projectId: string }
   ): Promise<LocalFile> {
-    const remoteSize = await this.statRemoteFile(host, connection, remotePath)
-    if (remoteSize > MAX_DOWNLOAD_BYTES) {
+    const remoteSnapshot = await this.statRemoteFile(host, connection, remotePath)
+    if (remoteSnapshot.sizeBytes > MAX_DOWNLOAD_BYTES) {
       const fsError = new Error(
-        `File exceeds 2 GiB download limit (${remoteSize} bytes)`
+        `File exceeds 2 GiB download limit (${remoteSnapshot.sizeBytes} bytes)`
       ) as Error & { remoteFsError: RemoteFsError }
       fsError.remoteFsError = {
-        detail: `File size ${remoteSize} bytes exceeds the 2 GiB download limit.`,
+        detail: `File size ${remoteSnapshot.sizeBytes} bytes exceeds the 2 GiB download limit.`,
         remoteKind: 'too_large'
       }
       throw fsError
@@ -502,7 +508,7 @@ export class ComputeRemoteOperationOwner {
         connection,
         remotePath,
         operation.path,
-        remoteSize
+        remoteSnapshot
       )
       const committedPath = await operation.commit()
       return {
@@ -535,19 +541,8 @@ export class ComputeRemoteOperationOwner {
     _host: ComputeHost,
     connection: ComputeConnectionLease,
     remotePath: string
-  ): Promise<{ fileType: string; size: number }> {
-    const quoted = shellSingleQuote(remotePath)
-    const command = [
-      `if [ -f ${quoted} ]; then`,
-      `  printf 'f '; stat -c '%s' ${quoted} 2>/dev/null || stat -f '%z' ${quoted}`,
-      `elif [ -d ${quoted} ]; then`,
-      `  echo 'd 0'`,
-      `elif [ -e ${quoted} ] || [ -L ${quoted} ]; then`,
-      `  echo 'o 0'`,
-      `else`,
-      `  echo 'm 0'`,
-      `fi`
-    ].join('\n')
+  ): Promise<RemoteFileStat> {
+    const command = remoteFileStatCommand(remotePath)
     let result
     try {
       result = await connection.run(command, {
@@ -572,18 +567,15 @@ export class ComputeRemoteOperationOwner {
       throw fsError
     }
 
-    const parts = result.stdout.trim().split(/\s+/)
-    const fileType = parts[0] ?? '?'
-    const size = Number.parseInt(parts[1] ?? '0', 10)
-    return { fileType, size: Number.isFinite(size) ? size : 0 }
+    return parseRemoteFileStat(result.stdout)
   }
 
   private async statRemoteFile(
     host: ComputeHost,
     connection: ComputeConnectionLease,
     remotePath: string
-  ): Promise<number> {
-    const { fileType, size } = await this.statRemote(host, connection, remotePath)
+  ): Promise<RemoteFileSnapshot> {
+    const { fileType, snapshot } = await this.statRemote(host, connection, remotePath)
     if (fileType === 'm') {
       const fsError = new Error(`Remote path not found: ${remotePath}`) as Error & {
         remoteFsError: RemoteFsError
@@ -594,7 +586,7 @@ export class ComputeRemoteOperationOwner {
       }
       throw fsError
     }
-    if (fileType !== 'f') {
+    if (fileType !== 'f' || !snapshot) {
       const fsError = new Error(`Remote path is not a regular file: ${remotePath}`) as Error & {
         remoteFsError: RemoteFsError
       }
@@ -604,7 +596,7 @@ export class ComputeRemoteOperationOwner {
       }
       throw fsError
     }
-    return size
+    return snapshot
   }
 
   private async verifyStableDownload(
@@ -612,17 +604,20 @@ export class ComputeRemoteOperationOwner {
     connection: ComputeConnectionLease,
     remotePath: string,
     localPath: string,
-    expectedSize: number
+    expectedSnapshot: RemoteFileSnapshot
   ): Promise<number> {
     const localStat = await fsStat(localPath)
     const localSize = Number(localStat.size)
-    const postTransferSize = await this.statRemoteFile(host, connection, remotePath)
-    if (localSize !== expectedSize || postTransferSize !== expectedSize) {
+    const postTransferSnapshot = await this.statRemoteFile(host, connection, remotePath)
+    if (
+      localSize !== expectedSnapshot.sizeBytes ||
+      !sameRemoteFileSnapshot(postTransferSnapshot, expectedSnapshot)
+    ) {
       const fsError = new Error(`File changed during transfer: ${remotePath}`) as Error & {
         remoteFsError: RemoteFsError
       }
       fsError.remoteFsError = {
-        detail: 'File size changed during transfer — download rejected.',
+        detail: 'File changed during transfer — download rejected.',
         remoteKind: 'not_a_file'
       }
       throw fsError

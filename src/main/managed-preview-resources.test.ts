@@ -1,6 +1,7 @@
 import { mkdtemp, rename, rm, stat, truncate, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { deflateSync } from 'node:zlib'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -38,6 +39,41 @@ describe('ManagedPreviewResources', () => {
       modifiedAtMs: value.mtimeMs,
       changedAtMs: value.ctimeMs
     }
+  }
+
+  const crc32 = (bytes: Buffer): number => {
+    let crc = 0xffffffff
+    for (const byte of bytes) {
+      crc ^= byte
+      for (let bit = 0; bit < 8; bit += 1) {
+        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+      }
+    }
+    return (crc ^ 0xffffffff) >>> 0
+  }
+
+  const pngChunk = (type: string, data: Buffer): Buffer => {
+    const typeBytes = Buffer.from(type, 'ascii')
+    const chunk = Buffer.alloc(12 + data.byteLength)
+    chunk.writeUInt32BE(data.byteLength, 0)
+    typeBytes.copy(chunk, 4)
+    data.copy(chunk, 8)
+    chunk.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])), 8 + data.byteLength)
+    return chunk
+  }
+
+  const createCompressedPng = (width: number, height: number): Buffer => {
+    const ihdr = Buffer.alloc(13)
+    ihdr.writeUInt32BE(width, 0)
+    ihdr.writeUInt32BE(height, 4)
+    ihdr.set([1, 0, 0, 0, 0], 8)
+    const rowBytes = 1 + Math.ceil(width / 8)
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      pngChunk('IHDR', ihdr),
+      pngChunk('IDAT', deflateSync(Buffer.alloc(rowBytes * height))),
+      pngChunk('IEND', Buffer.alloc(0))
+    ])
   }
 
   it('registers the preview scheme for streaming and cross-scheme capability fetches', () => {
@@ -87,6 +123,20 @@ describe('ManagedPreviewResources', () => {
       total: 10,
       data: new Uint8Array(Buffer.from('2345'))
     })
+  })
+
+  it('rejects an ordinary image preview above the decoded pixel budget before minting a URL', async () => {
+    const filePath = await createFile(createCompressedPng(5_000, 5_000), 'large.png')
+    const createId = vi.fn(() => 'unsafe-image-resource')
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId
+    })
+
+    await expect(
+      resources.acquire(17, { source: 'local', path: filePath, mimeType: 'image/png' })
+    ).rejects.toThrow(/16,000,000.*pixel/i)
+    expect(createId).not.toHaveBeenCalled()
   })
 
   it('reads a logical managed version through its trusted lease and closes it on release', async () => {
@@ -221,6 +271,65 @@ describe('ManagedPreviewResources', () => {
       fileId: 'artifact-1'
     })
     expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('attaches header-probed pixel dimensions when acquiring an image', async () => {
+    // Minimal PNG: signature + IHDR length/type + 640x400 dimensions.
+    const png = Buffer.alloc(33)
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0)
+    png.writeUInt32BE(13, 8)
+    png.write('IHDR', 12, 'ascii')
+    png.writeUInt32BE(640, 16)
+    png.writeUInt32BE(400, 20)
+    const filePath = await createFile(png, 'plot.png')
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId: () => 'resource-1'
+    })
+
+    const resource = await resources.acquire(17, { source: 'local', path: filePath })
+
+    expect(resource).toMatchObject({
+      mimeType: 'image/png',
+      width: 640,
+      height: 400
+    })
+  })
+
+  it('rejects forged image content whose header cannot be parsed', async () => {
+    const filePath = await createFile(Buffer.from('definitely not an image'), 'forged.png')
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId: () => 'resource-1'
+    })
+
+    // The shared raster safety path fails closed for pixel-limited types: an unparseable header
+    // rejects the acquire rather than minting a dimension-less resource.
+    await expect(resources.acquire(17, { source: 'local', path: filePath })).rejects.toThrow(
+      /dimensions/i
+    )
+  })
+
+  it('skips the header probe for image formats the parser does not support', async () => {
+    // PNG magic behind an .svg name: SVG/TIFF/AVIF acquires must not pay for a probe that the
+    // parser cannot serve anyway.
+    const png = Buffer.alloc(33)
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0)
+    png.writeUInt32BE(13, 8)
+    png.write('IHDR', 12, 'ascii')
+    png.writeUInt32BE(640, 16)
+    png.writeUInt32BE(400, 20)
+    const filePath = await createFile(png, 'vector.svg')
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => filePath,
+      createId: () => 'resource-1'
+    })
+
+    const resource = await resources.acquire(17, { source: 'local', path: filePath })
+
+    expect(resource.mimeType).toBe('image/svg+xml')
+    expect(resource.width).toBeUndefined()
+    expect(resource.height).toBeUndefined()
   })
 
   it('inspects authoritative metadata without minting a resource capability', async () => {

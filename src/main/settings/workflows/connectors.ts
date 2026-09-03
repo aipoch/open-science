@@ -229,6 +229,12 @@ class ConnectorSettingsWorkflows {
     return this.settings.listConnectors()
   }
 
+  async retryConnectorProjection(): WorkflowResult<'listConnectors'> {
+    this.effects.invalidatePermissionProjection()
+    await this.refreshConnectorProjection()
+    return this.settings.listConnectors()
+  }
+
   private async afterConnectorsChanged<Result>(mutation: () => Promise<Result>): Promise<Result> {
     const result = await mutation()
     this.connectorsChanged()
@@ -237,7 +243,10 @@ class ConnectorSettingsWorkflows {
 
   private connectorsChanged(customServerId?: string): void {
     this.effects.invalidatePermissionProjection()
-    void this.refreshConnectorProjection(customServerId)
+    // Persisted Connector mutations intentionally do not wait for this derived projection. The
+    // projection records and publishes degraded state; consume the rejection here so a failed
+    // background refresh does not become an unhandled promise rejection.
+    void this.refreshConnectorProjection(customServerId).catch(() => undefined)
   }
 
   private refreshConnectorProjection(customServerId?: string): Promise<unknown> {

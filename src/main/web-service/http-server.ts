@@ -405,6 +405,7 @@ const publicApplicationCommandError = (
 const applicationCommandErrorStatus = (error: ApplicationCommandError): number => {
   if (error.code === 'invalid-command-arguments') return 400
   if (error.code === 'command-unavailable') return 404
+  if (error.code === 'session-details-conflict') return 409
   if (error.code === 'session-revision-conflict') return 409
   return 500
 }
@@ -599,7 +600,14 @@ const readJsonBody = async (
 
 const taskErrorStatus = (error: TaskApiError): number => {
   if (error.code === 'invalid_request') return 400
-  if (error.code === 'session_busy' || error.code === 'project_conflict') return 409
+  if (
+    error.code === 'session_busy' ||
+    error.code === 'project_conflict' ||
+    error.code === 'session_archived' ||
+    error.code === 'project_archived'
+  ) {
+    return 409
+  }
   return 404
 }
 

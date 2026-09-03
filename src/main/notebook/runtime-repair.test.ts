@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { NotebookPackageAdmittedTarget } from './package-admission'
-import { createRootNotebookLane } from './lane-identity'
+import { createFrameNotebookLane, createRootNotebookLane, notebookLaneKey } from './lane-identity'
 import {
   addRepairRequired,
   managedRepairRegistryKey,
@@ -39,19 +39,21 @@ const binding = (
   provenance: source === 'managed' ? 'app-managed' : 'user-own',
   interpreterPath: runtimeId,
   label: runtimeId,
+  status: repairRequired ? 'unavailable' : 'active',
   ...(envName ? { envName } : {}),
-  ...(repairRequired ? { status: 'unavailable' as const, reason: 'repair-required' as const } : {})
+  ...(repairRequired ? { reason: 'repair-required' as const } : {})
 })
 
 const session = (
   sessionId: string,
-  bindings: readonly NotebookSessionRuntimeBinding[] = []
+  bindings: readonly NotebookSessionRuntimeBinding[] = [],
+  lane = createRootNotebookLane('project', sessionId, 'root-frame-' + sessionId)
 ): { value: NotebookSessionAggregate; terminate: ReturnType<typeof vi.fn> } => {
   const terminate = vi.fn().mockResolvedValue(undefined)
   const value = new NotebookSessionAggregate({
     sessionId,
     projectId: 'project',
-    lane: createRootNotebookLane('project', sessionId, 'root-frame-' + sessionId),
+    lane,
     cwd: '/workspace',
     notebookSessionRoot: '/workspace',
     dataRoot: '/data',
@@ -120,7 +122,7 @@ const harness = (
 } => {
   const runtimeRoot = mkdtempSync(join(tmpdir(), 'notebook-runtime-repair-'))
   roots.push(runtimeRoot)
-  const byId = new Map(sessions.map((candidate) => [candidate.sessionId, candidate]))
+  const byLane = new Map(sessions.map((candidate) => [notebookLaneKey(candidate.lane), candidate]))
   const options: RepairOptions = {
     runtimeRoot,
     policy: new NotebookRuntimeRepairPolicy(runtimeRoot),
@@ -142,20 +144,240 @@ const harness = (
         })
         return true
       }),
-      persist: vi.fn().mockResolvedValue(undefined)
+      persist: vi.fn().mockResolvedValue(undefined),
+      persistStrict: vi.fn().mockResolvedValue(undefined)
     },
     environmentOperations: {
       blockRepair: vi.fn(),
       clearRepair: vi.fn()
     },
     sessions: () => sessions,
-    findSession: (sessionId) => byId.get(sessionId),
+    isCurrentSession: (session) => byLane.get(notebookLaneKey(session.lane)) === session,
+    clearKernelTermination: vi.fn().mockResolvedValue(undefined),
     notifyChanged: vi.fn()
   }
   return { owner: new NotebookRuntimeRepairOwner(options), options, runtimeRoot }
 }
 
 describe('NotebookRuntimeRepairOwner', () => {
+  it('quarantines and stops running and idle default-runtime kernels before repair', async () => {
+    const managed = binding(
+      'python',
+      '/runtime/envs/default-python/bin/python',
+      'managed',
+      'default-python'
+    )
+    const explicit = session('explicit', [managed])
+    const implicit = session('implicit')
+    explicit.value.setKernelStatus('python:default-python', 'running')
+    implicit.value.setKernelStatus('python:default-python', 'idle')
+    const { owner, options, runtimeRoot } = harness([explicit.value, implicit.value])
+
+    await owner.prepareExplicitRepair('python', managed)
+
+    expect(readRepairRequiredReason(runtimeRoot, 'default-python')).toBe(
+      'protected-identity-change'
+    )
+    expect(explicit.value.runtimeBinding('python')).toMatchObject({
+      status: 'unavailable',
+      reason: 'repair-required'
+    })
+    expect(options.bindings.persistStrict).toHaveBeenCalledOnce()
+    expect(explicit.terminate).toHaveBeenCalledWith('python', 'default-python')
+    expect(implicit.terminate).toHaveBeenCalledWith('python', 'default-python')
+    expect(options.clearKernelTermination).toHaveBeenCalledTimes(2)
+    expect(explicit.value.consumeForceStopped('python:default-python')).toBe(true)
+    expect(implicit.value.consumeForceStopped('python:default-python')).toBe(false)
+    expect(explicit.value.kernelStatus('python:default-python')).toBeUndefined()
+    expect(implicit.value.kernelStatus('python:default-python')).toBeUndefined()
+  })
+
+  it('quarantines every live frame lane that shares an application Session', async () => {
+    const managed = binding(
+      'python',
+      '/runtime/envs/default-python/bin/python',
+      'managed',
+      'default-python'
+    )
+    const root = session('shared', [managed])
+    const delegated = session(
+      'shared',
+      [managed],
+      createFrameNotebookLane('project', 'shared', 'delegated-frame', 'attempt-1')
+    )
+    root.value.setKernelStatus('python:default-python', 'idle')
+    delegated.value.setKernelStatus('python:default-python', 'running')
+    const { owner } = harness([root.value, delegated.value])
+
+    await owner.prepareExplicitRepair('python', managed)
+
+    expect(root.terminate).toHaveBeenCalledWith('python', 'default-python')
+    expect(delegated.terminate).toHaveBeenCalledWith('python', 'default-python')
+  })
+
+  it('fails closed when pre-repair binding persistence cannot be confirmed', async () => {
+    const managed = binding(
+      'python',
+      '/runtime/envs/default-python/bin/python',
+      'managed',
+      'default-python'
+    )
+    const affected = session('affected', [managed])
+    const { owner, options, runtimeRoot } = harness([affected.value])
+    vi.mocked(options.bindings.persistStrict).mockRejectedValueOnce(new Error('persist denied'))
+
+    await expect(owner.prepareExplicitRepair('python', managed)).rejects.toThrow('persist denied')
+
+    expect(readRepairRequiredReason(runtimeRoot, 'default-python')).toBe(
+      'protected-identity-change'
+    )
+    expect(options.environmentOperations.blockRepair).toHaveBeenCalledWith('python:default-python')
+    expect(affected.value.runtimeBinding('python')).toMatchObject({
+      status: 'unavailable',
+      reason: 'repair-required'
+    })
+    expect(affected.terminate).not.toHaveBeenCalled()
+    expect(options.environmentOperations.clearRepair).not.toHaveBeenCalled()
+  })
+
+  it('refreshes repaired bindings before clearing the repair gate', async () => {
+    const previous = binding('r', '/runtime/envs/default-r/bin/R', 'managed', 'default-r', true)
+    const replacement = binding('r', '/runtime/envs/default-r/bin/R-new', 'managed', 'default-r')
+    const affected = session('affected', [previous])
+    const { owner, options, runtimeRoot } = harness([affected.value])
+    addRepairRequired(runtimeRoot, 'default-r', 'protected-identity-change')
+
+    await owner.completeExplicitRepair('r', replacement)
+
+    expect(affected.value.runtimeBinding('r')).toMatchObject({
+      runtimeId: replacement.runtimeId,
+      interpreterPath: replacement.interpreterPath,
+      status: 'active'
+    })
+    expect(options.bindings.persistStrict).toHaveBeenCalledOnce()
+    expect(readRepairRequiredReason(runtimeRoot, 'default-r')).toBeUndefined()
+    expect(options.environmentOperations.clearRepair).toHaveBeenCalledWith('r:default-r')
+  })
+
+  it('keeps another language sharing the repaired prefix quarantined', async () => {
+    const previousPython = binding(
+      'python',
+      '/runtime/envs/default-python/bin/python',
+      'managed',
+      'default-python'
+    )
+    const previousR = binding(
+      'r',
+      '/runtime/envs/default-python/bin/R',
+      'managed',
+      'default-python'
+    )
+    const replacementPython = binding(
+      'python',
+      '/runtime/envs/default-python/bin/python-new',
+      'managed',
+      'default-python'
+    )
+    const affected = session('affected', [previousPython, previousR])
+    affected.value.setKernelStatus('python:default-python', 'idle')
+    affected.value.setKernelStatus('r:default-python', 'running')
+    const { owner, options, runtimeRoot } = harness([affected.value])
+
+    await owner.prepareExplicitRepair('python', previousPython)
+
+    expect(affected.terminate).toHaveBeenCalledWith('python', 'default-python')
+    expect(affected.terminate).toHaveBeenCalledWith('r', 'default-python')
+    expect(affected.value.runtimeBinding('python')).toMatchObject({ reason: 'repair-required' })
+    expect(affected.value.runtimeBinding('r')).toMatchObject({ reason: 'repair-required' })
+    expect(readRepairRequiredReason(runtimeRoot, previousR.runtimeId)).toBe(
+      'protected-identity-change'
+    )
+
+    await owner.completeExplicitRepair('python', replacementPython)
+
+    expect(affected.value.runtimeBinding('python')).toMatchObject({
+      runtimeId: replacementPython.runtimeId,
+      status: 'active'
+    })
+    expect(affected.value.runtimeBinding('r')).toMatchObject({
+      runtimeId: previousR.runtimeId,
+      status: 'unavailable',
+      reason: 'repair-required'
+    })
+    expect(readRepairRequiredReason(runtimeRoot, previousR.runtimeId)).toBe(
+      'protected-identity-change'
+    )
+    expect(options.environmentOperations.clearRepair).toHaveBeenCalledWith('python:default-python')
+    expect(options.environmentOperations.clearRepair).not.toHaveBeenCalledWith('r:default-python')
+  })
+
+  it('keeps a repaired binding unavailable when refreshed binding persistence fails', async () => {
+    const previous = binding(
+      'python',
+      '/runtime/envs/default-python/bin/python',
+      'managed',
+      'default-python',
+      true
+    )
+    const replacement = binding(
+      'python',
+      '/runtime/envs/default-python/bin/python-new',
+      'managed',
+      'default-python'
+    )
+    const affected = session('affected', [previous])
+    const { owner, options, runtimeRoot } = harness([affected.value])
+    addRepairRequired(runtimeRoot, 'default-python', 'protected-identity-change')
+    vi.mocked(options.bindings.persistStrict).mockRejectedValueOnce(new Error('persist denied'))
+
+    await expect(owner.completeExplicitRepair('python', replacement)).rejects.toThrow(
+      'persist denied'
+    )
+
+    expect(affected.value.runtimeBinding('python')).toEqual(previous)
+    expect(readRepairRequiredReason(runtimeRoot, 'default-python')).toBe(
+      'protected-identity-change'
+    )
+    expect(options.environmentOperations.clearRepair).not.toHaveBeenCalled()
+  })
+
+  it('refreshes an already-persisted binding again when repair completion is retried', async () => {
+    const previous = binding(
+      'python',
+      '/runtime/envs/default-python/bin/python-old',
+      'managed',
+      'default-python',
+      true
+    )
+    const first = session('first', [previous])
+    const second = session('second', [previous])
+    const { owner, options, runtimeRoot } = harness([first.value, second.value])
+    addRepairRequired(runtimeRoot, 'default-python', 'protected-identity-change')
+    vi.mocked(options.bindings.persistStrict)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('second persist denied'))
+
+    await expect(
+      owner.completeExplicitRepair(
+        'python',
+        binding('python', '/runtime/envs/default-python/bin/python-a', 'managed', 'default-python')
+      )
+    ).rejects.toThrow('second persist denied')
+
+    vi.mocked(options.bindings.persistStrict).mockResolvedValue(undefined)
+    const replacement = binding(
+      'python',
+      '/runtime/envs/default-python/bin/python-b',
+      'managed',
+      'default-python'
+    )
+    await owner.completeExplicitRepair('python', replacement)
+
+    expect(first.value.runtimeBinding('python')?.runtimeId).toBe(replacement.runtimeId)
+    expect(second.value.runtimeBinding('python')?.runtimeId).toBe(replacement.runtimeId)
+    expect(readRepairRequiredReason(runtimeRoot, 'default-python')).toBeUndefined()
+  })
+
   it('quarantines both languages sharing a managed prefix and persists every changed Session', async () => {
     const managedPython = binding('python', '/runtime/analysis/python', 'managed', 'analysis')
     const managedR = binding('r', '/runtime/analysis/R', 'managed', 'analysis')

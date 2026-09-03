@@ -77,6 +77,7 @@ type WorkspaceSessionController = {
         titleDraft: string
         descriptionDraft: string
         isSaving: boolean
+        error: string | null
       } | null
       delete: SessionDeleteDialogState | null
       downloadArtifacts: ChatSession | null
@@ -103,7 +104,7 @@ type WorkspaceSessionController = {
     changeEditTitleDraft: (draft: string) => void
     changeEditDescriptionDraft: (draft: string) => void
     confirmEdit: (event: FormEvent<HTMLFormElement>) => void
-    renameTitle: (session: ChatSession, title: string) => void
+    renameTitle: (session: ChatSession, title: string, expectedTitle?: string) => Promise<boolean>
     togglePin: (session: ChatSession) => void
     archive: (session: ChatSession) => void
     openExportConversation: (session: ChatSession) => void

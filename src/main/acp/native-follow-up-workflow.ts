@@ -10,6 +10,7 @@ import type {
 } from '../../shared/acp'
 import type { FileReference } from '../../shared/artifacts'
 import type { MessagePart } from '../../shared/session-persistence'
+import type { NotebookPromptInput } from '../../shared/notebook'
 import type { AgentFrameworkId } from '../../shared/settings'
 import {
   toPersistedUploadedAttachment,
@@ -20,6 +21,7 @@ import type { AcpOpenCodeUsageApi } from './backend-generation-owner'
 import type { AcpConnectionCapabilities } from './connection-resource-owner'
 import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
 import type { VisionEvidenceSource } from './vision-evidence-repository'
+import { appendNotebookInputPrompt } from './prompt-preparation-owner'
 import {
   ACP_STEERING_METHOD,
   ACP_STEERING_TIMEOUT_MS,
@@ -70,7 +72,8 @@ type NativeFollowUpRegisterTurnInputs = (request: {
   promptMessageId: string
   uploads: UploadedAttachment[]
   references: FileReference[]
-}) => Promise<void>
+  materializeOnly?: boolean
+}) => Promise<readonly NotebookPromptInput[] | void>
 
 type NativeFollowUpLivePrompt = Readonly<{
   turnToken: string
@@ -348,6 +351,41 @@ class AcpNativeFollowUpWorkflow {
         transport: route.transport
       })
       return refusePrepared('prompt-required')
+    }
+
+    if (notebookTurnInputs && this.options.registerTurnInputs) {
+      try {
+        const notebookInputs = await this.options.registerTurnInputs({
+          projectId: notebookTurnInputs.projectId,
+          appSessionId: notebookTurnInputs.sessionId,
+          promptMessageId: notebookTurnInputs.livePromptMessageId,
+          uploads: [...notebookTurnInputs.uploads],
+          references: [...notebookTurnInputs.references],
+          materializeOnly: true
+        })
+        if (notebookInputs) {
+          const preparedPrompt = appendNotebookInputPrompt([...prompt], notebookInputs)
+          prompt =
+            typeof preparedPrompt === 'string'
+              ? steeringPromptFromText(preparedPrompt)
+              : preparedPrompt
+        }
+      } catch (error) {
+        log.info('native follow-up notebook materialization failed', {
+          sessionId: notebookTurnInputs.sessionId,
+          promptMessageId: notebookTurnInputs.livePromptMessageId,
+          reason: error instanceof Error ? error.message : String(error)
+        })
+        return refusePrepared('dispatch-failed')
+      }
+      if (!this.sameLivePrompt(request.sessionId, live)) {
+        log.info('native follow-up refused', {
+          sessionId: request.sessionId,
+          reason: 'no-live-turn',
+          transport: route.transport
+        })
+        return refusePrepared('no-live-turn')
+      }
     }
 
     const transportSignal = this.transportTimeout(route.transport)

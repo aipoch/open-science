@@ -64,7 +64,7 @@ const buildDocument = (): NotebookRunDocument => ({
 const buildLegacyDocument = (): NotebookRunDocument => {
   const current = buildDocument()
   const { projectId, ...document } = current
-  const { projectId: artifactProjectId, ...artifact } = current.runs[0].artifacts[0]
+  const { projectId: artifactProjectId, ...artifact } = current.runs[0].artifacts![0]
   return {
     ...document,
     projectName: projectId,
@@ -92,14 +92,14 @@ describe('run document data-path codec', () => {
       '$DATA/notebooks/default-project/session-1/data/processed.csv'
     )
     expect(encoded.runs[0].workingFiles[0].relativePath).toBe('data/processed.csv')
-    expect(encoded.runs[0].artifacts[0].path).toBe(
+    expect(encoded.runs[0].artifacts![0].path).toBe(
       '$DATA/notebooks/default-project/session-1/data/processed/plot.png'
     )
-    expect(encoded.runs[0].artifacts[0].fileUrl).toBeUndefined()
+    expect(encoded.runs[0].artifacts![0].fileUrl).toBeUndefined()
     expect(encoded).toMatchObject({ projectId: 'default-project' })
     expect(encoded).not.toHaveProperty('projectName')
-    expect(encoded.runs[0].artifacts[0]).toMatchObject({ projectId: 'default-project' })
-    expect(encoded.runs[0].artifacts[0]).not.toHaveProperty('projectName')
+    expect(encoded.runs[0].artifacts![0]).toMatchObject({ projectId: 'default-project' })
+    expect(encoded.runs[0].artifacts![0]).not.toHaveProperty('projectName')
 
     // Unrelated fields are untouched.
     expect(encoded.runs[0].text.stdout).toBe('hello\n')
@@ -121,12 +121,12 @@ describe('run document data-path codec', () => {
     expect(decoded.runs[0].workingFiles[0].path).toBe(
       at('notebooks/default-project/session-1/data/processed.csv')
     )
-    expect(decoded.runs[0].artifacts[0].path).toBe(
+    expect(decoded.runs[0].artifacts![0].path).toBe(
       at('notebooks/default-project/session-1/data/processed/plot.png')
     )
-    expect(decoded.runs[0].artifacts[0].fileUrl).toMatch(/^file:\/\/.*plot\.png$/)
-    expect(decoded.runs[0].artifacts[0]).toMatchObject({ projectId: 'default-project' })
-    expect(decoded.runs[0].artifacts[0]).not.toHaveProperty('projectName')
+    expect(decoded.runs[0].artifacts![0].fileUrl).toMatch(/^file:\/\/.*plot\.png$/)
+    expect(decoded.runs[0].artifacts![0]).toMatchObject({ projectId: 'default-project' })
+    expect(decoded.runs[0].artifacts![0]).not.toHaveProperty('projectName')
   })
 
   it('reads historical projectName-only documents and nested artifacts', () => {
@@ -134,14 +134,25 @@ describe('run document data-path codec', () => {
 
     expect(decoded).toMatchObject({ projectId: 'default-project' })
     expect(decoded).not.toHaveProperty('projectName')
-    expect(decoded.runs[0].artifacts[0]).toMatchObject({ projectId: 'default-project' })
-    expect(decoded.runs[0].artifacts[0]).not.toHaveProperty('projectName')
+    expect(decoded.runs[0].artifacts![0]).toMatchObject({ projectId: 'default-project' })
+    expect(decoded.runs[0].artifacts![0]).not.toHaveProperty('projectName')
+  })
+
+  it('keeps the retired artifacts field absent when a current Run omits it', () => {
+    const doc = buildDocument()
+    delete doc.runs[0].artifacts
+
+    const encoded = encodeRunDocumentDataPaths(doc, ROOT)
+    const decoded = decodeRunDocumentDataPaths(encoded, ROOT)
+
+    expect(encoded.runs[0]).not.toHaveProperty('artifacts')
+    expect(decoded.runs[0]).not.toHaveProperty('artifacts')
   })
 
   it('writes canonical application artifacts without the legacy field', () => {
     const doc = buildDocument()
 
-    const artifact = encodeRunDocumentDataPaths(doc, ROOT).runs[0].artifacts[0]
+    const artifact = encodeRunDocumentDataPaths(doc, ROOT).runs[0].artifacts![0]
     expect(artifact.projectId).toBe('default-project')
     expect(artifact).not.toHaveProperty('projectName')
   })
@@ -152,21 +163,21 @@ describe('run document data-path codec', () => {
       projectId: 'canonical-project',
       projectName: 'renamed-project'
     } as NotebookRunDocument & { projectName: string }
-    doc.runs[0].artifacts[0] = {
-      ...doc.runs[0].artifacts[0],
+    doc.runs[0].artifacts![0] = {
+      ...doc.runs[0].artifacts![0],
       projectId: 'canonical-project',
       projectName: 'renamed-project'
-    } as (typeof doc.runs)[number]['artifacts'][number] & { projectName: string }
+    } as NonNullable<(typeof doc.runs)[number]['artifacts']>[number] & { projectName: string }
 
     const decoded = decodeRunDocumentDataPaths(doc, ROOT)
     expect(decoded).toMatchObject({ projectId: 'canonical-project' })
     expect(decoded).not.toHaveProperty('projectName')
-    expect(decoded.runs[0].artifacts[0]).toMatchObject({ projectId: 'canonical-project' })
-    expect(decoded.runs[0].artifacts[0]).not.toHaveProperty('projectName')
+    expect(decoded.runs[0].artifacts![0]).toMatchObject({ projectId: 'canonical-project' })
+    expect(decoded.runs[0].artifacts![0]).not.toHaveProperty('projectName')
 
     const encoded = encodeRunDocumentDataPaths(decoded, ROOT)
     expect(encoded).not.toHaveProperty('projectName')
-    expect(encoded.runs[0].artifacts[0]).not.toHaveProperty('projectName')
+    expect(encoded.runs[0].artifacts![0]).not.toHaveProperty('projectName')
   })
 
   it('leaves an external workspaceCwd unchanged on encode', () => {

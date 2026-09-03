@@ -24,11 +24,14 @@ import {
   type AgentModelConfig,
   type AgentSpawnInput,
   type ModelConfigContext,
+  type ResolvedAgentBackend,
   type SessionSetup,
   type SessionSetupContext
 } from './types'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
-import { isCodexSubscriptionProvider } from '../../shared/settings'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID, isCodexSubscriptionProvider } from '../../shared/settings'
+import { prepareCodexRuntimeHomeAuthentication } from '../settings/codex-auth'
+import { codexStorageDir, codexSubscriptionStorageDir } from '../settings/codex-paths'
 import { CODEX_VERSION } from '../settings/managed-codex'
 import { clearSystemProxyEnvironment } from '../settings/system-proxy'
 import { registerOwnedPosixProcessGroup } from '../process-tree'
@@ -70,11 +73,16 @@ const CODEX_MODE_IDS = {
 // contract. This must live in CODEX_CONFIG (rather than only custom model metadata), because trusted
 // bundled models intentionally do not receive an app-authored model catalog.
 const CODEX_DISABLED_NATIVE_FEATURES = Object.freeze({
+  memories: false,
   multi_agent: false,
   multi_agent_v2: false,
   // Disabling unified_exec alone falls back to shell_command. shell_tool disables both generations
   // so execution stays on the app-owned Notebook bash_execute MCP tool.
   shell_tool: false
+})
+const CODEX_DISABLED_NATIVE_MEMORY = Object.freeze({
+  generate_memories: false,
+  use_memories: false
 })
 
 const CODEX_ENV_KEYS = [
@@ -102,10 +110,6 @@ type CodexFrameworkDeps = {
   sourceEnv?: NodeJS.ProcessEnv
   spawnProcess?: SpawnProcess
 }
-
-export const codexStorageDir = (storageRoot: string): string => join(storageRoot, 'codex')
-export const codexSubscriptionStorageDir = (storageRoot: string): string =>
-  join(storageRoot, 'codex-subscription')
 
 const isolatedCodexHomeEnv = (codexHome: string, platform: NodeJS.Platform): NodeJS.ProcessEnv => ({
   // Codex discovers user-installed Skills under $HOME/.agents/skills in addition to
@@ -175,6 +179,7 @@ const buildCodexConfig = (provider: {
   return {
     ...buildCodexModelOptions(provider),
     features: CODEX_DISABLED_NATIVE_FEATURES,
+    memories: CODEX_DISABLED_NATIVE_MEMORY,
     ...(contextWindow
       ? {
           model_context_window: contextWindow,
@@ -424,6 +429,29 @@ export const createCodexFramework = ({
     return child
   },
 
+  async prepareDelegatedSpawn(
+    backend: ResolvedAgentBackend,
+    runtimeHome: string
+  ): Promise<AgentSpawnInput> {
+    await prepareCodexRuntimeHomeAuthentication({
+      sourceHome: backend.env.CODEX_HOME,
+      runtimeHome,
+      useSubscriptionAuthentication: backend.providerId === CODEX_SUBSCRIPTION_PROVIDER_ID,
+      subscriptionTransport: backend.codexSubscriptionTransport
+    })
+    return {
+      executablePath: backend.executablePath,
+      args: [...(backend.args ?? [])],
+      env: {
+        ...backend.env,
+        HOME: runtimeHome,
+        CODEX_HOME: runtimeHome,
+        ...(platform === 'win32' ? { USERPROFILE: runtimeHome } : {})
+      },
+      proxyEnvironmentMode: backend.proxyEnvironmentMode
+    }
+  },
+
   prepareModelConfig(provider, ctx: ModelConfigContext): AgentModelConfig {
     const persistentSystemPrompt =
       ctx.systemPromptAppends?.filter(Boolean).join('\n\n') || undefined
@@ -439,6 +467,7 @@ export const createCodexFramework = ({
       const codexConfig = {
         ...modelOptions,
         features: CODEX_DISABLED_NATIVE_FEATURES,
+        memories: CODEX_DISABLED_NATIVE_MEMORY,
         ...(persistentSystemPrompt ? { developer_instructions: persistentSystemPrompt } : {})
       }
       const codexConfigJson =
@@ -571,6 +600,8 @@ export const codexFramework = createCodexFramework()
 
 export {
   buildCodexConfig,
+  codexStorageDir,
+  codexSubscriptionStorageDir,
   isOfficialOpenAiResponsesBase,
   mapCodexPermissionProfile,
   normalizeResponsesBaseUrl

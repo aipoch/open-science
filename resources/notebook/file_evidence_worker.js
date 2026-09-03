@@ -18,7 +18,6 @@ const {
   rmSync,
   statSync,
   statfsSync,
-  writeFileSync,
   writeSync
 } = require('node:fs')
 const { join } = require('node:path')
@@ -132,13 +131,22 @@ const readRegularFile = (name, maxBytes) => {
 const readJson = (name, maxBytes = MAX_INTERNAL_JSON_BYTES) =>
   JSON.parse(readRegularFile(name, maxBytes).toString('utf8'))
 const writeExclusiveFile = (name, contents) => {
-  writeFileSync(name, contents, {
-    encoding: 'utf8',
-    flag: constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
-    mode: 0o600
-  })
-  const descriptor = openSync(name, constants.O_RDONLY | constants.O_NOFOLLOW)
+  // Windows FlushFileBuffers requires a writable handle. Reopening the exclusive file with
+  // O_RDONLY makes fsync fail with EPERM even when the file itself is writable — the same
+  // contract as src/main/storage/file-durability.ts.
+  const descriptor = openSync(
+    name,
+    constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+    0o600
+  )
   try {
+    const bytes = Buffer.from(contents, 'utf8')
+    let offset = 0
+    while (offset < bytes.length) {
+      const written = writeSync(descriptor, bytes, offset, bytes.length - offset)
+      if (written <= 0) throw new Error('Exclusive file-evidence write made no progress.')
+      offset += written
+    }
     fsyncSync(descriptor)
   } finally {
     closeSync(descriptor)

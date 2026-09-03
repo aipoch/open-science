@@ -5739,7 +5739,6 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/previews/PreviewToolContent.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
-      'src/renderer/src/pages/workspace/project-files-library.ts',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
       'src/renderer/src/pages/workspace/session-action-menu.ts',
       'src/renderer/src/pages/workspace/session-message-artifact-reference.ts',
@@ -5750,7 +5749,6 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/session-wait-reason.ts',
       'src/renderer/src/pages/workspace/tool-execution-phase.ts',
       'src/renderer/src/pages/workspace/use-pdf-context-action.ts',
-      'src/renderer/src/pages/workspace/use-project-artifact-files.ts',
       'src/renderer/src/pages/workspace/use-side-chat-controller.ts',
       'src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts',
       'src/renderer/src/pages/workspace/visible-project-sessions.ts',
@@ -5776,6 +5774,15 @@ describe('session store public contract', () => {
       'src/renderer/src/stores/navigation-store.ts',
       'src/renderer/src/stores/preview-workbench-store.ts'
     ])
+  })
+
+  it('does not rebuild Project Files from Session-store consumers', () => {
+    expect(directConsumerPaths()).not.toEqual(
+      expect.arrayContaining([
+        'src/renderer/src/pages/workspace/project-files-library.ts',
+        'src/renderer/src/pages/workspace/use-project-artifact-files.ts'
+      ])
+    )
   })
 
   it('hydrates newest-first while preserving manifest and explicit selection semantics', () => {
@@ -6038,6 +6045,7 @@ describe('branchInNewSession', () => {
               autoReviewEnabled: true,
               memoryEnabled: false,
               enabledComputeHosts: ['ssh:build'],
+              computeConcurrencyLimit: 2,
               filesRevision: 7,
               artifacts: [
                 {
@@ -6103,6 +6111,7 @@ describe('branchInNewSession', () => {
       delegationPolicy: 'deny',
       memoryEnabled: false,
       enabledComputeHosts: ['ssh:build'],
+      computeConcurrencyLimit: 2,
       branchSource: {
         sessionId: 'source-session',
         agentFrameId: sourceFrame?.id,
@@ -7201,6 +7210,7 @@ describe('truncateSessionFromMessage', () => {
         ...toPersistedSession(source),
         enabledComputeHosts: ['ssh:lab', 'ssh:available'],
         selectedComputeHosts: ['ssh:lab'],
+        computeConcurrencyLimit: 2,
         updatedAt: source.updatedAt + 1
       },
       mode: 'compute-host-access-authority'
@@ -7209,7 +7219,8 @@ describe('truncateSessionFromMessage', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       title: 'Newer local title',
       enabledComputeHosts: ['ssh:lab', 'ssh:available'],
-      selectedComputeHosts: ['ssh:lab']
+      selectedComputeHosts: ['ssh:lab'],
+      computeConcurrencyLimit: 2
     })
   })
 })

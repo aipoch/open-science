@@ -103,6 +103,19 @@ describe('NotebookPackageAdmissionOwner', () => {
     })
   })
 
+  it('refuses to lazily create a missing default when Agent creation is disabled', async () => {
+    const isAgentEnvironmentCreationEnabled = vi.fn(async () => false)
+    const { owner } = ownerHarness(undefined, { isAgentEnvironmentCreationEnabled })
+
+    const admission = await owner.admit({ language: 'python', packages: ['numpy'] })
+
+    expect(admission).toMatchObject({
+      status: 'refused',
+      result: { error: expect.stringContaining('AGENT_ENVIRONMENT_CREATION_DISABLED') }
+    })
+    expect(isAgentEnvironmentCreationEnabled).toHaveBeenCalledOnce()
+  })
+
   it('loads the Session and pins a managed named target instead of trusting the request', async () => {
     const binding = managedBinding()
     const { owner, options } = ownerHarness(binding)

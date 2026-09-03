@@ -138,6 +138,23 @@ def _install_protected_paths_policy(entries):
     sys.addaudithook(audit)
 _runtime_dir_value = os.environ.get("OPEN_SCIENCE_RUNTIME_DIR", "")
 _managed_runtime_dir = _guard_path(_runtime_dir_value) if _runtime_dir_value else ""
+_cache_dir_value = os.environ.get("OPEN_SCIENCE_NOTEBOOK_CACHE_DIR", "")
+_managed_cache_dir = _guard_path(_cache_dir_value) if _cache_dir_value else ""
+
+def _path_is_within(path, directory):
+    return bool(directory) and (path == directory or path.startswith(directory + os.sep))
+
+if not (
+    _managed_runtime_dir
+    and _managed_cache_dir != _managed_runtime_dir
+    and _path_is_within(_managed_cache_dir, _managed_runtime_dir)
+):
+    _managed_cache_dir = ""
+
+def _runtime_path_is_blocked(path):
+    return _path_is_within(path, _managed_runtime_dir) and not _path_is_within(
+        path, _managed_cache_dir
+    )
 
 _package_mutation_command = re.compile(
     r"(?:\b(?:micromamba|mamba|conda|pip|pip3|pipx|uv|poetry)(?:\.exe)?\b.{0,160}"
@@ -234,15 +251,11 @@ def _text_references_managed_runtime(text):
 
 def _runtime_target_is_managed(value):
     text = str(value).strip().strip("\"'")
-    if _text_references_managed_runtime(text):
-        return True
     try:
-        resolved = _guard_path(text)
+        resolved = _guard_path(os.path.expandvars(os.path.expanduser(text)))
     except (TypeError, ValueError):
-        return False
-    return bool(_managed_runtime_dir) and (
-        resolved == _managed_runtime_dir or resolved.startswith(_managed_runtime_dir + os.sep)
-    )
+        return _text_references_managed_runtime(text)
+    return _runtime_path_is_blocked(resolved)
 
 def _runtime_write_targets(words, redirections=()):
     if not words:
@@ -362,9 +375,7 @@ def _protected_paths_audit(event, args):
             resolved = _guard_path(target)
         except (TypeError, ValueError):
             continue
-        if _managed_runtime_dir and (
-            resolved == _managed_runtime_dir or resolved.startswith(_managed_runtime_dir + os.sep)
-        ):
+        if _runtime_path_is_blocked(resolved):
             _blocked_environment_mutation()
 
     if event != "open" or not args:
@@ -386,9 +397,7 @@ def _protected_paths_audit(event, args):
     )
     if write_open and os.path.basename(resolved).casefold() == "pyvenv.cfg":
         _blocked_environment_mutation()
-    if write_open and _managed_runtime_dir and (
-        resolved == _managed_runtime_dir or resolved.startswith(_managed_runtime_dir + os.sep)
-    ):
+    if write_open and _runtime_path_is_blocked(resolved):
         _blocked_environment_mutation()
 sys.addaudithook(_protected_paths_audit)
 

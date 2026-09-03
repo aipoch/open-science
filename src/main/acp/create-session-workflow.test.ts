@@ -7,9 +7,10 @@ import type { ManagedSessionWorkspaceLease } from './managed-session-workspace'
 type AcpCreateSessionWorkflowHarness = {
   workflow: ReturnType<typeof createAcpCreateSessionWorkflow>
   createSession: Mock<(request: AcpCreateSessionRequest) => Promise<AcpCreateSessionResponse>>
+  deleteSession: Mock<(request: { sessionId: string }) => Promise<unknown>>
   lease: ManagedSessionWorkspaceLease
   workspaces: {
-    acquire: Mock<() => Promise<ManagedSessionWorkspaceLease>>
+    acquire: Mock<(input: { projectId: string }) => Promise<ManagedSessionWorkspaceLease>>
   }
   dataRootWriteCalls: () => number
   events: string[]
@@ -26,15 +27,21 @@ const createHarness = (
     if (createSessionResult instanceof Error) throw createSessionResult
     return { sessionId: 'session-1', cwd: request.cwd }
   })
+  const deleteSession = vi.fn<(request: { sessionId: string }) => Promise<unknown>>(async () => {
+    events.push('delete-session')
+    return undefined
+  })
   const lease: ManagedSessionWorkspaceLease = {
     cwd: '/data/workspaces/managed-1',
-    commit: vi.fn(() => events.push('commit')),
+    commit: vi.fn(async () => {
+      events.push('commit')
+    }),
     release: vi.fn(async () => {
       events.push('release')
     })
   }
   const workspaces: AcpCreateSessionWorkflowHarness['workspaces'] = {
-    acquire: vi.fn<() => Promise<ManagedSessionWorkspaceLease>>(async () => {
+    acquire: vi.fn(async () => {
       events.push('acquire')
       return lease
     })
@@ -50,12 +57,13 @@ const createHarness = (
     }
   }
   const workflow = createAcpCreateSessionWorkflow(
-    { createSession },
+    { createSession, deleteSession },
     { workspaces, withDataRootWrite }
   )
   return {
     workflow,
     createSession,
+    deleteSession,
     lease,
     workspaces,
     dataRootWriteCalls: () => dataRootWriteCalls,
@@ -83,7 +91,10 @@ describe('ACP create-Session workflow', () => {
         admissionActive = false
       }
     }
-    const workflow = createAcpCreateSessionWorkflow({ createSession }, { withProjectAvailable })
+    const workflow = createAcpCreateSessionWorkflow(
+      { createSession, deleteSession: vi.fn() },
+      { withProjectAvailable }
+    )
 
     const pending = workflow.create({
       cwd: '/workspace',
@@ -98,6 +109,44 @@ describe('ACP create-Session workflow', () => {
 
     expect(admissionActive).toBe(false)
   })
+
+  it.each([
+    { requestedProjectId: '  project-1  ', expectedProjectId: 'project-1' },
+    { requestedProjectId: '   ', expectedProjectId: undefined }
+  ])(
+    'normalizes "$requestedProjectId" before Project admission',
+    async ({ requestedProjectId, expectedProjectId }) => {
+      const createSession = vi.fn(async (request: AcpCreateSessionRequest) => ({
+        sessionId: 'session-1',
+        cwd: request.cwd
+      }))
+      const admittedProjectIds: (string | undefined)[] = []
+      const withProjectAvailable = async <Result>(
+        projectId: string | undefined,
+        operation: () => Promise<Result>
+      ): Promise<Result> => {
+        admittedProjectIds.push(projectId)
+        return operation()
+      }
+      const workflow = createAcpCreateSessionWorkflow(
+        { createSession, deleteSession: vi.fn() },
+        { withProjectAvailable }
+      )
+
+      await workflow.create({
+        cwd: '/workspace',
+        projectId: requestedProjectId,
+        permissionProfile: 'ask'
+      })
+
+      expect(admittedProjectIds).toEqual([expectedProjectId])
+      expect(createSession).toHaveBeenCalledWith({
+        cwd: '/workspace',
+        projectId: expectedProjectId,
+        permissionProfile: 'ask'
+      })
+    }
+  )
 
   it('trims and uses an explicit workspace without acquiring managed storage', async () => {
     const harness = createHarness()
@@ -137,6 +186,8 @@ describe('ACP create-Session workflow', () => {
         projectId: 'project-1',
         permissionProfile: 'ask'
       })
+      expect(harness.workspaces.acquire).toHaveBeenCalledWith({ projectId: 'project-1' })
+      expect(harness.lease.commit).toHaveBeenCalledWith('session-1')
       expect(harness.events).toEqual([
         'guard:start',
         'acquire',
@@ -159,6 +210,56 @@ describe('ACP create-Session workflow', () => {
       expect(harness.events).toEqual(['guard:start', 'acquire', 'session', 'release', 'guard:end'])
     }
   )
+
+  it('deletes the published Session when final ownership publication fails', async () => {
+    const harness = createHarness()
+    const failure = new Error('receipt publication failed')
+    vi.mocked(harness.lease.commit).mockImplementationOnce(async () => {
+      harness.events.push('commit')
+      throw failure
+    })
+
+    await expect(harness.workflow.create({ projectId: 'project-1' })).rejects.toBe(failure)
+
+    expect(harness.deleteSession).toHaveBeenCalledWith({ sessionId: 'session-1' })
+    expect(harness.events).toEqual([
+      'guard:start',
+      'acquire',
+      'session',
+      'commit',
+      'delete-session',
+      'release',
+      'guard:end'
+    ])
+  })
+
+  it('retains the workspace when ownership publication and Session rollback both fail', async () => {
+    const harness = createHarness()
+    const publicationFailure = new Error('receipt publication failed')
+    const rollbackFailure = new Error('Session rollback failed')
+    vi.mocked(harness.lease.commit).mockImplementationOnce(async () => {
+      harness.events.push('commit')
+      throw publicationFailure
+    })
+    harness.deleteSession.mockImplementationOnce(async () => {
+      harness.events.push('delete-session')
+      throw rollbackFailure
+    })
+
+    await expect(harness.workflow.create({ projectId: 'project-1' })).rejects.toMatchObject({
+      errors: [publicationFailure, rollbackFailure]
+    })
+
+    expect(harness.lease.release).not.toHaveBeenCalled()
+    expect(harness.events).toEqual([
+      'guard:start',
+      'acquire',
+      'session',
+      'commit',
+      'delete-session',
+      'guard:end'
+    ])
+  })
 })
 
 const createDeferred = <Value>(): {

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { normalizeExplicitLock } from './micromamba'
@@ -19,6 +20,8 @@ export type ExportRuntimeLocksDeps = {
   mm: string | undefined
   // Runs a micromamba argv and returns stdout (for `list --explicit --md5`).
   capture: (argv: string[]) => Promise<string>
+  // Injectable for deterministic write-failure coverage.
+  writeLock?: (path: string, contents: string) => void
   platform?: NodeJS.Platform
 }
 
@@ -26,9 +29,10 @@ export type ExportRuntimeLocksDeps = {
 // <toDataRoot>/runtime/envs.lock/<name>.lock, so the runtime can be rebuilt OFFLINE at the new root
 // from the (separately-copied) pkgs cache instead of copying the non-relocatable env prefixes. This
 // preserves conda-installed content exactly; pip/CRAN-only extras aren't conda-tracked and are not
-// captured here. Best-effort per env: an export failure skips that env (it falls back to default
-// provisioning). Returns the names actually exported; empty when micromamba is absent or no env has
-// an interpreter yet.
+// captured here. The bundle is all-or-nothing for materialized environments: every lock is captured
+// and validated before a private staging directory is published, so a failed capture or write can
+// never leave a partial envs.lock directory that migration could mistake for complete. Returns the
+// names actually exported; empty when micromamba is absent or no env has an interpreter yet.
 export const exportRuntimeLocks = async (
   fromDataRoot: string,
   toDataRoot: string,
@@ -61,33 +65,40 @@ export const exportRuntimeLocks = async (
   entries.sort((a, b) => Number(b.canonical) - Number(a.canonical))
   const seen = new Set<string>()
 
-  const outDir = envsLockDir(runtimeRoot(toDataRoot))
-  const exported: string[] = []
+  const locks: Array<{ name: string; contents: string }> = []
   for (const { name, prefix } of entries) {
     if (seen.has(name)) continue
     seen.add(name)
     // Skip mid-creation leftovers with no interpreter — nothing to reconstruct.
     if (!existsSync(pythonBin(prefix, deps.platform)) && !existsSync(rBin(prefix, deps.platform)))
       continue
-    try {
-      const raw = await deps.capture([
-        deps.mm,
-        '--no-rc',
-        'list',
-        '--prefix',
-        prefix,
-        '--explicit',
-        '--md5'
-      ])
-      const lock = normalizeExplicitLock(raw)
-      // A lock with no package URLs can't recreate anything; skip it.
-      if (!/^https?:\/\//m.test(lock)) continue
-      mkdirSync(outDir, { recursive: true })
-      writeFileSync(join(outDir, `${name}.lock`), lock, 'utf8')
-      exported.push(name)
-    } catch {
-      // best-effort: this env falls back to default provisioning at the new root.
+    const raw = await deps.capture([
+      deps.mm,
+      '--no-rc',
+      'list',
+      '--prefix',
+      prefix,
+      '--explicit',
+      '--md5'
+    ])
+    const lock = normalizeExplicitLock(raw)
+    if (!/^https?:\/\//m.test(lock)) {
+      throw new Error(`Could not preserve ${name}: the exported lock contains no package URLs.`)
     }
+    locks.push({ name, contents: lock })
   }
-  return exported
+  if (locks.length === 0) return []
+
+  const outDir = envsLockDir(runtimeRoot(toDataRoot))
+  const stagingDir = `${outDir}.tmp-${randomUUID()}`
+  const writeLock = deps.writeLock ?? ((path, contents) => writeFileSync(path, contents, 'utf8'))
+  try {
+    mkdirSync(stagingDir, { recursive: true })
+    for (const lock of locks) writeLock(join(stagingDir, `${lock.name}.lock`), lock.contents)
+    renameSync(stagingDir, outDir)
+  } catch (error) {
+    rmSync(stagingDir, { recursive: true, force: true })
+    throw error
+  }
+  return locks.map(({ name }) => name)
 }

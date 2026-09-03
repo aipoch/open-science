@@ -23,7 +23,7 @@ const session: ChatSession = {
   updatedAt: 1
 }
 
-const Harness = (): React.JSX.Element => {
+const Harness = ({ error }: { error?: string }): React.JSX.Element => {
   const [open, setOpen] = useState(false)
   const [titleDraft, setTitleDraft] = useState(session.title)
   const [descriptionDraft, setDescriptionDraft] = useState(session.description ?? '')
@@ -37,6 +37,7 @@ const Harness = (): React.JSX.Element => {
         session={open ? session : undefined}
         titleDraft={titleDraft}
         descriptionDraft={descriptionDraft}
+        error={error}
         onTitleDraftChange={setTitleDraft}
         onDescriptionDraftChange={setDescriptionDraft}
         onCancel={() => setOpen(false)}
@@ -73,5 +74,18 @@ describe('EditSessionDialog interactions', () => {
 
     expect(document.querySelector('#edit-session-title')).toBeInstanceOf(HTMLInputElement)
     expect(document.querySelector('#edit-session-description')).toBeInstanceOf(HTMLTextAreaElement)
+  })
+
+  it('announces a save failure inside the open editor', () => {
+    act(() => root.render(<Harness error="Could not save session details." />))
+
+    const editButton = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Edit…'
+    )
+    act(() => editButton?.click())
+
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not save session details.'
+    )
   })
 })

@@ -779,6 +779,13 @@ describe('StoragePanel', () => {
     ;(
       window as unknown as { api: { storage: { pickDirectory: ReturnType<typeof vi.fn> } } }
     ).api.storage.pickDirectory.mockResolvedValue('/mnt/data')
+    ;(
+      window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }
+    ).api.storage.inspectDataRoot.mockResolvedValue({
+      kind: 'move',
+      dataRoot: '/mnt/data/OpenScience',
+      targetAvailableBytes: 100_000_000
+    })
 
     await act(async () => {
       root.render(<StoragePanel />)
@@ -806,11 +813,18 @@ describe('StoragePanel', () => {
     // acting, not just the raw parent they picked.
     expect(container.textContent).toContain('Data will be stored in')
     expect(container.textContent).toContain('/mnt/data/OpenScience')
+    expect(container.textContent).toContain('Available on target disk: 100.0 MB')
     // Migration excludes runtime but includes the independently stored execution evidence.
     expect(container.textContent).toContain('Your existing data (~31.0 MB) will be moved')
     expect(container.textContent).not.toContain('Your existing data (~3.7 GB)')
     expect(container.textContent).toContain(
-      'Python/R environments are rebuilt at the new location on first use (not moved).'
+      'Python/R environments are rebuilt at the new location after restart (not copied).'
+    )
+    expect(container.textContent).toContain(
+      'Rebuilding environments may require additional disk space that cannot be estimated reliably in advance.'
+    )
+    expect(container.textContent).toContain(
+      'Packages installed only with pip or from CRAN are not guaranteed to be restored by this relocation.'
     )
 
     const changeButtonAfter = Array.from(

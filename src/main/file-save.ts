@@ -22,6 +22,7 @@ import type {
 } from '../shared/file-save'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import { toErrorMessage } from './error-message'
+import { publishUserFile } from './user-file-publisher'
 
 type RegisterFileSaveHandlersOptions = {
   resolveManagedFilePath?: (
@@ -46,6 +47,7 @@ type RegisterFileSaveHandlersOptions = {
   ) => Promise<ManagedFileVersionHandle>
   createProjectArtifactTemporaryRoot?: () => Promise<string>
   projectArtifactExportLimits?: ProjectArtifactExportLimits
+  publishUserFile?: typeof publishUserFile
   translate?: NativeTranslator
 }
 
@@ -71,17 +73,9 @@ const PROJECT_ARTIFACT_EXPORT_LIMITS: ProjectArtifactExportLimits = {
 
 const PROJECT_ARTIFACT_STREAM_CHUNK_BYTES = 64 * 1024
 
-type ProjectArtifactExportCandidateBase = {
-  file: SaveProjectArtifactsRequest['files'][number]
-  entryName: string
-}
-
-type ProjectArtifactExportCandidate = ProjectArtifactExportCandidateBase & {
-  source: ManagedFileVersionHandle
-}
-
 type ManagedFileHandle = {
   copyTo: (destinationPath: string, options?: { exclusive?: boolean }) => Promise<void>
+  assertCanCopyTo?: (destinationPath: string) => Promise<void>
   close: () => Promise<void>
 }
 
@@ -151,12 +145,13 @@ const assertSaveSessionArtifactsRequest: (
         file === null ||
         typeof file.fileId !== 'string' ||
         file.fileId.trim().length === 0 ||
+        typeof file.versionId !== 'string' ||
+        file.versionId.trim().length === 0 ||
         typeof file.suggestedName !== 'string'
       ) {
         return true
       }
       if ('path' in file && file.path !== undefined) return true
-      if ('versionId' in file && file.versionId !== undefined) return true
       return false
     })
   ) {
@@ -186,7 +181,8 @@ const assertSaveProjectArtifactsRequest = (request: SaveProjectArtifactsRequest)
         return true
       }
       if (typeof file.fileId !== 'string' || file.fileId.trim().length === 0) return true
-      if ('path' in file || ('versionId' in file && file.versionId !== undefined)) return true
+      if (typeof file.versionId !== 'string' || file.versionId.trim().length === 0) return true
+      if ('path' in file) return true
       return false
     })
   ) {
@@ -198,7 +194,27 @@ const assertSaveProjectArtifactsRequest = (request: SaveProjectArtifactsRequest)
 const openManagedFile = async (sourcePath: string): Promise<ManagedFileHandle> => {
   const sourceHandle = await open(sourcePath, 'r')
 
+  const assertCanCopyTo = async (destinationPath: string): Promise<void> => {
+    let destinationHandle: FileHandle | undefined
+    try {
+      destinationHandle = await open(destinationPath, 'r')
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return
+      throw error
+    }
+    try {
+      const sourceStat = await sourceHandle.stat()
+      const destinationStat = await destinationHandle.stat()
+      if (destinationStat.dev === sourceStat.dev && destinationStat.ino === sourceStat.ino) {
+        throw new Error('Cannot save a managed file over its source.')
+      }
+    } finally {
+      await destinationHandle.close()
+    }
+  }
+
   return {
+    assertCanCopyTo,
     copyTo: async (destinationPath, options) => {
       // Open without truncation, then check and write through the same handle to prevent path swaps.
       const destinationHandle = await open(
@@ -241,7 +257,10 @@ const appendArchiveChunk = async (handle: FileHandle, chunk: Uint8Array): Promis
 
 const writeProjectArtifactArchive = async (options: {
   destinationPath: string
-  candidates: ProjectArtifactExportCandidate[]
+  projectId: string
+  files: SaveProjectArtifactsRequest['files']
+  openManagedFileVersion: NonNullable<RegisterFileSaveHandlersOptions['openManagedFileVersion']>
+  publishUserFile: typeof publishUserFile
   failures: SaveProjectArtifactFailure[]
   limits: ProjectArtifactExportLimits
   createTemporaryRoot: () => Promise<string>
@@ -250,7 +269,6 @@ const writeProjectArtifactArchive = async (options: {
   let archiveHandle: FileHandle | undefined
   let archiveHandleClosed = false
   let zip: Zip | undefined
-  const pendingManagedSources = new Set(options.candidates.map((candidate) => candidate.source))
 
   try {
     temporaryRoot = await options.createTemporaryRoot()
@@ -260,6 +278,7 @@ const writeProjectArtifactArchive = async (options: {
     let pendingArchiveWrite = Promise.resolve()
     let streamedEntries = 0
     let streamedBytes = 0
+    const takenNames = new Set<string>()
 
     zip = new Zip((error, chunk) => {
       if (error) {
@@ -278,13 +297,22 @@ const writeProjectArtifactArchive = async (options: {
       if (archiveFailure) throw archiveFailure
     }
 
-    for (const candidate of options.candidates) {
-      let closeSource: (() => Promise<void>) | undefined
+    for (const file of options.files) {
+      let managedSource: ManagedFileVersionHandle | undefined
       let entryStarted = false
       try {
-        const managedSource = candidate.source
+        if (streamedEntries >= options.limits.maxFiles) {
+          throw new Error('Project export exceeds the file-count limit.')
+        }
+        managedSource = await options.openManagedFileVersion(file.source, {
+          projectId: options.projectId,
+          fileId: file.fileId,
+          versionId: file.versionId
+        })
         const sourceSize = managedSource.size
-        closeSource = () => managedSource.close()
+        if (!Number.isSafeInteger(sourceSize) || sourceSize < 0) {
+          throw new Error('Project export source size is invalid.')
+        }
         const chunks = (async function* (): AsyncGenerator<Uint8Array> {
           for (let begin = 0; begin < managedSource.size;) {
             const end = Math.min(begin + PROJECT_ARTIFACT_STREAM_CHUNK_BYTES, managedSource.size)
@@ -304,7 +332,13 @@ const writeProjectArtifactArchive = async (options: {
           throw new Error('Project export exceeds the total size limit.')
         }
 
-        const zipEntry = new ZipDeflate(candidate.entryName, { level: 6 })
+        const categoryDirectory = file.source === 'upload' ? 'uploads' : 'generated'
+        const entryName = claimZipEntryName(
+          takenNames,
+          `${categoryDirectory}/${getSafeZipEntryName(file.suggestedName)}`
+        )
+        takenNames.add(entryName.toLowerCase())
+        const zipEntry = new ZipDeflate(entryName, { level: 6 })
         zip.add(zipEntry)
         entryStarted = true
         let entryBytes = 0
@@ -333,12 +367,11 @@ const writeProjectArtifactArchive = async (options: {
       } catch (error) {
         if (entryStarted) throw error
         options.failures.push({
-          ...candidate.file,
+          ...file,
           message: toErrorMessage(error)
         })
       } finally {
-        await closeSource?.()
-        pendingManagedSources.delete(candidate.source)
+        await managedSource?.close()
       }
     }
 
@@ -352,7 +385,9 @@ const writeProjectArtifactArchive = async (options: {
     throwIfArchiveFailed()
     await archiveHandle.close()
     archiveHandleClosed = true
-    await copyFile(temporaryArchivePath, options.destinationPath)
+    await options.publishUserFile(options.destinationPath, (temporaryPath) =>
+      copyFile(temporaryArchivePath, temporaryPath, constants.COPYFILE_EXCL)
+    )
     return true
   } catch (error) {
     zip?.terminate()
@@ -361,9 +396,6 @@ const writeProjectArtifactArchive = async (options: {
     if (archiveHandle && !archiveHandleClosed) {
       await archiveHandle.close().catch(() => undefined)
     }
-    await Promise.all(
-      [...pendingManagedSources].map((source) => source.close().catch(() => undefined))
-    )
     if (temporaryRoot) {
       await rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined)
     }
@@ -436,17 +468,21 @@ const getSafeFilename = (suggestedName: string, sourcePath: string): string => {
 const copyToAvailableDestination = async (
   managedFile: ManagedFileHandle,
   destinationDirectory: string,
-  safeName: string
+  safeName: string,
+  publish: typeof publishUserFile
 ): Promise<string> => {
   for (let suffix = 1; ; suffix += 1) {
     const filename = suffix === 1 ? safeName : addFilenameCollisionSuffix(safeName, suffix)
     const destinationPath = join(destinationDirectory, filename)
     try {
-      await managedFile.copyTo(destinationPath, { exclusive: true })
+      await publish(
+        destinationPath,
+        (temporaryPath) => managedFile.copyTo(temporaryPath, { exclusive: true }),
+        { exclusive: true }
+      )
       return destinationPath
     } catch (error) {
       if (isAlreadyExistsError(error)) continue
-      await rm(destinationPath, { force: true }).catch(() => undefined)
       throw error
     }
   }
@@ -478,6 +514,7 @@ const extensionForMime = (mimeType: string): string | undefined => {
 }
 
 const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {}): void => {
+  const publish = options.publishUserFile ?? publishUserFile
   ipcMainHandle(
     'file:save-blob',
     async (event, request: SaveBlobFileRequest): Promise<SaveBlobFileResult> => {
@@ -497,7 +534,9 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
         return { saved: false }
       }
 
-      await writeFile(filePath, Buffer.from(request.data))
+      await publish(filePath, (temporaryPath) =>
+        writeFile(temporaryPath, Buffer.from(request.data))
+      )
       return { saved: true, filePath }
     }
   )
@@ -567,7 +606,11 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
               })
           : pathManagedFile!
         try {
-          await managedFile.copyTo(filePath)
+          await publish(filePath, (temporaryPath) => managedFile.copyTo(temporaryPath), {
+            ...(managedFile.assertCanCopyTo
+              ? { validateDestination: () => managedFile.assertCanCopyTo!(filePath) }
+              : {})
+          })
           return { saved: true, filePath }
         } finally {
           if (versionedRequest) await managedFile.close()
@@ -582,9 +625,9 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
     'file:save-session-artifacts',
     async (event, request: SaveSessionArtifactsRequest): Promise<SaveSessionArtifactsResult> => {
       assertSaveSessionArtifactsRequest(request)
-      const openLatestManagedFile = options.openLatestManagedFile
-      if (!openLatestManagedFile) {
-        throw new Error('Latest managed file resolver is not configured.')
+      const openManagedFileVersion = options.openManagedFileVersion
+      if (!openManagedFileVersion) {
+        throw new Error('Managed file Version resolver is not configured.')
       }
       const parentWindow = BrowserWindow.fromWebContents(event.sender)
 
@@ -601,13 +644,18 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
 
         if (canceled || !filePath) return { saved: false }
 
-        const managedFile = await openLatestManagedFile('artifact', {
+        const managedFile = await openManagedFileVersion('artifact', {
           projectId: request.projectId,
-          fileId: file.fileId
+          fileId: file.fileId,
+          versionId: file.versionId
         })
 
         try {
-          await managedFile.copyTo(filePath)
+          await publish(filePath, (temporaryPath) => managedFile.copyTo(temporaryPath), {
+            ...(managedFile.assertCanCopyTo
+              ? { validateDestination: () => managedFile.assertCanCopyTo!(filePath) }
+              : {})
+          })
           return { saved: true, filePaths: [filePath] }
         } finally {
           await managedFile.close()
@@ -632,13 +680,14 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
       for (const file of request.files) {
         let managedFile: ManagedFileHandle | undefined
         try {
-          managedFile = await openLatestManagedFile('artifact', {
+          managedFile = await openManagedFileVersion('artifact', {
             projectId: request.projectId,
-            fileId: file.fileId
+            fileId: file.fileId,
+            versionId: file.versionId
           })
           const safeName = getSafeFilename(file.suggestedName, file.fileId)
           savedPaths.push(
-            await copyToAvailableDestination(managedFile, destinationDirectory, safeName)
+            await copyToAvailableDestination(managedFile, destinationDirectory, safeName, publish)
           )
         } catch (error) {
           failures.push({
@@ -663,60 +712,9 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
     'file:save-project-artifacts',
     async (event, request: SaveProjectArtifactsRequest): Promise<SaveProjectArtifactsResult> => {
       assertSaveProjectArtifactsRequest(request)
-      const openLatestManagedFile = options.openLatestManagedFile
-      if (!openLatestManagedFile) {
-        throw new Error('Latest managed file resolver is not configured.')
-      }
-
-      const limits = options.projectArtifactExportLimits ?? PROJECT_ARTIFACT_EXPORT_LIMITS
-      const candidates: ProjectArtifactExportCandidate[] = []
-      const takenNames = new Set<string>()
-      const failures: SaveProjectArtifactFailure[] = []
-      let totalBytes = 0
-      for (const file of request.files) {
-        let exportFile: ManagedFileVersionHandle | undefined
-        let retainedManagedVersion = false
-        try {
-          if (takenNames.size >= limits.maxFiles) {
-            throw new Error('Project export exceeds the file-count limit.')
-          }
-          const managedVersion = await openLatestManagedFile(file.source, {
-            projectId: request.projectId,
-            fileId: file.fileId
-          })
-          exportFile = managedVersion
-          if (!Number.isSafeInteger(managedVersion.size) || managedVersion.size < 0) {
-            throw new Error('Project export source size is invalid.')
-          }
-          if (managedVersion.size > limits.maxFileBytes) {
-            throw new Error('Project export file exceeds the per-file size limit.')
-          }
-          if (totalBytes + managedVersion.size > limits.maxTotalBytes) {
-            throw new Error('Project export exceeds the total size limit.')
-          }
-          // Entries are grouped by origin under constant directory prefixes; the file name part
-          // is sanitized before prefixing and collision suffixes apply within each category.
-          const categoryDirectory = file.source === 'upload' ? 'uploads' : 'generated'
-          const entryName = claimZipEntryName(
-            takenNames,
-            `${categoryDirectory}/${getSafeZipEntryName(file.suggestedName)}`
-          )
-          candidates.push({ file, entryName, source: managedVersion })
-          retainedManagedVersion = true
-          totalBytes += managedVersion.size
-          // Claim checks are case-insensitive; the entry itself keeps its original casing.
-          takenNames.add(entryName.toLowerCase())
-        } catch (error) {
-          failures.push({
-            ...file,
-            message: toErrorMessage(error)
-          })
-        } finally {
-          if (!retainedManagedVersion) await exportFile?.close()
-        }
-      }
-      if (candidates.length === 0) {
-        return { saved: true, ...(failures.length > 0 ? { failures } : {}) }
+      const openManagedFileVersion = options.openManagedFileVersion
+      if (!openManagedFileVersion) {
+        throw new Error('Managed file Version resolver is not configured.')
       }
 
       const parentWindow = BrowserWindow.fromWebContents(event.sender)
@@ -733,30 +731,21 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
           }
         ]
       }
-      let dialogResult: Awaited<ReturnType<typeof dialog.showSaveDialog>>
-      try {
-        dialogResult = parentWindow
-          ? await dialog.showSaveDialog(parentWindow, dialogOptions)
-          : await dialog.showSaveDialog(dialogOptions)
-      } catch (error) {
-        await Promise.all(
-          candidates.flatMap((candidate) => [candidate.source.close().catch(() => undefined)])
-        )
-        throw error
-      }
+      const dialogResult = parentWindow
+        ? await dialog.showSaveDialog(parentWindow, dialogOptions)
+        : await dialog.showSaveDialog(dialogOptions)
       const { canceled, filePath } = dialogResult
-      if (canceled || !filePath) {
-        await Promise.all(
-          candidates.flatMap((candidate) => [candidate.source.close().catch(() => undefined)])
-        )
-        return { saved: false }
-      }
+      if (canceled || !filePath) return { saved: false }
 
+      const failures: SaveProjectArtifactFailure[] = []
       const wroteArchive = await writeProjectArtifactArchive({
         destinationPath: filePath,
-        candidates,
+        projectId: request.projectId,
+        files: request.files,
+        openManagedFileVersion,
+        publishUserFile: publish,
         failures,
-        limits,
+        limits: options.projectArtifactExportLimits ?? PROJECT_ARTIFACT_EXPORT_LIMITS,
         createTemporaryRoot:
           options.createProjectArtifactTemporaryRoot ??
           (() => mkdtemp(join(tmpdir(), 'open-science-project-export-')))

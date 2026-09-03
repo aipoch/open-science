@@ -4,6 +4,26 @@ import { claudeCodeFramework, codexFramework } from '../agent-framework'
 import { AcpBackendGenerationOwner } from './backend-generation-owner'
 
 describe('AcpBackendGenerationOwner', () => {
+  it('publishes the Claude transcript root without provider credentials', () => {
+    const owner = new AcpBackendGenerationOwner(claudeCodeFramework)
+    const attempt = owner.prepare(
+      { epoch: 1, assertCurrent: vi.fn() },
+      {
+        framework: claudeCodeFramework,
+        executablePath: '/bin/claude',
+        env: {
+          CLAUDE_CONFIG_DIR: '/profiles/app-claude',
+          ANTHROPIC_AUTH_TOKEN: 'provider-secret'
+        }
+      }
+    )
+
+    const view = attempt.publish()
+
+    expect(view.adapter.claudeConfigDir).toBe('/profiles/app-claude')
+    expect(JSON.stringify(view)).not.toContain('provider-secret')
+  })
+
   it('publishes one immutable secret-free behavior view atomically', () => {
     const owner = new AcpBackendGenerationOwner(claudeCodeFramework)
     const sessionOptions = { settingSources: ['user'] }

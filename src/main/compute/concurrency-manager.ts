@@ -27,16 +27,21 @@ const TERMINAL_JOB_STATUSES: ReadonlySet<ComputeJob['status']> = new Set([
 
 type DispatchQueuedJob = (jobId: string, onJobUpdated: (job: ComputeJob) => void) => Promise<void>
 
+type SessionConcurrencyLimitPersistence = {
+  load(): Promise<readonly (readonly [sessionId: string, limit: number])[]>
+  save(sessionId: string, limit: number): Promise<void>
+}
+
 // Enforces session-level and provider-level concurrency limits for compute jobs.
-// Stores session limits in memory, decides whether jobs should queue or dispatch,
-// and automatically dispatches queued jobs when slots become available.
+// Restores durable session limits into memory, decides whether jobs should queue or dispatch, and
+// automatically dispatches queued jobs when slots become available.
 export class ConcurrencyManager {
-  // In-memory storage of session limits: sessionId -> limit
   private sessionLimits: Map<string, number> = new Map()
 
   private reconciliationRequested: boolean = false
   private reconciliationTask: Promise<void> | undefined
-  private queueStopped = false
+  private queueStopped: boolean
+  private queueLifecycleRevision = 0
 
   // In-process serialization lock for admit(). The decision (read counts → pick status) and the
   // job-row commit must be atomic: without this, two concurrent submitJob calls could both read the
@@ -55,9 +60,16 @@ export class ConcurrencyManager {
     private readonly dispatchJob: DispatchQueuedJob,
     private readonly publishJobUpdated: (job: ComputeJob) => void = () => undefined,
     lifecycle?: ComputeJobLifecycle,
-    private readonly dispatchTracker: Pick<DispatchTracker, 'begin' | 'end'> = sharedDispatchTracker
+    private readonly dispatchTracker: Pick<
+      DispatchTracker,
+      'begin' | 'end'
+    > = sharedDispatchTracker,
+    private readonly sessionLimitPersistence?: SessionConcurrencyLimitPersistence
   ) {
     this.lifecycle = lifecycle ?? new ComputeJobLifecycle(jobRepository, this.handleJobUpdated)
+    // A production manager with durable Session limits fails closed until startup restoration has
+    // completed. Isolated callers without persistence retain the existing immediately-active seam.
+    this.queueStopped = sessionLimitPersistence !== undefined
   }
 
   // Owns the complete update policy used by ComputeService: publish every persisted projection, then
@@ -68,9 +80,31 @@ export class ConcurrencyManager {
     if (TERMINAL_JOB_STATUSES.has(job.status)) this.requestQueueReconciliation()
   }
 
-  // Session limits are process-local by design. Serialize updates with admissions so a limit saved by
-  // the caller cannot be followed by a late admission made against the previous value.
+  // Serialize the durable write and live projection with admissions so a successful setting cannot
+  // be followed by a late admission made against the previous value.
   async setSessionLimit(sessionId: string, limit: number): Promise<void> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      throw new Error(
+        `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
+      )
+    }
+
+    let previousLimit: number | undefined
+    await this.runExclusive(async () => {
+      await this.sessionLimitPersistence?.save(sessionId, limit)
+      previousLimit = this.sessionLimits.get(sessionId)
+      this.sessionLimits.set(sessionId, limit)
+    })
+
+    if (previousLimit !== undefined && limit > previousLimit) {
+      this.requestQueueReconciliation()
+    }
+  }
+
+  // Projects a limit that was already committed through Session persistence. Session creation uses
+  // this path so inherited limits become authoritative in the current process without writing the
+  // same Session a second time.
+  async projectPersistedSessionLimit(sessionId: string, limit: number): Promise<void> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
       throw new Error(
         `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
@@ -86,6 +120,12 @@ export class ConcurrencyManager {
     if (previousLimit !== undefined && limit > previousLimit) {
       this.requestQueueReconciliation()
     }
+  }
+
+  async clearProjectedSessionLimits(sessionIds: readonly string[]): Promise<void> {
+    await this.runExclusive(async () => {
+      for (const sessionId of sessionIds) this.sessionLimits.delete(sessionId)
+    })
   }
 
   // Provider limits are durable host configuration. Own the production mutation here so it shares
@@ -163,7 +203,8 @@ export class ConcurrencyManager {
     commit: (status: 'submitted' | 'queued') => Promise<void>
   ): Promise<'submitted' | 'queued' | 'queue_full'> {
     return this.runExclusive(async () => {
-      const shouldQueue = await this.overActiveLimits(params.sessionId, params.providerId)
+      const shouldQueue =
+        this.queueStopped || (await this.overActiveLimits(params.sessionId, params.providerId))
       if (!shouldQueue) {
         await commit('submitted')
         return 'submitted'
@@ -194,7 +235,9 @@ export class ConcurrencyManager {
   }): Promise<'can_dispatch' | 'should_queue' | 'queue_full'> {
     const { sessionId, providerId } = params
 
-    if (!(await this.overActiveLimits(sessionId, providerId))) return 'can_dispatch'
+    if (!this.queueStopped && !(await this.overActiveLimits(sessionId, providerId))) {
+      return 'can_dispatch'
+    }
     const globalQueuedCount = await this.jobRepository.countQueuedJobs()
     return globalQueuedCount >= GLOBAL_QUEUE_LIMIT ? 'queue_full' : 'should_queue'
   }
@@ -204,12 +247,33 @@ export class ConcurrencyManager {
     await this.reconcileQueuedJobs()
   }
 
-  startQueueReconciliation(): void {
-    this.queueStopped = false
-    this.requestQueueReconciliation()
+  async startQueueReconciliation(): Promise<void> {
+    const lifecycleRevision = ++this.queueLifecycleRevision
+    const restoredLimits = await this.sessionLimitPersistence?.load()
+    let limits: Map<string, number> | undefined
+    if (restoredLimits) {
+      limits = new Map<string, number>()
+      for (const [sessionId, limit] of restoredLimits) {
+        if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+          throw new Error(
+            `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
+          )
+        }
+        limits.set(sessionId, limit)
+      }
+    }
+    let shouldReconcile = false
+    await this.runExclusive(async () => {
+      if (lifecycleRevision !== this.queueLifecycleRevision) return
+      if (limits) this.sessionLimits = limits
+      this.queueStopped = false
+      shouldReconcile = true
+    })
+    if (shouldReconcile) this.requestQueueReconciliation()
   }
 
   async stopQueueReconciliation(): Promise<void> {
+    this.queueLifecycleRevision += 1
     this.queueStopped = true
     this.reconciliationRequested = false
     await this.reconciliationTask
@@ -338,3 +402,5 @@ export class ConcurrencyManager {
     return JSON.stringify([projectId, sessionId])
   }
 }
+
+export type { SessionConcurrencyLimitPersistence }

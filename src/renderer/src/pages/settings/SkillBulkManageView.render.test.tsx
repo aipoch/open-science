@@ -313,9 +313,6 @@ describe('SkillBulkManageView', () => {
     const protectedSummary = dialog?.querySelector<HTMLElement>(
       '[data-slot="skill-bulk-delete-protected-summary"]'
     )
-    const protectedSection = dialog?.querySelector<HTMLElement>(
-      '[data-slot="skill-bulk-delete-protected-section"]'
-    )
     const protectedList = dialog?.querySelector<HTMLElement>(
       '[data-slot="skill-bulk-delete-protected-list"]'
     )
@@ -330,8 +327,6 @@ describe('SkillBulkManageView', () => {
     expect(dialog?.textContent).not.toContain('No selected Skills can be deleted.')
     expect(protectedSummary?.className).toContain('text-base')
     expect(protectedSummary?.className).toBe(primarySummary?.className)
-    expect(protectedSection?.className).toContain('border-t')
-    expect(protectedSection?.className).toContain('pt-5')
     expect(protectedList?.className).toContain('text-xs')
     expect(protectedList?.textContent).toContain('Mine')
     expect(protectedList?.textContent).toContain('Research Specialist')

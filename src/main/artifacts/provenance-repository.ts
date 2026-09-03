@@ -123,6 +123,9 @@ type ArtifactStorageReconciliationResult = {
   recoveredVersionIds: string[]
   quarantinedVersionIds: string[]
   recoveredMessageArtifacts: Array<{ messageId: string; artifacts: ArtifactVersionFile[] }>
+  nativeFinalizationRunIds: string[]
+  unresolvedNativeFinalizationRunIds: string[]
+  invalidProofNativeFinalizationRunIds?: string[]
 }
 
 type ProjectVersionWriteOperation = {
@@ -641,6 +644,8 @@ class ArtifactProvenanceRepository {
     options?: {
       removeOrphanStaging?: boolean
       projectReconciliation?: ArtifactProjectReconciliationSnapshot
+      artifactRunIds?: string[]
+      artifactVersionIds?: string[]
     }
   ): Promise<ArtifactStorageReconciliationResult> {
     const projectId = assertSafeSegment(projectIdInput, 'project id')
@@ -652,7 +657,9 @@ class ArtifactProvenanceRepository {
     const result: ArtifactStorageReconciliationResult = {
       recoveredVersionIds: [],
       quarantinedVersionIds: [],
-      recoveredMessageArtifacts: []
+      recoveredMessageArtifacts: [],
+      nativeFinalizationRunIds: [],
+      unresolvedNativeFinalizationRunIds: []
     }
     const unindexedSnapshot = await this.unindexedRecovery.prepareSession(projectId, appSessionId)
     const stagingResult = await this.stagingRecovery.reconcileSession(
@@ -666,10 +673,21 @@ class ArtifactProvenanceRepository {
       projectId,
       appSessionId,
       durableSession,
-      options?.projectReconciliation
+      options?.projectReconciliation,
+      options?.artifactRunIds,
+      options?.artifactVersionIds
     )
     result.recoveredVersionIds.push(...finalizationResult.recoveredVersionIds)
     result.recoveredMessageArtifacts.push(...finalizationResult.recoveredMessageArtifacts)
+    result.nativeFinalizationRunIds.push(...finalizationResult.nativeFinalizationRunIds)
+    result.unresolvedNativeFinalizationRunIds.push(
+      ...finalizationResult.unresolvedNativeFinalizationRunIds
+    )
+    if (finalizationResult.invalidProofNativeFinalizationRunIds?.length) {
+      result.invalidProofNativeFinalizationRunIds = [
+        ...finalizationResult.invalidProofNativeFinalizationRunIds
+      ]
+    }
 
     const unindexedResult = await this.unindexedRecovery.reconcileSession(unindexedSnapshot)
     result.recoveredVersionIds.push(...unindexedResult.recoveredVersionIds)

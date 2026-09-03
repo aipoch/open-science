@@ -45,6 +45,10 @@ export type NotebookNetworkSandboxStatus =
 
 export type NotebookSandboxCommand = Readonly<{
   command: string
+  // Protected Windows launches use the exact process argv so PowerShell never has to initialize the
+  // AppContainer's working drive before the requested process can start.
+  executable?: string
+  args?: readonly string[]
   cwd: string
   env?: NodeJS.ProcessEnv
   shell?: string | Readonly<{ kind: 'powershell' | 'cmd'; path: string }>

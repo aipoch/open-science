@@ -18,6 +18,7 @@ import { createUploadVersionReference, type UploadedAttachment } from '../../../
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import type { ArtifactVersionDescriptor } from '../../../../shared/artifact-provenance'
+import type { ManagedPreviewResource } from '../../../../shared/preview-resources'
 import type {
   HandoffLifecycleEvent,
   HandoffLifecycleEventSource
@@ -306,24 +307,33 @@ const createDeferred = <Value,>(): {
 }
 
 const installIntersectionObserver = (): (() => void) => {
-  let intersectionCallback: IntersectionObserverCallback | undefined
+  const observers = new Set<{
+    callback: IntersectionObserverCallback
+    elements: Set<Element>
+  }>()
   vi.stubGlobal(
     'IntersectionObserver',
     class {
-      observe = vi.fn()
-      unobserve = vi.fn()
-      disconnect = vi.fn()
+      private readonly record: { callback: IntersectionObserverCallback; elements: Set<Element> }
+      observe = vi.fn((element: Element) => this.record.elements.add(element))
+      unobserve = vi.fn((element: Element) => this.record.elements.delete(element))
+      disconnect = vi.fn(() => observers.delete(this.record))
 
       constructor(callback: IntersectionObserverCallback) {
-        intersectionCallback = callback
+        this.record = { callback, elements: new Set() }
+        observers.add(this.record)
       }
     }
   )
   return () => {
-    intersectionCallback?.(
-      [{ isIntersecting: true } as IntersectionObserverEntry],
-      {} as IntersectionObserver
-    )
+    for (const { callback, elements } of observers) {
+      callback(
+        [...elements].map(
+          (target) => ({ target, isIntersecting: true }) as IntersectionObserverEntry
+        ),
+        {} as IntersectionObserver
+      )
+    }
   }
 }
 
@@ -3593,6 +3603,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       projectId: 'default',
       sessionId: 'session-1',
       fileId: 'managed-artifact-1',
+      versionId: 'artifact-version-1',
       maxBytes: 1,
       encoding: 'base64'
     })
@@ -3601,6 +3612,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       projectId: 'default',
       sessionId: 'session-1',
       fileId: 'managed-artifact-1',
+      versionId: 'artifact-version-1',
       maxBytes: 32 * 1024,
       encoding: 'utf8'
     })
@@ -3648,16 +3660,77 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
   })
 
-  it('keeps an unpublished managed thumbnail quiet while finalization is pending', async () => {
-    const enterViewport = installIntersectionObserver()
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    window.api.artifacts.readPreview = vi
-      .fn()
-      .mockRejectedValue(
-        new Error(
-          "Error invoking remote method 'artifacts:read-preview': ManagedFileVersionError: Managed file has no published version."
+  it.each(['/workspace/.pending/run-1/report.txt', 'C:\\workspace\\.pending\\run-1\\report.txt'])(
+    'keeps an unpublished managed thumbnail quiet while finalization is pending (%s)',
+    async (path) => {
+      const enterViewport = installIntersectionObserver()
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      window.api.artifacts.readPreview = vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            "Error invoking remote method 'artifacts:read-preview': ManagedFileVersionError: Managed file has no published version."
+          )
         )
-      )
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      const session = createSession({
+        status: 'idle',
+        messages: [
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'Created the file',
+            artifactIds: ['artifact-version-1']
+          })
+        ],
+        artifacts: [
+          {
+            id: 'artifact-version-1',
+            artifactId: 'managed-artifact-1',
+            versionId: 'artifact-version-1',
+            kind: 'managed-file',
+            path,
+            name: 'report.txt',
+            mimeType: 'text/plain',
+            size: 2048,
+            mtimeMs: 1710000000100
+          }
+        ]
+      })
+
+      try {
+        root = createRoot(container)
+        await act(async () => {
+          root.render(
+            <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+          )
+        })
+
+        expect(
+          container.querySelector<HTMLButtonElement>(
+            'button[aria-label="Preview generated file report.txt"]'
+          )?.disabled
+        ).toBe(true)
+
+        await act(async () => {
+          enterViewport()
+          await Promise.resolve()
+          await Promise.resolve()
+        })
+
+        expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+        expect(consoleError).not.toHaveBeenCalled()
+      } finally {
+        consoleError.mockRestore()
+      }
+    }
+  )
+
+  it('does not acquire a PDF thumbnail while artifact publication is pending', async () => {
+    const enterViewport = installIntersectionObserver()
+    window.api.previewResources.acquire = vi.fn(
+      () => new Promise<ManagedPreviewResource>(() => undefined)
+    )
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const session = createSession({
       status: 'idle',
@@ -3675,8 +3748,51 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           artifactId: 'managed-artifact-1',
           versionId: 'artifact-version-1',
           kind: 'managed-file',
-          path: '/workspace/.pending/report.txt',
-          name: 'report.txt',
+          path: '/workspace/.pending/run-1/report.pdf',
+          name: 'report.pdf',
+          mimeType: 'application/pdf',
+          size: 2048,
+          mtimeMs: 1710000000100
+        }
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    await act(async () => {
+      enterViewport()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
+  })
+
+  it('keeps a published artifact named .pending previewable', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Created the file',
+          artifactIds: ['artifact-version-1']
+        })
+      ],
+      artifacts: [
+        {
+          id: 'artifact-version-1',
+          artifactId: 'managed-artifact-1',
+          versionId: 'artifact-version-1',
+          kind: 'managed-file',
+          path: '/workspace/message-1/.pending',
+          name: '.pending',
           mimeType: 'text/plain',
           size: 2048,
           mtimeMs: 1710000000100
@@ -3684,24 +3800,22 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       ]
     })
 
-    try {
-      root = createRoot(container)
-      await act(async () => {
-        root.render(
-          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
-        )
-      })
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
 
-      await act(async () => {
-        enterViewport()
-        await Promise.resolve()
-        await Promise.resolve()
-      })
+    const card = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Preview generated file .pending"]'
+    )
+    expect(card?.disabled).toBe(false)
 
-      expect(consoleError).not.toHaveBeenCalled()
-    } finally {
-      consoleError.mockRestore()
-    }
+    await act(async () => card?.click())
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({ managedFileId: 'managed-artifact-1', name: '.pending' })
+    )
   })
 
   it('mounts desktop Run Marks from visible human prompts', async () => {

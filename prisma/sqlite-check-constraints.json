@@ -387,6 +387,11 @@
     },
     {
       "tableName": "ComputeJob",
+      "name": "ComputeJob_remoteCleanupDisposition_check",
+      "expression": "\"remoteCleanupDisposition\" IN ('pending', 'cleaned', 'abandoned')"
+    },
+    {
+      "tableName": "ComputeJob",
       "name": "ComputeJob_errorCode_check",
       "expression": "\"errorCode\" IS NULL OR \"errorCode\" IN ('approval_denied', 'credential_required', 'credential_conflict', 'credential_unavailable', 'secure_storage_unavailable', 'authentication_failed', 'host_key_unknown', 'host_key_changed', 'host_unreachable', 'unsupported_auth_configuration', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished')"
     },

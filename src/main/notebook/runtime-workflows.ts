@@ -1,30 +1,12 @@
 import type { NotebookLanguage } from '../../shared/notebook'
-import type {
-  EnvPackage,
-  RuntimeEnablement,
-  RuntimeSelection,
-  RuntimeSurvey,
-  RuntimeUsage
-} from '../../shared/notebook-runtime'
-import {
-  createExternalAdapter,
-  createManagedAdapter,
-  defaultExternalAdapterDeps
-} from './runtime-adapters'
+import type { EnvPackage, RuntimeEnablement, RuntimeUsage } from '../../shared/notebook-runtime'
 import {
   defaultDiscoveryDeps,
   discoverInterpreters,
   type DiscoveredInterpreter
 } from './environment-discovery'
 import { listEnvPackages } from './package-listing'
-import { RuntimeRegistry } from './runtime-registry'
-import { prepareExternalPythonRuntime, type AppOwnedExternalSelection } from './venv-overlay'
 import type { MicromambaRunner } from './windows-micromamba-runner'
-
-type RuntimeRegistryPort = Pick<RuntimeRegistry, 'survey' | 'readiness'>
-
-// Settings presents languages in this order; keep survey results stable for existing callers.
-const RUNTIME_LANGUAGES: readonly NotebookLanguage[] = ['python', 'r']
 
 // Upper bound on concurrent package listings inside listPackageCounts (mirrors the bounded
 // probe concurrency in environment-discovery): enough to fill the Settings badges quickly without
@@ -33,12 +15,7 @@ const PACKAGE_COUNT_CONCURRENCY = 4
 
 // Persisted runtime state remains Settings-owned. This narrow port keeps the workflows independent of
 // the broader Settings module while preserving its normalized read-after-write behavior.
-type RuntimeSelectionSettings = {
-  getRuntimeSelection(language: NotebookLanguage): Promise<RuntimeSelection | undefined>
-  setRuntimeSelection(
-    language: NotebookLanguage,
-    selection: RuntimeSelection | null
-  ): Promise<RuntimeSelection | undefined>
+type RuntimeSettings = {
   getRuntimeEnablement(language: NotebookLanguage): Promise<RuntimeEnablement>
   setEnvironmentEnabled(
     language: NotebookLanguage,
@@ -50,22 +27,17 @@ type RuntimeSelectionSettings = {
     envId: string,
     authorized: boolean
   ): Promise<RuntimeEnablement>
+  getAgentEnvironmentCreationEnabled(): Promise<boolean>
+  setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<boolean>
   getManualInterpreters(language: NotebookLanguage): Promise<string[]>
   addManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
   removeManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
 }
 
-type RuntimeSelectionWorkflowDeps = {
-  settingsService: RuntimeSelectionSettings
-  // Resolve lazily so a data-root switch reaches discovery and overlay preparation immediately.
+type RuntimeWorkflowDeps = {
+  settingsService: RuntimeSettings
+  // Resolve lazily so a data-root switch reaches discovery immediately.
   runtimeRoot: () => string
-  // Production uses the managed/external registry; tests use the same two-operation seam.
-  registry?: RuntimeRegistryPort
-  // An app-owned overlay must be ready before its selection becomes durable.
-  prepareExternalPython?: (
-    selection: AppOwnedExternalSelection,
-    runtimeRoot: string
-  ) => Promise<void>
   // Called only after disabled state is durable; force chooses stop-now instead of drain-and-close.
   onRuntimeDisabled?: (language: NotebookLanguage, envId: string, force?: boolean) => Promise<void>
   // Optional because sessions may not be composed yet during startup; absence means no live usage.
@@ -76,8 +48,7 @@ type RuntimeSelectionWorkflowDeps = {
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
 }
 
-type RuntimeSelectionWorkflows = {
-  survey(): Promise<RuntimeSurvey[]>
+type RuntimeWorkflows = {
   listEnvironments(): Promise<{
     python: DiscoveredInterpreter[]
     r: DiscoveredInterpreter[]
@@ -88,11 +59,9 @@ type RuntimeSelectionWorkflows = {
   // omitted). Non-runnable envs get no entry.
   listPackageCounts(request: { language: NotebookLanguage }): Promise<Record<string, number | null>>
   getEnablement(request: { language: NotebookLanguage }): Promise<RuntimeEnablement>
+  getAgentEnvironmentCreationEnabled(): Promise<boolean>
+  setAgentEnvironmentCreationEnabled(request: { enabled: boolean }): Promise<boolean>
   describeUsage(request: { language: NotebookLanguage; envId: string }): Promise<RuntimeUsage>
-  setSelection(request: {
-    language: NotebookLanguage
-    selection: RuntimeSelection | null
-  }): Promise<RuntimeSurvey>
   setEnvironmentEnabled(request: {
     language: NotebookLanguage
     envId: string
@@ -108,15 +77,7 @@ type RuntimeSelectionWorkflows = {
   unregister(request: { language: NotebookLanguage; path: string }): Promise<string[]>
 }
 
-const createRuntimeSelectionWorkflows = (
-  deps: RuntimeSelectionWorkflowDeps
-): RuntimeSelectionWorkflows => {
-  const registry =
-    deps.registry ??
-    new RuntimeRegistry({
-      managed: createManagedAdapter({ runtimeRoot: deps.runtimeRoot }),
-      external: createExternalAdapter(defaultExternalAdapterDeps())
-    })
+const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => {
   let discoveredSnapshot:
     { python: DiscoveredInterpreter[]; r: DiscoveredInterpreter[] } | undefined
   let discoveredRuntimeRoot: string | undefined
@@ -124,21 +85,6 @@ const createRuntimeSelectionWorkflows = (
   const invalidateDiscovery = (): void => {
     discoveredSnapshot = undefined
     discoveredRuntimeRoot = undefined
-  }
-
-  // A selected external runtime must report readiness for its persisted path, not the unrelated PATH
-  // interpreter returned by the source-wide survey.
-  const buildSurvey = async (language: NotebookLanguage): Promise<RuntimeSurvey> => {
-    const [selection, surveyed] = await Promise.all([
-      deps.settingsService.getRuntimeSelection(language),
-      registry.survey(language)
-    ])
-    const external =
-      selection?.source === 'external'
-        ? await registry.readiness(language, selection)
-        : surveyed.external
-
-    return { language, selection, managed: surveyed.managed, external }
   }
 
   // One language's discovered envs for the package-listing workflows: the manual-interpreter
@@ -168,7 +114,6 @@ const createRuntimeSelectionWorkflows = (
   }
 
   return {
-    survey: () => Promise.all(RUNTIME_LANGUAGES.map(buildSurvey)),
     listEnvironments: async () => {
       // Discovery expects a synchronous manual-path lookup, so snapshot both persisted catalogs first.
       const [manualPython, manualR] = await Promise.all([
@@ -227,45 +172,20 @@ const createRuntimeSelectionWorkflows = (
       return counts
     },
     getEnablement: (request) => deps.settingsService.getRuntimeEnablement(request.language),
+    getAgentEnvironmentCreationEnabled: () =>
+      deps.settingsService.getAgentEnvironmentCreationEnabled(),
+    setAgentEnvironmentCreationEnabled: async (request) => {
+      if (typeof request?.enabled !== 'boolean') {
+        throw new TypeError('Agent environment creation enabled must be a boolean.')
+      }
+      return deps.settingsService.setAgentEnvironmentCreationEnabled(request.enabled)
+    },
     describeUsage: async (request) =>
       deps.describeRuntimeUsage?.(request.language, request.envId) ?? {
         running: 0,
         idle: 0,
         dormant: 0
       },
-    setSelection: async (request): Promise<RuntimeSurvey> => {
-      // Validate the exact external interpreter before persistence. R stays managed-only, and managed
-      // selections remain runnable-by-provisioning without an eager interpreter probe.
-      if (request.selection?.source === 'external') {
-        if (request.language !== 'python') {
-          throw new Error('R only supports the app-managed runtime.')
-        }
-        const readiness = await registry.readiness(request.language, request.selection)
-        if (!readiness.runnable) {
-          throw new Error(
-            readiness.detail
-              ? `That interpreter can't be used as a notebook runtime: ${readiness.detail}`
-              : "That interpreter can't be used as a notebook runtime (not a runnable Python 3)."
-          )
-        }
-        if (request.selection.appOwnedOverlay) {
-          try {
-            // Overlay creation and its protocol probe are a precondition: failure leaves Settings
-            // unchanged, so later execution never observes a half-prepared runtime.
-            await (deps.prepareExternalPython ?? prepareExternalPythonRuntime)(
-              request.selection as AppOwnedExternalSelection,
-              deps.runtimeRoot()
-            )
-          } catch (error) {
-            throw new Error(
-              `Could not prepare an isolated notebook runtime, so the selection was not saved: ${error instanceof Error ? error.message : String(error)}`
-            )
-          }
-        }
-      }
-      await deps.settingsService.setRuntimeSelection(request.language, request.selection)
-      return buildSurvey(request.language)
-    },
     setEnvironmentEnabled: async (request) => {
       const next = await deps.settingsService.setEnvironmentEnabled(
         request.language,
@@ -301,5 +221,5 @@ const createRuntimeSelectionWorkflows = (
   }
 }
 
-export { createRuntimeSelectionWorkflows }
-export type { RuntimeSelectionWorkflowDeps, RuntimeSelectionWorkflows }
+export { createRuntimeWorkflows }
+export type { RuntimeWorkflowDeps, RuntimeWorkflows }

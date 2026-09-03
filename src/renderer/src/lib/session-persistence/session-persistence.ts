@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { ArtifactFile, ReconcilePendingArtifactsRequest } from '../../../../shared/artifacts'
+import {
+  ARTIFACT_FINALIZATION_INVALID_PROOF,
+  type ReconcilePendingArtifactsRequest,
+  type ReconcilePendingArtifactsResult
+} from '../../../../shared/artifacts'
 import {
   projectConversationMessage,
   resolveActiveConversationActivities,
@@ -27,6 +31,7 @@ import {
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
   getExternallyHydratedSessionAuthority,
+  isArtifactFinalizationError,
   isExternallyHydratedSession,
   toPersistedSession,
   useSessionStore
@@ -151,6 +156,7 @@ const MAIN_OWNED_SESSION_FIELDS = new Set<keyof PersistedChatSession>([
   'delegationPolicy',
   'enabledComputeHosts',
   'selectedComputeHosts',
+  'computeConcurrencyLimit',
   'specialistId',
   'specialistBindingPending'
 ])
@@ -900,13 +906,158 @@ const flushSessionPersistence = async (): Promise<void> => {
 
 // The one artifact command startup reconciliation needs; kept narrow so it is trivial to fake in tests.
 type ArtifactReconcileApi = {
-  reconcilePendingArtifacts: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
+  reconcilePendingArtifacts: (
+    request: ReconcilePendingArtifactsRequest
+  ) => Promise<ReconcilePendingArtifactsResult>
 }
+
+const invalidArtifactFinalizationProofError = (message: string): Error =>
+  Object.assign(new Error(message), { code: ARTIFACT_FINALIZATION_INVALID_PROOF })
+
+const isInvalidArtifactFinalizationProofError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  error.code === ARTIFACT_FINALIZATION_INVALID_PROOF
 
 // A crash between persisting a pending artifact reference and finalizing it strands the file in
 // `.pending/<run>/`. The path segment is stable across OSes, so detect it structurally.
 const isPendingArtifactPath = (path: string | undefined): path is string =>
   typeof path === 'string' && path.split(/[\\/]/).includes('.pending')
+
+const pendingArtifactRunId = (path: string | undefined): string | undefined => {
+  if (!path) return undefined
+  const parts = path.split(/[\\/]/)
+  const pendingIndex = parts.lastIndexOf('.pending')
+  return pendingIndex >= 0 ? parts[pendingIndex + 1] : undefined
+}
+
+const pendingArtifactRequests = (
+  session: ChatSession,
+  includeNativeVersions = false
+): Array<{ messageId: string; pendingPaths: string[]; artifactVersionIds?: string[] }> => {
+  const artifactsById = new Map(
+    (session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
+  )
+  const messages = session.conversationGraph?.messages ?? session.messages
+  return messages.flatMap((message) => {
+    const artifacts = (message.artifactIds ?? []).flatMap((id) => {
+      const artifact = artifactsById.get(id)
+      return artifact ? [artifact] : []
+    })
+    const pendingPaths = artifacts.map((artifact) => artifact.path).filter(isPendingArtifactPath)
+    const artifactVersionIds = includeNativeVersions
+      ? [
+          ...new Set(
+            artifacts.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
+          )
+        ]
+      : []
+    return pendingPaths.length > 0 || artifactVersionIds.length > 0
+      ? [
+          {
+            messageId: message.id,
+            pendingPaths,
+            ...(artifactVersionIds.length > 0 ? { artifactVersionIds } : {})
+          }
+        ]
+      : []
+  })
+}
+
+const reconcileSessionPendingArtifacts = async (
+  session: ChatSession,
+  api: ArtifactReconcileApi,
+  includeNativeVersions = false
+): Promise<void> => {
+  if (session.isPending || !session.projectId) return
+
+  let firstFailure: unknown
+  for (const request of pendingArtifactRequests(session, includeNativeVersions)) {
+    try {
+      const result = await api.reconcilePendingArtifacts({
+        projectId: session.projectId,
+        sessionId: session.id,
+        ...request
+      })
+      if (!Array.isArray(result)) throw invalidArtifactFinalizationProofError(result.message)
+      const finalized = result
+      const recoveredVersionIds = new Set(
+        finalized.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
+      )
+      if (request.artifactVersionIds?.some((versionId) => !recoveredVersionIds.has(versionId))) {
+        throw new Error('Artifact finalization did not resolve all native Versions.')
+      }
+      if (finalized.length > 0) {
+        const current = useSessionStore
+          .getState()
+          .sessions.find((candidate) => candidate.id === session.id)
+        const message = (current?.conversationGraph?.messages ?? current?.messages ?? []).find(
+          (candidate) => candidate.id === request.messageId
+        )
+        const artifactsById = new Map(
+          (current?.artifacts ?? []).map((artifact) => [artifact.id, artifact])
+        )
+        const recoveredRunIds = new Set(
+          finalized.flatMap((artifact) => (artifact.runId ? [artifact.runId] : []))
+        )
+        const recoveredCompatibilityNames = new Set(
+          finalized.flatMap((artifact) => (!artifact.versionId ? [artifact.name] : []))
+        )
+        const preserveArtifactIds = (message?.artifactIds ?? []).filter((artifactId) => {
+          const artifact = artifactsById.get(artifactId)
+          if (!isPendingArtifactPath(artifact?.path)) return true
+          const runId = pendingArtifactRunId(artifact.path)
+          const name = artifact.name ?? artifact.path.split(/[\\/]/).at(-1)
+          return (
+            (!runId || !recoveredRunIds.has(runId)) &&
+            (!name || !recoveredCompatibilityNames.has(name))
+          )
+        })
+        useSessionStore.getState().replaceMessageArtifacts({
+          sessionId: session.id,
+          messageId: request.messageId,
+          artifacts: finalized,
+          preserveArtifactIds
+        })
+      }
+    } catch (error) {
+      firstFailure ??= error
+    }
+  }
+  if (firstFailure) throw firstFailure
+}
+
+const retryPendingArtifactFinalization = async (
+  sessionId: string,
+  api: ArtifactReconcileApi = window.api.artifacts
+): Promise<void> => {
+  const session = useSessionStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === sessionId)
+  if (!session) throw new Error('Session not found.')
+
+  try {
+    if (pendingArtifactRequests(session, true).length === 0) {
+      throw new Error('No pending Artifact references are available to retry.')
+    }
+    await reconcileSessionPendingArtifacts(session, api, true)
+    const current = useSessionStore
+      .getState()
+      .sessions.find((candidate) => candidate.id === sessionId)
+    if (current && pendingArtifactRequests(current).length > 0) {
+      throw new Error('Artifact finalization did not resolve all pending files.')
+    }
+    useSessionStore.getState().clearArtifactError(sessionId)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    useSessionStore
+      .getState()
+      .recordArtifactError(sessionId, message, !isInvalidArtifactFinalizationProofError(error))
+    reportPersistenceError(error, 'artifact-reconcile')
+    throw error
+  }
+}
 
 // Re-finalizes artifacts a prior crash left in `.pending` after the in-memory finalize claim was lost.
 // For each hydrated message still referencing a pending path, ask the main process to complete the
@@ -916,38 +1067,24 @@ const isPendingArtifactPath = (path: string | undefined): path is string =>
 // readable at its pending path is never dropped.
 const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<void> => {
   for (const session of useSessionStore.getState().sessions) {
-    if (session.isPending || !session.projectId) continue
-
-    const artifactsById = new Map(
-      (session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
-    )
-
-    const messages = session.conversationGraph?.messages ?? session.messages
-    for (const message of messages) {
-      const pendingPaths = (message.artifactIds ?? [])
-        .map((id) => artifactsById.get(id)?.path)
-        .filter(isPendingArtifactPath)
-
-      if (pendingPaths.length === 0) continue
-
-      try {
-        const finalized = await api.reconcilePendingArtifacts({
-          projectId: session.projectId,
-          sessionId: session.id,
-          messageId: message.id,
-          pendingPaths
-        })
-
-        if (finalized.length > 0) {
-          useSessionStore.getState().replaceMessageArtifacts({
-            sessionId: session.id,
-            messageId: message.id,
-            artifacts: finalized
-          })
-        }
-      } catch (error) {
-        reportPersistenceError(error, 'artifact-reconcile')
+    try {
+      await reconcileSessionPendingArtifacts(
+        session,
+        api,
+        isArtifactFinalizationError(session.error)
+      )
+      const current = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === session.id)
+      if (
+        current &&
+        isArtifactFinalizationError(current.error) &&
+        pendingArtifactRequests(current).length === 0
+      ) {
+        useSessionStore.getState().clearArtifactError(session.id)
       }
+    } catch (error) {
+      reportPersistenceError(error, 'artifact-reconcile')
     }
   }
 }
@@ -1823,6 +1960,7 @@ export {
   loadPersistedSession,
   loadPersistedSessions,
   reconcilePendingArtifacts,
+  retryPendingArtifactFinalization,
   resetSessionPersistenceWriteFailuresForTests,
   deriveSessionCatalogRecovery,
   deleteSession,

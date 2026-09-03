@@ -47,7 +47,6 @@ beforeEach(() => {
       readPreview: vi.fn().mockResolvedValue({ content: '', encoding: 'base64', size: 0 })
     },
     artifacts: {
-      listProjectFiles: vi.fn().mockResolvedValue([]),
       readPreview: vi.fn().mockResolvedValue({ content: '', encoding: 'base64', size: 0 })
     },
     projectFiles: {

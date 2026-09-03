@@ -7,6 +7,7 @@ import { createLogger } from '../logger'
 import type { ApplicationEventSource } from '../application-events'
 import type { PermissionApprovalPresence } from '../permission-approval-presence'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
+import { FileTaskRunJournal, type TaskRunJournal } from '../tasks/task-run-journal'
 import type { TaskAgentPort, TaskComputePreferencePort } from '../tasks/task-runner'
 import { resolveConfigRoot } from '../storage-root'
 import { loadOrCreateWebToken } from './auth'
@@ -48,6 +49,7 @@ export type WebServiceControllerDeps = {
   loadWebToken: (configRoot: string) => Promise<string>
   writeState: (configRoot: string, state: Omit<WebServiceState, 'configRoot'>) => Promise<unknown>
   removeState: (configRoot: string) => Promise<void>
+  createTaskRunJournal: (configRoot: string) => TaskRunJournal
   appInfo: () => {
     appPath: string
     appName: string
@@ -93,6 +95,7 @@ const createWebServiceController = (
   const loadWebToken = deps.loadWebToken ?? loadOrCreateWebToken
   const writeState = deps.writeState ?? writeWebServiceState
   const removeState = deps.removeState ?? removeWebServiceState
+  const createTaskRunJournal = deps.createTaskRunJournal ?? ((root) => new FileTaskRunJournal(root))
   const appInfo =
     deps.appInfo ??
     (() => ({
@@ -114,6 +117,7 @@ const createWebServiceController = (
       computePreferences
     },
     {
+      runJournal: createTaskRunJournal(getConfigRoot()),
       subscribeEvents: (listener) =>
         applicationEvents.subscribe((event) => {
           for (const runtimeEvent of projectTaskRuntimeEvents(event)) listener(runtimeEvent)
@@ -174,6 +178,7 @@ const createWebServiceController = (
 
   const start = async (port: number, attached: boolean): Promise<{ port: number; url: string }> => {
     const configRoot = getConfigRoot()
+    await tasks.initialize()
     const token = await loadWebToken(configRoot)
     const info = appInfo()
     const server = await startServer({

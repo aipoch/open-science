@@ -810,6 +810,69 @@ describe('ComputeJob repository (SQLite integration)', () => {
     await expect(repo.hasIdentityChangeBlockingJobsForProvider('ssh:other')).resolves.toBe(false)
   })
 
+  it('does not recover harvest for jobs whose remote directory was cleaned', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-cleaned-unharvested-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+
+    for (const disposition of ['cleaned', 'abandoned'] as const) {
+      const id = `job-${disposition}`
+      await repo.create({
+        id,
+        providerId: 'ssh:test',
+        shape: 'direct_ssh',
+        sessionId: 's1',
+        projectId: 'p1',
+        intent: disposition,
+        command: 'sleep 9999',
+        commandHash: `hash-${disposition}`
+      })
+      await repo.update(id, { status: 'failed', finishedAt: new Date() })
+      await repo.settleRemoteCleanup({
+        jobId: id,
+        providerId: 'ssh:test',
+        projectId: 'p1',
+        sessionId: 's1',
+        disposition
+      })
+    }
+
+    expect((await repo.findTerminalUnharvested()).map((job) => job.job_id)).toEqual([
+      'job-abandoned'
+    ])
+  })
+
+  it('blocks Host identity changes while a harvested Job still needs remote cleanup', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-pending-cleanup-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+    await repo.create({
+      id: 'job-harvested-pending-cleanup',
+      providerId: 'ssh:test',
+      shape: 'direct_ssh',
+      sessionId: 's1',
+      projectId: 'p1',
+      intent: 'preserve cleanup credentials',
+      command: 'true',
+      commandHash: 'pending-cleanup-hash'
+    })
+    await repo.update('job-harvested-pending-cleanup', {
+      status: 'success',
+      finishedAt: new Date(),
+      harvestedAt: new Date()
+    })
+
+    await expect(repo.hasIdentityChangeBlockingJobsForProvider('ssh:test')).resolves.toBe(true)
+  })
+
   it('findPendingNotifications returns jobs with notifiedAt set and notificationConsumedAt null', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-pending-notif-'))
 
@@ -1620,6 +1683,54 @@ describe('ComputeJob repository (SQLite integration)', () => {
     await repo.abortOwnerDeletion(owner)
     await expect(create('retry-job', 'project-1', 'session-1')).resolves.toMatchObject({
       job_id: 'retry-job'
+    })
+  })
+
+  it('keeps a historical Job as a Host blocker until remote cleanup is settled', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-host-delete-blocker-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+
+    await repo.create({
+      id: 'historical-job',
+      providerId: 'ssh:retired-host',
+      shape: 'direct_ssh',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      intent: 'completed research',
+      command: 'echo done',
+      commandHash: 'historical-job'
+    })
+    await repo.update('historical-job', {
+      status: 'success',
+      finishedAt: new Date(),
+      harvestedAt: new Date(),
+      harvestError: null,
+      leftOnRemote: null
+    })
+
+    await expect(repo.hasDeletionBlockingJobsForProvider('ssh:retired-host')).resolves.toBe(true)
+    await expect(repo.findDeletionBlockingJobsForProvider('ssh:retired-host')).resolves.toEqual([
+      expect.objectContaining({
+        job_id: 'historical-job',
+        remote_cleanup_disposition: 'pending'
+      })
+    ])
+
+    await repo.settleRemoteCleanup({
+      jobId: 'historical-job',
+      providerId: 'ssh:retired-host',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      disposition: 'abandoned'
+    })
+
+    await expect(repo.hasDeletionBlockingJobsForProvider('ssh:retired-host')).resolves.toBe(false)
+    await expect(repo.findDeletionBlockingJobsForProvider('ssh:retired-host')).resolves.toEqual([])
+    await expect(repo.get('historical-job')).resolves.toMatchObject({
+      remote_cleanup_disposition: 'abandoned'
     })
   })
 })

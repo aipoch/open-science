@@ -305,6 +305,8 @@ describe('workspace session controller', () => {
     expect(editDetails).toHaveBeenCalledWith({
       projectId: active.projectId,
       sessionId: active.id,
+      expectedTitle: 'Original title',
+      expectedDescription: 'Before',
       title: '  After  ',
       description: ''
     })
@@ -342,6 +344,43 @@ describe('workspace session controller', () => {
       titleDraft: second.title,
       isSaving: false
     })
+  })
+
+  it.each([
+    [
+      Object.assign(new Error('Session details changed elsewhere.'), {
+        code: 'session-details-conflict'
+      }),
+      "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details."
+    ],
+    [new Error('disk failure'), 'Could not save session details.']
+  ])('keeps Edit session open with a visible save error', async (failure, expectedMessage) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const active = session({ description: 'Original description' })
+    const editDetails = vi.fn().mockRejectedValue(failure)
+    window.api = { sessions: { editDetails } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    const hook = renderController({ activeSession: active })
+    mounted.push(hook)
+
+    try {
+      act(() => hook.result.current.actions.openEdit(active))
+      act(() => hook.result.current.actions.changeEditTitleDraft('Unsaved title'))
+      act(() => hook.result.current.actions.confirmEdit({ preventDefault: vi.fn() } as never))
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(hook.result.current.view.dialogs.edit).toMatchObject({
+        titleDraft: 'Unsaved title',
+        descriptionDraft: 'Original description',
+        isSaving: false,
+        error: expectedMessage
+      })
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('does not clear a new Edit save state when the previous save fails', async () => {
@@ -403,15 +442,15 @@ describe('workspace session controller', () => {
     const hook = renderController({ activeSession: active })
     mounted.push(hook)
 
-    act(() => hook.result.current.actions.renameTitle(active, '  Renamed inline  '))
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await hook.result.current.actions.renameTitle(active, '  Renamed inline  ')
     })
 
     expect(editDetails).toHaveBeenCalledWith({
       projectId: active.projectId,
       sessionId: active.id,
+      expectedTitle: 'Original title',
+      expectedDescription: 'Keep me',
       title: 'Renamed inline',
       description: 'Keep me'
     })
@@ -430,18 +469,21 @@ describe('workspace session controller', () => {
     const hook = renderController({ activeSession: active })
     mounted.push(hook)
 
-    act(() => hook.result.current.actions.renameTitle(active, '   '))
-    act(() => hook.result.current.actions.renameTitle(active, 'Original title'))
+    act(() => {
+      void hook.result.current.actions.renameTitle(active, '   ')
+      void hook.result.current.actions.renameTitle(active, 'Original title')
+    })
 
     expect(editDetails).not.toHaveBeenCalled()
   })
 
   it('loads an unopened Session before an inline rename to preserve its description', async () => {
     const summary = session({ contentLoaded: false, activeMessageCount: 1 })
+    const latestSummary = { ...summary, title: 'Title updated in another window' }
     const persisted: PersistedChatSession = {
       id: summary.id,
       projectId: summary.projectId,
-      title: summary.title,
+      title: 'Title updated in another window',
       description: 'Durable description',
       cwd: summary.cwd,
       status: summary.status,
@@ -464,12 +506,12 @@ describe('workspace session controller', () => {
       .fn()
       .mockResolvedValue({ ...persisted, title: 'Renamed', sessionDetailsSource: 'manual' })
     window.api = { sessions: { loadOne, editDetails } } as unknown as Window['api']
-    useSessionStore.setState({ sessions: [summary], selectedSessionId: summary.id })
-    const hook = renderController({ activeSession: summary })
+    useSessionStore.setState({ sessions: [latestSummary], selectedSessionId: summary.id })
+    const hook = renderController({ activeSession: latestSummary })
     mounted.push(hook)
 
     await act(async () => {
-      hook.result.current.actions.renameTitle(summary, 'Renamed')
+      await hook.result.current.actions.renameTitle(latestSummary, 'Renamed', summary.title)
       await Promise.resolve()
       await Promise.resolve()
       await Promise.resolve()
@@ -479,9 +521,28 @@ describe('workspace session controller', () => {
     expect(editDetails).toHaveBeenCalledWith({
       projectId: 'project-a',
       sessionId: 'session-a',
+      expectedTitle: 'Original title',
+      expectedDescription: 'Durable description',
       title: 'Renamed',
       description: 'Durable description'
     })
+  })
+
+  it('reports an unopened Session load failure without turning it into a save failure', async () => {
+    const summary = session({ contentLoaded: false, activeMessageCount: 1 })
+    const loadOne = vi.fn().mockRejectedValue(new Error('read failure'))
+    const editDetails = vi.fn()
+    window.api = { sessions: { loadOne, editDetails } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [summary], selectedSessionId: summary.id })
+    const hook = renderController({ activeSession: summary })
+    mounted.push(hook)
+
+    await act(async () => {
+      await expect(hook.result.current.actions.renameTitle(summary, 'Renamed')).resolves.toBe(false)
+    })
+
+    expect(hook.result.current.view.exportError).toBe('Could not load this session for editing.')
+    expect(editDetails).not.toHaveBeenCalled()
   })
 
   it('loads an unopened Session before opening conversation export', async () => {

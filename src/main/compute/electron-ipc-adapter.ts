@@ -13,7 +13,8 @@ import {
   type CreatePasswordComputeHostRequest,
   type DeleteComputeHostRequest,
   type DetailsAuthor,
-  type ResetPasswordComputeHostRequest
+  type ResetPasswordComputeHostRequest,
+  type SetComputeJobRemoteCleanupRequest
 } from '../../shared/compute'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 import type { DownloadDest, SerializableRemoteFsError } from '../../shared/remote-fs'
@@ -130,6 +131,16 @@ const cancelComputeJobRequestSchema = z
   })
   .strict() satisfies z.ZodType<CancelComputeJobRequest>
 
+const setComputeJobRemoteCleanupRequestSchema = z
+  .object({
+    jobId: z.string(),
+    providerId: z.string(),
+    sessionId: z.string(),
+    projectId: z.string(),
+    disposition: z.enum(['cleaned', 'abandoned'])
+  })
+  .strict() satisfies z.ZodType<SetComputeJobRemoteCleanupRequest>
+
 const computeIpcArgumentSchemas = Object.freeze({
   'compute:list': z.tuple([]),
   'compute:get': z.tuple([z.string()]),
@@ -157,6 +168,7 @@ const computeIpcArgumentSchemas = Object.freeze({
   'compute:approval-replay-pending': z.tuple([]),
   'compute:jobs:list': z.tuple([computeJobsListFilterSchema]),
   'compute:jobs:cancel': z.tuple([cancelComputeJobRequestSchema]),
+  'compute:jobs:set-remote-cleanup': z.tuple([setComputeJobRemoteCleanupRequestSchema]),
   'compute:jobs:pending-notification': z.tuple([computeJobsPendingNotificationFilterSchema]),
   'compute:jobs:mark-consumed': z.tuple([z.string(), stringArraySchema]),
   'compute:jobs:transition-analysis': z.tuple([computeJobAnalysisTransitionSchema]),
@@ -279,6 +291,9 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   // Returns a Session job feed or the global non-terminal activity projection.
   handleComputeIpc(COMPUTE_JOBS_LIST_CHANNEL, (_event, filter) => handlers.jobsList(filter))
   handleComputeIpc('compute:jobs:cancel', (_event, request) => handlers.jobsCancel(request))
+  handleComputeIpc('compute:jobs:set-remote-cleanup', (_event, request) =>
+    handlers.jobsSetRemoteCleanup(request)
+  )
   // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null — issue 05).
   handleComputeIpc('compute:jobs:pending-notification', (_event, filter) =>
     handlers.jobsPendingNotification(filter)

@@ -278,6 +278,7 @@ describe('docToPdfContextSources', () => {
       name: `${id}.pdf`,
       path: `/${id}.pdf`,
       source,
+      sourceFileId: `file-${id}`,
       mimeType: 'application/pdf; charset=binary',
       versionId: `version-${id}`
     })
@@ -301,9 +302,21 @@ describe('docToPdfContextSources', () => {
         ]
       })
     ).toEqual([
-      { sourceKind: 'artifact-version', sourceVersionId: 'version-one' },
-      { sourceKind: 'upload-version', sourceVersionId: 'version-two' },
-      { sourceKind: 'artifact-version', sourceVersionId: 'version-three' }
+      {
+        sourceKind: 'artifact-version',
+        sourceFileId: 'file-one',
+        sourceVersionId: 'version-one'
+      },
+      {
+        sourceKind: 'upload-version',
+        sourceFileId: 'file-two',
+        sourceVersionId: 'version-two'
+      },
+      {
+        sourceKind: 'artifact-version',
+        sourceFileId: 'file-three',
+        sourceVersionId: 'version-three'
+      }
     ])
   })
 })

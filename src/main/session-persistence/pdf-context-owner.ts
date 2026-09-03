@@ -61,7 +61,8 @@ class SessionPdfContextOwner {
       const input = await this.options.inputs.resolveVersion({
         projectId: request.projectId,
         sourceKind: source.sourceKind,
-        inputFileVersionId: source.sourceVersionId
+        inputFileVersionId: source.sourceVersionId,
+        expectedSourceFileId: source.sourceFileId
       })
       if (
         !input ||
@@ -144,7 +145,8 @@ class SessionPdfContextOwner {
       const input = await this.options.inputs.resolveVersion({
         projectId: request.projectId,
         sourceKind: source.sourceKind,
-        inputFileVersionId: source.sourceVersionId
+        inputFileVersionId: source.sourceVersionId,
+        expectedSourceFileId: source.sourceFileId
       })
       if (!input) throw new Error('PDF context Version is unavailable in this Project.')
       if (!isPdf(input.filename, input.contentType)) {

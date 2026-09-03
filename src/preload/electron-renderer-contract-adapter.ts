@@ -107,8 +107,6 @@ const encodeRequestArguments = (
       const sourcePath = getPathForFile(args[0])
       return sourcePath ? [{ ...(args[1] as object), sourcePath }] : null
     }
-    case 'runtime-selection-object':
-      return [{ language: args[0], selection: args[1] }]
     case 'runtime-language-environment-object':
       return [{ language: args[0], envId: args[1] }]
     case 'runtime-language-object':

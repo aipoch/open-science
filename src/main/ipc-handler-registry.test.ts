@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ApplicationCallerLease } from './application-command-router'
@@ -84,6 +86,28 @@ describe('createIpcHandlerRegistry', () => {
 
     staleNavigationListener?.({ isMainFrame: true, isSameDocument: false })
     expect(replacement.signal.aborted).toBe(false)
+  })
+
+  it('does not retain renderer lifecycle listeners across main-frame navigations', () => {
+    const nativeHandlers = new Map<string, (...args: unknown[]) => unknown>()
+    const registry = createIpcHandlerRegistry({
+      handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+        nativeHandlers.set(channel, handler)
+    } as never)
+    const sender = Object.assign(new EventEmitter(), { id: 42 })
+    registry.ipcMainHandle('projects:list', (event) => callerLeaseForEvent(event))
+
+    for (let navigation = 0; navigation < 11; navigation += 1) {
+      nativeHandlers.get('projects:list')?.({ sender })
+      sender.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+    }
+
+    expect(sender.listenerCount('render-process-gone')).toBe(0)
+    expect(sender.listenerCount('destroyed')).toBeLessThanOrEqual(1)
+    sender.emit('destroyed')
+    expect(() => nativeHandlers.get('projects:list')?.({ sender })).toThrow(
+      'Caller lease is no longer current.'
+    )
   })
 
   it('renews a crashed WebContents lease but keeps destroyed terminal', () => {

@@ -25,6 +25,7 @@ import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProjectFilesChangedEvent, ProjectFileItem } from '../../../../shared/project-files'
 import {
   createUploadVersionReference,
+  getUploadedAttachmentName,
   getUploadedAttachmentPath,
   type UploadedAttachment
 } from '../../../../shared/uploads'
@@ -88,142 +89,60 @@ const clickDropdownTrigger = (button: HTMLButtonElement | null): void => {
 const foldAsciiCase = (value: string): string =>
   value.replace(/[A-Z]/g, (character) => character.toLowerCase())
 
-describe('buildProjectFileLibrary', () => {
-  it('collects all user uploads into one flat newest-first list', async () => {
-    const { buildProjectFileLibrary } = await import('./project-files-library')
-    const library = buildProjectFileLibrary([
-      createSession({
-        id: 'session-a',
-        title: 'Session A',
-        messages: [
-          createMessage({
-            id: 'old-message',
-            createdAt: 1710000000000,
-            updatedAt: 1710000001000,
-            uploads: [createUpload({ id: 'upload-old', originalName: 'old.fasta' })]
-          })
-        ]
-      }),
-      createSession({
-        id: 'session-b',
-        title: 'Session B',
-        messages: [
-          createMessage({
-            id: 'new-message',
-            createdAt: 1710000000000,
-            updatedAt: 1710000003000,
-            uploads: [createUpload({ id: 'upload-new', originalName: 'new.fasta' })]
-          })
-        ]
-      })
-    ])
+type ProjectFileFixtures = {
+  uploadFiles: ProjectFileItem[]
+  artifactGroups: Array<{ sessionId: string; files: ProjectFileItem[] }>
+}
 
-    expect(library.uploadFiles.map((file) => file.name)).toEqual(['new.fasta', 'old.fasta'])
-    expect(library.artifactGroups).toEqual([])
-  })
+const projectFileFixturesFromSessions = (sessions: ChatSession[]): ProjectFileFixtures => {
+  const uploadFiles: ProjectFileItem[] = []
+  const artifactGroups: ProjectFileFixtures['artifactGroups'] = []
 
-  it('groups generated files by session and filters out non-managed artifacts', async () => {
-    const { buildProjectFileLibrary } = await import('./project-files-library')
-    const library = buildProjectFileLibrary([
-      createSession({
-        id: 'session-a',
-        title: 'Phylogenetic Analysis',
-        artifacts: [
-          {
-            id: 'artifact-1',
-            kind: 'managed-file',
-            path: '/workspace/tree.png',
-            fileUrl: 'file:///workspace/tree.png',
-            name: 'tree.png',
-            mimeType: 'image/png',
-            size: 4096,
-            mtimeMs: 1710000002000
-          },
-          {
-            id: 'artifact-2',
-            kind: 'workspace-file',
-            path: '/workspace/raw.txt',
-            fileUrl: 'file:///workspace/raw.txt',
-            name: 'raw.txt',
-            mimeType: 'text/plain',
-            size: 128,
-            mtimeMs: 1710000002001
-          }
-        ]
-      })
-    ])
-
-    expect(library.artifactGroups).toHaveLength(1)
-    expect(library.artifactGroups[0]).toMatchObject({
-      sessionId: 'session-a',
-      title: 'Phylogenetic Analysis',
-      files: [
-        {
-          id: 'artifact-1',
-          name: 'tree.png'
-        }
-      ]
-    })
-  })
-
-  it('surfaces on-disk artifacts not referenced by any session under an Orphaned group', async () => {
-    const { buildProjectFileLibrary, ORPHANED_ARTIFACTS_GROUP_ID } =
-      await import('./project-files-library')
-    const liveArtifact = {
-      id: 's-live:m1:live.png',
-      projectId: 'proj-1',
-      sessionId: 's-live',
-      name: 'live.png',
-      path: '/artifacts/proj-1/s-live/m1/live.png',
-      fileUrl: 'file:///artifacts/proj-1/s-live/m1/live.png',
-      mimeType: 'image/png',
-      size: 10,
-      mtimeMs: 1710000000000
-    }
-    const orphan = {
-      id: 's-gone:m9:orphan.csv',
-      projectId: 'proj-1',
-      sessionId: 's-gone',
-      name: 'orphan.csv',
-      path: '/artifacts/proj-1/s-gone/m9/orphan.csv',
-      fileUrl: 'file:///artifacts/proj-1/s-gone/m9/orphan.csv',
-      mimeType: 'text/csv',
-      size: 20,
-      mtimeMs: 1710000009000
-    }
-
-    const library = buildProjectFileLibrary(
-      [
-        createSession({
-          id: 's-live',
-          title: 'Live session',
-          artifacts: [
-            {
-              id: liveArtifact.id,
-              kind: 'managed-file',
-              path: liveArtifact.path,
-              fileUrl: liveArtifact.fileUrl,
-              name: liveArtifact.name,
-              mimeType: liveArtifact.mimeType,
-              size: liveArtifact.size,
-              mtimeMs: liveArtifact.mtimeMs
-            }
-          ]
+  for (const session of sessions) {
+    for (const message of session.messages) {
+      if (message.role !== 'user') continue
+      for (const attachment of message.uploads ?? []) {
+        if (!attachment.path && !attachment.versionId) continue
+        const timestamp = message.updatedAt || message.createdAt
+        uploadFiles.push({
+          id: `upload:${attachment.id}`,
+          source: 'upload',
+          sourceFileId: attachment.id,
+          sourceVersionId: attachment.id,
+          projectId: 'default',
+          sessionId: session.id,
+          name: getUploadedAttachmentName(attachment),
+          path: getUploadedAttachmentPath(attachment, 'default'),
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          mtimeMs: timestamp,
+          sortAtMs: timestamp
         })
-      ],
-      // Disk scan returns both the live file and one whose owning session was deleted.
-      [liveArtifact, orphan]
-    )
+      }
+    }
 
-    // The live session's file is not duplicated into the orphan group.
-    const orphanGroup = library.artifactGroups.find(
-      (group) => group.sessionId === ORPHANED_ARTIFACTS_GROUP_ID
-    )
-    expect(orphanGroup?.title).toBe('Orphaned')
-    expect(orphanGroup?.files.map((file) => file.name)).toEqual(['orphan.csv'])
-    expect(library.artifactGroups.some((group) => group.sessionId === 's-live')).toBe(true)
-  })
-})
+    const files = (session.artifacts ?? [])
+      .filter((artifact) => artifact.kind === 'managed-file' && Boolean(artifact.path))
+      .map((artifact): ProjectFileItem => ({
+        id: artifact.id,
+        source: 'artifact',
+        sourceFileId: artifact.id,
+        sourceVersionId: artifact.id,
+        projectId: 'default',
+        sessionId: session.id,
+        name: artifact.name ?? artifact.path?.split('/').at(-1) ?? artifact.id,
+        path: artifact.path!,
+        mimeType: artifact.mimeType,
+        size: artifact.size ?? 0,
+        mtimeMs: artifact.mtimeMs,
+        sortAtMs: artifact.mtimeMs ?? 0
+      }))
+    if (files.length > 0) artifactGroups.push({ sessionId: session.id, files })
+  }
+
+  uploadFiles.sort((left, right) => right.sortAtMs - left.sortAtMs)
+  return { uploadFiles, artifactGroups }
+}
 
 describe('project file preview reader', () => {
   it('shares a four-request limit and deduplicates in-flight reads across batches', async () => {
@@ -351,7 +270,6 @@ describe('ProjectFilesView', () => {
         release: vi.fn().mockResolvedValue(undefined)
       },
       artifacts: {
-        listProjectFiles: vi.fn().mockResolvedValue([]),
         readPreview: vi.fn().mockResolvedValue({
           content: 'ZmFrZS1pbWFnZQ==',
           encoding: 'base64',
@@ -387,49 +305,15 @@ describe('ProjectFilesView', () => {
     const { useSessionStore } = await import('@/stores/session-store')
     const { useNavigationStore } = await import('@/stores/navigation-store')
     const { ProjectFilesView } = await import('./ProjectFilesView')
-    const { buildProjectFileLibrary } = await import('./project-files-library')
 
     useSessionStore.setState({
       ...createInitialSessionState(),
       sessions
     })
-    const getLibrary = (): ReturnType<typeof buildProjectFileLibrary> =>
-      buildProjectFileLibrary(
+    const getLibrary = (): ProjectFileFixtures =>
+      projectFileFixturesFromSessions(
         useSessionStore.getState().sessions.filter((session) => session.projectId === 'default')
       )
-    const toUploadItem = (
-      file: ReturnType<typeof getLibrary>['uploadFiles'][number]
-    ): ProjectFileItem => ({
-      id: file.id,
-      source: 'upload',
-      sourceFileId: file.attachment.id,
-      sourceVersionId: file.attachment.id,
-      projectId: 'default',
-      sessionId: file.sessionId,
-      name: file.name,
-      path: getUploadedAttachmentPath(file.attachment, 'default'),
-      mimeType: file.attachment.mimeType,
-      size: file.size,
-      mtimeMs: file.timestamp,
-      sortAtMs: file.timestamp
-    })
-    const toArtifactItem = (
-      file: ReturnType<typeof getLibrary>['artifactGroups'][number]['files'][number],
-      sessionId: string
-    ): ProjectFileItem => ({
-      id: file.id,
-      source: 'artifact',
-      sourceFileId: file.id,
-      sourceVersionId: file.id,
-      projectId: 'default',
-      sessionId,
-      name: file.name,
-      path: file.artifact.path,
-      mimeType: file.artifact.mimeType,
-      size: file.size ?? 0,
-      mtimeMs: file.artifact.mtimeMs,
-      sortAtMs: file.artifact.mtimeMs ?? 0
-    })
 
     window.api.projectFiles = {
       searchArtifacts: vi.fn(),
@@ -461,11 +345,10 @@ describe('ProjectFilesView', () => {
         const matches = (name: string): boolean => !query || foldAsciiCase(name).includes(query)
         const items =
           request.collection.kind === 'uploads'
-            ? library.uploadFiles.filter((file) => matches(file.name)).map(toUploadItem)
+            ? library.uploadFiles.filter((file) => matches(file.name))
             : (library.artifactGroups
                 .find((group) => group.sessionId === request.collection.sessionId)
-                ?.files.filter((file) => matches(file.name))
-                .map((file) => toArtifactItem(file, request.collection.sessionId)) ?? [])
+                ?.files.filter((file) => matches(file.name)) ?? [])
 
         return { items, totalCount: items.length }
       }),
@@ -4260,7 +4143,6 @@ describe('ProjectFilesView — granted local folders', () => {
     grantRoot = vi.fn().mockResolvedValue([grantedRoot])
     setGrantedRootAccess = vi.fn().mockResolvedValue([{ ...grantedRoot, access: 'rw' }])
     removeGrantedRoot = vi.fn().mockResolvedValue([])
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
       previewResources: {
@@ -4366,6 +4248,17 @@ describe('ProjectFilesView — granted local folders', () => {
     })
   }
 
+  const rootMutationConfirmation = (): Element | null =>
+    document.body.querySelector('[data-testid="granted-root-mutation-confirmation"]')
+
+  const confirmRootMutation = async (): Promise<void> => {
+    await clickElement(rootMutationConfirmation()?.querySelector('button:last-of-type'))
+  }
+
+  const cancelRootMutation = async (): Promise<void> => {
+    await clickElement(rootMutationConfirmation()?.querySelector('button:first-of-type'))
+  }
+
   // Radix's submenu trigger opens on pointermove only when pointerType is 'mouse' (whenMouse
   // guard); jsdom has no PointerEvent, so forge one from a MouseEvent.
   const hoverElement = async (element: Element | null | undefined): Promise<void> => {
@@ -4410,6 +4303,10 @@ describe('ProjectFilesView — granted local folders', () => {
     await clickElement(
       document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
     )
+    expect(rootMutationConfirmation()?.textContent).toContain(
+      'Changing Notebook file access will stop active Notebook kernels.'
+    )
+    await confirmRootMutation()
     expect(setGrantedRootAccess).toHaveBeenCalledWith({ id: 'root-1', access: 'rw' })
     expect(useGrantedFoldersStore.getState().roots[0]?.access).toBe('rw')
 
@@ -4425,12 +4322,12 @@ describe('ProjectFilesView — granted local folders', () => {
     )
 
     await clickElement(document.body.querySelector('[data-testid="granted-root-remove-root-1"]'))
+    await confirmRootMutation()
     expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })
     expect(useGrantedFoldersStore.getState().roots).toEqual([])
   })
 
   it('keeps granted-root access unchanged when the kernel-stop confirmation is cancelled', async () => {
-    vi.mocked(window.confirm).mockReturnValue(false)
     await renderFilesView()
     await openFilterMenu()
     await hoverElement(document.body.querySelector('[data-testid="granted-root-root-1"]'))
@@ -4443,6 +4340,7 @@ describe('ProjectFilesView — granted local folders', () => {
     await clickElement(
       document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
     )
+    await cancelRootMutation()
 
     expect(setGrantedRootAccess).not.toHaveBeenCalled()
     expect(useGrantedFoldersStore.getState().roots[0]?.access).toBe('ro')
@@ -4462,6 +4360,7 @@ describe('ProjectFilesView — granted local folders', () => {
     await clickElement(
       document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
     )
+    await confirmRootMutation()
     expect(setGrantedRootAccess).toHaveBeenCalledWith({ id: 'root-1', access: 'rw' })
 
     await waitFor(() => {
@@ -4495,6 +4394,7 @@ describe('ProjectFilesView — granted local folders', () => {
       ).not.toBeNull()
     })
     await clickElement(document.body.querySelector('[data-testid="granted-root-remove-root-1"]'))
+    await confirmRootMutation()
     expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })
 
     await waitFor(() => {
@@ -4563,6 +4463,11 @@ describe('ProjectFilesView — granted local folders', () => {
 
     await clickElement(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
     await clickElement(document.body.querySelector('[data-testid="grant-access-grant"]'))
+    await clickElement(
+      document.body
+        .querySelector('[data-testid="grant-folder-access-confirmation"]')
+        ?.querySelector('button:last-of-type')
+    )
 
     expect(grantRoot).toHaveBeenCalledWith({ path: '/Users/roxi/Projects', access: 'ro' })
     // Dialog closed; the new root is selected in the local browser.

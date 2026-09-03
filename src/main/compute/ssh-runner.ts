@@ -11,6 +11,10 @@ import { assertSafeSshAlias, shellSingleQuote } from './remote-path-security'
 // Maximum bytes captured per stream before we truncate. Caller can pass a smaller cap.
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024
 
+// Keep a wide margin below local process argument limits. Commands above this size travel over
+// stdin instead, while ordinary commands retain the existing OpenSSH invocation semantics.
+const MAX_INLINE_REMOTE_COMMAND_LENGTH = 8 * 1024
+
 // Short connect timeout used for probe calls; SSH itself honors ConnectTimeout from config but we
 // add it explicitly to override any large value from ~/.ssh/config (design.md §1).
 const DEFAULT_CONNECT_TIMEOUT_SECS = 10
@@ -271,7 +275,12 @@ export class SystemSshRunner implements SshRunner {
     const loginCommand = `if [ -r ~/.bashrc ]; then . ~/.bashrc || exit $?; fi; ${remoteCommand}`
     const finalCommand = loginShell ? `bash -lc ${shellSingleQuote(loginCommand)}` : remoteCommand
 
-    const args = [...target.extraArgs, target.host, finalCommand]
+    const streamCommand = finalCommand.length > MAX_INLINE_REMOTE_COMMAND_LENGTH
+    const args = [
+      ...target.extraArgs,
+      target.host,
+      streamCommand ? 'exec "${SHELL:-/bin/sh}"' : finalCommand
+    ]
 
     opts.signal?.throwIfAborted()
     return new Promise((resolve, reject) => {
@@ -306,12 +315,17 @@ export class SystemSshRunner implements SshRunner {
         stderrBuf.push(chunk)
       }
 
+      // ssh reports the useful transport/process status itself. Observe stdin errors so a closed
+      // pipe cannot become an unhandled stream error while that status is still settling.
+      const onStdinError = (): void => undefined
+
       const cleanup = (): void => {
         clearTimer(timeoutTimer)
         termination.stop()
         opts.signal?.removeEventListener('abort', onAbort)
         child.stdout?.removeListener('data', onStdout)
         child.stderr?.removeListener('data', onStderr)
+        child.stdin?.removeListener('error', onStdinError)
         child.removeListener('exit', onExit)
         child.removeListener('close', onClose)
         child.removeListener('error', onError)
@@ -368,9 +382,11 @@ export class SystemSshRunner implements SshRunner {
       opts.signal?.addEventListener('abort', onAbort, { once: true })
       child.stdout?.on('data', onStdout)
       child.stderr?.on('data', onStderr)
+      if (streamCommand) child.stdin?.once('error', onStdinError)
       child.once('exit', onExit)
       child.once('close', onClose)
       child.once('error', onError)
+      if (streamCommand) child.stdin?.end(finalCommand)
 
       // The signal may have changed between throwIfAborted() and listener registration.
       if (opts.signal?.aborted) onAbort()

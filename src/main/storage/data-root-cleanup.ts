@@ -22,6 +22,7 @@ const ALLOWED_CLEANUP_DIRS = new Set([
   ...MIGRATABLE_DATA_DIRS,
   'runtime',
   join('runtime', 'pkgs'),
+  join('runtime', '.repair-required.json'),
   join('runtime', 'provenance', 'environment-manifests')
 ])
 

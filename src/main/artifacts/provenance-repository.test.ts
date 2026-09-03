@@ -252,7 +252,9 @@ describe('artifact provenance repository', () => {
     ).resolves.toEqual({
       recoveredVersionIds: [],
       quarantinedVersionIds: [],
-      recoveredMessageArtifacts: []
+      recoveredMessageArtifacts: [],
+      nativeFinalizationRunIds: [],
+      unresolvedNativeFinalizationRunIds: []
     })
     await expect(stat(stagingDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
   })
@@ -1736,7 +1738,9 @@ describe('artifact provenance repository', () => {
     await expect(repository.reconcileSession('project-1', 'session-1')).resolves.toEqual({
       recoveredVersionIds: [versionId],
       quarantinedVersionIds: [corruptVersionId],
-      recoveredMessageArtifacts: []
+      recoveredMessageArtifacts: [],
+      nativeFinalizationRunIds: [],
+      unresolvedNativeFinalizationRunIds: []
     })
     await expect(
       readFile(join(storageRoot, ...contentStorageKey.split('/')), 'utf8')
@@ -4482,7 +4486,9 @@ describe('artifact provenance repository', () => {
     ).resolves.toEqual({
       recoveredVersionIds: [version.versionId],
       quarantinedVersionIds: [],
-      recoveredMessageArtifacts: []
+      recoveredMessageArtifacts: [],
+      nativeFinalizationRunIds: [],
+      unresolvedNativeFinalizationRunIds: []
     })
     await expect(
       client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
@@ -4555,7 +4561,9 @@ describe('artifact provenance repository', () => {
     ).resolves.toEqual({
       recoveredVersionIds: [version.versionId],
       quarantinedVersionIds: [],
-      recoveredMessageArtifacts: []
+      recoveredMessageArtifacts: [],
+      nativeFinalizationRunIds: [],
+      unresolvedNativeFinalizationRunIds: []
     })
     await expect(
       client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
@@ -4629,7 +4637,9 @@ describe('artifact provenance repository', () => {
     ).resolves.toEqual({
       recoveredVersionIds: [],
       quarantinedVersionIds: [],
-      recoveredMessageArtifacts: []
+      recoveredMessageArtifacts: [],
+      nativeFinalizationRunIds: [],
+      unresolvedNativeFinalizationRunIds: []
     })
     await expect(readFile(version.path)).resolves.toBeTruthy()
     await expect(
@@ -4642,7 +4652,9 @@ describe('artifact provenance repository', () => {
     ).resolves.toEqual({
       recoveredVersionIds: [version.versionId],
       quarantinedVersionIds: [],
-      recoveredMessageArtifacts: []
+      recoveredMessageArtifacts: [],
+      nativeFinalizationRunIds: [],
+      unresolvedNativeFinalizationRunIds: []
     })
   })
 
@@ -4738,7 +4750,9 @@ describe('artifact provenance repository', () => {
     ).resolves.toEqual({
       recoveredVersionIds: [],
       quarantinedVersionIds: [version.versionId],
-      recoveredMessageArtifacts: []
+      recoveredMessageArtifacts: [],
+      nativeFinalizationRunIds: [],
+      unresolvedNativeFinalizationRunIds: []
     })
     await expect(readFile(version.path)).rejects.toMatchObject({ code: 'ENOENT' })
     const quarantineRoot = join(

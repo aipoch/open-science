@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { unzipSync } from 'fflate'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -38,13 +38,39 @@ vi.mock('electron', () => ({
 }))
 
 const { registerFileSaveHandlers: registerProductionFileSaveHandlers } = await import('./file-save')
-const registerFileSaveHandlers = registerProductionFileSaveHandlers
+const { publishUserFile: productionPublishUserFile } = await import('./user-file-publisher')
+const publishDirectly: typeof productionPublishUserFile = async (
+  destinationPath,
+  write,
+  options
+) => {
+  await options?.validateDestination?.()
+  await write(destinationPath)
+}
+const publishWithoutHardLinks: typeof productionPublishUserFile = (destination, write, options) =>
+  productionPublishUserFile(destination, write, {
+    ...options,
+    linkFile: async () => {
+      throw Object.assign(new Error('hard links are unsupported'), { code: 'EOPNOTSUPP' })
+    }
+  })
+const registerFileSaveHandlers = (
+  options: NonNullable<Parameters<typeof registerProductionFileSaveHandlers>[0]> = {}
+): void => {
+  const openManagedFileVersion = options.openManagedFileVersion ?? options.openLatestManagedFile
+  registerProductionFileSaveHandlers({
+    ...options,
+    ...(openManagedFileVersion ? { openManagedFileVersion } : {}),
+    publishUserFile: options.publishUserFile ?? publishDirectly
+  })
+}
 
 type TestManagedVersionHandle = {
   size: number
   readRange: (begin: number, end: number) => Promise<Uint8Array>
   verifyUnchanged: () => Promise<void>
   copyTo: (destinationPath: string, options?: { exclusive?: boolean }) => Promise<void>
+  assertCanCopyTo?: (destinationPath: string) => Promise<void>
   close: () => Promise<void>
 }
 
@@ -69,7 +95,21 @@ const fileBackedManagedVersionHandle = async (
   managedVersionHandle(await readFile(sourcePath), {
     copyTo: vi.fn(async (destinationPath, options) =>
       copyFile(sourcePath, destinationPath, options?.exclusive ? constants.COPYFILE_EXCL : 0)
-    )
+    ),
+    assertCanCopyTo: async (destinationPath) => {
+      try {
+        const [sourceInfo, destinationInfo] = await Promise.all([
+          stat(sourcePath),
+          stat(destinationPath)
+        ])
+        if (sourceInfo.dev === destinationInfo.dev && sourceInfo.ino === destinationInfo.ino) {
+          throw new Error('Cannot save a managed file over its source.')
+        }
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return
+        throw error
+      }
+    }
   })
 
 type TestFileSaveOptions = Omit<
@@ -91,7 +131,8 @@ type TestFileSaveOptions = Omit<
 // latest-version lease boundary without restoring a path fallback in the handler itself.
 const registerProjectFileSaveHandlers = (options: TestFileSaveOptions = {}): void => {
   const { resolveManagedFilePath, resolveSessionArtifactFilePath, ...productionOptions } = options
-  const openLatestManagedFile =
+  const openManagedFileVersion =
+    options.openManagedFileVersion ??
     options.openLatestManagedFile ??
     (resolveSessionArtifactFilePath || resolveManagedFilePath
       ? async (source: 'artifact' | 'upload', request: { projectId: string; fileId: string }) => {
@@ -113,9 +154,9 @@ const registerProjectFileSaveHandlers = (options: TestFileSaveOptions = {}): voi
         }
       : undefined)
 
-  registerProductionFileSaveHandlers({
+  registerFileSaveHandlers({
     ...productionOptions,
-    ...(openLatestManagedFile ? { openLatestManagedFile } : {})
+    ...(openManagedFileVersion ? { openManagedFileVersion } : {})
   })
 }
 
@@ -146,13 +187,20 @@ describe('file save IPC handlers', () => {
         {
           projectId: 'project-1',
           sessionId: 'session-1',
-          files: [{ fileId: 'artifact-report', suggestedName: 'report.csv' }]
+          files: [
+            {
+              fileId: 'artifact-report',
+              versionId: 'artifact-report-version',
+              suggestedName: 'report.csv'
+            }
+          ]
         }
       )
 
       expect(openLatestManagedFile).toHaveBeenCalledWith('artifact', {
         projectId: 'project-1',
-        fileId: 'artifact-report'
+        fileId: 'artifact-report',
+        versionId: 'artifact-report-version'
       })
       expect(showSaveDialog).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -165,6 +213,42 @@ describe('file save IPC handlers', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+
+  it('opens the immutable Session Artifact Version selected in the renderer snapshot', async () => {
+    const copyTo = vi.fn().mockResolvedValue(undefined)
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openLatestManagedFile = vi.fn()
+    const openManagedFileVersion = vi.fn().mockResolvedValue({ copyTo, close })
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: join(downloadsPath, 'report.csv')
+    })
+    registerFileSaveHandlers({ openLatestManagedFile, openManagedFileVersion } as never)
+
+    await handlers.get('file:save-session-artifacts')!(
+      { sender: {} },
+      {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        files: [
+          {
+            fileId: 'artifact-report',
+            versionId: 'artifact-version-1',
+            suggestedName: 'report.csv'
+          }
+        ]
+      }
+    )
+
+    expect(openManagedFileVersion).toHaveBeenCalledWith('artifact', {
+      projectId: 'project-1',
+      fileId: 'artifact-report',
+      versionId: 'artifact-version-1'
+    })
+    expect(openLatestManagedFile).not.toHaveBeenCalled()
+    expect(copyTo).toHaveBeenCalledWith(join(downloadsPath, 'report.csv'))
+    expect(close).toHaveBeenCalledOnce()
   })
 
   it('exports multiple selected Session Artifacts after choosing one destination folder', async () => {
@@ -180,7 +264,7 @@ describe('file save IPC handlers', () => {
       .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceA))
       .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceB))
     showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
-    registerFileSaveHandlers({ openLatestManagedFile } as never)
+    registerFileSaveHandlers({ openLatestManagedFile, publishUserFile: publishWithoutHardLinks })
 
     try {
       const result = await handlers.get('file:save-session-artifacts')!(
@@ -189,8 +273,8 @@ describe('file save IPC handlers', () => {
           projectId: 'project-1',
           sessionId: 'session-1',
           files: [
-            { fileId: 'artifact-a', suggestedName: 'a.csv' },
-            { fileId: 'artifact-b', suggestedName: 'b.png' }
+            { fileId: 'artifact-a', versionId: 'artifact-a-version', suggestedName: 'a.csv' },
+            { fileId: 'artifact-b', versionId: 'artifact-b-version', suggestedName: 'b.png' }
           ]
         }
       )
@@ -232,7 +316,7 @@ describe('file save IPC handlers', () => {
       .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceA))
       .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourceB))
     showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [destinationDirectory] })
-    registerFileSaveHandlers({ openLatestManagedFile } as never)
+    registerFileSaveHandlers({ openLatestManagedFile, publishUserFile: publishWithoutHardLinks })
 
     try {
       const result = await handlers.get('file:save-session-artifacts')!(
@@ -241,8 +325,8 @@ describe('file save IPC handlers', () => {
           projectId: 'project-1',
           sessionId: 'session-1',
           files: [
-            { fileId: 'artifact-a', suggestedName: 'report.csv' },
-            { fileId: 'artifact-b', suggestedName: 'report.csv' }
+            { fileId: 'artifact-a', versionId: 'artifact-a-version', suggestedName: 'report.csv' },
+            { fileId: 'artifact-b', versionId: 'artifact-b-version', suggestedName: 'report.csv' }
           ]
         }
       )
@@ -268,6 +352,54 @@ describe('file save IPC handlers', () => {
     }
   })
 
+  it('uses a collision suffix when the selected batch destination is the source file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-artifact-self-collision-'))
+    const sourcePath = join(root, 'report.csv')
+    const otherSourcePath = join(root, 'other-source.csv')
+    await writeFile(sourcePath, 'artifact bytes')
+    await writeFile(otherSourcePath, 'other bytes')
+    showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [root] })
+    registerFileSaveHandlers({
+      openLatestManagedFile: vi
+        .fn()
+        .mockResolvedValueOnce(await fileBackedManagedVersionHandle(sourcePath))
+        .mockResolvedValueOnce(await fileBackedManagedVersionHandle(otherSourcePath)),
+      publishUserFile: productionPublishUserFile
+    })
+
+    try {
+      const result = await handlers.get('file:save-session-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          files: [
+            {
+              fileId: 'artifact-a',
+              versionId: 'artifact-a-version',
+              suggestedName: 'report.csv'
+            },
+            {
+              fileId: 'artifact-b',
+              versionId: 'artifact-b-version',
+              suggestedName: 'other.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({
+        saved: true,
+        filePaths: [join(root, 'report (2).csv'), join(root, 'other.csv')]
+      })
+      await expect(readFile(sourcePath, 'utf8')).resolves.toBe('artifact bytes')
+      await expect(readFile(join(root, 'report (2).csv'), 'utf8')).resolves.toBe('artifact bytes')
+      await expect(readFile(join(root, 'other.csv'), 'utf8')).resolves.toBe('other bytes')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('reports one failed Artifact while keeping the other batch exports', async () => {
     const destinationDirectory = '/downloads/session-artifacts'
     const closeA = vi.fn().mockResolvedValue(undefined)
@@ -288,8 +420,8 @@ describe('file save IPC handlers', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         files: [
-          { fileId: 'artifact-a', suggestedName: 'a.csv' },
-          { fileId: 'artifact-b', suggestedName: 'b.csv' }
+          { fileId: 'artifact-a', versionId: 'artifact-a-version', suggestedName: 'a.csv' },
+          { fileId: 'artifact-b', versionId: 'artifact-b-version', suggestedName: 'b.csv' }
         ]
       }
     )
@@ -300,6 +432,7 @@ describe('file save IPC handlers', () => {
       failures: [
         {
           fileId: 'artifact-b',
+          versionId: 'artifact-b-version',
           suggestedName: 'b.csv',
           message: 'disk full'
         }
@@ -327,8 +460,12 @@ describe('file save IPC handlers', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         files: [
-          { fileId: 'artifact-missing', suggestedName: 'missing.csv' },
-          { fileId: 'artifact-b', suggestedName: 'b.csv' }
+          {
+            fileId: 'artifact-missing',
+            versionId: 'artifact-missing-version',
+            suggestedName: 'missing.csv'
+          },
+          { fileId: 'artifact-b', versionId: 'artifact-b-version', suggestedName: 'b.csv' }
         ]
       }
     )
@@ -339,6 +476,7 @@ describe('file save IPC handlers', () => {
       failures: [
         {
           fileId: 'artifact-missing',
+          versionId: 'artifact-missing-version',
           suggestedName: 'missing.csv',
           message: 'Artifact no longer exists'
         }
@@ -431,19 +569,21 @@ describe('file save IPC handlers', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         files: [
-          { fileId: 'artifact-a', suggestedName: 'a.csv' },
-          { fileId: 'artifact-b', suggestedName: 'b.csv' }
+          { fileId: 'artifact-a', versionId: 'artifact-a-version', suggestedName: 'a.csv' },
+          { fileId: 'artifact-b', versionId: 'artifact-b-version', suggestedName: 'b.csv' }
         ]
       }
     )
 
     expect(openLatestManagedFile).toHaveBeenNthCalledWith(1, 'artifact', {
       projectId: 'project-1',
-      fileId: 'artifact-a'
+      fileId: 'artifact-a',
+      versionId: 'artifact-a-version'
     })
     expect(openLatestManagedFile).toHaveBeenNthCalledWith(2, 'artifact', {
       projectId: 'project-1',
-      fileId: 'artifact-b'
+      fileId: 'artifact-b',
+      versionId: 'artifact-b-version'
     })
   })
 
@@ -468,19 +608,21 @@ describe('file save IPC handlers', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         files: [
-          { fileId: 'artifact-a', suggestedName: 'a.csv' },
-          { fileId: 'artifact-b', suggestedName: 'b.csv' }
+          { fileId: 'artifact-a', versionId: 'artifact-a-version', suggestedName: 'a.csv' },
+          { fileId: 'artifact-b', versionId: 'artifact-b-version', suggestedName: 'b.csv' }
         ]
       }
     )
 
     expect(openLatestManagedFile).toHaveBeenNthCalledWith(1, 'artifact', {
       projectId: 'project-1',
-      fileId: 'artifact-a'
+      fileId: 'artifact-a',
+      versionId: 'artifact-a-version'
     })
     expect(openLatestManagedFile).toHaveBeenNthCalledWith(2, 'artifact', {
       projectId: 'project-1',
-      fileId: 'artifact-b'
+      fileId: 'artifact-b',
+      versionId: 'artifact-b-version'
     })
     expect(resolveManagedFilePath).not.toHaveBeenCalled()
     expect(first.close).toHaveBeenCalledOnce()
@@ -750,6 +892,37 @@ describe('file save IPC handlers', () => {
     expect(close).toHaveBeenCalledTimes(1)
   })
 
+  it('preserves an existing managed-file destination when copying fails after a partial write', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-failure-'))
+    const destinationPath = join(root, 'report.csv')
+    await writeFile(destinationPath, 'existing destination')
+    const copyTo = vi.fn(async (path: string) => {
+      await writeFile(path, 'partial replacement')
+      throw new Error('disk full')
+    })
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({
+      resolveManagedFilePath: vi.fn().mockResolvedValue('/managed/report.csv'),
+      publishUserFile: productionPublishUserFile,
+      openManagedFile: vi.fn().mockResolvedValue({
+        copyTo,
+        close: vi.fn().mockResolvedValue(undefined)
+      })
+    } as never)
+
+    try {
+      await expect(
+        handlers.get('file:save-managed')!(
+          { sender: {} },
+          { source: 'local', path: '/managed/report.csv', suggestedName: 'report.csv' }
+        )
+      ).rejects.toThrow('disk full')
+      await expect(readFile(destinationPath, 'utf8')).resolves.toBe('existing destination')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('does not prompt when managed path validation fails', async () => {
     const resolveManagedFilePath = vi.fn().mockRejectedValue(new Error('outside artifact storage'))
     registerFileSaveHandlers({ resolveManagedFilePath } as never)
@@ -854,18 +1027,21 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'report.csv'
             },
             {
               source: 'upload',
               sessionId: 'session-2',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'report.csv'
             },
             {
               source: 'artifact',
               sessionId: 'session-2',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'notes.txt'
             }
           ]
@@ -893,7 +1069,70 @@ describe('file save IPC handlers', () => {
     }
   })
 
-  it('reads each logical Project file from the current managed-file head', async () => {
+  it('shows Save As before opening Project Versions and holds only one lease at a time', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-lease-order-'))
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const events: string[] = []
+    let activeLeases = 0
+    let maximumActiveLeases = 0
+    const openManagedFileVersion = vi.fn(
+      async (_source: 'artifact' | 'upload', request: { fileId: string }) => {
+        events.push(`open:${request.fileId}`)
+        activeLeases += 1
+        maximumActiveLeases = Math.max(maximumActiveLeases, activeLeases)
+        return managedVersionHandle(request.fileId, {
+          close: vi.fn(async () => {
+            activeLeases -= 1
+            events.push(`close:${request.fileId}`)
+          })
+        })
+      }
+    )
+    showSaveDialog.mockImplementation(async () => {
+      events.push('dialog')
+      return { canceled: false, filePath: destinationPath }
+    })
+    registerProjectFileSaveHandlers({ openManagedFileVersion })
+
+    try {
+      await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          suggestedArchiveName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              fileId: 'artifact-1',
+              versionId: 'artifact-version-1',
+              suggestedName: 'artifact.txt'
+            },
+            {
+              source: 'upload',
+              sessionId: 'session-1',
+              fileId: 'upload-1',
+              versionId: 'upload-version-1',
+              suggestedName: 'upload.txt'
+            }
+          ]
+        }
+      )
+
+      expect(events).toEqual([
+        'dialog',
+        'open:artifact-1',
+        'close:artifact-1',
+        'open:upload-1',
+        'close:upload-1'
+      ])
+      expect(maximumActiveLeases).toBe(1)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reads each logical Project file from its selected managed Version', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-current-head-'))
     const destinationPath = join(root, 'Research-artifacts.zip')
     const resolveManagedFilePath = vi.fn().mockRejectedValue(new Error('stale path used'))
@@ -936,12 +1175,14 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'artifact-file-1',
+              versionId: 'artifact-file-1-version',
               suggestedName: 'report.csv'
             },
             {
               source: 'upload',
               sessionId: 'session-2',
               fileId: 'upload-file-1',
+              versionId: 'upload-file-1-version',
               suggestedName: 'data.csv'
             }
           ]
@@ -950,8 +1191,22 @@ describe('file save IPC handlers', () => {
 
       expect(result).toEqual({ saved: true, filePath: destinationPath })
       expect(openLatestManagedFile.mock.calls).toEqual([
-        ['artifact', { projectId: 'project-1', fileId: 'artifact-file-1' }],
-        ['upload', { projectId: 'project-1', fileId: 'upload-file-1' }]
+        [
+          'artifact',
+          {
+            projectId: 'project-1',
+            fileId: 'artifact-file-1',
+            versionId: 'artifact-file-1-version'
+          }
+        ],
+        [
+          'upload',
+          {
+            projectId: 'project-1',
+            fileId: 'upload-file-1',
+            versionId: 'upload-file-1-version'
+          }
+        ]
       ])
       expect(resolveManagedFilePath).not.toHaveBeenCalled()
       expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
@@ -969,7 +1224,7 @@ describe('file save IPC handlers', () => {
     }
   })
 
-  it('closes a retained Project Version lease when temporary archive setup fails', async () => {
+  it('does not open a Project Version when temporary archive setup fails', async () => {
     const close = vi.fn().mockResolvedValue(undefined)
     const readRange = vi.fn()
     const verifyUnchanged = vi.fn()
@@ -978,14 +1233,15 @@ describe('file save IPC handlers', () => {
       canceled: false,
       filePath: join(downloadsPath, 'Research-artifacts.zip')
     })
+    const openLatestManagedFile = vi.fn().mockResolvedValue({
+      size: 1,
+      readRange,
+      verifyUnchanged,
+      copyTo: vi.fn(),
+      close
+    })
     registerProjectFileSaveHandlers({
-      openLatestManagedFile: vi.fn().mockResolvedValue({
-        size: 1,
-        readRange,
-        verifyUnchanged,
-        copyTo: vi.fn(),
-        close
-      }),
+      openLatestManagedFile,
       createProjectArtifactTemporaryRoot: vi.fn().mockRejectedValue(temporaryRootError)
     } as never)
 
@@ -1000,6 +1256,7 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'artifact-file-1',
+              versionId: 'artifact-file-1-version',
               suggestedName: 'report.csv'
             }
           ]
@@ -1008,7 +1265,8 @@ describe('file save IPC handlers', () => {
     ).rejects.toBe(temporaryRootError)
     expect(readRange).not.toHaveBeenCalled()
     expect(verifyUnchanged).not.toHaveBeenCalled()
-    expect(close).toHaveBeenCalledOnce()
+    expect(openLatestManagedFile).not.toHaveBeenCalled()
+    expect(close).not.toHaveBeenCalled()
   })
 
   it('exports Project Artifacts without reading an entire source into memory', async () => {
@@ -1032,6 +1290,7 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'report.csv'
             }
           ]
@@ -1073,6 +1332,7 @@ describe('file save IPC handlers', () => {
                 source: 'artifact',
                 sessionId: 'session-1',
                 fileId: 'test-file-id',
+                versionId: 'test-file-id-version',
                 suggestedName: 'report.csv'
               }
             ]
@@ -1121,6 +1381,7 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'artifact-file-1',
+              versionId: 'artifact-file-1-version',
               suggestedName: 'report.csv'
             }
           ]
@@ -1134,6 +1395,7 @@ describe('file save IPC handlers', () => {
             source: 'artifact',
             sessionId: 'session-1',
             fileId: 'artifact-file-1',
+            versionId: 'artifact-file-1-version',
             suggestedName: 'report.csv',
             message: 'Managed version storage is unavailable.'
           }
@@ -1141,7 +1403,7 @@ describe('file save IPC handlers', () => {
       })
       expect(resolveManagedFilePath).not.toHaveBeenCalled()
       expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
-      expect(showSaveDialog).not.toHaveBeenCalled()
+      expect(showSaveDialog).toHaveBeenCalledOnce()
       await expect(readFile(destinationPath)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       await rm(root, { recursive: true, force: true })
@@ -1155,6 +1417,10 @@ describe('file save IPC handlers', () => {
         code: 'CONTENT_INTEGRITY_FAILED'
       })
     )
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: join(downloadsPath, 'Research-artifacts.zip')
+    })
     registerProjectFileSaveHandlers({
       resolveSessionArtifactFilePath,
       openLatestManagedFile
@@ -1170,6 +1436,7 @@ describe('file save IPC handlers', () => {
             source: 'artifact',
             sessionId: 'session-1',
             fileId: 'artifact-file-1',
+            versionId: 'artifact-file-1-version',
             suggestedName: 'report.csv'
           }
         ]
@@ -1183,27 +1450,33 @@ describe('file save IPC handlers', () => {
           source: 'artifact',
           sessionId: 'session-1',
           fileId: 'artifact-file-1',
+          versionId: 'artifact-file-1-version',
           suggestedName: 'report.csv',
           message: 'Managed file version content is unavailable or corrupt.'
         }
       ]
     })
     expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
-    expect(showSaveDialog).not.toHaveBeenCalled()
+    expect(showSaveDialog).toHaveBeenCalledOnce()
   })
 
-  it('does not let a stale Project version hint bypass latest resolution', async () => {
+  it('opens the immutable Project file Version selected in the renderer snapshot', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-version-'))
+    const destinationPath = join(root, 'Research-artifacts.zip')
     const resolveSessionArtifactFilePath = vi.fn()
     const openLatestManagedFile = vi.fn()
-    const openManagedFileVersion = vi.fn()
+    const openManagedFileVersion = vi
+      .fn()
+      .mockResolvedValue(managedVersionHandle('selected artifact version'))
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
     registerProjectFileSaveHandlers({
       resolveSessionArtifactFilePath,
       openLatestManagedFile,
       openManagedFileVersion
     } as never)
 
-    await expect(
-      handlers.get('file:save-project-artifacts')!(
+    try {
+      await handlers.get('file:save-project-artifacts')!(
         { sender: {} },
         {
           projectId: 'project-1',
@@ -1219,11 +1492,20 @@ describe('file save IPC handlers', () => {
           ]
         }
       )
-    ).rejects.toThrow('Invalid Project Artifact save request.')
+      expect(openManagedFileVersion).toHaveBeenCalledWith('artifact', {
+        projectId: 'project-1',
+        fileId: 'artifact-file-1',
+        versionId: 'artifact-version-1'
+      })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Buffer.from(entries['generated/report.csv']!).toString('utf8')).toBe(
+        'selected artifact version'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
     expect(openLatestManagedFile).not.toHaveBeenCalled()
-    expect(openManagedFileVersion).not.toHaveBeenCalled()
     expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
-    expect(showSaveDialog).not.toHaveBeenCalled()
   })
 
   it('applies collision suffixes within each source category only', async () => {
@@ -1257,18 +1539,21 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'report.csv'
             },
             {
               source: 'upload',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'report.csv'
             },
             {
               source: 'artifact',
               sessionId: 'session-2',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'report.csv'
             }
           ]
@@ -1313,12 +1598,14 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'report.csv'
             },
             {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'gone.csv'
             }
           ]
@@ -1333,6 +1620,7 @@ describe('file save IPC handlers', () => {
             source: 'artifact',
             sessionId: 'session-1',
             fileId: 'test-file-id',
+            versionId: 'test-file-id-version',
             suggestedName: 'gone.csv',
             message: 'Artifact bytes are unavailable.'
           }
@@ -1364,6 +1652,7 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'report.csv'
             }
           ]
@@ -1376,10 +1665,14 @@ describe('file save IPC handlers', () => {
     }
   })
 
-  it('skips the Save As dialog when no Project Artifact resolves', async () => {
+  it('publishes no archive when no Project Artifact resolves after Save As', async () => {
     const resolveSessionArtifactFilePath = vi
       .fn()
       .mockRejectedValue(new Error('Artifact bytes are unavailable.'))
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: join(downloadsPath, 'Research-artifacts.zip')
+    })
     registerProjectFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
 
     const result = await handlers.get('file:save-project-artifacts')!(
@@ -1392,13 +1685,14 @@ describe('file save IPC handlers', () => {
             source: 'artifact',
             sessionId: 'session-1',
             fileId: 'test-file-id',
+            versionId: 'test-file-id-version',
             suggestedName: 'gone.csv'
           }
         ]
       }
     )
 
-    expect(showSaveDialog).not.toHaveBeenCalled()
+    expect(showSaveDialog).toHaveBeenCalledOnce()
     expect(result).toEqual({
       saved: true,
       failures: [
@@ -1406,6 +1700,7 @@ describe('file save IPC handlers', () => {
           source: 'artifact',
           sessionId: 'session-1',
           fileId: 'test-file-id',
+          versionId: 'test-file-id-version',
           suggestedName: 'gone.csv',
           message: 'Artifact bytes are unavailable.'
         }
@@ -1440,12 +1735,14 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'small.txt'
             },
             {
               source: 'upload',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'big.txt'
             }
           ]
@@ -1460,6 +1757,7 @@ describe('file save IPC handlers', () => {
             source: 'upload',
             sessionId: 'session-1',
             fileId: 'test-file-id',
+            versionId: 'test-file-id-version',
             suggestedName: 'big.txt',
             message: 'Project export file exceeds the per-file size limit.'
           }
@@ -1500,12 +1798,14 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'first.txt'
             },
             {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'second.txt'
             }
           ]
@@ -1520,6 +1820,7 @@ describe('file save IPC handlers', () => {
             source: 'artifact',
             sessionId: 'session-1',
             fileId: 'test-file-id',
+            versionId: 'test-file-id-version',
             suggestedName: 'second.txt',
             message: 'Project export exceeds the total size limit.'
           }
@@ -1560,12 +1861,14 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'first.txt'
             },
             {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'second.txt'
             }
           ]
@@ -1580,6 +1883,7 @@ describe('file save IPC handlers', () => {
             source: 'artifact',
             sessionId: 'session-1',
             fileId: 'test-file-id',
+            versionId: 'test-file-id-version',
             suggestedName: 'second.txt',
             message: 'Project export exceeds the file-count limit.'
           }
@@ -1617,12 +1921,14 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: '..\\..\\evil.exe'
             },
             {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'nested/dir/notes.txt'
             }
           ]
@@ -1673,6 +1979,7 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: '__proto__'
             }
           ]
@@ -1716,6 +2023,7 @@ describe('file save IPC handlers', () => {
                 source: 'artifact',
                 sessionId: 'session-1',
                 fileId: 'test-file-id',
+                versionId: 'test-file-id-version',
                 suggestedName: 'report.csv'
               }
             ]
@@ -1734,6 +2042,10 @@ describe('file save IPC handlers', () => {
   it('reports invalid latest Version sizes without reading them', async () => {
     const close = vi.fn().mockResolvedValue(undefined)
     const readRange = vi.fn()
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: join(downloadsPath, 'Research-artifacts.zip')
+    })
     registerProjectFileSaveHandlers({
       openLatestManagedFile: vi
         .fn()
@@ -1750,6 +2062,7 @@ describe('file save IPC handlers', () => {
             source: 'artifact',
             sessionId: 'session-1',
             fileId: 'test-file-id',
+            versionId: 'test-file-id-version',
             suggestedName: 'fifo.csv'
           }
         ]
@@ -1763,13 +2076,14 @@ describe('file save IPC handlers', () => {
           source: 'artifact',
           sessionId: 'session-1',
           fileId: 'test-file-id',
+          versionId: 'test-file-id-version',
           suggestedName: 'fifo.csv',
           message: 'Project export source size is invalid.'
         }
       ]
     })
     expect(readRange).not.toHaveBeenCalled()
-    expect(showSaveDialog).not.toHaveBeenCalled()
+    expect(showSaveDialog).toHaveBeenCalledOnce()
     expect(close).toHaveBeenCalledTimes(1)
   })
 
@@ -1780,6 +2094,7 @@ describe('file save IPC handlers', () => {
       source: 'artifact',
       sessionId: 'session-1',
       fileId: 'test-file-id',
+      versionId: 'test-file-id-version',
       suggestedName: `${index}.txt`
     }))
 
@@ -1821,6 +2136,7 @@ describe('file save IPC handlers', () => {
                 source: 'artifact',
                 sessionId: 'session-1',
                 fileId: 'test-file-id',
+                versionId: 'test-file-id-version',
                 suggestedName: 'report.csv'
               }
             ]
@@ -1861,12 +2177,14 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'A.csv'
             },
             {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'a.csv'
             }
           ]
@@ -1903,6 +2221,7 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'a<b>.csv'
             }
           ]
@@ -1941,6 +2260,7 @@ describe('file save IPC handlers', () => {
               source: 'artifact',
               sessionId: 'session-1',
               fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
               suggestedName: 'exact.bin'
             }
           ]
@@ -1962,6 +2282,7 @@ describe('file save IPC handlers', () => {
       source: 'artifact',
       sessionId: 'session-1',
       fileId: 'artifact-file-1',
+      versionId: 'artifact-file-1-version',
       suggestedName: 'report.csv'
     }
 
@@ -1992,6 +2313,16 @@ describe('file save IPC handlers', () => {
           projectId: 'project-1',
           suggestedArchiveName: 'Research',
           files: [{ ...baseFile, fileId: undefined }]
+        }
+      )
+    ).rejects.toThrow('Invalid Project Artifact save request.')
+    await expect(
+      handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          suggestedArchiveName: 'Research',
+          files: [{ ...baseFile, versionId: undefined }]
         }
       )
     ).rejects.toThrow('Invalid Project Artifact save request.')
@@ -2233,6 +2564,7 @@ describe('assertSaveSessionArtifactsRequest logical identity validation', () => 
     { identity: {}, label: 'missing file id' },
     { identity: { fileId: 42 }, label: 'numeric file id' },
     { identity: { fileId: '   ' }, label: 'blank file id' },
+    { identity: { fileId: 'artifact-1' }, label: 'missing version id' },
     { identity: { fileId: 'artifact-1', versionId: 42 }, label: 'numeric version id' },
     { identity: { fileId: 'artifact-1', versionId: '' }, label: 'blank version id' },
     { identity: { versionId: 'artifact-v1' }, label: 'version without file id' }

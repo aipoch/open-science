@@ -111,7 +111,12 @@ describe('registerNotebookEnvIpcHandlers', () => {
     registerNotebookEnvIpcHandlers(createLifecycle(provisioner))
 
     await registered.get('notebook-env:provision')?.({}, 'r', 'provision-operation')
-    await registered.get('notebook-env:repair')?.({}, 'python', 'repair-operation')
+    await registered.get('notebook-env:repair')?.(
+      {},
+      'python',
+      'default-python',
+      'repair-operation'
+    )
 
     expect(sent).toEqual([
       {

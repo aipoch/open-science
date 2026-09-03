@@ -1479,8 +1479,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       view={memoryView}
                       onNavigate={navigateMemory}
                       onOpenProject={(projectId) => {
-                        useNavigationStore.getState().openProject(projectId, 'user')
-                        onClose()
+                        useNavigationStore.getState().openProject(projectId, 'user', onClose)
                       }}
                     />
                   ) : activePanel === 'connectors' ? (
@@ -1640,7 +1639,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     <RuntimesPanel
                       title={t('Notebook runtimes')}
                       description={t(
-                        'Enable the environments each notebook language may run in. The app-managed environment is on by default; enable your own interpreters to make them available to the agent.'
+                        'Choose which Python and R environments notebooks and the Agent can use. App-managed environments are enabled by default.'
                       )}
                       onOpenNetworkProtection={
                         notebookNetworkAvailable

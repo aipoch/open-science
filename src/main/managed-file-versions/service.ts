@@ -19,6 +19,7 @@ import {
   type SaveTextEditResult
 } from '../../shared/managed-file-versions'
 import { ManagedTextDiffTaskRunner } from './diff-task'
+import { ManagedFileVersionError } from './error'
 import {
   NodeVersionFileOperator,
   VersionFileOperatorError,
@@ -84,6 +85,7 @@ type ManagedFileReadLease = ResolvedManagedFileVersion & {
   ) => Promise<{ bytesRead: number }>
   readRange: (begin: number, end: number) => Promise<Uint8Array>
   copyTo: (destinationPath: string, options?: { exclusive?: boolean }) => Promise<void>
+  assertCanCopyTo?: (destinationPath: string) => Promise<void>
   verifyUnchanged: () => Promise<void>
   close: () => Promise<void>
 }
@@ -146,18 +148,6 @@ type AdoptedLegacyArtifact = {
 
 type WriteOperationRecord = Prisma.ManagedFileVersionWriteOperationGetPayload<object>
 type LegacyArtifactVersionRecord = Prisma.ArtifactVersionGetPayload<object>
-
-class ManagedFileVersionError extends Error {
-  readonly name = 'ManagedFileVersionError'
-
-  constructor(
-    readonly code: ManagedFileVersionErrorCode,
-    message: string,
-    options?: ErrorOptions
-  ) {
-    super(message, options)
-  }
-}
 
 const operationError = (code: ManagedFileVersionErrorCode, message: string): never => {
   throw new ManagedFileVersionError(code, message)
@@ -1208,6 +1198,7 @@ class ManagedFileVersionService {
       },
       readRange: operatorLease.readRange,
       copyTo: (destinationPath, options) => operatorLease.copyTo(destinationPath, options),
+      assertCanCopyTo: operatorLease.assertCanCopyTo,
       verifyUnchanged: operatorLease.verifyUnchanged,
       close: operatorLease.close
     }

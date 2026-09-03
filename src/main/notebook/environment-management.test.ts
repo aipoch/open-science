@@ -69,6 +69,7 @@ const harness = (
     runtimeRepair: {
       completeRemovedManagedEnvironment: vi.fn()
     },
+    isAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true),
     ...overrides
   }
   return {
@@ -167,6 +168,22 @@ describe('NotebookEnvironmentManagementOwner', () => {
       })
     )
     expect(options.assertPrefixRecoverable).toHaveBeenCalledWith(envPrefix('/runtime', 'analysis'))
+  })
+
+  it('refuses Agent environment creation when the persisted policy is disabled', async () => {
+    const {
+      owner,
+      manager: configured,
+      options
+    } = harness({
+      isAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(false)
+    })
+
+    await expect(
+      owner.manage({ action: 'create', language: 'python', name: 'analysis' })
+    ).rejects.toThrow('AGENT_ENVIRONMENT_CREATION_DISABLED')
+    expect(configured?.createNamedEnvironment).not.toHaveBeenCalled()
+    expect(options.ensureRecovered).not.toHaveBeenCalled()
   })
 
   it('rejects invalid create and remove names before lifecycle side effects', async () => {

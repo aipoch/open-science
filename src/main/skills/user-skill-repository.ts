@@ -35,6 +35,8 @@ export type { ImportOutcome } from './user-skill-import-contracts'
 
 // Reads and writes user-authored (personal) and imported skills under `<storageRoot>/skills/`.
 class UserSkillRepository {
+  readonly isMutationOwnerContext = (): boolean => this.transactions.isHeldByCurrentContext()
+
   private readonly transactions: SkillPackageTransactionOwner
   private readonly compatibilityIndex: UserSkillCompatibilityIndex
   private readonly store: UserSkillStore
@@ -44,9 +46,14 @@ class UserSkillRepository {
   constructor(
     storageRoot: string,
     mutationOwner?: SkillMutationOwner,
-    validatePromotion?: (list: () => Promise<BundledSkill[]>) => Promise<void>
+    validatePromotion?: (list: () => Promise<BundledSkill[]>) => Promise<void>,
+    withExternalRecoveryBarrier?: <T>(operation: () => Promise<T>) => Promise<T>
   ) {
-    this.transactions = new SkillPackageTransactionOwner(storageRoot, mutationOwner)
+    this.transactions = new SkillPackageTransactionOwner(
+      storageRoot,
+      mutationOwner,
+      withExternalRecoveryBarrier
+    )
     this.compatibilityIndex = new UserSkillCompatibilityIndex(storageRoot)
     this.store = new UserSkillStore(storageRoot, this.transactions, this.compatibilityIndex)
     this.bundleImports = new SkillBundleImportOwner(this.store, this.transactions)

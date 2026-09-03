@@ -11,6 +11,7 @@ import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 const roots: string[] = []
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
@@ -30,7 +31,16 @@ describe('Skill ZIP export', () => {
     const archiveBytes = new Uint8Array([1, 2, 3])
 
     await expect(
-      saveSkillExport({ showSaveDialog, writeFile }, { fileName: 'my-skill.zip', archiveBytes })
+      saveSkillExport(
+        {
+          showSaveDialog,
+          writeFile,
+          publishUserFile: async (destinationPath, write) => {
+            await write(destinationPath)
+          }
+        },
+        { fileName: 'my-skill.zip', archiveBytes }
+      )
     ).resolves.toEqual({ saved: true })
     expect(showSaveDialog).toHaveBeenCalledWith({
       title: 'Export Skill',
@@ -118,6 +128,28 @@ describe('Skill ZIP export', () => {
     expect(strFromU8(archive['SKILL.md']!)).not.toContain('displayName')
     expect(strFromU8(archive['SKILL.md']!)).toContain('name: Portable')
     expect(strFromU8(archive['SKILL.md']!)).toContain('Body.')
+  })
+
+  it('exports a Skill ZIP in a negative UTC timezone', async () => {
+    vi.stubEnv('TZ', 'America/Los_Angeles')
+    const root = await mkdtemp(join(tmpdir(), 'skill-export-negative-timezone-'))
+    roots.push(root)
+    await writeFile(join(root, 'SKILL.md'), '# Portable')
+
+    await expect(
+      buildSkillExportArchive({
+        id: 'personal-portable',
+        name: 'Portable',
+        displayName: 'Portable',
+        description: '',
+        source: 'personal',
+        updatedAt: '2026-08-07T00:00:00.000Z',
+        sourceDir: root
+      })
+    ).resolves.toEqual({
+      fileName: 'portable.zip',
+      archiveBytes: expect.any(Uint8Array)
+    })
   })
 
   it.each(['.hidden', '__MACOSX/metadata'])(

@@ -35,14 +35,13 @@ import type {
 } from './side-chat'
 import type { SourcePreviewLoadState } from './source-preview'
 import type {
-  ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult,
-  ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest,
   ReconcilePendingArtifactsRequest,
+  ReconcilePendingArtifactsResult,
   ResolveArtifactVersionDescriptorsRequest
 } from './artifacts'
 import type {
@@ -102,6 +101,7 @@ import type {
   CreatePasswordComputeHostResult,
   ResetPasswordComputeHostRequest,
   ResetPasswordComputeHostResult,
+  SetComputeJobRemoteCleanupRequest,
   ChangeComputeHostAuthenticationRequest,
   ChangeComputeHostAuthenticationResult,
   DeleteComputeHostRequest,
@@ -181,9 +181,7 @@ import type {
   DiscoveredInterpreter,
   EnvPackage,
   RuntimeEnablement,
-  RuntimeUsage,
-  RuntimeSelection,
-  RuntimeSurvey
+  RuntimeUsage
 } from './notebook-runtime'
 import type {
   DeletePreviewStateRequest,
@@ -499,7 +497,6 @@ const DEFAULT_EMPTY_ABSENT_ONLY = 'default-empty-object-absent-only'
 const OPTIONAL_ARGUMENT_SLOT = 'optional-argument-slot'
 const STORAGE_PARENT = 'storage-parent-object'
 const STORAGE_ROOT = 'storage-data-root-object'
-const RUNTIME_SELECTION = 'runtime-selection-object'
 const RUNTIME_LANGUAGE_ENV = 'runtime-language-environment-object'
 const RUNTIME_LANGUAGE = 'runtime-language-object'
 const RUNTIME_ENABLEMENT = 'runtime-enablement-object'
@@ -810,9 +807,6 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'artifacts.getVersionReview': callable<
     (request: GetArtifactVersionProvenanceRequest) => Promise<ArtifactVersionReviewProvenance>
   >()('artifacts', ['artifacts:get-version-review']),
-  'artifacts.listProjectFiles': callable<
-    (request: ListProjectArtifactsRequest) => Promise<ArtifactFile[]>
-  >()('artifacts', ['artifacts:list-project-files']),
   'artifacts.openFile': callable<(request: OpenArtifactFileRequest) => Promise<void>>()(
     'artifacts',
     ['artifacts:open-file', LOCAL]
@@ -821,7 +815,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   >()('artifacts', ['artifacts:read-preview']),
   'artifacts.reconcilePendingArtifacts': callable<
-    (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
+    (request: ReconcilePendingArtifactsRequest) => Promise<ReconcilePendingArtifactsResult>
   >()('artifacts', ['artifacts:reconcile-pending']),
   'artifacts.resolveVersionDescriptors': callable<
     (request: ResolveArtifactVersionDescriptorsRequest) => Promise<ArtifactVersionDescriptor[]>
@@ -890,6 +884,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'compute',
     ['compute:jobs:cancel']
   ),
+  'compute.jobsSetRemoteCleanup': callable<
+    (request: SetComputeJobRemoteCleanupRequest) => Promise<void>
+  >()('compute', ['compute:jobs:set-remote-cleanup', LOCAL]),
   'compute.jobsMarkConsumed': callable<(sessionId: string, jobIds: string[]) => Promise<void>>()(
     'compute',
     ['compute:jobs:mark-consumed']
@@ -1193,10 +1190,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'notebookEnv.provision': callable<
     (lang: NotebookLanguage, operationId?: string) => Promise<void>
   >()('notebook-environment', ['notebook-env:provision', LOCAL]),
-  'notebookEnv.repair': callable<(lang: NotebookLanguage, operationId?: string) => Promise<void>>()(
-    'notebook-environment',
-    ['notebook-env:repair', LOCAL]
-  ),
+  'notebookEnv.repair': callable<
+    (lang: NotebookLanguage, runtimeIdentity: string, operationId?: string) => Promise<void>
+  >()('notebook-environment', ['notebook-env:repair', LOCAL]),
   'notifications.getSnapshot': callable<() => Promise<NotificationInboxSnapshot>>()(
     'notifications',
     ['notifications:get-snapshot']
@@ -1445,6 +1441,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'runtime.describeUsage': callable<
     (language: NotebookLanguage, envId: string) => Promise<RuntimeUsage>
   >()('runtime', ['runtime:describe-usage', WEB, RUNTIME_LANGUAGE_ENV]),
+  'runtime.getAgentEnvironmentCreationEnabled': callable<() => Promise<boolean>>()('runtime', [
+    'runtime:get-agent-environment-creation-enabled',
+    WEB
+  ]),
   'runtime.getEnablement': callable<(language: NotebookLanguage) => Promise<RuntimeEnablement>>()(
     'runtime',
     ['runtime:get-enablement', WEB, RUNTIME_LANGUAGE]
@@ -1465,6 +1465,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'runtime.registerInterpreter': callable<
     (language: NotebookLanguage, path: string) => Promise<string[]>
   >()('runtime', ['runtime:register-interpreter', LOCAL, RUNTIME_INTERPRETER]),
+  'runtime.setAgentEnvironmentCreationEnabled': callable<
+    (request: { enabled: boolean }) => Promise<boolean>
+  >()('runtime', ['runtime:set-agent-environment-creation-enabled', LOCAL]),
   'runtime.setEnvironmentEnabled': callable<
     (
       language: NotebookLanguage,
@@ -1476,10 +1479,6 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'runtime.setInstallAuthorized': callable<
     (language: NotebookLanguage, envId: string, authorized: boolean) => Promise<RuntimeEnablement>
   >()('runtime', ['runtime:set-install-authorized', LOCAL, RUNTIME_INSTALL_AUTH]),
-  'runtime.setSelection': callable<
-    (language: NotebookLanguage, selection: RuntimeSelection | null) => Promise<RuntimeSurvey>
-  >()('runtime', ['runtime:set-selection', LOCAL, RUNTIME_SELECTION]),
-  'runtime.survey': callable<() => Promise<RuntimeSurvey[]>>()('runtime', ['runtime:survey']),
   'runtime.unregisterInterpreter': callable<
     (language: NotebookLanguage, path: string) => Promise<string[]>
   >()('runtime', ['runtime:unregister-interpreter', LOCAL, RUNTIME_INTERPRETER]),
@@ -1502,7 +1501,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('sessions', ['sessions:delete-session', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.editDetails': callable<
     (request: EditSessionDetailsRequest) => Promise<PersistedChatSession>
-  >()('sessions', ['sessions:edit-details']),
+  >()('sessions', ['sessions:edit-details', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.exportConversation': callable<
     (request: ExportConversationRequest) => Promise<ExportConversationResult>
   >()('sessions', ['sessions:export-conversation', MAPPED_ELECTRON]),
@@ -1839,6 +1838,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.respondSkillImportApproval': callable<
     (response: ConversationSkillImportApprovalResponse) => Promise<void>
   >()('settings', ['skills:conversation-import-respond']),
+  'settings.retryConnectorProjection': callable<() => Promise<ConnectorsSnapshot>>()('settings', [
+    'settings:retry-connector-projection',
+    LOCAL
+  ]),
   'settings.retryCustomServer': callable<
     (request: AuthenticateCustomServerRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:retry-custom-server', LOCAL]),

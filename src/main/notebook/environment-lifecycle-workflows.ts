@@ -17,12 +17,17 @@ import {
   type ProvisionStatus,
   type RuntimeProvisioner
 } from './provisioner'
+import { explicitRuntimeRepairTarget, type ExplicitRuntimeRepairTarget } from './runtime-repair'
 import { DEFAULT_ENV_VERSION, DEFAULT_PY_ENV, envPrefix, readReadyMarker } from './runtime-paths'
 
 type NotebookEnvironmentLifecycle = {
   status: () => Promise<ProvisionStatus>
   provision: (language: NotebookLanguage, operationId?: string) => Promise<void>
-  repair: (language: NotebookLanguage, operationId?: string) => Promise<void>
+  repair: (
+    language: NotebookLanguage,
+    runtimeIdentity: string,
+    operationId?: string
+  ) => Promise<void>
   cancel: (language?: NotebookLanguage) => void
   startup: () => Promise<void>
 }
@@ -34,6 +39,10 @@ type NotebookEnvironmentLifecycleDeps = {
   projectProgress: (progress: ProvisionProgress) => void
   waitForRecovery?: () => Promise<void>
   assertProvisionAllowed?: (language: NotebookLanguage) => void
+  onRepairStarting?: (
+    language: NotebookLanguage,
+    target: ExplicitRuntimeRepairTarget
+  ) => Promise<void> | void
   onRepairCompleted?: (language: NotebookLanguage) => Promise<void> | void
 }
 
@@ -71,7 +80,7 @@ const createUnavailableLifecycle = (
     }),
   provision: async (language, operationId) =>
     runUnavailableOperation(deps, 'provision', parseNotebookLanguage(language), operationId),
-  repair: async (language, operationId) =>
+  repair: async (language, _runtimeIdentity, operationId) =>
     runUnavailableOperation(deps, 'repair', parseNotebookLanguage(language), operationId),
   cancel: (language) => {
     parseOptionalNotebookLanguage(language)
@@ -121,8 +130,15 @@ const createNotebookEnvironmentLifecycle = (
     )
   }
 
-  const repair = async (language: NotebookLanguage, operationId?: string): Promise<void> => {
+  const repair = async (
+    language: NotebookLanguage,
+    runtimeIdentity: string,
+    operationId?: string
+  ): Promise<void> => {
     const parsedLanguage = parseNotebookLanguage(language)
+    if (typeof runtimeIdentity !== 'string' || runtimeIdentity.trim() === '') {
+      throw new Error('A current app-managed runtime identity is required for repair.')
+    }
     return runLoggedRuntimeOperation(
       'repair',
       parsedLanguage,
@@ -130,6 +146,12 @@ const createNotebookEnvironmentLifecycle = (
       (report) =>
         withDataRootWrite(async () => {
           if (deps.waitForRecovery) await deps.waitForRecovery()
+          if (deps.onRepairStarting) {
+            await deps.onRepairStarting(
+              parsedLanguage,
+              explicitRuntimeRepairTarget(parsedLanguage, runtimeIdentity)
+            )
+          }
           await provisioner.repair(parsedLanguage, report, {
             force: true,
             onVerified: () => deps.onRepairCompleted?.(parsedLanguage)

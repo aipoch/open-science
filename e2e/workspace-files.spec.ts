@@ -16,6 +16,26 @@ const SCRIPT_NAME = 'analysis.sh'
 const SCRIPT_CONTENT = '#!/bin/bash\n# stable\necho "old"\n'
 const SCRIPT_VERSION_TWO_CONTENT = '#!/bin/bash\n# stable\necho "new"\n'
 
+const createTwoPagePdf = (): Buffer => {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>'
+  ]
+  const offsets: number[] = []
+  let body = '%PDF-1.4\n'
+  for (const [index, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(body))
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`
+  }
+  const xrefOffset = Buffer.byteLength(body)
+  const xref = offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n `).join('\n')
+  return Buffer.from(
+    `${body}xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${xref}\ntrailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`
+  )
+}
+
 const createProject = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
@@ -188,6 +208,29 @@ test('edits uploaded Markdown versions and keeps diff navigation coherent', asyn
 
   await preview.getByRole('button', { name: `Close preview of ${FILE_NAME}` }).click()
   await expect(preview).toBeHidden()
+})
+
+test('links a multi-page PDF upload as Reading context in a new project', async ({ app }) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page)
+
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: 'paper.pdf',
+    mimeType: 'application/pdf',
+    buffer: createTwoPagePdf()
+  })
+  await expect(page.getByTestId('automatic-reading-suggestion')).toContainText(
+    '1 PDF will be linked when sent'
+  )
+
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Summarize the attached paper.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  await expect(page.getByTestId('pdf-context-bar')).toContainText('paper.pdf')
+  await expect(page.getByRole('button', { name: 'Page 1 of 2' })).toBeVisible()
+  await expect(page.getByText('PDF context Version is unavailable in this Project.')).toHaveCount(0)
+  await expect(page.getByText('Managed file reference requires a logical identity.')).toHaveCount(0)
 })
 
 test('shows structured text replacements with character-level highlights', async ({ app }) => {

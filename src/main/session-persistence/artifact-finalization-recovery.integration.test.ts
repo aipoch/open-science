@@ -11,6 +11,7 @@ vi.mock('electron', () => ({
 }))
 
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
+import { ARTIFACT_FINALIZATION_INVALID_PROOF } from '../../shared/artifacts'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createPngInlineSource } from '../artifacts/artifact-test-fixtures'
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
@@ -54,6 +55,118 @@ describe('artifact finalization startup recovery', () => {
   afterEach(async () => {
     await client.$disconnect()
     await rm(storageRoot, { recursive: true, force: true })
+  })
+
+  it('retries durable finalization in the current Session and remains idempotent', async () => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const { provenance, version } = await prepareRecovery(compatibility)
+    const coordinator = new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      undefined,
+      undefined,
+      provenance
+    )
+    const request = {
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      messageId: 'message-1',
+      pendingPaths: [],
+      artifactVersionIds: [version.versionId]
+    }
+
+    const recovery = await coordinator.retryArtifactFinalization(request)
+    const finalized = recovery?.artifacts
+
+    expect(finalized).toEqual([
+      expect.objectContaining({
+        id: version.versionId,
+        artifactId: version.artifactId,
+        versionId: version.versionId,
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID
+      })
+    ])
+    await expect(
+      client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    ).resolves.toMatchObject({ state: 'finalized', messageId: 'message-1' })
+    const durableSession = await sessions.loadSession(PROJECT_ID, SESSION_ID)
+    expect(durableSession?.messages[1].artifactIds).toBeUndefined()
+    expect(durableSession?.artifacts).toBeUndefined()
+
+    await expect(coordinator.retryArtifactFinalization(request)).resolves.toEqual(recovery)
+  })
+
+  it('replays an explicitly requested finalized Version that is already linked', async () => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const { provenance, version } = await prepareRecovery(compatibility)
+    await client.artifactVersion.update({
+      where: { id: version.versionId },
+      data: { state: 'finalized', messageId: 'message-1' }
+    })
+    const linked = (await sessions.loadSession(PROJECT_ID, SESSION_ID))!
+    linked.messages[1] = {
+      ...linked.messages[1],
+      status: 'complete',
+      artifactIds: [version.versionId]
+    }
+    const graphMessage = linked.conversationGraph?.messages.find(
+      (message) => message.id === 'message-1'
+    )
+    if (graphMessage) {
+      graphMessage.status = 'complete'
+      graphMessage.artifactIds = [version.versionId]
+    }
+    linked.artifacts = [
+      {
+        id: version.versionId,
+        artifactId: version.artifactId,
+        versionId: version.versionId,
+        versionNumber: version.versionNumber,
+        kind: 'managed-file',
+        path: version.path,
+        fileUrl: version.fileUrl,
+        name: version.name,
+        mimeType: version.mimeType,
+        size: version.size,
+        createdAt: Date.parse(version.createdAt),
+        mtimeMs: version.mtimeMs,
+        sha256: version.checksum
+      }
+    ]
+    await sessions.saveSession(linked)
+    const coordinator = new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      undefined,
+      undefined,
+      provenance
+    )
+
+    await expect(
+      coordinator.retryArtifactFinalization({
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        messageId: 'message-1',
+        pendingPaths: [],
+        artifactVersionIds: [version.versionId]
+      })
+    ).resolves.toMatchObject({
+      artifacts: [expect.objectContaining({ versionId: version.versionId })],
+      nativeRunIds: [RUN_ID]
+    })
+    await expect(
+      compatibility.listPendingRunFiles({
+        projectId: PROJECT_ID,
+        sessionId: STORAGE_SESSION_ID,
+        runId: RUN_ID
+      })
+    ).resolves.toEqual([])
+    await expect(
+      client.artifactLineage.findUniqueOrThrow({ where: { id: version.artifactId } })
+    ).resolves.toMatchObject({ currentVersionId: version.versionId })
   })
 
   it('persists an inspectable Message snapshot with the recovered Session attachment', async () => {
@@ -161,6 +274,24 @@ describe('artifact finalization startup recovery', () => {
 
     expect(loaded.sessions[0].messages[1].artifactIds).toBeUndefined()
     expect(loaded.sessions[0].artifacts).toBeUndefined()
+    await expect(
+      coordinator.retryArtifactFinalization({
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        messageId: 'message-1',
+        pendingPaths: [
+          join(
+            storageRoot,
+            'artifacts',
+            PROJECT_ID,
+            STORAGE_SESSION_ID,
+            '.pending',
+            RUN_ID,
+            'result.png'
+          )
+        ]
+      })
+    ).rejects.toMatchObject({ code: ARTIFACT_FINALIZATION_INVALID_PROOF })
     await expect(
       compatibility.findRunFinalizationMarker(PROJECT_ID, RUN_ID)
     ).resolves.toMatchObject({

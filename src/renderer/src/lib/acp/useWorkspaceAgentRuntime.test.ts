@@ -2063,6 +2063,7 @@ describe('workspace agent message sending', () => {
     const replacementSelection = {
       kind: 'version' as const,
       sourceKind: 'artifact-version' as const,
+      sourceFileId: 'artifact-2',
       sourceVersionId: 'version-2',
       previewItemId: 'artifact:version-2'
     }
@@ -2130,6 +2131,7 @@ describe('workspace agent message sending', () => {
     const selection = {
       kind: 'version' as const,
       sourceKind: 'artifact-version' as const,
+      sourceFileId: 'artifact-1',
       sourceVersionId: 'version-1',
       previewItemId: 'artifact:version-1'
     }
@@ -2997,7 +2999,13 @@ describe('workspace agent message sending', () => {
         readingPosition: { pageNumber: 7, pageCount: 14 }
       },
       pdfReadingPosition: { pageNumber: 7, pageCount: 14 },
-      pendingPdfContextVersions: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-2' }]
+      pendingPdfContextVersions: [
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-2',
+          sourceVersionId: 'version-2'
+        }
+      ]
     })
 
     await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
@@ -3072,7 +3080,13 @@ describe('workspace agent message sending', () => {
           linkPdfContext,
           saveSession: vi.fn(async (session: PersistedChatSession) => session),
           filterPdfContextCandidates: vi.fn().mockResolvedValue({
-            sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }],
+            sources: [
+              {
+                sourceKind: 'artifact-version',
+                sourceFileId: 'artifact-2',
+                sourceVersionId: 'artifact-version-2'
+              }
+            ],
             pendingAttachmentIds: [stagedPdf.id]
           })
         }
@@ -3093,7 +3107,11 @@ describe('workspace agent message sending', () => {
       attachments: [stagedPdf],
       pendingPdfContextAttachmentIds: [stagedPdf.id],
       pendingPdfContextVersions: [
-        { sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-2',
+          sourceVersionId: 'artifact-version-2'
+        }
       ],
       pdfReadingPosition: readingPosition,
       cwd: '/workspace/project',
@@ -3107,8 +3125,16 @@ describe('workspace agent message sending', () => {
       sessionId: 'transport-session-1',
       expectedRevision: 0,
       sources: [
-        { sourceKind: 'upload-version', sourceVersionId: 'pdf-version-1' },
-        { sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }
+        {
+          sourceKind: 'upload-version',
+          sourceFileId: 'pdf-upload-1',
+          sourceVersionId: 'pdf-version-1'
+        },
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-2',
+          sourceVersionId: 'artifact-version-2'
+        }
       ],
       excludeSinglePage: true
     })
@@ -3117,6 +3143,18 @@ describe('workspace agent message sending', () => {
       activeBindingId: stagedBinding.bindingId,
       readingPosition
     })
+    expect(runtime.sendPrompt.mock.calls[0]?.[4]).toEqual([
+      expect.objectContaining({
+        source: 'upload',
+        sourceFileId: 'pdf-upload-1',
+        versionId: 'pdf-version-1'
+      }),
+      expect.objectContaining({
+        source: 'artifact',
+        sourceFileId: 'artifact-2',
+        versionId: 'artifact-version-2'
+      })
+    ])
   })
 
   it('does not append a prompt when attachment finalization fails', async () => {
@@ -4028,7 +4066,13 @@ describe('workspace agent message sending', () => {
           saveSession,
           linkPdfContext,
           filterPdfContextCandidates: vi.fn().mockResolvedValue({
-            sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }],
+            sources: [
+              {
+                sourceKind: 'artifact-version',
+                sourceFileId: 'artifact-2',
+                sourceVersionId: 'artifact-version-2'
+              }
+            ],
             pendingAttachmentIds: [stagedPdf.id]
           })
         }
@@ -4053,7 +4097,11 @@ describe('workspace agent message sending', () => {
         attachments: [stagedPdf],
         pendingPdfContextAttachmentIds: [stagedPdf.id],
         pendingPdfContextVersions: [
-          { sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'artifact-2',
+            sourceVersionId: 'artifact-version-2'
+          }
         ],
         pdfReadingPosition: readingPosition,
         cwd: '/workspace/project',
@@ -4077,8 +4125,16 @@ describe('workspace agent message sending', () => {
       sessionId: 'transport-session-1',
       expectedRevision: 3,
       sources: [
-        { sourceKind: 'upload-version', sourceVersionId: 'pdf-version-1' },
-        { sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }
+        {
+          sourceKind: 'upload-version',
+          sourceFileId: 'pdf-upload-1',
+          sourceVersionId: 'pdf-version-1'
+        },
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-2',
+          sourceVersionId: 'artifact-version-2'
+        }
       ],
       excludeSinglePage: true
     })
@@ -4561,7 +4617,11 @@ describe('workspace agent message sending', () => {
         projectId: 'project-1',
         delegationPolicy: 'deny',
         pendingPdfContextVersions: [
-          { sourceKind: 'artifact-version', sourceVersionId: 'version-1' }
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'artifact-1',
+            sourceVersionId: 'version-1'
+          }
         ]
       },
       { awaitPendingPreparation: true }

@@ -85,6 +85,7 @@ import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { connectorSkillSourceDir } from './connectors/provision'
 import { registerFileSaveHandlers } from './file-save'
+import { publishUserFile } from './user-file-publisher'
 import { ImmutableInputAuthority } from './immutable-input-authority'
 import { createCliCommandOwner, registerCliInstallIpcHandlers } from './cli-install/ipc'
 
@@ -171,7 +172,7 @@ import { NotebookInputRegistry } from './notebook/input-registry'
 import { effectiveMirrorAsync } from './notebook/mirror-probe'
 import { createProductionProvisioner, type RuntimeProvisioner } from './notebook/provisioner'
 import { createProductionMicromambaRunner } from './notebook/windows-micromamba-runner'
-import { createRuntimeSelectionWorkflows } from './notebook/runtime-selection-workflows'
+import { createRuntimeWorkflows } from './notebook/runtime-workflows'
 import { runtimeRoot } from './notebook/runtime-paths'
 import { HostArtifactsService } from './notebook/host-artifacts-service'
 import { HostLineageService } from './notebook/host-lineage-service'
@@ -188,7 +189,6 @@ import {
   OFFICE_PREVIEW_STATE_CHANNEL,
   type OfficePreviewOpenRequest
 } from '../shared/office-preview'
-import { prepareExternalPythonRuntime } from './notebook/venv-overlay'
 import {
   createDefaultPreviewStateRepository,
   createDefaultProjectRepository,
@@ -350,7 +350,6 @@ import type {
   PersistedChatSession,
   SessionSummary
 } from '../shared/session-persistence'
-import { editSessionDetailsRequestSchema } from '../shared/session-persistence'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import {
@@ -360,6 +359,13 @@ import {
 } from './storage/migration-state'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import { DataRootCleanupJournal } from './storage/data-root-cleanup'
+import {
+  markManagedProjectWorkspacesRetained,
+  markManagedWorkspaceRetained,
+  reconcileProvisionalManagedWorkspaces,
+  restoreManagedProjectWorkspacesActive,
+  restoreManagedWorkspaceActive
+} from './storage/managed-workspace-ownership'
 import { deleteSources } from './storage/data-migration'
 import { removeMicromambaCacheForRoot } from './notebook/micromamba-cache'
 import { removeNotebookWorkloadCache } from './notebook/notebook-workload-cache-paths'
@@ -506,6 +512,9 @@ const createApplicationModules = async (
   const webSessionPersistenceFlush = createWebSessionPersistenceFlush(applicationEvents)
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
+  const specialistPackageRecovery = {
+    current: undefined as (<T>(operation: () => Promise<T>) => Promise<T>) | undefined
+  }
   const settingsRepository = new SettingsRepository(
     settingsStore ?? resolveStorageRoot(),
     (operation) => specialistPackageSkillAdapter.runMutationExclusive(operation)
@@ -621,6 +630,8 @@ const createApplicationModules = async (
         await networkProxyRuntime.apply(settings)
         await notebookNetworkSandbox.updateParentProxy()
       },
+      withUserSkillRecoveryBarrier: (operation) =>
+        specialistPackageRecovery.current?.(operation) ?? operation(),
       applyNotebookNetwork: async (settings) => notebookNetworkSandbox.applySettings(settings),
       validatePackageMirror: async (settings) => {
         await resolveNotebookTrustBundle(settings.caBundle)
@@ -653,8 +664,6 @@ const createApplicationModules = async (
     }
   }
   const storedSettings = await settingsService.getStoredSettings()
-  await settingsService.migrateAgentHomeSkillIdentities()
-  composition.phase('agent-home-skill-identity-migration')
   const storageLog = createLogger('storage')
   await networkProxyRuntime.apply(storedSettings.networkProxy)
   // Prime the data-root cache from settings before any data repository is constructed below. A change
@@ -893,6 +902,7 @@ const createApplicationModules = async (
     uploadRepository
   )
   const notebookInputRegistry = new NotebookInputRegistry({
+    storageRoot: resolveDataRoot(),
     inputAuthority: immutableInputAuthority,
     resolveArtifactVersionIdentity: async (projectId, versionId) => {
       const [artifact] = await projectFilesRepository.readHostArtifactCatalog({
@@ -995,6 +1005,7 @@ const createApplicationModules = async (
       .filter((chat) => chat.running)
       .map((chat) => ({ projectId: chat.projectId, sessionId: chat.parentSessionId }))
 
+  const managedWorkspaceRecoveryCutoff = Date.now()
   const sessionPersistenceCoordinator = new SessionPersistenceCoordinator(
     sessionRepository,
     projectFilesRepository,
@@ -1030,6 +1041,14 @@ const createApplicationModules = async (
       if (session.delegationPolicy === 'allow') {
         delegatedWorkRef.current?.root.clearUnavailableReason?.(session.id)
       }
+    },
+    {
+      reconcileProvisional: (sessions) =>
+        reconcileProvisionalManagedWorkspaces(sessions, managedWorkspaceRecoveryCutoff),
+      markProjectRetained: markManagedProjectWorkspacesRetained,
+      restoreProjectActive: restoreManagedProjectWorkspacesActive,
+      markRetained: markManagedWorkspaceRetained,
+      restoreActive: restoreManagedWorkspaceActive
     }
   )
   const sessionPdfContextOwner = new SessionPdfContextOwner({
@@ -1296,19 +1315,21 @@ const createApplicationModules = async (
         ? sessionEnabledComputeHostsOwnerRef.current.reconcileSession(session)
         : session
     },
-    saveSession: async (session, options) => {
+    saveSession: async (session, options, authority) => {
       const created =
         (await sessionRepository.loadSession(session.projectId, session.id)) === undefined
+      const save = (candidate: PersistedChatSession): Promise<PersistedChatSession> =>
+        authority
+          ? sessionPersistenceCoordinator.saveSession(candidate, options, authority)
+          : sessionPersistenceCoordinator.saveSession(candidate, options)
       let durableSession = created
         ? await (() => {
             if (!sessionEnabledComputeHostsOwnerRef.current) {
               throw new Error('Session enabled Compute Host ownership is not initialized.')
             }
-            return sessionEnabledComputeHostsOwnerRef.current.createSession(session, (candidate) =>
-              sessionPersistenceCoordinator.saveSession(candidate, options)
-            )
+            return sessionEnabledComputeHostsOwnerRef.current.createSession(session, save)
           })()
-        : await sessionPersistenceCoordinator.saveSession(session, options)
+        : await save(session)
       // Flush any approved host.agents.switch binding stashed while this session was not yet durable,
       // so the approved target survives a restart before the next message (the in-memory binding
       // alone does not persist across restart).
@@ -1351,23 +1372,25 @@ const createApplicationModules = async (
     home: dirname(dirname(provisioningRoot)),
     resourcesPath: process.resourcesPath
   })
-  const notebookRuntimeSettings: Pick<NotebookRuntimeSettings, 'getSnapshot'> = {
+  const notebookRuntimeSettings: Pick<
+    NotebookRuntimeSettings,
+    'getSnapshot' | 'setEnvironmentEnabled'
+  > = {
     getSnapshot: async (language) => {
-      const [runtimeSelection, runtimeEnablement, manualInterpreters, packageMirror] =
-        await Promise.all([
-          settingsService.getRuntimeSelection(language),
-          settingsService.getRuntimeEnablement(language),
-          settingsService.getManualInterpreters(language),
-          settingsService.getPackageMirror()
-        ])
+      const [runtimeEnablement, manualInterpreters, packageMirror] = await Promise.all([
+        settingsService.getRuntimeEnablement(language),
+        settingsService.getManualInterpreters(language),
+        settingsService.getPackageMirror()
+      ])
       return {
         language,
-        runtimeSelection,
         runtimeEnablement,
         manualInterpreters,
         packageMirror
       }
-    }
+    },
+    setEnvironmentEnabled: (language, envId, enabled) =>
+      settingsService.setEnvironmentEnabled(language, envId, enabled)
   }
   const notebookApplication = await modules.add(
     {
@@ -1376,6 +1399,8 @@ const createApplicationModules = async (
       projectId: DEFAULT_ARTIFACT_PROJECT_ID,
       repository: new NotebookRunRepository(resolveDataRoot()),
       getPackageMirror: () => settingsService.getPackageMirror(),
+      getAgentEnvironmentCreationEnabled: () =>
+        settingsService.getAgentEnvironmentCreationEnabled(),
       notebookRuntimeSettings,
       micromambaRunner,
       locale: app.getLocale(),
@@ -1421,7 +1446,11 @@ const createApplicationModules = async (
     protectedSpecialistIds: ['reviewer'],
     protectedSpecialistNames: ['Reviewer']
   })
-  const specialistService = new SpecialistService(specialistRepository, builtinRegistry)
+  const specialistService = new SpecialistService(
+    specialistRepository,
+    builtinRegistry,
+    (operation) => specialistPackageRecovery.current?.(operation) ?? operation()
+  )
   const marketplaceRepository = new MarketplaceRepository(resolveStorageRoot())
   const marketplaceOperationCoordinator = new MarketplaceOperationCoordinator()
   await specialistService.ensureBuiltinCatalogReady()
@@ -1441,11 +1470,14 @@ const createApplicationModules = async (
     applicationEvents
   )
   const tagCleanupLog = createLogger('tags:cleanup')
+  const removeResourceTagsOrThrow = async (
+    resources: Parameters<TagService['removeResources']>[0]
+  ): Promise<void> => tagService.removeResources(resources)
   const removeResourceTags = async (
     resources: Parameters<TagService['removeResources']>[0]
   ): Promise<void> => {
     try {
-      await tagService.removeResources(resources)
+      await removeResourceTagsOrThrow(resources)
     } catch (error) {
       tagCleanupLog.warn('resource deletion Tag cleanup failed', { error, resources })
     }
@@ -1519,7 +1551,7 @@ const createApplicationModules = async (
       }
     },
     onResourcesDeleted: (specialistId, skillIds) =>
-      removeResourceTags([
+      removeResourceTagsOrThrow([
         { resourceType: 'catalog.specialist', resourceId: specialistId },
         ...skillIds.map((resourceId) => ({
           resourceType: 'catalog.skill' as const,
@@ -1531,6 +1563,10 @@ const createApplicationModules = async (
       void runtime.requestSkillsReload()
     }
   })
+  specialistPackageRecovery.current = (operation) =>
+    specialistPackageService.withRecoveryBarrier(operation)
+  await settingsService.migrateAgentHomeSkillIdentities()
+  composition.phase('agent-home-skill-identity-migration')
   const marketplaceService = new MarketplaceService({
     repository: marketplaceRepository,
     operationCoordinator: marketplaceOperationCoordinator,
@@ -1809,6 +1845,35 @@ const createApplicationModules = async (
   const computeArtifactResolver = createComputeArtifactResolver(resolveDataRoot(), (path) =>
     artifactRepository.resolveManagedFilePath({ path })
   )
+  const sessionLimitPersistence = {
+    load: async (): Promise<readonly (readonly [string, number])[]> => {
+      const catalog = await loadAllSessions()
+      if (!canReconcileSessionAbsences(catalog)) {
+        throw new Error('Session concurrency limits could not be restored authoritatively.')
+      }
+      return catalog.sessions.flatMap((session) =>
+        session.computeConcurrencyLimit === undefined
+          ? []
+          : [[session.id, session.computeConcurrencyLimit] as const]
+      )
+    },
+    save: async (sessionId: string, limit: number): Promise<void> => {
+      const session = await withDataRootWrite(async () => {
+        const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
+        if (!projectId)
+          throw new Error(`Cannot persist concurrency for missing Session ${sessionId}.`)
+        return sessionPersistenceCoordinator.setSessionComputeConcurrencyLimit(
+          projectId,
+          sessionId,
+          limit
+        )
+      })
+      applicationEvents.publish('session:updated', {
+        session,
+        originClientId: MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
+      })
+    }
+  }
   const computeIpcModule = createComputeIpcModule(
     undefined,
     undefined,
@@ -1837,7 +1902,8 @@ const createApplicationModules = async (
           }
         }
       }
-    }
+    },
+    sessionLimitPersistence
   )
   surfaceAdapters = beforeAcpAdapters
   const {
@@ -1856,6 +1922,16 @@ const createApplicationModules = async (
     hostExists: async (providerId) => (await hostRepository.get(providerId)) !== null,
     listHostIds: async () => (await hostRepository.list()).map((host) => host.providerId),
     sessionAuthority: sessionPersistenceCoordinator,
+    projectSessionConcurrencyLimit: async (sessionId, limit) => {
+      const concurrencyManager = computeIpcModule.handlers.concurrencyManager
+      if (!concurrencyManager) throw new Error('Session concurrency ownership is not initialized.')
+      await concurrencyManager.projectPersistedSessionLimit(sessionId, limit)
+    },
+    clearSessionConcurrencyLimits: async (sessionIds) => {
+      const concurrencyManager = computeIpcModule.handlers.concurrencyManager
+      if (!concurrencyManager) throw new Error('Session concurrency ownership is not initialized.')
+      await concurrencyManager.clearProjectedSessionLimits(sessionIds)
+    },
     withDataRootWrite
   })
   sessionEnabledComputeHostsOwnerRef.current = sessionEnabledComputeHostsOwner
@@ -1888,77 +1964,6 @@ const createApplicationModules = async (
   await jobDeletionOwner.restoreOrphanJobDeletionBarriers(isComputeJobOwnerLive)
   composition.phase('deletion-barriers')
   const dataRoot = resolveDataRoot()
-  // Start the JobPoller wired to the shared broadcaster so every state/tail change is pushed to all
-  // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3). The dispatcher
-  // (inside ComputeService) uses the same hook, so submitted→running/error transitions broadcast too.
-  // Phase 3b: harvestFn drives automatic harvest on terminal transitions; broadcast + storageRoot
-  // wire the compute_done notification emitter for all three terminal outcomes (issue 06).
-  await modules.add(
-    {
-      computeService,
-      connectionBroker,
-      jobDeletionOwner,
-      hostRepository,
-      jobRepository,
-      operationRepository,
-      storageRoot: dataRoot
-    },
-    (dependencies) => {
-      const jobPoller = createComputeJobRuntime(dependencies)
-      return {
-        name: 'compute-job-runtime',
-        capability: undefined,
-        start: async () => {
-          try {
-            const owners = await jobRepository.listOwners()
-            const jobs = (
-              await Promise.all(owners.map((owner) => jobRepository.findByOwner(owner)))
-            ).flat()
-            for (const [index, job] of jobs.entries()) {
-              if (
-                job.status !== 'error' ||
-                hasImmutableExecutionFileEvidenceReference(job.file_evidence)
-              ) {
-                continue
-              }
-              const fileEvidence = await recoverPublishedComputeJobFileEvidence({
-                storageRoot: dataRoot,
-                projectId: job.project_id,
-                sessionId: job.session_id,
-                jobId: job.job_id,
-                producerRunId: job.producer_run_id
-              })
-              if (!fileEvidence) continue
-              const updated = await jobRepository.update(job.job_id, { fileEvidence })
-              jobs[index] = updated
-              await settleComputeJobFileEvidence({
-                storageRoot: dataRoot,
-                projectId: job.project_id,
-                sessionId: job.session_id,
-                jobId: job.job_id,
-                producerRunId: job.producer_run_id,
-                fileEvidence
-              }).catch((error) =>
-                createLogger('compute:file-evidence').warn(
-                  'Recovered Compute Job file-evidence receipt remains for reconciliation.',
-                  { jobId: job.job_id, ...errorLogFields(error) }
-                )
-              )
-            }
-            await reconcileComputeJobFileEvidence(dataRoot, jobs)
-          } catch (error) {
-            createLogger('compute:file-evidence').warn(
-              'Compute Job file-evidence startup reconciliation failed closed.',
-              diagnosticErrorFields(error)
-            )
-          }
-          jobPoller.start()
-        },
-        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
-        dispose: () => jobPoller.stop()
-      }
-    }
-  )
   // The Notebook RPC receives only this Session-admitted facade, never the unrestricted service
   // used by Settings and internal runtimes.
   const agentComputeService = new AgentComputeService(computeService, hostsRegistry)
@@ -2549,6 +2554,8 @@ const createApplicationModules = async (
       (await settingsRepository.getSettings()).connectors?.pendingCustomServerDeletionIds ?? []
     await reconcilePendingCustomServerDeletions(permissionGrantRegistry, {
       pendingCustomServerDeletionIds,
+      removeTagsForConnector: (serverId) =>
+        removeResourceTagsOrThrow([{ resourceType: 'catalog.connector', resourceId: serverId }]),
       completeCustomServerDeletion: (serverId) =>
         settingsRepository.completeCustomServerDeletion(serverId)
     })
@@ -2557,7 +2564,7 @@ const createApplicationModules = async (
     recoverPendingCustomServerDeletions()
       .catch((error) =>
         permissionGrantsLog.error(
-          'pending Connector permission cleanup failed',
+          'pending Connector relationship cleanup failed',
           errorLogFields(error)
         )
       )
@@ -2811,6 +2818,75 @@ const createApplicationModules = async (
     sideChatLog.error('durable Side chat hydration failed', diagnosticErrorFields(error))
   }
   composition.phase('side-chat')
+  // Start the JobPoller wired to the shared broadcaster only after Project runtime quiescence and
+  // Side Chat recovery are available. Queue startup loads the Session catalog, which may first need
+  // to finish a pending Project deletion through those owners before restoring concurrency limits.
+  await modules.add(
+    {
+      computeService,
+      connectionBroker,
+      jobDeletionOwner,
+      hostRepository,
+      jobRepository,
+      operationRepository,
+      storageRoot: dataRoot
+    },
+    (dependencies) => {
+      const jobPoller = createComputeJobRuntime(dependencies)
+      return {
+        name: 'compute-job-runtime',
+        capability: undefined,
+        start: async () => {
+          try {
+            const owners = await jobRepository.listOwners()
+            const jobs = (
+              await Promise.all(owners.map((owner) => jobRepository.findByOwner(owner)))
+            ).flat()
+            for (const [index, job] of jobs.entries()) {
+              if (
+                job.status !== 'error' ||
+                hasImmutableExecutionFileEvidenceReference(job.file_evidence)
+              ) {
+                continue
+              }
+              const fileEvidence = await recoverPublishedComputeJobFileEvidence({
+                storageRoot: dataRoot,
+                projectId: job.project_id,
+                sessionId: job.session_id,
+                jobId: job.job_id,
+                producerRunId: job.producer_run_id
+              })
+              if (!fileEvidence) continue
+              const updated = await jobRepository.update(job.job_id, { fileEvidence })
+              jobs[index] = updated
+              await settleComputeJobFileEvidence({
+                storageRoot: dataRoot,
+                projectId: job.project_id,
+                sessionId: job.session_id,
+                jobId: job.job_id,
+                producerRunId: job.producer_run_id,
+                fileEvidence
+              }).catch((error) =>
+                createLogger('compute:file-evidence').warn(
+                  'Recovered Compute Job file-evidence receipt remains for reconciliation.',
+                  { jobId: job.job_id, ...errorLogFields(error) }
+                )
+              )
+            }
+            await reconcileComputeJobFileEvidence(dataRoot, jobs)
+          } catch (error) {
+            createLogger('compute:file-evidence').warn(
+              'Compute Job file-evidence startup reconciliation failed closed.',
+              diagnosticErrorFields(error)
+            )
+          }
+          await jobPoller.start()
+        },
+        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
+        dispose: () => jobPoller.stop()
+      }
+    }
+  )
   // Recovery quiesces every runtime owner, so do not start its first attempt until ACP, Delegation,
   // Notebook, Side Chat, and the composed quiescence boundary are all initialized. The bounded
   // durable barrier restoration above still runs early enough to block admission during startup.
@@ -3194,7 +3270,7 @@ const createApplicationModules = async (
       pruneCustomServerPermissions: (serverId) =>
         permissionGrantRegistry.prune({ kind: 'mcp_server', serverId }).then(() => undefined),
       removeTagsForConnector: (resourceId) =>
-        removeResourceTags([{ resourceType: 'catalog.connector', resourceId }]),
+        removeResourceTagsOrThrow([{ resourceType: 'catalog.connector', resourceId }]),
       beginCustomServerSecurityChange: (serverId) =>
         connectorService.beginCustomServerSecurityChange(serverId),
       clearCustomServerFailure: (serverId) => connectorService.clearCustomServerFailure(serverId),
@@ -3233,7 +3309,9 @@ const createApplicationModules = async (
             filters: [{ name: translate('Connector configuration'), extensions: ['json'] }]
           })
           if (selected.canceled || !selected.filePath) return false
-          await writeFile(selected.filePath, contents, 'utf8')
+          await publishUserFile(selected.filePath, (temporaryPath) =>
+            writeFile(temporaryPath, contents, 'utf8')
+          )
           return true
         }
       },
@@ -3414,10 +3492,10 @@ const createApplicationModules = async (
       marketplaceService
     )
   )
-  // Runtime selection UI (Settings/Onboarding): survey managed+external per language, persist the
-  // choice, and pick an interpreter file. The runtime root MUST match the executor/service's
+  // Runtime Settings UI: discover managed/external environments and pick an interpreter file. The
+  // runtime root MUST match the executor/service's
   // (getRuntimeRoot(<dataRoot>)); read lazily so a data-root switch is reflected without re-register.
-  const runtimeSelectionWorkflows = createRuntimeSelectionWorkflows({
+  const runtimeWorkflows = createRuntimeWorkflows({
     settingsService,
     runtimeRoot: () => getRuntimeRoot(resolveDataRoot()),
     micromambaRunner,
@@ -3425,20 +3503,9 @@ const createApplicationModules = async (
     onRuntimeDisabled: (language, envId, force) =>
       notebookService.revokeRuntime(language, envId, { force }),
     // WS11: live-session usage of a runtime, for the disable-impact warning.
-    describeRuntimeUsage: (language, envId) =>
-      notebookService.describeRuntimeUsage(language, envId),
-    prepareExternalPython: async (selection, root) => {
-      const configuredMirror = await settingsService.getPackageMirror()
-      const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
-      await prepareExternalPythonRuntime(selection, root, {
-        pypiIndex: mirror.pypiIndex,
-        caBundle: mirror.caBundle
-      })
-    }
+    describeRuntimeUsage: (language, envId) => notebookService.describeRuntimeUsage(language, envId)
   })
-  declareElectronAdapter('notebook-runtime', () =>
-    registerRuntimeIpcHandlers(runtimeSelectionWorkflows)
-  )
+  declareElectronAdapter('notebook-runtime', () => registerRuntimeIpcHandlers(runtimeWorkflows))
   declareElectronAdapter('managed-preview', () =>
     installManagedPreviewElectronAdapter(
       previewResources,
@@ -3582,13 +3649,18 @@ const createApplicationModules = async (
     projectProgress: broadcastNotebookEnvProgress,
     waitForRecovery,
     assertProvisionAllowed,
+    onRepairStarting: (language, target) => notebookService.prepareRuntimeRepair(language, target),
     onRepairCompleted: (language) => notebookService.completeRuntimeRepair(language)
   })
   // Always register the handlers (serialized is undefined when the provisioner could not be built).
   // Start maintenance only after all four Electron channels exist, preserving the previous startup
   // ordering while construction remains application-owned and single-instance.
   declareElectronAdapter('notebook-environment', () => {
-    installNotebookEnvironmentSurface(notebookEnvironmentLifecycle, registerNotebookEnvIpcHandlers)
+    const startup = installNotebookEnvironmentSurface(
+      notebookEnvironmentLifecycle,
+      registerNotebookEnvIpcHandlers
+    )
+    notebookService.setEnvironmentStartupBarrier(startup)
   })
   if (provisioner && serialized) {
     // Back the notebook service's manage_environments tool with the same provisioner that owns the env
@@ -3651,8 +3723,6 @@ const createApplicationModules = async (
     )
   )
   const artifactHandlers = createArtifactHandlers(artifactRepository, artifactRunRegistry, {
-    getActiveArtifactRunIds: () =>
-      runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : [],
     provenance: artifactProvenanceRepository,
     openLatestManagedFile: (request) =>
       managedFileVersionService.openLatest({
@@ -3667,14 +3737,15 @@ const createApplicationModules = async (
       ),
     codeReconstruction,
     withSessionMutation: (projectId, sessionId, mutation) =>
-      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
+      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
+    recoverPendingArtifacts: (request) =>
+      sessionPersistenceCoordinator.retryArtifactFinalization(request)
   })
   artifactHandlersRef.current = artifactHandlers
   declareElectronAdapter('artifacts', () =>
     registerArtifactIpcHandlers(
       artifactRepository,
       artifactRunRegistry,
-      () => (runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : []),
       artifactProvenanceRepository,
       (projectId, sessionId, mutation) =>
         sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation),
@@ -3709,10 +3780,6 @@ const createApplicationModules = async (
     }
   })
   declareElectronAdapter('session-persistence', () => {
-    ipcMainHandle('sessions:edit-details', (_event, request) => {
-      const validatedRequest = editSessionDetailsRequestSchema.parse(request)
-      return withDataRootWrite(() => sessionDetailsOwner.edit(validatedRequest))
-    })
     registerSessionPersistenceIpcHandlers(
       sessionPersistenceBackend,
       reviewRepository,
@@ -3915,7 +3982,7 @@ const createApplicationModules = async (
     },
     notebookEnvironment: notebookEnvironmentLifecycle,
     notebookRuntime: {
-      workflows: runtimeSelectionWorkflows,
+      workflows: runtimeWorkflows,
       pickInterpreter: async () => {
         const result = await dialog.showOpenDialog({ properties: ['openFile'] })
         return result.filePaths[0] ?? null
@@ -4037,8 +4104,10 @@ const createApplicationModules = async (
           return context
         },
         editDetails: (request) => sessionDetailsOwner.edit(request),
-        saveSession: async (session, options) => {
-          const result = await sessionPersistenceHandlers.saveSession(session, options)
+        saveSession: async (session, options, authority) => {
+          const result = authority
+            ? await sessionPersistenceHandlers.saveSession(session, options, authority)
+            : await sessionPersistenceHandlers.saveSession(session, options)
           sessionDetailsOwner.afterSessionSaved(result.session)
           return result
         },

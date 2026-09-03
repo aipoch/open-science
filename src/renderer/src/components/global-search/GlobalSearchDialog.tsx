@@ -477,11 +477,15 @@ export const GlobalSearchDialog = ({
   )
   const previewArtifact = useCallback(
     (artifact: ProjectFileItem): void => {
-      if (activeProjectId !== artifact.projectId || view !== 'workspace') {
-        if (!openProject(artifact.projectId, 'user')) return
+      const openPreview = (): void => {
+        openFileDialog(artifactToPreviewItem(artifact))
+        close()
       }
-      openFileDialog(artifactToPreviewItem(artifact))
-      close()
+      if (activeProjectId !== artifact.projectId || view !== 'workspace') {
+        openProject(artifact.projectId, 'user', openPreview)
+        return
+      }
+      openPreview()
     },
     [activeProjectId, close, openFileDialog, openProject, view]
   )
@@ -545,8 +549,7 @@ export const GlobalSearchDialog = ({
           setActionError(t('This session is no longer available.'))
           return
         }
-        openSession(row.session.projectId, row.session.id, 'user')
-        close()
+        openSession(row.session.projectId, row.session.id, 'user', close)
         return
       }
       if (row.kind === 'artifact') {
@@ -568,9 +571,10 @@ export const GlobalSearchDialog = ({
         return
       }
       if (row.kind === 'new-session' && primaryProject && isSessionPersistenceReady) {
-        openProject(primaryProject.id, 'user')
-        useSessionStore.getState().clearSelection()
-        close()
+        openProject(primaryProject.id, 'user', () => {
+          useSessionStore.getState().clearSelection()
+          close()
+        })
         return
       }
       if (row.kind === 'new-project') {

@@ -25,7 +25,7 @@ const artifacts: ProjectFileItem[] = [
     id: 'artifact-1',
     source: 'artifact',
     sourceFileId: 'artifact-1',
-    sourceVersionId: 'artifact-1',
+    sourceVersionId: 'artifact-version-1',
     projectId: 'project-1',
     sessionId: 'session-1',
     name: 'report.csv',
@@ -38,7 +38,7 @@ const artifacts: ProjectFileItem[] = [
     id: 'artifact-2',
     source: 'artifact',
     sourceFileId: 'artifact-2',
-    sourceVersionId: 'artifact-2',
+    sourceVersionId: 'artifact-version-2',
     projectId: 'project-1',
     sessionId: 'session-1',
     name: 'figure.png',
@@ -126,7 +126,13 @@ describe('DownloadSessionArtifactsDialog', () => {
     expect(saveSessionArtifacts).toHaveBeenCalledWith({
       projectId: 'project-1',
       sessionId: 'session-1',
-      files: [{ fileId: 'artifact-1', suggestedName: 'report.csv' }]
+      files: [
+        {
+          fileId: 'artifact-1',
+          versionId: 'artifact-version-1',
+          suggestedName: 'report.csv'
+        }
+      ]
     })
     expect(onClose).toHaveBeenCalledTimes(1)
   })
@@ -215,5 +221,47 @@ describe('DownloadSessionArtifactsDialog', () => {
       'Downloaded 1 of 2 artifacts. 1 failed.'
     )
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('refuses to close while a download is in flight', async () => {
+    let resolveSave: ((result: unknown) => void) | undefined
+    saveSessionArtifacts.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve
+        })
+    )
+    const onClose = vi.fn()
+    await act(async () => {
+      root.render(<DownloadSessionArtifactsDialog session={session} onClose={onClose} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[data-testid="download-session-artifacts-confirm"]')
+        ?.click()
+      await Promise.resolve()
+    })
+
+    const closeButton = document.body.querySelector<HTMLButtonElement>('button[aria-label="Close"]')
+    const cancelButton = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent === 'Cancel'
+    )
+    expect(closeButton?.disabled).toBe(true)
+    expect(cancelButton?.disabled).toBe(true)
+    act(() => closeButton?.click())
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(onClose).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveSave?.({ saved: false })
+      await Promise.resolve()
+    })
+    expect(closeButton?.disabled).toBe(false)
+    expect(cancelButton?.disabled).toBe(false)
   })
 })

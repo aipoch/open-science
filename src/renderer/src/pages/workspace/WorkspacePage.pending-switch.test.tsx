@@ -243,6 +243,74 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe('WorkspacePage pending-switch broadcast', () => {
+  it('keeps Artifact retry disabled after switching Sessions while another retry is running', async () => {
+    setupBase()
+    const pendingSession = (id: string): ChatSession => {
+      const pendingPath = `/artifacts/storage-${id}/.pending/run-${id}/result.txt`
+      return createSession({
+        id,
+        title: id,
+        messages: [
+          {
+            id: `message-${id}`,
+            role: 'agent',
+            content: 'result',
+            status: 'complete',
+            eventIds: [],
+            artifactIds: [`artifact-${id}`],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        artifacts: [
+          {
+            id: `artifact-${id}`,
+            kind: 'managed-file',
+            name: 'result.txt',
+            path: pendingPath,
+            fileUrl: `file://${pendingPath}`,
+            size: 1,
+            mtimeMs: 1
+          }
+        ]
+      })
+    }
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [pendingSession('sess-a'), pendingSession('sess-b')],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({ items: [], isLoaded: true, load: vi.fn() })
+    let finishReconciliation!: (artifacts: []) => void
+    const reconcilePendingArtifacts = vi.fn(
+      () =>
+        new Promise<[]>((resolve) => {
+          finishReconciliation = resolve
+        })
+    )
+    window.api = {
+      ...apiStub(),
+      artifacts: { reconcilePendingArtifacts }
+    } as never
+    await renderPage(root)
+
+    await act(async () => {
+      conversationProps.workflows.artifactFinalization.request()
+      await Promise.resolve()
+    })
+    expect(conversationProps.workflows.artifactFinalization.running).toBe(true)
+
+    act(() => useSessionStore.setState({ selectedSessionId: 'sess-b' }))
+
+    expect(conversationProps.view.activeSession?.id).toBe('sess-b')
+    expect(conversationProps.workflows.artifactFinalization.running).toBe(true)
+
+    await act(async () => {
+      finishReconciliation([])
+      await Promise.resolve()
+    })
+  })
+
   it('keeps Delegation read-only while a selected Session is temporarily missing', async () => {
     setupBase()
     useSettingsStore.setState({

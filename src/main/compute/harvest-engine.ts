@@ -18,7 +18,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { access, mkdir, realpath, rename, rm, statfs, unlink } from 'node:fs/promises'
+import { access, mkdir, realpath, rename, rm, stat, statfs, unlink } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
 
 import type { ComputeJob, JobSummary } from '../../shared/compute'
@@ -56,8 +56,15 @@ import {
 } from '../notebook/working-file-observer'
 import { withDataRootWrite } from '../storage/migration-state'
 import { toErrorMessage } from '../error-message'
-import { workspaceRelativePath } from './workspace-path'
+import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
 import { createLogger, errorLogFields } from '../logger'
+import {
+  normalizeRemoteMtimeToken,
+  parseRemoteFileStat,
+  remoteFileStatCommand,
+  sameRemoteFileSnapshot,
+  type RemoteFileSnapshot
+} from './remote-file-snapshot'
 
 const MIB_BYTES = 1024 * 1024
 export const HARVEST_FREE_DISK_RESERVE_BYTES = 2 * 1024 * MIB_BYTES
@@ -126,49 +133,27 @@ const pathExists = async (path: string): Promise<boolean> =>
     () => false
   )
 // ---------------------------------------------------------------------------
-// Public path helper
-// ---------------------------------------------------------------------------
-
-/**
- * Returns the local harvest directory for a job:
- *   <storageRoot>/notebooks/<project>/<sessionId>/hpc/<jobId>/
- *
- * This is inside the session workspace (alongside ./handoff, ./data) so the
- * agent's data kernel can directly open('hpc/<jobId>/out.result') (design §4).
- * Delegates path-segment validation to getNotebookSessionRoot which rejects
- * traversal attempts.
- */
-export const getJobHarvestDir = (
-  storageRoot: string,
-  project: string,
-  sessionId: string,
-  jobId: string
-): string => {
-  // getNotebookSessionRoot validates project and sessionId (throws on traversal).
-  const workspaceCwd = getNotebookSessionRoot(storageRoot, project, sessionId)
-  return join(workspaceCwd, 'hpc', jobId)
-}
-
-// ---------------------------------------------------------------------------
 // Remote enumeration
 // ---------------------------------------------------------------------------
 
 // Timeout for the single SSH enumerate round-trip (generous for large workdirs).
 const ENUMERATE_TIMEOUT_MS = 60_000
 
+type HarvestFileEntry = FileEntry & { snapshot: RemoteFileSnapshot }
+
 /**
  * Lists all files in the remote workdir using a single SSH round-trip.
- * Command: find <workdir> -type f -printf '%P\t%s\n'
+ * Command: find <workdir> -type f -printf '%P\t%s\t%i\t%T@\n'
  *
  * Returns FileEntry[] (relative paths + byte sizes). Throws on SSH failure.
  */
 export const enumerateRemoteFiles = async (
   connection: ComputeConnectionLease,
   remoteWorkdir: string
-): Promise<FileEntry[]> => {
+): Promise<HarvestFileEntry[]> => {
   // Single-quote the workdir path for safe embedding in the SSH command.
   const quotedWorkdir = quoteRemotePath(remoteWorkdir)
-  const cmd = `find ${quotedWorkdir} -type f -printf '%P\\t%s\\n' 2>/dev/null || true`
+  const cmd = `find ${quotedWorkdir} -type f -printf '%P\\t%s\\t%i\\t%T@\\n' 2>/dev/null || true`
 
   const result = await connection.run(cmd, {
     timeoutMs: ENUMERATE_TIMEOUT_MS,
@@ -193,17 +178,26 @@ export const enumerateRemoteFiles = async (
 
   if (!result.stdout.trim()) return []
 
-  const entries: FileEntry[] = []
+  const entries: HarvestFileEntry[] = []
   for (const line of result.stdout.split('\n')) {
     const trimmed = line.trimEnd()
     if (!trimmed) continue
-    const tab = trimmed.lastIndexOf('\t')
-    if (tab === -1) continue
-    const path = trimmed.slice(0, tab)
-    const sizeStr = trimmed.slice(tab + 1)
+    const mtimeTab = trimmed.lastIndexOf('\t')
+    const inodeTab = trimmed.lastIndexOf('\t', mtimeTab - 1)
+    const sizeTab = trimmed.lastIndexOf('\t', inodeTab - 1)
+    if (sizeTab === -1 || inodeTab === -1 || mtimeTab === -1) continue
+    const path = trimmed.slice(0, sizeTab)
+    const sizeStr = trimmed.slice(sizeTab + 1, inodeTab)
+    const inode = trimmed.slice(inodeTab + 1, mtimeTab)
+    const mtimeToken = normalizeRemoteMtimeToken(trimmed.slice(mtimeTab + 1))
     const size_bytes = Number.parseInt(sizeStr, 10)
-    if (!path || Number.isNaN(size_bytes)) continue
-    entries.push({ path, size_bytes })
+    if (!path || !inode || !mtimeToken || !Number.isSafeInteger(size_bytes) || size_bytes < 0)
+      continue
+    entries.push({
+      path,
+      size_bytes,
+      snapshot: { sizeBytes: size_bytes, inode, mtimeToken }
+    })
   }
   return entries
 }
@@ -230,7 +224,8 @@ const downloadFile = async (
   remoteWorkdir: string,
   relativePath: string,
   localDestPath: string,
-  maxBytes: number
+  maxBytes: number,
+  expectedSnapshot: RemoteFileSnapshot
 ): Promise<number> => {
   const pathError = validateRelativePath(relativePath)
   if (pathError) {
@@ -260,6 +255,25 @@ const downloadFile = async (
   if (result.timedOut) throw new Error('download timed out for ' + relativePath)
   if (result.exitCode !== 0) {
     throw new Error('remote copy failed for ' + relativePath)
+  }
+  const localSize = Number((await stat(localDestPath)).size)
+  const postTransferResult = await connection.run(remoteFileStatCommand(absRemotePath), {
+    timeoutMs: 10_000,
+    loginShell: false,
+    maxOutputBytes: 512
+  })
+  const postTransferFailure = classifyConnectionFailure(postTransferResult, false)
+  if (postTransferFailure) throw postTransferFailure
+  const postTransfer = parseRemoteFileStat(postTransferResult.stdout)
+  if (
+    postTransferResult.exitCode !== 0 ||
+    postTransfer.fileType !== 'f' ||
+    !postTransfer.snapshot ||
+    result.bytesWritten !== expectedSnapshot.sizeBytes ||
+    localSize !== expectedSnapshot.sizeBytes ||
+    !sameRemoteFileSnapshot(postTransfer.snapshot, expectedSnapshot)
+  ) {
+    throw new Error('File changed during transfer: ' + relativePath)
   }
   return result.bytesWritten
 }
@@ -564,7 +578,7 @@ const harvestJobUnchecked = async (
   const remoteWorkdir = job.remote_workdir ?? `~/.openscience/jobs/${job.job_id}`
 
   // ── 3. Enumerate remote files ───────────────────────────────────────────────
-  let remoteFiles: FileEntry[]
+  let remoteFiles: HarvestFileEntry[]
   try {
     remoteFiles = await enumerateRemoteFiles(connection, remoteWorkdir)
   } catch (err) {
@@ -619,14 +633,14 @@ const harvestJobUnchecked = async (
     normalizedHarvestConfig,
     stagedInputs
   )
-  const remoteSizeByPath = new Map(remoteFiles.map((entry) => [entry.path, entry.size_bytes]))
+  const remoteFileByPath = new Map(remoteFiles.map((entry) => [entry.path, entry]))
   const plannedPaths = new Set([
     ...plannedClassification.featured,
     ...plannedClassification.hidden,
     ...plannedClassification.logs
   ])
   const plannedTransferBytes = [...plannedPaths].reduce(
-    (total, path) => total + Math.max(0, remoteSizeByPath.get(path) ?? 0),
+    (total, path) => total + Math.max(0, remoteFileByPath.get(path)?.size_bytes ?? 0),
     0
   )
   let freeDiskBytes: number
@@ -676,7 +690,12 @@ const harvestJobUnchecked = async (
     recordAsEvidence = true
   ): Promise<boolean> => {
     deps.signal?.throwIfAborted()
-    const expectedBytes = remoteSizeByPath.get(relativePath) ?? 0
+    const remoteFile = remoteFileByPath.get(relativePath)
+    if (!remoteFile) {
+      errors.push('Remote file disappeared before transfer: ' + relativePath)
+      return false
+    }
+    const expectedBytes = remoteFile.size_bytes
     let currentFreeBytes: number
     try {
       currentFreeBytes = await (deps.getFreeDiskBytesFn ?? getFreeDiskBytes)(attemptDir)
@@ -707,7 +726,8 @@ const harvestJobUnchecked = async (
         remoteWorkdir,
         relativePath,
         temporaryPath,
-        maxBytes
+        maxBytes,
+        remoteFile.snapshot
       )
       deps.signal?.throwIfAborted()
       await rename(temporaryPath, localPath)
@@ -800,3 +820,5 @@ const harvestJobUnchecked = async (
   const updatedJob = await finalize(harvestError, JSON.stringify(leftOnRemote))
   if (deps.broadcast) await notify(updatedJob)
 }
+
+export { getJobHarvestDir }

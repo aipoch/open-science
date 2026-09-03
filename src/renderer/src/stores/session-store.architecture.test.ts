@@ -107,6 +107,8 @@ const publicValueExports = [
   'createInitialSessionState',
   'createSessionStore',
   'getExternallyHydratedSessionAuthority',
+  'isArtifactFinalizationError',
+  'isRetryableArtifactFinalizationError',
   'isExternallyHydratedSession',
   'isSessionWaitReason',
   'projectSessionActionability',

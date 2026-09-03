@@ -123,6 +123,57 @@ describe('navigation store', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('b')
   })
 
+  it('runs a project continuation after deferred preview confirmation resumes navigation', () => {
+    useSessionStore
+      .getState()
+      .hydrateSessions(
+        [
+          createSession({ id: 'a', projectId: 'project-a' }),
+          createSession({ id: 'b', projectId: 'project-b', updatedAt: 2 })
+        ],
+        { version: SESSION_MANIFEST_VERSION }
+      )
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+    usePreviewWorkbenchStore.setState({ activeProjectId: 'project-a', activeItemId: 'file-1' })
+    let resumeNavigation: (() => boolean | void) | undefined
+    previewLeaveGuards.register(workbenchPreviewGuardScope('project-a', 'file-1')!, (action) => {
+      resumeNavigation = action
+      return false
+    })
+    const afterNavigate = vi.fn()
+
+    const opened = useNavigationStore.getState().openProject('project-b', 'user', afterNavigate)
+
+    expect(opened).toBe(false)
+    expect(afterNavigate).not.toHaveBeenCalled()
+    resumeNavigation?.()
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-b')
+    expect(afterNavigate).toHaveBeenCalledOnce()
+  })
+
+  it('drops a deferred continuation when its destination disappears before confirmation', () => {
+    useSessionStore
+      .getState()
+      .hydrateSessions([createSession({ id: 'b', projectId: 'project-b' })], {
+        version: SESSION_MANIFEST_VERSION
+      })
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+    usePreviewWorkbenchStore.setState({ activeProjectId: 'project-a', activeItemId: 'file-1' })
+    let resumeNavigation: (() => boolean | void) | undefined
+    previewLeaveGuards.register(workbenchPreviewGuardScope('project-a', 'file-1')!, (action) => {
+      resumeNavigation = action
+      return false
+    })
+    const afterNavigate = vi.fn()
+
+    useNavigationStore.getState().openSession('project-b', 'b', 'user', afterNavigate)
+    useSessionStore.setState({ sessions: [] })
+    resumeNavigation?.()
+
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-a')
+    expect(afterNavigate).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['missing', 'project-missing'],
     ['archived', 'project-archived']
@@ -274,6 +325,30 @@ describe('navigation store', () => {
     expect(useNavigationStore.getState().view).toBe('workspace')
     expect(useNavigationStore.getState().activeProjectId).toBe('project-a')
     expect(useSessionStore.getState().selectedSessionId).toBe('a')
+  })
+
+  it('runs a session-by-id continuation after deferred preview confirmation', () => {
+    useSessionStore
+      .getState()
+      .hydrateSessions([createSession({ id: 'b', projectId: 'project-b' })], {
+        version: SESSION_MANIFEST_VERSION
+      })
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+    usePreviewWorkbenchStore.setState({ activeProjectId: 'project-a', activeItemId: 'file-1' })
+    let resumeNavigation: (() => boolean | void) | undefined
+    previewLeaveGuards.register(workbenchPreviewGuardScope('project-a', 'file-1')!, (action) => {
+      resumeNavigation = action
+      return false
+    })
+    const afterNavigate = vi.fn()
+
+    const opened = useNavigationStore.getState().openSessionById('b', 'notification', afterNavigate)
+
+    expect(opened).toBe(false)
+    expect(afterNavigate).not.toHaveBeenCalled()
+    resumeNavigation?.()
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-b')
+    expect(afterNavigate).toHaveBeenCalledOnce()
   })
 
   it('stays put when a notification names a session that no longer exists', () => {

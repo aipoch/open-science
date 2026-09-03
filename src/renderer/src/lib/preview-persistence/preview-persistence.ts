@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 
 import {
   PREVIEW_STATE_VERSION,
+  MAX_PERSISTED_PREVIEW_ITEMS,
   createEmptyPersistedPreviewState,
   normalizePersistedPreviewState,
   type PersistedPreviewState,
@@ -363,35 +364,40 @@ const createPreviewSaveScheduler = (
 
 // Projects the live store slice down to its durable subset: file previews plus the one Session-scoped
 // Subagents selection. Other tool tabs and external source URLs remain runtime-only.
-const getPersistedActiveItemId = (state: PreviewStoreState): string | undefined =>
-  state.items.find((item) => item.id === state.activeItemId)?.type === 'source'
-    ? undefined
-    : state.activeItemId
-
-const toPersistedPreviewState = (state: PreviewStoreState): PersistedPreviewState => ({
-  version: PREVIEW_STATE_VERSION,
-  panelState: state.panelState,
-  activeItemId: getPersistedActiveItemId(state),
-  ...(() => {
-    const item = state.items.find(
-      (candidate) => candidate.type === 'tool' && candidate.toolKind === 'subagents'
-    )
-    return item?.type === 'tool' && item.selectedAgentFrameId
+const toPersistedPreviewState = (state: PreviewStoreState): PersistedPreviewState => {
+  const fileItems = state.items.filter((item) => item.type === 'file')
+  const retainedIds = new Set(
+    [...fileItems]
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, MAX_PERSISTED_PREVIEW_ITEMS)
+      .map((item) => item.id)
+  )
+  const retainedFileItems = fileItems.filter((item) => retainedIds.has(item.id))
+  const subagentsItem = state.items.find(
+    (candidate) => candidate.type === 'tool' && candidate.toolKind === 'subagents'
+  )
+  const subagents =
+    subagentsItem?.type === 'tool' && subagentsItem.selectedAgentFrameId
       ? {
-          subagents: {
-            id: item.id,
-            sessionId: item.sessionId,
-            title: item.title,
-            type: 'tool' as const,
-            toolKind: 'subagents' as const,
-            selectedAgentFrameId: item.selectedAgentFrameId
-          }
+          id: subagentsItem.id,
+          sessionId: subagentsItem.sessionId,
+          title: subagentsItem.title,
+          type: 'tool' as const,
+          toolKind: 'subagents' as const,
+          selectedAgentFrameId: subagentsItem.selectedAgentFrameId
         }
-      : {}
-  })(),
-  items: state.items
-    .filter((item) => item.type === 'file')
-    .map((item) => ({
+      : undefined
+  const activeItemId =
+    retainedIds.has(state.activeItemId ?? '') || subagents?.id === state.activeItemId
+      ? state.activeItemId
+      : undefined
+
+  return {
+    version: PREVIEW_STATE_VERSION,
+    panelState: state.panelState,
+    activeItemId,
+    ...(subagents ? { subagents } : {}),
+    items: retainedFileItems.map((item) => ({
       id: item.id,
       sessionId: item.sessionId,
       title: item.title,
@@ -408,7 +414,8 @@ const toPersistedPreviewState = (state: PreviewStoreState): PersistedPreviewStat
       ...(item.versionNumber !== undefined ? { versionNumber: item.versionNumber } : {}),
       ...(item.originSession ? { originSession: item.originSession } : {})
     }))
-})
+  }
+}
 
 // Rebuilds the store's restore payload and repairs upload paths that changed after staging.
 const toRestoredSlice = (

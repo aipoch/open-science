@@ -76,6 +76,7 @@ const computePaths = [
   'compute.jobsList',
   'compute.jobsMarkConsumed',
   'compute.jobsPendingNotification',
+  'compute.jobsSetRemoteCleanup',
   'compute.jobsTransitionAnalysis',
   'compute.list',
   'compute.listDir',
@@ -297,6 +298,7 @@ describe('renderer surface compatibility matrix', () => {
       'compute:change-authentication',
       'compute:create-password',
       'compute:download',
+      'compute:jobs:set-remote-cleanup',
       'compute:password-capability',
       'compute:reset-password',
       'compute:reveal-in-folder'
@@ -314,6 +316,7 @@ describe('renderer surface compatibility matrix', () => {
       changeAuthentication(): Promise<unknown>
       createPassword(): Promise<unknown>
       download(): Promise<unknown>
+      jobsSetRemoteCleanup(): Promise<unknown>
       passwordCapability(): Promise<unknown>
       resetPassword(): Promise<unknown>
       revealInFolder(): Promise<unknown>
@@ -326,6 +329,9 @@ describe('renderer surface compatibility matrix', () => {
     )
     await expect(remoteCompute.download()).rejects.toThrow(
       'This action is only available in the local desktop app (compute:download).'
+    )
+    await expect(remoteCompute.jobsSetRemoteCleanup()).rejects.toThrow(
+      'This action is only available in the local desktop app (compute:jobs:set-remote-cleanup).'
     )
     await expect(remoteCompute.revealInFolder()).rejects.toThrow(
       'This action is only available in the local desktop app (compute:reveal-in-folder).'

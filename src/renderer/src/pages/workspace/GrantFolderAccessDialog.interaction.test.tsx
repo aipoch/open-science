@@ -124,6 +124,20 @@ const click = async (element: Element | null | undefined): Promise<void> => {
   })
 }
 
+const confirmGrant = async (): Promise<void> => {
+  const confirmation = document.body.querySelector(
+    '[data-testid="grant-folder-access-confirmation"]'
+  )
+  await click(confirmation?.querySelector('button:last-of-type'))
+}
+
+const cancelGrant = async (): Promise<void> => {
+  const confirmation = document.body.querySelector(
+    '[data-testid="grant-folder-access-confirmation"]'
+  )
+  await click(confirmation?.querySelector('button:first-of-type'))
+}
+
 // Finds a crumb by exact label; CSS selectors can't express the Windows "C:\" label's backslash.
 const crumb = (label: string): Element | undefined =>
   Array.from(document.body.querySelectorAll('[data-testid^="grant-access-crumb-"]')).find(
@@ -550,11 +564,27 @@ describe('GrantFolderAccessDialog', () => {
 
     await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
     await click(document.body.querySelector('[data-testid="grant-access-grant"]'))
+    await confirmGrant()
 
     expect(document.body.textContent).toContain('Directory could not be accessed.')
     // The failure clears on navigation.
     await click(document.body.querySelector('[data-testid="grant-access-crumb-home"]'))
     expect(document.body.textContent).not.toContain('Directory could not be accessed.')
+  })
+
+  it('keeps the selected folder unchanged when confirmation is cancelled', async () => {
+    renderDialog()
+    await flush()
+
+    await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
+    await click(document.body.querySelector('[data-testid="grant-access-grant"]'))
+    expect(
+      document.body.querySelector('[data-testid="grant-folder-access-confirmation"]')?.textContent
+    ).toContain('Changing Notebook file access will stop active Notebook kernels. Continue?')
+    await cancelGrant()
+
+    expect(grantRoot).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[data-testid="grant-access-grant"]')).not.toBeNull()
   })
 
   it('submits one grant and disables actions when Grant is clicked twice before it settles', async () => {
@@ -574,10 +604,21 @@ describe('GrantFolderAccessDialog', () => {
       grantButton?.click()
       await Promise.resolve()
     })
+    const confirmation = document.body.querySelector(
+      '[data-testid="grant-folder-access-confirmation"]'
+    )
+    const confirmButton = confirmation?.querySelector<HTMLButtonElement>('button:last-of-type')
+    await act(async () => {
+      confirmButton?.click()
+      confirmButton?.click()
+      await Promise.resolve()
+    })
 
     expect(grantRoot).toHaveBeenCalledTimes(1)
     expect(grantButton?.disabled).toBe(true)
     expect(cancelButton?.disabled).toBe(true)
+    expect(confirmButton?.disabled).toBe(true)
+    expect(confirmation?.textContent).toContain('Working…')
 
     await act(async () => {
       resolveGrant([grantedRoot])
@@ -598,6 +639,7 @@ describe('GrantFolderAccessDialog', () => {
 
     await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
     await click(document.body.querySelector('[data-testid="grant-access-grant"]'))
+    await confirmGrant()
 
     act(() => {
       root.render(
@@ -632,6 +674,7 @@ describe('GrantFolderAccessDialog', () => {
 
     await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
     await click(document.body.querySelector('[data-testid="grant-access-grant"]'))
+    await confirmGrant()
     listDir.mockClear()
 
     await click(document.body.querySelector('[data-testid="grant-access-crumb-home"]'))
@@ -665,6 +708,7 @@ describe('GrantFolderAccessDialog', () => {
 
     await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
     await click(document.body.querySelector('[data-testid="grant-access-grant"]'))
+    await confirmGrant()
 
     const outside = document.createElement('div')
     document.body.appendChild(outside)
@@ -708,6 +752,7 @@ describe('GrantFolderAccessDialog', () => {
     // Switch to read & write before granting.
     await click(document.body.querySelector('[role="radio"][aria-checked="false"]'))
     await click(document.body.querySelector('[data-testid="grant-access-grant"]'))
+    await confirmGrant()
 
     expect(grantRoot).toHaveBeenCalledWith({ path: `${HOME}/Projects`, access: 'rw' })
     expect(onOpenChange).toHaveBeenCalledWith(false)

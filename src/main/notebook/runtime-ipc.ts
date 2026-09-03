@@ -4,24 +4,28 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 import { createLogger, diagnosticErrorFields } from '../logger'
 
 import type { NotebookLanguage } from '../../shared/notebook'
-import type { RuntimeSelection } from '../../shared/notebook-runtime'
-import type { RuntimeSelectionWorkflows } from './runtime-selection-workflows'
+import type { RuntimeWorkflows } from './runtime-workflows'
 
 const log = createLogger('notebook:runtime-ipc')
+
+const parseAgentEnvironmentCreationEnabled = (value: unknown): boolean => {
+  if (typeof value !== 'boolean') {
+    throw new TypeError('Agent environment creation enabled must be a boolean.')
+  }
+  return value
+}
 
 export type RuntimeIpcOptions = {
   // Injectable for tests; production defaults to the Electron native open-file dialog.
   showOpenDialog?: () => Promise<string | null>
 }
 
-// Registers renderer-callable runtime-selection commands while keeping native host interaction in
+// Registers renderer-callable runtime environment commands while keeping native host interaction in
 // the Electron adapter. Application ordering and state ownership live behind the workflow interface.
 const registerRuntimeIpcHandlers = (
-  workflows: RuntimeSelectionWorkflows,
+  workflows: RuntimeWorkflows,
   options: RuntimeIpcOptions = {}
 ): void => {
-  ipcMainHandle('runtime:survey', () => workflows.survey())
-
   ipcMainHandle('runtime:list-environments', () => workflows.listEnvironments())
 
   ipcMainHandle(
@@ -34,14 +38,12 @@ const registerRuntimeIpcHandlers = (
     workflows.listPackageCounts(request)
   )
 
-  ipcMainHandle(
-    'runtime:set-selection',
-    (_event, request: { language: NotebookLanguage; selection: RuntimeSelection | null }) =>
-      workflows.setSelection(request)
-  )
-
   ipcMainHandle('runtime:get-enablement', (_event, request: { language: NotebookLanguage }) =>
     workflows.getEnablement(request)
+  )
+
+  ipcMainHandle('runtime:get-agent-environment-creation-enabled', () =>
+    workflows.getAgentEnvironmentCreationEnabled()
   )
 
   ipcMainHandle(
@@ -62,6 +64,14 @@ const registerRuntimeIpcHandlers = (
     'runtime:set-install-authorized',
     (_event, request: { language: NotebookLanguage; envId: string; authorized: boolean }) =>
       workflows.setInstallAuthorized(request)
+  )
+
+  ipcMainHandle(
+    'runtime:set-agent-environment-creation-enabled',
+    (_event, request: { enabled?: unknown }) =>
+      workflows.setAgentEnvironmentCreationEnabled({
+        enabled: parseAgentEnvironmentCreationEnabled(request?.enabled)
+      })
   )
 
   ipcMainHandle('runtime:pick-interpreter', async (): Promise<string | null> => {

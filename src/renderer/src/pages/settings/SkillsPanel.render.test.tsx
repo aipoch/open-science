@@ -266,7 +266,8 @@ describe('SkillsPanel (list view)', () => {
     expect(filters?.querySelector('[aria-label="Filter skills by source"]')).not.toBeNull()
     expect(filters?.querySelector('[aria-label="Filter Skills by agent"]')).not.toBeNull()
     expect(filters?.querySelector('[aria-label="Filter by Tag"]')).not.toBeNull()
-    expect(filters?.querySelector('[aria-label="Search skills"]')).not.toBeNull()
+    const search = filters?.querySelector<HTMLInputElement>('[aria-label="Search skills"]')
+    expect(search?.parentElement?.className).toContain('min-w-56')
     expect(filters?.contains(manage ?? null)).toBe(false)
     expect(filters?.contains(addSkill ?? null)).toBe(false)
     expect(actions?.contains(manage ?? null)).toBe(true)
@@ -347,7 +348,7 @@ describe('SkillsPanel (list view)', () => {
       '[data-slot="settings-section"][aria-label="Conversation imports"]'
     )
     const row = section?.querySelector<HTMLElement>('[data-slot="settings-row"]')
-    expect(section?.className).toContain('pb-4')
+    expect(section?.className).toContain('mb-4')
     expect(row?.className).toContain('min-h-0')
     expect(row?.querySelector('.line-clamp-2')).not.toBeNull()
     const toggle = document.body.querySelector<HTMLButtonElement>(
@@ -377,6 +378,44 @@ describe('SkillsPanel (list view)', () => {
     )
     act(() => alphaRow?.click())
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'detail', id: 'a' })
+  })
+
+  it('shows identity-conflicting Skills without exposing ambiguous actions', () => {
+    const onNavigate = vi.fn()
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'shared-id',
+          catalogEntryKey: 'personal:shared-id:0',
+          name: 'conflicting',
+          displayName: 'Conflicting Skill',
+          description: 'Installed directly.',
+          source: 'personal',
+          updatedAt: '2026-09-02T00:00:00.000Z',
+          enabled: true,
+          available: false,
+          availability: 'identity-conflict'
+        }
+      ]
+    })
+
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    })
+
+    expect(document.body.textContent).toContain('Conflicting Skill')
+    expect(document.body.textContent).toContain('Identity conflict')
+    expect(document.body.querySelector('[aria-label="Actions for Conflicting Skill"]')).toBeNull()
+    const toggle = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Toggle Conflicting Skill"]'
+    )
+    expect(toggle?.disabled).toBe(true)
+    const title = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Conflicting Skill')
+    )
+    expect(title?.disabled).toBe(true)
+    act(() => title?.click())
+    expect(onNavigate).not.toHaveBeenCalled()
   })
 
   it('shows a distinct loading state before an empty Skill catalog settles', () => {
@@ -1477,7 +1516,6 @@ describe('SkillsPanel (sub-views)', () => {
     const importedHeading = Array.from(document.body.querySelectorAll('h3')).find(
       (heading) => heading.textContent?.trim() === 'Imported skills'
     )
-    expect(importedHeading?.className).toContain('border-t')
     const importedSection = importedHeading?.closest('section')
     expect(importedSection?.textContent).toContain('No imported skills yet')
     expect(importedSection?.textContent).toContain('Repos you import from will appear here.')

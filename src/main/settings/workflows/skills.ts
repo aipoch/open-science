@@ -69,7 +69,7 @@ class SkillSettingsWorkflows {
 
   async deleteSkill(request: DeleteSkillRequest): WorkflowResult<'deleteSkill'> {
     const result = await this.settings.deleteSkill(request)
-    await this.effects.removeTagsForSkill(request.id)
+    await this.effects.removeTagsForSkill(request.id).catch(() => undefined)
     this.effects.notifySkillCatalogChanged()
     return result
   }

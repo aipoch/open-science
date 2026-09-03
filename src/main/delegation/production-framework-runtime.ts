@@ -13,11 +13,9 @@ import {
 import {
   releaseResolvedAgentBackendLeases,
   type AgentModelConfig,
-  type AgentSpawnInput,
   type ResolvedAgentBackend,
   type SessionSetup
 } from '../agent-framework'
-import { isolateCodeBuddyEnvironment } from '../agent-framework/codebuddy'
 import { createAcpRuntime, type AcpRuntimeCompositionOptions } from '../acp/runtime-composition'
 import type { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
@@ -82,16 +80,6 @@ const sessionSetup = (backend: ResolvedAgentBackend): SessionSetup =>
     ],
     ...(backend.sessionOptions ? { sessionOptions: backend.sessionOptions } : {})
   })
-
-const prepareCodeBuddyDelegateSpawn = async (
-  backend: ResolvedAgentBackend,
-  runtimeHome: string
-): Promise<AgentSpawnInput> => ({
-  executablePath: backend.executablePath,
-  args: [...(backend.args ?? [])],
-  env: await isolateCodeBuddyEnvironment(backend.env, join(runtimeHome, 'codebuddy')),
-  proxyEnvironmentMode: backend.proxyEnvironmentMode
-})
 
 const createProductionDelegatedFrameworkRuntime = (
   options: ProductionFrameworkRuntimeOptions
@@ -202,35 +190,20 @@ const createProductionDelegatedFrameworkRuntime = (
               await rm(runtimeHome, { recursive: true, force: true }).catch(() => undefined)
             }
           }
+          const delegatedSpawn = await backend.framework.prepareDelegatedSpawn?.(
+            backend,
+            runtimeHome
+          )
+          if (delegatedSpawn) return { ...base, spawn: delegatedSpawn }
           if (frameworkId === 'claude-code') {
             return { ...base, sessionSetup: sessionSetup(backend) }
           }
           if (frameworkId === 'opencode') {
             return { ...base, modelConfig: openCodeModelConfig(backend) }
           }
-          if (frameworkId === 'codex') {
-            return {
-              ...base,
-              spawn: {
-                executablePath: backend.executablePath,
-                args: [...(backend.args ?? [])],
-                env: {
-                  ...backend.env,
-                  HOME: runtimeHome,
-                  CODEX_HOME: runtimeHome
-                },
-                proxyEnvironmentMode: backend.proxyEnvironmentMode
-              }
-            }
-          }
-          if (frameworkId === 'codebuddy') {
-            return {
-              ...base,
-              spawn: await prepareCodeBuddyDelegateSpawn(backend, runtimeHome)
-            }
-          }
-          const unsupported: never = frameworkId
-          throw new Error(`Unsupported delegated-work framework: ${String(unsupported)}`)
+          throw new Error(
+            `Delegated-work framework ${frameworkId} does not prepare an execution scope.`
+          )
         } catch (error) {
           preparedAttempts.delete(input.attemptId)
           if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)
@@ -280,7 +253,6 @@ const createProductionDelegatedFrameworkRuntime = (
 export {
   createProductionDelegatedFrameworkRuntime,
   DELEGATED_CHILD_SYSTEM_PROMPT_APPEND,
-  prepareCodeBuddyDelegateSpawn,
   withDelegatedChildContext
 }
 export type { ProductionFrameworkRuntimeOptions }

@@ -123,6 +123,7 @@ class NotebookNetworkSandbox {
     try {
       wrapped = await this.#backend.wrap({
         command: command.command,
+        ...(command.executable ? { executable: command.executable, args: command.args ?? [] } : {}),
         commandId,
         ...(shell ? { shell } : {}),
         cwd: command.cwd,

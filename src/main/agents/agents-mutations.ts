@@ -25,7 +25,7 @@
 // (later slice). Ordinary mutations do not request a system permission card.
 
 import type { ConnectorReadModel, SkillCatalogReadModel } from './agents-service'
-import { applyNameOrIdFilter } from './agents-service'
+import { applyNameOrIdFilter } from './name-or-id-filter'
 import type { SpecialistService } from '../specialist/service'
 import type {
   CreateSpecialistInput,

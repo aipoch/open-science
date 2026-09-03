@@ -24,6 +24,7 @@ type TransactionJournal = {
   specialistId: string
   beforeDigest: string
   afterDigest: string
+  deleteSkillIds?: string[]
   // Legacy journals embedded documents. New journals keep sensitive Specialist payloads in
   // transaction data sidecars and contain only IDs, digests, and phase metadata.
   before?: StoredSpecialists
@@ -65,14 +66,34 @@ export class SpecialistPackageTransaction {
     storageDir: string,
     private readonly repository: SpecialistRepository,
     private readonly transactionId: () => string = randomUUID,
-    private readonly skillPort: SpecialistPackageSkillPort = NOOP_SPECIALIST_PACKAGE_SKILL_PORT
+    private readonly skillPort: SpecialistPackageSkillPort = NOOP_SPECIALIST_PACKAGE_SKILL_PORT,
+    private readonly cleanupCommittedDeletion?: (
+      specialistId: string,
+      skillIds: readonly string[]
+    ) => Promise<void>
   ) {
     this.journalPath = join(storageDir, 'specialist-package-transaction.json')
     this.beforeDataPath = join(storageDir, 'specialist-package-transaction.before.json')
     this.afterDataPath = join(storageDir, 'specialist-package-transaction.after.json')
   }
 
-  async recover(): Promise<void> {
+  recover(): Promise<void> {
+    return this.withRecoveryBarrier(async () => undefined)
+  }
+
+  withRecoveryBarrier<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(async () => {
+      await this.recoverNow()
+      return operation()
+    })
+    this.queue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
+  private async recoverNow(): Promise<void> {
     if (this.recoveryFailure) throw new SpecialistPackageRecoveryError()
     let raw: string
     try {
@@ -92,23 +113,46 @@ export class SpecialistPackageTransaction {
       throw new SpecialistPackageRecoveryError()
     }
 
+    let retryableCommittedDeletion = false
     try {
       const journal = JSON.parse(raw) as TransactionJournal
-      if (!journal || typeof journal.transactionId !== 'string') {
+      if (
+        !journal ||
+        typeof journal.transactionId !== 'string' ||
+        (journal.deleteSkillIds !== undefined &&
+          (!Array.isArray(journal.deleteSkillIds) ||
+            journal.deleteSkillIds.some((id) => typeof id !== 'string')))
+      ) {
         throw new Error('Invalid Specialist package transaction journal.')
       }
-      const { before, after } = await this.readTransactionData(journal)
-      const beforeDigest = journal.beforeDigest ?? documentDigest(before)
-      const afterDigest = journal.afterDigest ?? documentDigest(after)
       if (journal.phase === 'committed') {
+        retryableCommittedDeletion = journal.deleteSkillIds !== undefined
         const current = await this.repository.getAll()
-        if (documentDigest(current) === beforeDigest) {
-          await this.repository.replaceAllIfUnchanged(before, after)
-        } else if (documentDigest(current) !== afterDigest) {
-          throw new Error('Specialist document changed after package commit.')
+        const currentDigest = documentDigest(current)
+        const committedDeletionStillAbsent =
+          journal.deleteSkillIds !== undefined &&
+          !current.specialists.some((specialist) => specialist.id === journal.specialistId)
+        if (
+          !committedDeletionStillAbsent &&
+          (typeof journal.afterDigest !== 'string' || currentDigest !== journal.afterDigest)
+        ) {
+          const { before, after } = await this.readTransactionData(journal)
+          const beforeDigest = journal.beforeDigest ?? documentDigest(before)
+          const afterDigest = journal.afterDigest ?? documentDigest(after)
+          if (currentDigest === beforeDigest) {
+            await this.repository.replaceAllIfUnchanged(before, after)
+          } else if (currentDigest !== afterDigest) {
+            throw new Error('Specialist document changed after package commit.')
+          }
         }
         await this.skillPort.recover(journal.transactionId, 'commit')
+        if (journal.deleteSkillIds) {
+          await this.cleanupCommittedDeletion?.(journal.specialistId, journal.deleteSkillIds)
+        }
       } else if (journal.phase !== 'rolled-back') {
+        const { before, after } = await this.readTransactionData(journal)
+        const beforeDigest = journal.beforeDigest ?? documentDigest(before)
+        const afterDigest = journal.afterDigest ?? documentDigest(after)
         await this.skillPort.recover(journal.transactionId, 'rollback')
         const current = await this.repository.getAll()
         if (documentDigest(current) === afterDigest) {
@@ -123,7 +167,7 @@ export class SpecialistPackageTransaction {
         specialistId: journal.specialistId
       })
     } catch (error) {
-      this.recoveryFailure = error
+      if (!retryableCommittedDeletion) this.recoveryFailure = error
       throw new SpecialistPackageRecoveryError()
     }
   }
@@ -137,7 +181,7 @@ export class SpecialistPackageTransaction {
     options?: { activateAfterInstall?: boolean; origin?: SpecialistOrigin }
   ): Promise<SpecialistView> {
     const run = this.queue.then(async () => {
-      await this.recover()
+      await this.recoverNow()
       const before = await this.repository.getAll()
       const existingIndex = before.specialists.findIndex(
         (specialist) => specialist.id === plan.specialistId
@@ -246,6 +290,7 @@ export class SpecialistPackageTransaction {
         await (this.skillPort.runInMutationContext?.(transactionId, commit) ?? commit())
         return toView(stored)
       } catch (error) {
+        if (journal.phase === 'committed') throw new SpecialistPackageRecoveryError()
         try {
           journal.phase = 'rolling-back'
           await this.writeJournal(journal)
@@ -279,7 +324,7 @@ export class SpecialistPackageTransaction {
     assertDeletionAllowed?: () => Promise<void>
   ): Promise<void> {
     const run = this.queue.then(async () => {
-      await this.recover()
+      await this.recoverNow()
       const before = await this.repository.getAll()
       const existing = before.specialists.find((specialist) => specialist.id === specialistId)
       if (!existing || existing.revision !== expectedRevision) {
@@ -295,7 +340,8 @@ export class SpecialistPackageTransaction {
         phase: 'prepared',
         specialistId,
         beforeDigest: documentDigest(before),
-        afterDigest: documentDigest(after)
+        afterDigest: documentDigest(after),
+        deleteSkillIds: [...deleteSkillIds]
       }
       let specialistCommitted = false
       let skillMutationBegun = false
@@ -320,10 +366,12 @@ export class SpecialistPackageTransaction {
           journal.phase = 'committed'
           await this.writeJournal(journal)
           await this.skillPort.recover(transactionId, 'commit')
-          await this.cleanupTransactionData()
         }
         await (this.skillPort.runInMutationContext?.(transactionId, commit) ?? commit())
       } catch (error) {
+        if (error instanceof SpecialistPackageRecoveryError || journal.phase === 'committed') {
+          throw new SpecialistPackageRecoveryError()
+        }
         try {
           journal.phase = 'rolling-back'
           await this.writeJournal(journal)
@@ -341,6 +389,12 @@ export class SpecialistPackageTransaction {
         throw error
       } finally {
         if (skillMutationBegun) await this.skillPort.endMutation?.(transactionId)
+      }
+      try {
+        await this.cleanupCommittedDeletion?.(specialistId, deleteSkillIds)
+        await this.cleanupTransactionData()
+      } catch {
+        throw new SpecialistPackageRecoveryError()
       }
     })
     this.queue = run.then(
@@ -384,9 +438,9 @@ export class SpecialistPackageTransaction {
 
   private async cleanupTransactionData(): Promise<void> {
     await Promise.all([
-      rm(this.journalPath, { force: true }),
       rm(this.beforeDataPath, { force: true }),
       rm(this.afterDataPath, { force: true })
     ])
+    await rm(this.journalPath, { force: true })
   }
 }

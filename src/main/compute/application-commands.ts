@@ -1,7 +1,8 @@
 import {
   normalizeComputeApprovalDecision,
   type ComputeApprovalDecisionInput,
-  type DeleteComputeHostRequest
+  type DeleteComputeHostRequest,
+  type SetComputeJobRemoteCleanupRequest
 } from '../../shared/compute'
 import {
   LIFECYCLE_CHANNELS,
@@ -45,6 +46,7 @@ type ComputeCommandOwner = Pick<
   | 'approvalReplayPending'
   | 'jobsList'
   | 'jobsCancel'
+  | 'jobsSetRemoteCleanup'
   | 'jobsPendingNotification'
   | 'jobsMarkConsumed'
   | 'jobsTransitionAnalysis'
@@ -203,6 +205,11 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'jobsCancel'>,
     OwnerResult<ComputeCommandOwner, 'jobsCancel'>
   >('compute:jobs:cancel'),
+  jobsSetRemoteCleanup: defineApplicationCommand<
+    'compute:jobs:set-remote-cleanup',
+    readonly [SetComputeJobRemoteCleanupRequest],
+    OwnerResult<ComputeCommandOwner, 'jobsSetRemoteCleanup'>
+  >('compute:jobs:set-remote-cleanup'),
   jobsPendingNotification: defineApplicationCommand<
     'compute:jobs:pending-notification',
     OwnerArgs<ComputeCommandOwner, 'jobsPendingNotification'>,
@@ -269,6 +276,7 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.get,
   computeApplicationCommands.jobsList,
   computeApplicationCommands.jobsCancel,
+  computeApplicationCommands.jobsSetRemoteCleanup,
   computeApplicationCommands.jobsMarkConsumed,
   computeApplicationCommands.jobsPendingNotification,
   computeApplicationCommands.jobsTransitionAnalysis,
@@ -403,6 +411,10 @@ const registerComputeApplicationCommands = (
       },
       'compute:jobs:list': ({ args }) => dependencies.compute.jobsList(args[0]),
       'compute:jobs:cancel': ({ args }) => dependencies.compute.jobsCancel(args[0]),
+      'compute:jobs:set-remote-cleanup': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:jobs:set-remote-cleanup')
+        return dependencies.compute.jobsSetRemoteCleanup(args[0])
+      },
       'compute:jobs:pending-notification': ({ args }) =>
         dependencies.compute.jobsPendingNotification(args[0]),
       'compute:jobs:mark-consumed': ({ args }) =>

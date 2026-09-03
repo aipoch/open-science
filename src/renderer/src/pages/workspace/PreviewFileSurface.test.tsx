@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, createRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -157,6 +157,21 @@ let root: Root
 const click = async (element: HTMLElement | null): Promise<void> => {
   if (!element) throw new Error('element not found')
   await act(async () => element.click())
+}
+
+const discardConfirmation = (): HTMLElement | null =>
+  document.body.querySelector('[data-testid="discard-preview-changes-confirmation"]')
+
+const confirmDiscard = async (): Promise<void> => {
+  await click(
+    discardConfirmation()?.querySelector<HTMLButtonElement>('button:last-of-type') ?? null
+  )
+}
+
+const cancelDiscard = async (): Promise<void> => {
+  await click(
+    discardConfirmation()?.querySelector<HTMLButtonElement>('button:first-of-type') ?? null
+  )
 }
 
 const changeTextarea = async (textarea: HTMLTextAreaElement, value: string): Promise<void> => {
@@ -321,12 +336,11 @@ describe('PreviewFileSurface managed text versions', () => {
       .mockResolvedValue({ ok: true, value: managedInspect })
   })
 
-  it('stays read-only when the Web runtime omits managed operations', async () => {
+  it('stays read-only when the Web runtime omits the managed-file namespace', async () => {
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
-        artifacts: window.api.artifacts,
-        managedFileVersions: {}
+        artifacts: window.api.artifacts
       }
     })
 
@@ -673,7 +687,6 @@ describe('PreviewFileSurface managed text versions', () => {
   })
 
   it('localizes the dirty-draft confirmation', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     const leaveAction = vi.fn()
 
     await act(async () => {
@@ -690,9 +703,13 @@ describe('PreviewFileSurface managed text versions', () => {
     await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
     await act(async () => i18next.changeLanguage('zh-Hans'))
 
-    expect(previewLeaveGuards.request('localized-dirty-draft', leaveAction)).toBe(false)
-    expect(confirm).toHaveBeenCalledWith('要放弃未保存的更改吗？')
+    await act(async () => {
+      expect(previewLeaveGuards.request('localized-dirty-draft', leaveAction)).toBe(false)
+    })
+    expect(discardConfirmation()?.textContent).toContain('要放弃未保存的更改吗？')
+    expect(discardConfirmation()?.textContent).toContain('对此文件的未保存编辑将丢失。')
     expect(leaveAction).not.toHaveBeenCalled()
+    await cancelDiscard()
 
     await act(async () => i18next.changeLanguage('en'))
   })
@@ -936,7 +953,6 @@ describe('PreviewFileSurface managed text versions', () => {
         resolveSave = resolve
       })
     )
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     await act(async () => {
       root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       await Promise.resolve()
@@ -945,7 +961,8 @@ describe('PreviewFileSurface managed text versions', () => {
     await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
     await click(container.querySelector('[aria-label="Save changes"]'))
     await click(container.querySelector('[aria-label="Previous file version"]'))
-    expect(confirm).toHaveBeenCalledOnce()
+    expect(discardConfirmation()).not.toBeNull()
+    await confirmDiscard()
 
     await act(async () => {
       resolveSave({
@@ -1553,7 +1570,6 @@ describe('PreviewFileSurface managed text versions', () => {
   it('uses one workbench guard for an atomic connected version switch', async () => {
     usePreviewWorkbenchStore.getState().activateProject('project-1')
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(managedUploadItem)
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(true).mockReturnValueOnce(false)
     await act(async () => {
       root.render(
         <PreviewFileSurface
@@ -1568,16 +1584,52 @@ describe('PreviewFileSurface managed text versions', () => {
     await click(container.querySelector('[aria-label="Edit README.md"]'))
     await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
     await click(container.querySelector('[aria-label="Previous file version"]'))
+    expect(discardConfirmation()).not.toBeNull()
+    await confirmDiscard()
 
-    expect(confirm).toHaveBeenCalledOnce()
     expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
       selectedVersionId: 'upload-v1'
     })
     expect(container.querySelector('textarea')).toBeNull()
   })
 
+  it('runs an approved deferred workbench mutation without a second confirmation', async () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-1')
+    store.upsertAndActivateItem(managedUploadItem)
+    const surfaceRef = createRef<{
+      requestLeave: (action: () => boolean | void) => boolean
+    }>()
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          ref={surfaceRef}
+          item={managedUploadItem}
+          onClose={vi.fn()}
+          leaveGuardScope="workbench:project-1:upload:upload-file-1"
+          workbenchConnected
+        />
+      )
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+
+    await act(async () => {
+      surfaceRef.current?.requestLeave(() =>
+        usePreviewWorkbenchStore.getState().removeItem(managedUploadItem.id)
+      )
+    })
+    expect(discardConfirmation()).not.toBeNull()
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
+
+    await confirmDiscard()
+
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(0)
+    expect(discardConfirmation()).toBeNull()
+  })
+
   it('keeps a dirty draft when a version switch is rejected', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     await act(async () => {
       root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
       await Promise.resolve()
@@ -1586,8 +1638,9 @@ describe('PreviewFileSurface managed text versions', () => {
     await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
 
     await click(container.querySelector('[aria-label="Previous file version"]'))
+    expect(discardConfirmation()).not.toBeNull()
+    await cancelDiscard()
 
-    expect(confirm).toHaveBeenCalledOnce()
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
     expect(
       container.querySelector('[data-testid="managed-preview-version-navigation"]')?.textContent
@@ -1597,7 +1650,6 @@ describe('PreviewFileSurface managed text versions', () => {
   it('does not guard again when a connected save publishes its new version', async () => {
     usePreviewWorkbenchStore.getState().activateProject('project-1')
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(managedUploadItem)
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const version = { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 }
     window.api.managedFileVersions.saveTextEdit = vi.fn().mockResolvedValue({
       ok: true,
@@ -1618,7 +1670,7 @@ describe('PreviewFileSurface managed text versions', () => {
     await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Saved\n')
     await click(container.querySelector('[aria-label="Save changes"]'))
 
-    expect(confirm).not.toHaveBeenCalled()
+    expect(discardConfirmation()).toBeNull()
     expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
       selectedVersionId: 'upload-v3'
     })
@@ -2155,7 +2207,13 @@ describe('PreviewFileSurface PDF context action matrix', () => {
       projectId: 'project-1',
       sessionId: 'active-session',
       expectedRevision: 3,
-      sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+      sources: [
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1'
+        }
+      ]
     })
     // Linking is "Read with agent": the composer takes focus so the user can ask immediately.
     expect(focusListener).toHaveBeenCalled()
@@ -2183,6 +2241,7 @@ describe('PreviewFileSurface PDF context action matrix', () => {
 
     expect(onLinkReadingContext).toHaveBeenCalledWith({
       sourceKind: 'artifact-version',
+      sourceFileId: 'artifact-1',
       sourceVersionId: 'version-1'
     })
     expect(direct.linkPdfContext).not.toHaveBeenCalled()
@@ -2246,7 +2305,13 @@ describe('PreviewFileSurface PDF context action matrix', () => {
       projectId: 'project-1',
       sessionId: 'active-session',
       expectedRevision: 3,
-      sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+      sources: [
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-1'
+        }
+      ]
     })
   })
 
@@ -2393,6 +2458,7 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']).toEqual({
       kind: 'version',
       sourceKind: 'artifact-version',
+      sourceFileId: 'artifact-1',
       sourceVersionId: 'version-1',
       previewItemId: 'artifact-1'
     })
@@ -2426,6 +2492,7 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']).toEqual({
       kind: 'version',
       sourceKind: 'artifact-version',
+      sourceFileId: 'artifact-1',
       sourceVersionId: 'version-1',
       previewItemId: 'artifact-1'
     })
@@ -2438,6 +2505,7 @@ describe('PreviewFileSurface PDF context action matrix', () => {
       ...pdfItem,
       id: 'upload-1',
       artifactId: undefined,
+      managedFileId: 'upload-1',
       selectedVersionId: undefined,
       source: 'upload',
       path: 'upload-version:project-1/source-session/upload-version-1'
@@ -2450,7 +2518,13 @@ describe('PreviewFileSurface PDF context action matrix', () => {
 
     expect(linkPdfContext).toHaveBeenCalledWith(
       expect.objectContaining({
-        sources: [{ sourceKind: 'upload-version', sourceVersionId: 'upload-version-1' }]
+        sources: [
+          {
+            sourceKind: 'upload-version',
+            sourceFileId: 'upload-1',
+            sourceVersionId: 'upload-version-1'
+          }
+        ]
       })
     )
   })
@@ -2611,6 +2685,7 @@ describe('PreviewFileSurface PDF context action matrix', () => {
         sources: [
           {
             sourceKind: 'upload-version',
+            sourceFileId: 'upload-1',
             sourceVersionId: 'notebook-upload-version-1'
           }
         ]
@@ -3493,6 +3568,39 @@ describe('PreviewFileSurface View in context entry', () => {
     await click(container.querySelector('[aria-label="View in context for sin.png"]'))
 
     expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
+    expect(onViewInContextNavigate).toHaveBeenCalledOnce()
+  })
+
+  it('passes the View in context notification as a navigation continuation', async () => {
+    seedWorkspaceStores()
+    const openSession = vi
+      .spyOn(useNavigationStore.getState(), 'openSession')
+      .mockReturnValue(false)
+    const onViewInContextNavigate = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={item}
+          provenanceEntry="trailing"
+          onViewInContextNavigate={onViewInContextNavigate}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await click(container.querySelector('[aria-label="View in context for sin.png"]'))
+
+    expect(openSession).toHaveBeenCalledWith(
+      'project-1',
+      'session-1',
+      'user',
+      onViewInContextNavigate
+    )
+    expect(onViewInContextNavigate).not.toHaveBeenCalled()
+    openSession.mock.calls[0]?.[3]?.()
     expect(onViewInContextNavigate).toHaveBeenCalledOnce()
   })
 })

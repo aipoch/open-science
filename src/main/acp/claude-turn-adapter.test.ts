@@ -1,7 +1,7 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { claudeCodeTurnAdapter } from './claude-turn-adapter'
+import { claudeCodeTurnAdapter, createClaudeCodeTurnAdapter } from './claude-turn-adapter'
 
 describe('Claude Code turn adapter', () => {
   it('returns generic ACP usage and the matching terminal SDK model-turn count', async () => {
@@ -110,7 +110,8 @@ describe('Claude Code turn adapter', () => {
   })
 
   it('publishes exact top-level calls only when Claude count and aggregate usage prove coverage', async () => {
-    const probe = await claudeCodeTurnAdapter.begin({
+    const readTranscriptMessages = vi.fn(async () => [])
+    const probe = await createClaudeCodeTurnAdapter({ readTranscriptMessages }).begin({
       providerSessionId: 'provider-session-1',
       cwd: '/workspace'
     })
@@ -180,6 +181,7 @@ describe('Claude Code turn adapter', () => {
         }
       ]
     })
+    expect(readTranscriptMessages).not.toHaveBeenCalled()
   })
 
   it('publishes exact calls from repeated provider messages that omit the parent tool id', async () => {
@@ -229,6 +231,106 @@ describe('Claude Code turn adapter', () => {
     expect(result.modelCalls?.map((call) => call.sourceInvocationId)).toEqual(
       Array.from({ length: 7 }, (_, index) => `provider-call-${index + 1}`)
     )
+  })
+
+  it('recovers finalized calls after a transient incomplete MiniMax-M3 transcript read', async () => {
+    const transcriptMessages = [
+      ['minimax-call-1', 32_837, 128, 116],
+      ['minimax-call-2', 1_195, 33_024, 66],
+      ['minimax-call-3', 898, 34_176, 23]
+    ].flatMap(([id, inputTokens, cachedReadTokens, outputTokens]) => {
+      const message = {
+        id,
+        usage: {
+          input_tokens: inputTokens,
+          cache_read_input_tokens: cachedReadTokens,
+          cache_creation_input_tokens: 0,
+          output_tokens: outputTokens
+        }
+      }
+      return [
+        { type: 'assistant', parent_tool_use_id: null, message },
+        { type: 'assistant', parent_tool_use_id: null, message }
+      ]
+    })
+    const readTranscriptMessages = vi
+      .fn()
+      .mockRejectedValueOnce(new SyntaxError('Unexpected end of JSON input'))
+      .mockResolvedValue(transcriptMessages)
+    const adapter = createClaudeCodeTurnAdapter({ readTranscriptMessages })
+    const probe = await adapter.begin({
+      providerSessionId: 'provider-session-1',
+      cwd: '/workspace'
+    })
+
+    for (const id of ['minimax-call-1', 'minimax-call-2', 'minimax-call-3']) {
+      const observation = {
+        sessionId: 'provider-session-1',
+        message: {
+          type: 'assistant',
+          parent_tool_use_id: null,
+          message: {
+            id,
+            usage: {
+              input_tokens: 0,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0,
+              output_tokens: 0
+            }
+          }
+        }
+      }
+      probe.observe?.(observation)
+      probe.observe?.(observation)
+    }
+    probe.observe?.({
+      sessionId: 'provider-session-1',
+      message: { type: 'result', num_turns: 3, origin: { kind: 'human' } }
+    })
+
+    const result = await probe.finalize({
+      response: {
+        stopReason: 'end_turn',
+        usage: {
+          inputTokens: 34_930,
+          cachedReadTokens: 67_328,
+          cachedWriteTokens: 0,
+          outputTokens: 205
+        }
+      } as PromptResponse
+    })
+
+    expect(result.modelCalls).toEqual([
+      {
+        sourceInvocationId: 'minimax-call-1',
+        inputTokens: 32_837,
+        cacheTokens: 128,
+        cachedReadTokens: 128,
+        cachedWriteTokens: 0,
+        outputTokens: 116
+      },
+      {
+        sourceInvocationId: 'minimax-call-2',
+        inputTokens: 1_195,
+        cacheTokens: 33_024,
+        cachedReadTokens: 33_024,
+        cachedWriteTokens: 0,
+        outputTokens: 66
+      },
+      {
+        sourceInvocationId: 'minimax-call-3',
+        inputTokens: 898,
+        cacheTokens: 34_176,
+        cachedReadTokens: 34_176,
+        cachedWriteTokens: 0,
+        outputTokens: 23
+      }
+    ])
+    expect(readTranscriptMessages).toHaveBeenCalledWith({
+      providerSessionId: 'provider-session-1',
+      cwd: '/workspace'
+    })
+    expect(readTranscriptMessages).toHaveBeenCalledTimes(2)
   })
 
   it('rejects conflicting usage replayed under the same provider call id', async () => {

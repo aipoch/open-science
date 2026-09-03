@@ -6,6 +6,7 @@ import { basename, dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  addRepairRequired,
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -49,6 +50,7 @@ import {
 } from './operation-journal'
 
 const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'os-prov-'))
+const TEST_WINDOWS_PATH_BUDGET = { maxCacheRelativePath: 1, maxEnvRelativePath: 1 } as const
 const RELOCATION_ARCHIVE = 'x-1.conda'
 const RELOCATION_ARCHIVE_CONTENT = 'relocation archive'
 const RELOCATION_ARCHIVE_MD5 = createHash('md5').update(RELOCATION_ARCHIVE_CONTENT).digest('hex')
@@ -77,7 +79,8 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
     mm: '/mm',
     channel: 'conda-forge',
     fetchBundle: async (spec): Promise<FetchedBundle> => ({
-      lockPath: join(root, `${spec.name}.lock`)
+      lockPath: join(root, `${spec.name}.lock`),
+      pathBudget: TEST_WINDOWS_PATH_BUDGET
     }),
     runArgv: async (argv: string[]): Promise<void> => {
       // argv[3] is --prefix / -p value depending on form; find the prefix and drop a bin file.
@@ -115,7 +118,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
         cache: { path: cachePath, lockKey: 'selected-cache-key' },
         fetchBundle: async () => {
           order.push('fetch')
-          return { lockPath: join(root, 'python.lock') }
+          return { lockPath: join(root, 'python.lock'), pathBudget: TEST_WINDOWS_PATH_BUDGET }
         },
         maintainCache: async (cache, onBeforeSpawn, onChild) => {
           expect(cache.path).toBe(cachePath)
@@ -246,7 +249,10 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     const argvs: string[][] = []
     const lockPath = join(root, 'default-python.lock')
     const deps = makeDeps(root, {
-      fetchBundle: async (): Promise<FetchedBundle> => ({ lockPath }),
+      fetchBundle: async (): Promise<FetchedBundle> => ({
+        lockPath,
+        pathBudget: TEST_WINDOWS_PATH_BUDGET
+      }),
       runArgv: async (argv) => {
         argvs.push(argv)
         const bin = pythonBin(envPrefix(root, DEFAULT_PY_ENV))
@@ -475,7 +481,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     writeFileSync(join(prefix, 'stale-file'), 'stale')
     let verifyCalls = 0
     const fetchBundle = vi.fn(async (): Promise<FetchedBundle> => ({
-      lockPath: join(root, 'python-3.12.lock')
+      lockPath: join(root, 'python-3.12.lock'),
+      pathBudget: TEST_WINDOWS_PATH_BUDGET
     }))
     const runArgv = vi.fn(async () => {
       expect(existsSync(join(prefix, 'stale-file'))).toBe(false)
@@ -508,7 +515,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
 
     let creates = 0
     const fetchBundle = vi.fn(async (): Promise<FetchedBundle> => ({
-      lockPath: join(root, 'python-3.12.lock')
+      lockPath: join(root, 'python-3.12.lock'),
+      pathBudget: TEST_WINDOWS_PATH_BUDGET
     }))
     const runArgv = vi.fn(async () => {
       creates += 1
@@ -545,7 +553,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
 
     let creates = 0
     const fetchBundle = vi.fn(async (): Promise<FetchedBundle> => ({
-      lockPath: join(root, 'python-3.12.lock')
+      lockPath: join(root, 'python-3.12.lock'),
+      pathBudget: TEST_WINDOWS_PATH_BUDGET
     }))
     const runArgv = vi.fn(async () => {
       creates += 1
@@ -692,7 +701,10 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
       writeFileSync(bin, 'ok')
     })
     const deps = makeDeps(root, {
-      fetchBundle: async () => ({ lockPath: join(root, 'python-3.12.lock') }),
+      fetchBundle: async () => ({
+        lockPath: join(root, 'python-3.12.lock'),
+        pathBudget: TEST_WINDOWS_PATH_BUDGET
+      }),
       runArgv
     })
 
@@ -725,7 +737,10 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
       writeFileSync(bin, 'ok')
     })
     const deps = makeDeps(root, {
-      fetchBundle: vi.fn(async (): Promise<FetchedBundle> => ({ lockPath: join(root, 'p.lock') })),
+      fetchBundle: vi.fn(async (): Promise<FetchedBundle> => ({
+        lockPath: join(root, 'p.lock'),
+        pathBudget: TEST_WINDOWS_PATH_BUDGET
+      })),
       runArgv
     })
 
@@ -760,7 +775,8 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     const provisioner = new DefaultRuntimeProvisioner(
       makeDeps(root, {
         fetchBundle: vi.fn(async (): Promise<FetchedBundle> => ({
-          lockPath: join(root, 'p.lock')
+          lockPath: join(root, 'p.lock'),
+          pathBudget: TEST_WINDOWS_PATH_BUDGET
         })),
         runArgv: vi.fn(async function firstCreate() {
           // Simulate the user cancelling right as the create fails with a cache signature: the abort
@@ -2327,6 +2343,28 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     expect(runArgv).toHaveBeenCalled()
   })
 
+  it.each([
+    ['python', DEFAULT_PY_ENV, readReadyMarker, pythonBin],
+    ['r', DEFAULT_R_ENV, readRReadyMarker, rBin]
+  ] as const)(
+    'removes the %s ready marker when repaired binding finalization fails',
+    async (language, environment, readMarker, interpreterFor) => {
+      const root = makeRoot()
+      const provisioner = new DefaultRuntimeProvisioner(makeDeps(root))
+
+      await expect(
+        provisioner.repair(language, () => {}, {
+          onVerified: () => {
+            throw new Error('binding persist failed')
+          }
+        })
+      ).rejects.toThrow('binding persist failed')
+
+      expect(readMarker(root)).toBeUndefined()
+      expect(existsSync(interpreterFor(envPrefix(root, environment)))).toBe(true)
+    }
+  )
+
   const BOOT_A = '11111111-1111-4111-8111-111111111111'
   const BOOT_B = '22222222-2222-4222-8222-222222222222'
   // Writes a {spawning} sidecar with a chosen boot_id, deterministically (recordSpawnIntentSync would
@@ -2610,13 +2648,24 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
 
   it('status() reports a recovery-blocked default prefix', () => {
     const root = makeRoot()
-    const blocked = new Set([envPrefix(root, DEFAULT_PY_ENV)])
-    const provisioner = new DefaultRuntimeProvisioner(
-      makeDeps(root, { isPrefixBlocked: (p) => blocked.has(p) })
-    )
+    const platform: NodeJS.Platform = process.platform === 'win32' ? 'linux' : 'win32'
+    const blockedPrefix = envPrefix(root, DEFAULT_PY_ENV, platform)
+    const isPrefixBlocked = vi.fn((prefix: string) => prefix === blockedPrefix)
+    const provisioner = new DefaultRuntimeProvisioner(makeDeps(root, { platform, isPrefixBlocked }))
     const status = provisioner.status()
     expect(status.pythonRecoveryBlocked).toBe(true)
     expect(status.rRecoveryBlocked).toBe(false)
+    expect(isPrefixBlocked).toHaveBeenCalledWith(blockedPrefix)
+  })
+
+  it('status() reports a durable repair marker after a failed explicit reinstall', () => {
+    const root = makeRoot()
+    addRepairRequired(root, DEFAULT_PY_ENV, 'protected-identity-change')
+
+    const status = new DefaultRuntimeProvisioner(makeDeps(root)).status()
+
+    expect(status.pythonRecoveryBlocked).toBe(true)
+    expect(status.rRecoveryBlocked).not.toBe(true)
   })
 
   it('a corrupt journal Reset moves the journal aside BEFORE deleting the prefix (never delete-then-fail)', async () => {

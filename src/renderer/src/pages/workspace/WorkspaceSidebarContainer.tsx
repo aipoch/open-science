@@ -56,8 +56,7 @@ const WorkspaceSidebarContainer = ({
   const openProject = useNavigationStore((state) => state.openProject)
   const handleOpenProject = useCallback(
     (targetProjectId: string): void => {
-      onMobileClose?.()
-      openProject(targetProjectId, 'user')
+      openProject(targetProjectId, 'user', onMobileClose)
     },
     [onMobileClose, openProject]
   )

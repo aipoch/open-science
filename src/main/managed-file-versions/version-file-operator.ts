@@ -72,6 +72,7 @@ type ReadLease = Integrity & {
   versionToken?: string
   readRange: (begin: number, end: number) => Promise<Uint8Array>
   copyTo: (destinationPath: string, options?: { exclusive?: boolean }) => Promise<void>
+  assertCanCopyTo: (destinationPath: string) => Promise<void>
   verifyUnchanged: () => Promise<void>
   close: () => Promise<void>
 }
@@ -564,6 +565,34 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
           )
         }
       }
+      const assertCanCopyTo = async (destinationPath: string): Promise<void> => {
+        let destination: FileHandle | undefined
+        try {
+          assertOpen()
+          try {
+            destination = await this.fileSystem.open(destinationPath, constants.O_RDONLY)
+          } catch (error) {
+            if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return
+            throw error
+          }
+          const sourceStats = await leaseHandle.stat()
+          const destinationStats = await destination.stat()
+          if (
+            sourceStats.dev === destinationStats.dev &&
+            sourceStats.ino === destinationStats.ino
+          ) {
+            throw new Error('Cannot copy an immutable version over itself.')
+          }
+        } catch (error) {
+          throw normalizeStorageError(
+            error,
+            'INTEGRITY_FAILED',
+            'Unable to validate immutable version copy destination.'
+          )
+        } finally {
+          await destination?.close().catch(() => undefined)
+        }
+      }
       const copyTo = async (
         destinationPath: string,
         options?: { exclusive?: boolean }
@@ -632,6 +661,7 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
         ...(versionTokenMatch ? { versionToken: versionTokenMatch[1] } : {}),
         readRange,
         copyTo,
+        assertCanCopyTo,
         verifyUnchanged,
         close: async () => {
           if (closed) return

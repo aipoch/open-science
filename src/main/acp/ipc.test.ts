@@ -25,7 +25,11 @@ import {
 
 // Capture every ipcMain.handle registration so a handler can be invoked directly.
 const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>()
-const { mkdir, rm } = vi.hoisted(() => ({
+const { lstat, mkdir, rm } = vi.hoisted(() => ({
+  lstat: vi.fn().mockResolvedValue({
+    isDirectory: () => true,
+    isSymbolicLink: () => false
+  }),
   mkdir: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined)
 }))
@@ -39,7 +43,13 @@ vi.mock('electron', () => ({
   app: { getVersion: () => '0.0.0-test' },
   BrowserWindow: { getAllWindows: () => [] }
 }))
-vi.mock('node:fs/promises', () => ({ mkdir, rm }))
+vi.mock('node:fs/promises', () => ({ lstat, mkdir, rm }))
+vi.mock('../storage/managed-workspace-ownership', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../storage/managed-workspace-ownership')>()),
+  initializeManagedWorkspaceOwnership: vi.fn().mockResolvedValue(undefined),
+  finalizeManagedWorkspaceOwnership: vi.fn().mockResolvedValue(undefined),
+  removeManagedWorkspaceOwnership: vi.fn().mockResolvedValue(undefined)
+}))
 
 // A fake runtime whose methods are spies; registration wires closures over these, so only the invoked
 // handler's method needs meaningful behavior. Hoisted so the (hoisted) vi.mock factory can reference it.
@@ -268,6 +278,7 @@ const registerWithFakes = (overrides?: {
 
 afterEach(() => {
   clearMigrationPending()
+  lstat.mockClear()
   mkdir.mockClear()
   rm.mockClear()
   // Restore the default managed-workspace implementation (a test may have overridden it once).
@@ -1027,8 +1038,10 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
       new RegExp(`^${join('/tmp/data', 'workspaces').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
     )
     expect(secondRequest.cwd).not.toBe(firstRequest.cwd)
-    expect(mkdir).toHaveBeenNthCalledWith(1, firstRequest.cwd, { recursive: true })
-    expect(mkdir).toHaveBeenNthCalledWith(2, secondRequest.cwd, { recursive: true })
+    expect(mkdir).toHaveBeenNthCalledWith(1, join('/tmp/data', 'workspaces'), { recursive: true })
+    expect(mkdir).toHaveBeenNthCalledWith(2, firstRequest.cwd, { recursive: false })
+    expect(mkdir).toHaveBeenNthCalledWith(3, join('/tmp/data', 'workspaces'), { recursive: true })
+    expect(mkdir).toHaveBeenNthCalledWith(4, secondRequest.cwd, { recursive: false })
     expect(rm).not.toHaveBeenCalled()
     expect(firstResult).toEqual({ sessionId: 's-new', cwd: firstRequest.cwd })
     expect(secondResult).toEqual({ sessionId: 's-new', cwd: secondRequest.cwd })
@@ -1078,7 +1091,8 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
 
     const request = createSession.mock.calls[0][0]
     expect(request.cwd).not.toBe('   ')
-    expect(mkdir).toHaveBeenCalledWith(request.cwd, { recursive: true })
+    expect(mkdir).toHaveBeenCalledWith(join('/tmp/data', 'workspaces'), { recursive: true })
+    expect(mkdir).toHaveBeenCalledWith(request.cwd, { recursive: false })
   })
 
   it('rejects managed workspace creation while a data-root migration is pending', async () => {
@@ -1134,7 +1148,8 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
     ).rejects.toBe(error)
 
     const request = createSession.mock.calls[0][0]
-    expect(mkdir).toHaveBeenCalledWith(request.cwd, { recursive: true })
+    expect(mkdir).toHaveBeenCalledWith(join('/tmp/data', 'workspaces'), { recursive: true })
+    expect(mkdir).toHaveBeenCalledWith(request.cwd, { recursive: false })
     expect(rm).toHaveBeenCalledWith(request.cwd, { recursive: true, force: true })
   })
 
