@@ -6,7 +6,6 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { parseNameStatus } from './classify-pr-changes.mjs'
-import { prismaSchemaFingerprint } from '../check-prisma-client.mjs'
 
 const allowedTypes = [
   'feat',
@@ -182,20 +181,9 @@ export function checkDatabaseMigrationPolicy({
 }) {
   const violations = []
   const basePaths = new Set(baseMigrationPaths)
-  const changedSchemaPaths = new Set(
-    changes.flatMap(({ path, previousPath }) =>
-      [path, previousPath].filter((candidate) => databaseSchemaPaths.has(candidate))
-    )
+  const schemaChanged = changes.some(({ path, previousPath }) =>
+    [path, previousPath].some((candidate) => databaseSchemaPaths.has(candidate))
   )
-  const schemaContractChanged = [...changedSchemaPaths].some((path) => {
-    const baseSource = baseFiles[path]
-    const headSource = headFiles[path]
-    return (
-      baseSource === undefined ||
-      headSource === undefined ||
-      prismaSchemaFingerprint(baseSource) !== prismaSchemaFingerprint(headSource)
-    )
-  })
   const addedPaths = changes
     .filter(
       ({ path, status }) =>
@@ -217,7 +205,7 @@ export function checkDatabaseMigrationPolicy({
     }
   }
 
-  if (schemaContractChanged && addedPaths.length === 0) {
+  if (schemaChanged && addedPaths.length === 0) {
     violations.push({
       kind: 'database-migration',
       subject: `database schema contracts changed without a new migration under ${migrationDirectory}`
@@ -339,25 +327,6 @@ function requireCommit(value, name) {
   return value
 }
 
-const readRevisionFiles = (revision, paths) =>
-  Object.fromEntries(
-    [...paths].flatMap((path) => {
-      try {
-        return [
-          [
-            path,
-            execFileSync('git', ['show', `${revision}:${path}`], {
-              encoding: 'utf8',
-              stdio: ['ignore', 'pipe', 'ignore']
-            })
-          ]
-        ]
-      } catch {
-        return []
-      }
-    })
-  )
-
 function escapeHtml(value) {
   return String(value)
     .replaceAll('&', '&amp;')
@@ -420,20 +389,31 @@ export function runPrPolicyCli(environment = process.env) {
       )
       .map(({ path }) => path)
     const headPaths = new Set(addedMigrationPaths)
-    const changedSchemaPaths = new Set(
-      changes.flatMap(({ path, previousPath }) =>
-        [path, previousPath].filter((candidate) => databaseSchemaPaths.has(candidate))
-      )
-    )
-    for (const path of changedSchemaPaths) headPaths.add(path)
     const serviceChanged = changes.some(({ path, previousPath }) =>
       [path, previousPath].includes(migrationServicePath)
     )
     if (addedMigrationPaths.length > 0 || serviceChanged) headPaths.add(migrationServicePath)
-    const headFiles = readRevisionFiles(head, headPaths)
-    const baseFiles = readRevisionFiles(mergeBase, changedSchemaPaths)
+    const headFiles = Object.fromEntries(
+      [...headPaths].map((path) => [
+        path,
+        execFileSync('git', ['show', `${head}:${path}`], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore']
+        })
+      ])
+    )
+    let baseFiles = {}
     if (headPaths.has(migrationServicePath)) {
-      Object.assign(baseFiles, readRevisionFiles(base, [migrationServicePath]))
+      try {
+        baseFiles = {
+          [migrationServicePath]: execFileSync('git', ['show', `${base}:${migrationServicePath}`], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore']
+          })
+        }
+      } catch {
+        baseFiles = {}
+      }
     }
     databaseMigrationViolations = checkDatabaseMigrationPolicy({
       changes,
