@@ -27,7 +27,7 @@ Open Science는 [AIPOCH](https://aipoch.com/open-science)가 과학자와 연구
 
 Open Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
-> 💡 **[Open Science v0.25.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 9월)_. Open Science v0.25.0은 연구 결과를 살아있는 문서로 바꿉니다. 텍스트 아티팩트와 업로드를 편집할 수 있게 되고, 저장할 때마다 비교 가능한 새 버전으로 게시됩니다. 이와 함께 엄선된 NVIDIA Build 제공업체, 세션별 위임 제어, 프로젝트 빠른 전환기의 퍼지 검색, 에이전트가 만드는 런타임 환경에 대한 제어와 함께 제공되는 안전한 런타임 재설치, 더 빨라진 다중 버전 업그레이드, 런타임·저장소·보안에 관한 폭넓은 문제 수정이 포함됩니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
+> 💡 **[Open Science v0.25.1 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 9월)_. Open Science v0.25.1은 유지 관리 릴리스입니다. 보호된 노트북 커널이 이제 Windows에서 직접 시작되고, 파일 내보내기는 시간대에 안전한 패키지 타임스탬프와 함께 원자적으로 게시되며, 생성된 이미지 미리보기가 복원됩니다. 아울러 세션·아티팩트·스페셜리스트·제공업체에 관한 폭넓은 문제 수정이 전반에 걸쳐 포함됩니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="생성된 아티팩트가 포함된 에이전트 세션을 보여 주는 Open Science 오픈 소스 AI 연구 워크벤치 데스크톱 앱" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />

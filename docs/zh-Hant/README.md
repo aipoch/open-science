@@ -27,7 +27,7 @@ Open Science 是由 [AIPOCH](https://aipoch.com/open-science) 為科學家與研
 
 Open Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
 
-> 💡 **[Open Science v0.25.0 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。Open Science v0.25.0 讓研究成果成為活文件：文字產物與上傳檔案可以編輯，每次儲存都會發布可比較的新版本——同時帶來精選的 NVIDIA Build 服務商、按會話的委派控制、專案快速切換器中的模糊搜尋、安全的執行環境重新安裝以及對智能體自行建立執行環境的控制、更快的多版本升級，還有一系列執行環境、持久化與安全性修復。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[Open Science v0.25.1 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。Open Science v0.25.1 是一次維護版本：受保護的 Notebook 核心現在能在 Windows 上直接啟動，檔案匯出改為以原子方式發布並使用不受時區影響的封裝時間戳記，生成的影像預覽已恢復，同時帶來一系列涵蓋會話、產物、專家與服務商的修復。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="Open Science 開源 AI 研究工作台桌面應用程式工作區，顯示含有生成產物的智能體會話" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />

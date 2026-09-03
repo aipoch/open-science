@@ -27,7 +27,7 @@ Open Science は、[AIPOCH](https://aipoch.com/open-science) が科学者と研�
 
 Open Science は、機械学習、統計学、生命科学、化学、材料科学、物理学、環境科学など、幅広い分野の計算集約型・データ集約型研究を支援します。文献レビューと仮説構築から、コード実行、データ分析、シミュレーション、可視化、追跡可能な研究成果の作成まで、研究プロセス全体を支えます。
 
-> 💡 **[Open Science v0.25.0 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _（最終更新：2026 年 9 月）_。Open Science v0.25.0 では、研究成果を生きたドキュメントに変えます。テキストのアーティファクトとアップロードが編集可能になり、保存のたびに比較可能な新しいバージョンとして公開されます。あわせて、厳選された NVIDIA Build プロバイダー、セッション別の委任コントロール、プロジェクトクイックスイッチャーのファジー検索、エージェントによる環境作成を制御できる安全なランタイム再インストール、より高速なマルチバージョンアップグレード、そしてランタイム・永続化・セキュリティに関する幅広い修正に対応します。詳細は[最新リリースノート](https://github.com/aipoch/open-science/releases/latest)を参照してください。
+> 💡 **[Open Science v0.25.1 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _（最終更新：2026 年 9 月）_。Open Science v0.25.1 はメンテナンスリリースです。Windows で保護された Notebook カーネルが直接起動するようになり、ファイルのエクスポートはタイムゾーンに対して安全なパッケージのタイムスタンプとともにアトミックに公開され、生成された画像のプレビューが復元されます。あわせて、セッション・アーティファクト・スペシャリスト・プロバイダーに関する幅広い修正が全体にわたって取り込まれます。詳細は[最新リリースノート](https://github.com/aipoch/open-science/releases/latest)を参照してください。
 
 <p align="center">
  <img width="1920" height="1140" alt="生成されたアーティファクトを含むエージェントセッションを表示する Open Science のオープンソース AI 研究ワークベンチ" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />
