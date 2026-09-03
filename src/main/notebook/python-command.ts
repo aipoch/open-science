@@ -291,18 +291,24 @@ else:
     def callable_placeholder(*args, **kwargs):
         return None
 
-    def build_static_class(node, shadowed_names=()):
+    def build_static_class(node, visible_bindings=None):
         if node.decorator_list or node.keywords:
             return None
+        if visible_bindings is None:
+            visible_bindings = {}
         bases = []
         for base in node.bases:
-            if (
-                not isinstance(base, ast.Name)
-                or base.id not in static_base_types
-                or base.id in shadowed_names
-            ):
+            if not isinstance(base, ast.Name):
                 return None
-            bases.append(static_base_types[base.id])
+            if base.id in visible_bindings:
+                base_type = visible_bindings[base.id]
+                if not isinstance(base_type, type):
+                    return None
+            else:
+                base_type = static_base_types.get(base.id)
+                if base_type is None:
+                    return None
+            bases.append(base_type)
         if not bases:
             bases.append(object)
 
@@ -310,7 +316,7 @@ else:
             "__module__": "__open_science_helper_validation__",
             "__qualname__": node.name,
         }
-        local_shadowed_names = set(shadowed_names)
+        local_bindings = dict(visible_bindings)
         for index, member in enumerate(node.body):
             if index == 0 and is_docstring(member):
                 namespace["__doc__"] = ast.literal_eval(member.value)
@@ -319,20 +325,20 @@ else:
                 continue
             if isinstance(member, (ast.AsyncFunctionDef, ast.FunctionDef)) and is_static_function(member):
                 namespace[member.name] = callable_placeholder
-                local_shadowed_names.add(member.name)
+                local_bindings[member.name] = callable_placeholder
                 continue
             if isinstance(member, ast.ClassDef):
-                nested_class = build_static_class(member, local_shadowed_names)
+                nested_class = build_static_class(member, local_bindings)
                 if nested_class is None:
                     return None
                 namespace[member.name] = nested_class
-                local_shadowed_names.add(member.name)
+                local_bindings[member.name] = nested_class
                 continue
             class_bindings = literal_assignment_bindings(member)
             if class_bindings is None:
                 return None
             namespace.update(class_bindings)
-            local_shadowed_names.update(class_bindings)
+            local_bindings.update(class_bindings)
 
         try:
             return type(node.name, tuple(bases), namespace)
@@ -347,15 +353,16 @@ else:
         if isinstance(node, ast.Pass):
             continue
         if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and is_static_function(node):
-            bindings[node.name] = True
+            bindings[node.name] = callable_placeholder
             continue
-        if isinstance(node, ast.ClassDef) and build_static_class(node, bindings) is not None:
-            bindings[node.name] = True
-            continue
+        if isinstance(node, ast.ClassDef):
+            static_class = build_static_class(node, bindings)
+            if static_class is not None:
+                bindings[node.name] = static_class
+                continue
         assignment_bindings = literal_assignment_bindings(node)
         if assignment_bindings is not None:
-            for name in assignment_bindings:
-                bindings[name] = False
+            bindings.update(assignment_bindings)
             continue
         unsafe.append(type(node).__name__)
 
@@ -364,7 +371,7 @@ else:
             "legacy helper validation requires side-effect-free definitions: "
             + ", ".join(unsafe)
         )
-    missing = [name for name in request["exports"] if not bindings.get(name, False)]
+    missing = [name for name in request["exports"] if not callable(bindings.get(name))]
 if missing:
     raise TypeError("missing or non-callable exports: " + ", ".join(missing))
 `

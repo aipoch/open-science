@@ -172,6 +172,14 @@ describe('validateNotebookHelperExports', () => {
     await expect(
       validateNotebookHelperExports(
         'figure-composer',
+        'class ComposerBase:\n    pass\nclass FigureComposer(ComposerBase):\n    pass\n',
+        ['FigureComposer'],
+        { python: legacyPython }
+      )
+    ).resolves.toBeUndefined()
+    await expect(
+      validateNotebookHelperExports(
+        'figure-composer',
         'def another_export():\n    return None\n',
         ['compose_figure'],
         { python: legacyPython }
