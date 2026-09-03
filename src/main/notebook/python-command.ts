@@ -291,6 +291,8 @@ else:
     def callable_placeholder(*args, **kwargs):
         return None
 
+    static_classes_with_init_subclass = set()
+
     def build_static_class(node, visible_bindings=None):
         if node.decorator_list or node.keywords:
             return None
@@ -308,6 +310,8 @@ else:
                 base_type = static_base_types.get(base.id)
                 if base_type is None:
                     return None
+            if base_type in static_classes_with_init_subclass:
+                return None
             bases.append(base_type)
         if not bases:
             bases.append(object)
@@ -341,9 +345,12 @@ else:
             local_bindings.update(class_bindings)
 
         try:
-            return type(node.name, tuple(bases), namespace)
+            static_class = type(node.name, tuple(bases), namespace)
         except Exception:
             return None
+        if "__init_subclass__" in namespace:
+            static_classes_with_init_subclass.add(static_class)
+        return static_class
 
     bindings = {}
     unsafe = []
