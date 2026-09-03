@@ -159,19 +159,24 @@ export const claudeCodeFramework: AgentFramework = {
       workflowKeywordTriggerEnabled: false
     })
     const configuredSettings = sessionOptions.settings
+    // The ACP adapter resolves string paths against the later session cwd, after this synchronous
+    // boundary has lost the chance to enforce settings.env. Require callers to resolve files first
+    // so app-owned policy cannot be reopened by a higher-priority settings file.
+    if (typeof configuredSettings === 'string') {
+      throw new Error(
+        'Claude Code session settings must be resolved before building ACP session metadata.'
+      )
+    }
     const settingsValues = recordValue(configuredSettings)
     // Claude applies settings.env after the subprocess env, so enforce the same session-only flag
     // in the programmatic settings tier while preserving app-owned settings and their environment.
-    const settings =
-      typeof configuredSettings === 'string'
-        ? configuredSettings
-        : Object.freeze({
-            ...settingsValues,
-            env: Object.freeze({
-              ...recordValue(settingsValues.env),
-              ...CLAUDE_CODE_DISABLED_AUTO_MEMORY_ENV
-            })
-          })
+    const settings = Object.freeze({
+      ...settingsValues,
+      env: Object.freeze({
+        ...recordValue(settingsValues.env),
+        ...CLAUDE_CODE_DISABLED_AUTO_MEMORY_ENV
+      })
+    })
     const env = Object.freeze({
       ...recordValue(sessionOptions.env),
       ...CLAUDE_CODE_DISABLED_AUTO_MEMORY_ENV,

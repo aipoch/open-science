@@ -10541,7 +10541,7 @@ describe('ACP runtime session management', () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'], { supportsResume: true })
     const sessionOptions = {
-      settings: '/app/claude/settings.json',
+      settings: { apiKeyHelper: '/app/claude/api-key-helper' },
       plugins: [{ type: 'local', path: '/app/claude' }]
     }
     const runtime = new AcpRuntime({
@@ -10559,10 +10559,28 @@ describe('ACP runtime session management', () => {
     await runtime.resumeSession({ sessionId: 'remote-session-2', cwd: '/workspace' })
 
     expect(fakeAgent.newSessions[0]._meta).toMatchObject({
-      claudeCode: { options: { ...sessionOptions, settingSources: ['user'] } }
+      claudeCode: {
+        options: {
+          plugins: [{ type: 'local', path: '/app/claude' }],
+          settingSources: ['user'],
+          settings: {
+            apiKeyHelper: '/app/claude/api-key-helper',
+            env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' }
+          }
+        }
+      }
     })
     expect(fakeAgent.resumedSessions[0]._meta).toMatchObject({
-      claudeCode: { options: { ...sessionOptions, settingSources: ['user'] } }
+      claudeCode: {
+        options: {
+          plugins: [{ type: 'local', path: '/app/claude' }],
+          settingSources: ['user'],
+          settings: {
+            apiKeyHelper: '/app/claude/api-key-helper',
+            env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' }
+          }
+        }
+      }
     })
   })
 

@@ -106,9 +106,18 @@ describe('claudeCodeFramework', () => {
     })
   })
 
+  it('rejects unresolved settings paths that could override ACP session policy', () => {
+    expect(() =>
+      claudeCodeFramework.buildSessionSetup({
+        systemPromptAppends: [],
+        sessionOptions: { settings: '/app/claude/settings.json' }
+      })
+    ).toThrow('Claude Code session settings must be resolved before building ACP session metadata.')
+  })
+
   it('injects resolved settings and local plugins into Claude session options', () => {
     const sessionOptions = {
-      settings: '/app/claude/settings.json',
+      settings: { apiKeyHelper: '/app/claude/api-key-helper' },
       plugins: [{ type: 'local', path: '/app/claude' }]
     }
 
