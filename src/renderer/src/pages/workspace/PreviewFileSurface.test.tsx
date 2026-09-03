@@ -315,12 +315,11 @@ describe('PreviewFileSurface managed text versions', () => {
       .mockResolvedValue({ ok: true, value: managedInspect })
   })
 
-  it('stays read-only when the Web runtime omits managed operations', async () => {
+  it('stays read-only when the Web runtime omits the managed-file namespace', async () => {
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
-        artifacts: window.api.artifacts,
-        managedFileVersions: {}
+        artifacts: window.api.artifacts
       }
     })
 
