@@ -459,7 +459,7 @@
     "Base URL": "기본 URL",
     "Base URL is required.": "기본 URL이 필요합니다.",
     "Base URL must be a valid HTTP or HTTPS URL.": "기본 URL은 유효한 HTTP 또는 HTTPS URL이어야 합니다.",
-    "Base URL must not include query parameters.": "기본 URL에는 쿼리 매개변수를 포함할 수 없습니다.",
+    "Base URL must not include query parameters or fragments.": "기본 URL에는 쿼리 매개변수나 프래그먼트를 포함할 수 없습니다.",
     "Base URL, key, and model for a Messages or Chat Completions endpoint": "Messages 또는 Chat Completions 엔드포인트의 기본 URL, 키, 모델",
     "Beaker": "비커",
     "Beta": "베타",

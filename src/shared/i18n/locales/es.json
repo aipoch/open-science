@@ -477,7 +477,7 @@
     "Base URL": "URL base",
     "Base URL is required.": "Se requiere la URL base.",
     "Base URL must be a valid HTTP or HTTPS URL.": "La URL base debe ser una URL HTTP o HTTPS válida.",
-    "Base URL must not include query parameters.": "La URL base no debe incluir parámetros de consulta.",
+    "Base URL must not include query parameters or fragments.": "La URL base no debe incluir parámetros de consulta ni fragmentos.",
     "Base URL, key, and model for a Messages or Chat Completions endpoint": "URL base, clave y modelo para un endpoint de Messages o Chat Completions",
     "Beaker": "Vaso de precipitados",
     "Beta": "Beta",

@@ -459,7 +459,7 @@
     "Base URL": "ベース URL",
     "Base URL is required.": "ベース URL は必須です。",
     "Base URL must be a valid HTTP or HTTPS URL.": "ベース URL には有効な HTTP または HTTPS URL を指定してください。",
-    "Base URL must not include query parameters.": "ベース URL にクエリパラメータを含めることはできません。",
+    "Base URL must not include query parameters or fragments.": "ベース URL にクエリパラメータやフラグメントを含めることはできません。",
     "Base URL, key, and model for a Messages or Chat Completions endpoint": "Messages または Chat Completions エンドポイントのベース URL、キー、およびモデル",
     "Beaker": "ビーカー",
     "Beta": "ベータ版",

@@ -86,7 +86,10 @@ describe('describeValidation', () => {
 describe('localizeProviderResourceMessage', () => {
   it.each([
     ['Base URL must be a valid HTTP or HTTPS URL.', '基础 URL 必须是有效的 HTTP 或 HTTPS URL。'],
-    ['Base URL must not include query parameters.', '基础 URL 不得包含查询参数。'],
+    [
+      'Base URL must not include query parameters or fragments.',
+      '基础 URL 不得包含查询参数或片段。'
+    ],
     [
       'Remove credentials from the Base URL and use the API key field.',
       '请从基础 URL 中移除凭据，改用 API 密钥字段。'

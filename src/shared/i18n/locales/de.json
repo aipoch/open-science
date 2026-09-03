@@ -444,7 +444,7 @@
     "Base URL": "Basis-URL",
     "Base URL is required.": "Die Basis-URL ist erforderlich.",
     "Base URL must be a valid HTTP or HTTPS URL.": "Die Basis-URL muss eine gültige HTTP- oder HTTPS-URL sein.",
-    "Base URL must not include query parameters.": "Die Basis-URL darf keine Abfrageparameter enthalten.",
+    "Base URL must not include query parameters or fragments.": "Die Basis-URL darf keine Abfrageparameter oder Fragmente enthalten.",
     "Base URL, key, and model for a Messages or Chat Completions endpoint": "Basis-URL, API-Schlüssel und Modell für einen Messages- oder Chat-Completions-Endpunkt",
     "Beaker": "Becherglas",
     "Beta": "Beta",

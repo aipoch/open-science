@@ -199,7 +199,14 @@ describe('ProviderAccountsModule', () => {
       'https://gateway.example/v1?api_key=secret-key',
       'Remove credentials from the Base URL and use the API key field.'
     ],
-    ['https://gateway.example/v1?tenant=lab', 'Base URL must not include query parameters.']
+    [
+      'https://gateway.example/v1?tenant=lab',
+      'Base URL must not include query parameters or fragments.'
+    ],
+    [
+      'https://gateway.example/v1#fragment',
+      'Base URL must not include query parameters or fragments.'
+    ]
   ])(
     'rejects an unsafe custom provider Base URL before persistence: %s',
     async (baseUrl, error) => {

@@ -484,7 +484,7 @@
     "Base URL": "Базовый URL",
     "Base URL is required.": "Базовый URL обязателен.",
     "Base URL must be a valid HTTP or HTTPS URL.": "Базовый URL должен быть допустимым URL-адресом HTTP или HTTPS.",
-    "Base URL must not include query parameters.": "Базовый URL не должен содержать параметры запроса.",
+    "Base URL must not include query parameters or fragments.": "Базовый URL не должен содержать параметры запроса или фрагменты.",
     "Base URL, key, and model for a Messages or Chat Completions endpoint": "Базовый URL, ключ и модель для конечной точки Messages или Chat Completions",
     "Beaker": "Лабораторный стакан",
     "Beta": "Бета",
