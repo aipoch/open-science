@@ -756,7 +756,7 @@ describe('single Codex workflow contract', () => {
     expect(setupNode.id).toBe('setup_subscription_node')
     expect(setupNode.if).toBe("${{ inputs.auth_mode == 'subscription' }}")
     expect(setupNode['continue-on-error']).toBe(true)
-    expect(setupNode.uses).toBe('actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f')
+    expect(setupNode.uses).toBe('actions/setup-node@820762786026740c76f36085b0efc47a31fe5020')
     expect(setupNode.with).toEqual({ 'node-version': '24' })
     const installCli = getStep(codexWorkflow, 'review', 'Install Codex CLI for subscription auth')
     expect(installCli.id).toBe('install_subscription_cli')
