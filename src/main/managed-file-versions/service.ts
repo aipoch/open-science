@@ -589,6 +589,9 @@ class ManagedFileVersionService {
     if (!version) {
       throw new ManagedFileVersionError('VERSION_NOT_FOUND', 'Managed file version was not found.')
     }
+    if (version.fileId !== logicalFile.id) {
+      operationError('VERSION_NOT_IN_FILE', 'Managed file version belongs to another file.')
+    }
     if (!options.unpublished) {
       if (request.source === 'artifact' && !isManagedVisibleArtifactVersion(version)) {
         operationError('VERSION_NOT_FOUND', 'Managed file version is not published.')
@@ -605,9 +608,6 @@ class ManagedFileVersionService {
       }
     } else if (version.state !== COMPLETE_STATE.upload) {
       operationError('VERSION_NOT_FOUND', 'Managed file version write has not completed.')
-    }
-    if (version.fileId !== logicalFile.id) {
-      operationError('VERSION_NOT_IN_FILE', 'Managed file version belongs to another file.')
     }
     return { logicalFile, version }
   }

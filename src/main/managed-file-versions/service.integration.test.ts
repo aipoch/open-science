@@ -3002,6 +3002,56 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       ).rejects.toMatchObject({ code: 'VERSION_NOT_IN_FILE' })
     })
 
+    it('reports version identity before write state on both read paths', async () => {
+      // A legacy-origin staging version owned by another file: identity must win over state so
+      // the published path keeps its historical error precedence.
+      const owned = await createFixture('artifact')
+      await client.artifactLineage.create({
+        data: {
+          id: 'foreign-lineage',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          normalizedFilename: 'foreign.json',
+          filename: 'foreign.json'
+        }
+      })
+      const foreignBytes = Buffer.from('foreign\n')
+      const foreignKey = 'artifacts/project-1/session-1/foreign-lineage/versions/foreign-v1/content'
+      await mkdir(dirname(join(storageRoot, ...foreignKey.split('/'))), { recursive: true })
+      await writeFile(join(storageRoot, ...foreignKey.split('/')), foreignBytes)
+      await client.artifactVersion.create({
+        data: {
+          id: 'foreign-v1',
+          artifactId: 'foreign-lineage',
+          versionNumber: 1,
+          filename: 'foreign.json',
+          originKind: 'legacy',
+          basedOnVersionId: null,
+          state: 'staging',
+          contentStorageKey: foreignKey,
+          contentType: 'application/json',
+          sizeBytes: BigInt(foreignBytes.byteLength),
+          checksum: checksum(foreignBytes)
+        }
+      })
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const identity = {
+        source: 'artifact' as const,
+        projectId: 'project-1',
+        fileId: owned.fileId
+      }
+
+      await expect(service.openVersion(identity, 'foreign-v1')).rejects.toMatchObject({
+        code: 'VERSION_NOT_IN_FILE'
+      })
+      await expect(service.openUnpublishedVersion(identity, 'foreign-v1')).rejects.toMatchObject({
+        code: 'VERSION_NOT_IN_FILE'
+      })
+    })
+
     it('reads a finalized published version through the same path', async () => {
       const fixture = await createPendingAgentPlanFixture()
       const now = new Date('2026-09-01T00:00:00.000Z')
