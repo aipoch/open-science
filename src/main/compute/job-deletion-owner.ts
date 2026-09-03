@@ -88,18 +88,23 @@ const cleanupCommand = (workdir: string, handle: RemoteHandle | undefined): stri
   const quotedWorkdir = quoteRemotePath(workdir)
   const quotedPidFile = quoteRemotePath(`${workdir}/job.pid`)
   // Retried plans may contain stale PIDs. Signal only while cwd still proves Job ownership;
-  // without that evidence, skip process mutation and keep directory removal idempotent.
+  // permit stale/absent PIDs, but fail closed when ownership cannot be determined.
   const lines = [
     `[ ! -L ${quotedWorkdir} ] || exit 1`,
     `scratch_root=$(cd -- ${quotedScratchRoot} 2>/dev/null && pwd -P || true)`,
     `workdir=$(cd -- ${quotedWorkdir} 2>/dev/null && pwd -P || true)`,
     'expected_workdir=${scratch_root%/}/' + quotedWorkdirSuffix,
     '[ -z "$workdir" ] || { [ -n "$scratch_root" ] && [ "$workdir" = "$expected_workdir" ]; } || exit 1',
-    ...remoteJobPidTerminationFunctionLines()
+    ...remoteJobPidTerminationFunctionLines(),
+    'cleanup_job_pid() {',
+    '  kill_job_pid "$1"',
+    '  ownership=$?',
+    '  case $ownership in 0|1|3) return 0 ;; *) return 2 ;; esac',
+    '}'
   ]
-  if (handle) lines.push(`kill_job_pid ${handle.pid}`)
+  if (handle) lines.push(`cleanup_job_pid ${handle.pid} || exit 1`)
   lines.push(
-    `if [ -f ${quotedPidFile} ]; then kill_job_pid "$(cat ${quotedPidFile} 2>/dev/null || true)"; fi`,
+    `if [ -f ${quotedPidFile} ]; then cleanup_job_pid "$(cat ${quotedPidFile} 2>/dev/null || true)" || exit 1; fi`,
     'if [ -n "$workdir" ]; then rm -rf -- "$workdir"; fi',
     'test -z "$workdir" || test ! -e "$workdir"'
   )
@@ -188,12 +193,25 @@ class ComputeJobDeletionOwner {
       if (requestCancellation && confirmCancellation && cancellationRequired) {
         cancellation = { request: requestCancellation, confirm: confirmCancellation }
       }
-      await cancellation?.request(job)
-      await this.dispatchTracker.waitFor([job.job_id])
-      const cleanup = await this.prepareRemoteCleanup(job)
-      if (cleanup) await this.runRemoteCleanup(cleanup)
-      await cancellation?.confirm(job)
-      return this.deps.jobRepository.settleRemoteCleanup(request)
+      const runtime = this.runtime
+      if (cancellationRequired && !runtime) {
+        throw new Error('Compute Job cancellation runtime is unavailable.')
+      }
+      let runtimePaused = false
+      try {
+        if (cancellationRequired && runtime) {
+          await runtime.pause()
+          runtimePaused = true
+        }
+        await cancellation?.request(job)
+        await this.dispatchTracker.waitFor([job.job_id])
+        const cleanup = await this.prepareRemoteCleanup(job)
+        if (cleanup) await this.runRemoteCleanup(cleanup)
+        await cancellation?.confirm(job)
+        return await this.deps.jobRepository.settleRemoteCleanup(request)
+      } finally {
+        if (runtimePaused) runtime?.resume()
+      }
     })
   }
 

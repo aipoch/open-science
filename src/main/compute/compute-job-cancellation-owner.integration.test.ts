@@ -186,6 +186,33 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     await expect(jobs.get('job-1')).resolves.toMatchObject({ status: 'running' })
   })
 
+  it('does not settle remote cleanup across a cancellation reaper lease', async () => {
+    const { jobs, operations, createJob } = await setup()
+    await createJob('running')
+    const owner = new ComputeJobCancellationOwner(operations, jobs)
+    await owner.request('job-1', scope)
+    const claim = await operations.claimNext(
+      'cancel',
+      new Date('2026-01-01T00:00:00.000Z'),
+      30_000,
+      'reaper-lease'
+    )
+    expect(claim).not.toBeNull()
+
+    await expect(
+      operations.fulfillCancellationAfterRemoteCleanup(
+        'job-1',
+        scope,
+        new Date('2026-01-01T00:00:01.000Z')
+      )
+    ).rejects.toThrow('Cancellation fulfillment lost its ownership claim')
+    await expect(jobs.get('job-1')).resolves.toMatchObject({ status: 'running' })
+    await expect(operations.get('job-1', 'cancel')).resolves.toMatchObject({
+      phase: 'active',
+      claimToken: 'reaper-lease'
+    })
+  })
+
   it('retries unknown, timeout, truncated, and nonzero evidence and never confirms it', async () => {
     const { jobs, operations, createJob } = await setup()
     await createJob('running')

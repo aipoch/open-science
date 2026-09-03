@@ -175,10 +175,12 @@ describe('ComputeJobDeletionOwner', () => {
     ).resolves.toMatchObject({ remote_cleanup_disposition: 'cleaned' })
 
     expect(harness.order).toEqual([
+      'poller-paused',
       'cancel-requested',
       'dispatch-drained',
       'remote-cleanup',
-      'cancel-confirmed'
+      'cancel-confirmed',
+      'poller-resumed'
     ])
     expect(harness.jobRepository.settleRemoteCleanup).toHaveBeenCalledOnce()
   })
@@ -224,8 +226,10 @@ describe('ComputeJobDeletionOwner', () => {
     expect(command).toContain('process_workdir=$(readlink "/proc/$pid/cwd"')
     expect(command).toContain('command -v lsof')
     expect(command).toContain('lsof -a -p "$pid" -d cwd -Fn')
-    expect(command).toContain('job_pid_is_owned "$pid" || return 0')
-    expect(command).toContain('kill_job_pid 123')
+    expect(command).not.toContain('job_pid_is_owned "$pid" || return 0')
+    expect(command).toContain('cleanup_job_pid() {')
+    expect(command).toContain('case $ownership in 0|1|3) return 0 ;; *) return 2 ;; esac')
+    expect(command).toContain('cleanup_job_pid 123 || exit 1')
     expect(command).not.toContain('kill -TERM -- -123')
     expect(command).toContain('[ ! -L ')
     expect(command).toContain('scratch_root=')
@@ -269,7 +273,7 @@ describe('ComputeJobDeletionOwner', () => {
         intent: 'job_cleanup'
       })
       const cleanup = String(harness.runner.run.mock.calls[0]?.[1])
-      expect(cleanup).toContain('kill_job_pid 123')
+      expect(cleanup).toContain('cleanup_job_pid 123 || exit 1')
       expect(cleanup).toContain('rm -rf -- "$workdir"')
     }
   )
@@ -291,8 +295,8 @@ describe('ComputeJobDeletionOwner', () => {
 
     expect(harness.runner.run).toHaveBeenCalledOnce()
     const cleanup = String(harness.runner.run.mock.calls[0]?.[1])
-    expect(cleanup).not.toContain('kill_job_pid 123')
-    expect(cleanup).toContain('kill_job_pid "$(cat ')
+    expect(cleanup).not.toContain('cleanup_job_pid 123')
+    expect(cleanup).toContain('cleanup_job_pid "$(cat ')
     expect(harness.lifecycle.deleteOwnerRows).toHaveBeenCalledOnce()
   })
 

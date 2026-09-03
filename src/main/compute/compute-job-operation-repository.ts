@@ -331,7 +331,12 @@ class ComputeJobOperationRepository {
         })
       }
       const settled = await transaction.computeJobOperation.updateMany({
-        where: { id: operation.id, revision: operation.revision, phase: 'active' },
+        where: {
+          id: operation.id,
+          revision: operation.revision,
+          phase: 'active',
+          claimToken: null
+        },
         data: {
           phase: 'settled',
           outcome: 'fulfilled',
