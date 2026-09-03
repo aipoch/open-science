@@ -17,6 +17,7 @@ import { normalizeResponsesBaseUrl } from '../agent-framework/codex'
 import { ResponseBodyLimitError, readBoundedResponseText } from './bounded-response'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { toErrorMessage } from '../error-message'
+import { fetchProviderRequest } from './provider-fetch'
 
 // Runs a real connectivity/auth probe for a provider and classifies the outcome into an actionable
 // category. Request construction and classification are pure so the branch matrix is unit-testable;
@@ -685,7 +686,7 @@ const validateCustomProvider = async (
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const response = await fetchImpl(request.url, {
+    const response = await fetchProviderRequest(fetchImpl, request.url, {
       method: 'POST',
       headers: request.headers,
       body: request.body,

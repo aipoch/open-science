@@ -8,6 +8,7 @@ import {
   writeProviderLoopbackJson as json,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
+import { fetchProviderRequest } from './provider-fetch'
 import {
   anthropicToResponses,
   chatToResponses,
@@ -221,11 +222,10 @@ export class XaiOAuthProviderBridge {
     forceRefresh: boolean
   ): Promise<Response> {
     const token = await this.getAccessToken(forceRefresh)
-    return this.fetchImpl('https://api.x.ai/v1/responses', {
+    return fetchProviderRequest(this.fetchImpl, 'https://api.x.ai/v1/responses', {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
-      redirect: 'manual',
       signal: request.signal
     })
   }

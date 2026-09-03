@@ -6,6 +6,7 @@ import {
   writeProviderLoopbackJson as json,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
+import { fetchProviderRequest } from './provider-fetch'
 import { chatToResponses, responsesToChat } from './xai-protocol'
 
 type Json = Record<string, unknown>
@@ -276,11 +277,10 @@ export class ChatProviderCompatibilityBridge {
     const headers: Record<string, string> = { 'content-type': 'application/json' }
     if (this.target.key) headers.authorization = `Bearer ${this.target.key}`
     if (this.target.wire === 'anthropic') headers['anthropic-version'] = '2023-06-01'
-    const upstream = await this.fetchImpl(this.target.endpoint, {
+    const upstream = await fetchProviderRequest(this.fetchImpl, this.target.endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify(upstreamBody),
-      redirect: 'manual',
       signal: request.signal
     })
     const payload = (await upstream.json()) as Json

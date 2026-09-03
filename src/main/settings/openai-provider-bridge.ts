@@ -16,6 +16,7 @@ import {
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
+import { fetchProviderRequest } from './provider-fetch'
 
 const WIRE_PATH = {
   'chat-completions': '/v1/chat/completions',
@@ -191,11 +192,10 @@ export class OpenAiProviderBridge {
       return
     }
 
-    const upstream = await this.fetchImpl(endpoint, {
+    const upstream = await fetchProviderRequest(this.fetchImpl, endpoint, {
       method: 'POST',
       headers: headersToForward,
       body,
-      redirect: 'manual',
       signal: request.signal
     })
     const headers = responseHeaders(upstream.headers)

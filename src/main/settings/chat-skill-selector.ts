@@ -3,6 +3,7 @@ import { createLogger } from '../logger'
 import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { CustomReasoningEffortTransport } from '../../shared/reasoning-effort'
 import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
+import { fetchProviderRequest } from './provider-fetch'
 import { resolveChatReasoningTransport } from './reasoning-transport'
 import {
   boundedSkillSelectorCatalog,
@@ -79,7 +80,7 @@ export async function selectChatSkills(input: {
       target.reasoningEffortTransport
     )
     const request = (withTool: boolean): Promise<Response> =>
-      fetchImpl(target.url, {
+      fetchProviderRequest(fetchImpl, target.url, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',

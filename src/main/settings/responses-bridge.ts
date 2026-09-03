@@ -32,6 +32,7 @@ import {
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
+import { fetchProviderRequest } from './provider-fetch'
 import type { SkillSelectorUsageObservation } from '../agent-framework'
 
 // The bridge deliberately keeps protocol payloads open-ended; validation rejects unsupported shapes
@@ -453,7 +454,7 @@ export class ResponsesBridge {
       })
       return
     }
-    const upstream = await this.fetchImpl(chatUrl(this.target.baseUrl), {
+    const upstream = await fetchProviderRequest(this.fetchImpl, chatUrl(this.target.baseUrl), {
       method: 'POST',
       headers,
       body: chatRequestBody,

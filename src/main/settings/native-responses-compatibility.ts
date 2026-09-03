@@ -30,6 +30,7 @@ import {
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
+import { fetchProviderRequest } from './provider-fetch'
 import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
 
 // Responses payloads are intentionally open-ended across providers. Keep the compatibility boundary
@@ -594,7 +595,8 @@ export class NativeResponsesCompatibilityProxy {
     timer.unref?.()
     try {
       const resolvedKey = this.target.resolveKey ? await this.target.resolveKey() : this.target.key
-      const response = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
+      const url = responsesUrl(this.target.baseUrl)
+      const response = await fetchProviderRequest(this.fetchImpl, url, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -890,7 +892,7 @@ export class NativeResponsesCompatibilityProxy {
         this.options.responseHeaderTimeoutMs ?? DEFAULT_RESPONSE_HEADER_TIMEOUT_MS,
         'Native Responses upstream did not return response headers in time.'
       )
-      let upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
+      let upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(this.target.baseUrl), {
         method: 'POST',
         headers: headersToForward,
         body: upstreamRequestBody,
@@ -898,7 +900,7 @@ export class NativeResponsesCompatibilityProxy {
       })
       if (upstream.status === 401 && this.target.resolveKey) {
         const refreshedKey = await this.target.resolveKey(true)
-        upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
+        upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(this.target.baseUrl), {
           method: 'POST',
           headers: upstreamHeaders(request, refreshedKey),
           body: upstreamRequestBody,
