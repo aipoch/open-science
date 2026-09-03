@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
@@ -834,6 +835,41 @@ describe('ComputeRemoteOperationOwner.download (os-downloads)', () => {
     })
     expect(await readdir(tmpDir)).toEqual([])
   })
+
+  it.runIf(process.platform === 'darwin')(
+    'downloads through the real BSD find-to-stat fallback with a fractional mtime',
+    async () => {
+      const remoteDir = join(tmpDir, 'remote')
+      const remotePath = join(remoteDir, 'data.csv')
+      await mkdir(remoteDir)
+      await writeFile(remotePath, 'stable-data')
+      const run = vi.fn<SshRunner['run']>(async (_host, command) => ({
+        exitCode: 0,
+        stdout: execFileSync('/bin/sh', ['-c', command], { encoding: 'utf8' }),
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      }))
+      const { repo } = makeRepo()
+      const scpRunner: ScpRunner = {
+        copy: vi.fn(async (_bin, args) => {
+          const localPath = args.at(-1) as string
+          await writeFile(localPath, await readFile(remotePath))
+          return { exitCode: 0, stderr: '', timedOut: false }
+        })
+      }
+      const service = makeOwner({ run }, repo, undefined, scpRunner, tmpDir)
+
+      await expect(
+        service.download('ssh:biowulf', remotePath, { kind: 'os-downloads' })
+      ).resolves.toMatchObject({ name: 'data.csv', size: 11 })
+      expect(run).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining("stat -f '%z %i %.9Fm'"),
+        expect.anything()
+      )
+    }
+  )
 
   it('rejects a same-size download when the remote file identity changes during transfer', async () => {
     const run = vi

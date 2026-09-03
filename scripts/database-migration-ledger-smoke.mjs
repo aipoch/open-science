@@ -107,7 +107,7 @@ const EXPECTED_MIGRATION_LEDGER = [
   },
   {
     id: '0026_compute_job_remote_cleanup',
-    checksum: '3b47efcf0b05ea2f3eb04e66b155b6db45116c5ead8dd67a91d0b9d9798d6357'
+    checksum: 'c9c0dff928daa4eafe5b8910c4202ddba83f740e92cb243a4fa0dc8e323cba7b'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

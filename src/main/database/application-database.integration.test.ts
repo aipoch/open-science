@@ -64,6 +64,8 @@ const removeComputeAnalysisSchema = async (client: PrismaClient): Promise<void> 
     `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
   )
   const removedLines = [
+    '"remoteCleanupDisposition" TEXT',
+    'CONSTRAINT "ComputeJob_remoteCleanupDisposition_check"',
     'CONSTRAINT "ComputeJob_analysisState_check"',
     'CONSTRAINT "ComputeJob_analysisBundle_check"',
     'CONSTRAINT "ComputeJob_analysisConsumption_check"',
@@ -81,7 +83,11 @@ const removeComputeAnalysisSchema = async (client: PrismaClient): Promise<void> 
   )
   const copiedColumns = columns
     .map(({ name }) => name)
-    .filter((name) => !['analysisState', 'analysisMessageId', 'analysisUpdatedAt'].includes(name))
+    .filter(
+      (name) =>
+        name !== 'remoteCleanupDisposition' &&
+        !['analysisState', 'analysisMessageId', 'analysisUpdatedAt'].includes(name)
+    )
     .map((name) => `"${name}"`)
     .join(', ')
 
@@ -688,9 +694,6 @@ describe('application database (integration)', () => {
     await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
-    await client.$executeRawUnsafe(
-      'ALTER TABLE "ComputeJob" DROP COLUMN "remoteCleanupDisposition"'
-    )
 
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
@@ -776,9 +779,6 @@ describe('application database (integration)', () => {
     await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
-    await client.$executeRawUnsafe(
-      'ALTER TABLE "ComputeJob" DROP COLUMN "remoteCleanupDisposition"'
-    )
 
     await migrateApplicationDatabase(client)
 

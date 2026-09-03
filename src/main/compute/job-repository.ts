@@ -469,7 +469,8 @@ export class ComputeJobRepository {
         providerId,
         OR: [
           { status: { in: ['queued', 'submitted', 'running'] } },
-          { status: { in: ['success', 'failed', 'timeout'] }, harvestedAt: null }
+          { status: { in: ['success', 'failed', 'timeout'] }, harvestedAt: null },
+          { remoteCleanupDisposition: 'pending' }
         ]
       }
     })

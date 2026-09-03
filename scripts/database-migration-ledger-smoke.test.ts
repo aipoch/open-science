@@ -21,13 +21,14 @@ const rebuildComputeJobWithoutAnalysisConstraints = async (
   client: PrismaClient,
   dropAnalysisColumns: boolean
 ): Promise<void> => {
-  await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "remoteCleanupDisposition"')
   await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
   await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
   const [{ sql }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
     `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
   )
   const removedLines = [
+    '"remoteCleanupDisposition" TEXT',
+    'CONSTRAINT "ComputeJob_remoteCleanupDisposition_check"',
     'CONSTRAINT "ComputeJob_analysisState_check"',
     'CONSTRAINT "ComputeJob_analysisBundle_check"',
     'CONSTRAINT "ComputeJob_analysisConsumption_check"',
@@ -47,8 +48,9 @@ const rebuildComputeJobWithoutAnalysisConstraints = async (
     .map(({ name }) => name)
     .filter(
       (name) =>
-        !dropAnalysisColumns ||
-        !['analysisState', 'analysisMessageId', 'analysisUpdatedAt'].includes(name)
+        name !== 'remoteCleanupDisposition' &&
+        (!dropAnalysisColumns ||
+          !['analysisState', 'analysisMessageId', 'analysisUpdatedAt'].includes(name))
     )
     .map((name) => `"${name}"`)
     .join(', ')
@@ -89,7 +91,7 @@ describe('packaged database migration ledger smoke', () => {
       },
       {
         id: '0026_compute_job_remote_cleanup',
-        checksum: '3b47efcf0b05ea2f3eb04e66b155b6db45116c5ead8dd67a91d0b9d9798d6357'
+        checksum: 'c9c0dff928daa4eafe5b8910c4202ddba83f740e92cb243a4fa0dc8e323cba7b'
       }
     ])
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()

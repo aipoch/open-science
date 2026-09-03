@@ -846,6 +846,33 @@ describe('ComputeJob repository (SQLite integration)', () => {
     ])
   })
 
+  it('blocks Host identity changes while a harvested Job still needs remote cleanup', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-pending-cleanup-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+    await repo.create({
+      id: 'job-harvested-pending-cleanup',
+      providerId: 'ssh:test',
+      shape: 'direct_ssh',
+      sessionId: 's1',
+      projectId: 'p1',
+      intent: 'preserve cleanup credentials',
+      command: 'true',
+      commandHash: 'pending-cleanup-hash'
+    })
+    await repo.update('job-harvested-pending-cleanup', {
+      status: 'success',
+      finishedAt: new Date(),
+      harvestedAt: new Date()
+    })
+
+    await expect(repo.hasIdentityChangeBlockingJobsForProvider('ssh:test')).resolves.toBe(true)
+  })
+
   it('findPendingNotifications returns jobs with notifiedAt set and notificationConsumedAt null', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-pending-notif-'))
 

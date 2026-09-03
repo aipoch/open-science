@@ -167,6 +167,8 @@ const removeComputeAnalysisSchema = async (
     `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
   )
   const removedLines = [
+    '"remoteCleanupDisposition" TEXT',
+    'CONSTRAINT "ComputeJob_remoteCleanupDisposition_check"',
     'CONSTRAINT "ComputeJob_analysisState_check"',
     'CONSTRAINT "ComputeJob_analysisBundle_check"',
     'CONSTRAINT "ComputeJob_analysisConsumption_check"',
@@ -186,8 +188,9 @@ const removeComputeAnalysisSchema = async (
     .map(({ name }) => name)
     .filter(
       (name) =>
-        !dropAnalysisColumns ||
-        !['analysisState', 'analysisMessageId', 'analysisUpdatedAt'].includes(name)
+        name !== 'remoteCleanupDisposition' &&
+        (!dropAnalysisColumns ||
+          !['analysisState', 'analysisMessageId', 'analysisUpdatedAt'].includes(name))
     )
     .map((name) => `"${name}"`)
     .join(', ')
@@ -483,9 +486,6 @@ describe('application database migrations', () => {
     )
     await removeComputeAnalysisSchema(client, true)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
-    await client.$executeRawUnsafe(
-      'ALTER TABLE "ComputeJob" DROP COLUMN "remoteCleanupDisposition"'
-    )
     await client.project.create({ data: { id: 'project-1', name: 'Project' } })
     await client.$executeRawUnsafe(`INSERT INTO "Session" (
       "id", "number", "projectId", "title", "status", "presentedStatus", "createdAtMs", "updatedAtMs"
@@ -655,9 +655,6 @@ describe('application database migrations', () => {
     await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client, true)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
-    await client.$executeRawUnsafe(
-      'ALTER TABLE "ComputeJob" DROP COLUMN "remoteCleanupDisposition"'
-    )
     await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
       WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup')`)
 
@@ -1336,9 +1333,6 @@ describe('application database migrations', () => {
     await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client, true)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
-    await client.$executeRawUnsafe(
-      'ALTER TABLE "ComputeJob" DROP COLUMN "remoteCleanupDisposition"'
-    )
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     await removeAgentMemoryTriggers(client)
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
@@ -2726,9 +2720,6 @@ describe('application database migrations', () => {
     await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client, true)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
-    await client.$executeRawUnsafe(
-      'ALTER TABLE "ComputeJob" DROP COLUMN "remoteCleanupDisposition"'
-    )
     await client.$executeRawUnsafe('DROP TABLE "TagAssignment"')
     await client.$executeRawUnsafe('DROP TABLE "Tag"')
 
