@@ -88,6 +88,22 @@ describe('getProviderFormErrors', () => {
     [
       'https://gateway.example/v1?password=secret-password',
       'Remove credentials from the Base URL and use the API key field.'
+    ],
+    [
+      'https://gateway.example/v1?key=secret-key',
+      'Remove credentials from the Base URL and use the API key field.'
+    ],
+    [
+      'https://gateway.example/v1?access_key=secret-key',
+      'Remove credentials from the Base URL and use the API key field.'
+    ],
+    [
+      'https://gateway.example/v1?auth=secret-token',
+      'Remove credentials from the Base URL and use the API key field.'
+    ],
+    [
+      'https://gateway.example/v1?username=researcher',
+      'Remove credentials from the Base URL and use the API key field.'
     ]
   ])('flags an unsafe custom provider Base URL: %s', (baseUrl, error) => {
     const errors = getProviderFormErrors(

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { i18next } from '@/i18n'
-import { describeValidation } from './validation-message'
+import { describeValidation, localizeProviderResourceMessage } from './validation-message'
 
 // English is pinned by test/setup-i18n.ts; these assertions are the guard that the catalog round-trip
 // leaves the user-visible copy byte-identical to what it was before it moved out of the module.
@@ -80,5 +80,17 @@ describe('describeValidation', () => {
         i18next.getFixedT('zh-Hans')
       )
     ).toBe('服务商校验响应超过 1048576 字节。')
+  })
+})
+
+describe('localizeProviderResourceMessage', () => {
+  it.each([
+    ['Base URL must be a valid HTTP or HTTPS URL.', '基础 URL 必须是有效的 HTTP 或 HTTPS URL。'],
+    [
+      'Remove credentials from the Base URL and use the API key field.',
+      '请从基础 URL 中移除凭据，改用 API 密钥字段。'
+    ]
+  ])('localizes a custom provider Base URL error', (message, expected) => {
+    expect(localizeProviderResourceMessage(message, i18next.getFixedT('zh-Hans'))).toBe(expected)
   })
 })

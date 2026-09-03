@@ -3,14 +3,17 @@ export type CustomProviderBaseUrlError =
   | 'Remove credentials from the Base URL and use the API key field.'
 
 const CREDENTIAL_QUERY_PARAMETERS = new Set([
+  'accesskey',
   'accesstoken',
   'apikey',
+  'auth',
   'authorization',
   'authtoken',
   'bearertoken',
   'clientsecret',
   'credential',
   'credentials',
+  'key',
   'passphrase',
   'passwd',
   'password',
@@ -20,6 +23,7 @@ const CREDENTIAL_QUERY_PARAMETERS = new Set([
   'securitytoken',
   'sessiontoken',
   'token',
+  'username',
   'xapikey'
 ])
 
