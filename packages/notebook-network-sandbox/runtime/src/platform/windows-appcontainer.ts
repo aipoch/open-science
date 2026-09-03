@@ -64,7 +64,14 @@ const windowsBatchInvocation = (
 type WindowsStandardLaunchRequest = Readonly<
   Pick<
     WindowsLaunchRequest,
-    'command' | 'shell' | 'gatewayPort' | 'gatewayCredentials' | 'env' | 'localRpcSocketPath'
+    | 'command'
+    | 'executable'
+    | 'args'
+    | 'shell'
+    | 'gatewayPort'
+    | 'gatewayCredentials'
+    | 'env'
+    | 'localRpcSocketPath'
   >
 >
 
@@ -403,10 +410,16 @@ const windowsStandardLaunch = (
       : request.shell
         ? { kind: 'cmd', path: request.shell }
         : { kind: 'powershell', path: 'powershell.exe' }
+  // PowerShell does not transparently relay a redirected stdin stream to a long-lived native child:
+  // a Notebook loop can observe EOF and exit before the executor writes its first protocol frame.
+  // Preserve structured native invocations in standard mode just as protected mode does. Batch
+  // shims still need a command shell, so retain the existing serialized-command path for them.
   const argv =
-    shell.kind === 'powershell'
-      ? [shell.path, '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command]
-      : [shell.path, '/d', '/s', '/c', request.command]
+    request.executable && !WINDOWS_BATCH_FILE.test(request.executable)
+      ? [request.executable, ...(request.args ?? [])]
+      : shell.kind === 'powershell'
+        ? [shell.path, '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command]
+        : [shell.path, '/d', '/s', '/c', request.command]
   const env = {
     ...request.env,
     ...proxyEnvironment(request.gatewayPort, request.gatewayCredentials)
