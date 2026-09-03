@@ -997,6 +997,55 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent).toContain('paper.pdf')
   })
 
+  it('shows automatic Reading follow-ups alongside linked PDF context', () => {
+    const dismissAutomaticReading = vi.fn()
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Reading session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      },
+      composer: {
+        view: {
+          readingContext: {
+            bindings: [
+              {
+                version: 1,
+                bindingId: 'binding-1',
+                sourceKind: 'artifact-version',
+                sourceFileId: 'artifact-1',
+                sourceVersionId: 'version-1',
+                sourceSessionId: 'source-session',
+                name: 'first.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 12,
+                checksum: 'checksum-1',
+                linkedAt: 1
+              }
+            ],
+            automaticAttachmentCount: 1
+          }
+        },
+        actions: { dismissAutomaticReading }
+      }
+    })
+
+    expect(container.querySelector('[data-testid="pdf-context-bar"]')).not.toBeNull()
+    const suggestion = container.querySelector('[data-testid="automatic-reading-suggestion"]')
+    expect(suggestion?.textContent).toContain('1 PDF will be linked when sent')
+    act(() =>
+      suggestion?.querySelector<HTMLButtonElement>('[aria-label="Keep as attachments"]')?.click()
+    )
+    expect(dismissAutomaticReading).toHaveBeenCalledOnce()
+  })
+
   it('shows linked PDF context as a single-line chip that opens its preview', () => {
     const open = vi.fn()
     const unlink = vi.fn()
