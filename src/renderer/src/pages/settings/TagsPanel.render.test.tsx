@@ -92,6 +92,57 @@ describe('TagsPanel', () => {
     })
   })
 
+  it('excludes identity-conflicting Skills from tagged resources', async () => {
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'conflicting-skill',
+          catalogEntryKey: 'personal:conflicting-skill',
+          name: 'personal-conflict',
+          displayName: 'Personal conflict',
+          description: 'Personal package',
+          source: 'personal',
+          enabled: true,
+          updatedAt: '2026-09-02T00:00:00.000Z',
+          available: false,
+          availability: 'identity-conflict'
+        },
+        {
+          id: 'conflicting-skill',
+          catalogEntryKey: 'imported:conflicting-skill',
+          name: 'imported-conflict',
+          displayName: 'Imported conflict',
+          description: 'Imported package',
+          source: 'imported',
+          enabled: true,
+          updatedAt: '2026-09-02T00:00:00.000Z',
+          available: false,
+          availability: 'identity-conflict'
+        }
+      ]
+    })
+    useTagStore.setState({
+      assignments: [
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'catalog.skill',
+          resourceId: 'conflicting-skill',
+          createdAt: 1
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
+    })
+
+    expect(container.textContent).not.toContain('Personal conflict')
+    expect(container.textContent).not.toContain('Imported conflict')
+    expect(container.querySelector('[data-slot="tag-resource-row"]')).toBeNull()
+  })
+
   it('opens create as a Settings sub-view and returns to the created Tag', async () => {
     const onNavigate = vi.fn()
     const createTag = vi.fn().mockResolvedValue('tag-research')
