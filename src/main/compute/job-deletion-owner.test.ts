@@ -175,14 +175,49 @@ describe('ComputeJobDeletionOwner', () => {
     ).resolves.toMatchObject({ remote_cleanup_disposition: 'cleaned' })
 
     expect(harness.order).toEqual([
+      'queue-paused',
       'poller-paused',
       'cancel-requested',
       'dispatch-drained',
       'remote-cleanup',
       'cancel-confirmed',
-      'poller-resumed'
+      'poller-resumed',
+      'queue-resumed'
     ])
     expect(harness.jobRepository.settleRemoteCleanup).toHaveBeenCalledOnce()
+  })
+
+  it('cleans a queued Job that is promoted while cleanup pauses its owner', async () => {
+    const jobs = [job({ status: 'queued', remote_handle: undefined })]
+    const harness = createHarness(jobs)
+    harness.queueManager.pauseOwner.mockImplementationOnce(async () => {
+      harness.order.push('queue-paused')
+      jobs[0] = job()
+    })
+
+    await expect(
+      harness.owner.cleanupJobRemote({
+        jobId: 'job-1',
+        providerId: 'ssh:cluster',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        disposition: 'cleaned'
+      })
+    ).resolves.toMatchObject({ remote_cleanup_disposition: 'cleaned' })
+
+    expect(harness.jobRepository.get).toHaveBeenCalledTimes(2)
+    expect(harness.runner.run).toHaveBeenCalledOnce()
+    expect(String(harness.runner.run.mock.calls[0]?.[1])).toContain('cleanup_job_pid 123 || exit 1')
+    expect(harness.order).toEqual([
+      'queue-paused',
+      'poller-paused',
+      'cancel-requested',
+      'dispatch-drained',
+      'remote-cleanup',
+      'cancel-confirmed',
+      'poller-resumed',
+      'queue-resumed'
+    ])
   })
 
   it('settles an explicitly abandoned cleanup without touching the remote Job', async () => {

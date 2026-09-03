@@ -187,38 +187,63 @@ class ComputeJobDeletionOwner {
         throw new Error('Compute Job results must be harvested before remote cleanup.')
       }
       const cancellationRequired = ACTIVE_STATUSES.has(job.status) || job.status === 'queued'
-      const requestCancellation = this.deps.requestCancellation
-      const confirmCancellation = this.deps.confirmCancellation
-      let cancellation:
-        | {
-            request: (job: ComputeJob) => Promise<void>
-            confirm: (job: ComputeJob) => Promise<void>
-          }
-        | undefined
-      if (cancellationRequired && (!requestCancellation || !confirmCancellation)) {
-        throw new Error('Compute Job cancellation is unavailable.')
-      }
-      if (requestCancellation && confirmCancellation && cancellationRequired) {
-        cancellation = { request: requestCancellation, confirm: confirmCancellation }
-      }
       const runtime = this.runtime
       if (cancellationRequired && !runtime) {
         throw new Error('Compute Job cancellation runtime is unavailable.')
       }
+      const queueManager = this.deps.queueManager
+      if (cancellationRequired && !queueManager) {
+        throw new Error('Compute Job cancellation queue manager is unavailable.')
+      }
+      const owner = { projectId: job.project_id, sessionId: job.session_id }
+      let queuePaused = false
       let runtimePaused = false
       try {
-        if (cancellationRequired && runtime) {
+        let currentJob = job
+        if (cancellationRequired && runtime && queueManager) {
+          await queueManager.pauseOwner(owner)
+          queuePaused = true
           await runtime.pause()
           runtimePaused = true
+          const refreshedJob = await this.deps.jobRepository.get(request.jobId)
+          if (
+            !refreshedJob ||
+            refreshedJob.provider_id !== request.providerId ||
+            refreshedJob.project_id !== request.projectId ||
+            refreshedJob.session_id !== request.sessionId
+          ) {
+            throw new Error('Compute Job cleanup scope does not match.')
+          }
+          currentJob = refreshedJob
+          if (
+            currentJob.remote_cleanup_disposition !== undefined &&
+            currentJob.remote_cleanup_disposition !== 'pending'
+          ) {
+            return await this.deps.jobRepository.settleRemoteCleanup(request)
+          }
+          if (
+            HARVESTABLE_TERMINAL_STATUSES.has(currentJob.status) &&
+            currentJob.harvested_at === undefined
+          ) {
+            throw new Error('Compute Job results must be harvested before remote cleanup.')
+          }
         }
-        await cancellation?.request(job)
-        await this.dispatchTracker.waitFor([job.job_id])
-        const cleanup = await this.prepareRemoteCleanup(job)
+        const currentCancellationRequired =
+          ACTIVE_STATUSES.has(currentJob.status) || currentJob.status === 'queued'
+        const requestCancellation = this.deps.requestCancellation
+        const confirmCancellation = this.deps.confirmCancellation
+        if (currentCancellationRequired && (!requestCancellation || !confirmCancellation)) {
+          throw new Error('Compute Job cancellation is unavailable.')
+        }
+        if (currentCancellationRequired) await requestCancellation?.(currentJob)
+        await this.dispatchTracker.waitFor([currentJob.job_id])
+        const cleanup = await this.prepareRemoteCleanup(currentJob)
         if (cleanup) await this.runRemoteCleanup(cleanup)
-        await cancellation?.confirm(job)
+        if (currentCancellationRequired) await confirmCancellation?.(currentJob)
         return await this.deps.jobRepository.settleRemoteCleanup(request)
       } finally {
         if (runtimePaused) runtime?.resume()
+        if (queuePaused) queueManager?.resumeOwner(owner)
       }
     })
   }
