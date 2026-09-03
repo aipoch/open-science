@@ -29,6 +29,7 @@ const expectedChannels = [
   'settings:delete-provider',
   'settings:set-active-provider',
   'settings:set-agent-framework',
+  'settings:set-agent-routing',
   'settings:set-reasoning-effort',
   'settings:login-shared-claude',
   'settings:logout-shared-claude',
@@ -113,7 +114,7 @@ describe('Settings runtime application commands', () => {
     expect(workflowMethod('setActiveProvider')).toHaveBeenCalledWith({ id: 'provider-1' })
   })
 
-  it('delegates the five remote-safe mutations through the runtime workflow', async () => {
+  it('delegates the six remote-safe mutations through the runtime workflow', async () => {
     const { dependencies, workflowMethod } = createDependencies()
     const router = createApplicationCommandRouter()
     registerRuntimeSettingsApplicationCommands(router.registrar, dependencies)
@@ -135,6 +136,24 @@ describe('Settings runtime application commands', () => {
       invocation([{ id: 'opencode' }] as const, 'remote')
     )
     await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.setAgentRouting,
+      invocation(
+        [
+          {
+            framework: 'codex',
+            reviewer: { mode: 'inherit' },
+            subagent: {
+              mode: 'fixed',
+              providerId: 'provider-2',
+              model: 'model-1',
+              reasoningEffort: 'high'
+            }
+          }
+        ] as const,
+        'remote'
+      )
+    )
+    await router.dispatcher.invoke(
       settingsRuntimeApplicationCommands.setReasoningEffort,
       invocation([{ effort: 'high' }] as const, 'remote')
     )
@@ -149,6 +168,16 @@ describe('Settings runtime application commands', () => {
       model: 'model-1'
     })
     expect(workflowMethod('setAgentFramework')).toHaveBeenCalledWith({ id: 'opencode' })
+    expect(workflowMethod('setAgentRouting')).toHaveBeenCalledWith({
+      framework: 'codex',
+      reviewer: { mode: 'inherit' },
+      subagent: {
+        mode: 'fixed',
+        providerId: 'provider-2',
+        model: 'model-1',
+        reasoningEffort: 'high'
+      }
+    })
     expect(workflowMethod('setReasoningEffort')).toHaveBeenCalledWith({ effort: 'high' })
   })
 

@@ -165,10 +165,11 @@ describe('database JSON constraints migration', () => {
           '0023_compute_job_operation',
           '0024_compute_job_file_evidence',
           '0025_managed_file_version_foundation',
-          '0026_compute_job_remote_cleanup'
+          '0026_compute_job_remote_cleanup',
+          '0027_project_session_defaults'
         ],
         from: '0007_notification_attention_metadata',
-        to: '0026_compute_job_remote_cleanup'
+        to: '0027_project_session_defaults'
       })
       await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).resolves.toBeUndefined()
       await expect(

@@ -10,16 +10,23 @@ import type { Project } from '../../shared/projects'
 import type { ReviewRunResult, ReviewWithChecks } from '../../shared/reviewer'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
+import type { SettingsSnapshot } from '../../shared/settings'
 import type {
   AcquiredTaskArtifact,
   CreateTaskProjectRequest,
   StartTaskRunRequest,
   TaskProject,
+  TaskAgentRouting,
+  TaskProjectSessionDefaults,
   TaskPlanResponseRequest,
   TaskRun,
   TaskRunProgressEvent,
   TaskRunReview,
   TaskSessionSummary,
+  TaskSessionConfiguration,
+  UpdateProjectSessionDefaultsRequest,
+  UpdateSessionConfigurationRequest,
+  UpdateTaskAgentRoutingRequest,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
 import { createApplicationCommandClient } from '../application-command-client'
@@ -44,6 +51,7 @@ type TaskApiPorts = {
   agent: TaskAgentPort
   controls?: TaskControlPorts
   computePreferences?: TaskComputePreferencePort
+  detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
 }
 
 type TaskApiDependencies = {
@@ -90,6 +98,9 @@ class HeadlessTaskApi {
         setDelegationPolicy: async (projectId, sessionId, policy) => {
           await this.invoke('sessions:set-delegation-policy', projectId, sessionId, policy)
         }
+      },
+      settings: {
+        get: () => this.invoke('settings:get-settings') as Promise<SettingsSnapshot>
       },
       agent: {
         withSessionAvailable: (projectId, sessionId, operation) =>
@@ -150,10 +161,23 @@ class HeadlessTaskApi {
         },
         set: async () => {
           throw new Error('Task Compute preference control is unavailable.')
-        }
+        },
+        validate: async (providerIds) => {
+          if (providerIds.length > 0) {
+            throw new Error('Task Compute preference control is unavailable.')
+          }
+          return []
+        },
+        listAvailable: async () => [],
+        project: () => undefined
       },
       runWithLifecycleContext: (operation) =>
         this.callerContexts.run(TASK_CALLER_CONTEXT, operation),
+      isSessionBusy: (projectId, sessionId) =>
+        this.ports
+          .detectActiveSessions?.()
+          .some((session) => session.projectId === projectId && session.sessionId === sessionId) ===
+        true,
       runJournal: dependencies.runJournal,
       createId: dependencies.createId ?? randomUUID,
       now: dependencies.now ?? Date.now
@@ -194,6 +218,49 @@ class HeadlessTaskApi {
 
   getSession(sessionId: string): Promise<TaskSessionSummary> {
     return this.runner.getSession(sessionId)
+  }
+
+  getSessionConfiguration(sessionId: string): Promise<TaskSessionConfiguration> {
+    return this.runner.getSessionConfiguration(sessionId)
+  }
+
+  updateSessionConfiguration(
+    sessionId: string,
+    request: UpdateSessionConfigurationRequest
+  ): Promise<TaskSessionConfiguration> {
+    return this.runner.updateSessionConfiguration(sessionId, request)
+  }
+
+  getProjectSessionDefaults(projectId: string): Promise<TaskProjectSessionDefaults> {
+    return this.runner.getProjectSessionDefaults(projectId)
+  }
+
+  updateProjectSessionDefaults(
+    projectId: string,
+    request: UpdateProjectSessionDefaultsRequest
+  ): Promise<TaskProjectSessionDefaults> {
+    return this.runner.updateProjectSessionDefaults(projectId, request)
+  }
+
+  async getAgentRouting(): Promise<TaskAgentRouting> {
+    return this.projectAgentRouting(
+      (await this.invoke('settings:get-settings')) as SettingsSnapshot
+    )
+  }
+
+  async updateAgentRouting(request: UpdateTaskAgentRoutingRequest): Promise<TaskAgentRouting> {
+    try {
+      const snapshot = (await this.invoke(
+        'settings:set-agent-routing',
+        request
+      )) as SettingsSnapshot
+      return this.projectAgentRouting(snapshot)
+    } catch (error) {
+      throw new TaskRunnerError(
+        'invalid_configuration',
+        error instanceof Error ? error.message : 'Agent routing update failed.'
+      )
+    }
   }
 
   async getSessionPlan(sessionId: string): Promise<ActivePlanProjection | null> {
@@ -280,6 +347,42 @@ class HeadlessTaskApi {
       return Promise.reject(new Error('Caller authorization is no longer current.'))
     }
     return operation()
+  }
+
+  private projectAgentRouting(settings: SettingsSnapshot): TaskAgentRouting {
+    const reviewer = settings.reviewerModel ?? { mode: 'inherit' as const }
+    const subagent = settings.subagentModel ?? { mode: 'inherit' as const }
+    return {
+      configured: {
+        framework: settings.agentFrameworkId,
+        reviewer,
+        subagent
+      },
+      effective: {
+        reviewer:
+          reviewer.mode === 'inherit'
+            ? {
+                source: 'application_main',
+                ...(settings.activeProviderId ? { providerId: settings.activeProviderId } : {}),
+                ...(settings.activeModel ? { model: settings.activeModel } : {})
+              }
+            : {
+                source: 'fixed',
+                providerId: reviewer.providerId,
+                model: reviewer.model,
+                reasoningEffort: reviewer.reasoningEffort
+              },
+        subagent:
+          subagent.mode === 'inherit'
+            ? { source: 'session_main' }
+            : {
+                source: 'fixed',
+                providerId: subagent.providerId,
+                model: subagent.model,
+                reasoningEffort: subagent.reasoningEffort
+              }
+      }
+    }
   }
 
   private resolveSpecialist(reference: string): Promise<{ id: string }> {

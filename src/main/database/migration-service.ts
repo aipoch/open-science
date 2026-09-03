@@ -51,6 +51,7 @@ import {
   managedFileVersionFoundationMigration
 } from './migrations/0025-managed-file-version-foundation'
 import { computeJobRemoteCleanupMigration } from './migrations/0026-compute-job-remote-cleanup'
+import { projectSessionDefaultsMigration } from './migrations/0027-project-session-defaults'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -347,6 +348,12 @@ const COMPUTE_JOB_REMOTE_CLEANUP_CHECKSUM = checksumMigrationPayload(
   computeJobRemoteCleanupMigration.verifiers,
   computeJobRemoteCleanupMigration.operations
 )
+const PROJECT_SESSION_DEFAULTS_CHECKSUM = checksumMigrationPayload(
+  projectSessionDefaultsMigration.id,
+  projectSessionDefaultsMigration.statements,
+  projectSessionDefaultsMigration.verifiers,
+  projectSessionDefaultsMigration.operations
+)
 const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
   computeJobSensitiveDataEncryptionMigration.id,
   computeJobSensitiveDataEncryptionMigration.statements,
@@ -608,6 +615,12 @@ const MIGRATION_MANIFEST = [
   {
     ...computeJobRemoteCleanupMigration,
     checksum: COMPUTE_JOB_REMOTE_CLEANUP_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...projectSessionDefaultsMigration,
+    checksum: PROJECT_SESSION_DEFAULTS_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }

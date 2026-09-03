@@ -8,6 +8,7 @@ import type {
   UpdateProjectRequest
 } from '../../shared/projects'
 import { PROJECT_NAME_MAX_LENGTH } from '../../shared/projects'
+import { projectSessionDefaultsSchema } from '../../shared/session-configuration'
 import { MEMORY_SETTINGS_ID } from '../../shared/memory'
 import { migrationSqlExecutor } from '../database/migration-sql-executor'
 
@@ -35,6 +36,7 @@ const toProject = (row: PrismaProject): Project => ({
   description: row.description,
   // An empty Agent Context is omitted on the wire, matching the optional shared schema field.
   ...(row.agentContext ? { agentContext: row.agentContext } : {}),
+  sessionDefaults: projectSessionDefaultsSchema.parse(JSON.parse(row.sessionDefaults ?? '{}')),
   isExample: row.isExample,
   ...(row.pinned ? { pinned: true } : {}),
   ...(row.archivedAt ? { archivedAt: row.archivedAt.getTime() } : {}),
@@ -96,6 +98,7 @@ class ProjectRepository {
       name?: string
       description?: string
       agentContext?: string
+      sessionDefaults?: string
       pinned?: boolean
       updatedAt?: Date
     } = {}
@@ -118,6 +121,12 @@ class ProjectRepository {
       data.agentContext = request.agentContext.trim()
     }
 
+    if (request.sessionDefaults !== undefined) {
+      data.sessionDefaults = JSON.stringify(
+        projectSessionDefaultsSchema.parse(request.sessionDefaults)
+      )
+    }
+
     if (!Number.isSafeInteger(request.expectedUpdatedAt) || request.expectedUpdatedAt <= 0) {
       throw new Error('Project update timestamp is invalid.')
     }
@@ -128,7 +137,8 @@ class ProjectRepository {
       request.pinned !== undefined &&
       request.name === undefined &&
       request.description === undefined &&
-      request.agentContext === undefined
+      request.agentContext === undefined &&
+      request.sessionDefaults === undefined
     ) {
       // Prisma's @updatedAt automation also runs for administrative changes. Updating only the pin
       // column in SQL avoids both a fake activity bump and a read/write race that could restore an

@@ -6,6 +6,7 @@ import {
   type ProviderDeletionScenarioModelHandling,
   type SetActiveProviderRequest,
   type SetAgentFrameworkRequest,
+  type SetAgentRoutingRequest,
   type SetReasoningEffortRequest,
   type UpsertProviderRequest
 } from '../../../shared/settings'
@@ -23,6 +24,7 @@ type RuntimeSettingsWorkflowStore = Pick<
   | 'deleteProvider'
   | 'setActiveProvider'
   | 'setAgentFramework'
+  | 'setAgentRouting'
   | 'setReasoningEffort'
   | 'loginClaudeShared'
   | 'logoutClaudeShared'
@@ -117,6 +119,17 @@ class RuntimeSettingsWorkflows {
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['setAgentFramework']>>> {
     const snapshot = await this.settings.setAgentFramework(request.id)
     this.effects.requestAgentFrameworkSwitch()
+    return snapshot
+  }
+
+  async setAgentRouting(
+    request: SetAgentRoutingRequest
+  ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['setAgentRouting']>>> {
+    const before = await this.settings.getSettingsView()
+    const snapshot = await this.settings.setAgentRouting(request)
+    if (snapshot.agentFrameworkId !== before.agentFrameworkId) {
+      this.effects.requestAgentFrameworkSwitch()
+    }
     return snapshot
   }
 

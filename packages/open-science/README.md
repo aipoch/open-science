@@ -22,6 +22,34 @@ const result = await client.waitForRun(run.id)
 console.log(result.output)
 ```
 
+Session, Project-default, and global Agent-routing configuration use the same authenticated local
+API:
+
+```js
+const configuration = await client.getSessionConfiguration(run.sessionId)
+await client.updateSessionConfiguration(run.sessionId, {
+  expectedRevision: configuration.revision,
+  memoryEnabled: false
+})
+
+const defaults = await client.getProjectSessionDefaults('systematic-review')
+await client.updateProjectSessionDefaults('systematic-review', {
+  expectedUpdatedAt: defaults.updatedAt,
+  patch: { permissionProfile: 'auto' }
+})
+
+await client.updateAgentRouting({
+  framework: 'codex',
+  reviewer: { mode: 'inherit' },
+  subagent: { mode: 'inherit' }
+})
+```
+
+Session updates use `revision`; Project-default updates use `updatedAt`. Both reject stale writes.
+Project defaults are copied only when a Session is created, with precedence `startRun` request,
+Project defaults, application settings, then provider default. Agent-routing updates are atomic and
+never return provider credentials.
+
 SDK requests have a 30-second default deadline that remains active while the response body is being
 consumed. Override the client default with `requestTimeoutMs`, or pass `{ signal, timeoutMs }` as the
 final options argument to an individual request method. `downloadArtifact` keeps the deadline active

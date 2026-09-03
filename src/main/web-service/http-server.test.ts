@@ -3746,8 +3746,34 @@ describe('startWebHttpServer', () => {
       updateProject: vi
         .fn()
         .mockResolvedValue({ id: 'project-1', name: 'Research', hasAgentContext: true }),
+      getProjectSessionDefaults: vi.fn().mockResolvedValue({
+        projectId: 'project/1',
+        updatedAt: 7,
+        configured: {}
+      }),
+      updateProjectSessionDefaults: vi.fn().mockResolvedValue({
+        projectId: 'project/1',
+        updatedAt: 8,
+        configured: { memoryEnabled: false }
+      }),
       listSessions: vi.fn().mockResolvedValue([{ id: 'session/1', title: 'Review' }]),
       getSession: vi.fn().mockResolvedValue({ id: 'session/1', title: 'Review' }),
+      getSessionConfiguration: vi.fn().mockResolvedValue({
+        sessionId: 'session/1',
+        revision: 3,
+        persisted: { computeHosts: { enabled: [], selected: [] } }
+      }),
+      updateSessionConfiguration: vi.fn().mockResolvedValue({
+        sessionId: 'session/1',
+        revision: 4,
+        persisted: { memoryEnabled: false, computeHosts: { enabled: [], selected: [] } }
+      }),
+      getAgentRouting: vi.fn().mockResolvedValue({
+        configured: { framework: 'claude-code' }
+      }),
+      updateAgentRouting: vi.fn().mockResolvedValue({
+        configured: { framework: 'codex' }
+      }),
       getSessionPlan: vi.fn().mockResolvedValue({
         artifactVersionId: 'plan-version',
         revision: 2,
@@ -3896,6 +3922,27 @@ describe('startWebHttpServer', () => {
       agentContext: 'Prefer Python.'
     })
 
+    const projectDefaults = await fetch(`${base}/api/v1/projects/project%2F1/session-defaults`, {
+      headers
+    })
+    expect(await projectDefaults.json()).toMatchObject({ data: { updatedAt: 7 } })
+    const updatedProjectDefaults = await fetch(
+      `${base}/api/v1/projects/project%2F1/session-defaults`,
+      {
+        method: 'PATCH',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedUpdatedAt: 7,
+          patch: { memoryEnabled: false }
+        })
+      }
+    )
+    expect(await updatedProjectDefaults.json()).toMatchObject({ data: { updatedAt: 8 } })
+    expect(tasks.updateProjectSessionDefaults).toHaveBeenCalledWith('project/1', {
+      expectedUpdatedAt: 7,
+      patch: { memoryEnabled: false }
+    })
+
     const sessions = await fetch(`${base}/api/v1/sessions?project=project-1`, {
       headers
     })
@@ -3905,6 +3952,35 @@ describe('startWebHttpServer', () => {
     const session = await fetch(`${base}/api/v1/sessions/session%2F1`, { headers })
     expect(await session.json()).toEqual({ data: { id: 'session/1', title: 'Review' } })
     expect(tasks.getSession).toHaveBeenCalledWith('session/1')
+
+    const sessionConfiguration = await fetch(`${base}/api/v1/sessions/session%2F1/config`, {
+      headers
+    })
+    expect(await sessionConfiguration.json()).toMatchObject({ data: { revision: 3 } })
+    const updatedSessionConfiguration = await fetch(`${base}/api/v1/sessions/session%2F1/config`, {
+      method: 'PATCH',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: 3, memoryEnabled: false })
+    })
+    expect(await updatedSessionConfiguration.json()).toMatchObject({ data: { revision: 4 } })
+    expect(tasks.updateSessionConfiguration).toHaveBeenCalledWith('session/1', {
+      expectedRevision: 3,
+      memoryEnabled: false
+    })
+
+    const agentRouting = await fetch(`${base}/api/v1/settings/agent-routing`, { headers })
+    expect(await agentRouting.json()).toMatchObject({
+      data: { configured: { framework: 'claude-code' } }
+    })
+    const updatedAgentRouting = await fetch(`${base}/api/v1/settings/agent-routing`, {
+      method: 'PATCH',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ framework: 'codex' })
+    })
+    expect(await updatedAgentRouting.json()).toMatchObject({
+      data: { configured: { framework: 'codex' } }
+    })
+    expect(tasks.updateAgentRouting).toHaveBeenCalledWith({ framework: 'codex' })
 
     const plan = await fetch(`${base}/api/v1/sessions/session%2F1/plan`, { headers })
     expect(await plan.json()).toEqual({

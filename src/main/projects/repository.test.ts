@@ -89,6 +89,7 @@ describe('project repository', () => {
         id: 'project-1',
         name: 'Research',
         description: 'A project',
+        sessionDefaults: {},
         isExample: false,
         createdAt: 1710000000000,
         updatedAt: 1710000000100
@@ -148,6 +149,7 @@ describe('project repository', () => {
     await repository.update({
       id: 'project-1',
       name: '  Renamed  ',
+      sessionDefaults: { memoryEnabled: false, permissionProfile: 'auto' },
       expectedUpdatedAt: 1710000000100
     })
 
@@ -157,7 +159,11 @@ describe('project repository', () => {
         deletedAt: null,
         updatedAt: new Date(1710000000100)
       },
-      data: { name: 'Renamed', updatedAt: expect.any(Date) }
+      data: {
+        name: 'Renamed',
+        sessionDefaults: '{"permissionProfile":"auto","memoryEnabled":false}',
+        updatedAt: expect.any(Date)
+      }
     })
     expect(project.update).not.toHaveBeenCalled()
   })

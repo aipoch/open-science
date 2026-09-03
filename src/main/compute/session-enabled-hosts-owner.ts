@@ -91,6 +91,14 @@ class SessionEnabledComputeHostsOwner {
     return this.options.registry.getSelected(sessionId)
   }
 
+  validate(providerIds: readonly string[]): Promise<string[]> {
+    return this.enqueueWrite(() => this.validateProviderIds(providerIds))
+  }
+
+  listAvailable(): Promise<readonly string[]> {
+    return this.enqueue(() => this.options.listHostIds())
+  }
+
   async withReservation<Result>(
     providerIds: readonly string[],
     operation: (providerIds: string[]) => Promise<Result>

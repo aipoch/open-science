@@ -5713,6 +5713,46 @@ describe('SettingsService: Subagent model', () => {
 })
 
 describe('SettingsService: Reviewer model', () => {
+  it('validates a compound Agent routing update against its target framework before committing', async () => {
+    const service = createService()
+    const created = await service.upsertProvider({
+      type: 'custom',
+      name: 'Routing gateway',
+      apiEndpoints: ['anthropic'],
+      baseUrl: 'https://routing.example/v1',
+      model: 'routing-model',
+      key: 'secret'
+    })
+    const provider = created.providers.find((candidate) => candidate.name === 'Routing gateway')!
+    const fixed = {
+      mode: 'fixed' as const,
+      providerId: provider.id,
+      model: 'routing-model',
+      reasoningEffort: 'high' as const
+    }
+
+    await expect(
+      service.setAgentRouting({
+        framework: 'claude-code',
+        reviewer: fixed,
+        subagent: fixed
+      })
+    ).resolves.toMatchObject({
+      agentFrameworkId: 'claude-code',
+      reviewerModel: fixed,
+      subagentModel: fixed
+    })
+
+    await expect(service.setAgentRouting({ framework: 'codex' })).rejects.toThrow(
+      'not available for the active Agent Framework'
+    )
+    await expect(service.getSettingsView()).resolves.toMatchObject({
+      agentFrameworkId: 'claude-code',
+      reviewerModel: fixed,
+      subagentModel: fixed
+    })
+  })
+
   it('atomically validates and saves a fixed Reviewer target', async () => {
     const service = createService()
     const created = await service.upsertProvider({

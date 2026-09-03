@@ -6,7 +6,11 @@ import {
   type ApplicationCommandRegistrar
 } from '../application-command-router'
 import type { CallerContext } from '../caller-context'
-import { readIsolatedClaudeToken, readReasoningEffort } from './transport-validation'
+import {
+  readAgentRouting,
+  readIsolatedClaudeToken,
+  readReasoningEffort
+} from './transport-validation'
 import type { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 import type { RuntimeSettingsWorkflows } from './workflows/runtime'
 
@@ -26,6 +30,7 @@ type RuntimeSettingsCommandWorkflows = Pick<
   | 'logoutXaiOAuth'
   | 'setActiveProvider'
   | 'setAgentFramework'
+  | 'setAgentRouting'
   | 'setReasoningEffort'
   | 'uninstallRuntime'
   | 'upsertProvider'
@@ -82,6 +87,11 @@ const settingsRuntimeApplicationCommands = Object.freeze({
     WorkflowArgs<'setAgentFramework'>,
     WorkflowResult<'setAgentFramework'>
   >('settings:set-agent-framework'),
+  setAgentRouting: defineApplicationCommand<
+    'settings:set-agent-routing',
+    WorkflowArgs<'setAgentRouting'>,
+    WorkflowResult<'setAgentRouting'>
+  >('settings:set-agent-routing'),
   setReasoningEffort: defineApplicationCommand<
     'settings:set-reasoning-effort',
     WorkflowArgs<'setReasoningEffort'>,
@@ -153,6 +163,7 @@ const settingsRuntimeApplicationCommandGroup = defineApplicationCommandGroup('se
   settingsRuntimeApplicationCommands.deleteProvider,
   settingsRuntimeApplicationCommands.setActiveProvider,
   settingsRuntimeApplicationCommands.setAgentFramework,
+  settingsRuntimeApplicationCommands.setAgentRouting,
   settingsRuntimeApplicationCommands.setReasoningEffort,
   settingsRuntimeApplicationCommands.loginSharedClaude,
   settingsRuntimeApplicationCommands.logoutSharedClaude,
@@ -227,6 +238,10 @@ const registerRuntimeSettingsApplicationCommands = (
       'settings:set-agent-framework': ({ args }) =>
         dependencies.snapshotCommits.currentSnapshotAfter(
           dependencies.workflows.setAgentFramework(args[0])
+        ),
+      'settings:set-agent-routing': ({ args }) =>
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.workflows.setAgentRouting(readAgentRouting(args[0]))
         ),
       'settings:set-reasoning-effort': ({ args }) =>
         dependencies.snapshotCommits.currentSnapshotAfter(

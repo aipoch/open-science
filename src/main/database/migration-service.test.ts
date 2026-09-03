@@ -402,10 +402,11 @@ describe('application database migrations', () => {
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
-        '0026_compute_job_remote_cleanup'
+        '0026_compute_job_remote_cleanup',
+        '0027_project_session_defaults'
       ],
       from: null,
-      to: '0026_compute_job_remote_cleanup'
+      to: '0027_project_session_defaults'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -418,8 +419,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0026_compute_job_remote_cleanup',
-      to: '0026_compute_job_remote_cleanup'
+      from: '0027_project_session_defaults',
+      to: '0027_project_session_defaults'
     })
   })
 
@@ -487,7 +488,7 @@ describe('application database migrations', () => {
       'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
     )
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup')`
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults')`
     )
     await removeComputeAnalysisSchema(client, true)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
@@ -512,7 +513,8 @@ describe('application database migrations', () => {
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
-        '0026_compute_job_remote_cleanup'
+        '0026_compute_job_remote_cleanup',
+        '0027_project_session_defaults'
       ]
     })
     await expect(
@@ -592,7 +594,8 @@ describe('application database migrations', () => {
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
-        '0026_compute_job_remote_cleanup'
+        '0026_compute_job_remote_cleanup',
+        '0027_project_session_defaults'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -637,7 +640,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0026_compute_job_remote_cleanup'
+      to: '0027_project_session_defaults'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -661,7 +664,7 @@ describe('application database migrations', () => {
     await removeComputeAnalysisSchema(client, true)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
     await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
-      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup')`)
+      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults')`)
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: [
@@ -685,10 +688,11 @@ describe('application database migrations', () => {
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
-        '0026_compute_job_remote_cleanup'
+        '0026_compute_job_remote_cleanup',
+        '0027_project_session_defaults'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0026_compute_job_remote_cleanup'
+      to: '0027_project_session_defaults'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -765,10 +769,11 @@ describe('application database migrations', () => {
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
-        '0026_compute_job_remote_cleanup'
+        '0026_compute_job_remote_cleanup',
+        '0027_project_session_defaults'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0026_compute_job_remote_cleanup'
+      to: '0027_project_session_defaults'
     })
     await expect(
       client.$queryRaw<
@@ -891,7 +896,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0026_compute_job_remote_cleanup'
+      migrationId: '0027_project_session_defaults'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -908,7 +913,7 @@ describe('application database migrations', () => {
     ).resolves.toEqual({
       adoptedLegacy: false,
       applied: ['0027_test_suffix'],
-      from: '0026_compute_job_remote_cleanup',
+      from: '0027_project_session_defaults',
       to: '0027_test_suffix'
     })
     await expect(
@@ -942,6 +947,7 @@ describe('application database migrations', () => {
       { id: '0024_compute_job_file_evidence' },
       { id: '0025_managed_file_version_foundation' },
       { id: '0026_compute_job_remote_cleanup' },
+      { id: '0027_project_session_defaults' },
       { id: '0027_test_suffix' }
     ])
   })
@@ -1020,10 +1026,11 @@ describe('application database migrations', () => {
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
-        '0026_compute_job_remote_cleanup'
+        '0026_compute_job_remote_cleanup',
+        '0027_project_session_defaults'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0026_compute_job_remote_cleanup'
+      to: '0027_project_session_defaults'
     })
     expect(backupEvents).toEqual([
       {
@@ -1103,7 +1110,8 @@ describe('application database migrations', () => {
       { id: '0023_compute_job_operation' },
       { id: '0024_compute_job_file_evidence' },
       { id: '0025_managed_file_version_foundation' },
-      { id: '0026_compute_job_remote_cleanup' }
+      { id: '0026_compute_job_remote_cleanup' },
+      { id: '0027_project_session_defaults' }
     ])
   })
 
@@ -1223,6 +1231,7 @@ describe('application database migrations', () => {
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
         '0026_compute_job_remote_cleanup',
+        '0027_project_session_defaults',
         '0027_test_suffix'
       ],
       to: '0027_test_suffix'
@@ -1480,7 +1489,8 @@ describe('application database migrations', () => {
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
-        '0026_compute_job_remote_cleanup'
+        '0026_compute_job_remote_cleanup',
+        '0027_project_session_defaults'
       ]
     })
     await expect(
@@ -1603,7 +1613,8 @@ describe('application database migrations', () => {
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
-        '0026_compute_job_remote_cleanup'
+        '0026_compute_job_remote_cleanup',
+        '0027_project_session_defaults'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1678,7 +1689,8 @@ describe('application database migrations', () => {
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
-        '0026_compute_job_remote_cleanup'
+        '0026_compute_job_remote_cleanup',
+        '0027_project_session_defaults'
       ]
     })
     await expect(
@@ -1756,7 +1768,8 @@ describe('application database migrations', () => {
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
-        '0026_compute_job_remote_cleanup'
+        '0026_compute_job_remote_cleanup',
+        '0027_project_session_defaults'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -1868,7 +1881,8 @@ describe('application database migrations', () => {
         '0023_compute_job_operation',
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
-        '0026_compute_job_remote_cleanup'
+        '0026_compute_job_remote_cleanup',
+        '0027_project_session_defaults'
       ]
     })
     await expect(
@@ -2001,7 +2015,7 @@ describe('application database migrations', () => {
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
 
-    const firstId = '0026_test_batch_start'
+    const firstId = '0028_test_batch_start'
     const firstStatements = [`UPDATE "Project" SET "name" = "name" WHERE 0`] as const
     const firstVerifiers = [{ kind: 'table-exists', version: 1, table: 'Project' }] as const
     const first = {
@@ -2012,7 +2026,7 @@ describe('application database migrations', () => {
       backupOnApply: 'required' as const,
       backupRetention: 'retain' as const
     }
-    const secondId = '0027_test_batch_failure'
+    const secondId = '0029_test_batch_failure'
     const secondStatements = [
       `CREATE TABLE "MigrationSuffixProbe" ("id" TEXT NOT NULL PRIMARY KEY)`
     ] as const
@@ -2386,8 +2400,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0025_managed_file_version_foundation.backup',
       'open-science.db.before-0026_compute_job_remote_cleanup.backup',
+      'open-science.db.before-0027_project_session_defaults.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
@@ -2724,7 +2738,7 @@ describe('application database migrations', () => {
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
-        WHERE "id" IN ('0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup')`)
+        WHERE "id" IN ('0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults')`)
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
     await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client, true)
@@ -2738,7 +2752,7 @@ describe('application database migrations', () => {
         MIGRATION_MANIFEST.findIndex(({ id }) => id === '0009_vision_evidence')
       ).map(({ id }) => id),
       from: '0008_database_json_constraints',
-      to: '0026_compute_job_remote_cleanup'
+      to: '0027_project_session_defaults'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -2794,9 +2808,13 @@ describe('application database migrations', () => {
       `
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup'],
+      applied: [
+        '0025_managed_file_version_foundation',
+        '0026_compute_job_remote_cleanup',
+        '0027_project_session_defaults'
+      ],
       from: '0024_compute_job_file_evidence',
-      to: '0026_compute_job_remote_cleanup'
+      to: '0027_project_session_defaults'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`

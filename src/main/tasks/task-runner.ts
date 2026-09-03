@@ -30,7 +30,29 @@ import {
   type Project,
   type UpdateProjectRequest
 } from '../../shared/projects'
-import type { AgentFrameworkId, SessionAgentConfiguration } from '../../shared/settings'
+import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
+import {
+  projectSessionDefaultsSchema,
+  sessionAgentConfigurationSchema,
+  sessionAgentConfigurationPatchSchema,
+  updateProjectSessionDefaultsRequestSchema,
+  updateSessionConfigurationRequestSchema,
+  type ProjectSessionDefaults,
+  type ProjectSessionDefaultsPatch,
+  type SessionAgentConfigurationPatch,
+  type SessionComputeHosts,
+  type UpdateProjectSessionDefaultsRequest,
+  type UpdateSessionConfigurationRequest
+} from '../../shared/session-configuration'
+import {
+  resolveSelectableConfiguration,
+  resolveSessionAgentConfiguration
+} from '../../shared/session-agent-configuration'
+import type {
+  AgentFrameworkId,
+  SessionAgentConfiguration,
+  SettingsSnapshot
+} from '../../shared/settings'
 import {
   materializeSessionConversationGraph,
   type DelegationPolicy,
@@ -49,6 +71,7 @@ import type {
   StartTaskRunRequest,
   TaskApiErrorCode,
   TaskProject,
+  TaskProjectSessionDefaults,
   TaskRun,
   TaskRunStatus,
   TaskRunIdentity,
@@ -56,6 +79,7 @@ import type {
   TaskRunProgressPhase,
   TaskRunReview,
   TaskSessionSummary,
+  TaskSessionConfiguration,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
 import { ArchiveAvailabilityError, archiveAvailabilityMessage } from '../archive/availability-error'
@@ -86,6 +110,13 @@ type TaskComputePreferencePort = {
     operation: (providerIds: string[]) => Promise<Result>
   ): Promise<Result>
   set(sessionId: string, providerIds: readonly string[]): Promise<PersistedChatSession>
+  validate?(providerIds: readonly string[]): Promise<string[]>
+  listAvailable?(): Promise<readonly string[]>
+  project?(session: PersistedChatSession): void
+}
+
+type TaskSettingsPort = {
+  get(): Promise<SettingsSnapshot>
 }
 
 type TaskPreviewResourcePort = {
@@ -113,6 +144,8 @@ type TaskAgentCreateSessionRequest = {
   permissionProfile: PermissionProfileId
   cwd?: string
   specialistId?: string
+  memoryEnabled?: boolean
+  agentConfiguration?: SessionAgentConfiguration
 }
 
 type TaskAgentResumeSessionRequest = {
@@ -192,6 +225,8 @@ type TaskRunnerDependencies = {
   specialists: TaskSpecialistPort
   reviewer: TaskReviewerPort
   computePreferences: TaskComputePreferencePort
+  settings: TaskSettingsPort
+  isSessionBusy?: (projectId: string, sessionId: string) => boolean
   runWithLifecycleContext<Result>(operation: () => Result): Result
   runJournal?: TaskRunJournal
   createId: () => string
@@ -571,6 +606,101 @@ const projectTaskProjection = (project: Project): TaskProject => ({
   hasAgentContext: Boolean(project.agentContext?.trim())
 })
 
+const taskModelCatalog = (
+  settings: SettingsSnapshot
+): ReturnType<typeof buildConfiguredModelCatalog> => {
+  const framework = settings.agentFrameworks.find(
+    (candidate) => candidate.id === settings.agentFrameworkId
+  )
+  return buildConfiguredModelCatalog({
+    providers: settings.providers,
+    activeProviderId: settings.activeProviderId,
+    claudeSubscriptionProviderId: settings.claudeSubscriptionProviderId,
+    includeAllClaudeSubscriptions: true,
+    frameworkId: settings.agentFrameworkId,
+    frameworkEndpoints: framework?.supportedApiTypes ?? ['anthropic']
+  })
+}
+
+const validateTaskAgentConfiguration = (
+  configuration: SessionAgentConfiguration,
+  settings: SettingsSnapshot
+): SessionAgentConfiguration => {
+  const resolved = resolveSelectableConfiguration(
+    taskModelCatalog(settings),
+    configuration.providerId,
+    configuration.model,
+    configuration.reasoningEffort
+  )
+  if (!resolved) {
+    throw new TaskRunnerError(
+      'invalid_configuration',
+      'The provider, model, and reasoning effort are not available for the active Agent Framework.'
+    )
+  }
+  return resolved
+}
+
+const effectiveTaskAgentConfiguration = (
+  session: Pick<PersistedChatSession, 'agentBackendId' | 'agentModel' | 'agentConfiguration'>,
+  settings: SettingsSnapshot
+): SessionAgentConfiguration | undefined => {
+  const resolution = resolveSessionAgentConfiguration({
+    session,
+    catalog: taskModelCatalog(settings),
+    activeProviderId: settings.activeProviderId,
+    activeModel: settings.activeModel,
+    activeReasoningEffort: settings.reasoningEffort
+  })
+  return resolution.configuration
+}
+
+const mergeAgentConfigurationPatch = (
+  current: SessionAgentConfiguration | undefined,
+  patch: SessionAgentConfigurationPatch
+): SessionAgentConfiguration => {
+  if (
+    patch.providerId !== undefined &&
+    patch.providerId !== current?.providerId &&
+    patch.model === undefined
+  ) {
+    throw new TaskRunnerError(
+      'invalid_configuration',
+      'A provider change requires an explicit model or provider-default model reset.'
+    )
+  }
+  const providerId = patch.providerId ?? current?.providerId
+  if (!providerId) {
+    throw new TaskRunnerError(
+      'invalid_configuration',
+      'Provider is required when the Session has no effective agent configuration.'
+    )
+  }
+  const model = patch.model === null ? undefined : (patch.model ?? current?.model)
+  return {
+    providerId,
+    ...(model ? { model } : {}),
+    reasoningEffort: patch.reasoningEffort ?? current?.reasoningEffort ?? 'default'
+  }
+}
+
+const computeHostsFromSession = (session: PersistedChatSession): SessionComputeHosts => ({
+  enabled: [...(session.enabledComputeHosts ?? [])],
+  selected: [...(session.selectedComputeHosts ?? session.enabledComputeHosts ?? [])]
+})
+
+const applyProjectDefaultsPatch = (
+  current: ProjectSessionDefaults,
+  patch: ProjectSessionDefaultsPatch
+): ProjectSessionDefaults => {
+  const next: Record<string, unknown> = { ...current }
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete next[key]
+    else next[key] = value
+  }
+  return projectSessionDefaultsSchema.parse(next)
+}
+
 class TaskRunnerError extends Error {
   constructor(
     readonly code: TaskApiErrorCode,
@@ -804,6 +934,202 @@ class TaskRunner {
     return summarizeSession(await this.findSession(sessionId))
   }
 
+  async getSessionConfiguration(sessionId: string): Promise<TaskSessionConfiguration> {
+    const [session, settings, availableComputeHosts] = await Promise.all([
+      this.findSession(sessionId),
+      this.dependencies.settings.get(),
+      this.dependencies.computePreferences.listAvailable?.() ?? Promise.resolve([])
+    ])
+    const effectiveAgentConfiguration = effectiveTaskAgentConfiguration(session, settings)
+    const computeHosts = computeHostsFromSession(session)
+    return {
+      sessionId: session.id,
+      projectId: session.projectId,
+      revision: session.revision ?? 0,
+      cwd: session.cwd,
+      ...(session.specialistId ? { specialistId: session.specialistId } : {}),
+      persisted: {
+        ...(session.agentConfiguration ? { agentConfiguration: session.agentConfiguration } : {}),
+        ...(session.permissionProfile ? { permissionProfile: session.permissionProfile } : {}),
+        ...(session.autoReviewEnabled !== undefined
+          ? { autoReviewEnabled: session.autoReviewEnabled }
+          : {}),
+        ...(session.memoryEnabled !== undefined ? { memoryEnabled: session.memoryEnabled } : {}),
+        ...(session.delegationPolicy ? { delegationPolicy: session.delegationPolicy } : {}),
+        computeHosts
+      },
+      effective: {
+        ...(effectiveAgentConfiguration ? { agentConfiguration: effectiveAgentConfiguration } : {}),
+        permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+        autoReviewEnabled: session.autoReviewEnabled === true,
+        memoryEnabled: session.memoryEnabled !== false,
+        delegationPolicy: session.delegationPolicy ?? 'allow',
+        computeHosts
+      },
+      availability: {
+        ...(effectiveAgentConfiguration
+          ? {
+              agentConfiguration: this.agentConfigurationAvailability(
+                effectiveAgentConfiguration,
+                settings
+              )
+            }
+          : {}),
+        ...(session.specialistId
+          ? { specialist: await this.specialistAvailability(session.specialistId) }
+          : {}),
+        computeHosts: this.computeAvailability(computeHosts, availableComputeHosts)
+      }
+    }
+  }
+
+  async updateSessionConfiguration(
+    sessionId: string,
+    request: UpdateSessionConfigurationRequest
+  ): Promise<TaskSessionConfiguration> {
+    const parsed = updateSessionConfigurationRequestSchema.safeParse(request)
+    if (
+      !request ||
+      typeof request !== 'object' ||
+      !Number.isSafeInteger(request.expectedRevision) ||
+      request.expectedRevision < 0 ||
+      !parsed.success ||
+      Object.keys(parsed.data).length === 1
+    ) {
+      throw new TaskRunnerError('invalid_request', 'Invalid Session configuration update.')
+    }
+    const session = await this.findSession(sessionId)
+    if ((session.revision ?? 0) !== request.expectedRevision) {
+      throw new TaskRunnerError(
+        'session_revision_conflict',
+        `Session revision conflict: expected ${request.expectedRevision}, actual ${session.revision ?? 0}.`
+      )
+    }
+    if (
+      this.activeRunBySession.has(session.id) ||
+      this.dependencies.isSessionBusy?.(session.projectId, session.id) === true ||
+      (session.status !== 'idle' && session.status !== 'error')
+    ) {
+      throw new TaskRunnerError('session_busy', `Session has active work: ${session.id}`)
+    }
+    const settings = await this.dependencies.settings.get()
+    const patch = parsed.data
+    const agentConfiguration = patch.agentConfiguration
+      ? validateTaskAgentConfiguration(
+          mergeAgentConfigurationPatch(
+            session.agentConfiguration ?? effectiveTaskAgentConfiguration(session, settings),
+            patch.agentConfiguration
+          ),
+          settings
+        )
+      : session.agentConfiguration
+    if (patch.computeHosts) {
+      await this.validateComputeHosts([
+        ...patch.computeHosts.enabled,
+        ...patch.computeHosts.selected
+      ])
+    }
+    const next: PersistedChatSession = {
+      ...session,
+      ...(patch.agentConfiguration ? { agentConfiguration } : {}),
+      ...(patch.permissionProfile !== undefined
+        ? { permissionProfile: patch.permissionProfile }
+        : {}),
+      ...(patch.autoReviewEnabled !== undefined
+        ? { autoReviewEnabled: patch.autoReviewEnabled }
+        : {}),
+      ...(patch.memoryEnabled !== undefined ? { memoryEnabled: patch.memoryEnabled } : {}),
+      ...(patch.delegationPolicy !== undefined ? { delegationPolicy: patch.delegationPolicy } : {}),
+      ...(patch.computeHosts
+        ? {
+            enabledComputeHosts: [...new Set(patch.computeHosts.enabled)],
+            selectedComputeHosts: [...new Set(patch.computeHosts.selected)]
+          }
+        : {}),
+      updatedAt: Math.max(session.updatedAt + 1, this.dependencies.now())
+    }
+    try {
+      const persisted = await this.dependencies.sessions.save(next)
+      this.dependencies.computePreferences.project?.(persisted)
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'session-revision-conflict'
+      ) {
+        throw new TaskRunnerError(
+          'session_revision_conflict',
+          error instanceof Error ? error.message : 'Session revision conflict.'
+        )
+      }
+      throw error
+    }
+    return this.getSessionConfiguration(sessionId)
+  }
+
+  async getProjectSessionDefaults(projectId: string): Promise<TaskProjectSessionDefaults> {
+    const project = await this.resolveProject(projectId)
+    return this.projectSessionDefaultsProjection(project)
+  }
+
+  async updateProjectSessionDefaults(
+    projectId: string,
+    request: UpdateProjectSessionDefaultsRequest
+  ): Promise<TaskProjectSessionDefaults> {
+    const parsed = updateProjectSessionDefaultsRequestSchema.safeParse(request)
+    if (!parsed.success || Object.keys(parsed.data.patch).length === 0) {
+      throw new TaskRunnerError('invalid_request', 'Invalid Project Session defaults update.')
+    }
+    const project = await this.resolveProject(projectId)
+    const patch: ProjectSessionDefaultsPatch = { ...parsed.data.patch }
+    if (typeof patch.specialistId === 'string') {
+      try {
+        patch.specialistId = (await this.dependencies.specialists.resolve(patch.specialistId)).id
+      } catch (error) {
+        throw new TaskRunnerError('specialist_not_found', toErrorMessage(error))
+      }
+    }
+    const settings = await this.dependencies.settings.get()
+    if (patch.agentConfiguration) {
+      patch.agentConfiguration = validateTaskAgentConfiguration(
+        mergeAgentConfigurationPatch(
+          project.sessionDefaults?.agentConfiguration ??
+            effectiveTaskAgentConfiguration({}, settings),
+          patch.agentConfiguration
+        ),
+        settings
+      )
+    }
+    const defaults = applyProjectDefaultsPatch(project.sessionDefaults ?? {}, patch)
+    if (defaults.computeHosts) {
+      await this.validateComputeHosts([
+        ...defaults.computeHosts.enabled,
+        ...defaults.computeHosts.selected
+      ])
+    }
+    try {
+      const updated = await this.dependencies.projects.update?.({
+        id: project.id,
+        expectedUpdatedAt: parsed.data.expectedUpdatedAt,
+        sessionDefaults: defaults
+      })
+      if (!updated) throw new Error('Task Project update is unavailable.')
+      return this.projectSessionDefaultsProjection(updated)
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message === 'Project changed elsewhere.' || error.message === 'Project not found.')
+      ) {
+        throw new TaskRunnerError(
+          'project_conflict',
+          'Project changed elsewhere. Refresh it and try again.'
+        )
+      }
+      throw error
+    }
+  }
+
   async listArtifacts(sessionId: string): Promise<PersistedArtifact[]> {
     return [...((await this.findSession(sessionId)).artifacts ?? [])]
   }
@@ -889,6 +1215,27 @@ class TaskRunner {
     ) {
       throw new TaskRunnerError('invalid_request', 'Compute Host ids must be non-empty strings.')
     }
+    if (
+      request.enabledComputeHostIds !== undefined &&
+      (!Array.isArray(request.enabledComputeHostIds) ||
+        request.enabledComputeHostIds.some(
+          (providerId) => typeof providerId !== 'string' || !providerId.trim()
+        ))
+    ) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Enabled Compute Host ids must be non-empty strings.'
+      )
+    }
+    if (
+      request.agentConfiguration !== undefined &&
+      !sessionAgentConfigurationPatchSchema.safeParse(request.agentConfiguration).success
+    ) {
+      throw new TaskRunnerError('invalid_request', 'Invalid Session agent configuration.')
+    }
+    if (request.memoryEnabled !== undefined && typeof request.memoryEnabled !== 'boolean') {
+      throw new TaskRunnerError('invalid_request', 'Memory must be a boolean.')
+    }
     const prompt = typeof request.prompt === 'string' ? request.prompt.trim() : ''
     if (!prompt) throw new TaskRunnerError('invalid_request', 'Prompt is required.')
     const cwd =
@@ -915,6 +1262,15 @@ class TaskRunner {
         `Session ${existing.id} does not belong to project ${project.id}.`
       )
     }
+    if (
+      existing &&
+      (request.agentConfiguration !== undefined || request.memoryEnabled !== undefined)
+    ) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Provider, model, reasoning effort, and memory must be changed with session config update before resuming an existing Session.'
+      )
+    }
     if (existing && cwd !== undefined) {
       const existingCwd = await canonicalizeTaskWorkingDirectory(existing.cwd)
       if (cwd !== existingCwd) {
@@ -932,6 +1288,72 @@ class TaskRunner {
         'session_busy',
         `Session is waiting for Plan approval: ${existing.id}`
       )
+    }
+    if (!existing) {
+      const settings = await this.dependencies.settings.get()
+      const defaults = project.sessionDefaults ?? {}
+      const selectedComputeHosts = request.computeHostIds ?? defaults.computeHosts?.selected
+      const configuredEnabledComputeHosts =
+        request.enabledComputeHostIds ?? defaults.computeHosts?.enabled
+      const enabledComputeHosts =
+        configuredEnabledComputeHosts !== undefined || selectedComputeHosts !== undefined
+          ? [
+              ...new Set([
+                ...(configuredEnabledComputeHosts ?? []),
+                ...(selectedComputeHosts ?? [])
+              ])
+            ]
+          : undefined
+      const candidateAgentConfiguration = request.agentConfiguration
+        ? mergeAgentConfigurationPatch(
+            defaults.agentConfiguration ?? effectiveTaskAgentConfiguration({}, settings),
+            request.agentConfiguration
+          )
+        : defaults.agentConfiguration
+      normalizedRequest = {
+        ...normalizedRequest,
+        permissionProfile:
+          request.permissionProfile ??
+          defaults.permissionProfile ??
+          settings.defaultPermissionProfile ??
+          DEFAULT_PERMISSION_PROFILE,
+        autoReviewEnabled: request.autoReviewEnabled ?? defaults.autoReviewEnabled ?? false,
+        memoryEnabled: request.memoryEnabled ?? defaults.memoryEnabled ?? true,
+        delegationPolicy: request.delegationPolicy ?? defaults.delegationPolicy ?? 'allow',
+        ...(request.specialist !== undefined
+          ? { specialist: request.specialist }
+          : defaults.specialistId
+            ? { specialist: defaults.specialistId }
+            : {}),
+        ...(candidateAgentConfiguration
+          ? {
+              agentConfiguration: validateTaskAgentConfiguration(
+                candidateAgentConfiguration,
+                settings
+              )
+            }
+          : {}),
+        ...(enabledComputeHosts !== undefined
+          ? { enabledComputeHostIds: enabledComputeHosts }
+          : {}),
+        ...(selectedComputeHosts !== undefined ? { computeHostIds: selectedComputeHosts } : {})
+      }
+      if (normalizedRequest.enabledComputeHostIds !== undefined) {
+        const enabled = new Set(normalizedRequest.enabledComputeHostIds)
+        const invalidSelection = normalizedRequest.computeHostIds?.find(
+          (providerId) => !enabled.has(providerId)
+        )
+        if (invalidSelection) {
+          throw new TaskRunnerError(
+            'invalid_configuration',
+            `Selected Compute Host is not enabled: ${invalidSelection}`
+          )
+        }
+        await this.validateComputeHosts(
+          [...normalizedRequest.enabledComputeHostIds, ...(normalizedRequest.computeHostIds ?? [])],
+          'invalid_request'
+        )
+      }
     }
     const userMessageId = this.dependencies.createId()
     const runId = this.dependencies.createId()
@@ -1011,9 +1433,9 @@ class TaskRunner {
           existing.id,
           async () => acceptPrepared(await prepare())
         )
-      } else if (request.computeHostIds !== undefined) {
+      } else if (normalizedRequest.computeHostIds !== undefined) {
         accepted = await this.dependencies.computePreferences.withReservation(
-          request.computeHostIds,
+          normalizedRequest.computeHostIds,
           async (computeHostIds) => {
             normalizedRequest = { ...normalizedRequest, computeHostIds }
             return acceptPrepared(await prepare(normalizedRequest))
@@ -1253,9 +1675,7 @@ class TaskRunner {
         !existing.agentConfiguration &&
         !existing.agentBackendId
       ) {
-        if (request.permissionProfile && request.permissionProfile !== existing.permissionProfile) {
-          await this.dependencies.agent.setPermissionProfile(existing.id, request.permissionProfile)
-        }
+        await this.dependencies.agent.setPermissionProfile(existing.id, permissionProfile)
         sessionInfo = {
           sessionId: existing.id,
           cwd: existing.cwd,
@@ -1284,11 +1704,25 @@ class TaskRunner {
         })
       }
     } else {
+      const parsedAgentConfiguration =
+        request.agentConfiguration === undefined
+          ? undefined
+          : sessionAgentConfigurationSchema.safeParse(request.agentConfiguration)
+      if (parsedAgentConfiguration && !parsedAgentConfiguration.success) {
+        throw new TaskRunnerError(
+          'invalid_configuration',
+          'A new Session requires a complete agent configuration.'
+        )
+      }
       sessionInfo = await this.dependencies.agent.createSession({
         projectId: project.id,
         permissionProfile,
         ...(request.cwd ? { cwd: request.cwd } : {}),
-        ...(specialistId ? { specialistId } : {})
+        ...(specialistId ? { specialistId } : {}),
+        ...(request.memoryEnabled === false ? { memoryEnabled: request.memoryEnabled } : {}),
+        ...(parsedAgentConfiguration?.success
+          ? { agentConfiguration: parsedAgentConfiguration.data }
+          : {})
       })
     }
 
@@ -1334,6 +1768,7 @@ class TaskRunner {
           status: 'running',
           permissionProfile,
           autoReviewEnabled,
+          memoryEnabled: existing.memoryEnabled ?? true,
           delegationPolicy,
           specialistId,
           agentFrameworkId: sessionInfo.frameworkId ?? existing.agentFrameworkId,
@@ -1354,6 +1789,7 @@ class TaskRunner {
           status: 'running',
           permissionProfile,
           autoReviewEnabled,
+          memoryEnabled: request.memoryEnabled ?? true,
           delegationPolicy,
           specialistId,
           agentFrameworkId: sessionInfo.frameworkId,
@@ -1361,10 +1797,12 @@ class TaskRunner {
           providerSessionId: sessionInfo.providerSessionId,
           providerContinuityToken: sessionInfo.providerContinuityToken,
           agentConfiguration: sessionInfo.agentConfiguration,
-          ...(request.computeHostIds !== undefined
+          ...(request.enabledComputeHostIds !== undefined || request.computeHostIds !== undefined
             ? {
-                enabledComputeHosts: request.computeHostIds,
-                selectedComputeHosts: request.computeHostIds
+                enabledComputeHosts: [
+                  ...new Set(request.enabledComputeHostIds ?? request.computeHostIds ?? [])
+                ],
+                selectedComputeHosts: [...new Set(request.computeHostIds ?? [])]
               }
             : {}),
           messages: [userMessage],
@@ -2122,6 +2560,97 @@ class TaskRunner {
     const project = projects.find((candidate) => candidate.id === normalized)
     if (project) return project
     throw new TaskRunnerError('project_not_found', `Project not found: ${normalized}`)
+  }
+
+  private agentConfigurationAvailability(
+    configuration: SessionAgentConfiguration,
+    settings: SettingsSnapshot
+  ): { available: boolean; reason?: string } {
+    try {
+      validateTaskAgentConfiguration(configuration, settings)
+      return { available: true }
+    } catch (error) {
+      return { available: false, reason: toErrorMessage(error) }
+    }
+  }
+
+  private async specialistAvailability(
+    specialistId: string
+  ): Promise<{ available: boolean; reason?: string }> {
+    try {
+      await this.dependencies.specialists.resolve(specialistId)
+      return { available: true }
+    } catch (error) {
+      return { available: false, reason: toErrorMessage(error) }
+    }
+  }
+
+  private computeAvailability(
+    computeHosts: SessionComputeHosts,
+    availableProviderIds: readonly string[]
+  ): Record<string, { available: boolean; reason?: string }> {
+    const available = new Set(availableProviderIds)
+    return Object.fromEntries(
+      [...new Set([...computeHosts.enabled, ...computeHosts.selected])].map((providerId) => [
+        providerId,
+        available.has(providerId)
+          ? { available: true }
+          : { available: false, reason: 'Compute Host is not registered.' }
+      ])
+    )
+  }
+
+  private async validateComputeHosts(
+    providerIds: readonly string[],
+    errorCode: 'invalid_request' | 'invalid_configuration' = 'invalid_configuration'
+  ): Promise<string[]> {
+    try {
+      if (this.dependencies.computePreferences.validate) {
+        return await this.dependencies.computePreferences.validate(providerIds)
+      }
+      return await this.dependencies.computePreferences.withReservation(
+        providerIds,
+        async (validated) => validated
+      )
+    } catch (error) {
+      if (error instanceof ComputeHostPreferenceValidationError) {
+        throw new TaskRunnerError(errorCode, error.message)
+      }
+      throw error
+    }
+  }
+
+  private async projectSessionDefaultsProjection(
+    project: Project
+  ): Promise<TaskProjectSessionDefaults> {
+    const defaults = project.sessionDefaults ?? {}
+    const [settings, availableComputeHosts, specialist] = await Promise.all([
+      this.dependencies.settings.get(),
+      this.dependencies.computePreferences.listAvailable?.() ?? Promise.resolve([]),
+      defaults.specialistId
+        ? this.specialistAvailability(defaults.specialistId)
+        : Promise.resolve(undefined)
+    ])
+    return {
+      projectId: project.id,
+      updatedAt: project.updatedAt,
+      configured: defaults,
+      availability: {
+        ...(defaults.agentConfiguration
+          ? {
+              agentConfiguration: this.agentConfigurationAvailability(
+                defaults.agentConfiguration,
+                settings
+              )
+            }
+          : {}),
+        ...(specialist ? { specialist } : {}),
+        computeHosts: this.computeAvailability(
+          defaults.computeHosts ?? { enabled: [], selected: [] },
+          availableComputeHosts
+        )
+      }
+    }
   }
 
   private async findSession(sessionId: string): Promise<PersistedChatSession> {

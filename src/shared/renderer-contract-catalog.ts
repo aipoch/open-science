@@ -290,6 +290,7 @@ import type {
   SetNetworkProxyRequest,
   SetNotebookNetworkRequest,
   SetAgentFrameworkRequest,
+  SetAgentRoutingRequest,
   SetConversationSkillImportEnabledRequest,
   SetNotificationsEnabledRequest,
   SetShowNotificationContentRequest,
@@ -1866,6 +1867,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.setAgentFramework': callable<
     (request: SetAgentFrameworkRequest) => Promise<SettingsSnapshot>
   >()('settings', ['settings:set-agent-framework']),
+  'settings.setAgentRouting': callable<
+    (request: SetAgentRoutingRequest) => Promise<SettingsSnapshot>
+  >()('settings', ['settings:set-agent-routing']),
   'settings.setAppIconVariant': callable<
     (request: SetAppIconVariantRequest) => Promise<SettingsSnapshot>
   >()('settings', ['settings:set-app-icon-variant', LOCAL]),

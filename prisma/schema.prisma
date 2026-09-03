@@ -24,6 +24,7 @@ model Project {
   name             String
   description      String               @default("")
   agentContext     String               @default("")
+  sessionDefaults  String               @default("{}")
   isExample        Boolean              @default(false)
   pinned           Boolean              @default(false)
   archivedAt       DateTime?

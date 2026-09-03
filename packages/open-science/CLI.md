@@ -182,6 +182,27 @@ newly created Sessions and provider Sessions that are set up again after the upd
 rebuild an already attached Session. Project list, create, and update output reports only the boolean
 `hasAgentContext`; Agent Context contents are not returned through the public Task API or CLI output.
 
+### Project Session defaults
+
+Inspect or update the configuration copied into each newly created Session:
+
+```bash
+open-science project session-defaults show <project-id> --json
+open-science project session-defaults update <project-id> \
+  --provider anthropic --model claude-sonnet-4-5 --reasoning-effort high \
+  --approval-profile auto --auto-review --memory --delegation allow \
+  --enable-compute-host ssh:cluster-a --compute-host ssh:cluster-a --json
+```
+
+Updates use the Project's current `updatedAt` value as a compare-and-swap revision. They fail on a
+concurrent Project edit instead of overwriting it. Use the corresponding `--clear-*` option to
+remove an optional default, or `--clear-compute-hosts` to remove both enabled and selected Compute
+Hosts. Omitted options are preserved.
+
+The precedence for a new Session is explicit `run` options, then Project Session defaults, then
+application settings, then the provider-owned default. Defaults are snapshotted into the new
+Session; changing them never rewrites an existing Session.
+
 ## Run a task
 
 Provide a prompt directly, read it from a UTF-8 file, or pipe it through stdin:
@@ -305,9 +326,55 @@ open-science plan revise <session-id> --feedback "Split the validation step" --j
 Version/revision matching prevents a stale automation client from deciding a newer Plan. Approval
 continues the parked Run; feedback asks the live Plan interaction for a revision.
 
+## Session configuration
+
+Read the persisted and effective configuration, including referenced provider, model, Specialist,
+and Compute Host availability:
+
+```bash
+open-science session config show <session-id> --json
+```
+
+Update an idle Session with the revision returned by `show`:
+
+```bash
+open-science session config update <session-id> --revision 7 \
+  --provider openai --provider-default-model --reasoning-effort medium \
+  --approval-profile ask --no-auto-review --memory --delegation deny \
+  --clear-compute-hosts --json
+```
+
+The Main provider, model, and reasoning effort are one compound configuration. A provider change
+must therefore include either `--model` or `--provider-default-model`. An update affects future
+turns only and is rejected while root-agent, subagent, or Notebook work is active. Reviewer work
+does not block the update. Stale revisions fail with `session_revision_conflict`; invalid or
+unavailable references fail with `invalid_configuration`.
+
+## Agent routing settings
+
+Inspect or atomically update the global Agent framework plus Reviewer and Subagent model routing:
+
+```bash
+open-science settings agent-routing show --json
+open-science settings agent-routing update --framework codex \
+  --reviewer-provider openai --reviewer-model gpt-5 \
+  --subagent-inherit --json
+```
+
+Use `--reviewer-inherit` or `--subagent-inherit` to follow the applicable Main model. Fixed routes
+require both provider and model; reasoning effort is optional. The command validates all three
+settings against the target framework before saving them together. It returns identifiers and
+availability only, never provider credentials.
+
+A framework change applies to new Sessions and future Reviewer work. Existing idle Sessions migrate
+lazily on their next turn, replaying their visible transcript when a fresh provider Session is
+needed. In-flight Main, Reviewer, and Subagent work remains pinned to the runtime generation and
+model snapshot admitted at its start. Reviewer and Subagent route changes affect only future work.
+
 ### Session persistence and compatibility
 
-The controls use the Session JSON authority; they do not add a Prisma/SQLite migration:
+Session configuration continues to use the Session JSON authority; it does not add a Session
+schema migration:
 
 - Session JSON stores `delegationPolicy` with values `allow` or `deny`. Historical Session files
   that omit it, and malformed values, restore as `allow`.
@@ -316,7 +383,11 @@ The controls use the Session JSON authority; they do not add a Prisma/SQLite mig
 - Plan artifacts/approval/continuation continue under runtimeContext.plan; delegated attempts,
   messages, and questions continue under runtimeContext.delegatedWork.
 
-No Session or Run status enum is added. Existing waiting-plan-approval remains the durable Session
+Project Session defaults add one `sessionDefaults` JSON-text column to the Project table. Existing
+rows migrate to `{}` and therefore retain prior behavior. Agent routing reuses the existing Settings
+JSON fields.
+
+No persistent enum value is added. Existing waiting-plan-approval remains the durable Session
 status, while a public Run remains running and carries an attention discriminant.
 
 ## Machine-readable output

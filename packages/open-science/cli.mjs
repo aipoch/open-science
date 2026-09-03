@@ -37,10 +37,16 @@ Commands:
   project list
   project create <name> [--description <text>] [--agent-context <text> | --agent-context-file <path>]
   project update <id-or-name> [--name <name>] [--description <text>] [--agent-context <text> | --agent-context-file <path> | --clear-agent-context]
+  project session-defaults show <id-or-name>
+  project session-defaults update <id-or-name> [session options]
   run --project <id-or-name> (--prompt <text> | --prompt-file <path>) [--compute-host <provider-id>] [--wait]
   run status <run-id>
   run cancel <run-id>
   session status <session-id>
+  session config show <session-id>
+  session config update <session-id> --revision <number> [session options]
+  settings agent-routing show
+  settings agent-routing update [routing options]
   plan show <session-id>
   plan approve <session-id> --artifact-version <id> --revision <number>
   plan reject <session-id> --artifact-version <id> --revision <number>
@@ -63,13 +69,26 @@ Options:
   --agent-context-file <path>  Read Project Agent Context from a UTF-8 file
   --clear-agent-context  Clear a Project's persistent Agent Context
   --approval-profile <profile>  ask, auto, or full (default: ask)
+  --provider <provider-id>  Configured Main provider
+  --model <model-id>       Main model
+  --provider-default-model Use the provider-owned default model
+  --reasoning-effort <effort>  default, low, medium, high, xhigh, or max
   --skill <id>           Force-load a skill for this run (repeatable)
   --compute-host <provider-id>  Select a Compute Host execution target (repeatable)
+  --enable-compute-host <provider-id>  Enable a Compute Host without selecting it (repeatable)
+  --clear-compute-hosts    Clear enabled and selected Compute Hosts
   --plan-first           Require an approved Plan before execution
   --auto-review          Enable automatic review for this Session
   --no-auto-review       Disable automatic review for this Session
+  --memory               Enable Memory for this Session
+  --no-memory            Disable Memory for this Session
   --specialist <id-or-name>  Bind a new Session to a Specialist
   --delegation <policy>  allow or deny new delegated children
+  --framework <id>       claude-code, opencode, codex, or codebuddy
+  --reviewer-inherit | --reviewer-provider <id> --reviewer-model <id> [--reviewer-effort <effort>]
+  --subagent-inherit | --subagent-provider <id> --subagent-model <id> [--subagent-effort <effort>]
+  --clear-provider | --clear-approval-profile | --clear-auto-review | --clear-memory
+  --clear-delegation | --clear-specialist  Clear one Project Session default
   --wait                 Wait for the run to finish
   --return-on-attention  With --wait, return when the Plan needs approval
   --timeout-ms <ms>      Stop waiting after this many milliseconds
@@ -96,6 +115,16 @@ const VALUE_OPTIONS = {
   '--prompt': 'prompt',
   '--prompt-file': 'promptFile',
   '--approval-profile': 'approvalProfile',
+  '--provider': 'provider',
+  '--model': 'model',
+  '--reasoning-effort': 'reasoningEffort',
+  '--framework': 'framework',
+  '--reviewer-provider': 'reviewerProvider',
+  '--reviewer-model': 'reviewerModel',
+  '--reviewer-effort': 'reviewerEffort',
+  '--subagent-provider': 'subagentProvider',
+  '--subagent-model': 'subagentModel',
+  '--subagent-effort': 'subagentEffort',
   '--specialist': 'specialist',
   '--delegation': 'delegation',
   '--artifact-version': 'artifactVersion',
@@ -109,8 +138,8 @@ const VALUE_OPTIONS = {
   '--output': 'output'
 }
 
-const TASK_COMMANDS = new Set(['project', 'run', 'session', 'plan', 'artifacts'])
-const GROUP_COMMANDS = new Set(['codex', 'project', 'session', 'plan', 'artifacts'])
+const TASK_COMMANDS = new Set(['project', 'run', 'session', 'settings', 'plan', 'artifacts'])
+const GROUP_COMMANDS = new Set(['codex', 'project', 'session', 'settings', 'plan', 'artifacts'])
 
 export class CliUsageError extends Error {
   constructor(message) {
@@ -156,6 +185,26 @@ export const parseCliArgs = (argv) => {
     else if (arg === '--wait') options.wait = true
     else if (arg === '--return-on-attention') options.returnOnAttention = true
     else if (arg === '--plan-first') options.planFirst = true
+    else if (arg === '--provider-default-model') options.providerDefaultModel = true
+    else if (arg === '--clear-compute-hosts') options.clearComputeHosts = true
+    else if (arg === '--memory') {
+      if (options.memoryEnabled === false) {
+        throw new CliUsageError('Use only one of --memory or --no-memory.')
+      }
+      options.memoryEnabled = true
+    } else if (arg === '--no-memory') {
+      if (options.memoryEnabled === true) {
+        throw new CliUsageError('Use only one of --memory or --no-memory.')
+      }
+      options.memoryEnabled = false
+    } else if (arg === '--reviewer-inherit') options.reviewerInherit = true
+    else if (arg === '--subagent-inherit') options.subagentInherit = true
+    else if (arg === '--clear-provider') options.clearProvider = true
+    else if (arg === '--clear-approval-profile') options.clearApprovalProfile = true
+    else if (arg === '--clear-auto-review') options.clearAutoReview = true
+    else if (arg === '--clear-memory') options.clearMemory = true
+    else if (arg === '--clear-delegation') options.clearDelegation = true
+    else if (arg === '--clear-specialist') options.clearSpecialist = true
     else if (arg === '--auto-review') {
       if (options.autoReviewEnabled === false) {
         throw new CliUsageError('Use only one of --auto-review or --no-auto-review.')
@@ -176,6 +225,10 @@ export const parseCliArgs = (argv) => {
       const value = args.shift()
       if (!value) throw new CliUsageError('--compute-host requires a value.')
       options.computeHosts = [...(options.computeHosts ?? []), value]
+    } else if (arg === '--enable-compute-host') {
+      const value = args.shift()
+      if (!value) throw new CliUsageError('--enable-compute-host requires a value.')
+      options.enabledComputeHosts = [...(options.enabledComputeHosts ?? []), value]
     } else if (arg === '-h' || arg === '--help') options.help = true
     else if (Object.hasOwn(VALUE_OPTIONS, arg)) {
       const value = args.shift()
@@ -203,12 +256,48 @@ export const parseCliArgs = (argv) => {
   if (options.revision !== undefined) {
     const revision = Number(options.revision)
     if (!Number.isInteger(revision) || revision < 0) {
-      throw new CliUsageError(`Invalid Plan revision: ${options.revision}`)
+      throw new CliUsageError(`Invalid revision: ${options.revision}`)
     }
     options.revision = revision
   }
   if (options.delegation && !['allow', 'deny'].includes(options.delegation)) {
     throw new CliUsageError(`Invalid delegation policy: ${options.delegation}`)
+  }
+  for (const [label, value] of [
+    ['--reasoning-effort', options.reasoningEffort],
+    ['--reviewer-effort', options.reviewerEffort],
+    ['--subagent-effort', options.subagentEffort]
+  ]) {
+    if (
+      value !== undefined &&
+      !['default', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value)
+    ) {
+      throw new CliUsageError(`Invalid ${label}: ${value}`)
+    }
+  }
+  if (
+    options.framework !== undefined &&
+    !['claude-code', 'opencode', 'codex', 'codebuddy'].includes(options.framework)
+  ) {
+    throw new CliUsageError(`Invalid framework: ${options.framework}`)
+  }
+  if (options.model !== undefined && options.providerDefaultModel) {
+    throw new CliUsageError('Use only one of --model or --provider-default-model.')
+  }
+  if (
+    options.provider !== undefined &&
+    options.model === undefined &&
+    !options.providerDefaultModel
+  ) {
+    throw new CliUsageError('--provider requires --model or --provider-default-model.')
+  }
+  if (
+    options.clearComputeHosts &&
+    (options.computeHosts !== undefined || options.enabledComputeHosts !== undefined)
+  ) {
+    throw new CliUsageError(
+      'Use only one of Compute Host selection options or --clear-compute-hosts.'
+    )
   }
   if (options.json && options.jsonl) {
     throw new CliUsageError('Use only one of --json or --jsonl.')
@@ -285,22 +374,74 @@ export const parseCliArgs = (argv) => {
     }
     if (positionals.length > 0) throw new CliUsageError('codex login accepts no arguments.')
   }
+  const sessionConfigAction = command === 'session' && subcommand === 'config' && positionals[0]
+  const projectDefaultsAction =
+    command === 'project' && subcommand === 'session-defaults' && positionals[0]
+  const agentRoutingAction =
+    command === 'settings' && subcommand === 'agent-routing' && positionals[0]
+  const isSessionConfigUpdate = sessionConfigAction === 'update'
+  const isProjectDefaultsUpdate = projectDefaultsAction === 'update'
+  const isAgentRoutingUpdate = agentRoutingAction === 'update'
+  const isRun = command === 'run' && !subcommand
   const runOnlyOptions = [
     ['--plan-first', options.planFirst],
-    ['--auto-review/--no-auto-review', options.autoReviewEnabled !== undefined],
-    ['--specialist', options.specialist !== undefined],
-    ['--delegation', options.delegation !== undefined],
-    ['--compute-host', options.computeHosts !== undefined]
+    ['--skill', options.skills !== undefined]
   ]
   for (const [label, present] of runOnlyOptions) {
-    if (present && (command !== 'run' || subcommand)) {
+    if (present && !isRun) {
       throw new CliUsageError(`${label} requires run.`)
     }
   }
+  const sessionOptionPresent =
+    options.provider !== undefined ||
+    options.model !== undefined ||
+    options.providerDefaultModel ||
+    options.reasoningEffort !== undefined ||
+    options.approvalProfile !== undefined ||
+    options.autoReviewEnabled !== undefined ||
+    options.memoryEnabled !== undefined ||
+    options.delegation !== undefined ||
+    options.computeHosts !== undefined ||
+    options.enabledComputeHosts !== undefined ||
+    options.clearComputeHosts
+  if (sessionOptionPresent && !isRun && !isSessionConfigUpdate && !isProjectDefaultsUpdate) {
+    throw new CliUsageError(
+      'Session configuration options require run or a defaults/config update.'
+    )
+  }
+  if (options.specialist !== undefined && !isRun && !isProjectDefaultsUpdate) {
+    throw new CliUsageError('--specialist requires run or project session-defaults update.')
+  }
+  const projectClearPresent =
+    options.clearProvider ||
+    options.clearApprovalProfile ||
+    options.clearAutoReview ||
+    options.clearMemory ||
+    options.clearDelegation ||
+    options.clearSpecialist
+  if (projectClearPresent && !isProjectDefaultsUpdate) {
+    throw new CliUsageError(
+      'Project default clear options require project session-defaults update.'
+    )
+  }
+  const routingPresent =
+    options.framework !== undefined ||
+    options.reviewerProvider !== undefined ||
+    options.reviewerModel !== undefined ||
+    options.reviewerEffort !== undefined ||
+    options.reviewerInherit ||
+    options.subagentProvider !== undefined ||
+    options.subagentModel !== undefined ||
+    options.subagentEffort !== undefined ||
+    options.subagentInherit
+  if (routingPresent && !isAgentRoutingUpdate) {
+    throw new CliUsageError('Agent routing options require settings agent-routing update.')
+  }
   if (
     command !== 'plan' &&
+    !isSessionConfigUpdate &&
     (options.artifactVersion !== undefined ||
-      options.revision !== undefined ||
+      (options.revision !== undefined && !isSessionConfigUpdate) ||
       options.feedback !== undefined)
   ) {
     throw new CliUsageError('Plan response options require a plan command.')
@@ -1116,6 +1257,64 @@ const streamRunEvents = async (eventStream, runRef, options, deps, signal) => {
   }
 }
 
+const agentConfigurationPatch = (options) => {
+  const present =
+    options.provider !== undefined ||
+    options.model !== undefined ||
+    options.providerDefaultModel ||
+    options.reasoningEffort !== undefined
+  if (!present) return undefined
+  return {
+    ...(options.provider !== undefined ? { providerId: options.provider } : {}),
+    ...(options.model !== undefined
+      ? { model: options.model }
+      : options.providerDefaultModel
+        ? { model: null }
+        : {}),
+    ...(options.reasoningEffort !== undefined ? { reasoningEffort: options.reasoningEffort } : {})
+  }
+}
+
+const computeHostsPatch = (options, current = { enabled: [], selected: [] }) => {
+  if (options.clearComputeHosts) return { enabled: [], selected: [] }
+  if (options.computeHosts === undefined && options.enabledComputeHosts === undefined) {
+    return undefined
+  }
+  const selected = options.computeHosts ?? current.selected
+  const enabled = [...(options.enabledComputeHosts ?? current.enabled), ...selected].filter(
+    (value, index, values) => values.indexOf(value) === index
+  )
+  return { enabled, selected }
+}
+
+const modelRouting = (options, prefix) => {
+  const inherit = options[`${prefix}Inherit`]
+  const providerId = options[`${prefix}Provider`]
+  const model = options[`${prefix}Model`]
+  const reasoningEffort = options[`${prefix}Effort`]
+  if (inherit) {
+    if (providerId !== undefined || model !== undefined || reasoningEffort !== undefined) {
+      throw new CliUsageError(
+        `--${prefix}-inherit cannot be combined with fixed ${prefix} routing options.`
+      )
+    }
+    return { mode: 'inherit' }
+  }
+  if (providerId === undefined && model === undefined && reasoningEffort === undefined) {
+    return undefined
+  }
+  if (!providerId || !model) {
+    throw new CliUsageError(
+      `--${prefix}-provider and --${prefix}-model are required for fixed routing.`
+    )
+  }
+  return { mode: 'fixed', providerId, model, reasoningEffort: reasoningEffort ?? 'default' }
+}
+
+const assertNoClearConflict = (clear, present, label) => {
+  if (clear && present) throw new CliUsageError(`Cannot set and clear ${label} together.`)
+}
+
 export const runTaskCommand = async (parsed, dependencies = {}) => {
   const deps = { ...TASK_DEPS, ...dependencies }
   const { command, subcommand, positionals = [], options } = parsed
@@ -1164,10 +1363,160 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     )
     return
   }
+  if (command === 'project' && subcommand === 'session-defaults') {
+    const action = positionals[0]
+    const selector = positionals.slice(1).join(' ').trim()
+    if (!selector) throw new CliUsageError('Project id or name is required.')
+    const project = await resolveCliProject(client, selector)
+    const current = await client.getProjectSessionDefaults(project.id)
+    if (action === 'show') {
+      outputValue(current, options, deps)
+      return
+    }
+    if (action !== 'update') {
+      throw new CliUsageError('Use project session-defaults show or update.')
+    }
+    const agent = agentConfigurationPatch(options)
+    assertNoClearConflict(options.clearProvider, agent !== undefined, 'the provider default')
+    assertNoClearConflict(
+      options.clearApprovalProfile,
+      options.approvalProfile !== undefined,
+      'the approval profile default'
+    )
+    assertNoClearConflict(
+      options.clearAutoReview,
+      options.autoReviewEnabled !== undefined,
+      'the auto-review default'
+    )
+    assertNoClearConflict(
+      options.clearMemory,
+      options.memoryEnabled !== undefined,
+      'the Memory default'
+    )
+    assertNoClearConflict(
+      options.clearDelegation,
+      options.delegation !== undefined,
+      'the delegation default'
+    )
+    assertNoClearConflict(
+      options.clearSpecialist,
+      options.specialist !== undefined,
+      'the Specialist default'
+    )
+    const computeHosts = computeHostsPatch(options, current.configured.computeHosts)
+    const patch = {
+      ...(options.clearProvider
+        ? { agentConfiguration: null }
+        : agent
+          ? { agentConfiguration: agent }
+          : {}),
+      ...(options.clearApprovalProfile
+        ? { permissionProfile: null }
+        : options.approvalProfile !== undefined
+          ? { permissionProfile: options.approvalProfile }
+          : {}),
+      ...(options.clearAutoReview
+        ? { autoReviewEnabled: null }
+        : options.autoReviewEnabled !== undefined
+          ? { autoReviewEnabled: options.autoReviewEnabled }
+          : {}),
+      ...(options.clearMemory
+        ? { memoryEnabled: null }
+        : options.memoryEnabled !== undefined
+          ? { memoryEnabled: options.memoryEnabled }
+          : {}),
+      ...(options.clearDelegation
+        ? { delegationPolicy: null }
+        : options.delegation !== undefined
+          ? { delegationPolicy: options.delegation }
+          : {}),
+      ...(options.clearSpecialist
+        ? { specialistId: null }
+        : options.specialist !== undefined
+          ? { specialistId: options.specialist }
+          : {}),
+      ...(computeHosts !== undefined
+        ? { computeHosts: options.clearComputeHosts ? null : computeHosts }
+        : {})
+    }
+    if (Object.keys(patch).length === 0) {
+      throw new CliUsageError('Project Session defaults update requires at least one field.')
+    }
+    outputValue(
+      await client.updateProjectSessionDefaults(project.id, {
+        expectedUpdatedAt: current.updatedAt,
+        patch
+      }),
+      options,
+      deps
+    )
+    return
+  }
   if (command === 'session' && subcommand === 'status') {
     const sessionId = positionals[0]
     if (!sessionId) throw new CliUsageError('Session id is required.')
     outputValue(await client.getSession(sessionId), options, deps)
+    return
+  }
+  if (command === 'session' && subcommand === 'config') {
+    const action = positionals[0]
+    const sessionId = positionals[1]
+    if (!sessionId) throw new CliUsageError('Session id is required.')
+    if (action === 'show') {
+      outputValue(await client.getSessionConfiguration(sessionId), options, deps)
+      return
+    }
+    if (action !== 'update') throw new CliUsageError('Use session config show or update.')
+    if (options.revision === undefined) throw new CliUsageError('--revision is required.')
+    const current = await client.getSessionConfiguration(sessionId)
+    const computeHosts = computeHostsPatch(options, current.persisted.computeHosts)
+    const patch = {
+      ...(agentConfigurationPatch(options)
+        ? { agentConfiguration: agentConfigurationPatch(options) }
+        : {}),
+      ...(options.approvalProfile !== undefined
+        ? { permissionProfile: options.approvalProfile }
+        : {}),
+      ...(options.autoReviewEnabled !== undefined
+        ? { autoReviewEnabled: options.autoReviewEnabled }
+        : {}),
+      ...(options.memoryEnabled !== undefined ? { memoryEnabled: options.memoryEnabled } : {}),
+      ...(options.delegation !== undefined ? { delegationPolicy: options.delegation } : {}),
+      ...(computeHosts !== undefined ? { computeHosts } : {})
+    }
+    if (Object.keys(patch).length === 0) {
+      throw new CliUsageError('Session configuration update requires at least one field.')
+    }
+    outputValue(
+      await client.updateSessionConfiguration(sessionId, {
+        expectedRevision: options.revision,
+        ...patch
+      }),
+      options,
+      deps
+    )
+    return
+  }
+  if (command === 'settings' && subcommand === 'agent-routing') {
+    const action = positionals[0]
+    if (action === 'show') {
+      outputValue(await client.getAgentRouting(), options, deps)
+      return
+    }
+    if (action !== 'update') {
+      throw new CliUsageError('Use settings agent-routing show or update.')
+    }
+    const reviewer = modelRouting(options, 'reviewer')
+    const subagent = modelRouting(options, 'subagent')
+    const request = {
+      ...(options.framework !== undefined ? { framework: options.framework } : {}),
+      ...(reviewer ? { reviewer } : {}),
+      ...(subagent ? { subagent } : {})
+    }
+    if (Object.keys(request).length === 0) {
+      throw new CliUsageError('Agent routing update requires at least one field.')
+    }
+    outputValue(await client.updateAgentRouting(request), options, deps)
     return
   }
   if (command === 'plan') {
@@ -1262,6 +1611,13 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
           : {}),
         ...(options.specialist ? { specialist: options.specialist } : {}),
         ...(options.delegation ? { delegationPolicy: options.delegation } : {}),
+        ...(agentConfigurationPatch(options)
+          ? { agentConfiguration: agentConfigurationPatch(options) }
+          : {}),
+        ...(options.memoryEnabled !== undefined ? { memoryEnabled: options.memoryEnabled } : {}),
+        ...(options.enabledComputeHosts !== undefined
+          ? { enabledComputeHostIds: options.enabledComputeHosts }
+          : {}),
         ...(options.computeHosts !== undefined ? { computeHostIds: options.computeHosts } : {})
       })
       runRef.current = { runId: started.id, sessionId: started.sessionId }

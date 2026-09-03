@@ -63,12 +63,15 @@ const createAcpTaskAgentPort = (
       : operation(),
   listAttachedSessionIds: async () => [...runtime.getSnapshot().sessionIds],
   createSession: async (request) => {
-    const agentTarget = await resolveDefaultSessionAgentTarget?.()
+    const agentTarget = request.agentConfiguration
+      ? await resolveSessionAgentTarget?.({ agentConfiguration: request.agentConfiguration })
+      : await resolveDefaultSessionAgentTarget?.()
     const response = await createSessionWorkflow.create({
       projectId: request.projectId,
       permissionProfile: request.permissionProfile,
       ...(request.cwd ? { cwd: request.cwd } : {}),
       ...(request.specialistId ? { specialistId: request.specialistId } : {}),
+      ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {}),
       ...(agentTarget ? { agentTarget } : {})
     })
     return {

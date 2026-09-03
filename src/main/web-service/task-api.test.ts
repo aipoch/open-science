@@ -35,6 +35,24 @@ const taskCallerContext = (): ReturnType<typeof expect.objectContaining> =>
     actionOrigin: 'automation'
   })
 
+const taskSettings = {
+  claude: {},
+  opencode: {},
+  codebuddy: {},
+  codex: {},
+  claudeManaged: false,
+  opencodeManaged: false,
+  codebuddyManaged: false,
+  codexManaged: false,
+  providers: [],
+  agentFrameworkId: 'claude-code',
+  agentFrameworks: [],
+  reasoningEffort: 'default',
+  notificationsEnabled: true,
+  conversationSkillImportEnabled: true,
+  appIconVariant: 'light'
+}
+
 type TaskAgentMock = {
   [Method in Exclude<keyof TaskAgentPort, 'withSessionAvailable'>]: MockedFunction<
     TaskAgentPort[Method]
@@ -64,6 +82,7 @@ const commandsFrom = (
     commandNames: () => [],
     invoke: async (channel, invocation) => {
       const args = [...invocation.args]
+      if (channel === 'settings:get-settings') return taskSettings
       try {
         const result = await invoke(channel, invocation.callerContext, args)
         if (channel === 'sessions:load-all') {

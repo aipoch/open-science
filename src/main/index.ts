@@ -615,7 +615,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               permissionApprovalPresence,
               taskAgent,
               taskControls,
-              computePreferences
+              computePreferences,
+              detectActiveSessions
             })
             remoteAccess.attachWebController(webController)
             registerRemoteAccessIpcHandlers(remoteAccess)

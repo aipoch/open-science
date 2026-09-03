@@ -137,6 +137,7 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
 
 const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
   'reviewer:abort',
+  'settings:set-agent-routing',
   'sessions:fail-task-run',
   'sessions:settle-task-completion',
   'sessions:stage-task-completion'
@@ -146,6 +147,8 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'projects:list',
   'projects:create',
   'projects:update',
+  'settings:get-settings',
+  'settings:set-agent-routing',
   'sessions:load-all',
   'sessions:save-session',
   'sessions:stage-task-completion',

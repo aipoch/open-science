@@ -6,7 +6,8 @@ import type {
   ClaudeInfo,
   ProjectFilesFilterPreference,
   ProviderDeletionScenarioModelHandling,
-  ReasoningEffort
+  ReasoningEffort,
+  SetAgentRoutingRequest
 } from '../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
@@ -449,6 +450,24 @@ class SettingsRepository {
 
   async setAgentFramework(id: AgentFrameworkId): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, agentFrameworkId: id }))
+  }
+
+  async setAgentRouting(
+    request: SetAgentRoutingRequest,
+    validate: (candidate: StoredSettings) => StoredSettings
+  ): Promise<StoredSettings> {
+    return this.mutate((settings) =>
+      validate({
+        ...settings,
+        ...(request.framework !== undefined ? { agentFrameworkId: request.framework } : {}),
+        ...(request.reviewer !== undefined
+          ? { reviewerModel: structuredClone(request.reviewer) }
+          : {}),
+        ...(request.subagent !== undefined
+          ? { subagentModel: structuredClone(request.subagent) }
+          : {})
+      })
+    )
   }
 
   async setReasoningEffort(effort: ReasoningEffort): Promise<StoredSettings> {

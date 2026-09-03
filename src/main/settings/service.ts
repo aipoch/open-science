@@ -50,6 +50,7 @@ import type {
   SetSkillsEnabledRequest,
   SetToolPermissionRequest,
   SettingsSnapshot,
+  SetAgentRoutingRequest,
   AppIconVariant,
   SkillDetailView,
   SkillView,
@@ -89,10 +90,11 @@ import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { resolveStorageRoot } from '../storage-root'
-import type {
-  AgentModelChangeTarget,
-  AgentFrameworkId,
-  ResolvedAgentBackend
+import {
+  DEFAULT_AGENT_FRAMEWORK_ID,
+  type AgentModelChangeTarget,
+  type AgentFrameworkId,
+  type ResolvedAgentBackend
 } from '../agent-framework'
 import type { ClaudeDetectDeps } from './claude-detect'
 import type { OpencodeDetectDeps } from './opencode-detect'
@@ -467,6 +469,33 @@ class SettingsService {
 
   async setAgentFramework(id: AgentFrameworkId): Promise<SettingsSnapshot> {
     await this.repository.setAgentFramework(id)
+    return this.getSettingsView()
+  }
+
+  async setAgentRouting(request: SetAgentRoutingRequest): Promise<SettingsSnapshot> {
+    if (
+      request.framework === undefined &&
+      request.reviewer === undefined &&
+      request.subagent === undefined
+    ) {
+      throw new Error('Agent routing update requires at least one field.')
+    }
+    await this.repository.setAgentRouting(request, (candidate) => {
+      const frameworkId = candidate.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+      return {
+        ...candidate,
+        reviewerModel: this.scenarioModels.reviewer.validate(
+          candidate,
+          candidate.reviewerModel ?? { mode: 'inherit' },
+          frameworkId
+        ),
+        subagentModel: this.scenarioModels.subagent.validate(
+          candidate,
+          candidate.subagentModel ?? { mode: 'inherit' },
+          frameworkId
+        )
+      }
+    })
     return this.getSettingsView()
   }
 

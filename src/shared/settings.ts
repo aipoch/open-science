@@ -433,6 +433,12 @@ export const DEFAULT_REVIEWER_MODEL_CONFIGURATION: ReviewerModelConfiguration = 
   mode: 'inherit'
 })
 
+export type SetAgentRoutingRequest = Readonly<{
+  framework?: AgentFrameworkId
+  reviewer?: ReviewerModelConfiguration
+  subagent?: SubagentModelConfiguration
+}>
+
 export type SessionDetailsModelConfiguration =
   | Readonly<{ mode: 'inherit'; reasoningEffort: ReasoningEffort }>
   | Readonly<{

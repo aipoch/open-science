@@ -2,8 +2,21 @@ import type { ArtifactFile } from './artifacts'
 import type { PermissionProfileId } from './permission-profiles'
 import type { CreateProjectRequest, Project, UpdateProjectRequest } from './projects'
 import type { ReviewLifecycle, ReviewOutcome, ReviewRunNotStartedReason } from './reviewer'
+import type {
+  ProjectSessionDefaults,
+  SessionAgentConfigurationPatch,
+  SessionAgentConfigurationValue,
+  SessionComputeHosts,
+  UpdateProjectSessionDefaultsRequest,
+  UpdateSessionConfigurationRequest
+} from './session-configuration'
 import type { DelegationPolicy, PersistedSessionStatus } from './session-persistence'
 import type { ActivePlanProjection } from './session-plan/contract'
+import type {
+  AgentFrameworkId,
+  ReviewerModelConfiguration,
+  SubagentModelConfiguration
+} from './settings'
 
 export const TASK_EVENT_STREAM_PROTOCOL_VERSION = 1 as const
 
@@ -46,8 +59,12 @@ export type StartTaskRunRequest = {
   // Accepts an immutable Specialist ID or its stable Profile name. displayName is presentation-only.
   specialist?: string
   delegationPolicy?: DelegationPolicy
+  agentConfiguration?: SessionAgentConfigurationPatch
+  memoryEnabled?: boolean
   /** Selected execution-target provider IDs for this Session. Omit to preserve. */
   computeHostIds?: string[]
+  /** Enabled execution targets; selected ids must be a subset. Used by Project defaults. */
+  enabledComputeHostIds?: string[]
 }
 
 export type TaskRunAttention = { kind: 'plan-approval'; plan: ActivePlanProjection }
@@ -108,9 +125,88 @@ export type TaskSessionSummary = {
   artifactCount: number
 }
 
-export type TaskProject = Omit<Project, 'agentContext'> & {
+export type TaskProject = Omit<Project, 'agentContext' | 'sessionDefaults'> & {
   hasAgentContext: boolean
 }
+
+export type TaskReferenceAvailability = Readonly<{
+  available: boolean
+  reason?: string
+}>
+
+export type TaskSessionConfiguration = Readonly<{
+  sessionId: string
+  projectId: string
+  revision: number
+  cwd: string
+  specialistId?: string
+  persisted: Readonly<{
+    agentConfiguration?: SessionAgentConfigurationValue
+    permissionProfile?: PermissionProfileId
+    autoReviewEnabled?: boolean
+    memoryEnabled?: boolean
+    delegationPolicy?: DelegationPolicy
+    computeHosts: SessionComputeHosts
+  }>
+  effective: Readonly<{
+    agentConfiguration?: SessionAgentConfigurationValue
+    permissionProfile: PermissionProfileId
+    autoReviewEnabled: boolean
+    memoryEnabled: boolean
+    delegationPolicy: DelegationPolicy
+    computeHosts: SessionComputeHosts
+  }>
+  availability: Readonly<{
+    agentConfiguration?: TaskReferenceAvailability
+    specialist?: TaskReferenceAvailability
+    computeHosts: Readonly<Record<string, TaskReferenceAvailability>>
+  }>
+}>
+
+export type TaskProjectSessionDefaults = Readonly<{
+  projectId: string
+  updatedAt: number
+  configured: ProjectSessionDefaults
+  availability: Readonly<{
+    agentConfiguration?: TaskReferenceAvailability
+    specialist?: TaskReferenceAvailability
+    computeHosts: Readonly<Record<string, TaskReferenceAvailability>>
+  }>
+}>
+
+export type TaskAgentRouting = Readonly<{
+  configured: Readonly<{
+    framework: AgentFrameworkId
+    reviewer: ReviewerModelConfiguration
+    subagent: SubagentModelConfiguration
+  }>
+  effective: Readonly<{
+    reviewer:
+      | Readonly<{ source: 'application_main'; providerId?: string; model?: string }>
+      | Readonly<{
+          source: 'fixed'
+          providerId: string
+          model: string
+          reasoningEffort: SessionAgentConfigurationValue['reasoningEffort']
+        }>
+    subagent:
+      | Readonly<{ source: 'session_main' }>
+      | Readonly<{
+          source: 'fixed'
+          providerId: string
+          model: string
+          reasoningEffort: SessionAgentConfigurationValue['reasoningEffort']
+        }>
+  }>
+}>
+
+export type UpdateTaskAgentRoutingRequest = Readonly<{
+  framework?: AgentFrameworkId
+  reviewer?: ReviewerModelConfiguration
+  subagent?: SubagentModelConfiguration
+}>
+
+export type { UpdateProjectSessionDefaultsRequest, UpdateSessionConfigurationRequest }
 
 export type CreateTaskProjectRequest = Pick<
   CreateProjectRequest,
@@ -136,6 +232,8 @@ export type TaskApiErrorCode =
   | 'project_conflict'
   | 'session_not_found'
   | 'session_busy'
+  | 'session_revision_conflict'
+  | 'invalid_configuration'
   | 'session_archived'
   | 'project_archived'
   | 'run_not_found'

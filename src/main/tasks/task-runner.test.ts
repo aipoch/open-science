@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { Project } from '../../shared/projects'
+import type { SettingsSnapshot } from '../../shared/settings'
 import { normalizeSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
 import type { TaskRun } from '../../shared/task-api'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
@@ -48,6 +49,43 @@ const session: PersistedChatSession = {
   messages: [],
   createdAt: 1,
   updatedAt: 2
+}
+
+const settings: SettingsSnapshot = {
+  claude: {},
+  opencode: {},
+  codebuddy: {},
+  codex: {},
+  claudeManaged: false,
+  opencodeManaged: false,
+  codebuddyManaged: false,
+  codexManaged: false,
+  providers: [],
+  agentFrameworkId: 'claude-code',
+  agentFrameworks: [],
+  reasoningEffort: 'default',
+  notificationsEnabled: true,
+  conversationSkillImportEnabled: true,
+  appIconVariant: 'light'
+}
+
+const configuredSettings: SettingsSnapshot = {
+  ...settings,
+  activeProviderId: 'provider-1',
+  activeModel: 'model-1',
+  providers: [
+    {
+      id: 'provider-1',
+      type: 'custom',
+      name: 'Test provider',
+      apiEndpoints: ['anthropic'],
+      model: 'model-1',
+      models: ['model-1', 'model-2'],
+      supportsImageInput: false,
+      hasKey: true,
+      needsKey: false
+    }
+  ]
 }
 
 class RetainedRunEventPayload {}
@@ -150,6 +188,7 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
       finalizeRun: async () => ({ ok: true, artifacts: [] })
     },
     runtimeEvents: { subscribe: () => () => undefined },
+    settings: { get: async () => settings },
     specialists: { resolve: async (reference) => ({ id: reference }) },
     reviewer: { review: async () => ({ started: true }) },
     computePreferences: {
@@ -174,6 +213,267 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
   })
 }
 describe('TaskRunner', () => {
+  it('updates an idle Session configuration atomically with revision and availability checks', async () => {
+    let current: PersistedChatSession = {
+      ...session,
+      revision: 4,
+      agentConfiguration: {
+        providerId: 'provider-1',
+        model: 'model-1',
+        reasoningEffort: 'default'
+      }
+    }
+    const save = vi.fn(async (value: PersistedChatSession) => {
+      current = { ...value, revision: (value.revision ?? 0) + 1 }
+      return current
+    })
+    const validate = vi.fn(async (providerIds: readonly string[]) => [...new Set(providerIds)])
+    const runner = createRunner({
+      sessions: { list: async () => [current], save },
+      settings: { get: async () => configuredSettings },
+      computePreferences: {
+        withReservation: async (providerIds, operation) => operation([...new Set(providerIds)]),
+        set: async () => current,
+        validate,
+        listAvailable: async () => ['ssh:alpha']
+      }
+    })
+
+    await expect(
+      runner.updateSessionConfiguration(session.id, {
+        expectedRevision: 4,
+        agentConfiguration: { model: 'model-2', reasoningEffort: 'high' },
+        permissionProfile: 'full',
+        memoryEnabled: false,
+        computeHosts: { enabled: ['ssh:alpha'], selected: ['ssh:alpha'] }
+      })
+    ).resolves.toMatchObject({
+      revision: 5,
+      persisted: {
+        agentConfiguration: {
+          providerId: 'provider-1',
+          model: 'model-2',
+          reasoningEffort: 'high'
+        },
+        permissionProfile: 'full',
+        memoryEnabled: false,
+        computeHosts: { enabled: ['ssh:alpha'], selected: ['ssh:alpha'] }
+      },
+      availability: {
+        agentConfiguration: { available: true },
+        computeHosts: { 'ssh:alpha': { available: true } }
+      }
+    })
+    expect(save).toHaveBeenCalledOnce()
+    expect(validate).toHaveBeenCalledWith(['ssh:alpha', 'ssh:alpha'])
+  })
+
+  it('rejects stale or active Session configuration updates without persisting them', async () => {
+    const current = { ...session, revision: 3 }
+    const save = vi.fn(async (value: PersistedChatSession) => value)
+    const staleRunner = createRunner({ sessions: { list: async () => [current], save } })
+
+    await expect(
+      staleRunner.updateSessionConfiguration(session.id, {
+        expectedRevision: 2,
+        memoryEnabled: false
+      })
+    ).rejects.toMatchObject({ code: 'session_revision_conflict' })
+
+    const busyRunner = createRunner({
+      sessions: { list: async () => [current], save },
+      isSessionBusy: () => true
+    })
+    await expect(
+      busyRunner.updateSessionConfiguration(session.id, {
+        expectedRevision: 3,
+        memoryEnabled: false
+      })
+    ).rejects.toMatchObject({ code: 'session_busy' })
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('requires an explicit model decision when changing providers', async () => {
+    const current = {
+      ...session,
+      revision: 3,
+      agentConfiguration: {
+        providerId: 'provider-1',
+        model: 'model-1',
+        reasoningEffort: 'default' as const
+      }
+    }
+    const save = vi.fn(async (value: PersistedChatSession) => value)
+    const runner = createRunner({
+      sessions: { list: async () => [current], save },
+      settings: { get: async () => configuredSettings }
+    })
+
+    await expect(
+      runner.updateSessionConfiguration(session.id, {
+        expectedRevision: 3,
+        agentConfiguration: { providerId: 'provider-2' }
+      })
+    ).rejects.toMatchObject({ code: 'invalid_configuration' })
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('persists Project Session defaults without rewriting existing Sessions', async () => {
+    let currentProject: Project = { ...project, updatedAt: 7 }
+    const update = vi.fn(async (request: Parameters<NonNullable<TaskProjectPort['update']>>[0]) => {
+      currentProject = {
+        ...currentProject,
+        sessionDefaults: request.sessionDefaults,
+        updatedAt: 8
+      }
+      return currentProject
+    })
+    const save = vi.fn(async (value: PersistedChatSession) => value)
+    const runner = createRunner({
+      projects: {
+        list: async () => [currentProject],
+        create: async (request) => ({ ...currentProject, ...request }),
+        update
+      },
+      sessions: { list: async () => [session], save },
+      settings: { get: async () => configuredSettings },
+      specialists: { resolve: async () => ({ id: 'specialist-id' }) },
+      computePreferences: {
+        withReservation: async (providerIds, operation) => operation([...new Set(providerIds)]),
+        set: async () => session,
+        validate: async (providerIds) => [...new Set(providerIds)],
+        listAvailable: async () => ['ssh:alpha']
+      }
+    })
+
+    await expect(
+      runner.updateProjectSessionDefaults(project.id, {
+        expectedUpdatedAt: 7,
+        patch: {
+          agentConfiguration: {
+            providerId: 'provider-1',
+            model: 'model-2',
+            reasoningEffort: 'high'
+          },
+          permissionProfile: 'auto',
+          memoryEnabled: false,
+          specialistId: 'specialist-name',
+          computeHosts: { enabled: ['ssh:alpha'], selected: ['ssh:alpha'] }
+        }
+      })
+    ).resolves.toMatchObject({
+      updatedAt: 8,
+      configured: {
+        agentConfiguration: {
+          providerId: 'provider-1',
+          model: 'model-2',
+          reasoningEffort: 'high'
+        },
+        permissionProfile: 'auto',
+        memoryEnabled: false,
+        specialistId: 'specialist-id',
+        computeHosts: { enabled: ['ssh:alpha'], selected: ['ssh:alpha'] }
+      }
+    })
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ id: project.id, expectedUpdatedAt: 7 })
+    )
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('snapshots Project defaults into only new Sessions with explicit Run values winning', async () => {
+    const defaultedProject: Project = {
+      ...project,
+      sessionDefaults: {
+        agentConfiguration: {
+          providerId: 'provider-1',
+          model: 'model-1',
+          reasoningEffort: 'low'
+        },
+        permissionProfile: 'full',
+        autoReviewEnabled: true,
+        memoryEnabled: false,
+        delegationPolicy: 'deny',
+        computeHosts: {
+          enabled: ['ssh:alpha', 'ssh:beta'],
+          selected: ['ssh:alpha']
+        }
+      }
+    }
+    const created: Array<Parameters<TaskRunnerDependencies['agent']['createSession']>[0]> = []
+    const saved: PersistedChatSession[] = []
+    const ids = ['user-defaults', 'run-defaults', 'agent-defaults']
+    const runner = createRunner({
+      projects: {
+        list: async () => [defaultedProject],
+        create: async (request) => ({ ...defaultedProject, ...request })
+      },
+      settings: { get: async () => configuredSettings },
+      sessions: {
+        list: async () => [],
+        save: async (value) => {
+          saved.push(structuredClone(value))
+          return value
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async (request) => {
+          created.push(request)
+          return {
+            sessionId: 'session-defaults',
+            agentConfiguration: request.agentConfiguration
+          }
+        },
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      prompt: 'Use the configured defaults.',
+      permissionProfile: 'auto',
+      memoryEnabled: true,
+      agentConfiguration: { model: 'model-2' },
+      computeHostIds: ['ssh:beta']
+    })
+    await runner.waitForRun(started.id)
+
+    expect(created).toEqual([
+      {
+        projectId: project.id,
+        permissionProfile: 'auto',
+        agentConfiguration: {
+          providerId: 'provider-1',
+          model: 'model-2',
+          reasoningEffort: 'low'
+        }
+      }
+    ])
+    expect(saved).toContainEqual(
+      expect.objectContaining({
+        permissionProfile: 'auto',
+        autoReviewEnabled: true,
+        memoryEnabled: true,
+        delegationPolicy: 'deny',
+        enabledComputeHosts: ['ssh:alpha', 'ssh:beta'],
+        selectedComputeHosts: ['ssh:beta'],
+        agentConfiguration: {
+          providerId: 'provider-1',
+          model: 'model-2',
+          reasoningEffort: 'low'
+        }
+      })
+    )
+  })
+
   it('resolves only the active Task Run that owns a Session and prompt', async () => {
     let finishPrompt: (() => void) | undefined
     const prompt = new Promise<void>((resolve) => {

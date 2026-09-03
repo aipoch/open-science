@@ -10,11 +10,11 @@ import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-serv
 import { visionEvidenceMigration } from './migrations/0009-vision-evidence'
 import { applySqliteMigrationOperations } from './sqlite-schema-migrations'
 
-const createDatabaseAtMigration0025 = async (client: PrismaClient): Promise<void> => {
-  const migration0026Index = MIGRATION_MANIFEST.findIndex(
-    (migration) => migration.id === '0026_compute_job_remote_cleanup'
+const createDatabaseAtMigration0026 = async (client: PrismaClient): Promise<void> => {
+  const migration0027Index = MIGRATION_MANIFEST.findIndex(
+    (migration) => migration.id === '0027_project_session_defaults'
   )
-  const prefix = MIGRATION_MANIFEST.slice(0, migration0026Index)
+  const prefix = MIGRATION_MANIFEST.slice(0, migration0027Index)
   await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
   for (const migration of prefix) {
     for (const statement of migration.statements) await client.$executeRawUnsafe(statement)
@@ -44,7 +44,7 @@ const createDatabaseAtMigration0025 = async (client: PrismaClient): Promise<void
   }
 }
 
-describe('Compute Job remote cleanup migration', () => {
+describe('Project Session defaults migration', () => {
   let storageRoot: string | undefined
   let client: ReturnType<typeof createProjectDbClient> | undefined
 
@@ -53,33 +53,27 @@ describe('Compute Job remote cleanup migration', () => {
     if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
   })
 
-  it('keeps historical Jobs pending until remote cleanup is explicitly settled', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-cleanup-migration-'))
+  it('adds an empty JSON object for historical Projects without rewriting related tables', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-defaults-migration-'))
     const databasePath = join(storageRoot, 'open-science.db')
     client = createProjectDbClient(storageRoot)
-    await createDatabaseAtMigration0025(client)
-    await client.$executeRawUnsafe(`INSERT INTO "ComputeJob" (
-      "id", "providerId", "shape", "sessionId", "projectId", "intent", "command",
-      "commandHash", "status"
-    ) VALUES (
-      'historical-job', 'ssh:retired-host', 'direct_ssh', 'session-1', 'project-1',
-      'completed research', 'true', 'hash', 'success'
-    )`)
+    await createDatabaseAtMigration0026(client)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Project" ("id", "name", "updatedAt") VALUES ('historical-project', 'Historical', CURRENT_TIMESTAMP)`
+    )
 
     await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toMatchObject({
-      applied: ['0026_compute_job_remote_cleanup', '0027_project_session_defaults'],
-      from: '0025_managed_file_version_foundation',
+      applied: ['0027_project_session_defaults'],
+      from: '0026_compute_job_remote_cleanup',
       to: '0027_project_session_defaults'
     })
     await expect(
-      client.$queryRawUnsafe<Array<{ remoteCleanupDisposition: string }>>(
-        `SELECT "remoteCleanupDisposition" FROM "ComputeJob" WHERE "id" = 'historical-job'`
+      client.$queryRawUnsafe<Array<{ sessionDefaults: string }>>(
+        `SELECT "sessionDefaults" FROM "Project" WHERE "id" = 'historical-project'`
       )
-    ).resolves.toEqual([{ remoteCleanupDisposition: 'pending' }])
+    ).resolves.toEqual([{ sessionDefaults: '{}' }])
     await expect(
-      client.$executeRawUnsafe(
-        `UPDATE "ComputeJob" SET "remoteCleanupDisposition" = 'corrupt' WHERE "id" = 'historical-job'`
-      )
-    ).rejects.toThrow(/CHECK constraint failed/)
+      client.$queryRawUnsafe<Array<{ table: string }>>(`PRAGMA foreign_key_list("Session")`)
+    ).resolves.toContainEqual(expect.objectContaining({ table: 'Project' }))
   })
 })

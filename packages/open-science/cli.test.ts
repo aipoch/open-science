@@ -235,6 +235,168 @@ describe('task CLI', () => {
     )
   })
 
+  it('parses Session, Project-default, and Agent-routing configuration commands', () => {
+    expect(() => parseCliArgs(['run', '--provider', 'provider-1'])).toThrow(
+      '--provider requires --model or --provider-default-model.'
+    )
+    expect(
+      parseCliArgs([
+        'session',
+        'config',
+        'update',
+        'session-1',
+        '--revision',
+        '4',
+        '--provider',
+        'provider-1',
+        '--provider-default-model',
+        '--reasoning-effort',
+        'high',
+        '--no-memory',
+        '--enable-compute-host',
+        'ssh:alpha',
+        '--compute-host',
+        'ssh:alpha'
+      ])
+    ).toMatchObject({
+      command: 'session',
+      subcommand: 'config',
+      positionals: ['update', 'session-1'],
+      options: {
+        revision: 4,
+        provider: 'provider-1',
+        providerDefaultModel: true,
+        reasoningEffort: 'high',
+        memoryEnabled: false,
+        enabledComputeHosts: ['ssh:alpha'],
+        computeHosts: ['ssh:alpha']
+      }
+    })
+    expect(
+      parseCliArgs([
+        'project',
+        'session-defaults',
+        'update',
+        'Research',
+        '--clear-provider',
+        '--clear-specialist'
+      ])
+    ).toMatchObject({
+      command: 'project',
+      subcommand: 'session-defaults',
+      positionals: ['update', 'Research'],
+      options: { clearProvider: true, clearSpecialist: true }
+    })
+    expect(
+      parseCliArgs([
+        'settings',
+        'agent-routing',
+        'update',
+        '--framework',
+        'codex',
+        '--reviewer-inherit',
+        '--subagent-provider',
+        'provider-1',
+        '--subagent-model',
+        'model-1'
+      ])
+    ).toMatchObject({
+      command: 'settings',
+      subcommand: 'agent-routing',
+      positionals: ['update'],
+      options: {
+        framework: 'codex',
+        reviewerInherit: true,
+        subagentProvider: 'provider-1',
+        subagentModel: 'model-1'
+      }
+    })
+    expect(() =>
+      parseCliArgs([
+        'session',
+        'config',
+        'update',
+        'session-1',
+        '--revision',
+        '4',
+        '--clear-compute-hosts',
+        '--enable-compute-host',
+        'ssh:alpha'
+      ])
+    ).toThrow('Use only one of Compute Host selection options or --clear-compute-hosts.')
+  })
+
+  it('dispatches atomic configuration updates with their concurrency tokens', async () => {
+    const client = {
+      listProjects: vi.fn(listProjects),
+      getProjectSessionDefaults: vi.fn().mockResolvedValue({
+        projectId: 'project-1',
+        updatedAt: 10,
+        configured: { computeHosts: { enabled: [], selected: [] } }
+      }),
+      updateProjectSessionDefaults: vi.fn().mockResolvedValue({ projectId: 'project-1' }),
+      getSessionConfiguration: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        revision: 4,
+        persisted: { computeHosts: { enabled: ['ssh:alpha'], selected: [] } }
+      }),
+      updateSessionConfiguration: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+      updateAgentRouting: vi.fn().mockResolvedValue({ configured: {} })
+    }
+    const deps = { connect: vi.fn().mockResolvedValue(client), log: vi.fn(), stdinIsTTY: true }
+
+    await runTaskCommand(
+      parseCliArgs([
+        'project',
+        'session-defaults',
+        'update',
+        'Research',
+        '--approval-profile',
+        'auto',
+        '--clear-memory'
+      ]),
+      deps
+    )
+    expect(client.updateProjectSessionDefaults).toHaveBeenCalledWith('project-1', {
+      expectedUpdatedAt: 10,
+      patch: { permissionProfile: 'auto', memoryEnabled: null }
+    })
+
+    await runTaskCommand(
+      parseCliArgs([
+        'session',
+        'config',
+        'update',
+        'session-1',
+        '--revision',
+        '4',
+        '--compute-host',
+        'ssh:alpha'
+      ]),
+      deps
+    )
+    expect(client.updateSessionConfiguration).toHaveBeenCalledWith('session-1', {
+      expectedRevision: 4,
+      computeHosts: { enabled: ['ssh:alpha'], selected: ['ssh:alpha'] }
+    })
+
+    await runTaskCommand(
+      parseCliArgs([
+        'settings',
+        'agent-routing',
+        'update',
+        '--framework',
+        'codex',
+        '--reviewer-inherit'
+      ]),
+      deps
+    )
+    expect(client.updateAgentRouting).toHaveBeenCalledWith({
+      framework: 'codex',
+      reviewer: { mode: 'inherit' }
+    })
+  })
+
   it('sends Compute hosts only when the repeatable flag is present and prints authority JSON', async () => {
     const authorityRun = {
       id: 'run-compute',
@@ -1330,8 +1492,7 @@ describe('task CLI', () => {
       'notebook',
       'notebook-env',
       'reviewer',
-      'runtime',
-      'settings'
+      'runtime'
     ]) {
       await expect(runCli([command])).rejects.toThrow(`Unknown command: ${command}`)
     }

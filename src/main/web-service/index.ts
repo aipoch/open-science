@@ -77,7 +77,8 @@ const createWebServiceController = (
     permissionApprovalPresence,
     taskAgent,
     taskControls,
-    computePreferences
+    computePreferences,
+    detectActiveSessions
   }: {
     applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
     requestQuit: () => void
@@ -87,6 +88,7 @@ const createWebServiceController = (
     taskAgent: TaskAgentPort
     taskControls?: TaskControlPorts
     computePreferences: TaskComputePreferencePort
+    detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
   },
   deps: Partial<WebServiceControllerDeps> = {}
 ): WebServiceController => {
@@ -114,7 +116,8 @@ const createWebServiceController = (
       commands: applicationCommands.task,
       agent: taskAgent,
       controls: taskControls,
-      computePreferences
+      computePreferences,
+      detectActiveSessions
     },
     {
       runJournal: createTaskRunJournal(getConfigRoot()),

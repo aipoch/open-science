@@ -4,6 +4,7 @@ import type { AgentBackendResolver, ExplicitAgentBackendTarget } from './backend
 import type { ProviderAccountsModule } from './provider-accounts'
 import { providerRuntimeValidationTarget } from './provider-validation-state'
 import type { SettingsRepository } from './repository'
+import type { StoredSettings } from './types'
 
 type ReviewerModelOwnerOptions = {
   repository: SettingsRepository
@@ -24,40 +25,43 @@ class ReviewerModelOwner {
       configuration.mode === 'fixed'
         ? (await this.options.backendResolver.captureConfiguredSelection()).frameworkId
         : undefined
-    await this.options.repository.setReviewerModel(configuration, (settings, candidate) => {
-      if (candidate.mode === 'inherit') return
-      const provider = settings.providers.find((entry) => entry.id === candidate.providerId)
-      const validationFailed = provider ? providerValidationFailed(provider) : false
-      if (!provider || validationFailed) {
-        throw new Error(
-          'The selected Reviewer model is no longer available. Refresh the model catalog.'
-        )
-      }
-      const framework = getAgentFramework(
-        frameworkId ?? settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+    await this.options.repository.setReviewerModel(configuration, (settings, candidate) =>
+      this.validate(settings, candidate, frameworkId)
+    )
+  }
+
+  validate(
+    settings: StoredSettings,
+    candidate: ReviewerModelConfiguration,
+    frameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+  ): ReviewerModelConfiguration {
+    if (candidate.mode === 'inherit') return candidate
+    const provider = settings.providers.find((entry) => entry.id === candidate.providerId)
+    const validationFailed = provider ? providerValidationFailed(provider) : false
+    if (!provider || validationFailed) {
+      throw new Error(
+        'The selected Reviewer model is no longer available. Refresh the model catalog.'
       )
-      const target = this.options.providers.resolveRuntimeTarget(
-        provider,
-        { kind: 'required', model: candidate.model },
-        framework
+    }
+    const framework = getAgentFramework(frameworkId)
+    const target = this.options.providers.resolveRuntimeTarget(
+      provider,
+      { kind: 'required', model: candidate.model },
+      framework
+    )
+    if (providerValidationFailed(provider, providerRuntimeValidationTarget(target, framework))) {
+      throw new Error(
+        'The selected Reviewer model is no longer available. Refresh the model catalog.'
       )
-      if (providerValidationFailed(provider, providerRuntimeValidationTarget(target, framework))) {
-        throw new Error(
-          'The selected Reviewer model is no longer available. Refresh the model catalog.'
-        )
-      }
-      if (
-        !target.frameworkCompatible ||
-        (framework.id === 'codex' && !target.modelBridgeSupported)
-      ) {
-        throw new Error(
-          'The selected Reviewer model is not available for the active Agent Framework. Refresh the model catalog.'
-        )
-      }
-      return target.reasoningEffortProfile.supported
-        ? candidate
-        : { ...candidate, reasoningEffort: 'default' }
-    })
+    }
+    if (!target.frameworkCompatible || (framework.id === 'codex' && !target.modelBridgeSupported)) {
+      throw new Error(
+        'The selected Reviewer model is not available for the active Agent Framework. Refresh the model catalog.'
+      )
+    }
+    return target.reasoningEffortProfile.supported
+      ? candidate
+      : { ...candidate, reasoningEffort: 'default' }
   }
 
   async admit(): Promise<ReviewerModelAdmission> {

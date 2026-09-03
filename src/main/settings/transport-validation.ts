@@ -4,6 +4,7 @@ import {
   type AppIconVariant,
   type ProjectFilesFilterPreference,
   type ReasoningEffort,
+  type SetAgentRoutingRequest,
   type ReviewerModelConfiguration,
   type SessionDetailsModelConfiguration,
   type SubagentModelConfiguration,
@@ -79,6 +80,33 @@ const readSubagentModel = (request: unknown): SubagentModelConfiguration =>
 
 const readReviewerModel = (request: unknown): ReviewerModelConfiguration =>
   readModelConfiguration(request, 'Reviewer')
+
+const readAgentRouting = (request: unknown): SetAgentRoutingRequest => {
+  if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+    throw new Error('Invalid Agent routing update.')
+  }
+  const value = request as Record<string, unknown>
+  if (!Object.keys(value).every((key) => ['framework', 'reviewer', 'subagent'].includes(key))) {
+    throw new Error('Invalid Agent routing update.')
+  }
+  if (
+    value.framework !== undefined &&
+    !['claude-code', 'opencode', 'codex', 'codebuddy'].includes(String(value.framework))
+  ) {
+    throw new Error(`Unknown Agent Framework: ${String(value.framework)}`)
+  }
+  return {
+    ...(value.framework !== undefined
+      ? { framework: value.framework as SetAgentRoutingRequest['framework'] }
+      : {}),
+    ...(value.reviewer !== undefined
+      ? { reviewer: readModelConfiguration({ configuration: value.reviewer }, 'Reviewer') }
+      : {}),
+    ...(value.subagent !== undefined
+      ? { subagent: readModelConfiguration({ configuration: value.subagent }, 'Subagent') }
+      : {})
+  }
+}
 
 const readSessionDetailsModel = (request: unknown): SessionDetailsModelConfiguration => {
   const configuration = readField(request, 'configuration')
@@ -220,6 +248,7 @@ const readGitHubToken = (request: unknown): string => {
 
 export {
   readAppIconVariant,
+  readAgentRouting,
   readClosePreference,
   readConversationSkillImportEnabled,
   readDefaultPermissionProfile,
