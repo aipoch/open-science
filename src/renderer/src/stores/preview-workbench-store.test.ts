@@ -456,8 +456,21 @@ describe('preview workbench store', () => {
     ).toBe(false)
   })
 
-  it('does not replace the active upload path during finalization when its dirty draft refuses leaving', () => {
+  it('preserves a rejected active upload while reconciling other finalized tabs', () => {
     const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-b')
+    store.upsertAndActivateItem({
+      id: 'upload:upload-c',
+      projectId: 'project-b',
+      sessionId: '.pending',
+      type: 'file',
+      source: 'upload',
+      managedFileId: 'upload-c',
+      title: 'c.md',
+      path: '/uploads/default-project/.pending/c.md',
+      format: 'markdown',
+      name: 'c.md'
+    })
     store.activateProject('project-a')
     store.upsertAndActivateItem({
       id: 'upload:upload-a',
@@ -471,6 +484,18 @@ describe('preview workbench store', () => {
       format: 'markdown',
       name: 'a.md'
     })
+    store.upsertItem({
+      id: 'upload:upload-b',
+      projectId: 'project-a',
+      sessionId: '.pending',
+      type: 'file',
+      source: 'upload',
+      managedFileId: 'upload-b',
+      title: 'b.md',
+      path: '/uploads/default-project/.pending/b.md',
+      format: 'markdown',
+      name: 'b.md'
+    })
     previewLeaveGuards.register('workbench:project-a:upload:upload-a', () => false)
 
     store.reconcileFinalizedUploads([
@@ -483,12 +508,47 @@ describe('preview workbench store', () => {
         path: '/uploads/default-project/session-a/a.md',
         mimeType: 'text/markdown',
         size: 12
+      },
+      {
+        id: 'upload-b',
+        versionId: 'version-b',
+        sessionId: 'session-b',
+        name: 'b.md',
+        originalName: 'b.md',
+        path: '/uploads/default-project/session-b/b.md',
+        mimeType: 'text/markdown',
+        size: 12
+      },
+      {
+        id: 'upload-c',
+        versionId: 'version-c',
+        sessionId: 'session-c',
+        name: 'c.md',
+        originalName: 'c.md',
+        path: '/uploads/default-project/session-c/c.md',
+        mimeType: 'text/markdown',
+        size: 12
       }
     ])
 
-    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+    const state = usePreviewWorkbenchStore.getState()
+    expect(state.items.find((item) => item.id === 'upload:upload-a')).toMatchObject({
       sessionId: '.pending',
       path: '/uploads/default-project/.pending/a.md'
+    })
+    expect(state.items.find((item) => item.id === 'upload:upload-b')).toMatchObject({
+      sessionId: 'session-b',
+      path: getUploadedAttachmentPath(
+        { id: 'upload-b', versionId: 'version-b', sessionId: 'session-b' },
+        'project-a'
+      )
+    })
+    expect(state.byProject['project-b']?.items[0]).toMatchObject({
+      sessionId: 'session-c',
+      path: getUploadedAttachmentPath(
+        { id: 'upload-c', versionId: 'version-c', sessionId: 'session-c' },
+        'project-b'
+      )
     })
   })
 

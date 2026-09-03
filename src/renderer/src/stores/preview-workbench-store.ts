@@ -401,10 +401,12 @@ const getRepairedActiveItemId = (
 const reconcileUploadPreviewItems = (
   items: StoredPreviewItem[],
   uploadByPreviewId: Map<string, UploadedAttachment>,
-  updatedAt: number
+  updatedAt: number,
+  excludedPreviewId?: string
 ): StoredPreviewItem[] => {
   let changed = false
   const reconciledItems = items.map((item) => {
+    if (item.id === excludedPreviewId) return item
     if (item.type !== 'file' || item.source !== 'upload') return item
 
     const upload = uploadByPreviewId.get(item.id)
@@ -494,9 +496,14 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
       activeItem?.type === 'file' && activeItem.source === 'upload'
         ? uploadByPreviewId.get(activeItem.id)
         : undefined
-    const reconcile = (): void =>
+    const reconcile = (excludedActiveItemId?: string): void =>
       set((state) => {
-        const items = reconcileUploadPreviewItems(state.items, uploadByPreviewId, updatedAt)
+        const items = reconcileUploadPreviewItems(
+          state.items,
+          uploadByPreviewId,
+          updatedAt,
+          excludedActiveItemId
+        )
         let byProject = state.byProject
 
         // Repair inactive project slices too without creating tabs for uploads never opened by users.
@@ -522,6 +529,9 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
       (getUploadedAttachmentPath(activeUpload, activeItem.projectId) !== activeItem.path ||
         activeUpload.sessionId !== activeItem.sessionId)
     if (activeUploadChanges) {
+      // A dirty active upload may keep its staged path until discard is confirmed. Other visible
+      // tabs and inactive project slices are not protected by that draft and must reconcile now.
+      reconcile(activeItem.id)
       previewLeaveGuards.request(activeWorkbenchGuardScope(current), reconcile)
       return
     }
