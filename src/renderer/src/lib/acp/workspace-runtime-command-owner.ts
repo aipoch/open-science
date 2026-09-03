@@ -5,6 +5,7 @@ import { withPdfContext as withPdf } from '../../../../shared/session-pdf-contex
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import {
   collectSessionReferences,
+  MAX_SESSION_PDF_CONTEXTS,
   type DelegationPolicy,
   type MessageAttribution,
   type MessagePdfContextSnapshot,
@@ -584,7 +585,7 @@ const startPendingPrompt = (
           attachments
         }),
         ...eligiblePendingPdfContext.versions
-      ]
+      ].slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - (pdfContext?.bindings.length ?? 0)))
       if (pdfContextSources.length > 0) {
         pdfContext = await linkPdfContextForSend({
           sessionId: created.sessionId,
@@ -922,7 +923,7 @@ const sendWorkspaceMessage = async (
           attachments: promptAttachments
         }),
         ...eligiblePendingPdfContext.versions
-      ]
+      ].slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - (pdfContext?.bindings.length ?? 0)))
       if (pdfContextSources.length > 0) {
         pdfContext = await linkPdfContextForSend({
           sessionId,

@@ -947,15 +947,7 @@ const useWorkspaceComposerController = ({
           occupied.add(identity)
           return true
         })
-        .slice(
-          0,
-          Math.max(
-            0,
-            MAX_SESSION_PDF_CONTEXTS -
-              includedDurableBindings.length -
-              pendingPdfContextAttachmentIds.length
-          )
-        )
+        .slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - includedDurableBindings.length))
       return {
         draftKey: activeDraftKeyRef.current,
         version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
