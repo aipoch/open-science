@@ -26332,7 +26332,7 @@ describe('Specialist Skill scoping', () => {
         }
       }
     }
-    const openVersion = vi.fn(async () => {
+    const openUnpublishedVersion = vi.fn(async () => {
       const content = Buffer.from(serializedPlan)
       return {
         path: planPath,
@@ -26368,7 +26368,7 @@ describe('Specialist Skill scoping', () => {
         repository: new ArtifactRepository(root),
         runRegistry: new ArtifactRunRegistry(),
         provenance,
-        managedFileVersions: { openVersion } as never
+        managedFileVersions: { openUnpublishedVersion } as never
       },
       plan: {
         mcpEntryPath: '/unused',
@@ -26428,7 +26428,7 @@ describe('Specialist Skill scoping', () => {
           }
         })
       ).resolves.toMatchObject({ projection: { artifactVersionId: 'version-1' } })
-      expect(openVersion).toHaveBeenCalledWith(
+      expect(openUnpublishedVersion).toHaveBeenCalledWith(
         { source: 'artifact', projectId: 'project-1', fileId: 'artifact-1' },
         'version-1'
       )
