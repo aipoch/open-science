@@ -1,5 +1,6 @@
 const SETTINGS_RESOURCE_LIMITS = Object.freeze({
-  credentialBytes: 16 * 1024
+  credentialBytes: 16 * 1024,
+  documentBytes: 128 * 1024 * 1024
 })
 
 const characterCount = (value: string): number => Array.from(value).length

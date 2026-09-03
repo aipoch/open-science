@@ -910,6 +910,8 @@
     "Could not switch to this folder.": "無法切換到該資料夾。",
     "Could not switch to {{name}}": "無法切換到 {{name}}",
     "Could not test the provider connection.": "無法測試模型服務商連線。",
+    "Could not delete the provider.": "無法刪除模型服務商。",
+    "Could not refresh models from the vendor.": "無法重新整理模型服務商的模型。",
     "Could not update project pin.": "無法更新專案置頂狀態。",
     "Could not update the command-line tool.": "無法更新命令列工具。",
     "Could not check the command-line tool.": "無法檢查命令列工具。",

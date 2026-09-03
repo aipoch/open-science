@@ -63,6 +63,46 @@ const render = (): void => {
 }
 
 describe('ProvidersPanel: unexpected command failures', () => {
+  it('shows a deletion failure instead of leaving an unhandled rejection', async () => {
+    const deleteProvider = vi.fn().mockRejectedValue(new Error('settings write failed'))
+    useSettingsStore.setState({
+      ...useSettingsStore.getState(),
+      providers: [
+        {
+          id: 'provider-1',
+          type: 'custom',
+          name: 'Gateway one',
+          models: ['model-1'],
+          model: 'model-1',
+          hasKey: true,
+          needsKey: false,
+          supportsImageInput: false
+        },
+        {
+          id: 'provider-2',
+          type: 'custom',
+          name: 'Gateway two',
+          models: ['model-2'],
+          model: 'model-2',
+          hasKey: true,
+          needsKey: false,
+          supportsImageInput: false
+        }
+      ],
+      activeProviderId: 'provider-1',
+      deleteProvider: deleteProvider as never
+    })
+    render()
+
+    const deleteButtons = document.body.querySelectorAll<HTMLButtonElement>('[aria-label="Delete"]')
+    await act(async () => deleteButtons[1]?.click())
+
+    expect(deleteProvider).toHaveBeenCalledWith('provider-2')
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not delete the provider.'
+    )
+  })
+
   it('localizes a connection-test failure and keeps transport details out of the alert', async () => {
     useSettingsStore.setState({
       ...useSettingsStore.getState(),

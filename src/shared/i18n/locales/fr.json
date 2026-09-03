@@ -872,6 +872,8 @@
     "Could not switch to this folder.": "Impossible de basculer vers ce dossier.",
     "Could not switch to {{name}}": "Impossible de passer à {{name}}",
     "Could not test the provider connection.": "Impossible de tester la connexion du fournisseur.",
+    "Could not delete the provider.": "Impossible de supprimer le fournisseur.",
+    "Could not refresh models from the vendor.": "Impossible d’actualiser les modèles du fournisseur.",
     "Could not update project pin.": "Impossible de mettre à jour le code PIN du projet.",
     "Could not update the command-line tool.": "Impossible de mettre à jour l'outil de ligne de commande.",
     "Could not check the command-line tool.": "Impossible de vérifier l'outil de ligne de commande.",

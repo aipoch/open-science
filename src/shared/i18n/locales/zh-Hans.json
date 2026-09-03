@@ -911,6 +911,8 @@
     "Could not switch to this folder.": "无法切换到该文件夹。",
     "Could not switch to {{name}}": "无法切换到 {{name}}",
     "Could not test the provider connection.": "无法测试模型服务商连接。",
+    "Could not delete the provider.": "无法删除模型服务商。",
+    "Could not refresh models from the vendor.": "无法刷新模型服务商的模型。",
     "Could not update project pin.": "无法更新项目置顶状态。",
     "Could not update the command-line tool.": "无法更新命令行工具。",
     "Could not check the command-line tool.": "无法检查命令行工具。",

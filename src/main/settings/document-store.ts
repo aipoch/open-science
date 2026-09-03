@@ -9,6 +9,7 @@ import {
 import { sanitizeSettings } from './document-codec'
 import { createEmptySettings, type StoredSettings } from './types'
 import { isRecord } from '../value-guards'
+import { SETTINGS_RESOURCE_LIMITS } from './settings-resource-limits'
 
 const SETTINGS_FILE = 'settings.json'
 
@@ -58,7 +59,14 @@ class SettingsDocumentStore {
   }
 
   async read(): Promise<StoredSettings> {
-    const result = await readDurableJsonFile(this.path, decodeSettingsDocument)
+    const result = await readDurableJsonFile(
+      this.path,
+      decodeSettingsDocument,
+      {},
+      {
+        maxBytes: SETTINGS_RESOURCE_LIMITS.documentBytes
+      }
+    )
     return result.status === 'found' ? result.value : createEmptySettings()
   }
 
@@ -76,7 +84,13 @@ class SettingsDocumentStore {
   }
 
   private async write(settings: StoredSettings): Promise<void> {
-    await writeDurableJsonFile(this.path, `${JSON.stringify(settings, null, 2)}\n`)
+    const contents = `${JSON.stringify(settings, null, 2)}\n`
+    if (Buffer.byteLength(contents, 'utf8') > SETTINGS_RESOURCE_LIMITS.documentBytes) {
+      throw new Error(
+        `Settings document exceeds the ${SETTINGS_RESOURCE_LIMITS.documentBytes} byte limit.`
+      )
+    }
+    await writeDurableJsonFile(this.path, contents)
   }
 }
 

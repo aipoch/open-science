@@ -844,6 +844,8 @@
     "Could not switch to this folder.": "이 폴더로 전환할 수 없습니다.",
     "Could not switch to {{name}}": "{{name}}로 전환할 수 없습니다.",
     "Could not test the provider connection.": "모델 제공업체 연결을 테스트할 수 없습니다.",
+    "Could not delete the provider.": "모델 제공업체를 삭제할 수 없습니다.",
+    "Could not refresh models from the vendor.": "모델 제공업체의 모델을 새로 고칠 수 없습니다.",
     "Could not update project pin.": "프로젝트 고정을 업데이트할 수 없습니다.",
     "Could not update the command-line tool.": "명령줄 도구를 업데이트할 수 없습니다.",
     "Could not check the command-line tool.": "명령줄 도구를 확인할 수 없습니다.",

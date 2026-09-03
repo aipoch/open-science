@@ -3,6 +3,7 @@ import { SETTINGS_RESOURCE_LIMITS, assertCharacterLimit } from './settings-resou
 
 const PROVIDER_RESOURCE_LIMITS = Object.freeze({
   providers: 64,
+  idCharacters: 128,
   nameCharacters: 128,
   baseUrlCharacters: 2_048,
   modelIdCharacters: 512,

@@ -37,6 +37,7 @@ import {
   sanitizePackageMirror,
   sanitizeProvider
 } from './record-codec'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { isRecord } from '../value-guards'
 
 // Checks for plain JSON objects so untrusted settings payloads can be sanitized safely.
@@ -177,11 +178,17 @@ const sanitizeRuntimeEnablement = (
 const sanitizeSettings = (value: unknown): StoredSettings => {
   if (!isRecord(value)) return createEmptySettings()
 
-  const sanitizedProviders = Array.isArray(value.providers)
-    ? value.providers
-        .map(sanitizeProvider)
-        .filter((provider): provider is StoredProvider => !!provider)
-    : []
+  const sanitizedProviders: StoredProvider[] = []
+  const sanitizedProviderIds = new Set<string>()
+  if (Array.isArray(value.providers)) {
+    for (const candidate of value.providers) {
+      const provider = sanitizeProvider(candidate)
+      if (!provider || sanitizedProviderIds.has(provider.id)) continue
+      sanitizedProviderIds.add(provider.id)
+      sanitizedProviders.push(provider)
+      if (sanitizedProviders.length >= PROVIDER_RESOURCE_LIMITS.providers) break
+    }
+  }
   const legacyActiveProviderId = asString(value.activeProviderId)
   const codexProviders = sanitizedProviders.filter((provider) =>
     isCodexSubscriptionProvider(provider.type)
@@ -205,10 +212,18 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     delete migratedCodexProvider.expiresAt
   }
 
-  const providers = [
+  const migratedProviders = [
     ...sanitizedProviders.filter((provider) => !isCodexSubscriptionProvider(provider.type)),
     ...(migratedCodexProvider ? [migratedCodexProvider] : [])
   ]
+  const providerIds = new Set<string>()
+  const providers = migratedProviders.filter((provider) => {
+    if (providerIds.has(provider.id) || providerIds.size >= PROVIDER_RESOURCE_LIMITS.providers) {
+      return false
+    }
+    providerIds.add(provider.id)
+    return true
+  })
   const visionModel = sanitizeVisionModel(value.visionModel)
   const settings: StoredSettings = {
     version: SETTINGS_FILE_VERSION,

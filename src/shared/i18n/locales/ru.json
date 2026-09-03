@@ -866,6 +866,8 @@
     "Could not switch to this folder.": "Не удалось переключиться на эту папку.",
     "Could not switch to {{name}}": "Не удалось переключиться на {{name}}",
     "Could not test the provider connection.": "Не удалось протестировать соединение с поставщиком.",
+    "Could not delete the provider.": "Не удалось удалить поставщика.",
+    "Could not refresh models from the vendor.": "Не удалось обновить модели поставщика.",
     "Could not update project pin.": "Не удалось изменить закрепление проекта.",
     "Could not update the command-line tool.": "Не удалось обновить инструмент командной строки.",
     "Could not check the command-line tool.": "Не удалось проверить инструмент командной строки.",

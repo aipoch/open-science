@@ -24,6 +24,8 @@ import type {
   StoredProvider
 } from './types'
 import { isRecord } from '../value-guards'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
+import { characterCount } from './settings-resource-limits'
 
 const log = createLogger('settings.repository')
 
@@ -123,7 +125,14 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   const id = asString(value.id)
   const type = asString(value.type) as ProviderType | undefined
   const name = asString(value.name)
-  if (!id || !type || name === undefined) return undefined
+  if (
+    !id ||
+    !type ||
+    name === undefined ||
+    characterCount(id) > PROVIDER_RESOURCE_LIMITS.idCharacters ||
+    characterCount(name) > PROVIDER_RESOURCE_LIMITS.nameCharacters
+  )
+    return undefined
   if (!PROVIDER_TYPES.has(type)) {
     log.warn('dropping stored provider with unknown type', { id, type })
     return undefined
@@ -161,11 +170,20 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   const codexTransport = asString(value.codexTransport)
   const codexAutoUseHttps = asBoolean(value.codexAutoUseHttps)
   // Keep only non-empty model ids from persisted discovery results.
-  const fetchedModels = Array.isArray(value.fetchedModels)
-    ? value.fetchedModels.filter(
-        (entry): entry is string => typeof entry === 'string' && entry !== ''
+  let fetchedModels: string[] | undefined
+  if (Array.isArray(value.fetchedModels)) {
+    fetchedModels = []
+    for (const entry of value.fetchedModels) {
+      if (
+        typeof entry !== 'string' ||
+        entry === '' ||
+        characterCount(entry) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters
       )
-    : undefined
+        continue
+      fetchedModels.push(entry)
+      if (fetchedModels.length >= PROVIDER_RESOURCE_LIMITS.fetchedModels) break
+    }
+  }
 
   // Migrate the removed scalar apiType to the explicit endpoint array.
   const rawEndpoints = Array.isArray(value.apiEndpoints) ? value.apiEndpoints : []
@@ -185,8 +203,10 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
           ? [legacyApiType]
           : []
 
-  if (baseUrl) provider.baseUrl = baseUrl
-  if (model) provider.model = model
+  if (baseUrl && characterCount(baseUrl) <= PROVIDER_RESOURCE_LIMITS.baseUrlCharacters)
+    provider.baseUrl = baseUrl
+  if (model && characterCount(model) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters)
+    provider.model = model
   if (type === 'custom') {
     if (contextWindow !== undefined) provider.contextWindow = contextWindow
     if (maxInputTokens !== undefined) provider.maxInputTokens = maxInputTokens

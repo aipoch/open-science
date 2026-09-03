@@ -872,6 +872,8 @@
     "Could not switch to this folder.": "No se pudo cambiar a esta carpeta.",
     "Could not switch to {{name}}": "No se pudo cambiar a {{name}}",
     "Could not test the provider connection.": "No se pudo probar la conexión del proveedor.",
+    "Could not delete the provider.": "No se pudo eliminar el proveedor.",
+    "Could not refresh models from the vendor.": "No se pudieron actualizar los modelos del proveedor.",
     "Could not update project pin.": "No se pudo actualizar el pin del proyecto.",
     "Could not update the command-line tool.": "No se pudo actualizar la herramienta de línea de comandos.",
     "Could not check the command-line tool.": "No se pudo comprobar la herramienta de línea de comandos.",

@@ -825,6 +825,8 @@
     "Could not switch to this folder.": "このフォルダーに切り替えられませんでした。",
     "Could not switch to {{name}}": "{{name}} に切り替えられませんでした",
     "Could not test the provider connection.": "プロバイダー接続をテストできませんでした。",
+    "Could not delete the provider.": "プロバイダーを削除できませんでした。",
+    "Could not refresh models from the vendor.": "プロバイダーのモデルを更新できませんでした。",
     "Could not update project pin.": "プロジェクトピンを更新できませんでした。",
     "Could not update the command-line tool.": "コマンドラインツールを更新できませんでした。",
     "Could not check the command-line tool.": "コマンドラインツールを確認できませんでした。",

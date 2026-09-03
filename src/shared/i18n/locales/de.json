@@ -815,6 +815,8 @@
     "Could not switch to this folder.": "Zu diesem Ordner konnte nicht gewechselt werden.",
     "Could not switch to {{name}}": "Konnte nicht zu {{name}} wechseln",
     "Could not test the provider connection.": "Die Verbindung zum Anbieter konnte nicht getestet werden.",
+    "Could not delete the provider.": "Der Anbieter konnte nicht gelöscht werden.",
+    "Could not refresh models from the vendor.": "Die Modelle des Anbieters konnten nicht aktualisiert werden.",
     "Could not update project pin.": "Projekt-Pin konnte nicht aktualisiert werden.",
     "Could not update the command-line tool.": "Das Befehlszeilentool konnte nicht aktualisiert werden.",
     "Couldn't fetch models: {{reason}}. Using the bundled list.": "Modelle konnten nicht abgerufen werden: {{reason}}. Stattdessen wird die integrierte Liste verwendet.",

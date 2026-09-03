@@ -1056,6 +1056,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 : t('request failed')
             })
       )
+    } catch {
+      setStatusOk(false)
+      setStatusMessage(t('Could not refresh models from the vendor.'))
     } finally {
       setIsRefreshingModels(false)
     }

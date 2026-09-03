@@ -155,6 +155,19 @@ describe('durable JSON file publication', () => {
 })
 
 describe('durable JSON file recovery', () => {
+  it('rejects an oversized primary before reading it', async () => {
+    const filePath = join('config', 'settings.json')
+    const dependencies = createDependencies({
+      stat: vi.fn().mockResolvedValue({ mtimeMs: 1, size: 11 }),
+      readFile: vi.fn().mockResolvedValue('{"ok":true}')
+    })
+
+    await expect(
+      readDurableJsonFile(filePath, JSON.parse, dependencies, { maxBytes: 10 })
+    ).rejects.toThrow('settings.json exceeds the 10 byte read limit.')
+    expect(dependencies.readFile).not.toHaveBeenCalled()
+  })
+
   it('keeps a valid primary authoritative and removes recognized temps', async () => {
     const root = await mkdtemp(join(tmpdir(), 'durable-json-primary-'))
     roots.push(root)
