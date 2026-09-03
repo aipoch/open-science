@@ -5,9 +5,11 @@ import type {
   HostArtifactCatalogItem,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
+  ProjectFileItem,
   ProjectFilesOverview,
   ProjectFilesPage,
   ProjectFileSource,
+  ResolveProjectFileRequest,
   SearchArtifactsRequest,
   SearchArtifactsResult
 } from '../../shared/project-files'
@@ -95,6 +97,10 @@ class ManagedFileIndexRepository {
 
   async listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage> {
     return this.queryOwner.listFiles(request)
+  }
+
+  async resolveFile(request: ResolveProjectFileRequest): Promise<ProjectFileItem | undefined> {
+    return this.queryOwner.resolveFile(request)
   }
 
   async readHostArtifactCatalog(request: {

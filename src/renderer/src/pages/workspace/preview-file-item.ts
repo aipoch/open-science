@@ -1,6 +1,7 @@
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
 import type { ArtifactFile } from '../../../../shared/artifacts'
+import type { ProjectFileItem, ResolveProjectFileRequest } from '../../../../shared/project-files'
 import type { MessagePart, SessionPdfBinding } from '../../../../shared/session-persistence'
 import { sessionPdfBindingToFileReference } from '../../../../shared/session-pdf-context'
 import {
@@ -82,6 +83,80 @@ export const createPreviewFileItem = ({
   if (originSession) item.originSession = originSession
 
   return item
+}
+
+// Builds the metadata-only lookup used before a managed preview retry. A restored upload keeps its
+// stable `upload:` tab id, while Artifact ids may need the main process's scoped filename fallback.
+export const createProjectFileResolveRequest = (
+  item: PreviewFileItem,
+  projectId: string | undefined
+): ResolveProjectFileRequest | undefined => {
+  const source = item.source ?? 'artifact'
+  if (!projectId || (source !== 'artifact' && source !== 'upload')) return undefined
+
+  const artifactLocator = source === 'artifact' ? parseArtifactVersionLocator(item.path) : undefined
+  const uploadLocator = source === 'upload' ? parseUploadVersionReference(item.path) : undefined
+  const uploadTabId = source === 'upload' && item.id.startsWith('upload:') ? item.id.slice(7) : ''
+  const logicalFileId =
+    source === 'artifact'
+      ? (item.managedFileId ?? item.artifactId ?? artifactLocator?.artifactId)
+      : (item.managedFileId ?? uploadLocator?.fileId ?? uploadTabId)
+  const fileIdHint = logicalFileId || item.id
+  // Old persisted Artifacts may have used their physical path as the display name. The database
+  // compatibility lookup is scoped by filename, so strip either POSIX or Windows directories.
+  const name =
+    source === 'artifact' && !logicalFileId
+      ? item.name.split(/[\\/]/u).at(-1) || item.name
+      : item.name
+
+  return {
+    projectId,
+    sessionId: item.sessionId,
+    source,
+    ...(fileIdHint ? { fileIdHint } : {}),
+    identityHint: logicalFileId ? 'logical' : 'legacy',
+    name
+  }
+}
+
+// Replaces a stale physical projection with the catalog's logical identity. Explicit history
+// selections stay pinned; an ordinary tab continues following the database head returned here.
+export const refreshPreviewFileItemFromProjectFile = (
+  item: PreviewFileItem,
+  file: ProjectFileItem
+): PreviewFileItem => {
+  const selectedVersionId = item.selectedVersionId
+  const path = selectedVersionId
+    ? file.source === 'artifact'
+      ? createArtifactVersionLocator({
+          projectId: file.projectId,
+          appSessionId: file.sessionId,
+          artifactId: file.sourceFileId,
+          versionId: selectedVersionId
+        })
+      : createUploadVersionReference(selectedVersionId, {
+          projectId: file.projectId,
+          sessionId: file.sessionId,
+          fileId: file.sourceFileId
+        })
+    : file.path
+
+  return createPreviewFileItem({
+    id: item.id,
+    projectId: file.projectId,
+    sessionId: file.sessionId,
+    path,
+    name: file.name,
+    mimeType: file.mimeType,
+    source: file.source === 'upload' ? 'upload' : undefined,
+    size: file.size,
+    mtimeMs: file.mtimeMs,
+    artifactId: file.source === 'artifact' ? file.sourceFileId : undefined,
+    managedFileId: file.sourceFileId,
+    selectedVersionId,
+    versionNumber: selectedVersionId ? item.versionNumber : undefined,
+    originSession: file.originSession
+  })
 }
 
 // Converts app-managed generated files into preview tabs and ignores unmanaged artifacts.

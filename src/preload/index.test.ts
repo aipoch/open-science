@@ -429,6 +429,7 @@ describe('preload bridge — public surface inventory', () => {
       'projectFiles.listFiles',
       'projectFiles.onChanged',
       'projectFiles.repairIndex',
+      'projectFiles.resolveFile',
       'projectFiles.searchArtifacts',
       'projects.create',
       'projects.delete',

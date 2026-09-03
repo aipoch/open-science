@@ -237,9 +237,11 @@ import type {
   GetProjectFilesOverviewRequest,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
+  ProjectFileItem,
   ProjectFilesChangedEvent,
   ProjectFilesOverview,
   ProjectFilesPage,
+  ResolveProjectFileRequest,
   SearchArtifactsRequest,
   SearchArtifactsResult
 } from './project-files'
@@ -1302,6 +1304,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'projectFiles.listFiles': callable<
     (request: ListProjectFilesRequest) => Promise<ProjectFilesPage>
   >()('project-files', ['project-files:list-files']),
+  'projectFiles.resolveFile': callable<
+    (request: ResolveProjectFileRequest) => Promise<ProjectFileItem | undefined>
+  >()('project-files', ['project-files:resolve-file']),
   'projectFiles.onChanged': callable<
     (listener: AcpListener<ProjectFilesChangedEvent>) => RemoveListener
   >()('project-files', ['project-files:changed', EVENT]),

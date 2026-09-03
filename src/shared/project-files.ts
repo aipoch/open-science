@@ -57,6 +57,17 @@ export type ProjectFilesPage = {
   totalCount: number
 }
 
+// Compatibility lookup for a restored preview tab. Hints identify metadata only; callers still
+// read file bytes through the returned logical sourceFileId/sourceVersionId pair.
+export type ResolveProjectFileRequest = {
+  projectId: string
+  sessionId: string
+  source: ProjectFileSource
+  fileIdHint?: string
+  identityHint: 'logical' | 'legacy'
+  name: string
+}
+
 // Bounded global-search projection. The primary Project is independently paged; Other Projects
 // deliberately return only a small combined sample so the command palette remains responsive.
 export type SearchArtifactsRequest = {

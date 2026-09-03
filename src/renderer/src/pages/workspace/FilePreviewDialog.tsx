@@ -147,6 +147,7 @@ const FilePreviewDialog = ({
                   onPdfContextError={onPdfContextError}
                   tooltipClassName="z-[70]"
                   leaveGuardScope={dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)}
+                  retryResolutionEnabled={open}
                   {...annotationPort}
                 />
               ) : null}

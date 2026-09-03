@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -283,6 +283,7 @@ describe('PreviewFileContent', () => {
     item: PreviewFileItem,
     options: Omit<PreviewFileRendererProps, 'item'> & {
       downloadVersionContext?: PreviewDownloadVersionContext
+      onRetry?: () => Promise<void>
     } = {}
   ): Promise<void> => {
     root = createRoot(container)
@@ -441,6 +442,103 @@ describe('PreviewFileContent', () => {
 
     await vi.waitFor(() => expect(container.textContent).toContain('recovered preview'))
     expect(window.api.artifacts.readPreview).toHaveBeenCalledTimes(2)
+    consoleError.mockRestore()
+  })
+
+  it('waits for managed logical identity refresh before restarting a failed preview', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let finishIdentityRefresh: (() => void) | undefined
+    const onRetry = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishIdentityRefresh = resolve
+        })
+    )
+    vi.mocked(window.api.artifacts.readPreview)
+      .mockRejectedValueOnce(new Error('stale managed identity'))
+      .mockResolvedValueOnce({
+        content: 'logical preview',
+        encoding: 'utf8',
+        size: 15,
+        truncated: false
+      })
+
+    await renderFile(createFileItem({ format: 'text', name: 'notes.txt' }), { onRetry })
+    await vi.waitFor(() => expect(container.textContent).toContain("File couldn't be read"))
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+
+    await act(async () => {
+      retry?.click()
+      retry?.click()
+      await Promise.resolve()
+    })
+
+    expect(onRetry).toHaveBeenCalledOnce()
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      finishIdentityRefresh?.()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await vi.waitFor(() => expect(container.textContent).toContain('logical preview'))
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledTimes(2)
+    consoleError.mockRestore()
+  })
+
+  it('retries with the refreshed logical identity instead of the stale physical path', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const legacyItem = createFileItem({
+      managedFileId: undefined,
+      path: '/stale/notes.txt',
+      format: 'text',
+      name: 'notes.txt'
+    })
+    const canonicalItem = {
+      ...legacyItem,
+      managedFileId: 'canonical-artifact-id',
+      path: 'artifact-version:project-1/session-1/canonical-artifact-id/version-3'
+    }
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'logical preview',
+      encoding: 'utf8',
+      size: 15,
+      truncated: false
+    })
+    const RetryHarness = (): React.JSX.Element => {
+      const [currentItem, setCurrentItem] = useState(legacyItem)
+      return (
+        <PreviewFileContent
+          item={currentItem}
+          onRetry={async () => setCurrentItem(canonicalItem)}
+        />
+      )
+    }
+
+    root = createRoot(container)
+    await act(async () => root.render(<RetryHarness />))
+    await vi.waitFor(() => expect(container.textContent).toContain("File couldn't be read"))
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+
+    await act(async () => {
+      retry?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await vi.waitFor(() => expect(container.textContent).toContain('logical preview'))
+    expect(window.api.previewResources.acquire).toHaveBeenCalledOnce()
+    expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: 'canonical-artifact-id',
+      maxBytes: expect.any(Number)
+    })
     consoleError.mockRestore()
   })
 

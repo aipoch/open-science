@@ -1,3 +1,5 @@
+import type { ManagedFile } from '@prisma/client'
+
 import type {
   ArtifactGroupPage,
   GetProjectFilesOverviewRequest,
@@ -7,6 +9,7 @@ import type {
   ProjectFileItem,
   ProjectFilesOverview,
   ProjectFilesPage,
+  ResolveProjectFileRequest,
   SearchArtifactsRequest,
   SearchArtifactsResult
 } from '../../shared/project-files'
@@ -28,6 +31,7 @@ import {
   toProjectFileItem,
   toSafeCount
 } from './query-support'
+import { normalizeArtifactFilename } from '../artifacts/provenance-version-writer'
 
 type ProjectFilesIndexCompletenessReader = (projectId: string) => boolean
 
@@ -184,6 +188,82 @@ class ProjectFilesQueryOwner {
             })
           : undefined
     }
+  }
+
+  async resolveFile(request: ResolveProjectFileRequest): Promise<ProjectFileItem | undefined> {
+    requireIdentifier(request.projectId, 'projectId')
+    requireIdentifier(request.sessionId, 'sessionId')
+    if (request.source !== 'artifact' && request.source !== 'upload') {
+      throw new Error('Project file source is invalid.')
+    }
+    if (!request.name.trim() || request.name.length > 1024) {
+      throw new Error('Project file name is invalid.')
+    }
+    if (request.fileIdHint !== undefined) requireIdentifier(request.fileIdHint, 'fileIdHint')
+    if (request.identityHint !== 'logical' && request.identityHint !== 'legacy') {
+      throw new Error('Project file identity hint is invalid.')
+    }
+
+    const client = await this.getClient()
+    const normalizedName = normalizeArtifactFilename(request.name)
+    const queryArtifactByScopedName = async (): Promise<ManagedFile[]> => {
+      const lineage = await client.artifactLineage.findUnique({
+        where: {
+          projectId_sessionId_normalizedFilename: {
+            projectId: request.projectId,
+            sessionId: request.sessionId,
+            normalizedFilename: normalizedName
+          }
+        },
+        select: { id: true }
+      })
+      return lineage
+        ? await queryAuthoritativeFiles(client, {
+            projectIds: [request.projectId],
+            source: 'artifact',
+            sourceFileId: lineage.id,
+            sessionId: request.sessionId,
+            limit: 1
+          })
+        : []
+    }
+
+    // Logical ids remain authoritative across mentions. A path-only Artifact id is only a weak
+    // pre-adoption hint: resolve its Session-unique filename first so an identical id and filename
+    // already owned by another Session cannot capture the restored tab.
+    let rows =
+      request.source === 'artifact' && request.identityHint === 'legacy'
+        ? await queryArtifactByScopedName()
+        : request.fileIdHint
+          ? await queryAuthoritativeFiles(client, {
+              projectIds: [request.projectId],
+              source: request.source,
+              sourceFileId: request.fileIdHint,
+              limit: 1
+            })
+          : []
+    if (
+      rows.length === 0 &&
+      request.source === 'artifact' &&
+      request.identityHint === 'legacy' &&
+      request.fileIdHint
+    ) {
+      rows = await queryAuthoritativeFiles(client, {
+        projectIds: [request.projectId],
+        source: 'artifact',
+        sourceFileId: request.fileIdHint,
+        sessionId: request.sessionId,
+        limit: 1
+      })
+    }
+    const row = rows[0]
+    if (!row) return undefined
+    const origin = await client.fileOriginSession.findUnique({
+      where: {
+        projectId_sessionId: { projectId: row.projectId, sessionId: row.sessionId }
+      }
+    })
+    return toProjectFileItem(row, origin ?? undefined)
   }
 
   async searchArtifacts(request: SearchArtifactsRequest): Promise<SearchArtifactsResult> {

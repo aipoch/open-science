@@ -7,6 +7,7 @@ import type { PreviewFileRendererProps } from './preview-types'
 export const PreviewFileContent = ({
   item,
   downloadVersionContext,
+  onRetry,
   annotationVersionId,
   annotationBlockedByHistoricalVersion,
   annotationVersionPending,
@@ -20,6 +21,7 @@ export const PreviewFileContent = ({
   onPdfReadingPositionChange
 }: PreviewFileRendererProps & {
   downloadVersionContext?: PreviewDownloadVersionContext
+  onRetry?: () => Promise<void>
 }): React.JSX.Element => {
   const content = renderPreviewFile({
     item,
@@ -37,7 +39,11 @@ export const PreviewFileContent = ({
   })
 
   return (
-    <PreviewRuntimeBoundary item={item} downloadVersionContext={downloadVersionContext}>
+    <PreviewRuntimeBoundary
+      item={item}
+      downloadVersionContext={downloadVersionContext}
+      onRetry={onRetry}
+    >
       {content ?? (
         <PreviewUnsupportedContent
           path={item.path}

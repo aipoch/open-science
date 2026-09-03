@@ -15,7 +15,15 @@ import {
   X
 } from 'lucide-react'
 import type { TFunction } from 'i18next'
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -46,8 +54,10 @@ import { LocalFileHeaderActions } from './LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 import { usePdfContextAction, type PdfContextAction } from './use-pdf-context-action'
 import {
+  createProjectFileResolveRequest,
   createPreviewFileItemForArtifactVersion,
   createPreviewFileItemForManagedVersion,
+  refreshPreviewFileItemFromProjectFile,
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 import { PreviewFileContent } from './previews/PreviewFileContent'
@@ -71,6 +81,7 @@ type PreviewFileSurfaceProps = PreviewInteractionPort & {
   provenanceEntry?: 'menu' | 'leading' | 'trailing'
   leaveGuardScope?: string
   workbenchConnected?: boolean
+  retryResolutionEnabled?: boolean
   onItemChange?: (item: PreviewFileItem) => void
 }
 
@@ -567,6 +578,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       provenanceEntry = 'menu',
       leaveGuardScope,
       workbenchConnected = false,
+      retryResolutionEnabled = true,
       onItemChange,
       activeAnnotations,
       onAddAnnotation,
@@ -608,6 +620,11 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     const [pendingLeaveAction, setPendingLeaveAction] = useState<() => boolean | void>()
     const saveGenerationRef = useRef(0)
     const acceptedIdentityTransitionRef = useRef<string | undefined>(undefined)
+    const mountedRef = useRef(false)
+    const retryGenerationRef = useRef(0)
+    const retryInFlightRef = useRef<{ generation: number; operation: Promise<void> } | undefined>(
+      undefined
+    )
     const activeProjectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
     const storedItem = usePreviewWorkbenchStore((state) =>
       workbenchConnected
@@ -623,6 +640,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     const itemIdentityKey = `${sourceItem.projectId ?? ''}:${sourceItem.source ?? 'artifact'}:${sourceItem.id}:${sourceItem.managedFileId ?? ''}:${sourceItem.artifactId ?? ''}:${sourceItem.selectedVersionId ?? ''}:${sourceItem.path}`
     const previewItem = versionOverride?.key === itemIdentityKey ? versionOverride.item : sourceItem
     const projectId = previewItem.projectId ?? activeProjectId
+    const previewIdentityKey = `${previewItem.projectId ?? ''}:${previewItem.source ?? 'artifact'}:${previewItem.id}:${previewItem.managedFileId ?? ''}:${previewItem.artifactId ?? ''}:${previewItem.selectedVersionId ?? ''}:${previewItem.path}`
     const managedWorkflow = useManagedVersionWorkflow({
       item: previewItem,
       projectId,
@@ -738,6 +756,13 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     )
     useImperativeHandle(ref, () => ({ requestLeave }), [requestLeave])
 
+    useEffect(() => {
+      mountedRef.current = true
+      return () => {
+        mountedRef.current = false
+      }
+    }, [])
+
     useEffect(
       () =>
         leaveGuardScope ? previewLeaveGuards.register(leaveGuardScope, guardLeave) : undefined,
@@ -815,9 +840,61 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         // onItemChange and must not retain an origin-keyed override that can become stale.
         if (!onItemChange) setVersionOverride({ key: itemIdentityKey, item: nextItem })
       }
+      // Invalidate pending retry lookups synchronously; the following render will advance the
+      // generation again if the complete request or selected identity also changed.
+      retryGenerationRef.current += 1
       onApplied?.()
       return true
     }
+
+    const managedRetryRequest = createProjectFileResolveRequest(resolvedPreviewItem, projectId)
+    const retryGenerationKey = JSON.stringify([
+      retryResolutionEnabled,
+      previewIdentityKey,
+      managedRetryRequest?.projectId,
+      managedRetryRequest?.sessionId,
+      managedRetryRequest?.source,
+      managedRetryRequest?.fileIdHint,
+      managedRetryRequest?.identityHint,
+      managedRetryRequest?.name
+    ])
+    useLayoutEffect(() => {
+      retryGenerationRef.current += 1
+    }, [retryGenerationKey])
+    const retryManagedPreview = managedRetryRequest
+      ? (): Promise<void> => {
+          const requestedGeneration = retryGenerationRef.current
+          if (retryInFlightRef.current?.generation === requestedGeneration) {
+            return retryInFlightRef.current.operation
+          }
+          const operation = (async (): Promise<void> => {
+            try {
+              const file = await window.api.projectFiles.resolveFile(managedRetryRequest)
+              if (
+                !file ||
+                !retryResolutionEnabled ||
+                !mountedRef.current ||
+                retryGenerationRef.current !== requestedGeneration
+              ) {
+                return
+              }
+              // A retry repairs metadata for the same stable tab, so it must not prompt about an
+              // unrelated identity transition before the failed preview can remount.
+              applyVersionItem(refreshPreviewFileItemFromProjectFile(previewItem, file), true)
+            } catch {
+              // The runtime still remounts the original request so transient catalog failures do
+              // not turn Retry into a no-op.
+            }
+          })()
+          retryInFlightRef.current = { generation: requestedGeneration, operation }
+          void operation.finally(() => {
+            if (retryInFlightRef.current?.operation === operation) {
+              retryInFlightRef.current = undefined
+            }
+          })
+          return operation
+        }
+      : undefined
 
     const selectPreviewVersion = (versionId: string): void => {
       if (!lineage || !projectId) return
@@ -1207,6 +1284,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   onUndoAnnotation={onUndoAnnotation}
                   onRedoAnnotation={onRedoAnnotation}
                   onAnnotationError={onAnnotationError}
+                  onRetry={retryManagedPreview}
                   onPdfReadingPositionChange={
                     readingContextBindingId ? reportPdfReadingPosition : undefined
                   }
@@ -1238,6 +1316,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
               onUndoAnnotation={onUndoAnnotation}
               onRedoAnnotation={onRedoAnnotation}
               onAnnotationError={onAnnotationError}
+              onRetry={retryManagedPreview}
               onPdfReadingPositionChange={
                 readingContextBindingId ? reportPdfReadingPosition : undefined
               }
