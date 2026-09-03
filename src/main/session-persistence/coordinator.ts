@@ -48,7 +48,8 @@ import {
   type AppendUserMessageToInteractionCommand,
   type PatchSessionRuntimeContextCommand,
   type SessionMetadata,
-  type SessionMetadataSnapshot
+  type SessionMetadataSnapshot,
+  type SessionSaveAuthority
 } from './state-owner'
 import {
   SessionSideChatPersistenceOwner,
@@ -731,11 +732,16 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   // incomplete state rather than silently presenting stale metadata as complete.
   saveSession(
     session: PersistedChatSession,
-    options: SaveSessionOptions = {}
+    options: SaveSessionOptions = {},
+    authority: SessionSaveAuthority = { taskRunCommit: false }
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(session.projectId, session.id, async () => {
       await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
-      return this.stateOwner.saveSession(session, sanitizeRendererSaveSessionOptions(options))
+      return this.stateOwner.saveSession(
+        session,
+        sanitizeRendererSaveSessionOptions(options),
+        authority
+      )
     })
   }
 

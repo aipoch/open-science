@@ -35,6 +35,10 @@ type SessionMetadataSnapshot = Readonly<{
   isComplete: boolean
 }>
 
+type SessionSaveAuthority = Readonly<{
+  taskRunCommit: boolean
+}>
+
 type PatchSessionRuntimeContextCommand = Readonly<{
   projectId: string
   sessionId: string
@@ -573,9 +577,10 @@ class SessionPersistenceStateOwner {
 
   async saveSession(
     session: PersistedChatSession,
-    options: SaveSessionOptions = {}
+    options: SaveSessionOptions = {},
+    authority: SessionSaveAuthority = { taskRunCommit: false }
   ): Promise<PersistedChatSession> {
-    return this.saveSessionWithAuthority(session, options)
+    return this.saveSessionWithAuthority(session, options, authority)
   }
 
   async saveSessionSpecialistBinding(
@@ -595,7 +600,8 @@ class SessionPersistenceStateOwner {
 
   private async saveSessionWithAuthority(
     session: PersistedChatSession,
-    options: MainSaveSessionOptions = {}
+    options: MainSaveSessionOptions = {},
+    saveAuthority: SessionSaveAuthority = { taskRunCommit: false }
   ): Promise<PersistedChatSession> {
     this.options.assertMutable(session.projectId, session.id, 'save')
     const { projectId, id: sessionId } = session
@@ -615,6 +621,13 @@ class SessionPersistenceStateOwner {
     const rendererOwnedSession: PersistedChatSession = { ...submittedSession }
     delete rendererOwnedSession.runtimeContext
     delete rendererOwnedSession.archivedAt
+    const taskRunCommitId =
+      saveAuthority.taskRunCommit && rendererOwnedSession.taskRunCommitId
+        ? rendererOwnedSession.taskRunCommitId
+        : authority?.taskRunCommitId
+    // This witness participates in Task's cross-file commit protocol. Whole-Session saves from
+    // renderer/web surfaces may preserve it, but only the Task surface may advance it.
+    delete rendererOwnedSession.taskRunCommitId
     const specialistBindingOwnedByCaller =
       options.conflictRebaseFields?.includes('specialistId') === true &&
       options.conflictRebaseFields.includes('specialistBindingPending')
@@ -666,6 +679,7 @@ class SessionPersistenceStateOwner {
       ...mainOwnedSessionDetails,
       ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
+      ...(taskRunCommitId ? { taskRunCommitId } : {}),
       ...(authority && !specialistBindingOwnedByCaller
         ? {
             specialistId: authority.specialistId,
@@ -793,5 +807,6 @@ export type {
   AppendUserMessageToInteractionCommand,
   PatchSessionRuntimeContextCommand,
   SessionMetadata,
-  SessionMetadataSnapshot
+  SessionMetadataSnapshot,
+  SessionSaveAuthority
 }

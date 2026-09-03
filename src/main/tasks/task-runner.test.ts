@@ -9,7 +9,7 @@ import type { AcpRuntimeEvent } from '../../shared/acp'
 import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { Project } from '../../shared/projects'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { normalizeSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
 import type { TaskRun } from '../../shared/task-api'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
@@ -3127,26 +3127,53 @@ describe('TaskRunner', () => {
     expect(cancelPrompt).not.toHaveBeenCalled()
   })
 
-  it('observes cancellation accepted while the final Session save is draining', async () => {
+  it('recovers cancellation accepted while the final Session save is draining', async () => {
     let finalSaveStarted: (() => void) | undefined
     let releaseFinalSave: (() => void) | undefined
+    let terminalWriteStarted: (() => void) | undefined
+    let releaseTerminalWrite: (() => void) | undefined
     const finalSaveStart = new Promise<void>((resolve) => {
       finalSaveStarted = resolve
     })
     const finalSaveGate = new Promise<void>((resolve) => {
       releaseFinalSave = resolve
     })
+    const terminalWriteStart = new Promise<void>((resolve) => {
+      terminalWriteStarted = resolve
+    })
+    const terminalWriteGate = new Promise<void>((resolve) => {
+      releaseTerminalWrite = resolve
+    })
     let saveCount = 0
+    let durableSession: PersistedChatSession | undefined
+    let durableRuns: TaskRunJournalEntry[] = []
+    let terminalWriteBlocked = false
     const cancelPrompt = vi.fn(async () => undefined)
     const runner = createRunner({
       sessions: {
-        list: async () => [],
-        save: async () => {
+        list: async () => (durableSession ? [normalizeSessionFile(durableSession)!] : []),
+        save: async (session) => {
           saveCount += 1
           if (saveCount === 2) {
             finalSaveStarted?.()
             await finalSaveGate
           }
+          durableSession = { ...session, revision: (session.revision ?? 0) + 1 }
+          return durableSession
+        }
+      },
+      runJournal: {
+        load: async () => structuredClone(durableRuns),
+        replace: async (runs) => {
+          if (
+            !terminalWriteBlocked &&
+            runs.some((run) => run.id === 'save-run' && run.status === 'cancelled')
+          ) {
+            terminalWriteBlocked = true
+            terminalWriteStarted?.()
+            await terminalWriteGate
+          }
+          durableRuns = runs.map((run) => structuredClone(run))
         }
       },
       agent: {
@@ -3170,7 +3197,30 @@ describe('TaskRunner', () => {
     await vi.waitFor(() => expect(cancelPrompt).toHaveBeenCalledOnce())
     releaseFinalSave?.()
 
+    await terminalWriteStart
+    expect(durableRuns).toContainEqual(
+      expect.objectContaining({
+        id: started.id,
+        status: 'running',
+        sessionCommitStatus: 'cancelled'
+      })
+    )
+    const recoveredRunner = createRunner({
+      sessions: {
+        list: async () => (durableSession ? [normalizeSessionFile(durableSession)!] : [])
+      },
+      runJournal: {
+        load: async () => structuredClone(durableRuns),
+        replace: async () => undefined
+      }
+    })
+    await recoveredRunner.initialize()
+    expect(recoveredRunner.getRun(started.id)).toMatchObject({ status: 'cancelled' })
+
+    releaseTerminalWrite?.()
     await expect(cancellation).resolves.toMatchObject({ status: 'cancelled' })
+    expect(cancelPrompt).toHaveBeenCalledOnce()
+    await recoveredRunner.dispose()
   })
 
   it('waits for a queued Session commit marker before dispatching cancellation', async () => {
@@ -3524,10 +3574,11 @@ describe('TaskRunner', () => {
       releaseReview = resolve
     })
     const sessions: TaskSessionPort = {
-      list: async () => (durableSession ? [structuredClone(durableSession)] : []),
+      list: async () => (durableSession ? [normalizeSessionFile(durableSession)!] : []),
       save: async (value) => {
-        durableSession = structuredClone(value)
-        return value
+        const persisted = { ...value, revision: (value.revision ?? 0) + 1 }
+        durableSession = structuredClone(persisted)
+        return persisted
       },
       setDelegationPolicy: async () => undefined
     }
@@ -3584,6 +3635,7 @@ describe('TaskRunner', () => {
     await reviewStarted
 
     expect(durableSession).toMatchObject({ status: 'idle', activeRun: undefined })
+    expect(durableSession?.taskRunCommitId).toBe(started.id)
     expect(durableRuns).toContainEqual(expect.objectContaining({ status: 'running' }))
     expect(runner.getRun(started.id)).toMatchObject({ status: 'running', output: undefined })
 
@@ -3613,10 +3665,11 @@ describe('TaskRunner', () => {
     })
     let terminalWriteBlocked = false
     const sessions: TaskSessionPort = {
-      list: async () => (durableSession ? [structuredClone(durableSession)] : []),
+      list: async () => (durableSession ? [normalizeSessionFile(durableSession)!] : []),
       save: async (value) => {
-        durableSession = structuredClone(value)
-        return value
+        const persisted = { ...value, revision: (value.revision ?? 0) + 1 }
+        durableSession = structuredClone(persisted)
+        return persisted
       },
       setDelegationPolicy: async () => undefined
     }
@@ -3656,6 +3709,7 @@ describe('TaskRunner', () => {
     await terminalWriteStarted
 
     expect(durableSession).toMatchObject({ status: 'error', error: 'provider failed' })
+    expect(durableSession?.taskRunCommitId).toBe(started.id)
     expect(durableRuns).toContainEqual(
       expect.objectContaining({
         id: started.id,
@@ -3679,16 +3733,27 @@ describe('TaskRunner', () => {
     await recoveredRunner.dispose()
   })
 
-  it('does not recover a staged completion before its Session commit', async () => {
+  it('does not recover a staged completion after an unrelated startup Session save', async () => {
+    const normalizedSession = normalizeSessionFile({
+      ...session,
+      status: 'running',
+      activeRun: { promptMessageId: 'staged-prompt', startedAt: 2 },
+      messages: [
+        {
+          id: 'staged-prompt',
+          role: 'user',
+          content: 'Finish this work.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })!
+    const startupSession = { ...normalizedSession, status: 'idle' as const, revision: 1 }
     const runner = createRunner({
       sessions: {
-        list: async () => [
-          {
-            ...session,
-            status: 'running',
-            activeRun: { promptMessageId: 'staged-prompt', startedAt: 2 }
-          }
-        ]
+        list: async () => [startupSession]
       },
       runJournal: {
         load: async () => [
@@ -3722,7 +3787,14 @@ describe('TaskRunner', () => {
   it('clears stale attention when recovering a committed cancellation', async () => {
     const runner = createRunner({
       sessions: {
-        list: async () => [{ ...session, status: 'idle', activeRun: undefined }]
+        list: async () => [
+          normalizeSessionFile({
+            ...session,
+            status: 'idle',
+            activeRun: undefined,
+            taskRunCommitId: 'cancelled-run'
+          })!
+        ]
       },
       runJournal: {
         load: async () => [

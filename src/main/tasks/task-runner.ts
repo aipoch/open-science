@@ -1027,12 +1027,6 @@ class TaskRunner {
       await run.completion
       return cloneRun(run)
     }
-    const sessionCommitBarrier = run.sessionCommitBarrier
-    if (sessionCommitBarrier) {
-      await sessionCommitBarrier
-      return this.cancelRun(runId)
-    }
-
     const existingCancellation = run.cancellation
     if (existingCancellation) {
       await existingCancellation.dispatch
@@ -1047,7 +1041,11 @@ class TaskRunner {
     }
     run.cancellation = cancellation
     cancellation.dispatch = Promise.resolve()
-      .then(() => this.dependencies.agent.cancelPrompt(run.sessionId))
+      .then(async () => {
+        const sessionCommitBarrier = run.sessionCommitBarrier
+        if (sessionCommitBarrier) await sessionCommitBarrier
+        await this.dependencies.agent.cancelPrompt(run.sessionId)
+      })
       .then(async () => {
         if (run.sessionCommit && run.sessionCommit.status !== 'failed') {
           const cancelledAt = this.dependencies.now()
@@ -1486,6 +1484,7 @@ class TaskRunner {
     }
     const sessionCommitStatus =
       sessionCommitCancellation?.accepted === true ? 'cancelled' : 'completed'
+    completed!.session = { ...completed!.session, taskRunCommitId: run.id }
     const sessionCommitAt = this.dependencies.now()
     const sessionCommit: NonNullable<MutableTaskRun['sessionCommit']> = {
       status: sessionCommitStatus,
@@ -1583,6 +1582,7 @@ class TaskRunner {
       ...(completed?.session ?? session),
       status: 'error',
       activeRun: undefined,
+      taskRunCommitId: run.id,
       error: message,
       ...(runtimeError?.providerError ? { errorReportable: false } : {}),
       updatedAt: this.dependencies.now()
@@ -1835,7 +1835,9 @@ class TaskRunner {
           ? sessions.find(
               (session) =>
                 session.id === snapshot.sessionId &&
-                session.activeRun?.promptMessageId !== snapshot.promptMessageId
+                session.activeRun?.promptMessageId !== snapshot.promptMessageId &&
+                session.taskRunCommitId === snapshot.id &&
+                session.status === (snapshot.sessionCommitStatus === 'failed' ? 'error' : 'idle')
             )
           : undefined
         if (snapshot.sessionCommitStatus && committedSession) {

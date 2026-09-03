@@ -785,6 +785,9 @@ export type PersistedChatSession = {
   activities?: PersistedToolActivity[]
   activityGroups?: PersistedActivityGroup[]
   activeRun?: PersistedActiveRun
+  // Main-owned witness for the latest terminal Task Run whose Session projection was committed.
+  // Historical files omit it; Task Run recovery then fails closed.
+  taskRunCommitId?: string
   // Survives renderer/app restarts so a failed Resume remains retryable without reconstructing the
   // state from an error string or re-sending the interrupted prompt.
   resumeRecovery?: PersistedSessionResumeRecovery
@@ -4099,6 +4102,7 @@ const sanitizeSession = (
     updatedAt: asNumber(session.updatedAt) ?? 0
   }
   const activeRun = sanitizeActiveRun(session.activeRun)
+  const taskRunCommitId = asString(session.taskRunCommitId)
   const resumeRecovery = sanitizeSessionResumeRecovery(session.resumeRecovery)
   const branchSource = sanitizeSessionBranchSource(session.branchSource)
   const pendingHistoryReplay =
@@ -4156,6 +4160,7 @@ const sanitizeSession = (
   }
 
   if (activeRun) sanitized.activeRun = activeRun
+  if (taskRunCommitId) sanitized.taskRunCommitId = taskRunCommitId
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
   if (branchSource) sanitized.branchSource = branchSource
   if (pendingHistoryReplay) sanitized.pendingHistoryReplay = pendingHistoryReplay

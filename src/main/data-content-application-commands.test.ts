@@ -1125,12 +1125,32 @@ describe('Data and content application commands', () => {
 
     expect(deps.sessions.saveSession).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'idle', revision: 0, createdAt: 0 }),
-      undefined
+      undefined,
+      { taskRunCommit: false }
     )
     const savedSession = (
       deps.sessions.saveSession.mock.calls as unknown as Array<readonly [Record<string, unknown>]>
     )[0]?.[0]
     expect(savedSession?.runtimeContext).toBeUndefined()
+  })
+
+  it('grants Task callers authority to advance the Task Run commit witness', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await dispatchCommand(
+      router,
+      'sessionSave',
+      [{ ...deps.session, taskRunCommitId: 'run-1' }],
+      createTaskCallerContext()
+    ).result
+
+    expect(deps.sessions.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ taskRunCommitId: 'run-1' }),
+      undefined,
+      { taskRunCommit: true }
+    )
   })
 
   it('normalizes graph-only Session arguments and results without preserving incomplete objects', async () => {

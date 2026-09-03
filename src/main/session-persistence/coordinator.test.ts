@@ -1825,6 +1825,32 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable).toMatchObject({ title: 'Renderer rename', archivedAt: 10 })
   })
 
+  it('lets only Task-owned saves advance the Task Run commit witness', async () => {
+    let durable = createSession({ taskRunCommitId: 'committed-run' })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await coordinator.saveSession(
+      createSession({ title: 'Renderer rename', taskRunCommitId: 'forged-run' })
+    )
+    expect(durable).toMatchObject({ title: 'Renderer rename', taskRunCommitId: 'committed-run' })
+
+    await coordinator.saveSession(
+      { ...durable, taskRunCommitId: 'next-run' },
+      {},
+      { taskRunCommit: true }
+    )
+    expect(durable.taskRunCommitId).toBe('next-run')
+  })
+
   it('updates delegation policy through its dedicated durable Session owner', async () => {
     const previousUpdatedAt = Date.now() + 10_000
     let durable = createSession({ delegationPolicy: 'allow', updatedAt: previousUpdatedAt })

@@ -28,6 +28,7 @@ import { ReviewRepository } from '../reviewer/repository'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { SessionMetadataSnapshot } from './coordinator'
+import type { SessionSaveAuthority } from './state-owner'
 import { MainMessageAttributionAuthority } from './message-attribution-authority'
 import { canReconcileSessionAbsences, withProjectDeletionRecoveryStatus } from './catalog-authority'
 import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
@@ -39,7 +40,8 @@ type SessionPersistenceBackend = {
   loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   saveSession: (
     session: PersistedChatSession,
-    options?: SaveSessionOptions
+    options?: SaveSessionOptions,
+    authority?: SessionSaveAuthority
   ) => Promise<{ created: boolean; session: PersistedChatSession }>
   setDelegationPolicy?: (
     projectId: string,
@@ -58,7 +60,8 @@ type SessionPersistenceHandlers = {
   loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   saveSession: (
     session: PersistedChatSession,
-    options?: SaveSessionOptions
+    options?: SaveSessionOptions,
+    authority?: SessionSaveAuthority
   ) => Promise<{ created: boolean; session: PersistedChatSession }>
   setDelegationPolicy: (
     projectId: string,
@@ -177,15 +180,15 @@ const createSessionPersistenceHandlersWithAttributionAuthority = (
       return repository.loadUsage()
     },
     loadOne: (request) => repository.loadOne(request),
-    saveSession: async (session, options) => {
+    saveSession: async (session, options, authority) => {
       const durable = await repository.loadOne({
         projectId: session.projectId,
         sessionId: session.id
       })
       const authorized = messageAttributionAuthority.authorizeSessionProjection(session, durable)
       return options
-        ? repository.saveSession(authorized, options)
-        : repository.saveSession(authorized)
+        ? repository.saveSession(authorized, options, authority)
+        : repository.saveSession(authorized, undefined, authority)
     },
     setDelegationPolicy: (projectId, sessionId, policy) => {
       if (!repository.setDelegationPolicy) {
@@ -222,9 +225,11 @@ const coordinateSessionPersistenceWithProjectDeletions = (
 ): SessionPersistenceBackend => {
   const coordinated: SessionPersistenceBackend = {
     ...repository,
-    saveSession: async (session, options) => {
+    saveSession: async (session, options, authority) => {
       await projectDeletion.waitForProjectOperations([session.projectId])
-      return options ? repository.saveSession(session, options) : repository.saveSession(session)
+      return options
+        ? repository.saveSession(session, options, authority)
+        : repository.saveSession(session, undefined, authority)
     },
     deleteSession: async (projectId, sessionId) => {
       await projectDeletion.waitForProjectOperations([projectId])
