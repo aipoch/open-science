@@ -212,6 +212,22 @@ describe('validateNotebookHelperExports', () => {
     await expect(
       validateNotebookHelperExports(
         'figure-composer',
+        'int = 1\nclass FigureComposer(int):\n    pass\n',
+        ['FigureComposer'],
+        { python: legacyPython }
+      )
+    ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
+    await expect(
+      validateNotebookHelperExports(
+        'figure-composer',
+        'class FigureComposer:\n    int = 1\n    class Nested(int):\n        pass\n',
+        ['FigureComposer'],
+        { python: legacyPython }
+      )
+    ).rejects.toThrow('legacy helper validation requires side-effect-free definitions')
+    await expect(
+      validateNotebookHelperExports(
+        'figure-composer',
         'LEFT, RIGHT = (1,)\ndef compose_figure():\n    return None\n',
         ['compose_figure'],
         { python: legacyPython }

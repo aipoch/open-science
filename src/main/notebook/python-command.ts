@@ -291,12 +291,16 @@ else:
     def callable_placeholder(*args, **kwargs):
         return None
 
-    def build_static_class(node):
+    def build_static_class(node, shadowed_names=()):
         if node.decorator_list or node.keywords:
             return None
         bases = []
         for base in node.bases:
-            if not isinstance(base, ast.Name) or base.id not in static_base_types:
+            if (
+                not isinstance(base, ast.Name)
+                or base.id not in static_base_types
+                or base.id in shadowed_names
+            ):
                 return None
             bases.append(static_base_types[base.id])
         if not bases:
@@ -306,6 +310,7 @@ else:
             "__module__": "__open_science_helper_validation__",
             "__qualname__": node.name,
         }
+        local_shadowed_names = set(shadowed_names)
         for index, member in enumerate(node.body):
             if index == 0 and is_docstring(member):
                 namespace["__doc__"] = ast.literal_eval(member.value)
@@ -314,17 +319,20 @@ else:
                 continue
             if isinstance(member, (ast.AsyncFunctionDef, ast.FunctionDef)) and is_static_function(member):
                 namespace[member.name] = callable_placeholder
+                local_shadowed_names.add(member.name)
                 continue
             if isinstance(member, ast.ClassDef):
-                nested_class = build_static_class(member)
+                nested_class = build_static_class(member, local_shadowed_names)
                 if nested_class is None:
                     return None
                 namespace[member.name] = nested_class
+                local_shadowed_names.add(member.name)
                 continue
             class_bindings = literal_assignment_bindings(member)
             if class_bindings is None:
                 return None
             namespace.update(class_bindings)
+            local_shadowed_names.update(class_bindings)
 
         try:
             return type(node.name, tuple(bases), namespace)
@@ -341,7 +349,7 @@ else:
         if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and is_static_function(node):
             bindings[node.name] = True
             continue
-        if isinstance(node, ast.ClassDef) and build_static_class(node) is not None:
+        if isinstance(node, ast.ClassDef) and build_static_class(node, bindings) is not None:
             bindings[node.name] = True
             continue
         assignment_bindings = literal_assignment_bindings(node)
