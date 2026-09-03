@@ -1282,11 +1282,13 @@ class TaskRunner {
     }
     if (
       existing &&
-      (request.agentConfiguration !== undefined || request.memoryEnabled !== undefined)
+      (request.agentConfiguration !== undefined ||
+        request.memoryEnabled !== undefined ||
+        request.enabledComputeHostIds !== undefined)
     ) {
       throw new TaskRunnerError(
         'invalid_request',
-        'Provider, model, reasoning effort, and memory must be changed with session config update before resuming an existing Session.'
+        'Provider, model, reasoning effort, memory, and enabled Compute Hosts must be changed with session config update before resuming an existing Session.'
       )
     }
     if (existing && cwd !== undefined) {

@@ -468,6 +468,7 @@ describe('Session persistence coordinator architecture', () => {
         'submitStructuredOutput',
         'transitionAttempt',
         'updateArchive',
+        'updateSessionConfiguration',
         'updateQuestionDraft'
       ].sort()
     )
@@ -683,6 +684,7 @@ describe('Session persistence coordinator architecture', () => {
         'stageTaskCompletion',
         'setSessionDelegationPolicy',
         'setSessionEnabledComputeHosts',
+        'updateSessionConfiguration',
         'updateArchive'
       ],
       runSessionThenGlobalIfNeeded: ['deleteSession'],
@@ -737,7 +739,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(39)
+    expect(expectedSchedulerRoute.size).toBe(40)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
@@ -886,7 +888,8 @@ describe('Session persistence coordinator architecture', () => {
         'setDelegationPolicy',
         'setEnabledComputeHosts',
         'settleTaskCompletion',
-        'stageTaskCompletion'
+        'stageTaskCompletion',
+        'updateSessionConfiguration'
       ].sort()
     )
     expect(methods(stateOwner, 'private')).toEqual(

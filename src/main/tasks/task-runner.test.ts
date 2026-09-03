@@ -1101,6 +1101,27 @@ describe('TaskRunner', () => {
     })
   })
 
+  it('rejects enabled Compute Host changes while resuming an existing Session', async () => {
+    const save = vi.fn(async (value: PersistedChatSession) => value)
+    const runner = createRunner({
+      sessions: { list: async () => [session], save }
+    })
+
+    await expect(
+      runner.startRun({
+        project: project.id,
+        sessionId: session.id,
+        prompt: 'Continue with changed host access.',
+        enabledComputeHostIds: ['ssh:alpha']
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message:
+        'Provider, model, reasoning effort, memory, and enabled Compute Hosts must be changed with session config update before resuming an existing Session.'
+    })
+    expect(save).not.toHaveBeenCalled()
+  })
+
   it('rejects a cwd that conflicts with an existing Session workspace', async () => {
     const existingRoot = await mkdtemp(join(tmpdir(), 'open-science-task-existing-cwd-'))
     const requestedRoot = await mkdtemp(join(tmpdir(), 'open-science-task-requested-cwd-'))
