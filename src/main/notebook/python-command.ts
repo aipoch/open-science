@@ -202,35 +202,75 @@ else:
             default for default in node.args.kw_defaults if default is not None
         ]
         annotations = [argument.annotation for argument in arguments] + [node.returns]
+
+        def is_static_annotation(annotation):
+            return is_literal(annotation) or (
+                isinstance(annotation, ast.Name)
+                and annotation.id in {
+                    "bool", "bytes", "dict", "Exception", "float", "int", "list", "object",
+                    "set", "str", "tuple", "ValueError"
+                }
+            )
+
         return (
             not node.decorator_list
             and all(is_literal(default) for default in defaults)
-            and all(annotation is None or is_literal(annotation) for annotation in annotations)
+            and all(
+                annotation is None or is_static_annotation(annotation)
+                for annotation in annotations
+            )
         )
 
-    def assignment_names(target):
+    def bind_literal_target(target, value):
         if isinstance(target, ast.Name):
-            return [target.id]
+            return {target.id: value}
         if isinstance(target, (ast.List, ast.Tuple)):
-            names = []
-            for element in target.elts:
-                nested_names = assignment_names(element)
-                if nested_names is None:
+            try:
+                values = list(value)
+            except TypeError:
+                return None
+            starred = [
+                index for index, element in enumerate(target.elts)
+                if isinstance(element, ast.Starred)
+            ]
+            if len(starred) > 1:
+                return None
+            if not starred and len(values) != len(target.elts):
+                return None
+            if starred and len(values) < len(target.elts) - 1:
+                return None
+
+            bindings = {}
+            for index, element in enumerate(target.elts):
+                if isinstance(element, ast.Starred):
+                    trailing = len(target.elts) - index - 1
+                    nested_value = values[index:len(values) - trailing if trailing else None]
+                    element = element.value
+                elif starred and index > starred[0]:
+                    nested_value = values[len(values) - (len(target.elts) - index)]
+                else:
+                    nested_value = values[index]
+                nested_bindings = bind_literal_target(element, nested_value)
+                if nested_bindings is None:
                     return None
-                names.extend(nested_names)
-            return names
+                bindings.update(nested_bindings)
+            return bindings
         return None
 
-    def literal_assignment_names(node):
-        if not isinstance(node, ast.Assign) or not is_literal(node.value):
+    def literal_assignment_bindings(node):
+        if not isinstance(node, ast.Assign):
             return None
-        names = []
+        try:
+            value = ast.literal_eval(node.value)
+        except (SyntaxError, TypeError, ValueError):
+            return None
+        bindings = {}
         for target in node.targets:
-            target_names = assignment_names(target)
-            if target_names is None:
+            target_bindings = bind_literal_target(target, value)
+            if target_bindings is None:
                 return None
-            names.extend(target_names)
-        return names
+            bindings.update(target_bindings)
+        return bindings
 
     def is_docstring(node):
         if not isinstance(node, ast.Expr):
@@ -240,28 +280,56 @@ else:
         except (SyntaxError, TypeError, ValueError):
             return False
 
-    def is_static_class(node):
+    static_base_types = {
+        name: getattr(builtins, name)
+        for name in (
+            "bytes", "dict", "Exception", "float", "int", "list", "object", "set", "str",
+            "tuple", "ValueError"
+        )
+    }
+
+    def callable_placeholder(*args, **kwargs):
+        return None
+
+    def build_static_class(node):
         if node.decorator_list or node.keywords:
-            return False
-        if node.bases and not (
-            len(node.bases) == 1
-            and isinstance(node.bases[0], ast.Name)
-            and node.bases[0].id == "object"
-        ):
-            return False
+            return None
+        bases = []
+        for base in node.bases:
+            if not isinstance(base, ast.Name) or base.id not in static_base_types:
+                return None
+            bases.append(static_base_types[base.id])
+        if not bases:
+            bases.append(object)
+
+        namespace = {
+            "__module__": "__open_science_helper_validation__",
+            "__qualname__": node.name,
+        }
         for index, member in enumerate(node.body):
             if index == 0 and is_docstring(member):
+                namespace["__doc__"] = ast.literal_eval(member.value)
                 continue
             if isinstance(member, ast.Pass):
                 continue
             if isinstance(member, (ast.AsyncFunctionDef, ast.FunctionDef)) and is_static_function(member):
+                namespace[member.name] = callable_placeholder
                 continue
-            if isinstance(member, ast.ClassDef) and is_static_class(member):
+            if isinstance(member, ast.ClassDef):
+                nested_class = build_static_class(member)
+                if nested_class is None:
+                    return None
+                namespace[member.name] = nested_class
                 continue
-            if literal_assignment_names(member) is not None:
-                continue
-            return False
-        return True
+            class_bindings = literal_assignment_bindings(member)
+            if class_bindings is None:
+                return None
+            namespace.update(class_bindings)
+
+        try:
+            return type(node.name, tuple(bases), namespace)
+        except Exception:
+            return None
 
     bindings = {}
     unsafe = []
@@ -273,12 +341,12 @@ else:
         if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and is_static_function(node):
             bindings[node.name] = True
             continue
-        if isinstance(node, ast.ClassDef) and is_static_class(node):
+        if isinstance(node, ast.ClassDef) and build_static_class(node) is not None:
             bindings[node.name] = True
             continue
-        names = literal_assignment_names(node)
-        if names is not None:
-            for name in names:
+        assignment_bindings = literal_assignment_bindings(node)
+        if assignment_bindings is not None:
+            for name in assignment_bindings:
                 bindings[name] = False
             continue
         unsafe.append(type(node).__name__)
