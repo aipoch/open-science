@@ -959,7 +959,9 @@ describe('ManagedTextDiffTaskRunner', () => {
 
   it('resolves the diff module through an absolute path the worker can require', async () => {
     const diffModulePath = resolveDiffModulePath()
+    expect(diffModulePath).toBeDefined()
     expect(diffModulePath).toMatch(/^\/|^[A-Za-z]:[\\/]/)
+    if (!diffModulePath) throw new Error('Expected resolveDiffModulePath() to return a path.')
     // The path must be requirable on its own, without help from the process CWD.
     const resolved = createRequire(diffModulePath)('diff') as typeof import('diff')
     expect(typeof resolved.diffLines).toBe('function')
