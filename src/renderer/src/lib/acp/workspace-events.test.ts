@@ -3665,7 +3665,14 @@ describe('workspace runtime events', () => {
       ]
     })
     await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-native-replay', kind: 'stop' }))
-    useSessionStore.getState().recordArtifactError('transport-session-1', 'unrelated claim failed')
+    ;(
+      useSessionStore.getState().recordArtifactError as (
+        sessionId: string,
+        error: string,
+        retryable: boolean,
+        eventId: string
+      ) => void
+    )('transport-session-1', 'current claim failed', true, 'native-pending-event')
     const messageId = useSessionStore.getState().sessions[0].messages[1].id
     const finalizedArtifact = {
       ...nativePendingArtifact,
@@ -3691,7 +3698,45 @@ describe('workspace runtime events', () => {
 
     expect(reconcilePendingArtifacts).toHaveBeenCalledOnce()
     expect(finalizeRunArtifacts).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().sessions[0].error).toContain('unrelated claim failed')
+    expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+  })
+
+  it('does not clear an artifact error owned by another event', async () => {
+    const finalizedArtifact = createArtifactFile({
+      id: 'transport-session-1:message-1:result.txt',
+      sessionId: 'transport-session-1',
+      messageId: 'message-1',
+      runId: undefined,
+      path: '/Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt'
+    })
+    const artifactEvent = createEvent({
+      id: 'replayed-finalized-event',
+      kind: 'artifact',
+      runId: 'run-finalized',
+      artifactClaimId: 'expired-finalized-claim',
+      artifacts: [createArtifactFile({ runId: 'run-finalized' })]
+    })
+    const finalizeRunArtifacts = vi.fn().mockResolvedValue([finalizedArtifact])
+    const dependencies = {
+      finalizeRunArtifacts,
+      saveSession: vi.fn().mockResolvedValue(undefined)
+    }
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-owned-error', kind: 'stop' }))
+    await applyWorkspaceRuntimeEvent(artifactEvent, dependencies)
+    ;(
+      useSessionStore.getState().recordArtifactError as (
+        sessionId: string,
+        error: string,
+        retryable: boolean,
+        eventId: string
+      ) => void
+    )('transport-session-1', 'sibling claim failed', true, 'sibling-artifact-event')
+
+    await applyWorkspaceRuntimeEvent(artifactEvent, dependencies)
+
+    expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].error).toContain('sibling claim failed')
   })
 
   it('records native artifact reconciliation failures for retry', async () => {

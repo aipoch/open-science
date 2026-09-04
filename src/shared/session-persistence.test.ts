@@ -4303,6 +4303,23 @@ describe('normalizeSessionFile with activities', () => {
     expect(noError?.errorReportable).toBeUndefined()
   })
 
+  it('persists artifact error event ownership only with an artifact finalization error', () => {
+    const base = { ...createSessionWithActivity(undefined), activities: undefined, status: 'error' }
+    const artifactFailure = normalizeSessionFile({
+      ...base,
+      error: 'Generated file finalization failed: move failed',
+      artifactErrorEventId: 'artifact-event-1'
+    })
+    const unrelatedFailure = normalizeSessionFile({
+      ...base,
+      error: 'Invalid API key',
+      artifactErrorEventId: 'artifact-event-1'
+    })
+
+    expect(artifactFailure?.artifactErrorEventId).toBe('artifact-event-1')
+    expect(unrelatedFailure?.artifactErrorEventId).toBeUndefined()
+  })
+
   it('round-trips valid Session details and a bounded generation attempt', () => {
     const restored = normalizeSessionFile({
       ...createSessionWithActivity(undefined),

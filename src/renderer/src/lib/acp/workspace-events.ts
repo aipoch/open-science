@@ -344,8 +344,11 @@ const finalizeArtifactEvent = async (
           ...event.artifacts.map((artifact) => artifact.id),
           ...result.map((artifact) => artifact.id)
         ])
-        if (sessionReferencesOnly(resolvedArtifactIds)) {
-          useSessionStore.getState().clearArtifactError(event.sessionId)
+        if (
+          session?.artifactErrorEventId === event.id ||
+          sessionReferencesOnly(resolvedArtifactIds)
+        ) {
+          useSessionStore.getState().clearArtifactError(event.sessionId, event.id)
         }
         return true
       }
@@ -355,7 +358,8 @@ const finalizeArtifactEvent = async (
         .recordArtifactError(
           event.sessionId,
           getErrorText(error),
-          !isArtifactFinalizationProofError(error)
+          !isArtifactFinalizationProofError(error),
+          event.id
         )
       throw error
     }
@@ -375,8 +379,11 @@ const finalizeArtifactEvent = async (
     return Boolean(finalizedArtifact)
   })
   if (appliedMessage && eventArtifactsAreFinalized) {
-    if (sessionReferencesOnly(resolvedCompatibilityArtifactIds)) {
-      useSessionStore.getState().clearArtifactError(event.sessionId)
+    if (
+      session?.artifactErrorEventId === event.id ||
+      sessionReferencesOnly(resolvedCompatibilityArtifactIds)
+    ) {
+      useSessionStore.getState().clearArtifactError(event.sessionId, event.id)
     }
     return true
   }
@@ -430,7 +437,7 @@ const finalizeArtifactEvent = async (
       messageId: attached.messageId,
       artifacts: finalizedArtifacts
     })
-    store.clearArtifactError(event.sessionId)
+    store.clearArtifactError(event.sessionId, event.id)
     openMoleculePreviews(event.sessionId, finalizedArtifacts)
     // Auto-review and every main-process provenance reader load the durable Session, not renderer
     // memory. Persist the checksum-bearing finalized Version descriptors before the stop handler may
@@ -442,7 +449,8 @@ const finalizeArtifactEvent = async (
       store.recordArtifactError(
         event.sessionId,
         getErrorText(error),
-        !isArtifactFinalizationProofError(error)
+        !isArtifactFinalizationProofError(error),
+        event.id
       )
     }
     throw error

@@ -68,8 +68,13 @@ export type SessionRunProjectionActions = {
   replaceMessageArtifacts: (input: ReplaceMessageArtifactsInput) => void
   replaceMessageUploads: (input: ReplaceMessageUploadsInput) => void
   replaceMessagePdfContext: (input: ReplaceMessagePdfContextInput) => void
-  recordArtifactError: (sessionId: string, error: string, retryable?: boolean) => void
-  clearArtifactError: (sessionId: string) => void
+  recordArtifactError: (
+    sessionId: string,
+    error: string,
+    retryable?: boolean,
+    eventId?: string
+  ) => void
+  clearArtifactError: (sessionId: string, eventId?: string) => void
   finishRun: (
     sessionId: string,
     turnUsage?: AcpTurnTokenUsage,
@@ -275,20 +280,22 @@ export const createSessionRunProjectionOwner = <
       }))
     },
 
-    recordArtifactError: (sessionId, error, retryable = true) => {
+    recordArtifactError: (sessionId, error, retryable = true, eventId) => {
       const message = error.trim()
       if (!sessionId || !message) return
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
-          projectArtifactError(session, message, retryable)
+          projectArtifactError(session, message, retryable, eventId)
         )
       }))
     },
 
-    clearArtifactError: (sessionId) => {
+    clearArtifactError: (sessionId, eventId) => {
       if (!sessionId) return
       setSessionState((state) => ({
-        sessions: projectSession(state.sessions, sessionId, projectArtifactErrorCleared)
+        sessions: projectSession(state.sessions, sessionId, (session) =>
+          projectArtifactErrorCleared(session, eventId)
+        )
       }))
     },
 

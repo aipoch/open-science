@@ -268,22 +268,31 @@ export const projectPermissionCleared = (
 export const projectArtifactError = (
   session: ChatSession,
   error: string,
-  retryable = true
+  retryable = true,
+  eventId?: string
 ): ChatSession => ({
   ...session,
   status: 'error',
   error: `${retryable ? ARTIFACT_ERROR_PREFIX : TERMINAL_ARTIFACT_ERROR_PREFIX}: ${error}`,
   errorReportable: true,
+  artifactErrorEventId: eventId,
   updatedAt: Date.now()
 })
 
-export const projectArtifactErrorCleared = (session: ChatSession): ChatSession => {
+export const projectArtifactErrorCleared = (
+  session: ChatSession,
+  eventId?: string
+): ChatSession => {
   if (!isArtifactFinalizationError(session.error)) return session
+  if (eventId && session.artifactErrorEventId && session.artifactErrorEventId !== eventId) {
+    return session
+  }
   return {
     ...session,
     status: session.activeRun ? 'running' : 'idle',
     error: undefined,
     errorReportable: undefined,
+    artifactErrorEventId: undefined,
     updatedAt: Date.now()
   }
 }
