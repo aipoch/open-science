@@ -3773,6 +3773,56 @@ describe('SessionPersistenceCoordinator', () => {
     })
   })
 
+  it('preserves the deletion failure and every failed compensation', async () => {
+    const session = createSession()
+    const deletionError = new Error('disk locked')
+    const indexRollbackError = new Error('database unavailable')
+    const computeRollbackError = new Error('compute cleanup unavailable')
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session }),
+      deleteSession: vi.fn().mockRejectedValue(deletionError)
+    })
+    const fileIndex = createFileIndex({
+      restoreSession: vi.fn().mockRejectedValue(indexRollbackError)
+    })
+    const computeJobs = {
+      prepareSessionJobDeletion: vi.fn(async () => undefined),
+      commitSessionJobDeletion: vi.fn(async () => undefined),
+      prepareProjectJobDeletion: vi.fn(async () => undefined),
+      commitProjectJobDeletion: vi.fn(async () => undefined),
+      abortSessionJobDeletion: vi.fn().mockRejectedValue(computeRollbackError)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createTestLogger(),
+      computeJobs
+    )
+
+    const failure = await coordinator
+      .deleteSession('project-1', 'session-1')
+      .catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect((failure as AggregateError).errors).toEqual([
+      deletionError,
+      indexRollbackError,
+      computeRollbackError
+    ])
+    expect(fileIndex.restoreSession).toHaveBeenCalledWith(
+      'project-1',
+      'session-1',
+      'delete-session-operation'
+    )
+    expect(computeJobs.abortSessionJobDeletion).toHaveBeenCalledWith('project-1', 'session-1')
+    expect(fileIndex.markReconciliationIncomplete).toHaveBeenCalledWith('project-1')
+  })
+
   it('does not widen an already scoped file reconciliation failure during hydration', async () => {
     const session = createSession()
     const result = { sessions: [session], manifest: { version: 1 as const } }

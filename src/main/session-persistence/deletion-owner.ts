@@ -498,8 +498,7 @@ class SessionPersistenceDeletionOwner {
       let recoveryPhase: string | undefined
       try {
         if (!jsonDeleted) {
-          let recoveryError: unknown
-          let recoveryFailed = false
+          const recoveryErrors: unknown[] = []
           try {
             if (receipt.kind === 'retained') {
               recoveryPhase = 'abort-provenance'
@@ -510,16 +509,14 @@ class SessionPersistenceDeletionOwner {
               await this.fileIndex.restoreSession(projectId, sessionId, token)
             }
           } catch (restoreError) {
-            recoveryError = restoreError
-            recoveryFailed = true
+            recoveryErrors.push(restoreError)
           }
           if (computeJobsPrepared) {
             try {
               await this.computeJobs?.abortSessionJobDeletion?.(projectId, sessionId)
             } catch (computeRestoreError) {
               recoveryPhase = 'abort-compute-cleanup'
-              recoveryError = computeRestoreError
-              recoveryFailed = true
+              recoveryErrors.push(computeRestoreError)
             }
           }
           if (managedWorkspaceRetained && session) {
@@ -527,11 +524,19 @@ class SessionPersistenceDeletionOwner {
               recoveryPhase = 'restore-managed-workspace'
               await this.workspaceOwnership?.restoreActive(session)
             } catch (workspaceRestoreError) {
-              recoveryError = workspaceRestoreError
-              recoveryFailed = true
+              recoveryErrors.push(workspaceRestoreError)
             }
           }
-          if (recoveryFailed) throw recoveryError
+          if (recoveryErrors.length > 0) {
+            throw new AggregateError(
+              [error, ...recoveryErrors],
+              `Session deletion rollback failed: ${recoveryErrors
+                .map((recoveryError) =>
+                  recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
+                )
+                .join('; ')}`
+            )
+          }
         } else {
           this.fileIndex.markReconciliationIncomplete(projectId)
         }

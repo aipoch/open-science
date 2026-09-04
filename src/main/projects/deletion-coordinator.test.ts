@@ -190,6 +190,32 @@ describe('ProjectDeletionCoordinator', () => {
     await expect(deletion).rejects.toThrow('intent unavailable')
   })
 
+  it('preserves intent creation and deletion-fence rollback failures', async () => {
+    const intentError = new Error('intent unavailable')
+    const rollbackError = new Error('deletion fence unavailable')
+    const projects = createProjects()
+    projects.createDeletionIntent = vi.fn().mockRejectedValue(intentError)
+    const abortProjectDeletion = vi.fn().mockRejectedValue(rollbackError)
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      createSessions(),
+      undefined,
+      undefined,
+      undefined,
+      {
+        beforeProjectDelete: vi.fn().mockResolvedValue(undefined),
+        restoreProjectDeletion: vi.fn().mockResolvedValue(undefined),
+        abortProjectDeletion
+      }
+    )
+
+    const failure = await coordinator.deleteProject('project-1').catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect((failure as AggregateError).errors).toEqual([intentError, rollbackError])
+    expect(abortProjectDeletion).toHaveBeenCalledWith('project-1')
+  })
+
   it('retains the durable intent and deletion barrier when runtime quiescence fails', async () => {
     const projects = createProjects()
     const abortProjectDeletion = vi.fn()

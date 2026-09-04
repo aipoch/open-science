@@ -379,7 +379,14 @@ class ProjectDeletionCoordinator {
       await this.lifecycle?.restoreProjectDeletion?.(projectId)
       await this.projects.createDeletionIntent(projectId)
     } catch (error) {
-      await this.lifecycle?.abortProjectDeletion?.(projectId)
+      try {
+        await this.lifecycle?.abortProjectDeletion?.(projectId)
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          `Project deletion setup and fence rollback failed: ${projectId}`
+        )
+      }
       throw error
     }
   }
