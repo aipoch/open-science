@@ -613,6 +613,10 @@ class ProvenanceMessageSnapshotRepository {
           terminalMessageId: snapshot.terminalMessageId
         })
       } catch {
+        // Legacy rows without a checksum have no immutable witness. Valid existing bytes can still
+        // establish one in verifyReadySnapshot, but missing/corrupt bytes must remain fail-closed
+        // rather than being reconstructed from mutable Session state.
+        if (!snapshot.checksum) continue
         const session = sessions.get(`${snapshot.projectId}\0${snapshot.sessionId}`)
         if (!session) continue
         try {

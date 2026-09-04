@@ -327,6 +327,19 @@ describe('Provenance Message snapshots', () => {
       `${JSON.stringify(snapshotPayload, null, 2)}\n`
     )
 
+    // A checksumless legacy row has no immutable witness. Missing bytes must remain unavailable
+    // instead of being reconstructed from mutable Session state.
+    await client.artifactMessageSnapshot.update({
+      where: { id: row.messageSnapshot!.id },
+      data: { checksum: '' }
+    })
+    await rm(snapshotPath)
+    await snapshots.reconcileSessionDeletions([changedSession])
+    await expect(readFile(snapshotPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id: row.messageSnapshot!.id } })
+    ).resolves.toMatchObject({ state: 'ready', checksum: '' })
+
     // Previously captured v2 snapshots remain readable; they simply have no process timeline.
     const legacyPayload: Record<string, unknown> = { ...snapshotPayload, schemaVersion: 2 }
     delete legacyPayload.activities
