@@ -561,11 +561,11 @@ describe('SessionPersistenceCoordinator contracts', () => {
       'permission',
       'upload:session-1',
       'upload:session-2',
-      'provenance',
       'artifact-project:project-1',
       'artifact-project:project-2',
       'artifact-session:session-1',
       'artifact-session:session-2',
+      'provenance',
       'files:reconcile',
       'files:sync:session-1',
       'files:sync:session-2'
