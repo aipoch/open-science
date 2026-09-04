@@ -253,6 +253,45 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it('uses the current Session gate when Memory is enabled after capability issue', async () => {
+    let memoryEnabled = false
+    const memorySearch = vi.fn(async () => [])
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      isMemoryEnabledForSession: async () => memoryEnabled,
+      memoryService: {
+        listCategoriesForAgent: vi.fn(async () => []),
+        searchForAgent: memorySearch,
+        rememberForAgent: vi.fn()
+      }
+    })
+    const connection = await server.issueSessionConnection(
+      'session-toggle',
+      'project-1',
+      'root-frame-session-toggle',
+      false
+    )
+    const request = (): Promise<Response> =>
+      fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'memorySearch', params: { query: 'remembered' } })
+      })
+
+    try {
+      expect((await request()).status).toBe(403)
+      memoryEnabled = true
+      expect((await request()).status).toBe(200)
+      expect(memorySearch).toHaveBeenCalledOnce()
+    } finally {
+      connection.release?.()
+      await server.close()
+    }
+  })
+
   it('rejects Memory RPC when the current Main-owned Session gate is disabled', async () => {
     const memorySearch = vi.fn(async () => [])
     const server = new NotebookLocalRpcServer({} as never, {

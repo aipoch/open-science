@@ -1626,15 +1626,15 @@ class NotebookLocalRpcServer {
           if (sessionBinding.allowedMethods && !sessionBinding.allowedMethods.has(method)) {
             throw new RpcHttpError(403, `Notebook RPC capability does not allow ${method}.`)
           }
-          if (MEMORY_RPC_METHODS.has(method) && sessionBinding.memoryTools !== true) {
-            throw new RpcHttpError(403, 'Memory is disabled for this Session.')
-          }
-          if (MEMORY_RPC_METHODS.has(method) && this.isMemoryEnabledForSession) {
-            let memoryEnabled = false
-            try {
-              memoryEnabled = await this.isMemoryEnabledForSession(sessionBinding.sessionId)
-            } catch (error) {
-              log.warn('Memory Session gate read failed', errorLogFields(error))
+          if (MEMORY_RPC_METHODS.has(method)) {
+            let memoryEnabled = sessionBinding.memoryTools === true
+            if (this.isMemoryEnabledForSession) {
+              memoryEnabled = false
+              try {
+                memoryEnabled = await this.isMemoryEnabledForSession(sessionBinding.sessionId)
+              } catch (error) {
+                log.warn('Memory Session gate read failed', errorLogFields(error))
+              }
             }
             if (!memoryEnabled) {
               throw new RpcHttpError(403, 'Memory is disabled for this Session.')

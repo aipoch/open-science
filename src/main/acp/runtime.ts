@@ -336,7 +336,6 @@ type AcpRuntimeNotebookOptions = {
   mcpEntryPath: string
   mcpCommand?: string
   memoryTools?: boolean
-  isMemoryEnabled?: () => Promise<boolean>
   getRpcConnection?: (binding: {
     sessionId: string
     projectId: string
