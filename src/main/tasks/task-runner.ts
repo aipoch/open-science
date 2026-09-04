@@ -947,6 +947,7 @@ class TaskRunner {
       this.dependencies.computePreferences.listAvailable?.() ?? Promise.resolve([])
     ])
     const effectiveAgentConfiguration = effectiveTaskAgentConfiguration(session, settings)
+    const availabilityAgentConfiguration = session.agentConfiguration ?? effectiveAgentConfiguration
     const computeHosts = computeHostsFromSession(session)
     return {
       sessionId: session.id,
@@ -973,10 +974,10 @@ class TaskRunner {
         computeHosts
       },
       availability: {
-        ...(effectiveAgentConfiguration
+        ...(availabilityAgentConfiguration
           ? {
               agentConfiguration: this.agentConfigurationAvailability(
-                effectiveAgentConfiguration,
+                availabilityAgentConfiguration,
                 settings
               )
             }

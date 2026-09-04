@@ -297,6 +297,11 @@ const dataContentApplicationCommands = Object.freeze({
     'update',
     Projects.projectApplicationCommandContracts.update
   ),
+  projectUpdateSessionDefaults: projectCommand(
+    'projects:update-session-defaults',
+    'update',
+    Projects.projectApplicationCommandContracts.update
+  ),
   sessionDelete: sessionCommand(
     'sessions:delete-session',
     'deleteSession',
@@ -440,7 +445,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.projectList,
     dataContentApplicationCommands.projectListDeletionCleanup,
     dataContentApplicationCommands.projectRetryDeletionCleanup,
-    dataContentApplicationCommands.projectUpdate
+    dataContentApplicationCommands.projectUpdate,
+    dataContentApplicationCommands.projectUpdateSessionDefaults
   ] as const),
   defineApplicationCommandGroup('sessions', [
     dataContentApplicationCommands.sessionDelete,
@@ -632,10 +638,29 @@ const registerDataContentApplicationCommands = (
         }),
       'projects:update': ({ args }) =>
         dependencies.withDataRootWrite(async () => {
+          if (args[0].sessionDefaults !== undefined) {
+            throw new Error(
+              'Project Session defaults must be changed through the Task configuration API.'
+            )
+          }
           const project = await dependencies.projects.update(args[0])
           publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectUpdated, project)
           return project
+        }),
+      'projects:update-session-defaults': (invocation) => {
+        assertTaskCaller(
+          invocation,
+          dataContentApplicationCommands.projectUpdateSessionDefaults.name
+        )
+        return dependencies.withDataRootWrite(async () => {
+          if (invocation.args[0].sessionDefaults === undefined) {
+            throw new Error('Project Session defaults are required.')
+          }
+          const project = await dependencies.projects.update(invocation.args[0])
+          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectUpdated, project)
+          return project
         })
+      }
     })
     scope.registerGroup(dataContentApplicationCommandGroups[6], {
       'sessions:delete-session': async ({ args }) => {

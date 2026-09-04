@@ -237,6 +237,32 @@ const createComputePreferenceHarness = (
 }
 
 describe('HeadlessTaskApi adapter', () => {
+  it('routes Project Session defaults through the Task-only persistence command', async () => {
+    const invoke = vi.fn(
+      async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
+        if (channel === 'projects:list') return [project]
+        if (channel === 'projects:update-session-defaults') {
+          return { ...project, ...(args[0] as object), updatedAt: 2 }
+        }
+        throw new Error(`Unexpected Task command: ${channel}`)
+      }
+    )
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+
+    await api.updateProjectSessionDefaults(project.id, {
+      expectedUpdatedAt: project.updatedAt,
+      patch: { memoryEnabled: false }
+    })
+
+    expect(invoke).toHaveBeenCalledWith('projects:update-session-defaults', taskCallerContext(), [
+      {
+        id: project.id,
+        expectedUpdatedAt: project.updatedAt,
+        sessionDefaults: { memoryEnabled: false }
+      }
+    ])
+  })
+
   it('routes Session configuration updates through the Task-only atomic command', async () => {
     const existing: PersistedChatSession = {
       id: 'session-config',

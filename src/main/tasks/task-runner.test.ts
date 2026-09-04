@@ -308,6 +308,26 @@ describe('TaskRunner', () => {
     expect(save).not.toHaveBeenCalled()
   })
 
+  it('reports availability for the persisted Agent configuration instead of its fallback', async () => {
+    const pinned = {
+      ...session,
+      agentConfiguration: {
+        providerId: 'provider-removed',
+        model: 'model-removed',
+        reasoningEffort: 'high' as const
+      }
+    }
+    const runner = createRunner({
+      sessions: { list: async () => [pinned] },
+      settings: { get: async () => configuredSettings }
+    })
+
+    await expect(runner.getSessionConfiguration(pinned.id)).resolves.toMatchObject({
+      persisted: { agentConfiguration: pinned.agentConfiguration },
+      availability: { agentConfiguration: { available: false } }
+    })
+  })
+
   it('maps an authoritative concurrent-start rejection to session_busy', async () => {
     const current = { ...session, revision: 3 }
     const updateConfiguration = vi.fn(async (): Promise<PersistedChatSession> => {

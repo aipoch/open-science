@@ -77,7 +77,13 @@ class HeadlessTaskApi {
       projects: {
         list: () => this.invoke('projects:list') as Promise<Project[]>,
         create: (request) => this.invoke('projects:create', request) as Promise<Project>,
-        update: (request) => this.invoke('projects:update', request) as Promise<Project>
+        update: (request) =>
+          this.invoke(
+            request.sessionDefaults === undefined
+              ? 'projects:update'
+              : 'projects:update-session-defaults',
+            request
+          ) as Promise<Project>
       },
       sessions: {
         list: async () => {

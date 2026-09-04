@@ -248,6 +248,7 @@ const WRAPPED_COMMAND_KEYS = [
   'projectCreate',
   'projectDelete',
   'projectUpdate',
+  'projectUpdateSessionDefaults',
   'sessionDelete',
   'sessionEditDetails',
   'sessionExportConversation',
@@ -327,6 +328,7 @@ describe('Data and content application commands', () => {
         'projects:list-deletion-cleanup',
         'projects:retry-deletion-cleanup',
         'projects:update',
+        'projects:update-session-defaults',
         'sessions:delete-session',
         'sessions:edit-details',
         'sessions:export-conversation',
@@ -1110,6 +1112,42 @@ describe('Data and content application commands', () => {
       )
     }
     expect(deps.sessions.updateSessionConfiguration).toHaveBeenCalledOnce()
+  })
+
+  it('keeps Project Session defaults behind the Task-only validated command', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const request = {
+      id: deps.project.id,
+      expectedUpdatedAt: deps.project.updatedAt,
+      sessionDefaults: { memoryEnabled: false }
+    }
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.projectUpdate,
+        invocation([request] as const)
+      )
+    ).rejects.toThrow(
+      'Project Session defaults must be changed through the Task configuration API.'
+    )
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.projectUpdateSessionDefaults,
+        invocation([request] as const, callerContext)
+      )
+    ).rejects.toThrow(
+      'Channel only available from Task automation: projects:update-session-defaults'
+    )
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.projectUpdateSessionDefaults,
+        invocation([request] as const, createTaskCallerContext())
+      )
+    ).resolves.toBe(deps.project)
+    expect(deps.projects.update).toHaveBeenCalledOnce()
+    expect(deps.projects.update).toHaveBeenCalledWith(request)
   })
 
   it('preserves configuration revision conflicts across the Task command boundary', async () => {
