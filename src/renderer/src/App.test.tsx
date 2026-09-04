@@ -99,12 +99,19 @@ const mocks = vi.hoisted(() => {
             kind: 'unsupported-version'
             affectedFileCount: number
           }
+        | {
+            kind: 'oversized-authority'
+            affectedFiles: Array<{ projectId: string; fileName: string }>
+          }
         | { kind: 'project-deletion-recovery' },
       canDeleteSessionsAndProjects: true,
       loadError: undefined as string | undefined,
       loadWarning: undefined as string | undefined,
       writeError: undefined as string | undefined,
+      writeErrorRetryable: true,
+      persistenceBlockedSessionIds: [] as string[],
       dismissLoadWarning: vi.fn(),
+      startNewConversationAfterSizeLimit: vi.fn(),
       retryLoad: vi.fn(),
       retryWrites: vi.fn()
     },
@@ -134,7 +141,12 @@ const mocks = vi.hoisted(() => {
       connectorApproval: undefined as { active?: boolean } | undefined,
       credentialRequest: undefined as { active?: boolean } | undefined,
       skillImportApproval: undefined as { active?: boolean } | undefined,
-      workspace: undefined as { isPreviewPresentationActive?: boolean } | undefined
+      workspace: undefined as
+        | {
+            isPreviewPresentationActive?: boolean
+            persistenceBlockedSessionIds?: readonly string[]
+          }
+        | undefined
     }
   }
 })
@@ -364,16 +376,21 @@ vi.mock('@/pages/workspace/EnvStatusBanner', () => ({
 vi.mock('@/pages/workspace/WorkspacePage', () => ({
   WorkspacePage: ({
     isSessionPersistenceReady,
+    persistenceBlockedSessionIds,
     canDeleteConversations,
     isPreviewPresentationActive
   }: {
     isSessionPersistenceReady: boolean
+    persistenceBlockedSessionIds?: readonly string[]
     canDeleteConversations: boolean
     isPreviewPresentationActive?: boolean
   }): React.JSX.Element => (
     <div
       ref={() => {
-        mocks.presentationProps.workspace = { isPreviewPresentationActive }
+        mocks.presentationProps.workspace = {
+          isPreviewPresentationActive,
+          persistenceBlockedSessionIds
+        }
       }}
       data-testid="workspace-page"
       data-ready={String(isSessionPersistenceReady)}
@@ -441,10 +458,13 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.loadError = undefined
     mocks.sessionPersistence.loadWarning = undefined
     mocks.sessionPersistence.writeError = undefined
+    mocks.sessionPersistence.writeErrorRetryable = true
+    mocks.sessionPersistence.persistenceBlockedSessionIds = []
     mocks.update.isDialogOpen = false
     mocks.update.status.state = 'idle'
     mocks.update.closeDialog.mockClear()
     mocks.sessionPersistence.dismissLoadWarning.mockClear()
+    mocks.sessionPersistence.startNewConversationAfterSizeLimit.mockClear()
     mocks.sessionPersistence.retryLoad.mockClear()
     mocks.sessionPersistence.retryWrites.mockClear()
     mocks.settings.pendingApprovals = []
@@ -1398,6 +1418,27 @@ describe('App startup routing', () => {
 
     container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')?.click()
     expect(mocks.sessionPersistence.retryWrites).toHaveBeenCalledOnce()
+  })
+
+  it('offers a new conversation instead of retrying a Session size-limit failure', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.sessionPersistence.writeError =
+      'This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.'
+    mocks.sessionPersistence.writeErrorRetryable = false
+    mocks.sessionPersistence.persistenceBlockedSessionIds = ['session-1']
+
+    await render()
+
+    const alert = container.querySelector('[data-testid="session-persistence-alert"]')
+    expect(alert?.textContent).toContain('Conversation storage limit reached')
+    expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
+
+    container
+      .querySelector<HTMLButtonElement>('[data-testid="session-persistence-action"]')
+      ?.click()
+    expect(mocks.sessionPersistence.startNewConversationAfterSizeLimit).toHaveBeenCalledOnce()
+    expect(mocks.presentationProps.workspace?.persistenceBlockedSessionIds).toEqual(['session-1'])
   })
 
   it('keeps failed writes retryable while catalog recovery is visible', async () => {

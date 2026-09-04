@@ -4,6 +4,7 @@ import {
   createEmptySessionManifest,
   materializeSessionConversationGraph,
   SessionRevisionConflictError,
+  SessionSizeLimitError,
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { Logger } from '../logger'
@@ -861,6 +862,40 @@ describe('session persistence IPC handlers', () => {
       error: {
         code: 'session-revision-conflict',
         message: conflict.message
+      }
+    })
+    expect(broadcastLifecycleEvent).not.toHaveBeenCalled()
+  })
+
+  it('returns a size-limit outcome without rejecting the Electron IPC handler', async () => {
+    const failure = new SessionSizeLimitError()
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const handlers: SessionPersistenceHandlers = {
+      loadAll: vi.fn(),
+      list: vi.fn(),
+      loadUsage: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn().mockRejectedValue(failure),
+      setDelegationPolicy: vi.fn(),
+      updateArchive: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), handlers)
+
+    await expect(
+      ipcHandlers.get('sessions:save-session')?.({ sender: { id: 1 } }, createSession())
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        code: 'session-size-limit',
+        message: failure.message
       }
     })
     expect(broadcastLifecycleEvent).not.toHaveBeenCalled()

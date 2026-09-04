@@ -507,7 +507,8 @@ const createPanelDefaults = (): PanelProps => ({
       submitMode: undefined,
       revise: true,
       resume: true,
-      branch: true
+      branch: true,
+      planResponse: true
     },
     actions: {
       submit: {

@@ -501,7 +501,8 @@ const ConversationPanel = ({
       submitMode,
       revise: canEditMessage,
       resume: canResumeSession,
-      branch: canBranchInNewSession
+      branch: canBranchInNewSession,
+      planResponse: canRespondToPlan
     },
     actions: {
       submit: { draft: submitDraft, restoredPlan: onRespondToRestoredPlan },
@@ -893,7 +894,7 @@ const ConversationPanel = ({
   const respondToPendingPlan = async (
     response: { decision: 'approved' | 'rejected' } | { feedback: string }
   ): Promise<void> => {
-    if (!activeSession || !pendingPlan) return
+    if (!activeSession || !pendingPlan || !canRespondToPlan) return
     if (!activeSession.activeRun) {
       await onRespondToRestoredPlan(response)
       return
@@ -1504,8 +1505,16 @@ const ConversationPanel = ({
                             embedded
                             projection={pendingPlan}
                             onOpen={openPendingPlan}
-                            onRespond={(decision) => respondToPendingPlan({ decision })}
-                            onSubmitResponse={(text) => respondToPendingPlan({ feedback: text })}
+                            onRespond={
+                              canRespondToPlan
+                                ? (decision) => respondToPendingPlan({ decision })
+                                : undefined
+                            }
+                            onSubmitResponse={
+                              canRespondToPlan
+                                ? (text) => respondToPendingPlan({ feedback: text })
+                                : undefined
+                            }
                             onResolved={() => setResolvedPlanKey(activePendingPlanKey)}
                           />
                         </ResizablePlanComposer>

@@ -77,7 +77,8 @@ const SessionCatalogRecoveryAlert = ({
       />
     )
   }
-  if (recovery.kind === 'damaged-authority') {
+  if (recovery.kind === 'damaged-authority' || recovery.kind === 'oversized-authority') {
+    const isOversized = recovery.kind === 'oversized-authority'
     const filesByProject = new Map<string, string[]>()
     for (const file of recovery.affectedFiles) {
       const fileNames = filesByProject.get(file.projectId) ?? []
@@ -87,15 +88,25 @@ const SessionCatalogRecoveryAlert = ({
     return (
       <>
         <SessionPersistenceAlert
-          title={t('Project archive needs attention')}
-          message={t(
-            '{{count}} damaged saved conversations were moved aside. Project archive stays unavailable because their state cannot be verified. You can still permanently delete the project.',
-            {
-              count: recovery.affectedFiles.length,
-              defaultValue_one:
-                'A damaged saved conversation was moved aside. Project archive stays unavailable because its state cannot be verified. You can still permanently delete the project.'
-            }
-          )}
+          title={
+            isOversized
+              ? t('Conversation storage limit reached')
+              : t('Project archive needs attention')
+          }
+          message={
+            isOversized
+              ? t(
+                  'One or more saved conversations exceed the 256 MiB storage limit. They were left unchanged and cannot be opened. Review the affected files before retrying.'
+                )
+              : t(
+                  '{{count}} damaged saved conversations were moved aside. Project archive stays unavailable because their state cannot be verified. You can still permanently delete the project.',
+                  {
+                    count: recovery.affectedFiles.length,
+                    defaultValue_one:
+                      'A damaged saved conversation was moved aside. Project archive stays unavailable because its state cannot be verified. You can still permanently delete the project.'
+                  }
+                )
+          }
           variant="warning"
           inline={inline}
           onAction={() => setAreRecoveryDetailsOpen(true)}
@@ -116,7 +127,13 @@ const SessionCatalogRecoveryAlert = ({
                   {t('Affected saved conversations')}
                 </Dialog.Title>
                 <Dialog.Description className="mt-1 text-sm text-muted-foreground">
-                  {t('These files were moved aside so you can inspect or recover them manually.')}
+                  {isOversized
+                    ? t(
+                        'These files were left unchanged. Move them out of the Session folder before retrying, or use an older app version to export them.'
+                      )
+                    : t(
+                        'These files were moved aside so you can inspect or recover them manually.'
+                      )}
                 </Dialog.Description>
               </div>
               <ul className="max-h-[50vh] space-y-3 overflow-y-auto p-5">

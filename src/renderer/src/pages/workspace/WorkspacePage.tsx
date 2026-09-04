@@ -87,6 +87,7 @@ import { annotationRequiresImageInput } from '../../../../shared/annotations'
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
   isSessionPersistenceReady: boolean
+  persistenceBlockedSessionIds?: readonly string[]
   canDeleteConversations: boolean
   isPreviewPresentationActive?: boolean
 }
@@ -114,6 +115,7 @@ const planProjectionRecoveryPorts = {
 const WorkspacePage = ({
   isSessionPersistenceHydrated,
   isSessionPersistenceReady,
+  persistenceBlockedSessionIds = [],
   canDeleteConversations,
   isPreviewPresentationActive = true
 }: WorkspacePageProps): React.JSX.Element => {
@@ -574,7 +576,10 @@ const WorkspacePage = ({
     activeSession,
     projectId: scopedProjectId,
     currentDraftKey,
-    isPersistenceReady: isSessionPersistenceReady,
+    persistenceBlockedSessionIds,
+    isPersistenceReady:
+      isSessionPersistenceReady &&
+      (!activeSession || !persistenceBlockedSessionIds.includes(activeSession.id)),
     supportsImageInput,
     agentConfiguration: activeAgentConfiguration,
     agentConfigurationReady: !agentConfigurationUnavailable,
@@ -1112,6 +1117,7 @@ const WorkspacePage = ({
           activeSession
             ? {
                 sessionId: activeSession.id,
+                enabled: conversation.availability.planResponse,
                 respond: conversation.actions.submit.restoredPlan
               }
             : undefined

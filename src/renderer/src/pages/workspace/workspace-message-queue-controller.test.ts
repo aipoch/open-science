@@ -131,6 +131,7 @@ const options = (
   isBarrierInFlight: vi.fn(() => false),
   isPresentationRevealing: vi.fn(() => false),
   isSpecialistReady: vi.fn(() => true),
+  isPersistenceBlocked: vi.fn(() => false),
   hasPendingPermissionRequest: vi.fn(() => false),
   isProjectActive: vi.fn(() => true),
   abortFixLoop: vi.fn(async () => undefined),

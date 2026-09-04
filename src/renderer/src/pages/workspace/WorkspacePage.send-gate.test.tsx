@@ -40,7 +40,7 @@ const runtime = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   compactContext: vi.fn(),
   ensureSessionReady: vi.fn().mockResolvedValue(undefined),
-  cancelRun: vi.fn(),
+  cancelRun: vi.fn().mockResolvedValue(undefined),
   deleteRuntimeSession: vi.fn(),
   respondToPermission: vi.fn(),
   setMemoryEnabled: vi.fn()
@@ -236,13 +236,16 @@ describe('WorkspacePage send gate while compacting', () => {
     container.remove()
   })
 
-  const renderPage = async (): Promise<void> => {
+  const renderPage = async (
+    persistenceBlockedSessionIds: readonly string[] = []
+  ): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
       root.render(
         <WorkspacePage
           isSessionPersistenceHydrated={true}
           isSessionPersistenceReady={true}
+          persistenceBlockedSessionIds={persistenceBlockedSessionIds}
           canDeleteConversations={true}
         />
       )
@@ -271,6 +274,27 @@ describe('WorkspacePage send gate while compacting', () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     expect(conversationProps.conversation.availability.submit).toBe(true)
+  })
+
+  it('stops an active run and blocks further sends after its Session exceeds the storage limit', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        createSession({
+          status: 'running',
+          activeRun: { promptMessageId: 'prompt-1', startedAt: 1 }
+        })
+      ],
+      selectedSessionId: 'sess-a'
+    })
+
+    await renderPage(['sess-a'])
+
+    expect(runtime.cancelRun).toHaveBeenCalledOnce()
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('continue growing'))
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(false)
   })
 
   it('defaults Memory off and explains the global gate when Memory is off in Settings', async () => {

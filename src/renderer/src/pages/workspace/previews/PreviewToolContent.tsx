@@ -187,7 +187,8 @@ const PlanPreviewToolContent = ({
     await restoredPlanResponder.respond({ decision })
   }
   const hasPlanResponsePath =
-    planSession?.activeRun !== undefined || restoredPlanResponder?.sessionId === item.sessionId
+    restoredPlanResponder?.enabled !== false &&
+    (planSession?.activeRun !== undefined || restoredPlanResponder?.sessionId === item.sessionId)
   const canRespondToPlan =
     planProjection !== undefined &&
     planSession?.status === 'waiting-plan-approval' &&

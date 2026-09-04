@@ -81,6 +81,7 @@ type WorkspaceMessageQueueControllerOptions = {
   isBarrierInFlight: (sessionId: string) => boolean
   isPresentationRevealing: (sessionId: string) => boolean
   isSpecialistReady: (sessionId: string) => boolean
+  isPersistenceBlocked: (sessionId: string) => boolean
   hasPendingPermissionRequest: (sessionId: string) => boolean
   isProjectActive?: (projectId: string) => boolean
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
@@ -101,6 +102,7 @@ type WorkspaceMessageQueueRuntimeOptions = Pick<
   | 'runtime'
   | 'isBarrierInFlight'
   | 'isSpecialistReady'
+  | 'isPersistenceBlocked'
   | 'isSideChatOpen'
   | 'hasPendingPermissionRequest'
   | 'isProjectActive'

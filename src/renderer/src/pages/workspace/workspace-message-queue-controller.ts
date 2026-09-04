@@ -114,7 +114,11 @@ const WorkspaceMessageQueueProvider = ({ children }: PropsWithChildren): ReactEl
   return createElement(WorkspaceMessageQueueContext.Provider, { value: owner }, children)
 }
 
-const WorkspaceMessageQueueRuntimeBridge = (): null => {
+const WorkspaceMessageQueueRuntimeBridge = ({
+  persistenceBlockedSessionIds
+}: {
+  persistenceBlockedSessionIds: readonly string[]
+}): null => {
   const owner = useProvidedWorkspaceMessageQueueOwner()
   const runtime = useWorkspaceAgentRuntime()
   const specialistCatalogLoaded = useSpecialistStore((state) => state.isLoaded)
@@ -152,6 +156,7 @@ const WorkspaceMessageQueueRuntimeBridge = (): null => {
       )
     },
     isSideChatOpen: (sessionId) => openSideChatParentSessionIds.has(sessionId),
+    isPersistenceBlocked: (sessionId) => persistenceBlockedSessionIds.includes(sessionId),
     hasPendingPermissionRequest: (sessionId) =>
       runtime.pendingPermissions.some((request) => request.sessionId === sessionId),
     isProjectActive: (projectId) =>

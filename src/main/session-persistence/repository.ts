@@ -1,11 +1,14 @@
 import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
+import { Buffer } from 'node:buffer'
 import { basename, join } from 'node:path'
 
 import {
   createEmptySessionManifest,
   createSessionFile,
   decodeSessionFile,
+  MAX_PERSISTED_SESSION_BYTES,
+  SessionSizeLimitError,
   SessionRevisionConflictError,
   sanitizeSessionUploadedAttachments,
   sessionRevision,
@@ -28,6 +31,7 @@ import {
 } from './projection'
 import {
   DurableJsonRecoveryBarrierError,
+  DurableJsonReadLimitError,
   readDurableJsonFile,
   recoverDurableJsonDirectory,
   writeDurableJsonFile
@@ -117,6 +121,11 @@ type SessionScanMetrics = {
   sessionBytes: number
 }
 
+type PreparedSessionWrite = {
+  sanitizedSession: PersistedChatSession
+  contents: string
+}
+
 type SessionLoadDiagnostics = {
   result: LoadAllSessionsResult
   // False means at least one directory or session file could not be read or safely quarantined.
@@ -177,6 +186,7 @@ type SessionDirectoryEntry = {
 type SessionRepositoryDependencies = {
   hasActiveRuntimePrompt(projectId: string, sessionId: string): boolean
   hasLiveRuntimeSession(projectId: string, sessionId: string): boolean
+  maxSessionBytes: number
   remove(path: string, options: { force: boolean; recursive: boolean }): Promise<void>
   readDirectoryEntries(path: string): Promise<SessionDirectoryEntry[]>
   readManifestFile(path: string): Promise<string>
@@ -188,6 +198,7 @@ type SessionRepositoryDependencies = {
 const DEFAULT_DEPENDENCIES: SessionRepositoryDependencies = {
   hasActiveRuntimePrompt: () => false,
   hasLiveRuntimeSession: () => false,
+  maxSessionBytes: MAX_PERSISTED_SESSION_BYTES,
   remove: (path, options) => rm(path, options),
   readDirectoryEntries: (path) => readdir(path, { withFileTypes: true }),
   readManifestFile: (path) => readFile(path, 'utf8'),
@@ -292,6 +303,7 @@ class SessionRepository {
         dependencies.hasActiveRuntimePrompt ?? DEFAULT_DEPENDENCIES.hasActiveRuntimePrompt,
       hasLiveRuntimeSession:
         dependencies.hasLiveRuntimeSession ?? DEFAULT_DEPENDENCIES.hasLiveRuntimeSession,
+      maxSessionBytes: dependencies.maxSessionBytes ?? DEFAULT_DEPENDENCIES.maxSessionBytes,
       remove: dependencies.remove ?? DEFAULT_DEPENDENCIES.remove,
       readDirectoryEntries:
         dependencies.readDirectoryEntries ?? DEFAULT_DEPENDENCIES.readDirectoryEntries,
@@ -455,7 +467,10 @@ class SessionRepository {
       sessions: SessionSummary[]
     }> => {
       const summaries = await this.operationScheduler.runGlobal(() => this.projection!.list())
-      if (!summaries.some((session) => session.needsStartupRecovery)) {
+      const needsAuthorityScan =
+        summaries.some((session) => session.needsStartupRecovery) ||
+        (await this.hasOversizedProjectedSession(summaries))
+      if (!needsAuthorityScan) {
         return { sessions: summaries }
       }
       const result = await this.loadAuthorityWithSuspendedProjection(loadAuthority)
@@ -603,6 +618,26 @@ class SessionRepository {
       throw new Error('Session projection is not ready.')
     }
     return this.operationScheduler.runGlobal(() => this.projection!.list())
+  }
+
+  private async hasOversizedProjectedSession(
+    summaries: readonly SessionSummary[]
+  ): Promise<boolean> {
+    for (const summary of summaries) {
+      try {
+        const metadata = await lstat(this.sessionFilePath(summary.projectId, summary.id))
+        if (
+          metadata.isFile() &&
+          !metadata.isSymbolicLink() &&
+          metadata.size > this.dependencies.maxSessionBytes
+        ) {
+          return true
+        }
+      } catch (error) {
+        if (!isMissingFileError(error)) throw error
+      }
+    }
+    return false
   }
 
   async loadSessionUsageProjection(): Promise<SessionUsageProjection> {
@@ -823,6 +858,23 @@ class SessionRepository {
     }
     const nextRevision = nextSessionRevision(actualRevision)
 
+    const unprojectedDurableSession: PersistedChatSession = {
+      ...session,
+      revision: nextRevision
+    }
+    const projectionWillAssignNumber = Boolean(
+      this.projection && !this.projectionWritesSuspended && session.number === undefined
+    )
+    // Admission must precede prepareSave because that call reserves projection metadata. A new
+    // Session is measured with the largest possible assigned number, so the final payload cannot
+    // cross the limit when projection allocation adds that field.
+    const unprojectedWrite = this.prepareSessionWrite(
+      projectionWillAssignNumber
+        ? { ...unprojectedDurableSession, number: Number.MAX_SAFE_INTEGER }
+        : unprojectedDurableSession
+    )
+    await this.assertExistingSessionWithinLimit(this.sessionFilePath(session.projectId, session.id))
+
     if (this.projection && this.projectionWritesSuspended) {
       assertSessionProjectionStorageShape(session)
     }
@@ -834,7 +886,12 @@ class SessionRepository {
       ...projectedSession,
       revision: nextRevision
     }
-    await this.writeSession(durableSession)
+    await this.writeSession(
+      durableSession,
+      projectedSession === session && !projectionWillAssignNumber
+        ? unprojectedWrite
+        : this.prepareSessionWrite(durableSession)
+    )
     if (this.projectionWritesSuspended) {
       this.suspendedProjectionSessionWrites.set(key, {
         projectId: session.projectId,
@@ -1072,15 +1129,7 @@ class SessionRepository {
   }
 
   // Writes through a unique temp file, then atomically replaces the target session file.
-  private async writeSession(session: PersistedChatSession): Promise<void> {
-    await this.ensureDirectoryBoundary(this.sessionsDir, 'Active Session root')
-    await this.writeSessionToDirectory(session, this.projectDir(session.projectId))
-  }
-
-  private async writeSessionToDirectory(
-    session: PersistedChatSession,
-    projectDirectory: string
-  ): Promise<void> {
+  private prepareSessionWrite(session: PersistedChatSession): PreparedSessionWrite {
     const messages = [...session.messages, ...(session.conversationGraph?.messages ?? [])]
     const legacyUpload = messages
       .flatMap((message) => message.uploads ?? [])
@@ -1090,16 +1139,51 @@ class SessionRepository {
         `Session upload must be upgraded to an immutable Version before persistence: ${legacyUpload.id}`
       )
     }
-    const filePath = join(projectDirectory, `${assertSafeSegment(session.id)}.json`)
     const sanitizedSession = sanitizeSessionUploadedAttachments(session)
+    return {
+      sanitizedSession,
+      contents: this.serializeJsonForWrite(
+        createSessionFile(encodeSessionDataPaths(sanitizedSession)),
+        this.dependencies.maxSessionBytes
+      )
+    }
+  }
+
+  private async writeSession(
+    session: PersistedChatSession,
+    preparedWrite = this.prepareSessionWrite(session)
+  ): Promise<void> {
+    await this.ensureDirectoryBoundary(this.sessionsDir, 'Active Session root')
+    await this.writeSessionToDirectory(session, this.projectDir(session.projectId), preparedWrite)
+  }
+
+  private async writeSessionToDirectory(
+    session: PersistedChatSession,
+    projectDirectory: string,
+    preparedWrite = this.prepareSessionWrite(session)
+  ): Promise<void> {
+    const filePath = join(projectDirectory, `${assertSafeSegment(session.id)}.json`)
+    const { sanitizedSession, contents } = preparedWrite
 
     await this.ensureDirectoryBoundary(projectDirectory, 'Session Project directory')
     await this.assertFileBoundary(filePath, 'Session file')
+    await this.assertExistingSessionWithinLimit(filePath)
     await this.preservePreS2Backup(filePath, sanitizedSession)
     await this.preservePreSubagentModelBackup(filePath, sanitizedSession)
     await this.ensureDirectoryBoundary(projectDirectory, 'Session Project directory')
     await this.assertFileBoundary(filePath, 'Session file')
-    await this.atomicWrite(filePath, createSessionFile(encodeSessionDataPaths(sanitizedSession)))
+    await this.atomicWriteContents(filePath, contents)
+  }
+
+  private async assertExistingSessionWithinLimit(filePath: string): Promise<void> {
+    try {
+      if ((await lstat(filePath)).size > this.dependencies.maxSessionBytes) {
+        throw new SessionSizeLimitError(this.dependencies.maxSessionBytes)
+      }
+    } catch (error) {
+      if (isMissingFileError(error)) return
+      throw error
+    }
   }
 
   private async preservePreS2Backup(
@@ -1210,8 +1294,20 @@ class SessionRepository {
   }
 
   // Shared temp-file + rename write used by session files and the manifest.
-  private async atomicWrite(filePath: string, payload: unknown): Promise<void> {
-    await writeDurableJsonFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, {
+  private async atomicWrite(filePath: string, payload: unknown, maxBytes?: number): Promise<void> {
+    await this.atomicWriteContents(filePath, this.serializeJsonForWrite(payload, maxBytes))
+  }
+
+  private serializeJsonForWrite(payload: unknown, maxBytes?: number): string {
+    const contents = `${JSON.stringify(payload, null, 2)}\n`
+    if (maxBytes !== undefined && Buffer.byteLength(contents, 'utf8') > maxBytes) {
+      throw new SessionSizeLimitError(maxBytes)
+    }
+    return contents
+  }
+
+  private async atomicWriteContents(filePath: string, contents: string): Promise<void> {
+    await writeDurableJsonFile(filePath, contents, {
       remove: this.dependencies.remove,
       rename: this.dependencies.renameFile,
       wait: this.dependencies.wait
@@ -1370,7 +1466,8 @@ class SessionRepository {
           remove: this.dependencies.remove,
           rename: this.dependencies.renameFile,
           wait: this.dependencies.wait
-        }
+        },
+        { maxBytes: this.dependencies.maxSessionBytes }
       )
     } catch {
       recoveryComplete = false
@@ -1461,9 +1558,21 @@ class SessionRepository {
           remove: this.dependencies.remove,
           rename: this.dependencies.renameFile,
           wait: this.dependencies.wait
-        }
+        },
+        { maxBytes: this.dependencies.maxSessionBytes }
       )
     } catch (error) {
+      if (error instanceof DurableJsonReadLimitError) {
+        return {
+          isComplete: false,
+          warning: {
+            kind: 'too-large',
+            projectId,
+            fileName: basename(filePath),
+            recovered: false
+          }
+        }
+      }
       if (error instanceof UnsupportedSessionFileError) {
         return {
           isComplete: false,

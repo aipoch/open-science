@@ -76,6 +76,7 @@ const queueSessionIsSendable = (
   options: WorkspaceMessageQueueControllerOptions,
   session: ChatSession
 ): boolean =>
+  !options.isPersistenceBlocked(session.id) &&
   session.archivedAt === undefined &&
   (options.isProjectActive?.(session.projectId) ?? true) &&
   (session.status === 'idle' || session.status === 'error') &&

@@ -98,6 +98,7 @@ type WorkspaceConversationControllerOptions = {
   activeSession: ChatSession | undefined
   projectId: string
   currentDraftKey: string
+  persistenceBlockedSessionIds: readonly string[]
   isPersistenceReady: boolean
   supportsImageInput: boolean | undefined
   agentConfiguration: SessionAgentConfiguration | undefined
@@ -137,6 +138,7 @@ type WorkspaceConversationController = {
     revise: boolean
     resume: boolean
     branch: boolean
+    planResponse: boolean
   }
   actions: {
     submit: {
@@ -371,6 +373,7 @@ const useWorkspaceConversationController = (
     optionsRef.current = options
   }, [options])
   const inFlightDraftKeysRef = useRef(new Set<string>())
+  const cancelledPersistenceBlockedSessions = useRef(new Set<string>())
   const [optimisticMessages, setOptimisticMessages] = useState<Record<string, ChatMessage>>({})
   const planProjectionRecoveryError = usePlanProjectionRecovery(
     options.activeSession,
@@ -396,11 +399,35 @@ const useWorkspaceConversationController = (
       const current = optionsRef.current
       return current.session.lifecycle.canStartSend(sessionId)
     },
+    isPersistenceBlocked: (sessionId) =>
+      optionsRef.current.persistenceBlockedSessionIds.includes(sessionId),
     hasPendingPermissionRequest: options.hasPendingPermissionRequest,
     abortFixLoop: options.abortFixLoop,
     getSession: options.getSession,
     subscribeSessionChanges: options.subscribeSessionChanges
   })
+  useEffect(() => {
+    const current = optionsRef.current
+    const blocked = new Set(current.persistenceBlockedSessionIds)
+    for (const sessionId of cancelledPersistenceBlockedSessions.current) {
+      if (!blocked.has(sessionId)) cancelledPersistenceBlockedSessions.current.delete(sessionId)
+    }
+    for (const sessionId of blocked) {
+      if (cancelledPersistenceBlockedSessions.current.has(sessionId)) continue
+      const session = current.getSession(sessionId)
+      if (!session?.activeRun && !session?.agentPromptInFlight && session?.status !== 'running') {
+        continue
+      }
+      cancelledPersistenceBlockedSessions.current.add(sessionId)
+      void current.runtime
+        .cancelRun(sessionId)
+        .catch(() => current.runtime.cancelRun(sessionId))
+        .catch((error: unknown) => {
+          cancelledPersistenceBlockedSessions.current.delete(sessionId)
+          console.warn('Failed to stop oversized conversation:', error)
+        })
+    }
+  }, [options.persistenceBlockedSessionIds])
   const [actions] = useState<WorkspaceConversationController['actions']>(() => {
     const submitDraft = ({ forcedSkillIds, mode = 'continue' }: DraftSubmitIntent): void => {
       const current = optionsRef.current
@@ -567,7 +594,9 @@ const useWorkspaceConversationController = (
     }
 
     const submitRestoredPlan = async (response: RestoredPlanResponse): Promise<void> => {
-      const { activeSession, agentConfigurationReady, runtime, sideChatOpen } = optionsRef.current
+      const { activeSession, agentConfigurationReady, isPersistenceReady, runtime, sideChatOpen } =
+        optionsRef.current
+      if (!isPersistenceReady) throw new Error('Session persistence is unavailable.')
       const session = activeSession ? optionsRef.current.getSession(activeSession.id) : undefined
       const plan = selectActiveBranchPlan(session)
       if (sideChatOpen || !session || session.activeRun || plan?.approval !== 'pending') {
@@ -708,7 +737,8 @@ const useWorkspaceConversationController = (
       submitMode: submitImmediately ? 'send' : queueDraft ? 'queue' : undefined,
       revise: canRevise(options) || canQueueRevision(options),
       resume: options.isPersistenceReady && !options.sideChatOpen,
-      branch: !queueBlocksActiveSession && canBranch(options)
+      branch: !queueBlocksActiveSession && canBranch(options),
+      planResponse: options.isPersistenceReady
     },
     actions,
     queue: {
