@@ -42,6 +42,7 @@ import {
 import { PythonIcon, RIcon } from './language-icons'
 import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
 import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
+import { provisionProgressText } from '../workspace/provision-progress-text'
 
 // v4 Runtime Registry write surface: one CARD per discovered interpreter per language. Each card can
 // be enabled/disabled (the agent only ever sees enabled envs); external envs additionally expose a
@@ -662,6 +663,7 @@ const RuntimesPanel = ({
             const settingUp = preparing || finishing
             const langProgress = langState?.progress
             const progress = finishing ? 1 : (langProgress?.progress ?? 0)
+            const progressMessage = provisionProgressText(t, langProgress?.event)
             const langError = langState?.error
             const managedRunnable = managedRunnableFor(id)
             const managedEnv = list.find((env) => isDefaultManagedRuntime(id, env))
@@ -670,7 +672,7 @@ const RuntimesPanel = ({
                   preparing,
                   finishing,
                   progress,
-                  message: finishing ? undefined : langProgress?.message,
+                  message: finishing ? undefined : progressMessage,
                   error: langError
                 }
               : undefined
@@ -736,7 +738,7 @@ const RuntimesPanel = ({
                               managedRunnable,
                               settingUp,
                               t,
-                              finishing ? t('Finishing setup…') : langProgress?.message
+                              finishing ? t('Finishing setup…') : progressMessage
                             )}
                           </div>
                           {settingUp ? (

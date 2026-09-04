@@ -49,7 +49,11 @@ const provisioningState = (): void => {
   useNotebookEnvStore.setState({
     status: { pythonReady: false, rReady: false, version: 3, provisioning: true },
     scope: 'python',
-    progress: { phase: 'materialize', message: 'Preparing Python environment…', progress: 0.3 }
+    progress: {
+      phase: 'fetch-python',
+      event: { code: 'preparing-packages', environment: 'default-python' },
+      progress: 0.3
+    }
   })
 }
 
@@ -105,8 +109,8 @@ describe('NotebookStep', () => {
         python: {
           preparing: true,
           progress: {
-            phase: 'materialize',
-            message: 'Preparing Python environment…',
+            phase: 'fetch-python',
+            event: { code: 'preparing-packages', environment: 'default-python' },
             progress: 0.3,
             language: 'python'
           }
@@ -120,7 +124,7 @@ describe('NotebookStep', () => {
     const progress = container.querySelector('[aria-label="Setting up Python runtime"]')
     expect(progress).not.toBeNull()
     expect(progress?.getAttribute('aria-valuenow')).toBe('30')
-    expect(container.textContent).toContain('Preparing Python environment')
+    expect(container.textContent).toContain('Preparing default-python packages…')
   })
 
   it('gates Back and Finish while a runtime setup is in flight, then enables both when idle', async () => {

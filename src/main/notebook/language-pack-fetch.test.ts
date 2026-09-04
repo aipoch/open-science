@@ -227,14 +227,16 @@ describe('createFetchBundleAdapter', () => {
     await expect(readFile(join(root, 'pkgs', 'package-1.conda'), 'utf8')).resolves.toBe(
       packageBytes
     )
-    expect(progress.map((event) => event.message)).toContain('Fetching managed runtime manifest…')
-    expect(progress.map((event) => event.message)).toContain(
-      'Downloading managed python runtime (25%)'
-    )
-    expect(progress.map((event) => event.message)).toContain(
-      'Downloading managed python runtime (100%)'
-    )
-    expect(progress.map((event) => event.message)).toContain('Downloaded python-3.12.tar.zst')
+    expect(progress.map((update) => update.event)).toContainEqual({
+      code: 'fetching-runtime-manifest'
+    })
+    expect(
+      progress.filter((update) => update.event?.code === 'downloading-python-runtime')
+    ).toHaveLength(2)
+    expect(progress.map((update) => update.event)).toContainEqual({
+      code: 'runtime-downloaded',
+      file: 'python-3.12.tar.zst'
+    })
     // A download-phase event carries the nested DownloadProgress detail for the UI speed line.
     const withDownload = progress.find((event) => event.download)
     expect(withDownload?.download).toMatchObject({ phase: 'downloading', attempt: 0 })
@@ -254,7 +256,7 @@ describe('createFetchBundleAdapter', () => {
       adapter(
         { name: 'default-python', language: 'python', version: '3.12', packages: [] },
         1,
-        (update) => progress.push(update.message)
+        (update) => progress.push(update.diagnostic ?? '')
       )
     ).rejects.toThrow('Managed runtime pack unavailable: manifest request failed')
     expect(progress.at(-1)).toContain('Managed runtime pack unavailable')

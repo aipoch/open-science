@@ -97,14 +97,16 @@ describe('createNotebookEnvironmentLifecycle', () => {
   it('provision dispatches python vs R by language and forwards progress', async () => {
     const provisioner = fakeProvisioner({
       provisionPython: vi.fn().mockImplementation(async (cb: (p: ProvisionProgress) => void) => {
-        cb({ phase: 'done', message: 'ok', progress: 1 })
+        cb({ phase: 'done', event: { code: 'python-ready' }, progress: 1 })
       })
     })
     const emitted: ProvisionProgress[] = []
     const lifecycle = createLifecycle(provisioner, { projectProgress: (p) => emitted.push(p) })
     await lifecycle.provision('python')
     expect(provisioner.provisionPython).toHaveBeenCalledOnce()
-    expect(emitted).toEqual([{ phase: 'done', message: 'ok', progress: 1, scope: 'python' }])
+    expect(emitted).toEqual([
+      { phase: 'done', event: { code: 'python-ready' }, progress: 1, scope: 'python' }
+    ])
     await lifecycle.provision('r')
     expect(provisioner.provisionR).toHaveBeenCalledOnce()
   })
@@ -141,7 +143,7 @@ describe('createNotebookEnvironmentLifecycle', () => {
     expect(emitted).toEqual([
       {
         phase: 'error',
-        message: failure.message,
+        diagnostic: failure.message,
         progress: 0,
         language: 'python',
         scope: 'python',
@@ -534,10 +536,14 @@ describe('environment lifecycle command projection', () => {
     const projected: ProvisionProgress[] = []
     const provisioner = fakeProvisioner({
       provisionR: vi.fn().mockImplementation(async (report: (p: ProvisionProgress) => void) => {
-        report({ phase: 'fetch-r', message: 'Downloading R', progress: 0.4 })
+        report({ phase: 'fetch-r', event: { code: 'downloading-r-runtime' }, progress: 0.4 })
       }),
       repair: vi.fn().mockImplementation(async (_lang, report) => {
-        report({ phase: 'repair', message: 'Repairing Python', progress: 0.2 })
+        report({
+          phase: 'create-python',
+          event: { code: 'repairing-package-cache', environment: 'default-python' },
+          progress: 0.2
+        })
       })
     })
     const lifecycle = createLifecycle(provisioner, {
@@ -548,8 +554,18 @@ describe('environment lifecycle command projection', () => {
     await lifecycle.repair('python', 'default-python')
 
     expect(projected).toEqual([
-      { phase: 'fetch-r', message: 'Downloading R', progress: 0.4, scope: 'r' },
-      { phase: 'repair', message: 'Repairing Python', progress: 0.2, scope: 'python' }
+      {
+        phase: 'fetch-r',
+        event: { code: 'downloading-r-runtime' },
+        progress: 0.4,
+        scope: 'r'
+      },
+      {
+        phase: 'create-python',
+        event: { code: 'repairing-package-cache', environment: 'default-python' },
+        progress: 0.2,
+        scope: 'python'
+      }
     ])
   })
 
@@ -596,7 +612,11 @@ describe('environment lifecycle command projection', () => {
       provisionPython: vi
         .fn()
         .mockImplementation(async (report: (p: ProvisionProgress) => void) => {
-          report({ phase: 'fetch-python', message: `Retrying ${channel}`, progress: 0.1 })
+          report({
+            phase: 'fetch-python',
+            event: { code: 'retrying-short-cache', environment: channel },
+            progress: 0.1
+          })
           throw failure
         })
     })
@@ -626,11 +646,19 @@ describe('environment lifecycle command projection', () => {
       provisionPython: vi
         .fn()
         .mockImplementation(async (report: (p: ProvisionProgress) => void) => {
-          report({ phase: 'fetch-python', message: 'Downloading Python (10%)', progress: 0.1 })
-          report({ phase: 'fetch-python', message: 'Downloading Python (20%)', progress: 0.2 })
           report({
             phase: 'fetch-python',
-            message: 'Downloading Python (resuming…)',
+            event: { code: 'downloading-python-runtime' },
+            progress: 0.1
+          })
+          report({
+            phase: 'fetch-python',
+            event: { code: 'downloading-python-runtime' },
+            progress: 0.2
+          })
+          report({
+            phase: 'fetch-python',
+            event: { code: 'downloading-python-runtime' },
             progress: 0.2,
             download: {
               phase: 'reconnecting',
@@ -641,7 +669,11 @@ describe('environment lifecycle command projection', () => {
               attempt: 1
             }
           })
-          report({ phase: 'create-python', message: 'Creating Python', progress: 0.45 })
+          report({
+            phase: 'create-python',
+            event: { code: 'environment-create', environment: 'default-python' },
+            progress: 0.45
+          })
         })
     })
     const lifecycle = createLifecycle(provisioner)
@@ -659,13 +691,16 @@ describe('environment lifecycle command projection', () => {
       .filter(([message]) => message === 'runtime operation progress')
       .map(([, fields]) => fields as Record<string, unknown>)
     expect(progressFields).toMatchObject([
-      { phase: 'fetch-python', message: 'Downloading Python (10%)' },
+      { phase: 'fetch-python', event: { code: 'downloading-python-runtime' } },
       {
         phase: 'fetch-python',
-        message: 'Downloading Python (resuming…)',
+        event: { code: 'downloading-python-runtime' },
         download: { phase: 'reconnecting', attempt: 1, transferred: 20, total: 100 }
       },
-      { phase: 'create-python', message: 'Creating Python' }
+      {
+        phase: 'create-python',
+        event: { code: 'environment-create', environment: 'default-python' }
+      }
     ])
     const operationIds = new Set(
       loggerSpies.info.mock.calls.map(
@@ -689,7 +724,7 @@ describe('environment lifecycle startup', () => {
     expect(broadcast).toHaveBeenCalledWith(
       expect.objectContaining({
         phase: 'error',
-        message: expect.stringMatching(/moving your data/i)
+        diagnostic: expect.stringMatching(/moving your data/i)
       })
     )
   })
@@ -794,7 +829,7 @@ describe('environment lifecycle startup', () => {
     const broadcast = vi.fn()
     await expect(startLifecycle(provisioner, dir, broadcast)).resolves.toBeUndefined()
     expect(broadcast).toHaveBeenCalledWith(
-      expect.objectContaining({ phase: 'error', message: expect.stringContaining('boom') })
+      expect.objectContaining({ phase: 'error', diagnostic: expect.stringContaining('boom') })
     )
   })
 
@@ -854,7 +889,7 @@ describe('environment lifecycle startup', () => {
     expect(broadcast).toHaveBeenCalledWith(
       expect.objectContaining({
         phase: 'error',
-        message: expect.stringMatching(/RUNTIME_RECOVERY_BLOCKED/)
+        diagnostic: expect.stringMatching(/RUNTIME_RECOVERY_BLOCKED/)
       })
     )
   })

@@ -36,7 +36,7 @@ import type {
   InstallRequest as InstallRequestForTest,
   InstallResult as InstallResultForTest
 } from './package-manager'
-import type { EnvironmentInfo } from '../../shared/notebook-env'
+import type { EnvironmentInfo, ProvisionProgress } from '../../shared/notebook-env'
 import {
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
   NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
@@ -7400,12 +7400,16 @@ describe('notebook runtime service', () => {
       const root = await createStorageRoot()
       const executions: NotebookExecutionRequest[] = []
       const service = recordingService(root, executions)
-      const progress: Array<{ phase: string; message: string; progress: number }> = []
+      const progress: ProvisionProgress[] = []
       service.setDefaultEnvProvisioner(
         {
           provisionPython: async () => undefined,
           provisionR: async (onProgress) => {
-            onProgress({ phase: 'fetch-r', message: 'Downloading R runtime', progress: 0.4 })
+            onProgress({
+              phase: 'fetch-r',
+              event: { code: 'downloading-r-runtime' },
+              progress: 0.4
+            })
             throw new Error('checksum mismatch')
           }
         },
@@ -7425,14 +7429,14 @@ describe('notebook runtime service', () => {
       expect(progress).toEqual([
         {
           phase: 'fetch-r',
-          message: 'Downloading R runtime',
+          event: { code: 'downloading-r-runtime' },
           progress: 0.4,
           scope: 'r',
           sessionId: 's'
         },
         {
           phase: 'error',
-          message: 'Could not prepare default-r: checksum mismatch',
+          diagnostic: 'Could not prepare default-r: checksum mismatch',
           progress: 0,
           scope: 'r',
           sessionId: 's',

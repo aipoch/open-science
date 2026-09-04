@@ -163,7 +163,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     const progresses = events.map((e) => e.progress)
     for (let i = 1; i < progresses.length; i++)
       expect(progresses[i]).toBeGreaterThanOrEqual(progresses[i - 1])
-    for (const e of events) expect(e.message).not.toBe('')
+    for (const event of events) expect(event.event).toBeDefined()
     const status = provisioner.status()
     expect(status.pythonReady).toBe(true)
     expect(status.version).toBe(DEFAULT_ENV_VERSION)
@@ -206,7 +206,7 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     tick?.()
     tick?.()
     const createProgress = events
-      .filter((e) => e.phase === 'create-python' && e.message.startsWith('Creating'))
+      .filter((event) => event.event?.code === 'environment-create')
       .map((e) => e.progress)
     // create-start floor + the three ticks above it, monotonic, never reaching the ceiling.
     expect(createProgress).toHaveLength(4)
@@ -623,7 +623,9 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     expect(creates).toBe(2)
     expect(fetchBundle).toHaveBeenCalledTimes(2)
     expect(events).toContainEqual(
-      expect.objectContaining({ message: expect.stringMatching(/repair/i) })
+      expect.objectContaining({
+        event: expect.objectContaining({ code: expect.stringMatching(/^repairing-/) })
+      })
     )
   })
 

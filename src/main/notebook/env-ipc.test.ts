@@ -102,10 +102,14 @@ describe('registerNotebookEnvIpcHandlers', () => {
   it('projects scoped progress only through live Electron BrowserWindows', async () => {
     const provisioner = fakeProvisioner({
       provisionR: vi.fn().mockImplementation(async (report) => {
-        report({ phase: 'fetch-r', message: 'Downloading R', progress: 0.4 })
+        report({ phase: 'fetch-r', event: { code: 'downloading-r-runtime' }, progress: 0.4 })
       }),
       repair: vi.fn().mockImplementation(async (_language, report) => {
-        report({ phase: 'repair', message: 'Repairing Python', progress: 0.2 })
+        report({
+          phase: 'create-python',
+          event: { code: 'repairing-package-cache', environment: 'default-python' },
+          progress: 0.2
+        })
       })
     })
     registerNotebookEnvIpcHandlers(createLifecycle(provisioner))
@@ -123,7 +127,7 @@ describe('registerNotebookEnvIpcHandlers', () => {
         channel: 'notebook-env:progress',
         progress: {
           phase: 'fetch-r',
-          message: 'Downloading R',
+          event: { code: 'downloading-r-runtime' },
           progress: 0.4,
           scope: 'r',
           operationId: 'provision-operation'
@@ -132,8 +136,8 @@ describe('registerNotebookEnvIpcHandlers', () => {
       {
         channel: 'notebook-env:progress',
         progress: {
-          phase: 'repair',
-          message: 'Repairing Python',
+          phase: 'create-python',
+          event: { code: 'repairing-package-cache', environment: 'default-python' },
           progress: 0.2,
           scope: 'python',
           operationId: 'repair-operation'

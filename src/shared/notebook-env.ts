@@ -4,9 +4,48 @@ import type { NotebookLanguage } from './notebook'
 // preload, and the main provisioner (Plan A) all import these so there is one source of truth.
 export type ProvisionScope = 'python' | 'r'
 export type ProvisionOperationScope = ProvisionScope | 'upgrade'
-export type ProvisionProgress = {
-  phase: string
-  message: string
+
+export type ProvisionPhase =
+  | 'upgrade'
+  | 'upgrade-r'
+  | 'restore'
+  | 'fetch-python'
+  | 'fetch-r'
+  | 'create-python'
+  | 'create-r'
+  | 'verify-python'
+  | 'verify-r'
+  | 'python-ready'
+  | 'r-ready'
+  | 'done'
+  | 'error'
+
+// User-facing progress is a closed renderer-localized event. Unstructured failure details travel in
+// `diagnostic` instead, so machine diagnostics can never masquerade as translated product copy.
+export type ProvisionProgressEvent =
+  | { code: 'legacy-package-removed' }
+  | { code: 'environment-create'; environment: string }
+  | { code: 'python-ready' }
+  | { code: 'r-ready' }
+  | { code: 'updating-default-packages' }
+  | { code: 'updating-r-packages' }
+  | { code: 'default-environments-updated' }
+  | { code: 'restoring-environment'; environment: string }
+  | { code: 'runtime-restored' }
+  | { code: 'environment-ready'; environment: string }
+  | { code: 'preparing-packages'; environment: string }
+  | { code: 'retrying-short-cache'; environment: string }
+  | { code: 'repairing-windows-crash'; environment: string }
+  | { code: 'repairing-package-cache'; environment: string }
+  | { code: 'verifying-interpreter'; environment: string }
+  | { code: 'verifying-packages'; completed: number; total: number }
+  | { code: 'fetching-runtime-manifest' }
+  | { code: 'downloading-python-runtime' }
+  | { code: 'downloading-r-runtime' }
+  | { code: 'runtime-downloaded'; file: string }
+  | { code: 'runtime-pack-unavailable' }
+
+type ProvisionProgressBase = {
   progress: number
   // Correlates renderer-requested provision/repair progress with the originating IPC call. Automatic
   // maintenance omits it so its terminal event cannot accidentally settle a queued explicit request.
@@ -23,6 +62,41 @@ export type ProvisionProgress = {
   // coarse `progress` fraction.
   download?: import('./download-progress').DownloadProgress
 }
+
+export type ProvisionProgress =
+  | (ProvisionProgressBase & {
+      phase: Exclude<ProvisionPhase, 'error'>
+      event: ProvisionProgressEvent
+      diagnostic?: string
+    })
+  | (ProvisionProgressBase & {
+      phase: 'error'
+      diagnostic: string
+      event?: never
+    })
+
+export const isTerminalProvisionPhase = (phase: ProvisionPhase): boolean => {
+  switch (phase) {
+    case 'done':
+    case 'error':
+      return true
+    case 'upgrade':
+    case 'upgrade-r':
+    case 'restore':
+    case 'fetch-python':
+    case 'fetch-r':
+    case 'create-python':
+    case 'create-r':
+    case 'verify-python':
+    case 'verify-r':
+    case 'python-ready':
+    case 'r-ready':
+      return false
+    default:
+      return phase satisfies never
+  }
+}
+
 export type RuntimeBundleSource = {
   kind: 'official' | 'override'
   baseUrl: string

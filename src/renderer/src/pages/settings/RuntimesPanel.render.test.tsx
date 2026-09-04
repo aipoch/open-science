@@ -770,8 +770,8 @@ describe('RuntimesPanel', () => {
           r: {
             preparing: true,
             progress: {
-              phase: 'download',
-              message: 'Downloading managed R runtime (30%)',
+              phase: 'fetch-r',
+              event: { code: 'downloading-r-runtime' },
               progress: 0.3,
               language: 'r'
             }
@@ -782,7 +782,7 @@ describe('RuntimesPanel', () => {
     const bar = container.querySelector('[role="progressbar"]')
     expect(bar).not.toBeNull()
     expect(bar?.getAttribute('aria-valuenow')).toBe('30')
-    expect(container.textContent).toContain('Downloading managed R runtime (30%)')
+    expect(container.textContent).toContain('Downloading managed R runtime')
     // The download is cancelable, not a locked state.
     const cancelBtn = Array.from(container.querySelectorAll('button')).find((b) =>
       /^cancel$/i.test((b.textContent ?? '').trim())
