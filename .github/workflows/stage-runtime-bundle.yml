@@ -70,7 +70,7 @@ jobs:
       # staging-irrelevant postinstall (prisma generate + electron-builder native rebuild); staging only
       # needs these JS/WASM deps plus the micromamba fetched below.
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit
 
       # micromamba comes from the pinned official GitHub release asset (see fetch-micromamba.mjs), not
       # our CDN, so staging never depends on a chicken-and-egg CDN state. Fetch the RUNNER's native
