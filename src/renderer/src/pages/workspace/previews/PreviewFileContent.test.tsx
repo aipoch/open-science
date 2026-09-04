@@ -329,6 +329,39 @@ describe('PreviewFileContent', () => {
     )
   })
 
+  it('waits for an Artifact Version to publish before rendering Markdown', async () => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.mocked(window.api.previewResources.acquire).mockRejectedValueOnce(
+      new Error(
+        "Error invoking remote method 'preview-resources:acquire': ManagedFileVersionError: Managed file has no published version."
+      )
+    )
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: '# Published report',
+      encoding: 'utf8',
+      size: 18,
+      truncated: false
+    })
+
+    try {
+      await renderFile(createFileItem({ format: 'markdown', name: 'report.md' }))
+
+      expect(window.api.previewResources.acquire).toHaveBeenCalledOnce()
+      await act(async () => vi.advanceTimersByTimeAsync(200))
+
+      expect(container.textContent).toContain('Published report')
+      expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
+      expect(consoleError).not.toHaveBeenCalledWith(
+        'Failed to read file preview',
+        expect.anything()
+      )
+    } finally {
+      consoleError.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('enables annotations for HTML Source but not HTML Render', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
       content: '<main>selectable source</main>',
