@@ -134,6 +134,8 @@ const publicTypeExports = [
   'SessionStore',
   'SessionStoreApi',
   'SessionWaitReason',
+  'StreamingMessageContent',
+  'StreamingMessageContentByMessageId',
   'ToolActivity',
   'ToolActivityStatus'
 ].sort()
@@ -925,7 +927,8 @@ describe('Session Store architecture', () => {
     ])
     expect(ownerTypeProperties('session-store-persistence-owner.ts', 'SessionStoreData')).toEqual([
       'selectedSessionId',
-      'sessions'
+      'sessions',
+      'streamingMessages'
     ])
     expect(
       ownerTypeProperties('session-store-persistence-owner.ts', 'SessionPersistenceActions')

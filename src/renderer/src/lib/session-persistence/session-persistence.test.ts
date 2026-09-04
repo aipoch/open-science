@@ -1006,6 +1006,52 @@ describe('renderer session persistence bridge', () => {
     )
   })
 
+  it('persists in-flight streaming text that Session identity stability keeps out of Messages', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Stream a response',
+      cwd: '/workspace/project',
+      projectId: 'project-a'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-1',
+      eventId: 'event-1',
+      content: 'Hello'
+    })
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    // Pure text-growth ticks hold the new text in the streaming slice only; the Session object,
+    // its messages array, and the saver's identity diff all stay unchanged.
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-1',
+      eventId: 'event-2',
+      content: ' world'
+    })
+    const state = useSessionStore.getState()
+    expect(state.sessions[0].messages.at(-1)?.content).toBe('Hello')
+    await save(state)
+
+    expect(api.saveSession).toHaveBeenCalledTimes(1)
+    const persisted = vi.mocked(api.saveSession).mock.calls[0][0]
+    expect(persisted.messages.find((message) => message.role === 'agent')).toMatchObject({
+      content: 'Hello world',
+      eventIds: ['event-1', 'event-2']
+    })
+
+    // A crash after the turn ends must still find the complete terminal Message on disk.
+    useSessionStore.getState().finishRun('session-1')
+    await save(useSessionStore.getState())
+    const terminal = vi.mocked(api.saveSession).mock.calls.at(-1)![0]
+    expect(terminal.messages.find((message) => message.role === 'agent')).toMatchObject({
+      content: 'Hello world',
+      status: 'complete',
+      eventIds: ['event-1', 'event-2']
+    })
+  })
+
   it('reports only changed safe fields for stale-graph conflict rebasing', async () => {
     const persisted = materializeSessionConversationGraph(
       createPersistedSession({

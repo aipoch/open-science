@@ -36,7 +36,11 @@ import {
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
-import type { ChatSession, SessionHydrationSelection } from '../../stores/session-store'
+import type {
+  ChatSession,
+  SessionHydrationSelection,
+  StreamingMessageContentByMessageId
+} from '../../stores/session-store'
 import { projectRendererFailure } from '../../renderer-diagnostics'
 
 type SessionPersistenceApi = {
@@ -87,7 +91,7 @@ const deleteSession = (request: DeleteSessionRequest): Promise<SessionDeletionRe
 const toPersistedSessionForAuthorityMaterialization = (
   session: ChatSession
 ): PersistedChatSession => {
-  const persisted = toPersistedSession(session)
+  const persisted = toPersistedSession(session, useSessionStore.getState().streamingMessages)
   return session.delegationPolicyAuthorityPending
     ? { ...persisted, delegationPolicy: 'allow' }
     : persisted
@@ -1093,6 +1097,7 @@ const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<voi
 type SessionStoreSnapshot = {
   sessions: ChatSession[]
   selectedSessionId: string | undefined
+  streamingMessages?: StreamingMessageContentByMessageId
 }
 
 type SessionCatalogRecovery =
@@ -1351,6 +1356,7 @@ const createStoreSaver = (
 ): StoreSaver => {
   let previousSessions = initial.sessions
   let previousSelection = initial.selectedSessionId
+  let previousStreamingMessages = initial.streamingMessages ?? {}
   const acknowledgedRevisions = new Map(
     initial.sessions
       .filter((session) => session.contentLoaded !== false)
@@ -1392,6 +1398,21 @@ const createStoreSaver = (
     const nextSessions = state.sessions
     const previousById = indexById(previousSessions)
     const nextById = indexById(nextSessions)
+    // Pure text-growth ticks keep Session identity stable and only advance the streaming slice, so
+    // the slice diff must also mark a Session dirty or in-flight text would never reach disk until
+    // the next identity-changing event.
+    const nextStreamingMessages = state.streamingMessages ?? {}
+    const streamingDirtySessionIds = new Set<string>()
+    if (nextStreamingMessages !== previousStreamingMessages) {
+      for (const [messageId, entry] of Object.entries(nextStreamingMessages)) {
+        if (previousStreamingMessages[messageId] !== entry) {
+          streamingDirtySessionIds.add(entry.sessionId)
+        }
+      }
+      for (const [messageId, entry] of Object.entries(previousStreamingMessages)) {
+        if (!(messageId in nextStreamingMessages)) streamingDirtySessionIds.add(entry.sessionId)
+      }
+    }
     const tasks: Array<{
       target: string
       run: () => Promise<unknown>
@@ -1477,7 +1498,9 @@ const createStoreSaver = (
       const hasUnsavedLocalTitle =
         session.unsavedTitle === true && Boolean(authority && session.title !== authority.title)
       if (
-        (previousById.get(session.id) !== session || isForced) &&
+        (previousById.get(session.id) !== session ||
+          isForced ||
+          streamingDirtySessionIds.has(session.id)) &&
         (isForced || !isExternallyHydratedSession(session) || hasUnsavedLocalTitle) &&
         !hasStagedUploads(session) &&
         // A terminal graph-integrity failure keeps the renderer responsive, but the flat projection
@@ -1519,7 +1542,7 @@ const createStoreSaver = (
           run: isForced
             ? async () => {
                 const persisted = observePersistencePhase('session-serialize', () =>
-                  toPersistedSession(session)
+                  toPersistedSession(session, nextStreamingMessages)
                 )
                 persisted.revision =
                   acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
@@ -1555,7 +1578,7 @@ const createStoreSaver = (
                   target,
                   async (coalescedOptions) => {
                     const persisted = observePersistencePhase('session-serialize', () =>
-                      toPersistedSession(session)
+                      toPersistedSession(session, nextStreamingMessages)
                     )
                     persisted.revision =
                       acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
@@ -1625,6 +1648,7 @@ const createStoreSaver = (
 
     previousSessions = nextSessions
     previousSelection = state.selectedSessionId
+    previousStreamingMessages = nextStreamingMessages
 
     const scheduledTasks = tasks.map(({ target, run, failureContext }) => {
       // Invoke every task now so it takes its place in the shared persistence queue at snapshot time.

@@ -142,12 +142,18 @@ describe('workspace runtime events', () => {
       })
     )
 
-    expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
+    const state = useSessionStore.getState()
+    expect(state.sessions[0].messages[1]).toMatchObject({
       role: 'agent',
-      content: 'Hello',
+      content: 'Hel',
       streamId: 'assistant-message-1',
-      eventIds: ['event-1', 'event-2'],
+      eventIds: ['event-1'],
       status: 'streaming'
+    })
+    // Later deltas accumulate in the streaming slice until the turn ends.
+    expect(state.streamingMessages[state.sessions[0].messages[1].id]).toMatchObject({
+      content: 'Hello',
+      eventIds: ['event-1', 'event-2']
     })
   })
 
