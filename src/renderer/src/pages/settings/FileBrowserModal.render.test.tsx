@@ -653,4 +653,33 @@ describe('FileBrowserModal', () => {
     ) as HTMLButtonElement | undefined
     expect(addButton?.disabled).toBe(true)
   })
+
+  it('does not offer the last workspace Project after returning home', async () => {
+    useProjectStore.setState({
+      projects: [{ id: 'proj-1', name: 'My Project', createdAt: 1, updatedAt: 1 }],
+      isLoaded: true,
+      loadError: undefined
+    } as Parameters<typeof useProjectStore.setState>[0])
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-1' })
+    useNavigationStore.getState().goHome('user')
+
+    await act(async () => {
+      root.render(
+        <FileBrowserModal open={true} onClose={vi.fn()} initialProviderId="ssh:biowulf" />
+      )
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const fileButton = Array.from(document.querySelectorAll('[role="option"]')).find((element) =>
+      element.textContent?.includes('readme.txt')
+    ) as HTMLElement | undefined
+    expect(fileButton).toBeDefined()
+    await act(async () => {
+      fileButton?.click()
+    })
+
+    expect(document.body.textContent).not.toContain('Add to project')
+  })
 })
