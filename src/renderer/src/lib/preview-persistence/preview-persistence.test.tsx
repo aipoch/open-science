@@ -349,6 +349,126 @@ describe('preview persistence projections', () => {
     })
   })
 
+  it('does not promote artifact identity into an unmatched Upload item', () => {
+    const session = createSession(createUpload({ id: 'different-upload' }), {
+      artifacts: [
+        {
+          id: 'upload:missing-upload',
+          artifactId: 'hydrated-artifact-lineage',
+          kind: 'managed-file',
+          path: '/workspace/uploads/session-final/data.csv',
+          name: 'data.csv'
+        }
+      ]
+    })
+    const restored = toRestoredSlice(
+      {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'open',
+        items: [
+          {
+            id: 'upload:missing-upload',
+            sessionId: 'session-final',
+            title: 'data.csv',
+            source: 'upload',
+            path: '/workspace/uploads/session-final/data.csv',
+            format: 'csv',
+            name: 'data.csv',
+            artifactId: 'persisted-artifact-lineage'
+          }
+        ]
+      },
+      [session]
+    )
+
+    expect(restored.items?.[0]).not.toHaveProperty('artifactId')
+    expect(restored.items?.[0]).not.toHaveProperty('managedFileId')
+  })
+
+  it('preserves a persisted Upload identity while discarding artifact metadata', () => {
+    const restored = toRestoredSlice({
+      version: PREVIEW_STATE_VERSION,
+      panelState: 'open',
+      items: [
+        {
+          id: 'upload:legacy-upload',
+          sessionId: 'session-final',
+          title: 'data.csv',
+          source: 'upload',
+          path: '/workspace/uploads/session-final/data.csv',
+          format: 'csv',
+          name: 'data.csv',
+          artifactId: 'artifact-from-wrong-source',
+          managedFileId: 'persisted-upload-authority'
+        }
+      ]
+    })
+
+    expect(restored.items?.[0]).toMatchObject({
+      managedFileId: 'persisted-upload-authority'
+    })
+    expect(restored.items?.[0]).not.toHaveProperty('artifactId')
+  })
+
+  it('recovers compatibility artifact identity from a persisted artifact id', () => {
+    const restored = toRestoredSlice({
+      version: PREVIEW_STATE_VERSION,
+      panelState: 'open',
+      items: [
+        {
+          id: 'legacy-artifact-version',
+          sessionId: 'session-final',
+          title: 'report.html',
+          path: '/workspace/project/report.html',
+          format: 'html',
+          name: 'report.html',
+          artifactId: 'persisted-artifact-lineage'
+        }
+      ]
+    })
+
+    expect(restored.items?.[0]).toMatchObject({
+      artifactId: 'persisted-artifact-lineage',
+      managedFileId: 'persisted-artifact-lineage'
+    })
+  })
+
+  it('recovers compatibility artifact identity from an exact hydrated Artifact record', () => {
+    const session = createSession(createUpload(), {
+      artifacts: [
+        {
+          id: 'legacy-artifact-version',
+          artifactId: 'hydrated-artifact-lineage',
+          kind: 'managed-file',
+          path: '/workspace/project/report.html',
+          name: 'report.html'
+        }
+      ]
+    })
+    const restored = toRestoredSlice(
+      {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'open',
+        items: [
+          {
+            id: 'legacy-artifact-version',
+            sessionId: 'session-final',
+            title: 'report.html',
+            path: '/workspace/project/report.html',
+            format: 'html',
+            name: 'report.html'
+          }
+        ]
+      },
+      [session]
+    )
+
+    expect(restored.items?.[0]).toMatchObject({
+      artifactId: 'hydrated-artifact-lineage',
+      managedFileId: 'hydrated-artifact-lineage'
+    })
+  })
+
   it('recovers artifact identity only from an exact hydrated Artifact record', () => {
     const session = createSession(createUpload(), {
       artifacts: [
@@ -407,7 +527,6 @@ describe('preview persistence projections', () => {
             id: 'legacy-artifact-version',
             sessionId: 'session-final',
             title: 'report.html',
-            source: 'artifact',
             path: '/workspace/project/report.html',
             format: 'html',
             name: 'report.html'

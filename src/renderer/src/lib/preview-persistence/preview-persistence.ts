@@ -432,12 +432,18 @@ const toRestoredSlice = (
     items: [
       ...persisted.items.map((item) => {
         const upload = item.source === 'upload' ? uploadByPreviewId.get(item.id) : undefined
-        const artifactId =
-          item.artifactId ??
-          (item.source === undefined || item.source === 'artifact'
-            ? artifactIdByRecordId.get(item.id)
-            : undefined)
-        const managedFileId = item.managedFileId ?? upload?.managedFileId ?? artifactId
+        // Restore managed identity only from authoritative data for the persisted source.
+        const hasArtifactSource = item.source === undefined || item.source === 'artifact'
+        const artifactId = hasArtifactSource
+          ? (item.artifactId ?? artifactIdByRecordId.get(item.id))
+          : undefined
+        const hydratedManagedFileId =
+          item.source === 'upload'
+            ? upload?.managedFileId
+            : hasArtifactSource
+              ? artifactId
+              : undefined
+        const managedFileId = item.managedFileId ?? hydratedManagedFileId
         const mimeType = upload?.mimeType ?? item.mimeType
         const currentFormat = getPreviewFormatForFile({ name: item.name, mimeType })
 

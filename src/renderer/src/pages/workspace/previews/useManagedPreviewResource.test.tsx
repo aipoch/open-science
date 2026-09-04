@@ -206,7 +206,8 @@ describe('useManagedPreviewResource', () => {
         name: 'legacy-file.html',
         title: 'legacy-file.html',
         format: 'html',
-        managedFileId: undefined
+        managedFileId: undefined,
+        ...(source === 'upload' ? { artifactId: 'artifact-from-wrong-source' } : {})
       }
       root = createRoot(container)
 
