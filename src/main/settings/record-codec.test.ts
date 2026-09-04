@@ -101,6 +101,7 @@ describe('settings record codec', () => {
   })
 
   it.each([
+    ['apodex', 'Apodex', undefined],
     ['tencent', 'Tencent TokenHub', 'international'],
     ['tencentcodingplan', 'Tencent Coding Plan', undefined],
     ['tencenttokenplan', 'Tencent Token Plan', undefined]

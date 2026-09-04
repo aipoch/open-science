@@ -37,6 +37,7 @@ describe('provider registry', () => {
     expect(isOfficialVendorId('deepseek')).toBe(true)
     expect(isOfficialVendorId('openai')).toBe(true)
     expect(isOfficialVendorId('xai')).toBe(true)
+    expect(isOfficialVendorId('apodex')).toBe(true)
     expect(isOfficialVendorId('tencent')).toBe(true)
     expect(isOfficialVendorId('tencentcodingplan')).toBe(true)
     expect(isOfficialVendorId('tencenttokenplan')).toBe(true)
@@ -545,6 +546,22 @@ describe('provider registry', () => {
     // hidden and expose only the curated language-model catalog.
     expect(resolveVendorModelsUrl('xai')).toBeUndefined()
     expect(defaultVendorModel('xai')).toBe('grok-4.6')
+  })
+
+  it('routes Apodex core models through Messages and Chat Completions', () => {
+    expect(resolveVendorApiEndpoints('apodex')).toEqual(['anthropic', 'openai'])
+    expect(resolveVendorBaseUrl('apodex')).toBe('https://api.apodex.ai')
+    expect(resolveVendorOpenAiBaseUrl('apodex')).toBe('https://api.apodex.ai/v1')
+    expect(resolveVendorApiKeyUrl('apodex')).toBe('https://platform.apodex.ai/console')
+    expect(resolveVendorModelsUrl('apodex')).toBeUndefined()
+    expect(usesVendorAnthropicApiKeyHeader('apodex')).toBe(true)
+    expect(getOfficialVendor('apodex')?.models).toEqual([
+      { id: 'apodex-1.1', contextWindow: 262_144 },
+      { id: 'apodex-1.1-mini', contextWindow: 262_144 }
+    ])
+    expect(defaultVendorModel('apodex')).toBe('apodex-1.1')
+    expect(isVendorModelMultimodal('apodex', 'apodex-1.1')).toBe(false)
+    expect(isVendorModelResponsesSupported('apodex', 'apodex-1.1')).toBe(false)
   })
 
   it('routes Kimi through both APIs so Codex can bridge it', () => {

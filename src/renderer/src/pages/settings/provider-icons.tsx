@@ -9,6 +9,7 @@ import TencentCloudColor from '@lobehub/icons/es/TencentCloud/components/Color'
 
 import { cn } from '@/lib/utils'
 import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
+import apodexLogo from '@/assets/provider-icons/apodex.svg'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
 // CodeBuddy is a third-party product mark used only to identify its compatible ACP runtime.
 // Keep it separate from Open Science branding and avoid implying affiliation or endorsement.
@@ -57,6 +58,7 @@ const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   openai: openaiLogo,
   anthropic: anthropicLogo,
   xai: grokLogo,
+  apodex: apodexLogo,
   deepseek: deepseekLogo,
   bailian: bailianLogo,
   bailianplan: bailianLogo,

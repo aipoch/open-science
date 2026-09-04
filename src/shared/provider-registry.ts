@@ -18,6 +18,7 @@ export type OfficialVendorId =
   | 'openai'
   | 'anthropic'
   | 'xai'
+  | 'apodex'
   | 'deepseek'
   | 'bailian'
   | 'bailianplan'
@@ -207,6 +208,23 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     ],
     // Every curated xAI language model accepts text and image input.
     multimodal: { allMultimodal: true }
+  },
+  {
+    id: 'apodex',
+    label: 'Apodex',
+    // Apodex exposes only a thinking on/off switch, not the product's effort ladder.
+    reasoningEffort: 'unsupported',
+    apiEndpoints: ['anthropic', 'openai'],
+    anthropicApiKeyHeader: true,
+    baseUrl: 'https://api.apodex.ai',
+    openaiBaseUrl: 'https://api.apodex.ai/v1',
+    apiKeyUrl: 'https://platform.apodex.ai/console',
+    // Keep this curated: the account catalog can also contain Deep Research SKUs with different
+    // request semantics, while this provider entry is for the two core text models.
+    models: [
+      { id: 'apodex-1.1', contextWindow: 262_144 },
+      { id: 'apodex-1.1-mini', contextWindow: 262_144 }
+    ]
   },
   {
     id: 'deepseek',
