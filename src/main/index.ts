@@ -403,7 +403,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // 5 MB backend chunk immediately after BrowserWindow construction can otherwise delay
       // ready-to-show even though the window no longer depends on that chunk.
       const startupShellRendered = startupWindow
-        ? waitForStartupShell(startupWindow)
+        ? waitForStartupShell(startupWindow, { diagnostics: startupDiagnostics })
         : Promise.resolve()
       if (startupWindow) {
         if (!forwardSecondInstanceDuringStartup) {
