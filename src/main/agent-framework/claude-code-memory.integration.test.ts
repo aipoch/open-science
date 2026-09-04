@@ -4,9 +4,9 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
-  rmSync,
   writeFileSync
 } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -127,7 +127,7 @@ const runMemoryProbe = async (memoryFlag: '0' | '1'): Promise<MemoryProbeResult>
       }
     }
 
-    for await (const message of query({
+    const session = query({
       prompt: 'Reply with OK.',
       options: {
         cwd: canonicalCwd,
@@ -139,8 +139,13 @@ const runMemoryProbe = async (memoryFlag: '0' | '1'): Promise<MemoryProbeResult>
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         tools: []
       }
-    })) {
-      if (message.type === 'result') break
+    })
+    try {
+      for await (const message of session) {
+        if (message.type === 'result') break
+      }
+    } finally {
+      session.close()
     }
 
     expect(requestBodies).toHaveLength(1)
@@ -156,10 +161,12 @@ const runMemoryProbe = async (memoryFlag: '0' | '1'): Promise<MemoryProbeResult>
   }
 }
 
-afterEach(() => {
-  for (const root of temporaryRoots.splice(0)) {
-    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
-  }
+afterEach(async () => {
+  await Promise.all(
+    temporaryRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }))
+  )
 })
 
 describe('Claude Code ACP memory isolation', () => {
