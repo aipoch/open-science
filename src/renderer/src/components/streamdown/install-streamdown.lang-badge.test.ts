@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { installStreamdown } from './install-streamdown'
+import { resolveLanguageIconPath } from './language-icons'
 
 let uninstall: (() => void) | undefined
 
@@ -93,6 +94,30 @@ describe('code block language badge', () => {
     await flushMutations()
 
     expect(actions.querySelectorAll('[data-lang-icon]')).toHaveLength(1)
+  })
+
+  it('covers the TIOBE top-10 languages and common aliases', () => {
+    // TIOBE index top 10: Python, C++, C, Java, C#, JavaScript, Go, Visual Basic, SQL,
+    // Delphi/Object Pascal — plus the explicitly requested JSON, R, TS.
+    const languages = [
+      'python',
+      'c++',
+      'c',
+      'java',
+      'c#',
+      'javascript',
+      'go',
+      'visual basic',
+      'sql',
+      'delphi',
+      'pascal',
+      'json',
+      'r',
+      'typescript'
+    ]
+    for (const language of languages) {
+      expect(resolveLanguageIconPath(language), language).not.toBeNull()
+    }
   })
 
   it('removes badges on uninstall', async () => {
