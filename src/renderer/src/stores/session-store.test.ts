@@ -2408,7 +2408,7 @@ describe('session store', () => {
     ).toEqual([command])
   })
 
-  it('accepts a newer durable root Branch head before saving the next streamed chunk', () => {
+  it('persists the next streamed chunk when the durable graph timestamp is ahead of the wall clock', () => {
     const prompt = {
       id: 'root-prompt',
       role: 'user' as const,
@@ -2444,8 +2444,14 @@ describe('session store', () => {
     })
 
     const durable = toPersistedSession(useSessionStore.getState().sessions[0])
-    durable.updatedAt += 10
+    const futureUpdatedAt = Date.now() + 60_000
+    const responseMessageId = durable.messages.at(-1)!.id
+    durable.messages.at(-1)!.updatedAt = futureUpdatedAt
+    durable.conversationGraph!.messages.find(({ id }) => id === responseMessageId)!.updatedAt =
+      futureUpdatedAt
+    durable.updatedAt = futureUpdatedAt
     useSessionStore.getState().upsertPersistedSession(durable)
+    vi.setSystemTime(futureUpdatedAt - 120_000)
     useSessionStore.getState().appendAgentMessageChunk({
       sessionId: base.id,
       streamId: 'root-stream',
@@ -2455,7 +2461,14 @@ describe('session store', () => {
     })
 
     const current = useSessionStore.getState().sessions[0]
-    expect(() => toPersistedSession(current)).not.toThrow()
+    expect(current.messages.at(-1)?.content).toBe('Delegation complete')
+    const persisted = toPersistedSession(current)
+    useSessionStore.getState().hydrateSessions([persisted])
+
+    expect(persisted.messages.at(-1)?.content).toBe('Delegation complete')
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)?.content).toBe(
+      'Delegation complete'
+    )
     expect(
       current.conversationGraph?.branches.find(
         ({ id }) => id === current.conversationGraph?.frames[0].activeBranchId
