@@ -152,6 +152,21 @@ describe('ProviderAuthLifecycleOwner', () => {
     expect(claudeSharedAuth.getStatus).toHaveBeenCalledTimes(2)
   })
 
+  it('classifies a missing shared Claude login as a provider-wide auth failure', async () => {
+    vi.mocked(claudeSharedAuth.getStatus).mockResolvedValueOnce({
+      supported: true,
+      authenticated: false,
+      message: 'Not signed in.'
+    })
+    const settings = await repository.getSettings()
+    const provider = settings.providers[0]
+    const projection = new ProviderRuntimeProjectionOwner()
+
+    await expect(
+      owner.validateProviderAuth(projection.resolveProvider(provider), settings, provider)
+    ).resolves.toMatchObject({ ok: false, category: 'auth' })
+  })
+
   it('cancels the matching authentication owners before cleanup completes', async () => {
     await owner.cleanupProviderBeforeDelete('builtin-codex-subscription')
     expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()

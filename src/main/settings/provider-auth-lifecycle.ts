@@ -583,10 +583,11 @@ class ProviderAuthLifecycleOwner {
       checkedAt: Date.now()
     }
     if (!status.authenticated) {
-      return this.claudeSharedAuthValidationResult(
+      const result = this.claudeSharedAuthValidationResult(
         status,
         'Not signed in. Sign in via browser OAuth in the Settings card to connect your Claude subscription.'
       )
+      return status.supported ? { ...result, category: 'auth' } : result
     }
     return this.options.runClaudeSubscriptionProbe(provider, settings)
   }

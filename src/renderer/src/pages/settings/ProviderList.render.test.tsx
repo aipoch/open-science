@@ -3,7 +3,11 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ClaudeSubscriptionProviderId, ProviderView } from '../../../../shared/settings'
+import type {
+  ClaudeSubscriptionProviderId,
+  ProviderValidationTarget,
+  ProviderView
+} from '../../../../shared/settings'
 import { ProviderList } from './ProviderList'
 
 let container: HTMLDivElement
@@ -61,7 +65,7 @@ const renderList = (
     onCancelXaiLogin?: () => void
     onLogoutXai?: () => void
     claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
-    activeModel?: string
+    activeValidationTarget?: ProviderValidationTarget
   } = {}
 ): void => {
   act(() => {
@@ -69,7 +73,7 @@ const renderList = (
       <ProviderList
         providers={providers}
         activeProviderId={activeId}
-        activeModel={callbacks.activeModel}
+        activeValidationTarget={callbacks.activeValidationTarget}
         busyProviderId={busyId}
         onEdit={noop}
         onDelete={noop}
@@ -232,7 +236,24 @@ describe('ProviderList', () => {
       ],
       'p1',
       undefined,
-      { activeModel: 'model-b' }
+      { activeValidationTarget: { model: 'model-b', endpoint: 'anthropic' } }
+    )
+
+    expect(container.querySelector('[aria-label="Connection verified"]')).toBeNull()
+  })
+
+  it('does not mark the active provider verified for a different protocol target', () => {
+    renderList(
+      [
+        provider({
+          lastValidatedTarget: { model: 'claude-sonnet-4-5', endpoint: 'anthropic' }
+        })
+      ],
+      'p1',
+      undefined,
+      {
+        activeValidationTarget: { model: 'claude-sonnet-4-5', endpoint: 'openai' }
+      }
     )
 
     expect(container.querySelector('[aria-label="Connection verified"]')).toBeNull()

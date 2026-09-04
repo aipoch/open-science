@@ -18,6 +18,7 @@ import type {
   ChatApiEndpoint,
   ClaudeSubscriptionProviderId,
   ProviderValidationFailure,
+  ProviderValidationTarget,
   ProviderView
 } from '../../../../shared/settings'
 import {
@@ -27,6 +28,7 @@ import {
   isXaiSubscriptionProvider,
   providerEndpoints,
   providerValidationFailed,
+  providerValidationTargetMatches,
   resolveCodexSubscriptionType,
   selectClaudeSubscriptionProvider
 } from '../../../../shared/settings'
@@ -43,7 +45,7 @@ type ProviderListProps = {
   // Provider that sources the currently selected model. Not shown as an "active provider"; used only
   // to keep the in-use provider from being deleted (which would leave no selectable model).
   activeProviderId: string | undefined
-  activeModel?: string
+  activeValidationTarget?: ProviderValidationTarget
   claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
   busyProviderId?: string
   onEdit: (provider: ProviderView) => void
@@ -143,7 +145,7 @@ const describeType = (provider: ProviderView, t: TFunction): string => {
 const ProviderList = ({
   providers,
   activeProviderId,
-  activeModel,
+  activeValidationTarget,
   claudeSubscriptionProviderId,
   busyProviderId,
   onEdit,
@@ -216,14 +218,15 @@ const ProviderList = ({
             ? provider.lastValidationFailure
             : undefined
           // A passing test shows a green check. Suppressed while a test is in flight.
-          const validationMatchesActiveModel =
+          const validationMatchesActiveTarget =
             !isActiveSource ||
             provider.lastValidatedTarget === undefined ||
-            provider.lastValidatedTarget.model === activeModel
+            (activeValidationTarget !== undefined &&
+              providerValidationTargetMatches(provider.lastValidatedTarget, activeValidationTarget))
           const isVerified =
             !failure &&
             !isBusy &&
-            validationMatchesActiveModel &&
+            validationMatchesActiveTarget &&
             provider.lastValidatedAt !== undefined
           const isCodexSubscription = isCodexSubscriptionProvider(provider.type)
           const isXaiSubscription = isXaiSubscriptionProvider(provider.type)
