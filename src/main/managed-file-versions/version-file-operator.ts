@@ -52,6 +52,10 @@ type StoredFile = Integrity & {
   versionToken?: string
 }
 
+type OpenImmutableOptions = {
+  forceVerify?: boolean
+}
+
 type PublishImmutableInput = PlanImmutableInput & {
   plannedFile: PlannedFile
   content: Uint8Array
@@ -148,7 +152,11 @@ const normalizeStorageError = (
 interface VersionFileOperator {
   planImmutable(input: PlanImmutableInput): PlannedFile
   publishImmutable(input: PublishImmutableInput): Promise<StoredFile>
-  openImmutable(storageRef: string, expectedIntegrity: Integrity): Promise<ReadLease>
+  openImmutable(
+    storageRef: string,
+    expectedIntegrity: Integrity,
+    options?: OpenImmutableOptions
+  ): Promise<ReadLease>
   removeImmutable(storageRef: string, expectedIntegrity: Integrity): Promise<void>
 }
 
@@ -477,7 +485,11 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
     }
   }
 
-  async openImmutable(storageRef: string, expectedIntegrity: Integrity): Promise<ReadLease> {
+  async openImmutable(
+    storageRef: string,
+    expectedIntegrity: Integrity,
+    options?: OpenImmutableOptions
+  ): Promise<ReadLease> {
     const localPath = this.resolveStorageRef(storageRef)
     if (
       !Number.isSafeInteger(expectedIntegrity.sizeBytes) ||
@@ -519,7 +531,7 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
         ctimeNs: before.ctimeNs
       }
       let verificationKey = immutableVerificationKey(expectedIntegrity, snapshot)
-      let cached = verifiedImmutableFiles.has(verificationKey)
+      let cached = !options?.forceVerify && verifiedImmutableFiles.has(verificationKey)
       if (cached) {
         const after = await handle.stat({ bigint: true })
         if (!snapshotMatches(snapshot, after)) {
@@ -1558,6 +1570,7 @@ export {
   type NodeVersionFileOperatorOptions,
   type Integrity,
   type InspectRecoveryInput,
+  type OpenImmutableOptions,
   type PlanImmutableInput,
   type PlannedFile,
   type PublishImmutableInput,

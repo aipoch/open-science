@@ -23,6 +23,7 @@ import { ManagedFileVersionError } from './error'
 import {
   NodeVersionFileOperator,
   VersionFileOperatorError,
+  type OpenImmutableOptions,
   type PlannedFile,
   type ReadLease,
   type VersionFileOperator,
@@ -430,10 +431,14 @@ class ManagedFileVersionService {
       }
     }
 
-    const lease = await this.versionFileOperator.openImmutable(activeVersion.contentStorageKey, {
-      sizeBytes: bytes.byteLength,
-      checksum
-    })
+    const lease = await this.versionFileOperator.openImmutable(
+      activeVersion.contentStorageKey,
+      {
+        sizeBytes: bytes.byteLength,
+        checksum
+      },
+      { forceVerify: true }
+    )
     await lease.close()
     const published = await client.$transaction(async (tx) => {
       const logicalFile = await this.loadLogicalFile(tx, {
@@ -1190,7 +1195,8 @@ class ManagedFileVersionService {
   }
 
   private async openVersionLease(
-    resolved: ResolvedManagedFileVersion
+    resolved: ResolvedManagedFileVersion,
+    options?: OpenImmutableOptions
   ): Promise<ManagedFileReadLease> {
     let operatorLease: ReadLease
     try {
@@ -1199,7 +1205,8 @@ class ManagedFileVersionService {
         {
           sizeBytes: Number(resolved.version.sizeBytes),
           checksum: resolved.version.checksum
-        }
+        },
+        options
       )
     } catch (error) {
       throw translateVersionFileError(
@@ -1267,7 +1274,7 @@ class ManagedFileVersionService {
   }
 
   private async verifyResolvedVersion(resolved: ResolvedManagedFileVersion): Promise<void> {
-    const lease = await this.openVersionLease(resolved)
+    const lease = await this.openVersionLease(resolved, { forceVerify: true })
     await lease.close()
   }
 
@@ -1583,7 +1590,8 @@ class ManagedFileVersionService {
     try {
       const lease = await this.versionFileOperator.openImmutable(
         operation.contentStorageKey,
-        expectedIntegrity
+        expectedIntegrity,
+        { forceVerify: true }
       )
       await lease.close()
     } catch (error) {

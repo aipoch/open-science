@@ -2845,12 +2845,18 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       where: { id: fixture.versionIds[1] },
       data: { contentType: 'video/mp4' }
     })
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const openImmutable = vi.spyOn(versionFileOperator, 'openImmutable')
     const service = new ManagedFileVersionService({
       storageRoot,
-      getClient: () => Promise.resolve(client)
+      getClient: () => Promise.resolve(client),
+      versionFileOperator
     })
 
     await expect(service.auditActiveVersionIntegrity()).resolves.toEqual([])
+    expect(openImmutable).toHaveBeenCalledWith(expect.any(String), expect.any(Object), {
+      forceVerify: true
+    })
   })
 
   describe('openUnpublishedVersion', () => {

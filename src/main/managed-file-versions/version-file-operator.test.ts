@@ -604,18 +604,24 @@ describe('NodeVersionFileOperator', () => {
 
     expect(verifiedBytesRead).toBe(content.byteLength)
 
+    const auditLease = await secondOperator.openImmutable(stored.storageRef, stored, {
+      forceVerify: true
+    })
+    await auditLease.close()
+    expect(verifiedBytesRead).toBe(content.byteLength * 2)
+
     await writeFile(immutablePath, Buffer.alloc(content.byteLength, 8))
     await utimes(immutablePath, fixedTime, fixedTime)
     await expect(secondLease.readRange(0, content.byteLength)).rejects.toMatchObject({
       code: 'INTEGRITY_FAILED'
     })
     await secondLease.close()
-    expect(verifiedBytesRead).toBe(content.byteLength * 3)
+    expect(verifiedBytesRead).toBe(content.byteLength * 4)
 
     await expect(secondOperator.openImmutable(stored.storageRef, stored)).rejects.toMatchObject({
       code: 'INTEGRITY_FAILED'
     })
-    expect(verifiedBytesRead).toBe(content.byteLength * 4)
+    expect(verifiedBytesRead).toBe(content.byteLength * 5)
   })
 
   it('removes a verified immutable file idempotently', async () => {
