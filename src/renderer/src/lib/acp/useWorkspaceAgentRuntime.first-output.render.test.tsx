@@ -115,8 +115,9 @@ describe('workspace Agent first-output runtime sync', () => {
     expect(container.textContent).toBe('thinking')
   })
 
-  it('projects a pending user choice and resumes running before the next Agent output', async () => {
+  it('keeps a detached user-choice continuation visible after its provider run stops', async () => {
     await act(async () => root.render(<Harness />))
+    const promptMessageId = useSessionStore.getState().sessions[0].messages[0].id
 
     runtimeMock.current = createRuntime(
       createSnapshot({
@@ -143,21 +144,43 @@ describe('workspace Agent first-output runtime sync', () => {
     })
     expect(container.textContent).toBe('waiting-for-response')
 
+    const choiceStopEvent = {
+      id: 'choice-provider-stop',
+      timestamp: 1710000000000,
+      kind: 'stop' as const,
+      level: 'info' as const,
+      sessionId: 'session-1',
+      promptMessageId,
+      text: 'end_turn'
+    }
+    const continuationToolEvent = {
+      id: 'choice-continuation-tool',
+      timestamp: 1710000000100,
+      kind: 'tool' as const,
+      level: 'info' as const,
+      sessionId: 'session-1',
+      promptMessageId,
+      toolCallId: 'continuation-tool-1',
+      title: 'Continue after answer',
+      status: 'in_progress' as const
+    }
     runtimeMock.current = createRuntime(
       createSnapshot({
         promptInFlight: true,
         promptInFlightSessionIds: ['session-1'],
-        agentPromptInFlightSessionIds: ['session-1']
+        agentPromptInFlightSessionIds: ['session-1'],
+        events: [choiceStopEvent, continuationToolEvent]
       })
     )
     await act(async () => root.render(<Harness />))
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'running',
+      activeRun: undefined,
       agentPromptInFlight: true,
-      awaitingFirstAgentOutput: true
+      awaitingFirstAgentOutput: undefined
     })
-    expect(container.textContent).toBe('thinking')
+    expect(container.textContent).toBe('interacting-with-tools')
 
     runtimeMock.current = createRuntime(
       createSnapshot({
