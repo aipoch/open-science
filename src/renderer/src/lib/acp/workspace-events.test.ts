@@ -3789,6 +3789,49 @@ describe('workspace runtime events', () => {
       error: expect.stringContaining('Generated file finalization failed')
     })
   })
+
+  it('rejects incomplete native artifact reconciliation results', async () => {
+    const nativePendingArtifact = createArtifactFile({
+      id: 'native-version-incomplete',
+      artifactId: 'native-artifact-incomplete',
+      versionId: 'native-version-incomplete',
+      versionNumber: 1,
+      path: '/Users/example/.open-science/managed/native-version-incomplete/result.txt'
+    })
+    useSessionStore.getState().attachRunArtifacts({
+      sessionId: 'transport-session-1',
+      runId: 'run-native-incomplete',
+      eventId: 'native-incomplete-event',
+      artifacts: [nativePendingArtifact]
+    })
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'stop-before-native-incomplete', kind: 'stop' })
+    )
+
+    await expect(
+      applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'native-incomplete-event',
+          kind: 'artifact',
+          runId: 'run-native-incomplete',
+          artifactClaimId: 'native-incomplete-claim',
+          artifacts: [nativePendingArtifact]
+        }),
+        {
+          reconcilePendingArtifacts: vi.fn().mockResolvedValue([]),
+          finalizeRunArtifacts: vi
+            .fn()
+            .mockRejectedValue(new Error('Artifact run claim not found: native-incomplete-claim')),
+          saveSession: vi.fn().mockResolvedValue(undefined)
+        }
+      )
+    ).rejects.toThrow('Artifact reconciliation did not resolve all native Versions.')
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      artifactErrorEventIds: ['native-incomplete-event']
+    })
+  })
 })
 
 describe('loop guard: suppressNextAutoReview', () => {

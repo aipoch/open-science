@@ -352,6 +352,7 @@ const finalizeArtifactEvent = async (
         }
         return true
       }
+      throw new Error('Artifact reconciliation did not resolve all native Versions.')
     } catch (error) {
       useSessionStore
         .getState()
