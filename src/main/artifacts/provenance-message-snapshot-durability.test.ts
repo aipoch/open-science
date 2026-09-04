@@ -116,6 +116,7 @@ describe('Provenance Message snapshot durability', () => {
       'database:staging',
       `sync:${join(storageRoot, 'artifacts/project-1/session-1/.provenance/.staging/messages/snapshot-1.json')}`,
       `sync:${join(storageRoot, 'artifacts/project-1/session-1/.provenance/message-snapshots')}`,
+      `sync:${join(storageRoot, 'artifacts/project-1/session-1/.provenance/.staging/messages')}`,
       'database:ready'
     ])
   })

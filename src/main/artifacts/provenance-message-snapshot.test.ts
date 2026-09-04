@@ -759,6 +759,7 @@ describe('Provenance Message snapshots', () => {
     await createStagingSnapshot('snapshot-staging-file-1', false, true)
     await createStagingSnapshot('snapshot-corrupt-1', true)
     let failDurability = true
+    const syncedDirectories: string[] = []
     const snapshots = new ProvenanceMessageSnapshotRepository({
       storageRoot,
       getClient: () => Promise.resolve(client),
@@ -766,7 +767,9 @@ describe('Provenance Message snapshots', () => {
         syncFile: async () => {
           if (failDurability) throw Object.assign(new Error('storage unavailable'), { code: 'EIO' })
         },
-        syncDirectory: async () => undefined
+        syncDirectory: async (path) => {
+          syncedDirectories.push(path)
+        }
       }
     })
 
@@ -804,6 +807,34 @@ describe('Provenance Message snapshots', () => {
         'utf8'
       )
     ).resolves.toContain('snapshot-staging-file-1')
+    const stagingDirectory = join(
+      storageRoot,
+      'artifacts/project-1/session-1/.provenance/.staging/messages'
+    )
+    expect(syncedDirectories.filter((path) => path === stagingDirectory)).toHaveLength(2)
+  })
+
+  it('reconciles a large active Session catalog without exceeding SQLite query limits', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-session-batches-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const snapshots = new ProvenanceMessageSnapshotRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const sessions: PersistedChatSession[] = Array.from({ length: 20_001 }, (_, index) => ({
+      id: `session-${index}`,
+      projectId: `project-${index}`,
+      title: `Session ${index}`,
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }))
+
+    await expect(snapshots.reconcileSessionDeletions(sessions)).resolves.toBeUndefined()
   })
 
   it('republishes a staging Review scope snapshot before Session deletion reconciliation', async () => {

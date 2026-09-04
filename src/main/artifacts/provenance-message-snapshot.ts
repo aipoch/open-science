@@ -42,6 +42,8 @@ type AgentMessageScope = {
   messageId: string | null
 }
 
+const ACTIVE_SESSION_QUERY_BATCH_SIZE = 400
+
 const requireAgentMessageScope = <T extends AgentMessageScope>(
   version: T
 ): T & {
@@ -75,16 +77,14 @@ class FinalizedArtifactBindingConflictError extends Error {
 
 const storageKey = (...segments: string[]): string => segments.join('/')
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
+const isMissingPathError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  (error as { code?: unknown }).code === 'ENOENT'
 const readOptionalText = async (path: string): Promise<string | undefined> =>
   readFile(path, 'utf8').catch((error: unknown) => {
-    if (
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error as { code?: unknown }).code === 'ENOENT'
-    ) {
-      return undefined
-    }
+    if (isMissingPathError(error)) return undefined
     throw error
   })
 const resolveStorageKey = (root: string, key: string): string => {
@@ -579,6 +579,9 @@ class ProvenanceMessageSnapshotRepository {
           await this.durability.syncFile(finalPath)
         }
         await this.durability.syncDirectory(dirname(finalPath))
+        await this.durability.syncDirectory(dirname(stagingPath)).catch((error: unknown) => {
+          if (!isMissingPathError(error)) throw error
+        })
         await client.$transaction(async (transaction) => {
           const promoted = await transaction.artifactMessageSnapshot.updateMany({
             where: { id: snapshot.id, state: 'staging' },
@@ -614,15 +617,23 @@ class ProvenanceMessageSnapshotRepository {
       activeSessions.map((session) => [`${session.projectId}\0${session.id}`, session])
     )
     const client = await this.options.getClient()
-    const ready = await client.artifactMessageSnapshot.findMany({
-      where: {
-        state: 'ready',
-        OR: activeSessions.map((session) => ({
-          projectId: session.projectId,
-          sessionId: session.id
+    const ready = []
+    const distinctSessions = [...sessions.values()]
+    for (let index = 0; index < distinctSessions.length; index += ACTIVE_SESSION_QUERY_BATCH_SIZE) {
+      ready.push(
+        ...(await client.artifactMessageSnapshot.findMany({
+          where: {
+            state: 'ready',
+            OR: distinctSessions
+              .slice(index, index + ACTIVE_SESSION_QUERY_BATCH_SIZE)
+              .map((session) => ({
+                projectId: session.projectId,
+                sessionId: session.id
+              }))
+          }
         }))
-      }
-    })
+      )
+    }
     for (const snapshot of ready) {
       try {
         await this.verifyReadySnapshot(snapshot, {
@@ -898,6 +909,7 @@ class ProvenanceMessageSnapshotRepository {
     await this.durability.syncFile(stagingPath)
     await rename(stagingPath, finalPath)
     await this.durability.syncDirectory(dirname(finalPath))
+    await this.durability.syncDirectory(dirname(stagingPath))
     await client.$transaction(async (transaction) => {
       await transaction.artifactMessageSnapshot.update({
         where: { id: snapshotId },
