@@ -13,8 +13,10 @@ export type ChatReasoningTransport = {
 // Model profiles describe the values the user may select; this resolver describes how an official
 // provider expects that value on its Chat Completions wire. `none` is especially non-portable:
 // GLM accepts it as reasoning_effort, while DeepSeek/MiniMax/MiMo use a thinking switch and
-// OpenRouter uses its normalized reasoning object. Custom providers select one of the same request
-// shapes explicitly; absence remains the backwards-compatible literal reasoning_effort field.
+// OpenRouter uses its normalized reasoning object. Apodex exposes thinking only on Anthropic
+// Messages, so its OpenAI-compatible Chat requests omit reasoning controls. Custom providers select
+// one of the same request shapes explicitly; absence remains the backwards-compatible literal
+// reasoning_effort field.
 export const resolveChatReasoningTransport = (
   vendorId: OfficialVendorId | undefined,
   model: string | undefined,
@@ -22,6 +24,8 @@ export const resolveChatReasoningTransport = (
   customTransport?: CustomReasoningEffortTransport
 ): ChatReasoningTransport => {
   const transport = vendorId ?? customTransport
+
+  if (transport === 'apodex') return {}
 
   if (transport === 'openrouter') {
     // Qwen 3.7 Max exposes a hybrid-thinking toggle but no continuous effort levels in OpenRouter's
