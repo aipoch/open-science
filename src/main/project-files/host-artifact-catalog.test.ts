@@ -1,13 +1,15 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
+import { ImmutableInputAuthority } from '../immutable-input-authority'
+import { HostArtifactsService } from '../notebook/host-artifacts-service'
 import { UploadRepository } from '../uploads/repository'
 import { ManagedFileIndexRepository } from './repository'
 
@@ -150,6 +152,71 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
       data: { currentVersionId: versionId }
     })
   }
+
+  it.each(['artifact', 'upload'] as const)(
+    'keeps the listed %s Version content when a newer Version is published before artifactPath',
+    async (source) => {
+      await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+      const service = new HostArtifactsService(
+        repository,
+        new ImmutableInputAuthority({
+          storageRoot: root,
+          managedFileVersions: new ManagedFileVersionService({
+            storageRoot: root,
+            getClient: () => Promise.resolve(client)
+          })
+        })
+      )
+      const context = { projectId: 'project-a', sessionId: 'reading-session' }
+      const publish = async (versionNumber: number): Promise<void> => {
+        const versionId = `${source}-v${versionNumber}`
+        const content = `value\nv${versionNumber}\n`
+        const contentStorageKey = `${source}s/project-a/session-a/file/${versionId}/content`
+        const path = join(root, ...contentStorageKey.split('/'))
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, content)
+        const metadata = {
+          contentStorageKey,
+          checksum: checksum(content),
+          sizeBytes: BigInt(Buffer.byteLength(content))
+        }
+        if (source === 'artifact') {
+          await createArtifactVersion('project-a', 'session-a', 'file', versionId, versionNumber)
+          await client.artifactVersion.update({ where: { id: versionId }, data: metadata })
+        } else {
+          if (versionNumber === 1) {
+            await createUploadVersion('project-a', 'session-a', 'file', versionId)
+          } else {
+            const first = await client.uploadVersion.findUniqueOrThrow({
+              where: { id: 'upload-v1' }
+            })
+            await client.uploadVersion.create({
+              data: { ...first, ...metadata, id: versionId, versionNumber }
+            })
+          }
+          await client.uploadVersion.update({ where: { id: versionId }, data: metadata })
+          await client.uploadFile.update({
+            where: { id: 'file' },
+            data: { currentVersionId: versionId }
+          })
+        }
+      }
+
+      await publish(1)
+      const listed = await service.list({}, context)
+      const versionId = listed.artifacts[0]!.latestVersionId
+      expect(versionId).toBe(`${source}-v1`)
+      await publish(2)
+      expect((await service.list({}, context)).artifacts[0]!.latestVersionId).toBe(`${source}-v2`)
+
+      const path = await service.resolvePath(versionId, context)
+      await expect(readFile(path, 'utf8')).resolves.toBe('value\nv1\n')
+      expect(await service.resolvePath(versionId, context)).toBe(path)
+      const latestPath = await service.resolvePath(`${source}-v2`, context)
+      expect(latestPath).not.toBe(path)
+      await expect(readFile(latestPath, 'utf8')).resolves.toBe('value\nv2\n')
+    }
+  )
 
   it('resolves default catalog entries from DB heads when ManagedFile projections are stale', async () => {
     await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-v1', 1)
