@@ -15,10 +15,10 @@ import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
 import type {
+  AgentFrameworkId,
   ChatApiEndpoint,
   ClaudeSubscriptionProviderId,
   ProviderValidationFailure,
-  ProviderValidationTarget,
   ProviderView
 } from '../../../../shared/settings'
 import {
@@ -26,13 +26,15 @@ import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isXaiSubscriptionProvider,
+  preferredEndpoint,
   providerEndpoints,
   providerValidationFailed,
   providerValidationTargetMatches,
+  requiresChatCompletionsBridge,
   resolveCodexSubscriptionType,
   selectClaudeSubscriptionProvider
 } from '../../../../shared/settings'
-import { getOfficialVendor } from '../../../../shared/provider-registry'
+import { defaultVendorModel, getOfficialVendor } from '../../../../shared/provider-registry'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { ProviderKindIcon } from './provider-icons'
@@ -45,7 +47,9 @@ type ProviderListProps = {
   // Provider that sources the currently selected model. Not shown as an "active provider"; used only
   // to keep the in-use provider from being deleted (which would leave no selectable model).
   activeProviderId: string | undefined
-  activeValidationTarget?: ProviderValidationTarget
+  activeModel?: string
+  agentFrameworkId?: AgentFrameworkId
+  frameworkEndpoints?: readonly ChatApiEndpoint[]
   claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
   busyProviderId?: string
   onEdit: (provider: ProviderView) => void
@@ -125,6 +129,8 @@ const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
   responses: '/v1/responses'
 }
 
+const DEFAULT_FRAMEWORK_ENDPOINTS = ['anthropic'] as const
+
 // Human label for a provider type badge: the vendor name for official providers, else a type name.
 // Vendor names and the Codex identity are proper nouns and stay as the registry supplies them.
 const describeType = (provider: ProviderView, t: TFunction): string => {
@@ -145,7 +151,9 @@ const describeType = (provider: ProviderView, t: TFunction): string => {
 const ProviderList = ({
   providers,
   activeProviderId,
-  activeValidationTarget,
+  activeModel,
+  agentFrameworkId = 'claude-code',
+  frameworkEndpoints = DEFAULT_FRAMEWORK_ENDPOINTS,
   claudeSubscriptionProviderId,
   busyProviderId,
   onEdit,
@@ -217,12 +225,32 @@ const ProviderList = ({
           const failure = providerValidationFailed(provider, provider.lastValidationFailure?.target)
             ? provider.lastValidationFailure
             : undefined
+          const providerRoutes = providerEndpoints(provider)
+          const effectiveModel =
+            activeModel ??
+            provider.model ??
+            (provider.vendorId ? defaultVendorModel(provider.vendorId) : undefined)
+          const activeValidationTarget = {
+            model: effectiveModel,
+            endpoint: preferredEndpoint(
+              providerRoutes,
+              isXaiSubscriptionProvider(provider.type)
+                ? (['responses'] as const)
+                : agentFrameworkId === 'codex'
+                  ? (['anthropic', 'openai', 'responses'] as const)
+                  : requiresChatCompletionsBridge(
+                        { apiEndpoints: providerRoutes },
+                        { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+                      )
+                    ? providerRoutes
+                    : frameworkEndpoints
+            )
+          }
           // A passing test shows a green check. Suppressed while a test is in flight.
           const validationMatchesActiveTarget =
             !isActiveSource ||
             provider.lastValidatedTarget === undefined ||
-            (activeValidationTarget !== undefined &&
-              providerValidationTargetMatches(provider.lastValidatedTarget, activeValidationTarget))
+            providerValidationTargetMatches(provider.lastValidatedTarget, activeValidationTarget)
           const isVerified =
             !failure &&
             !isBusy &&
@@ -237,7 +265,6 @@ const ProviderList = ({
           // removing it would leave no model to run, so its delete action stays disabled.
           const canDelete = !isActiveSource && displayedProviders.length > 1
           // The chat endpoint(s) this provider speaks; defaults to Anthropic when unset (older/custom).
-          const providerRoutes = providerEndpoints(provider)
           const endpoint = {
             path: providerRoutes.map((route) => ENDPOINT_PATHS[route]).join(' · '),
             full:

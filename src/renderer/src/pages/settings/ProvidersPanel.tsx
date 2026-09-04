@@ -24,11 +24,7 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   isClaudeSubscriptionProvider,
-  isCodexSubscriptionProvider,
-  isXaiSubscriptionProvider,
-  preferredEndpoint,
-  providerEndpoints,
-  requiresChatCompletionsBridge
+  isCodexSubscriptionProvider
 } from '../../../../shared/settings'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { errorDetail } from '@/lib/error-detail'
@@ -164,27 +160,6 @@ const ProvidersPanel = ({
   // first wins. When the manual paste wins we cancel the background browser login, and this flag
   // stops that cancelled login's rejection from surfacing a spurious error over the paste's success.
   const manualClaudePasteWonRef = useRef(false)
-
-  const activeProvider = providers.find((provider) => provider.id === activeProviderId)
-  const activeProviderEndpoints = activeProvider ? providerEndpoints(activeProvider) : []
-  const activeValidationTarget = activeProvider
-    ? {
-        model: activeModel,
-        endpoint: preferredEndpoint(
-          activeProviderEndpoints,
-          isXaiSubscriptionProvider(activeProvider.type)
-            ? (['responses'] as const)
-            : agentFrameworkId === 'codex'
-              ? (['anthropic', 'openai', 'responses'] as const)
-              : requiresChatCompletionsBridge(
-                    { apiEndpoints: activeProviderEndpoints },
-                    { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
-                  )
-                ? activeProviderEndpoints
-                : frameworkEndpoints
-        )
-      }
-    : undefined
 
   // A pending sign-in lives in the main process for up to five minutes. This panel unmounts when
   // Settings closes (or the user switches panels), and an orphaned flow would have no cancel
@@ -540,7 +515,9 @@ const ProvidersPanel = ({
         <ProviderList
           providers={visibleProviders}
           activeProviderId={activeProviderId}
-          activeValidationTarget={activeValidationTarget}
+          activeModel={activeModel}
+          agentFrameworkId={agentFrameworkId}
+          frameworkEndpoints={frameworkEndpoints}
           claudeSubscriptionProviderId={claudeSubscriptionProviderId}
           busyProviderId={busyProviderId}
           onEdit={onEditProvider}
