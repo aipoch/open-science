@@ -309,6 +309,11 @@ const finalizeArtifactEvent = async (
     ...(session?.conversationGraph?.messages ?? [])
   ].find((message) => message.eventIds.includes(event.id) && ownsArtifactPrompt(message))
   const appliedArtifactIds = new Set(appliedMessage?.artifactIds ?? [])
+  const sessionReferencesOnly = (resolvedArtifactIds: ReadonlySet<string>): boolean =>
+    [...(session?.messages ?? []), ...(session?.conversationGraph?.messages ?? [])].every(
+      (message) =>
+        (message.artifactIds ?? []).every((artifactId) => resolvedArtifactIds.has(artifactId))
+    )
   const artifactVersionIds = event.artifacts.flatMap((artifact) =>
     artifact.versionId ? [artifact.versionId] : []
   )
@@ -335,7 +340,13 @@ const finalizeArtifactEvent = async (
         result.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
       )
       if (artifactVersionIds.every((versionId) => reconciledVersionIds.has(versionId))) {
-        useSessionStore.getState().clearArtifactError(event.sessionId)
+        const resolvedArtifactIds = new Set([
+          ...event.artifacts.map((artifact) => artifact.id),
+          ...result.map((artifact) => artifact.id)
+        ])
+        if (sessionReferencesOnly(resolvedArtifactIds)) {
+          useSessionStore.getState().clearArtifactError(event.sessionId)
+        }
         return true
       }
     } catch (error) {
@@ -349,8 +360,9 @@ const finalizeArtifactEvent = async (
       throw error
     }
   }
-  const eventArtifactsAreFinalized = event.artifacts.every((pendingArtifact) =>
-    session?.artifacts?.some(
+  const resolvedCompatibilityArtifactIds = new Set<string>()
+  const eventArtifactsAreFinalized = event.artifacts.every((pendingArtifact) => {
+    const finalizedArtifact = session?.artifacts?.find(
       (artifact) =>
         appliedArtifactIds.has(artifact.id) &&
         artifact.name === pendingArtifact.name &&
@@ -359,9 +371,13 @@ const finalizeArtifactEvent = async (
         !pendingArtifact.versionId &&
         !artifact.path.split(/[\\/]/).includes('.pending')
     )
-  )
+    if (finalizedArtifact) resolvedCompatibilityArtifactIds.add(finalizedArtifact.id)
+    return Boolean(finalizedArtifact)
+  })
   if (appliedMessage && eventArtifactsAreFinalized) {
-    useSessionStore.getState().clearArtifactError(event.sessionId)
+    if (sessionReferencesOnly(resolvedCompatibilityArtifactIds)) {
+      useSessionStore.getState().clearArtifactError(event.sessionId)
+    }
     return true
   }
 

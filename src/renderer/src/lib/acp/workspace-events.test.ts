@@ -3650,7 +3650,22 @@ describe('workspace runtime events', () => {
       eventId: 'native-pending-event',
       artifacts: [nativePendingArtifact]
     })
+    useSessionStore.getState().attachRunArtifacts({
+      sessionId: 'transport-session-1',
+      runId: 'run-native-pending',
+      eventId: 'unrelated-native-pending-event',
+      artifacts: [
+        createArtifactFile({
+          id: 'unrelated-native-version',
+          artifactId: 'unrelated-native-artifact',
+          versionId: 'unrelated-native-version',
+          name: 'unrelated.txt',
+          path: '/Users/example/.open-science/managed/unrelated-native-version/unrelated.txt'
+        })
+      ]
+    })
     await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-native-replay', kind: 'stop' }))
+    useSessionStore.getState().recordArtifactError('transport-session-1', 'unrelated claim failed')
     const messageId = useSessionStore.getState().sessions[0].messages[1].id
     const finalizedArtifact = {
       ...nativePendingArtifact,
@@ -3676,6 +3691,7 @@ describe('workspace runtime events', () => {
 
     expect(reconcilePendingArtifacts).toHaveBeenCalledOnce()
     expect(finalizeRunArtifacts).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].error).toContain('unrelated claim failed')
   })
 
   it('records native artifact reconciliation failures for retry', async () => {
