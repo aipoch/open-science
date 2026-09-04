@@ -792,7 +792,15 @@ describe('ConversationPanel composer errors', () => {
     const retry = container.querySelector<HTMLButtonElement>(
       '[aria-label="Retry Artifact publication"]'
     )
+    const report = container.querySelector<HTMLButtonElement>('[aria-label="Report this error"]')
+    const error = Array.from(container.querySelectorAll('span')).find(
+      (element) => element.textContent === activeSession.error
+    )
     expect(retry).not.toBeNull()
+    expect(report).not.toBeNull()
+    expect(error?.parentElement?.classList.contains('flex-col')).toBe(true)
+    expect(retry?.parentElement?.classList.contains('flex-wrap')).toBe(true)
+    expect(retry?.parentElement?.classList.contains('self-end')).toBe(true)
     act(() => retry?.click())
     expect(request).toHaveBeenCalledOnce()
   })

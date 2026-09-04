@@ -1133,14 +1133,14 @@ const ConversationPanel = ({
                       <span className="min-w-0 break-words">{resolvedActionError}</span>
                     ) : null}
                     {activeSession?.status === 'error' ? (
-                      <div className="flex items-start gap-2">
-                        <span className="min-w-0 flex-1 break-words">{resolvedRunError}</span>
-                        {/* The button sits on the failure row beside the run's own error, so the shown
-                            text and the reported text are always the same error. Shown only for an
-                            unknown failure — a recognized one (app guidance or a known provider error)
-                            keeps its message but is not a bug worth a GitHub issue. */}
+                      <div className="flex flex-col items-stretch gap-2">
+                        <span className="min-w-0 break-words">{resolvedRunError}</span>
+                        {/* Actions stay with the run's own error, so the shown and reported text are
+                            always the same error. Shown only for an unknown failure — a recognized one
+                            (app guidance or a known provider error) keeps its message but is not a bug
+                            worth a GitHub issue. */}
                         {canRetryArtifactFinalization || isRunErrorReportable ? (
-                          <div className="flex shrink-0 items-center gap-1">
+                          <div className="flex flex-wrap items-center justify-end gap-1 self-end">
                             {canRetryArtifactFinalization ? (
                               <button
                                 type="button"
