@@ -125,6 +125,11 @@ type PendingResumeReconciliation = {
   specialistId: string | undefined
 }
 
+type PendingSessionDeletion = {
+  runtime: AcpRuntime
+  finish: (retained: boolean) => void
+}
+
 type RootAdmissionLease = {
   release: () => void
 }
@@ -177,6 +182,7 @@ class AcpRuntimeCoordinator {
   private readonly pendingSessionAdoptions = new Map<string, AcpRuntime>()
   private readonly pendingResumeReconciliations = new Map<string, PendingResumeReconciliation>()
   private readonly pendingSessionDrains = new Map<string, PendingSessionDrain>()
+  private readonly pendingSessionDeletions = new Map<string, PendingSessionDeletion>()
   // The latest user-originated prompt is retained only long enough to construct an app-owned
   // continuation for an approved handoff. The continuation keeps its provenance context but never
   // republishes this text as a new user message.
@@ -1249,30 +1255,60 @@ class AcpRuntimeCoordinator {
     this.pendingResumeReconciliations.delete(request.sessionId)
     const runtime = this.runtimeForSession(request.sessionId)
     const ownedBeforeDelete = this.sessionRuntimes.get(request.sessionId) === runtime
+    let deletionFinished = false
+    const pending: PendingSessionDeletion = {
+      runtime,
+      finish: (retained) => {
+        if (deletionFinished) return
+        deletionFinished = true
+        this.teardownCallbacks.afterSessionDelete?.(request.sessionId, retained)
+      }
+    }
+    this.pendingSessionDeletions.set(request.sessionId, pending)
     try {
-      await this.delegatedWork?.deleteSession(request.sessionId)
-      await this.teardownCallbacks.beforeSessionDelete?.(request.sessionId)
-      await runtime.deleteSession(request)
-    } catch (error) {
-      this.teardownCallbacks.afterSessionDelete?.(request.sessionId, true)
-      throw error
+      try {
+        await this.delegatedWork?.deleteSession(request.sessionId)
+        await this.teardownCallbacks.beforeSessionDelete?.(request.sessionId)
+        await runtime.deleteSession(request)
+      } catch (error) {
+        pending.finish(true)
+        throw error
+      }
+      const ownerAfterDelete = this.sessionRuntimes.get(request.sessionId)
+      const retained = ownerAfterDelete !== undefined && ownerAfterDelete !== runtime
+      // Attached deletes emit a runtime state change, whose reconciliation already notifies exactly once.
+      // Detached cleanup deliberately emits no state, so complete its session-scoped teardown here. A
+      // concurrent resume may have transferred the same app session to a new generation while the old
+      // agent delete was in flight; preserve that new owner and its connection status in full.
+      if (ownerAfterDelete === runtime || (!ownerAfterDelete && !ownedBeforeDelete)) {
+        this.sessionRuntimes.delete(request.sessionId)
+        this.sessionConnectionStatuses.delete(request.sessionId)
+        this.latestPromptRequests.delete(request.sessionId)
+        this.clearApplicationSessionEvents(request.sessionId)
+        this.onSessionUnavailable?.(request.sessionId)
+      }
+      pending.finish(retained)
+      await this.retireUnusedTargetedRuntime(runtime)
+      return this.getState()
+    } finally {
+      if (this.pendingSessionDeletions.get(request.sessionId) === pending) {
+        this.pendingSessionDeletions.delete(request.sessionId)
+      }
     }
-    const ownerAfterDelete = this.sessionRuntimes.get(request.sessionId)
-    const retained = ownerAfterDelete !== undefined && ownerAfterDelete !== runtime
-    // Attached deletes emit a runtime state change, whose reconciliation already notifies exactly once.
-    // Detached cleanup deliberately emits no state, so complete its session-scoped teardown here. A
-    // concurrent resume may have transferred the same app session to a new generation while the old
-    // agent delete was in flight; preserve that new owner and its connection status in full.
-    if (ownerAfterDelete === runtime || (!ownerAfterDelete && !ownedBeforeDelete)) {
-      this.sessionRuntimes.delete(request.sessionId)
-      this.sessionConnectionStatuses.delete(request.sessionId)
-      this.latestPromptRequests.delete(request.sessionId)
-      this.clearApplicationSessionEvents(request.sessionId)
-      this.onSessionUnavailable?.(request.sessionId)
+  }
+
+  abortSessionDeletion(sessionId: string): void {
+    const pending = this.pendingSessionDeletions.get(sessionId)
+    if (!pending) return
+
+    this.pendingSessionDeletions.delete(sessionId)
+    try {
+      pending.finish(true)
+      pending.runtime.shutdown()
+    } finally {
+      this.releaseRuntimeOwnership(pending.runtime)
+      this.emitState()
     }
-    this.teardownCallbacks.afterSessionDelete?.(request.sessionId, retained)
-    await this.retireUnusedTargetedRuntime(runtime)
-    return this.getState()
   }
 
   async respondToPermission(response: AcpPermissionResponse): Promise<AcpRuntimeState> {
@@ -1876,6 +1912,9 @@ class AcpRuntimeCoordinator {
       this.pendingSessionDrains.delete(sessionId)
       pending.resolve()
     }
+    for (const [sessionId, pending] of this.pendingSessionDeletions) {
+      if (pending.runtime === runtime) this.pendingSessionDeletions.delete(sessionId)
+    }
     for (const [requestId, owner] of this.permissionRuntimes) {
       if (owner === runtime) this.permissionRuntimes.delete(requestId)
     }
@@ -2016,6 +2055,7 @@ class AcpRuntimeCoordinator {
     this.sessionRuntimes.clear()
     this.pendingSessionAdoptions.clear()
     this.pendingResumeReconciliations.clear()
+    this.pendingSessionDeletions.clear()
     for (const pending of this.pendingSessionDrains.values()) pending.resolve()
     this.pendingSessionDrains.clear()
     this.sessionConnectionStatuses.clear()

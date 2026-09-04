@@ -18,6 +18,7 @@ const createOwner = (
 ): {
   owner: SessionDeletionOwner
   deleteRuntime: (request: { sessionId: string }) => Promise<AcpStateSnapshot>
+  abortSessionDeletion: (sessionId: string) => void
   liveSessionProjectId: (sessionId: string) => string | undefined
   deletePersisted: (request: DeleteSessionRequest) => Promise<void>
   log: { warn: ReturnType<typeof vi.fn> }
@@ -25,14 +26,22 @@ const createOwner = (
   const deleteRuntime = overrides.deleteRuntime ?? vi.fn().mockResolvedValue(snapshot([]))
   const liveSessionProjectId =
     overrides.liveSessionProjectId ?? vi.fn().mockReturnValue('project-1')
+  const abortSessionDeletion = vi.fn()
   const deletePersisted = overrides.deletePersisted ?? vi.fn().mockResolvedValue(undefined)
   const log = { warn: vi.fn() }
   const owner = new SessionDeletionOwner({
-    runtime: { deleteSession: deleteRuntime, liveSessionProjectId },
+    runtime: { deleteSession: deleteRuntime, abortSessionDeletion, liveSessionProjectId },
     persistence: { deleteSession: deletePersisted },
     log
   })
-  return { owner, deleteRuntime, liveSessionProjectId, deletePersisted, log }
+  return {
+    owner,
+    deleteRuntime,
+    abortSessionDeletion,
+    liveSessionProjectId,
+    deletePersisted,
+    log
+  }
 }
 
 describe('SessionDeletionOwner', () => {
@@ -83,6 +92,30 @@ describe('SessionDeletionOwner', () => {
       'Session runtime deletion failed',
       expect.objectContaining({ phase: 'delete-runtime', errorCategory: 'error' })
     )
+  })
+
+  it('returns a retryable runtime failure when runtime teardown never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      const { owner, abortSessionDeletion, deletePersisted } = createOwner({
+        deleteRuntime: vi.fn(() => new Promise<AcpStateSnapshot>(() => undefined))
+      })
+
+      const deletion = owner.delete(request)
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      await expect(
+        Promise.race([deletion, Promise.resolve('still-pending' as const)])
+      ).resolves.toEqual({
+        status: 'failed',
+        reason: 'runtime',
+        runtimeDetached: false
+      })
+      expect(abortSessionDeletion).toHaveBeenCalledWith('session-1')
+      expect(deletePersisted).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not delete persistence while runtime state still contains the Session', async () => {
