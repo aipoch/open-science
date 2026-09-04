@@ -124,6 +124,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     abortFixLoop: vi.fn(() => undefined)
   },
   storage: {
+    acceptMissingDataRoot: vi.fn(async () => undefined),
     acknowledgeDataRootHandoffFlush: vi.fn(() => undefined),
     getStatus: vi.fn(async () => ({
       dataRoot: '/data',
@@ -195,7 +196,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 55 Electron request channels in their existing capability groups', () => {
+  it('defines the exact 56 Electron request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
@@ -215,7 +216,7 @@ describe('Host application commands', () => {
       }
     })
 
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(55)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(56)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -231,7 +232,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(55)
+    expect(router.dispatcher.commandNames()).toHaveLength(56)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -344,6 +345,10 @@ describe('Host application commands', () => {
       invocation([reviewSession])
     )
     await router.dispatcher.invoke(hostApplicationCommands.reviewer.run, invocation([reviewRun]))
+    await router.dispatcher.invoke(
+      hostApplicationCommands.storage.acceptMissingDataRoot,
+      invocation([])
+    )
     await router.dispatcher.invoke(
       hostApplicationCommands.storage.acknowledgeDataRootHandoffFlush,
       invocation([flushResponse])
@@ -476,6 +481,7 @@ describe('Host application commands', () => {
     const previewRequest = { path: '/data/result.txt', encoding: 'utf8' as const }
     const parent = { parent: '/target' }
     const argsByChannel: Readonly<Record<string, readonly unknown[]>> = {
+      'storage:accept-missing-data-root': [],
       'storage:ack-data-root-handoff-flush': [{ requestId: 'flush-1', status: 'completed' }],
       'local-fs:grant-root': [{ path: '/data', access: 'ro' }],
       'local-fs:granted-roots:remove': [{ id: 'root-1' }],
@@ -504,7 +510,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(29)
+    expect(localOnlyChannels).toHaveLength(30)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(

@@ -97,8 +97,11 @@ const withoutTrustedTurnContext = <
 const createNotebookCommandWorkflows = (
   runtime: NotebookCommandRuntime
 ): NotebookCommandWorkflows => ({
-  state: (request) => runtime.state(request),
-  inspectNamespace: (request) => runtime.inspectNamespace(withoutTrustedTurnContext(request)),
+  // These projections can initialize a previously unseen Notebook session and persist run.json,
+  // so they share the same data-root admission as explicit mutation commands.
+  state: (request) => withDataRootWrite(() => runtime.state(request)),
+  inspectNamespace: (request) =>
+    withDataRootWrite(() => runtime.inspectNamespace(withoutTrustedTurnContext(request))),
   reference: (request) => runtime.getSessionReference(request),
   beginCodeCell: (request) => withDataRootWrite(() => runtime.beginCodeCell(request)),
   appendCodeCell: (request) => withDataRootWrite(() => runtime.appendCodeCell(request)),

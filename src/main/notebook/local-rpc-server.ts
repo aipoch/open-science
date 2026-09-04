@@ -101,6 +101,7 @@ import {
   type MemoryAgentContext
 } from '../../shared/memory'
 import type { MemoryService } from '../memory/service'
+import { withDataRootWrite } from '../storage/migration-state'
 import { isRecord } from '../value-guards'
 
 const log = createLogger('notebook:local-rpc')
@@ -1938,7 +1939,11 @@ class NotebookLocalRpcServer {
       const result =
         method === 'capabilitiesCall'
           ? hostCapabilities
-          : await this.dispatch(method, resolvedParams, disconnect.signal)
+          : isNotebookLocalRpcMethod(method) && method !== 'requestNetworkAccess'
+            ? await withDataRootWrite(() =>
+                this.dispatch(method, resolvedParams, disconnect.signal)
+              )
+            : await this.dispatch(method, resolvedParams, disconnect.signal)
 
       writeJson(response, 200, { result })
     } catch (error) {

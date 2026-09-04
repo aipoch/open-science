@@ -286,6 +286,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.validateOpenAlexCredential': 'settings:validate-openalex-credential',
   'settings.validateProvider': 'settings:validate-provider',
   'settings.waitXaiOAuthLogin': 'settings:wait-xai-oauth-login',
+  'storage.acceptMissingDataRoot': 'storage:accept-missing-data-root',
   'storage.ackDataRootHandoffFlush': 'storage:ack-data-root-handoff-flush',
   'storage.cancelMigrate': 'storage:cancel-migrate',
   'storage.commitAndRelaunch': 'storage:commit-and-relaunch',

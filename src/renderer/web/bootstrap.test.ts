@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   WEB_EVENT_STREAM_PROTOCOL_VERSION,
+  WEB_RPC_CAPABILITY_UPDATE_CLI_V1,
   WEB_RPC_PROTOCOL_VERSION
 } from '../../shared/web-rpc-contract'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../shared/web-caller-location'
 import {
   WEB_EVENT_CONNECTION_STATE_EVENT,
   WEB_EVENT_CONSUMERS_READY_EVENT,
@@ -72,6 +74,7 @@ const bootstrapPayload = {
     latestSequence: 0
   },
   platform: 'test',
+  webCallerLocation: 'local',
   versions: { electron: '1', chrome: '1', node: '1' },
   rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
   rpcChannels: []
@@ -116,6 +119,7 @@ beforeEach(() => {
   vi.resetModules()
   FakeWebSocket.instances = []
   document.documentElement.removeAttribute('data-open-science-notebook-network-unavailable')
+  document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
   document.body.innerHTML = `
     <div id=open-science-connection-state role=status>
       <div class=open-science-connection-panel>
@@ -127,6 +131,7 @@ beforeEach(() => {
   sessionStorage.clear()
   sessionStorage.setItem('open-science-web-client', 'web-client-1')
   delete (window as unknown as { api?: unknown }).api
+  document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
   vi.stubGlobal('WebSocket', FakeWebSocket)
   vi.stubGlobal(
     'fetch',
@@ -151,6 +156,33 @@ afterEach(() => {
 })
 
 describe('Web bootstrap event connection', () => {
+  it('records the caller location returned by bootstrap', async () => {
+    await loadBootstrap()
+
+    expect(document.documentElement.getAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)).toBe('local')
+  })
+
+  it('recognizes an older local protocol-v1 Main from its local-only capability', async () => {
+    const olderBootstrap = { ...bootstrapPayload, webCallerLocation: undefined }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...olderBootstrap,
+              rpcCapabilities: [WEB_RPC_CAPABILITY_UPDATE_CLI_V1]
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          )
+      )
+    )
+
+    await loadBootstrap()
+
+    expect(document.documentElement.getAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)).toBe('local')
+  })
+
   it('marks Notebook network settings unavailable when the RPC is remote-restricted', async () => {
     vi.stubGlobal(
       'fetch',

@@ -181,7 +181,6 @@ const createWebServiceController = (
 
   const start = async (port: number, attached: boolean): Promise<{ port: number; url: string }> => {
     const configRoot = getConfigRoot()
-    await tasks.initialize()
     const token = await loadWebToken(configRoot)
     const info = appInfo()
     const server = await startServer({
@@ -197,6 +196,7 @@ const createWebServiceController = (
       permissionApprovalPresence,
       externalAccess,
       tasks,
+      waitUntilTasksReady: () => tasks.initialize(),
       // Attached: a graceful shutdown request stops only the web service (the app keeps running). A
       // dedicated daemon quits the process, which is what stops it serving.
       onShutdownRequest: attached ? () => void close() : requestQuit,
@@ -234,6 +234,10 @@ const createWebServiceController = (
       await closeRunning()
       throw error
     }
+
+    // Task restoration can read Sessions and therefore wait on the missing-data-root gate. Keep
+    // bootstrap and storage recovery reachable while Task HTTP requests wait on the same promise.
+    void tasks.initialize().catch((error) => log.error('Task journal restoration failed', error))
 
     const url = authUrl(token, server.port)
     log.info(`Open Science Web: http://127.0.0.1:${server.port}/`, {

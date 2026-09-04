@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { request as httpRequest, type ClientRequest, type Server } from 'node:http'
 import { createConnection, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -19,6 +19,10 @@ import { fetchLocalRpc } from '../local-rpc-transport'
 import { MemoryRepository } from '../memory/repository'
 import { MemoryService } from '../memory/service'
 import { createProjectDbClient } from '../projects/prisma-client'
+import {
+  acceptMissingDataRoot,
+  initializeDataRootWriteAvailability
+} from '../storage/migration-state'
 import { createNotebookArtifactSourceScopeProvider } from './artifact-source-scope'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import {
@@ -87,6 +91,7 @@ const artifactCapabilityBinding = {
 } as const
 
 afterEach(async () => {
+  initializeDataRootWriteAvailability(false)
   if (storageRoot) {
     await rm(storageRoot, { recursive: true, force: true })
     storageRoot = undefined
@@ -94,6 +99,60 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('does not recreate a missing data root before empty-folder acceptance', async () => {
+    const parentRoot = await createStorageRoot()
+    const missingDataRoot = join(parentRoot, 'missing-data-root')
+    initializeDataRootWriteAvailability(true)
+    const service = new NotebookRuntimeService({
+      configRoot: parentRoot,
+      dataRoot: missingDataRoot,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(missingDataRoot)
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
+    const response = fetchLocalRpc(
+      connection,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'state',
+          params: { sessionId: 'session-1', workspaceCwd: '/workspace' }
+        })
+      },
+      'missing data root Notebook gate test'
+    )
+
+    try {
+      let recreated = false
+      for (let attempt = 0; attempt < 20 && !recreated; attempt += 1) {
+        recreated = await stat(missingDataRoot).then(
+          () => true,
+          () => false
+        )
+        if (!recreated) await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      expect(recreated).toBe(false)
+
+      await acceptMissingDataRoot()
+      await expect(response.then((result) => result.status)).resolves.toBe(200)
+    } finally {
+      await acceptMissingDataRoot()
+      await response.catch(() => undefined)
+      connection.release?.()
+      await server.close()
+      await service.dispose()
+    }
+  })
+
   it('canonicalizes caller-controlled notebook run sources to Agent authority', async () => {
     const beginCodeCell = vi.fn(async (request: unknown) => request)
     const runCell = vi.fn(async (request: unknown) => request)

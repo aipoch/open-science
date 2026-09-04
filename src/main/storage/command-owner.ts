@@ -33,10 +33,12 @@ import { removeNotebookWorkloadCache } from '../notebook/notebook-workload-cache
 import { detectActiveSessions } from './detect-active'
 import { hasAnyExistingPath, isDataRootMissing } from './path-presence'
 import {
+  acceptMissingDataRoot as acceptMissingDataRootWrite,
   beginMigration,
   beginMigrationPreparation,
   clearMigrationPending,
   endMigrationCopy,
+  reconcileDataRootWriteAvailability,
   resumeMigrationPreparation
 } from './migration-state'
 import {
@@ -258,30 +260,50 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     // unconfigured root may authorize onboarding's pointer-only default-drive selection.
     let canAutoSelectDataDrive = false
     const cleanupPending = await cleanupJournal.hasPending().catch(() => true)
+    let storedSettings:
+      Awaited<ReturnType<typeof deps.settingsService.getStoredSettings>> | undefined
     try {
-      const storedSettings = await deps.settingsService.getStoredSettings()
+      storedSettings = await deps.settingsService.getStoredSettings()
+    } catch (err) {
+      logger.warn('data root status detection failed', diagnosticErrorFields(err))
+    }
+
+    if (storedSettings) {
       // Only an explicitly-configured root that stat proves is gone (ENOENT/ENOTDIR) counts as
       // missing. isDataRootMissing deliberately does NOT collapse other stat errors into "missing"
       // the way a bare existsSync would, so a non-ENOENT failure (seen with non-ASCII paths on some
       // Windows setups, or a transient drive/IO hiccup) can't nag the user to abandon real data.
-      dataRootMissing = Boolean(storedSettings.dataRoot) && (await isDataRootMissing(dataRoot))
-
-      const configRoot = resolveConfigRoot()
-      const legacyInPlace = !storedSettings.dataRoot && samePath(dataRoot, configRoot)
-      const hasUserData = await (deps.hasAnyExistingPath ?? hasAnyExistingPath)(
-        MIGRATABLE_DATA_DIRS.map((dir) => join(configRoot, dir))
-      )
-      legacyDataMovePrompt =
-        legacyInPlace && hasUserData && storedSettings.legacyDataMovePromptDismissedAt === undefined
-      // Include runtime/: unlike legacy detection, onboarding must not pointer-switch away from a
-      // managed environment that was prepared before an interrupted setup resumed.
-      const currentRootHasData =
-        (await (deps.hasAnyExistingPath ?? hasAnyExistingPath)(
-          NON_UPLOAD_DATA_ROOT_DIRS.map((dir) => join(dataRoot, dir))
-        )) || (await hasUploadDataBeyondStartupScaffold(dataRoot))
-      canAutoSelectDataDrive = !storedSettings.dataRoot && !currentRootHasData && !dataRootMissing
-    } catch (err) {
-      logger.warn('data root status detection failed', diagnosticErrorFields(err))
+      const configuredRootMissing =
+        Boolean(storedSettings.dataRoot?.trim()) && (await isDataRootMissing(dataRoot))
+      // A failed reconnect recovery leaves the availability owner in its fail-closed missing state.
+      // Project that state as still missing so both the initial status probe and an open dialog stay
+      // reachable for retry instead of falling back to the Session-loading screen.
+      try {
+        dataRootMissing = await reconcileDataRootWriteAvailability(configuredRootMissing)
+      } catch (err) {
+        dataRootMissing = true
+        logger.warn('data root reconnect recovery incomplete', diagnosticErrorFields(err))
+      }
+      try {
+        const configRoot = resolveConfigRoot()
+        const legacyInPlace = !storedSettings.dataRoot && samePath(dataRoot, configRoot)
+        const hasUserData = await (deps.hasAnyExistingPath ?? hasAnyExistingPath)(
+          MIGRATABLE_DATA_DIRS.map((dir) => join(configRoot, dir))
+        )
+        legacyDataMovePrompt =
+          legacyInPlace &&
+          hasUserData &&
+          storedSettings.legacyDataMovePromptDismissedAt === undefined
+        // Include runtime/: unlike legacy detection, onboarding must not pointer-switch away from a
+        // managed environment that was prepared before an interrupted setup resumed.
+        const currentRootHasData =
+          (await (deps.hasAnyExistingPath ?? hasAnyExistingPath)(
+            NON_UPLOAD_DATA_ROOT_DIRS.map((dir) => join(dataRoot, dir))
+          )) || (await hasUploadDataBeyondStartupScaffold(dataRoot))
+        canAutoSelectDataDrive = !storedSettings.dataRoot && !currentRootHasData && !dataRootMissing
+      } catch (err) {
+        logger.warn('data root status detection failed', diagnosticErrorFields(err))
+      }
     }
 
     return {
@@ -299,6 +321,17 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   }
 
   const getStatus = async (): Promise<StorageStatus> => (await getStatusSnapshot()).status
+
+  const acceptMissingDataRoot = async (): Promise<void> => {
+    const storedSettings = await deps.settingsService.getStoredSettings()
+    const configuredRootMissing =
+      Boolean(storedSettings.dataRoot?.trim()) && (await isDataRootMissing(resolveDataRoot()))
+    if (!configuredRootMissing) {
+      await reconcileDataRootWriteAvailability(false)
+      return
+    }
+    await acceptMissingDataRootWrite()
+  }
 
   const getInfo = async (): Promise<StorageInfo> => {
     const { status, canAutoSelectDataDrive } = await getStatusSnapshot()
@@ -1084,6 +1117,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     ): void => deps.acknowledgeWebRendererFlush?.(response, lifecycleClientId),
     getStatus,
     getInfo,
+    acceptMissingDataRoot,
     revealAppStorage,
     dismissLegacyMovePrompt,
     detectActive,
