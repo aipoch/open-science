@@ -601,16 +601,21 @@ describe('NodeVersionFileOperator', () => {
     await firstLease.close()
     const secondOperator = new module.NodeVersionFileOperator(options)
     const secondLease = await secondOperator.openImmutable(stored.storageRef, stored)
-    await secondLease.close()
 
     expect(verifiedBytesRead).toBe(content.byteLength)
 
     await writeFile(immutablePath, Buffer.alloc(content.byteLength, 8))
     await utimes(immutablePath, fixedTime, fixedTime)
+    await expect(secondLease.readRange(0, content.byteLength)).rejects.toMatchObject({
+      code: 'INTEGRITY_FAILED'
+    })
+    await secondLease.close()
+    expect(verifiedBytesRead).toBe(content.byteLength * 3)
+
     await expect(secondOperator.openImmutable(stored.storageRef, stored)).rejects.toMatchObject({
       code: 'INTEGRITY_FAILED'
     })
-    expect(verifiedBytesRead).toBe(content.byteLength * 2)
+    expect(verifiedBytesRead).toBe(content.byteLength * 4)
   })
 
   it('removes a verified immutable file idempotently', async () => {

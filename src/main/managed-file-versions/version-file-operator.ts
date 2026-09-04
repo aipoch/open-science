@@ -111,6 +111,9 @@ const snapshotMatches = (expected: LeaseSnapshot, actual: BigIntStats): boolean 
   expected.size === actual.size &&
   expected.mtimeNs === actual.mtimeNs
 
+const verificationSnapshotMatches = (expected: LeaseSnapshot, actual: BigIntStats): boolean =>
+  snapshotMatches(expected, actual) && expected.ctimeNs === actual.ctimeNs
+
 const normalizeStorageError = (
   error: unknown,
   fallbackCode: VersionFileOperatorErrorCode,
@@ -515,11 +518,26 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
         mtimeNs: before.mtimeNs,
         ctimeNs: before.ctimeNs
       }
-      const verificationKey = immutableVerificationKey(expectedIntegrity, snapshot)
-      if (!verifiedImmutableFiles.has(verificationKey)) {
+      let verificationKey = immutableVerificationKey(expectedIntegrity, snapshot)
+      let cached = verifiedImmutableFiles.has(verificationKey)
+      if (cached) {
+        const after = await handle.stat({ bigint: true })
+        if (!snapshotMatches(snapshot, after)) {
+          throw new Error('Immutable version changed during cached integrity verification.')
+        }
+        if (snapshot.ctimeNs !== after.ctimeNs) {
+          snapshot.ctimeNs = after.ctimeNs
+          verificationKey = immutableVerificationKey(expectedIntegrity, snapshot)
+          cached = false
+        }
+      }
+      if (!cached) {
         const checksum = await checksumHandle(handle, expectedIntegrity.sizeBytes)
         const after = await handle.stat({ bigint: true })
-        if (checksum !== expectedIntegrity.checksum || !snapshotMatches(snapshot, after)) {
+        if (
+          checksum !== expectedIntegrity.checksum ||
+          !verificationSnapshotMatches(snapshot, after)
+        ) {
           throw new Error('Immutable version changed during integrity verification.')
         }
         rememberVerifiedImmutableFile(verificationKey)
@@ -544,6 +562,26 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
               'INTEGRITY_FAILED',
               'Immutable version changed during trusted consumption.'
             )
+          }
+          if (snapshot.ctimeNs !== current.ctimeNs) {
+            const checksum = await checksumHandle(leaseHandle, expectedIntegrity.sizeBytes)
+            const after = await leaseHandle.stat({ bigint: true })
+            const revalidationSnapshot: LeaseSnapshot = {
+              ...snapshot,
+              ctimeNs: current.ctimeNs
+            }
+            if (
+              checksum !== expectedIntegrity.checksum ||
+              !verificationSnapshotMatches(revalidationSnapshot, after)
+            ) {
+              throw new VersionFileOperatorError(
+                'INTEGRITY_FAILED',
+                'Immutable version changed during trusted consumption.'
+              )
+            }
+            verifiedImmutableFiles.delete(immutableVerificationKey(expectedIntegrity, snapshot))
+            snapshot.ctimeNs = after.ctimeNs
+            rememberVerifiedImmutableFile(immutableVerificationKey(expectedIntegrity, snapshot))
           }
         } catch (error) {
           throw normalizeStorageError(
