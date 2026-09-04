@@ -232,6 +232,7 @@ class PlanService {
       artifactId: artifact.artifactId,
       artifactVersionId: artifact.versionId,
       artifactChecksum: artifact.checksum,
+      document,
       originatingPromptMessageId: input.interactionId,
       materializedAt: this.now(),
       approval: 'pending',
@@ -749,6 +750,24 @@ class PlanService {
     sessionId: string,
     plan: SessionPlanRuntimeContext
   ): Promise<PlanDocumentV1> {
+    if (plan.document) {
+      let document: PlanDocumentV1
+      try {
+        document = parsePlanDocumentV1(plan.document)
+      } catch {
+        throw new PlanCommandError(
+          'artifact-unavailable',
+          'The active Plan document is unreadable.'
+        )
+      }
+      if (sha256(JSON.stringify(document, null, 2)) !== plan.artifactChecksum) {
+        throw new PlanCommandError(
+          'artifact-unavailable',
+          'The active Plan document failed verification.'
+        )
+      }
+      return document
+    }
     let result: { content: string; checksum: string }
     try {
       result = await this.dependencies.readArtifactVersion({

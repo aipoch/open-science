@@ -232,6 +232,7 @@ describe('PlanService', () => {
       artifactVersionId: 'version-1',
       originatingPromptMessageId: 'interaction-1',
       materializedAt: 42,
+      document: { schema_version: 1, task_summary: content.task_summary },
       approval: 'pending',
       stepStatuses: {}
     })
@@ -245,6 +246,32 @@ describe('PlanService', () => {
       sessionId: 'session-1',
       artifactVersionId: 'version-1',
       summary: content.task_summary
+    })
+  })
+
+  it('reconstructs a pending Plan after the unpublished Artifact reader is lost on restart', async () => {
+    const { service, dependencies } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      executionId: 'execution-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    vi.mocked(dependencies.readArtifactVersion).mockRejectedValue(
+      new Error('unpublished Artifact index was process-local')
+    )
+
+    const restarted = new PlanService({
+      ...dependencies,
+      interactions: new SessionPlanInteractionOwner()
+    })
+
+    await expect(restarted.getProjection('project-1', 'session-1')).resolves.toMatchObject({
+      artifactVersionId: generated.projection.artifactVersionId,
+      approval: 'pending',
+      lifecycle: 'awaiting_approval',
+      document: { schema_version: 1, task_summary: content.task_summary }
     })
   })
 
@@ -340,7 +367,7 @@ describe('PlanService', () => {
     ).rejects.toMatchObject({ code: 'revision-conflict' })
 
     expect(dependencies.readRuntimeContext).toHaveBeenCalledOnce()
-    expect(dependencies.readArtifactVersion).toHaveBeenCalledOnce()
+    expect(dependencies.readArtifactVersion).not.toHaveBeenCalled()
     expect(dependencies.patchRuntimeContext).toHaveBeenCalledOnce()
     expect(context().plan?.stepStatuses).toEqual({})
   })
@@ -1728,50 +1755,20 @@ describe('PlanService', () => {
     )
   })
 
-  it('drops an unreadable restored Plan instead of exposing corrupt state', async () => {
-    const { service, dependencies, context, status } = setup()
+  it('drops an unreadable embedded Plan document instead of exposing corrupt state', async () => {
+    const { service, context, setContext, status } = setup()
     await service.generate({
       projectId: 'project-1',
       sessionId: 'session-1',
       executionId: 'execution-1',
       interactionId: 'interaction-1',
       content
-    })
-    vi.mocked(dependencies.readArtifactVersion).mockResolvedValueOnce({
-      content: '{"schema_version":1}',
-      checksum: '0'.repeat(64)
-    })
-
-    await expect(service.getProjection('project-1', 'session-1')).resolves.toBeNull()
-    expect(context().plan).toBeUndefined()
-    expect(status()).toBe('idle')
-  })
-
-  it('drops a checksum-valid restored Plan when the document structure is corrupt', async () => {
-    const { service, dependencies, context, setContext, status } = setup()
-    await service.generate({
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      executionId: 'execution-1',
-      interactionId: 'interaction-1',
-      content
-    })
-    const corrupt = JSON.stringify({
-      schema_version: 1,
-      task_summary: 'Missing phases',
-      phases: [],
-      desired_outputs: [],
-      feasibility: { confidence: 'high', rationale: 'Invalid structure.' }
-    })
-    vi.mocked(dependencies.readArtifactVersion).mockResolvedValueOnce({
-      content: corrupt,
-      checksum: createHash('sha256').update(corrupt).digest('hex')
     })
     setContext({
       ...context(),
       plan: {
         ...context().plan!,
-        artifactChecksum: createHash('sha256').update(corrupt).digest('hex')
+        document: { schema_version: 1 } as never
       }
     })
 
@@ -1780,7 +1777,38 @@ describe('PlanService', () => {
     expect(status()).toBe('idle')
   })
 
-  it('drops a restored Plan when provenance content is missing', async () => {
+  it('drops a checksum-valid restored Plan when the embedded document structure is corrupt', async () => {
+    const { service, context, setContext, status } = setup()
+    await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      executionId: 'execution-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    const corrupt = {
+      schema_version: 1,
+      task_summary: 'Missing phases',
+      phases: [],
+      desired_outputs: [],
+      feasibility: { confidence: 'high', rationale: 'Invalid structure.' }
+    }
+    const serialized = JSON.stringify(corrupt, null, 2)
+    setContext({
+      ...context(),
+      plan: {
+        ...context().plan!,
+        artifactChecksum: createHash('sha256').update(serialized).digest('hex'),
+        document: corrupt as never
+      }
+    })
+
+    await expect(service.getProjection('project-1', 'session-1')).resolves.toBeNull()
+    expect(context().plan).toBeUndefined()
+    expect(status()).toBe('idle')
+  })
+
+  it('retains a verified restored Plan when unpublished provenance content is unavailable', async () => {
     const { service, dependencies, context, status } = setup()
     await service.generate({
       projectId: 'project-1',
@@ -1793,9 +1821,13 @@ describe('PlanService', () => {
       new Error('pending content is missing')
     )
 
-    await expect(service.getProjection('project-1', 'session-1')).resolves.toBeNull()
-    expect(context().plan).toBeUndefined()
-    expect(status()).toBe('idle')
+    await expect(service.getProjection('project-1', 'session-1')).resolves.toMatchObject({
+      approval: 'pending',
+      lifecycle: 'awaiting_approval',
+      document: { task_summary: content.task_summary }
+    })
+    expect(context().plan).toBeDefined()
+    expect(status()).toBe('waiting-plan-approval')
   })
 
   it('drives deterministic fake-Agent blocked and completed acceptance flows', async () => {

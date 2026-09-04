@@ -940,6 +940,29 @@ class TaskRunner {
     return summarizeSession(await this.findSession(sessionId))
   }
 
+  async ensureSessionAttached(sessionId: string): Promise<PersistedChatSession> {
+    const session = await this.findSession(sessionId)
+    const attachedSessionIds = await this.dependencies.agent.listAttachedSessionIds()
+    if (attachedSessionIds.includes(session.id)) return session
+
+    await this.dependencies.agent.resumeSession({
+      sessionId: session.id,
+      cwd: session.cwd,
+      projectId: session.projectId,
+      permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+      previousFrameworkId: session.agentFrameworkId,
+      previousBackendId: session.agentBackendId,
+      previousModel: session.agentModel,
+      providerSessionId: session.providerSessionId,
+      providerContinuityToken: session.providerContinuityToken,
+      memoryEnabled: session.memoryEnabled !== false,
+      ...(session.specialistId ? { specialistId: session.specialistId } : {}),
+      ...(session.specialistBindingPending === true ? { specialistBindingPending: true } : {}),
+      ...(session.agentConfiguration ? { agentConfiguration: session.agentConfiguration } : {})
+    })
+    return session
+  }
+
   async getSessionConfiguration(sessionId: string): Promise<TaskSessionConfiguration> {
     const [session, settings, availableComputeHosts] = await Promise.all([
       this.findSession(sessionId),

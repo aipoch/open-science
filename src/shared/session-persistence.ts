@@ -44,6 +44,7 @@ import {
   planStepTitles,
   projectPlanStepStates,
   type ActivePlanProjection,
+  type PlanDocumentV1,
   type PlanLifecycle
 } from './session-plan/contract'
 import {
@@ -332,6 +333,9 @@ export type SessionPlanRuntimeContext = Readonly<{
   artifactId: string
   artifactVersionId: string
   artifactChecksum: string
+  // Verified immutable copy used to reconstruct Plan review/context while the originating Agent
+  // turn is parked and its provenance Artifact Version is still awaiting publication.
+  document?: PlanDocumentV1
   // The user Message whose Conversation Turn generated this Plan. Older persisted Plans may omit it.
   originatingPromptMessageId?: string
   // Durable causal boundary recorded after the Plan Artifact is verified and before approval begins.
@@ -1398,6 +1402,7 @@ const sanitizeSessionPlanRuntimeContext = (
           'artifactId',
           'artifactVersionId',
           'artifactChecksum',
+          'document',
           'originatingPromptMessageId',
           'materializedAt',
           'approval',
@@ -1414,6 +1419,14 @@ const sanitizeSessionPlanRuntimeContext = (
   const artifactId = asString(value.artifactId)
   const artifactVersionId = asString(value.artifactVersionId)
   const artifactChecksum = asString(value.artifactChecksum)
+  let document: PlanDocumentV1 | undefined
+  if (value.document !== undefined) {
+    try {
+      document = parsePlanDocumentV1(value.document)
+    } catch {
+      return undefined
+    }
+  }
   const originatingPromptMessageId =
     value.originatingPromptMessageId === undefined
       ? undefined
@@ -1524,6 +1537,7 @@ const sanitizeSessionPlanRuntimeContext = (
     artifactId,
     artifactVersionId,
     artifactChecksum,
+    ...(document ? { document } : {}),
     ...(originatingPromptMessageId ? { originatingPromptMessageId } : {}),
     ...(materializedAt !== undefined ? { materializedAt } : {}),
     approval,

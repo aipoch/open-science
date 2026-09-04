@@ -2627,6 +2627,37 @@ describe('normalizeSessionFile with activities', () => {
     expect(restored?.runtimeContext?.plan?.materializedAt).toBe(42)
   })
 
+  it('preserves the verified Plan document needed to reconstruct pending review after restart', () => {
+    const document = {
+      schema_version: 1 as const,
+      task_summary: 'Review the dataset schema',
+      phases: [
+        {
+          name: 'Review',
+          delegations: [
+            {
+              name: 'Schema review',
+              steps: [{ title: 'Inspect fields', description: 'Check the field definitions.' }]
+            }
+          ]
+        }
+      ],
+      desired_outputs: ['Schema findings'],
+      feasibility: { confidence: 'high' as const, rationale: 'The schema is available.' }
+    }
+    const plan = { ...createRuntimePlan(), document }
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        status: 'waiting-plan-approval',
+        runtimeContext: { version: 1, revision: 3, plan }
+      })
+    )
+
+    expect(restored?.runtimeContext?.plan?.document).toEqual(document)
+  })
+
   it('normalizes a legacy queued Plan continuation into a delivery receipt', () => {
     const persisted = createSessionFile({
       ...(createSessionWithActivity(undefined) as PersistedChatSession),
