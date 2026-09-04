@@ -317,6 +317,9 @@ describe('workspace runtime events', () => {
         causeReviewId: 'review-1'
       }
     })
+    expect(
+      storedSession.messages.find((message) => message.id === 'reviewer-correction-1')
+    ).not.toHaveProperty('responseToMessageId')
     expect(originalPromptMessageId).not.toBe('reviewer-correction-1')
     const correctionResponse = storedSession.messages.find(
       (message) =>
