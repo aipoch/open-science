@@ -11,6 +11,7 @@ import {
   STREAMDOWN_MERMAID_FULLSCREEN_SELECTOR,
   STREAMDOWN_TABLE_FULLSCREEN_SELECTOR
 } from './dom-selectors'
+import { installMermaidHeightAnimation } from './mermaid-height-animation'
 
 const saveBlobFile = (request: SaveBlobFileRequest): Promise<SaveBlobFileResult> =>
   window.api.saveBlobFile(request)
@@ -758,6 +759,7 @@ const installStreamdown = (): (() => void) => {
       installMenuPositioning(),
       installDownloads(),
       installMermaidDownload(),
+      installMermaidHeightAnimation(),
       installFullscreenDialogAdapter(),
       installTableActions(),
       installTableFullscreenFix()
