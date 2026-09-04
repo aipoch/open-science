@@ -1063,23 +1063,25 @@ const launchUninstallerLockHolder = async (
   env,
   spawnProcess = spawn,
   waitForReady = waitFor,
-  terminate = terminateProcessTree
+  terminate = terminateProcessTree,
+  shareMode = 'None'
 ) => {
   const uninstaller = await findUninstaller(installDirectory)
-  const ready = join(env.TEMP, 'installer-smoke-lock-holder.ready')
+  const ready = join(env.TEMP, `installer-smoke-lock-holder-${randomUUID()}.ready`)
   const child = spawnProcess(
     'powershell.exe',
     [
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      "$stream = [System.IO.File]::Open($env:OPEN_SCIENCE_LOCK_PATH, 'Open', 'Read', 'None'); [System.IO.File]::WriteAllText($env:OPEN_SCIENCE_LOCK_READY, 'ready'); [System.Threading.Thread]::Sleep([System.Threading.Timeout]::Infinite)"
+      "$stream = [System.IO.File]::Open($env:OPEN_SCIENCE_LOCK_PATH, 'Open', 'Read', $env:OPEN_SCIENCE_LOCK_SHARE); [System.IO.File]::WriteAllText($env:OPEN_SCIENCE_LOCK_READY, 'ready'); [System.Threading.Thread]::Sleep([System.Threading.Timeout]::Infinite)"
     ],
     {
       env: {
         ...env,
         OPEN_SCIENCE_LOCK_PATH: uninstaller,
-        OPEN_SCIENCE_LOCK_READY: ready
+        OPEN_SCIENCE_LOCK_READY: ready,
+        OPEN_SCIENCE_LOCK_SHARE: shareMode
       },
       windowsHide: true
     }
@@ -1087,7 +1089,7 @@ const launchUninstallerLockHolder = async (
   const exit = observeChildExit(child)
   try {
     await Promise.race([
-      waitForReady('the old uninstaller to be exclusively locked', async () =>
+      waitForReady('the old uninstaller to be write-locked', async () =>
         (await pathExists(ready)) ? true : undefined
       ),
       exit.then((code) => {
@@ -1099,6 +1101,46 @@ const launchUninstallerLockHolder = async (
     throw error
   }
   return { child, uninstaller }
+}
+
+// Exercise a registered, working installation rather than an orphaned uninstaller. Read sharing
+// lets the old uninstaller be copied and launched, but blocks replacing its original file. A check
+// performed only after uninstalling is too late: it leaves the app executable missing on failure.
+const drillLockedUpgrade = async ({
+  installer,
+  installDirectory,
+  env,
+  executableName = APP_EXECUTABLE
+}) => {
+  const executable = join(installDirectory, executableName)
+  const original = createHash('sha256')
+    .update(await readFile(executable))
+    .digest('hex')
+  const lock = await launchUninstallerLockHolder(
+    installDirectory,
+    env,
+    spawn,
+    waitFor,
+    terminateProcessTree,
+    'Read'
+  )
+  try {
+    const result = await runProcess(installer, ['/S', '--updated', `/D=${installDirectory}`], {
+      allowNonZero: true,
+      env,
+      timeoutMs: 30_000
+    })
+    if (result.code === 0) throw new Error('Update accepted a write-locked uninstaller target.')
+    if (lock.child.exitCode !== null) throw new Error('Update terminated the external lock holder.')
+    const remaining = await readFile(executable).catch((cause) => {
+      throw new Error('Rejected update removed the previously launchable application.', { cause })
+    })
+    if (createHash('sha256').update(remaining).digest('hex') !== original) {
+      throw new Error('Rejected update replaced the previous application.')
+    }
+  } finally {
+    await terminateProcessTree(lock.child)
+  }
 }
 
 const drillOrphanedUninstallerLock = async ({ installer, installDirectory, env }) => {
@@ -1354,6 +1396,9 @@ const main = async () => {
           await launchAndExpectDatabaseBlocked({ installDirectory, env })
         }
         if (configRoot) await upgradeProfileGuard.verifyCycle(cycle.phase, configRoot)
+        if (cycle.phase === 'previous') {
+          await drillLockedUpgrade({ installer: currentInstaller, installDirectory, env })
+        }
       }
     )
     const smokeIsolatedDatabase = async (storageRoot, expectLegacyProject) => {
@@ -1420,6 +1465,7 @@ export {
   buildSmokePlan,
   cleanupSmokeRoot,
   createUpgradeProfileGuard,
+  drillLockedUpgrade,
   drillOrphanedUninstallerLock,
   executeSmokePlan,
   fetchWithTimeout,
