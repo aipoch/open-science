@@ -21,7 +21,7 @@ import {
 } from 'streamdown'
 import 'katex/dist/katex.min.css'
 
-import { getMarkdownPluginNeeds } from './code-fence'
+import { createMarkdownPluginNeedsScanner } from './code-fence'
 import { AGENT_ALLOWED_TAGS, AGENT_CONTROLS } from './streamdown-config'
 import { LinkSafetyModal } from './LinkSafetyModal'
 import { SessionMessageLink } from './SessionMessageLink'
@@ -130,7 +130,9 @@ const mermaidOptions = {
 }
 
 const useMarkdownPlugins = (content: string): PluginConfig => {
-  const needs = useMemo(() => getMarkdownPluginNeeds(content), [content])
+  // Append-only streaming rescans just the appended lines instead of the full message.
+  const [pluginNeedsScanner] = useState(() => createMarkdownPluginNeedsScanner())
+  const needs = useMemo(() => pluginNeedsScanner(content), [pluginNeedsScanner, content])
   const [optionalPlugins, setOptionalPlugins] = useState<PluginConfig>({})
   const code = useCodeHighlighter(needs.code)
 
