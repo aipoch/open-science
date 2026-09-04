@@ -593,6 +593,8 @@ describe('NodeVersionFileOperator', () => {
     immutablePath = join(cleanupRoot, ...plannedFile.storageRef.split('/'))
     const content = Buffer.alloc(256 * 1024, 7)
     const stored = await operator.publishImmutable({ ...planInput, plannedFile, content })
+    const fixedTime = new Date('2000-01-01T00:00:00.000Z')
+    await utimes(immutablePath, fixedTime, fixedTime)
     verifiedBytesRead = 0
 
     const firstLease = await operator.openImmutable(stored.storageRef, stored)
@@ -604,7 +606,7 @@ describe('NodeVersionFileOperator', () => {
     expect(verifiedBytesRead).toBe(content.byteLength)
 
     await writeFile(immutablePath, Buffer.alloc(content.byteLength, 8))
-    await utimes(immutablePath, new Date(0), new Date(0))
+    await utimes(immutablePath, fixedTime, fixedTime)
     await expect(secondOperator.openImmutable(stored.storageRef, stored)).rejects.toMatchObject({
       code: 'INTEGRITY_FAILED'
     })

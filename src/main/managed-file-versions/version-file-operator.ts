@@ -97,7 +97,7 @@ class VersionFileOperatorError extends Error {
   }
 }
 
-type LeaseSnapshot = Pick<BigIntStats, 'dev' | 'ino' | 'size' | 'mtimeNs'>
+type LeaseSnapshot = Pick<BigIntStats, 'dev' | 'ino' | 'size' | 'mtimeNs' | 'ctimeNs'>
 
 type StorageParentSnapshot = Pick<BigIntStats, 'dev' | 'ino'> & {
   path: string
@@ -199,7 +199,14 @@ const immutableOperationTails = new Map<string, Promise<void>>()
 const verifiedImmutableFiles = new Set<string>()
 
 const immutableVerificationKey = (integrity: Integrity, snapshot: LeaseSnapshot): string =>
-  [integrity.checksum, snapshot.dev, snapshot.ino, snapshot.size, snapshot.mtimeNs].join('\0')
+  [
+    integrity.checksum,
+    snapshot.dev,
+    snapshot.ino,
+    snapshot.size,
+    snapshot.mtimeNs,
+    snapshot.ctimeNs
+  ].join('\0')
 
 const rememberVerifiedImmutableFile = (key: string): void => {
   verifiedImmutableFiles.add(key)
@@ -505,7 +512,8 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
         dev: before.dev,
         ino: before.ino,
         size: before.size,
-        mtimeNs: before.mtimeNs
+        mtimeNs: before.mtimeNs,
+        ctimeNs: before.ctimeNs
       }
       const verificationKey = immutableVerificationKey(expectedIntegrity, snapshot)
       if (!verifiedImmutableFiles.has(verificationKey)) {
