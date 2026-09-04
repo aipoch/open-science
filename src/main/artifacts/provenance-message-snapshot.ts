@@ -171,6 +171,35 @@ class ProvenanceMessageSnapshotRepository {
     this.durability = options.durability ?? defaultArtifactDurability
   }
 
+  private async syncDirectoryTrees(leaves: string[]): Promise<void> {
+    const root = resolve(this.options.storageRoot)
+    const resolvedLeaves = leaves.map((leaf) => resolve(leaf))
+    const ancestors = new Set<string>()
+    for (const leaf of resolvedLeaves) {
+      const fromRoot = relative(root, leaf)
+      if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`)) {
+        throw new Error('Artifact Message snapshot directory is outside the storage root.')
+      }
+      let current = dirname(leaf)
+      while (current !== root) {
+        ancestors.add(current)
+        current = dirname(current)
+      }
+      ancestors.add(root)
+    }
+    const syncExisting = (path: string): Promise<void> =>
+      this.durability.syncDirectory(path).catch((error: unknown) => {
+        if (!isMissingPathError(error)) throw error
+      })
+    // Publish destination entries before source deletions, then persist newly created ancestors
+    // from deepest to shallowest so every child directory is reachable after a crash.
+    for (const leaf of resolvedLeaves) await syncExisting(leaf)
+    const depth = (path: string): number => relative(root, path).split(sep).filter(Boolean).length
+    for (const directory of [...ancestors].sort((left, right) => depth(right) - depth(left))) {
+      await syncExisting(directory)
+    }
+  }
+
   async validateFinalizedMessageBindings(input: PersistedChatSession): Promise<void> {
     const session = materializeSessionConversationGraph(input)
     if (!session.conversationGraph) {
@@ -578,10 +607,16 @@ class ProvenanceMessageSnapshotRepository {
         } else {
           await this.durability.syncFile(finalPath)
         }
-        await this.durability.syncDirectory(dirname(finalPath))
-        await this.durability.syncDirectory(dirname(stagingPath)).catch((error: unknown) => {
-          if (!isMissingPathError(error)) throw error
-        })
+        await this.syncDirectoryTrees([dirname(finalPath), dirname(stagingPath)])
+        await this.verifyReadySnapshot(
+          { ...snapshot, state: 'ready' },
+          {
+            rootFrameId: snapshot.rootFrameId,
+            agentFrameId: snapshot.agentFrameId,
+            messageBranchId: snapshot.messageBranchId,
+            terminalMessageId: snapshot.terminalMessageId
+          }
+        )
         await client.$transaction(async (transaction) => {
           const promoted = await transaction.artifactMessageSnapshot.updateMany({
             where: { id: snapshot.id, state: 'staging' },
@@ -908,8 +943,13 @@ class ProvenanceMessageSnapshotRepository {
     await writeFile(stagingPath, serialized, 'utf8')
     await this.durability.syncFile(stagingPath)
     await rename(stagingPath, finalPath)
-    await this.durability.syncDirectory(dirname(finalPath))
-    await this.durability.syncDirectory(dirname(stagingPath))
+    await this.syncDirectoryTrees([dirname(finalPath), dirname(stagingPath)])
+    const published = await readFile(finalPath, 'utf8')
+    if (sha256(published) !== checksum) {
+      throw new Error(
+        `Artifact Message snapshot checksum mismatch after publication: ${snapshotId}`
+      )
+    }
     await client.$transaction(async (transaction) => {
       await transaction.artifactMessageSnapshot.update({
         where: { id: snapshotId },

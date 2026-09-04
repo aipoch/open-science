@@ -812,6 +812,70 @@ describe('Provenance Message snapshots', () => {
       'artifacts/project-1/session-1/.provenance/.staging/messages'
     )
     expect(syncedDirectories.filter((path) => path === stagingDirectory)).toHaveLength(2)
+    expect(syncedDirectories).toContain(storageRoot)
+  })
+
+  it('does not promote staged bytes replaced after their initial validation', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-staging-race-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    const id = 'snapshot-raced-1'
+    const storageKey = `artifacts/project-1/session-1/.provenance/message-snapshots/${id}.json`
+    const stagingPath = join(
+      storageRoot,
+      'artifacts/project-1/session-1/.provenance/.staging/messages',
+      `${id}.json`
+    )
+    const payload = {
+      schemaVersion: 3,
+      snapshotId: id,
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      terminalMessageId: 'message-1',
+      createdAt: '2026-07-27T12:00:00.000Z',
+      messages: [{ id: 'message-1', role: 'agent', content: 'original', createdAt: 1 }],
+      activities: [],
+      activityGroups: []
+    }
+    const serialized = `${JSON.stringify(payload, null, 2)}\n`
+    await mkdir(dirname(stagingPath), { recursive: true })
+    await writeFile(stagingPath, serialized, 'utf8')
+    await client.artifactMessageSnapshot.create({
+      data: {
+        id,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        terminalMessageId: 'message-1',
+        state: 'staging',
+        storageKey,
+        checksum: createHash('sha256').update(serialized).digest('hex'),
+        messageCount: 1
+      }
+    })
+    const snapshots = new ProvenanceMessageSnapshotRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      durability: {
+        syncFile: async (path) => {
+          await writeFile(path, 'replaced after validation', 'utf8')
+        },
+        syncDirectory: async () => undefined
+      }
+    })
+
+    await snapshots.reconcileSessionDeletions([])
+
+    await expect(
+      client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id } })
+    ).resolves.toMatchObject({ state: 'staging' })
   })
 
   it('reconciles a large active Session catalog without exceeding SQLite query limits', async () => {
