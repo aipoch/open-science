@@ -470,6 +470,169 @@ afterEach(() => {
 })
 
 describe('ArtifactProvenancePanel', () => {
+  it('retries an earlier history page without reloading core evidence or changing selection', async () => {
+    act(() => root.unmount())
+    container.replaceChildren()
+    root = createRoot(container)
+    const latest = {
+      ...descriptor,
+      id: 'version-102',
+      versionId: 'version-102',
+      versionNumber: 102
+    }
+    const initial = {
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active' as const },
+      versions: Array.from({ length: 50 }, (_, i) => ({
+        ...descriptor,
+        id: `version-${i + 53}`,
+        versionId: `version-${i + 53}`,
+        versionNumber: i + 53
+      })),
+      selectedVersion: descriptor,
+      headVersion: latest,
+      nextVersion: secondDescriptor,
+      nextCursor: '53'
+    }
+    const getLineage = vi.mocked(window.api.artifacts.getLineage)
+    getLineage
+      .mockReset()
+      .mockResolvedValueOnce(initial)
+      .mockRejectedValueOnce(new Error('history temporarily unavailable'))
+      .mockResolvedValueOnce({
+        ...initial,
+        versions: [descriptor, secondDescriptor],
+        nextCursor: undefined
+      })
+    getVersionProvenance.mockClear()
+    await act(async () =>
+      root.render(<ArtifactProvenancePanel item={item} projectId="project-1" onClose={vi.fn()} />)
+    )
+    await flush()
+    await clickTab('Load earlier versions')
+    await flush()
+    expect(container.textContent).toContain('history temporarily unavailable')
+    await clickTab('Retry loading earlier versions')
+    await flush()
+    expect(getLineage).toHaveBeenLastCalledWith({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1',
+      cursor: '53'
+    })
+    expect(getVersionProvenance).toHaveBeenCalledTimes(1)
+    expect(container.textContent).not.toContain('history temporarily unavailable')
+    expect(container.textContent).toContain('v1')
+    expect(
+      container
+        .querySelector('button[aria-label="Next Artifact version"]')
+        ?.hasAttribute('disabled')
+    ).toBe(false)
+  })
+
+  it.each(['missing', 'checksum-mismatch'] as const)(
+    'offers diagnostics for %s content while retaining captured provenance',
+    async (reason) => {
+      act(() => root.unmount())
+      container.replaceChildren()
+      root = createRoot(container)
+      getVersionProvenance.mockResolvedValue({
+        ...provenance(),
+        contentStatus: { state: 'unavailable', reason }
+      })
+      await act(async () =>
+        root.render(<ArtifactProvenancePanel item={item} projectId="project-1" onClose={vi.fn()} />)
+      )
+      await flush()
+      expect(container.textContent).toContain(
+        `Artifact content is ${reason}; captured provenance remains available.`
+      )
+      const diagnostics = [...container.querySelectorAll('button')].find(
+        (button) => button.textContent?.trim() === 'View diagnostics'
+      )
+      expect(
+        diagnostics,
+        'known content integrity failures must offer a diagnostic entry'
+      ).toBeDefined()
+      await act(async () => diagnostics!.click())
+      const diagnosticText = container.querySelector('pre')!.textContent!
+      expect(JSON.parse(diagnosticText)).toMatchObject({
+        projectId: 'project-1',
+        artifactId: 'artifact-1',
+        versionId: 'version-1',
+        section: 'content',
+        kind: 'integrity-failed',
+        message: reason
+      })
+      const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+      try {
+        await clickTab('Copy diagnostics')
+        await flush()
+        expect(writeText).toHaveBeenCalledWith(diagnosticText)
+        expect(container.textContent).toContain('Copied')
+      } finally {
+        if (clipboardDescriptor) Object.defineProperty(navigator, 'clipboard', clipboardDescriptor)
+        else Reflect.deleteProperty(navigator, 'clipboard')
+      }
+    }
+  )
+
+  it.each(['lineage', 'provenance'] as const)(
+    'retries a transient %s load failure without closing the panel',
+    async (stage) => {
+      act(() => root.unmount())
+      container.replaceChildren()
+      root = createRoot(container)
+      const load =
+        stage === 'lineage' ? vi.mocked(window.api.artifacts.getLineage) : getVersionProvenance
+      load.mockClear()
+      load.mockRejectedValueOnce(new Error('database busy'))
+      await act(async () =>
+        root.render(<ArtifactProvenancePanel item={item} projectId="project-1" onClose={vi.fn()} />)
+      )
+      await flush()
+      expect(container.textContent).toContain('database busy')
+      const retry = [...container.querySelectorAll('button')].find(
+        (button) => button.textContent?.trim() === 'Retry'
+      )
+      expect(retry, 'a transient load error must offer Retry in the open panel').toBeDefined()
+      await act(async () => retry!.click())
+      await flush()
+      expect(load).toHaveBeenCalledTimes(2)
+      expect(container.textContent).not.toContain('database busy')
+    }
+  )
+
+  it.each(['Execution Log', 'Messages', 'Review'] as const)(
+    'retries a transient deferred %s failure without changing versions',
+    async (tab) => {
+      const load =
+        tab === 'Execution Log'
+          ? getVersionExecution
+          : tab === 'Messages'
+            ? getVersionMessages
+            : getVersionReview
+      load.mockRejectedValueOnce(new Error('IPC temporarily unavailable'))
+      await clickTab(tab)
+      await flush()
+      expect(load).toHaveBeenCalledTimes(1)
+      expect(container.textContent).toContain('IPC temporarily unavailable')
+      const retry = [...container.querySelectorAll('button')].find(
+        (button) => button.textContent?.trim() === 'Retry'
+      )
+      expect(retry, 'a failed deferred section must offer Retry').toBeDefined()
+      await act(async () => retry!.click())
+      await flush()
+      expect(load).toHaveBeenCalledTimes(2)
+      expect(getVersionProvenance).toHaveBeenCalledTimes(1)
+      expect(container.textContent).not.toContain('IPC temporarily unavailable')
+    }
+  )
+
   it('shows user-edit lineage without requesting Agent provenance', async () => {
     act(() => root.unmount())
     container.replaceChildren()

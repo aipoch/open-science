@@ -4012,6 +4012,14 @@
     "Auto (recommended)": "자동(권장)",
     "HTTPS": "HTTPS",
     "WebSocket": "WebSocket",
-    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "자동 모드는 사용 가능한 경우 WebSocket을 사용하고 HTTPS로 대체합니다. 호환성이 중요하면 HTTPS를, 지연 시간을 줄이려면 WebSocket을 사용하세요."
+    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "자동 모드는 사용 가능한 경우 WebSocket을 사용하고 HTTPS로 대체합니다. 호환성이 중요하면 HTTPS를, 지연 시간을 줄이려면 WebSocket을 사용하세요.",
+    "Provenance integrity error": "출처 무결성 오류",
+    "Provenance could not be loaded": "출처를 불러오지 못했습니다",
+    "View diagnostics": "진단 정보 보기",
+    "Copy diagnostics": "진단 정보 복사",
+    "Could not copy diagnostics. Select and copy the text above.": "진단 정보를 복사하지 못했습니다. 위의 텍스트를 선택하여 복사하세요.",
+    "Loading earlier versions…": "이전 버전 불러오는 중…",
+    "Retry loading earlier versions": "이전 버전 불러오기 재시도",
+    "Load earlier versions": "이전 버전 불러오기"
   }
 }

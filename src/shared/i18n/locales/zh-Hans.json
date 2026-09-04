@@ -4014,6 +4014,14 @@
     "Auto (recommended)": "自动（推荐）",
     "HTTPS": "HTTPS",
     "WebSocket": "WebSocket",
-    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "自动模式会在可用时使用 WebSocket，并在不可用时回退到 HTTPS。使用 HTTPS 可提高兼容性，使用 WebSocket 可降低延迟。"
+    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "自动模式会在可用时使用 WebSocket，并在不可用时回退到 HTTPS。使用 HTTPS 可提高兼容性，使用 WebSocket 可降低延迟。",
+    "Provenance integrity error": "来源完整性错误",
+    "Provenance could not be loaded": "无法加载来源信息",
+    "View diagnostics": "查看诊断信息",
+    "Copy diagnostics": "复制诊断信息",
+    "Could not copy diagnostics. Select and copy the text above.": "无法复制诊断信息。请选择并复制上方文本。",
+    "Loading earlier versions…": "正在加载更早的版本…",
+    "Retry loading earlier versions": "重试加载更早的版本",
+    "Load earlier versions": "加载更早的版本"
   }
 }

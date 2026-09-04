@@ -1,3 +1,4 @@
+import { ProjectFilesReconciliationError } from '../project-files/repository'
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
 import type { ReconcilePendingArtifactsRequest } from '../../shared/artifacts'
 import {
@@ -143,7 +144,7 @@ type SessionFileIndex = {
   softDeleteProject(projectId: string): Promise<ManagedFileSoftDeleteToken>
   reconcileProjectSessions(projectId: string, sessions: PersistedChatSession[]): Promise<void>
   reconcileActiveSessions(sessions: PersistedChatSession[]): Promise<void>
-  markReconciliationIncomplete(): void
+  markReconciliationIncomplete(projectId?: string): void
 }
 
 type SessionProvenancePersistence = {
@@ -430,6 +431,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           } catch (error) {
             recoveryFailure ??= error
             recoveryFailureCount += 1
+            this.fileIndex.markReconciliationIncomplete(sessions[index].projectId)
             const sessionRecovery = startDiagnosticOperation(this.log, {
               operation: 'delegation-recovery',
               fields: { mode: 'startup' }
@@ -440,7 +442,6 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         }
         if (recoveryFailureCount > 0) {
           this.stateOwner.replaceMetadata(sessions, false)
-          this.fileIndex.markReconciliationIncomplete()
           result = {
             ...result,
             sessions,
@@ -501,7 +502,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
 
       if (reconciliation.status === 'degraded') {
         this.stateOwner.markMetadataIncomplete()
-        this.fileIndex.markReconciliationIncomplete()
+        if (!(reconciliation.failure instanceof ProjectFilesReconciliationError)) {
+          this.fileIndex.markReconciliationIncomplete()
+        }
         operation.fail(reconciliation.failure, {
           status: 'degraded',
           hydrationAvailable: true,
@@ -935,7 +938,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           }
         } catch {
           // Unknown durable state is treated as committed: retain the in-memory tombstone and intent.
-          this.fileIndex.markReconciliationIncomplete()
+          this.fileIndex.markReconciliationIncomplete(projectId)
         }
         throw error
       }

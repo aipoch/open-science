@@ -4454,6 +4454,14 @@
     "Auto (recommended)": "Автоматически (рекомендуется)",
     "HTTPS": "HTTPS",
     "WebSocket": "WebSocket",
-    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "Автоматический режим использует WebSocket, когда он доступен, и переключается на HTTPS. Используйте HTTPS для совместимости или WebSocket для снижения задержки."
+    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "Автоматический режим использует WebSocket, когда он доступен, и переключается на HTTPS. Используйте HTTPS для совместимости или WebSocket для снижения задержки.",
+    "Provenance integrity error": "Ошибка целостности данных о происхождении",
+    "Provenance could not be loaded": "Не удалось загрузить данные о происхождении",
+    "View diagnostics": "Показать диагностику",
+    "Copy diagnostics": "Копировать диагностику",
+    "Could not copy diagnostics. Select and copy the text above.": "Не удалось скопировать диагностику. Выделите и скопируйте текст выше.",
+    "Loading earlier versions…": "Загрузка предыдущих версий…",
+    "Retry loading earlier versions": "Повторить загрузку предыдущих версий",
+    "Load earlier versions": "Загрузить предыдущие версии"
   }
 }

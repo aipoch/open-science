@@ -4324,6 +4324,14 @@
     "Auto (recommended)": "Automatique (recommandé)",
     "HTTPS": "HTTPS",
     "WebSocket": "WebSocket",
-    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "Le mode automatique utilise WebSocket lorsqu’il est disponible et se replie sur HTTPS. Utilisez HTTPS pour la compatibilité ou WebSocket pour réduire la latence."
+    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "Le mode automatique utilise WebSocket lorsqu’il est disponible et se replie sur HTTPS. Utilisez HTTPS pour la compatibilité ou WebSocket pour réduire la latence.",
+    "Provenance integrity error": "Erreur d’intégrité de la provenance",
+    "Provenance could not be loaded": "Impossible de charger la provenance",
+    "View diagnostics": "Afficher le diagnostic",
+    "Copy diagnostics": "Copier le diagnostic",
+    "Could not copy diagnostics. Select and copy the text above.": "Impossible de copier le diagnostic. Sélectionnez et copiez le texte ci-dessus.",
+    "Loading earlier versions…": "Chargement des versions antérieures…",
+    "Retry loading earlier versions": "Réessayer de charger les versions antérieures",
+    "Load earlier versions": "Charger les versions antérieures"
   }
 }

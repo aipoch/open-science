@@ -1,3 +1,4 @@
+import { ProjectFilesReconciliationError } from '../project-files/repository'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -3752,6 +3753,22 @@ describe('SessionPersistenceCoordinator', () => {
     await expect(coordinator.saveSession(session)).resolves.toMatchObject({
       id: 'session-1'
     })
+  })
+
+  it('does not widen an already scoped file reconciliation failure during hydration', async () => {
+    const session = createSession()
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const fileIndex = createFileIndex({
+      reconcileActiveSessions: vi
+        .fn()
+        .mockRejectedValue(new ProjectFilesReconciliationError([new Error('busy')], ['project-1']))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+    await coordinator.loadAll()
+    expect(fileIndex.markReconciliationIncomplete).not.toHaveBeenCalled()
   })
 
   it('hydrates sessions after indexing and reconciles only a complete scan', async () => {

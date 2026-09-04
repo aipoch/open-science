@@ -1,3 +1,4 @@
+import { ProjectFilesReconciliationError } from '../project-files/repository'
 import type { ProjectFilesChangedEvent, ProjectFileSource } from '../../shared/project-files'
 import {
   hasAnswerableDelegatedQuestion,
@@ -72,7 +73,7 @@ type SessionDeletionFileIndex = {
   softDeleteProject(projectId: string): Promise<ManagedFileSoftDeleteToken>
   reconcileProjectSessions(projectId: string, sessions: PersistedChatSession[]): Promise<void>
   reconcileActiveSessions(sessions: PersistedChatSession[]): Promise<void>
-  markReconciliationIncomplete(): void
+  markReconciliationIncomplete(projectId?: string): void
 }
 
 type SessionDeletionProvenance = {
@@ -323,7 +324,7 @@ class SessionPersistenceDeletionOwner {
                 'Cannot adopt a legacy Project tombstone with incomplete Session authority.'
               )
             }
-            this.fileIndex.markReconciliationIncomplete()
+            this.fileIndex.markReconciliationIncomplete(projectId)
           }
           for (const session of scan.sessions) {
             let cleanup: { hasUnsafeResidual: boolean }
@@ -341,14 +342,14 @@ class SessionPersistenceDeletionOwner {
                 error instanceof OrphanLegacyUploadAuthorityMissingError
               ) {
                 await this.computeJobs?.commitProjectJobDeletion(projectId)
-                this.fileIndex.markReconciliationIncomplete()
+                this.fileIndex.markReconciliationIncomplete(projectId)
                 await this.fileIndex.softDeleteProject(projectId)
                 await this.notifySessionsDeleted(deletedSessionIds)
                 return { status: 'orphan-retained', reason: 'missing-upload-authority' }
               }
               throw error
             }
-            if (cleanup.hasUnsafeResidual) this.fileIndex.markReconciliationIncomplete()
+            if (cleanup.hasUnsafeResidual) this.fileIndex.markReconciliationIncomplete(projectId)
           }
         }
         const retainedWorkspaceSessions: PersistedChatSession[] = []
@@ -532,10 +533,10 @@ class SessionPersistenceDeletionOwner {
           }
           if (recoveryFailed) throw recoveryError
         } else {
-          this.fileIndex.markReconciliationIncomplete()
+          this.fileIndex.markReconciliationIncomplete(projectId)
         }
       } catch (restoreError) {
-        this.fileIndex.markReconciliationIncomplete()
+        this.fileIndex.markReconciliationIncomplete(projectId)
         operation.fail(restoreError, { failurePhase, recoveryPhase })
         throw restoreError
       }
@@ -572,9 +573,10 @@ class SessionPersistenceDeletionOwner {
         this.stateOwner.markMetadataIncomplete()
         this.fileIndex.markReconciliationIncomplete()
       }
-    } catch {
+    } catch (error) {
       this.stateOwner.markMetadataIncomplete()
-      this.fileIndex.markReconciliationIncomplete()
+      if (!(error instanceof ProjectFilesReconciliationError))
+        this.fileIndex.markReconciliationIncomplete()
     }
 
     for (const change of survivorChanges) {
@@ -615,7 +617,7 @@ class SessionPersistenceDeletionOwner {
       this.stateOwner.invalidateBindingTopology(projectId, sessionId)
     } catch {
       this.stateOwner.markMetadataIncomplete()
-      this.fileIndex.markReconciliationIncomplete()
+      this.fileIndex.markReconciliationIncomplete(projectId)
       return false
     }
 

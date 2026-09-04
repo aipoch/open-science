@@ -1,3 +1,4 @@
+import type { ProvenanceReadResult } from './provenance-read-result'
 import type {
   AcpCancelPromptRequest,
   AcpAgentRuntimeUpdate,
@@ -797,19 +798,29 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (request: GetArtifactCodeReconstructionRequest) => Promise<ArtifactCodeReconstructionState>
   >()('artifacts', ['artifacts:get-code-reconstruction']),
   'artifacts.getLineage': callable<
-    (request: GetArtifactLineageRequest) => Promise<ArtifactLineageProvenance | undefined>
+    (
+      request: GetArtifactLineageRequest
+    ) => Promise<ProvenanceReadResult<ArtifactLineageProvenance | undefined>>
   >()('artifacts', ['artifacts:get-lineage']),
   'artifacts.getVersionExecution': callable<
-    (request: GetArtifactVersionProvenanceRequest) => Promise<ArtifactVersionExecutionProvenance>
+    (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ProvenanceReadResult<ArtifactVersionExecutionProvenance>>
   >()('artifacts', ['artifacts:get-version-execution']),
   'artifacts.getVersionMessages': callable<
-    (request: GetArtifactVersionProvenanceRequest) => Promise<ArtifactVersionMessagesProvenance>
+    (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ProvenanceReadResult<ArtifactVersionMessagesProvenance>>
   >()('artifacts', ['artifacts:get-version-messages']),
   'artifacts.getVersionProvenance': callable<
-    (request: GetArtifactVersionProvenanceRequest) => Promise<ArtifactVersionProvenance>
+    (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ProvenanceReadResult<ArtifactVersionProvenance>>
   >()('artifacts', ['artifacts:get-version-provenance']),
   'artifacts.getVersionReview': callable<
-    (request: GetArtifactVersionProvenanceRequest) => Promise<ArtifactVersionReviewProvenance>
+    (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ProvenanceReadResult<ArtifactVersionReviewProvenance>>
   >()('artifacts', ['artifacts:get-version-review']),
   'artifacts.openFile': callable<(request: OpenArtifactFileRequest) => Promise<void>>()(
     'artifacts',

@@ -1,3 +1,11 @@
+import { useVersionHistoryPages } from './use-version-history-pages'
+import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
+import {
+  provenanceReadFailure,
+  unwrapProvenanceRead,
+  type ProvenanceReadFailure
+} from '../../../../shared/provenance-read-result'
+import { ProvenanceLoadNotice } from './ProvenanceLoadNotice'
 import { ChevronLeft, ChevronRight, Circle, Download, LoaderCircle, X } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import { Fragment, useEffect, useMemo, useState } from 'react'
@@ -60,7 +68,8 @@ type DeferredSection =
   | Pick<ArtifactVersionProvenance, 'messages'>
   | Pick<ArtifactVersionProvenance, 'review'>
 type DeferredSectionResult =
-  { state: 'loaded'; section: DeferredSection } | { state: 'error'; message: string }
+  | { state: 'loaded'; section: DeferredSection }
+  | { state: 'error'; message: string; kind: ProvenanceReadFailure['kind'] }
 
 type CodeReconstructionPanelState =
   | { status: 'loading' }
@@ -504,21 +513,25 @@ const ArtifactProvenancePanel = ({
   const formatDate = useDateTimeFormat()
   const tabScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const lineageKey = `${projectId}:${item.sessionId}:${item.artifactId ?? ''}`
-  const lineageRequestKey = `${lineageKey}:${item.selectedVersionId ?? ''}`
-  const [lineageResult, setLineageResult] = useState<{
-    key: string
-    value?: ArtifactLineageProvenance
-    unavailable?: boolean
-    error?: string
-  }>()
   const [selectedVersion, setSelectedVersion] = useState<{
     artifactId: string
     versionId: string
   }>()
+  const requestedVersionId =
+    selectedVersion && selectedVersion.artifactId === item.artifactId
+      ? selectedVersion.versionId
+      : item.selectedVersionId
+  const lineageRequestKey = `${lineageKey}:${requestedVersionId ?? ''}`
+  const [lineageResult, setLineageResult] = useState<{
+    key: string
+    value?: ArtifactLineageProvenance
+    unavailable?: boolean
+    error?: ProvenanceReadFailure
+  }>()
   const [provenanceResult, setProvenanceResult] = useState<{
     key: string
     value?: ArtifactVersionProvenance
-    error?: string
+    error?: ProvenanceReadFailure
   }>()
   const [activeTab, setActiveTab] = useState<ProvenanceTab>('code')
   const [deferredSectionResults, setDeferredSectionResults] = useState<
@@ -528,6 +541,8 @@ const ArtifactProvenancePanel = ({
     Record<string, CodeReconstructionPanelState>
   >({})
   const [reviewRevision, setReviewRevision] = useState(0)
+  const [lineageRetry, setLineageRetry] = useState(0)
+  const [coreRetry, setCoreRetry] = useState(0)
   const [showAllPackagesKey, setShowAllPackagesKey] = useState<string>()
   const [exportingNotebook, setExportingNotebook] = useState(false)
   const [notebookExportFailure, setNotebookExportFailure] = useState<{
@@ -538,13 +553,36 @@ const ArtifactProvenancePanel = ({
     key: string
     message: string
   }>()
-  const lineage = lineageResult?.key === lineageRequestKey ? lineageResult.value : undefined
+  const initialLineage = lineageResult?.key === lineageRequestKey ? lineageResult.value : undefined
+  const historyLineage = lineageResult?.key.startsWith(lineageKey + ':')
+    ? lineageResult.value
+    : undefined
+  const history = useVersionHistoryPages({
+    historyKey:
+      lineageKey +
+      ':' +
+      (historyLineage?.headVersion?.versionId ?? historyLineage?.versions.at(-1)?.versionId ?? ''),
+    initial: historyLineage,
+    loadPage: async (cursor) => {
+      const value = unwrapProvenanceRead(
+        await window.api.artifacts.getLineage({
+          projectId,
+          appSessionId: item.sessionId,
+          artifactId: item.artifactId!,
+          versionId: item.selectedVersionId,
+          cursor
+        })
+      )
+      if (!value) throw new Error('Artifact history is unavailable.')
+      return value
+    }
+  })
+  const lineage = useMemo(
+    () => (initialLineage ? { ...initialLineage, versions: history.versions } : undefined),
+    [initialLineage, history.versions]
+  )
   const lineageUnavailable =
     lineageResult?.key === lineageRequestKey && lineageResult.unavailable === true
-  const requestedVersionId =
-    selectedVersion && selectedVersion.artifactId === item.artifactId
-      ? selectedVersion.versionId
-      : item.selectedVersionId
   const selectedVersionDescriptor = lineage
     ? resolveArtifactVersionDescriptor(lineage, requestedVersionId)
     : undefined
@@ -552,9 +590,11 @@ const ArtifactProvenancePanel = ({
   const isUserEdit = selectedVersionDescriptor?.originKind === 'user_edit'
   const isLegacyVersion = selectedVersionDescriptor?.originKind === 'legacy'
   const basedOnVersionId = selectedVersionDescriptor?.basedOnVersionId ?? undefined
-  const basedOnVersionNumber = lineage?.versions.find(
-    (version) => version.versionId === basedOnVersionId
-  )?.versionNumber
+  const basedOnVersionNumber =
+    lineage?.versions.find((version) => version.versionId === basedOnVersionId)?.versionNumber ??
+    (lineage?.basedOnVersion?.versionId === basedOnVersionId
+      ? lineage?.basedOnVersion?.versionNumber
+      : undefined)
   const selectedVersionUnavailable = Boolean(lineage && requestedVersionId && !selectedVersionId)
   const provenanceKey = `${lineageKey}:${selectedVersionId ?? ''}`
   const coreProvenance =
@@ -566,7 +606,12 @@ const ArtifactProvenancePanel = ({
     codeActionFailure?.key === provenanceKey ? codeActionFailure.message : undefined
   const codeReconstructionResult = codeReconstructionResults[provenanceKey]
   const error =
-    (selectedVersionUnavailable ? t('The selected Artifact version is unavailable.') : undefined) ??
+    (selectedVersionUnavailable
+      ? {
+          kind: 'load-failed' as const,
+          message: t('The selected Artifact version is unavailable.')
+        }
+      : undefined) ??
     (lineageResult?.key === lineageRequestKey ? lineageResult.error : undefined) ??
     (provenanceResult?.key === provenanceKey ? provenanceResult.error : undefined)
 
@@ -582,7 +627,13 @@ const ArtifactProvenancePanel = ({
     let active = true
     if (!item.artifactId) return
     void window.api.artifacts
-      .getLineage({ projectId, appSessionId: item.sessionId, artifactId: item.artifactId })
+      .getLineage({
+        projectId,
+        appSessionId: item.sessionId,
+        artifactId: item.artifactId,
+        ...(requestedVersionId ? { versionId: requestedVersionId } : {})
+      })
+      .then(unwrapProvenanceRead)
       .then((value) => {
         if (!active) return
         setLineageResult({ key: lineageRequestKey, value, unavailable: value === undefined })
@@ -591,33 +642,7 @@ const ArtifactProvenancePanel = ({
         if (active) {
           setLineageResult({
             key: lineageRequestKey,
-            error: failure instanceof Error ? failure.message : String(failure)
-          })
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [item.artifactId, item.sessionId, lineageRequestKey, projectId])
-
-  useEffect(() => {
-    let active = true
-    if (!item.artifactId || !selectedVersionId || !lineage || isUserEdit || isLegacyVersion) return
-    void window.api.artifacts
-      .getVersionProvenance({
-        projectId,
-        appSessionId: item.sessionId,
-        artifactId: item.artifactId,
-        versionId: selectedVersionId
-      })
-      .then((value) => {
-        if (active) setProvenanceResult({ key: provenanceKey, value })
-      })
-      .catch((failure: unknown) => {
-        if (active) {
-          setProvenanceResult({
-            key: provenanceKey,
-            error: failure instanceof Error ? failure.message : String(failure)
+            error: provenanceReadFailure(failure)
           })
         }
       })
@@ -625,11 +650,47 @@ const ArtifactProvenancePanel = ({
       active = false
     }
   }, [
+    item.artifactId,
+    item.sessionId,
+    lineageRequestKey,
+    projectId,
+    lineageRetry,
+    requestedVersionId
+  ])
+
+  useEffect(() => {
+    let active = true
+    if (!item.artifactId || !selectedVersionId || !initialLineage || isUserEdit || isLegacyVersion)
+      return
+    void window.api.artifacts
+      .getVersionProvenance({
+        projectId,
+        appSessionId: item.sessionId,
+        artifactId: item.artifactId,
+        versionId: selectedVersionId
+      })
+      .then(unwrapProvenanceRead)
+      .then((value) => {
+        if (active) setProvenanceResult({ key: provenanceKey, value })
+      })
+      .catch((failure: unknown) => {
+        if (active) {
+          setProvenanceResult({
+            key: provenanceKey,
+            error: provenanceReadFailure(failure)
+          })
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [
+    coreRetry,
     isUserEdit,
     isLegacyVersion,
     item.artifactId,
     item.sessionId,
-    lineage,
+    initialLineage,
     projectId,
     provenanceKey,
     selectedVersionId
@@ -733,6 +794,7 @@ const ArtifactProvenancePanel = ({
     if (!load) return
     const sectionKey = `${provenanceKey}:${activeTab}:${activeTab === 'review' ? reviewReloadKey : 0}`
     void load
+      .then((value) => unwrapProvenanceRead<DeferredSection>(value))
       .then((section) => {
         if (!active) return
         setDeferredSectionResults((current) => ({
@@ -746,7 +808,7 @@ const ArtifactProvenancePanel = ({
           ...current,
           [sectionKey]: {
             state: 'error',
-            message: failure instanceof Error ? failure.message : String(failure)
+            ...provenanceReadFailure(failure)
           }
         }))
       })
@@ -764,6 +826,29 @@ const ArtifactProvenancePanel = ({
     reviewReloadKey,
     selectedVersionId
   ])
+
+  const diagnosticsFor = (failure: ProvenanceReadFailure, section: string): string =>
+    JSON.stringify(
+      {
+        projectId,
+        sessionId: item.sessionId,
+        artifactId: item.artifactId,
+        versionId: selectedVersionId,
+        section,
+        ...failure
+      },
+      null,
+      2
+    )
+  const retryCore = (): void => {
+    if (lineageResult?.error) {
+      setLineageResult(undefined)
+      setLineageRetry((value) => value + 1)
+    } else {
+      setProvenanceResult(undefined)
+      setCoreRetry((value) => value + 1)
+    }
+  }
 
   const selectedIndex =
     lineage?.versions.findIndex((version) => version.versionId === selectedVersionId) ?? -1
@@ -869,7 +954,7 @@ const ArtifactProvenancePanel = ({
 
   const selectVersion = (versionId: string): void => {
     if (!item.artifactId) return
-    const version = lineage?.versions.find((candidate) => candidate.versionId === versionId)
+    const version = lineage ? resolveArtifactVersionDescriptor(lineage, versionId) : undefined
     if (!version) return
 
     const nextItem = createPreviewFileItemForArtifactVersion({ item, version, projectId })
@@ -886,7 +971,7 @@ const ArtifactProvenancePanel = ({
     setNotebookExportFailure(undefined)
     try {
       const baseName = item.name.replace(/\.[^.]+$/u, '') || 'artifact'
-      const versionNumber = lineage?.versions[selectedIndex]?.versionNumber ?? 1
+      const versionNumber = selectedVersionDescriptor?.versionNumber ?? 1
       for (const kernel of executionKernels) {
         const notebook = buildExecutionNotebook(rawExecutionRuns, kernel, {
           artifactId: item.artifactId,
@@ -930,7 +1015,7 @@ const ArtifactProvenancePanel = ({
         bytes.byteOffset + bytes.byteLength
       ) as ArrayBuffer
       const baseName = item.name.replace(/\.[^.]+$/u, '') || 'artifact'
-      const versionNumber = lineage?.versions[selectedIndex]?.versionNumber ?? 1
+      const versionNumber = selectedVersionDescriptor?.versionNumber ?? 1
       const format = scriptDownloadFormats[language]
       await window.api.saveBlobFile({
         suggestedName: `${baseName}-v${versionNumber}.${format.extension}`,
@@ -1021,25 +1106,33 @@ const ArtifactProvenancePanel = ({
           aria-label={t('Previous Artifact version')}
           disabled={selectedIndex <= 0}
           onClick={() => {
-            const versionId = lineage?.versions[selectedIndex - 1]?.versionId
+            const versionId = (
+              selectedIndex > 0 ? lineage?.versions[selectedIndex - 1] : lineage?.previousVersion
+            )?.versionId
             if (versionId) selectVersion(versionId)
           }}
         >
           <ChevronLeft aria-hidden="true" />
         </Button>
         <span className="text-xs font-medium text-text-100">
-          {selectedIndex >= 0
-            ? `v${lineage?.versions[selectedIndex]?.versionNumber}`
-            : t('Version')}
+          {selectedVersionDescriptor ? `v${selectedVersionDescriptor.versionNumber}` : t('Version')}
         </span>
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
           aria-label={t('Next Artifact version')}
-          disabled={!lineage || selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1}
+          disabled={
+            !lineage ||
+            ((selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1) &&
+              !lineage.nextVersion)
+          }
           onClick={() => {
-            const versionId = lineage?.versions[selectedIndex + 1]?.versionId
+            const versionId = (
+              selectedIndex >= 0
+                ? (lineage?.versions[selectedIndex + 1] ?? lineage?.nextVersion)
+                : lineage?.nextVersion
+            )?.versionId
             if (versionId) selectVersion(versionId)
           }}
         >
@@ -1069,6 +1162,7 @@ const ArtifactProvenancePanel = ({
         </Button>
       </div>
 
+      <VersionHistoryLoadButton history={history} />
       {!isUserEdit && !isLegacyVersion ? (
         <div
           ref={tabScrollFadeRef}
@@ -1091,7 +1185,18 @@ const ArtifactProvenancePanel = ({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {error ? <p className="p-5 text-sm text-danger-000">{error}</p> : null}
+        {error ? (
+          <ProvenanceLoadNotice
+            key={provenanceKey + ':core'}
+            failure={error}
+            diagnostics={diagnosticsFor(error, lineageResult?.error ? 'lineage' : 'core')}
+            onRetry={
+              selectedVersionUnavailable || error.kind === 'integrity-failed'
+                ? undefined
+                : retryCore
+            }
+          />
+        ) : null}
         {!error && lineageUnavailable ? (
           <p className="p-5 text-sm text-text-300">
             {t('Provenance is not available for this legacy file.')}
@@ -1138,16 +1243,39 @@ const ArtifactProvenancePanel = ({
           </div>
         ) : null}
         {provenance && deferredSectionResult?.state === 'error' ? (
-          <p className="p-5 text-sm text-danger-000">{deferredSectionResult.message}</p>
+          <ProvenanceLoadNotice
+            key={deferredSectionKey}
+            failure={deferredSectionResult}
+            diagnostics={diagnosticsFor(deferredSectionResult, activeTab)}
+            onRetry={
+              deferredSectionResult.kind === 'integrity-failed'
+                ? undefined
+                : () =>
+                    setDeferredSectionResults((current) => {
+                      const next = { ...current }
+                      if (deferredSectionKey) delete next[deferredSectionKey]
+                      return next
+                    })
+            }
+          />
         ) : null}
         {provenance && activeTab === 'code' ? (
           <section>
             {provenance.contentStatus.state === 'unavailable' ? (
-              <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-warning-900">
-                {t('Artifact content is {{reason}}; captured provenance remains available.', {
-                  reason: provenance.contentStatus.reason
-                })}
-              </p>
+              <ProvenanceLoadNotice
+                key={provenanceKey + ':content'}
+                failure={{
+                  kind: 'integrity-failed',
+                  message: t(
+                    'Artifact content is {{reason}}; captured provenance remains available.',
+                    { reason: provenance.contentStatus.reason }
+                  )
+                }}
+                diagnostics={diagnosticsFor(
+                  { kind: 'integrity-failed', message: provenance.contentStatus.reason },
+                  'content'
+                )}
+              />
             ) : null}
             <div className={tabActionBarClassName}>
               {generatedCode ? (

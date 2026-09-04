@@ -4014,6 +4014,14 @@
     "Auto (recommended)": "自動（推奨）",
     "HTTPS": "HTTPS",
     "WebSocket": "WebSocket",
-    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "自動では、利用可能な場合は WebSocket を使用し、HTTPS にフォールバックします。互換性を重視する場合は HTTPS、低遅延を重視する場合は WebSocket を使用してください。"
+    "Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.": "自動では、利用可能な場合は WebSocket を使用し、HTTPS にフォールバックします。互換性を重視する場合は HTTPS、低遅延を重視する場合は WebSocket を使用してください。",
+    "Provenance integrity error": "来歴の整合性エラー",
+    "Provenance could not be loaded": "来歴を読み込めませんでした",
+    "View diagnostics": "診断情報を表示",
+    "Copy diagnostics": "診断情報をコピー",
+    "Could not copy diagnostics. Select and copy the text above.": "診断情報をコピーできませんでした。上のテキストを選択してコピーしてください。",
+    "Loading earlier versions…": "以前のバージョンを読み込み中…",
+    "Retry loading earlier versions": "以前のバージョンの読み込みを再試行",
+    "Load earlier versions": "以前のバージョンを読み込む"
   }
 }

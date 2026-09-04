@@ -1,3 +1,6 @@
+import { useVersionHistoryPages } from './use-version-history-pages'
+import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
+import { unwrapProvenanceRead } from '../../../../shared/provenance-read-result'
 import {
   BookOpen,
   Check,
@@ -21,6 +24,7 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState
 } from 'react'
@@ -507,7 +511,8 @@ const ArtifactVersionNavigation = ({
   const selectedIndex = lineage.versions.findIndex(
     (version) => version.versionId === selectedVersionId
   )
-  if (selectedIndex < 0) return null
+  const selected = resolveArtifactVersionDescriptor(lineage, selectedVersionId)
+  if (!selected) return null
 
   return (
     <div
@@ -519,25 +524,32 @@ const ArtifactVersionNavigation = ({
         variant="ghost"
         size="icon-xs"
         aria-label={t('Previous Artifact version')}
-        disabled={selectedIndex <= 0}
+        disabled={selectedIndex <= 0 && !lineage.previousVersion}
         onClick={() => {
-          const versionId = lineage.versions[selectedIndex - 1]?.versionId
+          const versionId = (
+            selectedIndex > 0 ? lineage.versions[selectedIndex - 1] : lineage.previousVersion
+          )?.versionId
           if (versionId) onSelect(versionId)
         }}
       >
         <ChevronLeft aria-hidden="true" />
       </Button>
-      <span className="text-xs font-medium text-text-100">
-        v{lineage.versions[selectedIndex]?.versionNumber}
-      </span>
+      <span className="text-xs font-medium text-text-100">v{selected.versionNumber}</span>
       <Button
         type="button"
         variant="ghost"
         size="icon-xs"
         aria-label={t('Next Artifact version')}
-        disabled={selectedIndex >= lineage.versions.length - 1}
+        disabled={
+          (selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1) &&
+          !lineage.nextVersion
+        }
         onClick={() => {
-          const versionId = lineage.versions[selectedIndex + 1]?.versionId
+          const versionId = (
+            selectedIndex >= 0
+              ? (lineage.versions[selectedIndex + 1] ?? lineage.nextVersion)
+              : lineage.nextVersion
+          )?.versionId
           if (versionId) onSelect(versionId)
         }}
       >
@@ -570,23 +582,32 @@ const ManagedVersionNavigation = ({
         aria-label={t('Previous file version')}
         disabled={selectedIndex <= 0}
         onClick={() => {
-          const id = inspect.versions[selectedIndex - 1]?.id
+          const id = (
+            selectedIndex > 0 ? inspect.versions[selectedIndex - 1] : inspect.previousVersion
+          )?.id
           if (id) onSelect(id)
         }}
       >
         <ChevronLeft aria-hidden="true" />
       </Button>
       <span className="min-w-8 text-center text-xs font-medium text-text-100">
-        v{inspect.versions[selectedIndex]?.versionNumber}
+        v{inspect.selectedVersion?.versionNumber ?? inspect.versions[selectedIndex]?.versionNumber}
       </span>
       <Button
         type="button"
         variant="ghost"
         size="icon-xs"
         aria-label={t('Next file version')}
-        disabled={selectedIndex >= inspect.versions.length - 1}
+        disabled={
+          (selectedIndex < 0 || selectedIndex >= inspect.versions.length - 1) &&
+          !inspect.nextVersion
+        }
         onClick={() => {
-          const id = inspect.versions[selectedIndex + 1]?.id
+          const id = (
+            selectedIndex >= 0
+              ? (inspect.versions[selectedIndex + 1] ?? inspect.nextVersion)
+              : inspect.nextVersion
+          )?.id
           if (id) onSelect(id)
         }}
       >
@@ -711,15 +732,46 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     // Selection and origin lifecycle changes can update a stable tab without changing its Artifact
     // identity. Keep the response keyed to the full request so stale lineage is never consumed.
     const lineageRequestKey = `${lineageKey}:${sessionFilesRevision}:${previewItem.selectedVersionId ?? ''}:${previewItem.originSession?.state ?? ''}`
-    const lineage =
+    const initialLineage =
       lineageLoadState?.key === lineageRequestKey && lineageLoadState.phase === 'loaded'
         ? lineageLoadState.value
         : undefined
+    const historyLineage =
+      lineageLoadState?.key.startsWith(lineageKey + ':') && lineageLoadState.phase === 'loaded'
+        ? lineageLoadState.value
+        : undefined
+    const lineageHistory = useVersionHistoryPages({
+      historyKey:
+        lineageKey +
+        ':' +
+        (historyLineage?.headVersion?.versionId ??
+          historyLineage?.versions.at(-1)?.versionId ??
+          ''),
+      initial: historyLineage,
+      loadPage: async (cursor) => {
+        const value = unwrapProvenanceRead(
+          await window.api.artifacts.getLineage({
+            projectId: projectId!,
+            appSessionId: previewItem.sessionId,
+            artifactId: previewItem.artifactId!,
+            versionId: previewItem.selectedVersionId,
+            cursor
+          })
+        )
+        if (!value) throw new Error('Artifact history is unavailable.')
+        return value
+      }
+    })
+    const lineage = useMemo(
+      () => (initialLineage ? { ...initialLineage, versions: lineageHistory.versions } : undefined),
+      [initialLineage, lineageHistory.versions]
+    )
     const lineageFailed =
       lineageLoadState?.key === lineageRequestKey && lineageLoadState.phase === 'error'
-    const exactSelectedVersion = lineage?.versions.find(
-      (version) => version.versionId === previewItem.selectedVersionId
-    )
+    const exactSelectedVersion =
+      lineage && previewItem.selectedVersionId
+        ? resolveArtifactVersionDescriptor(lineage, previewItem.selectedVersionId)
+        : undefined
     const newestLoadedVersion = lineage?.versions.at(-1)
     const selectionIsNewerThanLoadedLineage =
       typeof previewItem.versionNumber === 'number' &&
@@ -914,10 +966,16 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         .getLineage({
           projectId,
           appSessionId: previewItem.sessionId,
-          artifactId: previewItem.artifactId
+          artifactId: previewItem.artifactId,
+          ...(previewItem.selectedVersionId ? { versionId: previewItem.selectedVersionId } : {})
         })
         .then((value) => {
-          if (active) setLineageLoadState({ key: lineageRequestKey, phase: 'loaded', value })
+          if (active)
+            setLineageLoadState({
+              key: lineageRequestKey,
+              phase: 'loaded',
+              value: unwrapProvenanceRead(value)
+            })
         })
         .catch(() => {
           if (active) setLineageLoadState({ key: lineageRequestKey, phase: 'error' })
@@ -932,6 +990,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       lineageRetryToken,
       previewItem.artifactId,
       previewItem.sessionId,
+      previewItem.selectedVersionId,
       previewItem.source,
       projectId
     ])
@@ -1018,7 +1077,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
 
     const selectPreviewVersion = (versionId: string): void => {
       if (!lineage || !projectId) return
-      const version = lineage.versions.find((candidate) => candidate.versionId === versionId)
+      const version = resolveArtifactVersionDescriptor(lineage, versionId)
       if (!version) return
 
       applyVersionItem(
@@ -1062,9 +1121,13 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
 
     const selectManagedVersion = (versionId: string): void => {
       if (!managedNavigationInspect || !projectId) return
-      const version = managedNavigationInspect.versions.find(
-        (candidate) => candidate.id === versionId
-      )
+      const version = [
+        managedNavigationInspect.selectedVersion,
+        managedNavigationInspect.headVersion,
+        managedNavigationInspect.previousVersion,
+        managedNavigationInspect.nextVersion,
+        ...managedNavigationInspect.versions
+      ].find((candidate) => candidate?.id === versionId)
       if (!version) return
       const nextItem = createPreviewFileItemForManagedVersion({
         item: previewItem,
@@ -1398,6 +1461,11 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   lineage={lineage}
                   selectedVersionId={selectedVersionId}
                   onSelect={selectPreviewVersion}
+                />
+              ) : null}
+              {!showProvenance ? (
+                <VersionHistoryLoadButton
+                  history={managedIdentity ? managedWorkflow.history : lineageHistory}
                 />
               ) : null}
               <div

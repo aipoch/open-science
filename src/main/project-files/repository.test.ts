@@ -3152,6 +3152,69 @@ describe('ManagedFileIndexRepository', () => {
     })
   })
 
+  it.each(['unrelated project', 'recovered project'] as const)(
+    'keeps the %s complete after a Project-scoped reconciliation failure',
+    async (scenario) => {
+      const getClient = vi.fn().mockResolvedValue(client)
+      const recoveringRepository = new ManagedFileIndexRepository(
+        getClient,
+        storageRoot,
+        new ManagedFileVersionService({ storageRoot, getClient: () => Promise.resolve(client) }),
+        uploadRepository
+      )
+      await recoveringRepository.reconcileActiveSessions([])
+      getClient.mockRejectedValueOnce(new Error('database busy'))
+
+      await expect(recoveringRepository.reconcileProjectSessions(PROJECT_ID, [])).rejects.toThrow(
+        'database busy'
+      )
+      await expect(recoveringRepository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+        isIndexComplete: false
+      })
+      if (scenario === 'recovered project') {
+        await recoveringRepository.reconcileProjectSessions(PROJECT_ID, [])
+      }
+      await expect(
+        recoveringRepository.getOverview(
+          scenario === 'unrelated project' ? 'project-b' : PROJECT_ID
+        )
+      ).resolves.toMatchObject({ isIndexComplete: true })
+    }
+  )
+
+  it('keeps a known retained-origin failure scoped during a global reconciliation', async () => {
+    await client.fileOriginSession.create({
+      data: {
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        state: 'deleted',
+        deletedAt: new Date()
+      }
+    })
+    vi.spyOn(client.artifactLineage, 'findMany').mockRejectedValueOnce(
+      new Error('retained projection busy')
+    )
+    await expect(repository.reconcileActiveSessions([])).rejects.toThrow()
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      isIndexComplete: false
+    })
+    await expect(repository.getOverview('project-b')).resolves.toMatchObject({
+      isIndexComplete: true
+    })
+  })
+
+  it('does not clear global uncertainty when only one Project is reconciled', async () => {
+    repository.markReconciliationIncomplete()
+    await repository.reconcileProjectSessions(PROJECT_ID, [])
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      isIndexComplete: false
+    })
+    await repository.reconcileActiveSessions([])
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      isIndexComplete: true
+    })
+  })
+
   it('reports an incomplete index until failed startup reconciliation succeeds', async () => {
     const artifactPath = join(
       storageRoot,

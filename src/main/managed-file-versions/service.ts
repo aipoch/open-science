@@ -1,4 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import {
+  parseVersionHistoryCursor,
+  versionHistoryPage,
+  VERSION_HISTORY_PAGE_SIZE
+} from '../../shared/version-history'
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 
@@ -463,7 +468,24 @@ class ManagedFileVersionService {
     request: ManagedFileVersionInspectRequest
   ): Promise<ManagedFileVersionInspectResult> {
     const resolved = await this.resolveRecord(request)
-    const versions = await this.listVersions(resolved.logicalFile)
+    let before: number | undefined
+    try {
+      before = parseVersionHistoryCursor(request.cursor)
+    } catch {
+      operationError('INVALID_REQUEST', 'Invalid version history cursor.')
+    }
+    const page = versionHistoryPage(await this.listVersions(resolved.logicalFile, before))
+    const head =
+      resolved.version.id === resolved.logicalFile.currentVersionId
+        ? resolved
+        : await this.resolveRecord({
+            ...request,
+            versionId: resolved.logicalFile.currentVersionId!
+          })
+    const [previous, next] = await Promise.all([
+      this.listVersions(resolved.logicalFile, resolved.version.versionNumber, undefined, 1),
+      this.listVersions(resolved.logicalFile, undefined, resolved.version.versionNumber, 1)
+    ])
     const writeUnavailableReason = await this.writeUnavailableReason(resolved.logicalFile)
     const eligibility = await this.readTextEligibility(resolved)
 
@@ -475,9 +497,22 @@ class ManagedFileVersionService {
       displayName: resolved.logicalFile.displayName,
       headVersionId: resolved.logicalFile.currentVersionId!,
       selectedVersionId: resolved.version.id,
-      versions: versions.map((version) =>
+      versions: page.versions.map((version) =>
         toDescriptor(request.source, resolved.logicalFile.displayName, version)
       ),
+      nextCursor: page.nextCursor,
+      previousVersion: previous[0]
+        ? toDescriptor(request.source, resolved.logicalFile.displayName, previous[0])
+        : undefined,
+      nextVersion: next[0]
+        ? toDescriptor(request.source, resolved.logicalFile.displayName, next[0])
+        : undefined,
+      selectedVersion: toDescriptor(
+        request.source,
+        resolved.logicalFile.displayName,
+        resolved.version
+      ),
+      headVersion: toDescriptor(request.source, resolved.logicalFile.displayName, head.version),
       canEdit: eligibility.editable && writeUnavailableReason === undefined,
       canDiff: eligibility.editable && resolved.version.basedOnVersionId !== null,
       ...(eligibility.editable ? { text: eligibility.text, textFormat: eligibility.format } : {}),
@@ -1160,16 +1195,27 @@ class ManagedFileVersionService {
       : null
   }
 
-  private async listVersions(logicalFile: ManagedLogicalFile): Promise<ManagedFileVersionRecord[]> {
+  private async listVersions(
+    logicalFile: ManagedLogicalFile,
+    before?: number,
+    after?: number,
+    take = VERSION_HISTORY_PAGE_SIZE + 1
+  ): Promise<ManagedFileVersionRecord[]> {
     const client = await this.options.getClient()
     if (logicalFile.source === 'artifact') {
       const versions = await client.artifactVersion.findMany({
         where: {
           artifactId: logicalFile.id,
+          ...(before === undefined
+            ? after === undefined
+              ? {}
+              : { versionNumber: { gt: after } }
+            : { versionNumber: { lt: before } }),
           state: 'finalized',
           OR: [{ originKind: { not: 'agent_generated' } }, { managedVisibleAt: { not: null } }]
         },
-        orderBy: { versionNumber: 'asc' }
+        orderBy: { versionNumber: after === undefined ? 'desc' : 'asc' },
+        take
       })
       return versions.map((version) => ({
         ...version,
@@ -1179,8 +1225,17 @@ class ManagedFileVersionService {
       }))
     }
     const versions = await client.uploadVersion.findMany({
-      where: { uploadFileId: logicalFile.id, state: 'ready' },
-      orderBy: { versionNumber: 'asc' }
+      where: {
+        uploadFileId: logicalFile.id,
+        state: 'ready',
+        ...(before === undefined
+          ? after === undefined
+            ? {}
+            : { versionNumber: { gt: after } }
+          : { versionNumber: { lt: before } })
+      },
+      orderBy: { versionNumber: after === undefined ? 'desc' : 'asc' },
+      take
     })
     return versions.map((version) => ({
       ...version,
