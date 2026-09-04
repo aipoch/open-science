@@ -701,7 +701,11 @@ describe('Provenance Message snapshots', () => {
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
-    const createStagingSnapshot = async (id: string, corruptChecksum = false): Promise<void> => {
+    const createStagingSnapshot = async (
+      id: string,
+      corruptChecksum = false,
+      stagingFileOnly = false
+    ): Promise<void> => {
       const storageKey = `artifacts/project-1/session-1/.provenance/message-snapshots/${id}.json`
       const terminalMessageId = `message-${id}`
       const payload = {
@@ -724,7 +728,13 @@ describe('Provenance Message snapshots', () => {
         activityGroups: []
       }
       const serialized = `${JSON.stringify(payload, null, 2)}\n`
-      const path = join(storageRoot!, ...storageKey.split('/'))
+      const path = stagingFileOnly
+        ? join(
+            storageRoot!,
+            'artifacts/project-1/session-1/.provenance/.staging/messages',
+            `${id}.json`
+          )
+        : join(storageRoot!, ...storageKey.split('/'))
       await mkdir(dirname(path), { recursive: true })
       await writeFile(path, serialized, 'utf8')
       await client.artifactMessageSnapshot.create({
@@ -746,6 +756,7 @@ describe('Provenance Message snapshots', () => {
       })
     }
     await createStagingSnapshot('snapshot-valid-1')
+    await createStagingSnapshot('snapshot-staging-file-1', false, true)
     await createStagingSnapshot('snapshot-corrupt-1', true)
     let failDurability = true
     const snapshots = new ProvenanceMessageSnapshotRepository({
@@ -765,6 +776,11 @@ describe('Provenance Message snapshots', () => {
       client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id: 'snapshot-valid-1' } })
     ).resolves.toMatchObject({ state: 'staging' })
     await expect(
+      client.artifactMessageSnapshot.findUniqueOrThrow({
+        where: { id: 'snapshot-staging-file-1' }
+      })
+    ).resolves.toMatchObject({ state: 'staging' })
+    await expect(
       client.artifactMessageSnapshot.findUnique({ where: { id: 'snapshot-corrupt-1' } })
     ).resolves.toBeNull()
 
@@ -774,6 +790,20 @@ describe('Provenance Message snapshots', () => {
     await expect(
       client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id: 'snapshot-valid-1' } })
     ).resolves.toMatchObject({ state: 'ready' })
+    await expect(
+      client.artifactMessageSnapshot.findUniqueOrThrow({
+        where: { id: 'snapshot-staging-file-1' }
+      })
+    ).resolves.toMatchObject({ state: 'ready' })
+    await expect(
+      readFile(
+        join(
+          storageRoot,
+          'artifacts/project-1/session-1/.provenance/message-snapshots/snapshot-staging-file-1.json'
+        ),
+        'utf8'
+      )
+    ).resolves.toContain('snapshot-staging-file-1')
   })
 
   it('republishes a staging Review scope snapshot before Session deletion reconciliation', async () => {

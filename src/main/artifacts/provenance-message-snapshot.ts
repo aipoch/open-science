@@ -521,6 +521,18 @@ class ProvenanceMessageSnapshotRepository {
       where: { state: 'staging' }
     })
     for (const snapshot of staging) {
+      const finalPath = resolveStorageKey(this.options.storageRoot, snapshot.storageKey)
+      const stagingPath = join(
+        this.options.storageRoot,
+        'artifacts',
+        snapshot.projectId,
+        snapshot.sessionId,
+        '.provenance',
+        '.staging',
+        'messages',
+        `${snapshot.id}.json`
+      )
+      let recoverFromStaging = false
       try {
         // Reuse the same immutable-file validation as normal reads. The temporary state override is
         // local to validation; SQLite remains staging until the promotion transaction commits.
@@ -534,31 +546,38 @@ class ProvenanceMessageSnapshotRepository {
           }
         )
       } catch {
-        const deleted = await client.artifactMessageSnapshot.deleteMany({
-          where: { id: snapshot.id, state: 'staging' }
-        })
-        if (deleted.count !== 1) continue
-        const stagingPath = join(
-          this.options.storageRoot,
-          'artifacts',
-          snapshot.projectId,
-          snapshot.sessionId,
-          '.provenance',
-          '.staging',
-          'messages',
-          `${snapshot.id}.json`
-        )
-        await Promise.all([
-          rm(resolveStorageKey(this.options.storageRoot, snapshot.storageKey), {
-            force: true
-          }).catch(() => undefined),
-          rm(stagingPath, { force: true }).catch(() => undefined)
-        ])
-        continue
+        try {
+          await this.verifyReadySnapshot(
+            { ...snapshot, state: 'ready' },
+            {
+              rootFrameId: snapshot.rootFrameId,
+              agentFrameId: snapshot.agentFrameId,
+              messageBranchId: snapshot.messageBranchId,
+              terminalMessageId: snapshot.terminalMessageId
+            },
+            stagingPath
+          )
+          recoverFromStaging = true
+        } catch {
+          const deleted = await client.artifactMessageSnapshot.deleteMany({
+            where: { id: snapshot.id, state: 'staging' }
+          })
+          if (deleted.count !== 1) continue
+          await Promise.all([
+            rm(finalPath, { force: true }).catch(() => undefined),
+            rm(stagingPath, { force: true }).catch(() => undefined)
+          ])
+          continue
+        }
       }
       try {
-        const finalPath = resolveStorageKey(this.options.storageRoot, snapshot.storageKey)
-        await this.durability.syncFile(finalPath)
+        if (recoverFromStaging) {
+          await mkdir(dirname(finalPath), { recursive: true })
+          await this.durability.syncFile(stagingPath)
+          await rename(stagingPath, finalPath)
+        } else {
+          await this.durability.syncFile(finalPath)
+        }
         await this.durability.syncDirectory(dirname(finalPath))
         await client.$transaction(async (transaction) => {
           const promoted = await transaction.artifactMessageSnapshot.updateMany({
@@ -972,15 +991,13 @@ class ProvenanceMessageSnapshotRepository {
       agentFrameId: string
       messageBranchId: string
       terminalMessageId: string
-    }
+    },
+    storagePath = resolveStorageKey(this.options.storageRoot, snapshot.storageKey)
   ): Promise<void> {
     if (snapshot.state !== 'ready') {
       throw new Error(`Artifact Message snapshot is not ready: ${snapshot.id}`)
     }
-    const serialized = await readFile(
-      resolveStorageKey(this.options.storageRoot, snapshot.storageKey),
-      'utf8'
-    ).catch((error: unknown) => {
+    const serialized = await readFile(storagePath, 'utf8').catch((error: unknown) => {
       throw new Error(
         `Artifact Message snapshot is unavailable: ${snapshot.id}: ${error instanceof Error ? error.message : String(error)}`
       )
