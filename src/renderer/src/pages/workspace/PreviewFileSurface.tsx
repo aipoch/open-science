@@ -1449,24 +1449,25 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   </Button>
                 </div>
               ) : !showProvenance && managedNavigationInspect?.text !== undefined ? (
-                <ManagedVersionNavigation
-                  inspect={managedNavigationInspect}
-                  onSelect={selectManagedVersion}
-                />
+                <>
+                  <ManagedVersionNavigation
+                    inspect={managedNavigationInspect}
+                    onSelect={selectManagedVersion}
+                  />
+                  <VersionHistoryLoadButton history={managedWorkflow.history} />
+                </>
               ) : !showProvenance &&
                 !managedIdentity &&
                 lineage &&
                 hasManagedTextEditExtension(resolvedPreviewItem.name) ? (
-                <ArtifactVersionNavigation
-                  lineage={lineage}
-                  selectedVersionId={selectedVersionId}
-                  onSelect={selectPreviewVersion}
-                />
-              ) : null}
-              {!showProvenance ? (
-                <VersionHistoryLoadButton
-                  history={managedIdentity ? managedWorkflow.history : lineageHistory}
-                />
+                <>
+                  <ArtifactVersionNavigation
+                    lineage={lineage}
+                    selectedVersionId={selectedVersionId}
+                    onSelect={selectPreviewVersion}
+                  />
+                  <VersionHistoryLoadButton history={lineageHistory} />
+                </>
               ) : null}
               <div
                 data-testid="preview-file-content-region"

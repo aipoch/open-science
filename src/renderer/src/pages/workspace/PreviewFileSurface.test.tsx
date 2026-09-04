@@ -342,6 +342,34 @@ describe('PreviewFileSurface managed text versions', () => {
       .mockResolvedValue({ ok: true, value: managedInspect })
   })
 
+  it.each(['plot.png', 'report.pdf', 'README.md'])(
+    'offers older history for %s only alongside a version navigator',
+    async (name) => {
+      const isText = name.endsWith('.md')
+      window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          ...managedInspect,
+          displayName: name,
+          nextCursor: '1',
+          text: isText ? managedInspect.text : undefined,
+          canEdit: isText,
+          canDiff: isText
+        }
+      })
+      await act(async () =>
+        root.render(<PreviewFileSurface item={{ ...managedUploadItem, name }} onClose={vi.fn()} />)
+      )
+      expect(
+        container.querySelector('[data-testid="managed-preview-version-navigation"]') !== null
+      ).toBe(isText)
+      const loader = [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Load earlier versions'
+      )
+      expect(loader !== undefined).toBe(isText)
+    }
+  )
+
   it('keeps the selected download target while inspection is pending and after failure', async () => {
     type Result = Awaited<ReturnType<typeof window.api.managedFileVersions.inspect>>
     let rejectInspect!: (error: Error) => void
