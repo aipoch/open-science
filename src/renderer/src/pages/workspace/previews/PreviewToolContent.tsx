@@ -2,7 +2,12 @@ import { LoaderCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { ActivePlanProjection } from '../../../../../shared/session-plan/contract'
+import {
+  derivePlanLifecycle,
+  planStepTitles,
+  projectPlanStepStates,
+  type ActivePlanProjection
+} from '../../../../../shared/session-plan/contract'
 import { Button } from '@/components/ui/button'
 import {
   selectProjectSessionReviewLoadError,
@@ -33,13 +38,64 @@ const resolvePlanProjection = (
   if (!planArtifactVersionId) return activePlanProjection
 
   return (
-    session?.planHistoryProjections?.find(
-      (projection) => projection.artifactVersionId === planArtifactVersionId
-    ) ??
     (activePlanProjection?.artifactVersionId === planArtifactVersionId
       ? activePlanProjection
-      : undefined)
+      : undefined) ??
+    session?.planHistoryProjections?.find(
+      (projection) => projection.artifactVersionId === planArtifactVersionId
+    )
   )
+}
+
+type RuntimePlan = NonNullable<NonNullable<ChatSession['runtimeContext']>['plan']>
+
+const projectionMatchesRuntimeIdentity = (
+  projection: ActivePlanProjection,
+  runtimePlan: RuntimePlan,
+  planArtifactVersionId: string | undefined
+): boolean =>
+  projection.artifactVersionId === runtimePlan.artifactVersionId &&
+  projection.artifactId === runtimePlan.artifactId &&
+  projection.artifactChecksum === runtimePlan.artifactChecksum &&
+  (!runtimePlan.originatingPromptMessageId ||
+    projection.originatingPromptMessageId === runtimePlan.originatingPromptMessageId) &&
+  (runtimePlan.materializedAt === undefined ||
+    projection.materializedAt === runtimePlan.materializedAt) &&
+  (!planArtifactVersionId || projection.artifactVersionId === planArtifactVersionId)
+
+const projectRuntimePlan = (
+  projection: ActivePlanProjection,
+  runtimePlan: RuntimePlan,
+  revision: number
+): ActivePlanProjection => {
+  const titles = planStepTitles(projection.document)
+  return {
+    ...projection,
+    revision,
+    approval: runtimePlan.approval,
+    lifecycle: derivePlanLifecycle(
+      projection.document,
+      runtimePlan.approval,
+      runtimePlan.stepStatuses
+    ),
+    stepStatuses: runtimePlan.stepStatuses,
+    stepStates: projectPlanStepStates(projection.document, runtimePlan.stepStatuses),
+    counts: {
+      phases: projection.document.phases.length,
+      delegations: projection.document.phases.reduce(
+        (sum, phase) => sum + phase.delegations.length,
+        0
+      ),
+      steps: titles.length,
+      completed: titles.filter((title) => {
+        const status = runtimePlan.stepStatuses[title]?.status
+        return status === 'completed' || status === 'skipped'
+      }).length,
+      inProgress: titles.filter(
+        (title) => runtimePlan.stepStatuses[title]?.status === 'in_progress'
+      ).length
+    }
+  }
 }
 
 // Durable progress updates can invalidate the full projection while WorkspacePage reloads it.
@@ -49,25 +105,48 @@ const createVisiblePlanProjectionSelector = (
   planArtifactVersionId: string | undefined
 ): ((state: SessionStore) => ActivePlanProjection | undefined) => {
   let retainedProjection: ActivePlanProjection | undefined
+  let projectedBase: ActivePlanProjection | undefined
+  let projectedRuntimePlan: RuntimePlan | undefined
+  let projectedRuntimeRevision: number | undefined
+  let runtimeProjection: ActivePlanProjection | undefined
 
   return (state) => {
     const session = state.sessions.find((candidate) => candidate.id === sessionId)
     const projection = resolvePlanProjection(session, planArtifactVersionId)
-    if (projection) {
+    const activeProjection = session?.activePlanProjection
+    if (projection && projection === activeProjection) {
       retainedProjection = projection
       return projection
     }
 
     const runtimePlan = session?.runtimeContext?.plan
+    const runtimeRevision = session?.runtimeContext?.revision
+    const candidate = projection ?? retainedProjection
     const retainedMatchesRuntime =
-      retainedProjection &&
+      candidate &&
       runtimePlan &&
-      retainedProjection.artifactVersionId === runtimePlan.artifactVersionId &&
-      retainedProjection.artifactId === runtimePlan.artifactId &&
-      retainedProjection.artifactChecksum === runtimePlan.artifactChecksum &&
-      (!planArtifactVersionId || retainedProjection.artifactVersionId === planArtifactVersionId)
+      runtimeRevision !== undefined &&
+      projectionMatchesRuntimeIdentity(candidate, runtimePlan, planArtifactVersionId)
 
-    if (retainedMatchesRuntime) return retainedProjection
+    if (retainedMatchesRuntime) {
+      if (projection) retainedProjection = projection
+      if (
+        candidate === projectedBase &&
+        runtimePlan === projectedRuntimePlan &&
+        runtimeRevision === projectedRuntimeRevision
+      ) {
+        return runtimeProjection
+      }
+      projectedBase = candidate
+      projectedRuntimePlan = runtimePlan
+      projectedRuntimeRevision = runtimeRevision
+      runtimeProjection = projectRuntimePlan(candidate, runtimePlan, runtimeRevision)
+      return runtimeProjection
+    }
+    if (projection) {
+      retainedProjection = projection
+      return projection
+    }
     retainedProjection = undefined
     return undefined
   }
@@ -171,14 +250,17 @@ const PlanPreviewToolContent = ({
   const isPlanExpanded = usePreviewWorkbenchStore((state) => state.expandedToolItemId === item.id)
   const setToolItemExpanded = usePreviewWorkbenchStore((state) => state.setToolItemExpanded)
   const activePlanProjection = planSession?.activePlanProjection
-  const planProjection = resolvePlanProjection(planSession, item.planArtifactVersionId)
   const runtimePlan = planSession?.runtimeContext?.plan
 
   const respondPlan = async (decision: 'approved' | 'rejected'): Promise<void> => {
-    if (!planProjection || !item.projectId) return
+    if (!visiblePlanProjection || !item.projectId) return
     if (planSession?.activeRun) {
       await respondToSessionPlan(
-        { projectId: item.projectId, sessionId: item.sessionId, projection: planProjection },
+        {
+          projectId: item.projectId,
+          sessionId: item.sessionId,
+          projection: visiblePlanProjection
+        },
         { decision }
       )
       return
@@ -189,7 +271,7 @@ const PlanPreviewToolContent = ({
   const hasPlanResponsePath =
     planSession?.activeRun !== undefined || restoredPlanResponder?.sessionId === item.sessionId
   const canRespondToPlan =
-    planProjection !== undefined &&
+    visiblePlanProjection !== undefined &&
     planSession?.status === 'waiting-plan-approval' &&
     hasPlanResponsePath &&
     !isSideChatOpen

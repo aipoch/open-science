@@ -275,6 +275,102 @@ describe('PlanService', () => {
     })
   })
 
+  it('forwards the final projection of the replaced Plan when generating its successor', async () => {
+    const { service, dependencies, setContext } = setup()
+    const document = {
+      schema_version: 1 as const,
+      ...content
+    }
+    const serialized = JSON.stringify(document, null, 2)
+    setContext({
+      version: 1,
+      revision: 7,
+      plan: {
+        artifactId: 'artifact-old',
+        artifactVersionId: 'version-old',
+        artifactChecksum: createHash('sha256').update(serialized).digest('hex'),
+        document,
+        originatingPromptMessageId: 'interaction-old',
+        materializedAt: 21,
+        approval: 'approved',
+        stepStatuses: {
+          'Analyze the data': { status: 'completed', notes: 'Final result.', updatedAt: 41 }
+        }
+      }
+    })
+
+    await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      executionId: 'execution-2',
+      interactionId: 'interaction-2',
+      content: { ...content, task_summary: 'Analyze the follow-up dataset' }
+    })
+
+    expect(dependencies.patchRuntimeContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedRevision: 7,
+        archivePlanProjection: {
+          artifactId: 'artifact-old',
+          artifactVersionId: 'version-old',
+          artifactChecksum: createHash('sha256').update(serialized).digest('hex'),
+          originatingPromptMessageId: 'interaction-old',
+          materializedAt: 21,
+          revision: 7,
+          approval: 'approved',
+          lifecycle: 'completed',
+          document,
+          stepStatuses: {
+            'Analyze the data': { status: 'completed', notes: 'Final result.', updatedAt: 41 }
+          },
+          stepStates: {
+            'Analyze the data': { status: 'completed', notes: 'Final result.' }
+          },
+          counts: { phases: 1, delegations: 1, steps: 1, completed: 1, inProgress: 0 }
+        }
+      })
+    )
+  })
+
+  it('still generates a successor when the replaced legacy Plan Artifact is unavailable', async () => {
+    const { service, dependencies, setContext } = setup()
+    setContext({
+      version: 1,
+      revision: 7,
+      plan: {
+        artifactId: 'artifact-old',
+        artifactVersionId: 'version-old',
+        artifactChecksum: 'a'.repeat(64),
+        originatingPromptMessageId: 'interaction-old',
+        approval: 'approved',
+        stepStatuses: {}
+      }
+    })
+    vi.mocked(dependencies.readArtifactVersion).mockImplementation(async (request) => {
+      if (request.artifactVersionId === 'version-old') throw new Error('Artifact was pruned')
+      const successor = JSON.stringify(
+        { schema_version: 1, ...content, task_summary: 'Analyze the follow-up dataset' },
+        null,
+        2
+      )
+      return { content: successor, checksum: createHash('sha256').update(successor).digest('hex') }
+    })
+
+    await expect(
+      service.generate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        executionId: 'execution-2',
+        interactionId: 'interaction-2',
+        content: { ...content, task_summary: 'Analyze the follow-up dataset' }
+      })
+    ).resolves.toMatchObject({ projection: { artifactVersionId: 'version-1' } })
+
+    expect(dependencies.patchRuntimeContext).toHaveBeenCalledWith(
+      expect.not.objectContaining({ archivePlanProjection: expect.anything() })
+    )
+  })
+
   it('uses one irreversible idempotent transition for approval and completes the exact step', async () => {
     const { service, context, dependencies } = setup()
     const generated = await service.generate({

@@ -9,6 +9,7 @@ vi.mock('electron', () => ({
 }))
 
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
+import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { hasAnswerableDelegatedQuestion } from '../../shared/delegated-work-projection'
 import {
   createLinearConversationGraph,
@@ -240,6 +241,39 @@ const createRuntimePlan = (
   artifactChecksum: 'a'.repeat(64),
   approval: 'pending',
   stepStatuses: {},
+  ...overrides
+})
+
+const createPlanProjection = (
+  overrides: Partial<ActivePlanProjection> = {}
+): ActivePlanProjection => ({
+  artifactId: 'plan-1',
+  artifactVersionId: 'plan-version-1',
+  artifactChecksum: 'a'.repeat(64),
+  originatingPromptMessageId: 'prompt-plan-1',
+  revision: 7,
+  approval: 'approved',
+  lifecycle: 'completed',
+  document: {
+    schema_version: 1,
+    task_summary: 'Analyze the dataset',
+    phases: [
+      {
+        name: 'Analysis',
+        delegations: [
+          {
+            name: 'Primary agent',
+            steps: [{ title: 'Analyze data', description: 'Produce the result.' }]
+          }
+        ]
+      }
+    ],
+    desired_outputs: ['Analysis report'],
+    feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+  },
+  stepStatuses: { 'Analyze data': { status: 'completed', updatedAt: 6 } },
+  stepStates: { 'Analyze data': { status: 'completed' } },
+  counts: { phases: 1, delegations: 1, steps: 1, completed: 1, inProgress: 0 },
   ...overrides
 })
 
@@ -1292,6 +1326,166 @@ describe('SessionPersistenceCoordinator', () => {
       }),
       'runtime-context'
     )
+  })
+
+  it('atomically archives the replaced Plan and preserves Main-owned history across restart and renderer saves', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-plan-history-owner-'))
+    const repository = new SessionRepository(root)
+    const oldPlan = createRuntimePlan({
+      approval: 'approved',
+      stepStatuses: { 'Analyze data': { status: 'completed', updatedAt: 6 } }
+    })
+    const finalProjection = createPlanProjection()
+    const retainedLastProjection = createPlanProjection({
+      artifactId: 'plan-retained',
+      artifactVersionId: 'plan-version-retained',
+      artifactChecksum: 'c'.repeat(64),
+      revision: 5
+    })
+    const newPlan = createRuntimePlan({
+      artifactId: 'plan-2',
+      artifactVersionId: 'plan-version-2',
+      artifactChecksum: 'b'.repeat(64)
+    })
+    try {
+      await repository.saveSession(
+        createSession({
+          runtimeContext: { version: 1, revision: 7, plan: oldPlan },
+          planHistoryProjections: [
+            createPlanProjection({
+              lifecycle: 'approved',
+              stepStatuses: {},
+              stepStates: { 'Analyze data': { status: 'not_started' } },
+              counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+            }),
+            createPlanProjection({
+              ...retainedLastProjection,
+              revision: 4,
+              lifecycle: 'approved',
+              stepStatuses: {},
+              stepStates: { 'Analyze data': { status: 'not_started' } },
+              counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+            }),
+            retainedLastProjection,
+            createPlanProjection({
+              artifactId: newPlan.artifactId,
+              artifactVersionId: newPlan.artifactVersionId,
+              artifactChecksum: newPlan.artifactChecksum
+            })
+          ]
+        })
+      )
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+      await coordinator.patchSessionRuntimeContext({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedRevision: 7,
+        patch: { plan: newPlan },
+        archivePlanProjection: finalProjection,
+        sessionStatus: 'waiting-plan-approval'
+      })
+
+      const afterReplacement = await repository.loadSession('project-1', 'session-1')
+      if (!afterReplacement) throw new Error('Expected the replaced Session to remain durable.')
+      expect(afterReplacement).toMatchObject({
+        status: 'waiting-plan-approval',
+        runtimeContext: { revision: 8, plan: newPlan },
+        planHistoryProjections: [retainedLastProjection, finalProjection]
+      })
+
+      await coordinator.saveSession({
+        ...afterReplacement,
+        runtimeContext: { version: 1, revision: 1, plan: oldPlan },
+        planHistoryProjections: [
+          createPlanProjection({
+            artifactId: newPlan.artifactId,
+            artifactVersionId: newPlan.artifactVersionId,
+            artifactChecksum: newPlan.artifactChecksum
+          })
+        ]
+      })
+
+      const restarted = new SessionPersistenceCoordinator(repository, createFileIndex())
+      const loaded = await restarted.loadAllReadOnly()
+      expect(loaded.sessions[0]).toMatchObject({
+        runtimeContext: { revision: 8, plan: newPlan },
+        planHistoryProjections: [retainedLastProjection, finalProjection]
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not reject an authoritative Plan replacement when its optional history projection is not displayable', async () => {
+    let durable = createSession({
+      runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const successor = createRuntimePlan({
+      artifactId: 'plan-2',
+      artifactVersionId: 'plan-version-2',
+      artifactChecksum: 'b'.repeat(64)
+    })
+
+    await expect(
+      coordinator.patchSessionRuntimeContext({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedRevision: 2,
+        patch: { plan: successor },
+        archivePlanProjection: createPlanProjection({ originatingPromptMessageId: undefined })
+      })
+    ).resolves.toMatchObject({ revision: 3, plan: successor })
+
+    expect(durable).toMatchObject({ runtimeContext: { revision: 3, plan: successor } })
+    expect(durable.planHistoryProjections).toBeUndefined()
+
+    const oversizedProjection = createPlanProjection({
+      artifactId: successor.artifactId,
+      artifactVersionId: successor.artifactVersionId,
+      artifactChecksum: successor.artifactChecksum
+    })
+    const oversizedSuccessor = createRuntimePlan({
+      artifactId: 'plan-3',
+      artifactVersionId: 'plan-version-3',
+      artifactChecksum: 'c'.repeat(64)
+    })
+    await expect(
+      coordinator.patchSessionRuntimeContext({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedRevision: 3,
+        patch: { plan: oversizedSuccessor },
+        archivePlanProjection: {
+          ...oversizedProjection,
+          document: {
+            ...oversizedProjection.document,
+            phases: [
+              {
+                name: 'Analysis',
+                delegations: [
+                  {
+                    name: 'Primary agent',
+                    steps: [{ title: 'Analyze data', description: 'x'.repeat(513_000) }]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      })
+    ).resolves.toMatchObject({ revision: 4, plan: oversizedSuccessor })
+    expect(durable.planHistoryProjections).toBeUndefined()
   })
 
   it('does not persist a runtime context patch when its commit precondition fails', async () => {

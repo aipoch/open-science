@@ -53,6 +53,7 @@ type PlanServiceDependencies = Readonly<{
     sessionId: string
     expectedRevision: number
     plan: SessionPlanRuntimeContext | undefined
+    archivePlanProjection?: ActivePlanProjection
     sessionStatus: 'waiting-plan-approval' | 'running' | 'idle'
     beforePersist?: () => void
   }) => Promise<SessionRuntimeContext>
@@ -204,6 +205,19 @@ class PlanService {
         )
       }
     }
+    let archivePlanProjection: ActivePlanProjection | undefined
+    if (current.plan) {
+      try {
+        archivePlanProjection = this.project(
+          await this.readDocument(input.projectId, input.sessionId, current.plan),
+          current.plan,
+          current.revision
+        )
+      } catch (error) {
+        if (!(error instanceof PlanCommandError) || error.code !== 'artifact-unavailable')
+          throw error
+      }
+    }
     const artifact = await this.dependencies.writeArtifactForExecution(input.executionId, {
       filename: `plan-${this.createId()}.json`,
       content: serialized,
@@ -246,6 +260,7 @@ class PlanService {
         sessionId: input.sessionId,
         expectedRevision: current.revision,
         plan,
+        ...(archivePlanProjection ? { archivePlanProjection } : {}),
         sessionStatus: 'waiting-plan-approval'
       })
     } catch (error) {
