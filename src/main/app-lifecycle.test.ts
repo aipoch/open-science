@@ -1380,7 +1380,7 @@ describe('installAppLifecycle', () => {
     expect(app.exit).not.toHaveBeenCalled()
   })
 
-  it('reissues quit when the delegated work recheck is confirmed', async () => {
+  it('reissues quit when delegated and Settings work are confirmed', async () => {
     let active: ActiveSessionInfo[] = []
     let resolveFirst: ((choice: CloseConfirmChoice) => void) | undefined
     const confirmClose = vi.fn(() => {
@@ -1393,6 +1393,7 @@ describe('installAppLifecycle', () => {
     })
     const { app, quit, shutdownBackends } = setup({
       detectActiveSessions: () => active,
+      hasActiveSettingsWork: () => true,
       confirmClose
     })
 
@@ -1503,7 +1504,7 @@ describe('installAppLifecycle', () => {
     expect(app.exit).not.toHaveBeenCalled()
   })
 
-  it('reissues a confirmed Windows titlebar quit after delegated work is confirmed', async () => {
+  it('reissues a confirmed Windows titlebar quit after delegated and Settings work are confirmed', async () => {
     const delegated: ActiveSessionInfo[] = [
       { projectId: 'demo', sessionId: 'child-live', kind: 'delegated' }
     ]
@@ -1511,6 +1512,7 @@ describe('installAppLifecycle', () => {
     const { app, closeOpts, quit, shutdownBackends } = setup({
       platform: 'win32',
       detectActiveSessions: () => delegated,
+      hasActiveSettingsWork: () => true,
       confirmClose
     })
 
@@ -1518,7 +1520,7 @@ describe('installAppLifecycle', () => {
     app.emit('before-quit')
     await flush()
 
-    expect(confirmClose).toHaveBeenCalledWith('quit', delegated)
+    expect(confirmClose).toHaveBeenCalledWith('quit', delegated, true)
     expect(quit).toHaveBeenCalledTimes(2)
 
     app.emit('before-quit')

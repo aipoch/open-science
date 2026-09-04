@@ -357,9 +357,12 @@ export const installAppLifecycle = (
       clearApplicationShutdownTrigger()
       if (confirmInFlight) return
       confirmInFlight = true
+      const settingsWorkAtDelegatedConfirmation = deps.hasActiveSettingsWork()
       void confirmResearchClose('quit', delegatedAtShutdownBoundary)
         .then((choice) => {
-          if (choice === 'quit') requestConfirmedQuit(delegatedAtShutdownBoundary)
+          if (choice === 'quit') {
+            requestConfirmedQuit(delegatedAtShutdownBoundary, settingsWorkAtDelegatedConfirmation)
+          }
         })
         .finally(() => {
           confirmInFlight = false
@@ -381,8 +384,11 @@ export const installAppLifecycle = (
             if (delegated.length > 0) {
               quitConfirmed = false
               settingsWorkConfirmed = false
+              const settingsWorkAtDelegatedConfirmation = deps.hasActiveSettingsWork()
               const delegatedChoice = await confirmResearchClose('quit', delegated)
-              if (delegatedChoice === 'quit') requestConfirmedQuit(delegated)
+              if (delegatedChoice === 'quit') {
+                requestConfirmedQuit(delegated, settingsWorkAtDelegatedConfirmation)
+              }
               return
             }
             requestConfirmedQuit([], settingsWorkAtConfirmation)
