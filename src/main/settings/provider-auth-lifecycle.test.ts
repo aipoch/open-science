@@ -148,6 +148,7 @@ describe('ProviderAuthLifecycleOwner', () => {
     await owner.loginClaudeShared()
     const reconnected = (await repository.getSettings()).providers[0]
     await expect(owner.isProviderKeyUsable(reconnected)).resolves.toBe(true)
+    expect(reconnected.lastValidatedTarget).toEqual({ endpoint: 'anthropic' })
     expect(claudeSharedAuth.getStatus).toHaveBeenCalledTimes(2)
   })
 

@@ -161,6 +161,7 @@ class SettingsRepository {
 
       const provider = { ...current }
       delete provider.lastValidatedAt
+      delete provider.lastValidatedTarget
       delete provider.lastValidationFailure
       const providers = [...settings.providers]
       providers[index] = provider
@@ -173,7 +174,8 @@ class SettingsRepository {
 
   async updateCodexIsolatedValidationIfIdentityMatches(
     expectedProvider: Pick<StoredProvider, 'id' | 'type' | 'codexAuthMode'>,
-    patch: Pick<StoredProvider, 'lastValidatedAt' | 'lastValidationFailure'>
+    patch: Pick<StoredProvider, 'lastValidatedAt' | 'lastValidationFailure'> &
+      Partial<Pick<StoredProvider, 'lastValidatedTarget'>>
   ): Promise<boolean> {
     let applied = false
 
@@ -221,7 +223,10 @@ class SettingsRepository {
   // first paste) it is created with the fixed id/name, mirroring codex's single subscription record.
   async upsertClaudeIsolatedProvider(
     patch: Partial<
-      Pick<StoredProvider, 'keyRef' | 'keyMask' | 'lastValidatedAt' | 'lastValidationFailure'>
+      Pick<
+        StoredProvider,
+        'keyRef' | 'keyMask' | 'lastValidatedAt' | 'lastValidatedTarget' | 'lastValidationFailure'
+      >
     >
   ): Promise<StoredSettings> {
     const identity = claudeIsolatedProviderIdentity()
@@ -275,7 +280,8 @@ class SettingsRepository {
   // replacement token as verified.
   async updateClaudeIsolatedValidationIfKeyMatches(
     expectedKeyRef: string | undefined,
-    patch: Pick<StoredProvider, 'expiresAt' | 'lastValidatedAt' | 'lastValidationFailure'>
+    patch: Pick<StoredProvider, 'expiresAt' | 'lastValidatedAt' | 'lastValidationFailure'> &
+      Partial<Pick<StoredProvider, 'lastValidatedTarget'>>
   ): Promise<boolean> {
     let applied = false
 
@@ -299,7 +305,8 @@ class SettingsRepository {
     expectedProvider: StoredProvider,
     expectedPreferredMode: ClaudeSubscriptionProviderId | undefined,
     expectedResolvedModel: string | undefined,
-    patch: Pick<StoredProvider, 'disconnectedAt' | 'lastValidatedAt' | 'lastValidationFailure'>
+    patch: Pick<StoredProvider, 'disconnectedAt' | 'lastValidatedAt' | 'lastValidationFailure'> &
+      Partial<Pick<StoredProvider, 'lastValidatedTarget'>>
   ): Promise<boolean> {
     let applied = false
 

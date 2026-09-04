@@ -107,6 +107,7 @@ const ProvidersPanel = ({
   const { t } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
+  const activeModel = useSettingsStore((state) => state.activeModel)
   const claudeSubscriptionProviderId = useSettingsStore(
     (state) => state.claudeSubscriptionProviderId
   )
@@ -513,6 +514,7 @@ const ProvidersPanel = ({
         <ProviderList
           providers={visibleProviders}
           activeProviderId={activeProviderId}
+          activeModel={activeModel}
           claudeSubscriptionProviderId={claudeSubscriptionProviderId}
           busyProviderId={busyProviderId}
           onEdit={onEditProvider}

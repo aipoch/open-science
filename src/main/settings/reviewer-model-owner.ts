@@ -2,6 +2,7 @@ import { providerValidationFailed, type ReviewerModelConfiguration } from '../..
 import { DEFAULT_AGENT_FRAMEWORK_ID, getAgentFramework } from '../agent-framework'
 import type { AgentBackendResolver, ExplicitAgentBackendTarget } from './backend-resolver'
 import type { ProviderAccountsModule } from './provider-accounts'
+import { providerRuntimeValidationTarget } from './provider-validation-state'
 import type { SettingsRepository } from './repository'
 
 type ReviewerModelOwnerOptions = {
@@ -40,6 +41,11 @@ class ReviewerModelOwner {
         { kind: 'required', model: candidate.model },
         framework
       )
+      if (providerValidationFailed(provider, providerRuntimeValidationTarget(target, framework))) {
+        throw new Error(
+          'The selected Reviewer model is no longer available. Refresh the model catalog.'
+        )
+      }
       if (
         !target.frameworkCompatible ||
         (framework.id === 'codex' && !target.modelBridgeSupported)
@@ -70,6 +76,17 @@ class ReviewerModelOwner {
       throw new Error('The configured Reviewer model provider validation failed.')
     }
     const { frameworkId } = await this.options.backendResolver.captureConfiguredSelection()
+    const framework = getAgentFramework(frameworkId)
+    if (provider) {
+      const target = this.options.providers.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model: configuration.model },
+        framework
+      )
+      if (providerValidationFailed(provider, providerRuntimeValidationTarget(target, framework))) {
+        throw new Error('The configured Reviewer model provider validation failed.')
+      }
+    }
     return Object.freeze({
       model: configuration.model,
       fixedTarget: Object.freeze({

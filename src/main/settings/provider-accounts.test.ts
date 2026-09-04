@@ -12,6 +12,7 @@ import type { ResolvedProvider } from './provider-env'
 import type { StoredSettings } from './types'
 import { getAgentFramework } from '../agent-framework'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
+import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
 
 vi.mock('electron', () => ({
   net: {
@@ -650,6 +651,59 @@ describe('ProviderAccountsModule', () => {
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeTypeOf('number')
     expect(stored.lastValidationFailure).toBeUndefined()
+  })
+
+  it('keeps another model selectable after a model-specific validation failure', async () => {
+    await module.upsertProvider({
+      type: 'custom',
+      name: 'Lab gateway',
+      baseUrl: 'https://lab.example/v1',
+      model: 'model-a',
+      key: 'secret-key',
+      apiEndpoints: ['anthropic']
+    })
+    const providerId = (await repository.getSettings()).providers[0].id
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'text', text: 'pong' }],
+              usage: { input_tokens: 1, output_tokens: 1 }
+            }),
+            { status: 200 }
+          )
+        )
+        .mockResolvedValueOnce(new Response('', { status: 404 }))
+    )
+
+    await expect(module.validateProvider({ providerId, model: 'model-a' })).resolves.toMatchObject({
+      ok: true,
+      category: 'ok'
+    })
+
+    await expect(module.validateProvider({ providerId, model: 'model-b' })).resolves.toMatchObject({
+      ok: false,
+      category: 'model-not-found'
+    })
+
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.lastValidatedAt).toBeTypeOf('number')
+    expect(stored.lastValidatedTarget).toEqual({ model: 'model-a', endpoint: 'anthropic' })
+    expect(stored.lastValidationFailure?.target).toEqual({
+      model: 'model-b',
+      endpoint: 'anthropic'
+    })
+    const catalog = buildConfiguredModelCatalog({
+      providers: [module.toProviderView(stored)],
+      frameworkId: 'claude-code',
+      frameworkEndpoints: ['anthropic']
+    })
+    expect(catalog.map((entry) => entry.model)).toEqual(['model-a'])
   })
 
   it('coalesces shared Claude status reads and invalidates them across logout and login', async () => {

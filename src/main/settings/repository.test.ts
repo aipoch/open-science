@@ -941,21 +941,29 @@ describe('settings repository', () => {
 
     await repository.upsertProvider(
       provider({
+        lastValidatedAt: 1716999999999,
+        lastValidatedTarget: { model: 'model-a', endpoint: 'anthropic' },
         lastValidationFailure: {
           at: 1717000000000,
-          category: 'auth',
-          status: 401,
-          message: 'nope'
+          category: 'model-not-found',
+          status: 404,
+          message: 'nope',
+          target: { model: 'model-b', endpoint: 'anthropic' }
         }
       })
     )
 
     const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.providers[0].lastValidatedTarget).toEqual({
+      model: 'model-a',
+      endpoint: 'anthropic'
+    })
     expect(reloaded.providers[0].lastValidationFailure).toEqual({
       at: 1717000000000,
-      category: 'auth',
-      status: 401,
-      message: 'nope'
+      category: 'model-not-found',
+      status: 404,
+      message: 'nope',
+      target: { model: 'model-b', endpoint: 'anthropic' }
     })
   })
 

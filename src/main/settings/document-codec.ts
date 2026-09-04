@@ -219,6 +219,7 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   // Legacy shared validation describes the global home, not the app-owned isolated profile.
   if (selectedCodexProvider?.type === 'codex-shared' && migratedCodexProvider) {
     delete migratedCodexProvider.lastValidatedAt
+    delete migratedCodexProvider.lastValidatedTarget
     delete migratedCodexProvider.lastValidationFailure
     delete migratedCodexProvider.expiresAt
   }

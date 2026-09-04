@@ -17,7 +17,11 @@ import type {
   Preflight,
   ValidateProviderResult
 } from '../../shared/settings'
-import { isProviderUsableByFramework } from '../../shared/settings'
+import {
+  isProviderUsableByFramework,
+  preferredEndpoint,
+  requiresChatCompletionsBridge
+} from '../../shared/settings'
 import {
   buildUnsupportedCodexAcpVersionMessage,
   isSupportedCodexAcpVersion,
@@ -428,6 +432,21 @@ export class AgentRuntimeManager {
       activeProvider && activeProvider.lastValidatedAt !== undefined
         ? await providers.isProviderKeyUsable(activeProvider)
         : false
+    const activeValidationTarget = activeProvider
+      ? {
+          model: activeModel,
+          endpoint: preferredEndpoint(
+            activeEndpoints ?? [],
+            activeProvider.type === 'xai-subscription'
+              ? (['responses'] as const)
+              : framework.id === 'codex'
+                ? (['anthropic', 'openai', 'responses'] as const)
+                : requiresChatCompletionsBridge({ apiEndpoints: activeEndpoints }, framework)
+                  ? (activeEndpoints ?? [])
+                  : framework.supportedApiTypes
+          )
+        }
+      : undefined
 
     return computePreflight({
       settings,
@@ -438,7 +457,8 @@ export class AgentRuntimeManager {
       agentFrameworkId,
       isProviderKeyUsable: (provider) =>
         provider.id === activeProvider?.id && activeProviderKeyUsable,
-      activeProviderCompatible
+      activeProviderCompatible,
+      activeValidationTarget
     })
   }
 

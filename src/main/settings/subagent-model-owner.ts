@@ -1,4 +1,4 @@
-import type { SubagentModelConfiguration } from '../../shared/settings'
+import { providerValidationFailed, type SubagentModelConfiguration } from '../../shared/settings'
 import type { ResolvedSubagentModelSnapshot } from '../../shared/session-persistence'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import { createDelegateExecutionBackendLease } from '../delegation/execution-backend-lease'
@@ -12,6 +12,7 @@ import {
 } from '../agent-framework'
 import type { AgentBackendResolutionContext, AgentBackendResolver } from './backend-resolver'
 import type { ProviderAccountsModule } from './provider-accounts'
+import { providerRuntimeValidationTarget } from './provider-validation-state'
 import type { SettingsRepository } from './repository'
 
 type InheritedSubagentModel = Readonly<{
@@ -37,10 +38,7 @@ class SubagentModelOwner {
     await this.options.repository.setSubagentModel(configuration, (settings, candidate) => {
       if (candidate.mode === 'inherit') return
       const provider = settings.providers.find((entry) => entry.id === candidate.providerId)
-      const validationFailed =
-        provider?.lastValidationFailure !== undefined &&
-        (provider.lastValidatedAt === undefined ||
-          provider.lastValidationFailure.at >= provider.lastValidatedAt)
+      const validationFailed = provider ? providerValidationFailed(provider) : false
       if (!provider || validationFailed) {
         throw new Error(
           'The selected Subagent model is no longer available. Refresh the model catalog.'
@@ -52,6 +50,11 @@ class SubagentModelOwner {
         { kind: 'required', model: candidate.model },
         framework
       )
+      if (providerValidationFailed(provider, providerRuntimeValidationTarget(target, framework))) {
+        throw new Error(
+          'The selected Subagent model is no longer available. Refresh the model catalog.'
+        )
+      }
       if (
         !target.frameworkCompatible ||
         (framework.id === 'codex' && !target.modelBridgeSupported)
@@ -100,12 +103,20 @@ class SubagentModelOwner {
     const provider = settings.providers.find(
       (candidate) => candidate.id === configuration.providerId
     )
-    const validationFailed =
-      provider?.lastValidationFailure !== undefined &&
-      (provider.lastValidatedAt === undefined ||
-        provider.lastValidationFailure.at >= provider.lastValidatedAt)
+    const validationFailed = provider ? providerValidationFailed(provider) : false
     if (validationFailed) {
       throw new Error('The configured Subagent model provider validation failed.')
+    }
+    if (provider) {
+      const framework = getAgentFramework(frameworkId)
+      const target = this.options.providers.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model: configuration.model },
+        framework
+      )
+      if (providerValidationFailed(provider, providerRuntimeValidationTarget(target, framework))) {
+        throw new Error('The configured Subagent model provider validation failed.')
+      }
     }
 
     const backend = await this.options.backendResolver.resolveExplicitTarget({

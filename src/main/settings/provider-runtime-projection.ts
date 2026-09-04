@@ -108,6 +108,7 @@ class ProviderRuntimeProjectionOwner {
       hasKey,
       needsKey,
       lastValidatedAt: provider.lastValidatedAt,
+      lastValidatedTarget: provider.lastValidatedTarget,
       lastValidationFailure: provider.lastValidationFailure,
       ...(provider.expiresAt !== undefined ? { expiresAt: provider.expiresAt } : {})
     }

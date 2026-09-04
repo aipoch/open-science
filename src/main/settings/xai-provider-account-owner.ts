@@ -39,6 +39,7 @@ export class XaiProviderAccountOwner {
               }
               if (clearValidation) {
                 delete updated.lastValidatedAt
+                delete updated.lastValidatedTarget
                 delete updated.lastValidationFailure
               }
               await this.repository.upsertProvider(updated)
@@ -52,6 +53,7 @@ export class XaiProviderAccountOwner {
               delete withoutCredential.keyRef
               delete withoutCredential.accountEmail
               delete withoutCredential.lastValidatedAt
+              delete withoutCredential.lastValidatedTarget
               delete withoutCredential.lastValidationFailure
               await this.repository.upsertProvider(withoutCredential)
             })

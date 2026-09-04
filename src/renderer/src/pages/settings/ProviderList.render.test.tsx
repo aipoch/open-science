@@ -61,6 +61,7 @@ const renderList = (
     onCancelXaiLogin?: () => void
     onLogoutXai?: () => void
     claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
+    activeModel?: string
   } = {}
 ): void => {
   act(() => {
@@ -68,6 +69,7 @@ const renderList = (
       <ProviderList
         providers={providers}
         activeProviderId={activeId}
+        activeModel={callbacks.activeModel}
         busyProviderId={busyId}
         onEdit={noop}
         onDelete={noop}
@@ -217,6 +219,23 @@ describe('ProviderList', () => {
 
     expect(container.querySelector('[aria-label="Connection verified"]')).not.toBeNull()
     expect(container.textContent).not.toContain('Test failed')
+  })
+
+  it('does not mark the active provider verified for a different model target', () => {
+    renderList(
+      [
+        provider({
+          model: 'model-b',
+          models: ['model-a', 'model-b'],
+          lastValidatedTarget: { model: 'model-a', endpoint: 'anthropic' }
+        })
+      ],
+      'p1',
+      undefined,
+      { activeModel: 'model-b' }
+    )
+
+    expect(container.querySelector('[aria-label="Connection verified"]')).toBeNull()
   })
 
   it('shows a testing state (and no check/warning) while a provider is being validated', () => {

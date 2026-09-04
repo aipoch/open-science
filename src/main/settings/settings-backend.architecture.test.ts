@@ -719,6 +719,7 @@ describe('Settings backend ownership architecture', () => {
       'keyMask',
       'keyRef',
       'lastValidatedAt',
+      'lastValidatedTarget',
       'lastValidationFailure',
       'maxInputTokens',
       'maxOutputTokens',
