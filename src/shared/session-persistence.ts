@@ -3658,7 +3658,11 @@ const sanitizeMessage = (
   if (streamId) sanitized.streamId = streamId
   if (attribution) sanitized.attribution = attribution
   if (presentation) sanitized.presentation = presentation
-  if (responseToMessageId) sanitized.responseToMessageId = responseToMessageId
+  // Older application-routed user Messages could persist their own id as the response target.
+  // The edge carries no information, so canonicalize that known legacy shape on every read path.
+  if (responseToMessageId && (role !== 'user' || responseToMessageId !== id)) {
+    sanitized.responseToMessageId = responseToMessageId
+  }
   if (artifactIds.length > 0) sanitized.artifactIds = artifactIds
   if (delegatedTask) sanitized.delegatedTask = delegatedTask
   if (delegatedInputVersionIds.length > 0) {
@@ -3810,11 +3814,6 @@ const sanitizeConversationGraph = (
         const agentFrameId = asString(candidate.agentFrameId)
         const introducedOnBranchId = asString(candidate.introducedOnBranchId)
         if (!message || !agentFrameId || !introducedOnBranchId) return []
-        // Older application-routed user Messages could persist their own id as the response target.
-        // The edge carries no information, so canonicalize that known legacy shape before validation.
-        if (message.role === 'user' && message.responseToMessageId === message.id) {
-          delete message.responseToMessageId
-        }
         return [
           {
             ...(options.preserveRuntimeState ? message : normalizeMessageAfterRestore(message)),

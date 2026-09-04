@@ -430,6 +430,33 @@ describe('conversation graph materialization diagnostics', () => {
     expect(decoded.session.conversationGraph?.messages[0].responseToMessageId).toBeUndefined()
   })
 
+  it('normalizes the same historical routed user self-link in a flat Session', () => {
+    const decoded = decodeSessionFile({
+      version: SESSION_FILE_VERSION,
+      session: {
+        ...createSessionWithActivity(undefined),
+        messages: [
+          {
+            id: 'routed-message',
+            role: 'user',
+            content: 'Apply the reviewer correction',
+            status: 'complete',
+            eventIds: ['application-event'],
+            responseToMessageId: 'routed-message',
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      }
+    })
+
+    expect(decoded.status).toBe('ok')
+    if (decoded.status !== 'ok') return
+    expect(decoded.session.messages[0].responseToMessageId).toBeUndefined()
+    expect(decoded.session.conversationGraph?.messages[0].responseToMessageId).toBeUndefined()
+    expect(() => createSessionFile(decoded.session)).not.toThrow()
+  })
+
   it('writes a canonical graph while retaining flat messages as the active projection', () => {
     const session: PersistedChatSession = {
       id: 'session-1',
