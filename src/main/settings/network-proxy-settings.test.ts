@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { NetworkProxySettings } from '../../shared/network-proxy'
 import { createEmptySettings } from './types'
 
 vi.mock('electron', () => ({
@@ -80,7 +81,7 @@ describe('Network proxy settings persistence', () => {
 
   it('does not persist a proxy setting that the runtime rejected', async () => {
     const repository = new SettingsRepository(dir)
-    const applyNetworkProxy = vi.fn().mockRejectedValue(new Error('proxy session unavailable'))
+    const applyNetworkProxy = vi.fn().mockRejectedValueOnce(new Error('proxy session unavailable'))
     const service = new SettingsService({ repository, storageRoot: dir, applyNetworkProxy })
 
     await expect(service.setNetworkProxy({ mode: 'direct' })).rejects.toThrow(
@@ -88,6 +89,54 @@ describe('Network proxy settings persistence', () => {
     )
 
     expect((await repository.getSettings()).networkProxy).toBeUndefined()
+  })
+
+  it('restores persistence and live proxy state after a partial runtime apply failure', async () => {
+    const previous = {
+      mode: 'manual' as const,
+      server: 'http://old-proxy.example:8080'
+    }
+    const repository = new SettingsRepository(dir)
+    await repository.setNetworkProxy(previous)
+    let runtimeProxy: NetworkProxySettings = previous
+    const applyNetworkProxy = vi.fn(async (settings: NetworkProxySettings) => {
+      runtimeProxy = settings
+      if (settings.mode === 'direct') throw new Error('notebook proxy refresh failed')
+    })
+    const service = new SettingsService({ repository, storageRoot: dir, applyNetworkProxy })
+
+    await expect(service.setNetworkProxy({ mode: 'direct' })).rejects.toThrow(
+      'notebook proxy refresh failed'
+    )
+
+    expect((await repository.getSettings()).networkProxy).toEqual(previous)
+    expect(runtimeProxy).toEqual(previous)
+    expect(applyNetworkProxy).toHaveBeenNthCalledWith(1, { mode: 'direct' })
+    expect(applyNetworkProxy).toHaveBeenNthCalledWith(2, previous)
+  })
+
+  it('preserves the apply error while reporting persistence and runtime rollback failures', async () => {
+    const repository = new SettingsRepository(dir)
+    const originalSetNetworkProxy = repository.setNetworkProxy.bind(repository)
+    const persistenceRollbackError = new Error('persistence rollback failed')
+    vi.spyOn(repository, 'setNetworkProxy')
+      .mockImplementationOnce(originalSetNetworkProxy)
+      .mockRejectedValueOnce(persistenceRollbackError)
+    const applyError = new Error('notebook proxy refresh failed')
+    const runtimeRollbackError = new Error('runtime rollback failed')
+    const applyNetworkProxy = vi
+      .fn()
+      .mockRejectedValueOnce(applyError)
+      .mockRejectedValueOnce(runtimeRollbackError)
+    const service = new SettingsService({ repository, storageRoot: dir, applyNetworkProxy })
+
+    const result = service.setNetworkProxy({ mode: 'direct' })
+
+    await expect(result).rejects.toMatchObject({
+      message: 'Could not apply or restore the proxy configuration.',
+      errors: [applyError, persistenceRollbackError, runtimeRollbackError]
+    })
+    expect(applyNetworkProxy).toHaveBeenNthCalledWith(2, { mode: 'system' })
   })
 
   it('keeps persisted and runtime proxy order aligned across concurrent saves', async () => {
