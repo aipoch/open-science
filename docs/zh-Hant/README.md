@@ -1,4 +1,4 @@
-<h1 align="center">Open Science</h1>
+<h1 align="center">AIPOCH Open Science</h1>
 
 <p align="center">
   面向可重現科學研究的開源、本機優先、模型無關 AI 研究工作台。

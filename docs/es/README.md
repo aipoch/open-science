@@ -1,4 +1,4 @@
-<h1 align="center">Open Science</h1>
+<h1 align="center">AIPOCH Open Science</h1>
 
 <p align="center">
   Entorno de investigación con IA de código abierto, centrado en la ejecución local e independiente del modelo, para una ciencia reproducible.

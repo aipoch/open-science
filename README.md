@@ -1,4 +1,4 @@
-<h1 align="center">Open Science</h1>
+<h1 align="center">AIPOCH Open Science</h1>
 
 <p align="center">
   Open-source, local-first, model-agnostic AI research workbench for reproducible science.

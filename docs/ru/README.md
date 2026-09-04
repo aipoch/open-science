@@ -1,4 +1,4 @@
-<h1 align="center">Open Science</h1>
+<h1 align="center">AIPOCH Open Science</h1>
 
 <p align="center">
   Открытая, локальная и независимая от моделей среда ИИ-исследований для воспроизводимой науки.

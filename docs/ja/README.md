@@ -1,4 +1,4 @@
-<h1 align="center">Open Science</h1>
+<h1 align="center">AIPOCH Open Science</h1>
 
 <p align="center">
   再現可能な科学のための、オープンソース、ローカルファースト、モデル非依存の AI 研究ワークベンチ。

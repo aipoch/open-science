@@ -1,4 +1,4 @@
-<h1 align="center">Open Science</h1>
+<h1 align="center">AIPOCH Open Science</h1>
 
 <p align="center">
   Quelloffene, lokal betriebene und modellunabhängige KI-Forschungsumgebung für reproduzierbare Wissenschaft.

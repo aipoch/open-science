@@ -1,4 +1,4 @@
-<h1 align="center">Open Science</h1>
+<h1 align="center">AIPOCH Open Science</h1>
 
 <p align="center">
   재현 가능한 과학을 위한 오픈 소스·로컬 우선·모델 독립형 AI 연구 워크벤치입니다.
