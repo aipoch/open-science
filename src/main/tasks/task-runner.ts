@@ -1315,7 +1315,16 @@ class TaskRunner {
       const defaults = project.sessionDefaults ?? {}
       const selectedComputeHosts = request.computeHostIds ?? defaults.computeHosts?.selected
       const configuredEnabledComputeHosts =
-        request.enabledComputeHostIds ?? defaults.computeHosts?.enabled
+        request.enabledComputeHostIds === undefined
+          ? defaults.computeHosts?.enabled
+          : request.enabledComputeHostIds.length === 0
+            ? []
+            : [
+                ...new Set([
+                  ...(defaults.computeHosts?.enabled ?? []),
+                  ...request.enabledComputeHostIds
+                ])
+              ]
       const enabledComputeHosts =
         configuredEnabledComputeHosts !== undefined || selectedComputeHosts !== undefined
           ? [

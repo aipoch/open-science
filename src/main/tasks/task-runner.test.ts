@@ -434,7 +434,7 @@ describe('TaskRunner', () => {
     expect(save).not.toHaveBeenCalled()
   })
 
-  it('snapshots Project defaults into only new Sessions with explicit Run values winning', async () => {
+  it('snapshots Project defaults into only new Sessions with explicit Run overrides and additions', async () => {
     const defaultedProject: Project = {
       ...project,
       sessionDefaults: {
@@ -495,6 +495,7 @@ describe('TaskRunner', () => {
       permissionProfile: 'auto',
       memoryEnabled: true,
       agentConfiguration: { model: 'model-2' },
+      enabledComputeHostIds: ['ssh:gamma'],
       computeHostIds: ['ssh:beta']
     })
     await runner.waitForRun(started.id)
@@ -516,13 +517,28 @@ describe('TaskRunner', () => {
         autoReviewEnabled: true,
         memoryEnabled: true,
         delegationPolicy: 'deny',
-        enabledComputeHosts: ['ssh:alpha', 'ssh:beta'],
+        enabledComputeHosts: ['ssh:alpha', 'ssh:beta', 'ssh:gamma'],
         selectedComputeHosts: ['ssh:beta'],
         agentConfiguration: {
           providerId: 'provider-1',
           model: 'model-2',
           reasoningEffort: 'low'
         }
+      })
+    )
+
+    const cleared = await runner.startRun({
+      project: project.id,
+      prompt: 'Override the configured Compute Host defaults.',
+      enabledComputeHostIds: [],
+      computeHostIds: []
+    })
+    await runner.waitForRun(cleared.id)
+
+    expect(saved).toContainEqual(
+      expect.objectContaining({
+        enabledComputeHosts: [],
+        selectedComputeHosts: []
       })
     )
   })
