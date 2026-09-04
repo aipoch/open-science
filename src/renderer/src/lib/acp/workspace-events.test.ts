@@ -3551,6 +3551,83 @@ describe('workspace runtime events', () => {
     expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
   })
+
+  it('finalizes sibling artifact events independently', async () => {
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'run-with-sibling-claims',
+      eventId: 'agent-before-sibling-claims',
+      content: 'Saved both results.'
+    })
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'stop-before-sibling-claims', kind: 'stop' })
+    )
+
+    const messageId = useSessionStore.getState().sessions[0].messages[1].id
+    const firstFinalizedArtifact = createArtifactFile({
+      id: `transport-session-1:${messageId}:first.txt`,
+      sessionId: 'transport-session-1',
+      messageId,
+      runId: undefined,
+      name: 'first.txt',
+      path: `/Users/example/.open-science/artifacts/default-project/transport-session-1/${messageId}/first.txt`
+    })
+    const secondFinalizedArtifact = createArtifactFile({
+      id: `transport-session-1:${messageId}:second.txt`,
+      sessionId: 'transport-session-1',
+      messageId,
+      runId: undefined,
+      name: 'second.txt',
+      path: `/Users/example/.open-science/artifacts/default-project/transport-session-1/${messageId}/second.txt`
+    })
+    const finalizeRunArtifacts = vi
+      .fn()
+      .mockResolvedValueOnce([firstFinalizedArtifact])
+      .mockResolvedValueOnce([firstFinalizedArtifact, secondFinalizedArtifact])
+    const dependencies = {
+      finalizeRunArtifacts,
+      saveSession: vi.fn().mockResolvedValue(undefined)
+    }
+
+    useSessionStore.getState().attachRunArtifacts({
+      sessionId: 'transport-session-1',
+      runId: 'run-with-sibling-claims',
+      eventId: 'first-artifact-event',
+      artifacts: [createArtifactFile({ name: 'first.txt' })]
+    })
+    useSessionStore.getState().attachRunArtifacts({
+      sessionId: 'transport-session-1',
+      runId: 'run-with-sibling-claims',
+      eventId: 'second-artifact-event',
+      artifacts: [createArtifactFile({ name: 'second.txt' })]
+    })
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'first-artifact-event',
+        kind: 'artifact',
+        runId: 'run-with-sibling-claims',
+        artifactClaimId: 'first-claim',
+        artifacts: [createArtifactFile({ name: 'first.txt' })]
+      }),
+      dependencies
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'second-artifact-event',
+        kind: 'artifact',
+        runId: 'run-with-sibling-claims',
+        artifactClaimId: 'second-claim',
+        artifacts: [createArtifactFile({ name: 'second.txt' })]
+      }),
+      dependencies
+    )
+
+    expect(finalizeRunArtifacts).toHaveBeenCalledTimes(2)
+    expect(useSessionStore.getState().sessions[0].messages[1].artifactIds).toEqual([
+      firstFinalizedArtifact.id,
+      secondFinalizedArtifact.id
+    ])
+  })
 })
 
 describe('loop guard: suppressNextAutoReview', () => {

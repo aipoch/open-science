@@ -303,16 +303,18 @@ const finalizeArtifactEvent = async (
     ...(session?.messages ?? []),
     ...(session?.conversationGraph?.messages ?? [])
   ].find((message) => message.eventIds.includes(event.id) && ownsArtifactPrompt(message))
-  const finalizedArtifactIds = new Set(
-    session?.artifacts
-      ?.filter((artifact) => !artifact.path.split(/[\\/]/).includes('.pending'))
-      .map((artifact) => artifact.id)
+  const appliedArtifactIds = new Set(appliedMessage?.artifactIds ?? [])
+  const eventArtifactsAreFinalized = event.artifacts.every((pendingArtifact) =>
+    session?.artifacts?.some(
+      (artifact) =>
+        appliedArtifactIds.has(artifact.id) &&
+        !artifact.path.split(/[\\/]/).includes('.pending') &&
+        artifact.name === pendingArtifact.name &&
+        artifact.size === pendingArtifact.size &&
+        artifact.mtimeMs === pendingArtifact.mtimeMs
+    )
   )
-  const appliedArtifactIds = appliedMessage?.artifactIds ?? []
-  if (
-    appliedArtifactIds.length > 0 &&
-    appliedArtifactIds.every((artifactId) => finalizedArtifactIds.has(artifactId))
-  ) {
+  if (appliedMessage && eventArtifactsAreFinalized) {
     return true
   }
 
