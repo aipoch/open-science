@@ -131,6 +131,7 @@ type PendingSessionDeletion = {
 }
 
 type RootAdmissionLease = {
+  runtime?: AcpRuntime
   release: () => void
 }
 
@@ -168,6 +169,7 @@ class AcpRuntimeCoordinator {
   private readonly pendingPromptStarts = new Map<string, PendingPromptStart[]>()
   private readonly activePromptRequests = new Map<string, ActivePromptRequest>()
   private readonly activePromptCounts = new Map<string, number>()
+  private readonly runtimeActivePromptCounts = new Map<AcpRuntime, Map<string, number>>()
   private readonly interactionReleaseWaiters = new Map<string, Set<() => void>>()
   private readonly rootAdmissionTails = new Map<string, Promise<void>>()
   private readonly activeRootAdmissions = new Map<string, RootAdmissionLease>()
@@ -1072,6 +1074,8 @@ class AcpRuntimeCoordinator {
     }
 
     const runtime = owner ?? this.getActiveRuntime()
+    const rootAdmission = this.activeRootAdmissions.get(request.sessionId)
+    if (rootAdmission) rootAdmission.runtime = runtime
     const attempt: PendingPromptStart = {
       id: `prompt-attempt-${++this.promptAttemptSequence}`,
       runtime,
@@ -1720,20 +1724,28 @@ class AcpRuntimeCoordinator {
         ...(this.callbacks.onEvent
           ? {
               onEvent: (event: AcpRuntimeEvent) => {
+                if (!this.runtimes.has(runtime)) return
                 if (!this.shouldPublishEvent(runtime, event)) return
                 this.callbacks.onEvent?.({ ...event, id: this.eventId(runtime, event.id) })
               }
             }
           : {}),
         onPermissionRequest: (request) => {
+          if (!this.runtimes.has(runtime)) return
           this.permissionRuntimes.set(request.requestId, runtime)
           this.callbacks.onPermissionRequest?.(projectPermissionRequest(request))
         },
         onPermissionSettled: (requestId, state) => {
+          if (!this.runtimes.has(runtime)) return
           this.callbacks.onPermissionSettled?.(requestId, state)
         },
         onPromptStarted: (sessionId, turnToken, promptAttemptId) => {
+          if (!this.runtimes.has(runtime)) return
           const attempt = this.takePendingPromptStart(sessionId, runtime, promptAttemptId)
+          const runtimeCounts =
+            this.runtimeActivePromptCounts.get(runtime) ?? new Map<string, number>()
+          runtimeCounts.set(sessionId, (runtimeCounts.get(sessionId) ?? 0) + 1)
+          this.runtimeActivePromptCounts.set(runtime, runtimeCounts)
           this.activePromptCounts.set(sessionId, (this.activePromptCounts.get(sessionId) ?? 0) + 1)
           if (
             attempt &&
@@ -1749,6 +1761,7 @@ class AcpRuntimeCoordinator {
           this.callbacks.onPromptStarted?.(sessionId, turnToken)
         },
         onProviderPromptAccepted: (sessionId, promptAttemptId) => {
+          if (!this.runtimes.has(runtime)) return
           const activePrompt = this.activePromptRequests.get(sessionId)
           if (activePrompt && activePrompt.attemptId === promptAttemptId) {
             activePrompt.acceptance?.resolve()
@@ -1756,18 +1769,28 @@ class AcpRuntimeCoordinator {
           this.callbacks.onProviderPromptAccepted?.(sessionId, promptAttemptId)
         },
         onCodexWebSocketFallback: () => {
+          if (!this.runtimes.has(runtime)) return
           this.callbacks.onCodexWebSocketFallback?.()
         },
         onPromptEnded: (sessionId, turnToken) => {
+          if (!this.runtimes.has(runtime)) return
+          const runtimeCounts = this.runtimeActivePromptCounts.get(runtime)
+          const runtimeRemaining = (runtimeCounts?.get(sessionId) ?? 0) - 1
+          if (runtimeRemaining < 0) return
+          if (runtimeRemaining > 0) runtimeCounts?.set(sessionId, runtimeRemaining)
+          else runtimeCounts?.delete(sessionId)
+          if (runtimeCounts?.size === 0) this.runtimeActivePromptCounts.delete(runtime)
           const remaining = (this.activePromptCounts.get(sessionId) ?? 1) - 1
           if (remaining > 0) this.activePromptCounts.set(sessionId, remaining)
           else this.activePromptCounts.delete(sessionId)
-          this.activeRootAdmissions.get(sessionId)?.release()
+          const rootAdmission = this.activeRootAdmissions.get(sessionId)
+          if (rootAdmission?.runtime === runtime) rootAdmission.release()
           this.notifyInteractionRelease(sessionId)
           this.teardownCallbacks.onSessionTurnEnded?.(sessionId, turnToken)
           this.callbacks.onPromptEnded?.(sessionId, turnToken)
         },
         onSkillImportAttachmentEligible: (sessionId, turnToken, attachmentUri) => {
+          if (!this.runtimes.has(runtime)) return
           this.teardownCallbacks.onSkillImportAttachmentEligible?.(
             sessionId,
             turnToken,
@@ -1826,6 +1849,7 @@ class AcpRuntimeCoordinator {
   }
 
   private handleRuntimeState(runtime: AcpRuntime, state: AcpStateUpdate): void {
+    if (!this.runtimes.has(runtime)) return
     if (state.events) {
       const retainedEventIds = new Set(state.events.map((event) => event.id))
       const publishedEventIds = this.publishedRuntimeEventIds.get(runtime)
@@ -1888,6 +1912,7 @@ class AcpRuntimeCoordinator {
       this.targetedRuntimes.delete(targetKey)
     }
     const retiredStatus = runtime.getSnapshot().status
+    this.releaseRuntimePromptOwnership(runtime)
     this.runtimes.delete(runtime)
     this.retiredRuntimes.delete(runtime)
     for (const [sessionId, owner] of this.sessionRuntimes) {
@@ -1926,6 +1951,35 @@ class AcpRuntimeCoordinator {
       // active target for new work; getActiveRuntime may create the selected framework generation later.
       this.lastRuntime = this.activeRuntime ?? Array.from(this.runtimes).at(-1)
     }
+  }
+
+  private releaseRuntimePromptOwnership(runtime: AcpRuntime): void {
+    const affectedSessionIds = new Set<string>()
+    for (const [sessionId, pending] of this.pendingPromptStarts) {
+      const retained = pending.filter((attempt) => attempt.runtime !== runtime)
+      if (retained.length === pending.length) continue
+      affectedSessionIds.add(sessionId)
+      if (retained.length > 0) this.pendingPromptStarts.set(sessionId, retained)
+      else this.pendingPromptStarts.delete(sessionId)
+    }
+    for (const [sessionId, prompt] of this.activePromptRequests) {
+      if (prompt.runtime !== runtime) continue
+      affectedSessionIds.add(sessionId)
+      this.activePromptRequests.delete(sessionId)
+    }
+    for (const [sessionId, count] of this.runtimeActivePromptCounts.get(runtime) ?? []) {
+      affectedSessionIds.add(sessionId)
+      const remaining = (this.activePromptCounts.get(sessionId) ?? count) - count
+      if (remaining > 0) this.activePromptCounts.set(sessionId, remaining)
+      else this.activePromptCounts.delete(sessionId)
+    }
+    this.runtimeActivePromptCounts.delete(runtime)
+    for (const [sessionId, admission] of this.activeRootAdmissions) {
+      if (admission.runtime !== runtime) continue
+      affectedSessionIds.add(sessionId)
+      admission.release()
+    }
+    for (const sessionId of affectedSessionIds) this.notifyInteractionRelease(sessionId)
   }
 
   private visibleSessionIds(runtime: AcpRuntime, snapshot: AcpRuntimeState): string[] {
@@ -2061,6 +2115,8 @@ class AcpRuntimeCoordinator {
     this.sessionConnectionStatuses.clear()
     this.permissionRuntimes.clear()
     this.pendingPromptStarts.clear()
+    this.activePromptCounts.clear()
+    this.runtimeActivePromptCounts.clear()
     this.latestPromptRequests.clear()
     this.activePromptRequests.clear()
     this.applicationEvents.length = 0

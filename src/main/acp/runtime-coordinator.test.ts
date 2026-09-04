@@ -70,6 +70,7 @@ const createFakeRuntime = (options: {
   quitBlockingSessions?: { projectId: string; sessionId: string }[]
   prompt?: (sessionId: string) => Promise<unknown>
   holdAfterPromptEnded?: () => Promise<void>
+  suppressPromptEndCallbacks?: boolean
   stateOnlyEventUpdates?: boolean
 }): {
   runtime: AcpRuntime
@@ -103,6 +104,7 @@ const createFakeRuntime = (options: {
   emitPermission: (request: AcpPermissionRequest) => void
   emitState: (overrides: Partial<AcpStateSnapshot>) => void
   setStateSilently: (overrides: Partial<AcpStateSnapshot>) => void
+  emitPromptEnded: (sessionId: string, turnToken: string) => void
   emitRetired: () => void
 } => {
   let snapshot = emptySnapshot()
@@ -208,7 +210,9 @@ const createFakeRuntime = (options: {
     const endPrompt = (): void => {
       if (ended) return
       ended = true
-      options.callbacks.onPromptEnded?.(sessionId, turnToken)
+      if (!options.suppressPromptEndCallbacks) {
+        options.callbacks.onPromptEnded?.(sessionId, turnToken)
+      }
       snapshot = {
         ...snapshot,
         promptInFlight: false,
@@ -216,7 +220,7 @@ const createFakeRuntime = (options: {
           (candidate) => candidate !== sessionId
         )
       }
-      options.callbacks.onStateChanged?.(snapshot)
+      if (!options.suppressPromptEndCallbacks) options.callbacks.onStateChanged?.(snapshot)
     }
     try {
       const prompt = options.prompt
@@ -371,6 +375,8 @@ const createFakeRuntime = (options: {
     setStateSilently: (overrides) => {
       snapshot = { ...snapshot, ...overrides }
     },
+    emitPromptEnded: (sessionId, turnToken) =>
+      options.callbacks.onPromptEnded?.(sessionId, turnToken),
     emitRetired: () => options.callbacks.onRetired?.()
   }
 }
@@ -4127,6 +4133,70 @@ describe('AcpRuntimeCoordinator', () => {
       expect.objectContaining({ sessionId: 'session-1' }),
       expect.any(String)
     )
+  })
+
+  it('does not let a late prompt callback from an aborted deletion release a replacement turn', async () => {
+    const oldPrompt = createDeferred<unknown>()
+    const replacementPrompts = [createDeferred<unknown>(), createDeferred<unknown>()]
+    let replacementPromptIndex = 0
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+        sessionIds: created.length === 0 ? ['session-1'] : [],
+        callbacks,
+        ...(created.length === 0
+          ? {
+              prompt: () => oldPrompt.promise,
+              suppressPromptEndCallbacks: true
+            }
+          : { prompt: () => replacementPrompts[replacementPromptIndex++].promise })
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    const oldTurn = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'old turn' })
+    const oldTurnResult = oldTurn.catch((error: unknown) => error)
+    await vi.waitFor(() => expect(created[0].sendPrompt).toHaveBeenCalledOnce())
+    const deletion = createDeferred<AcpStateSnapshot>()
+    created[0].deleteSession.mockReturnValueOnce(deletion.promise)
+    const deleting = coordinator.deleteSession({ sessionId: session.sessionId })
+    const deletionResult = deleting.catch((error: unknown) => error)
+    await vi.waitFor(() => expect(created[0].deleteSession).toHaveBeenCalledOnce())
+
+    coordinator.abortSessionDeletion(session.sessionId)
+    created[0].emitState({ status: 'connected', sessionIds: [session.sessionId] })
+    expect(coordinator.liveSessionProjectId(session.sessionId)).toBeUndefined()
+    await expect(
+      Promise.race([
+        coordinator.waitForSessionInteractionRelease(session.sessionId).then(() => 'released'),
+        new Promise<'still-pending'>((resolve) => setImmediate(() => resolve('still-pending')))
+      ])
+    ).resolves.toBe('released')
+    oldPrompt.reject(new Error('runtime stopped'))
+    await expect(oldTurnResult).resolves.toMatchObject({ message: 'runtime stopped' })
+    await coordinator.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
+
+    const replacementTurn = coordinator.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'replacement turn'
+    })
+    await vi.waitFor(() => expect(created[1].sendPrompt).toHaveBeenCalledOnce())
+    const queuedTurn = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'queued turn' })
+
+    created[0].emitPromptEnded(session.sessionId, 'turn-1')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+
+    replacementPrompts[0].resolve({ stopReason: 'end_turn' })
+    await replacementTurn
+    await vi.waitFor(() => expect(created[1].sendPrompt).toHaveBeenCalledTimes(2))
+    replacementPrompts[1].resolve({ stopReason: 'end_turn' })
+    await queuedTurn
+    deletion.reject(new Error('runtime stopped'))
+    await expect(deletionResult).resolves.toMatchObject({ message: 'runtime stopped' })
   })
 
   it('attempts every runtime quit teardown and preserves the surviving snapshot primary', async () => {
