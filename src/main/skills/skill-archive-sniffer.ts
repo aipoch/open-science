@@ -4,7 +4,11 @@ import { createInflateRaw } from 'node:zlib'
 
 import { parseSkillDocument } from './frontmatter'
 import { SKILL_IMPORT_LIMITS } from './import-limits'
-import { selectSkillManifestRoots, skillManifestRootPath } from './skill-bundle-paths'
+import {
+  MAX_SKILL_MANIFEST_ROOT_SEGMENTS,
+  selectSkillManifestRoots,
+  skillManifestRootPath
+} from './skill-bundle-paths'
 
 const EOCD_SIGNATURE = 0x06054b50
 const CENTRAL_SIGNATURE = 0x02014b50
@@ -681,7 +685,10 @@ const owningRoot = (
   if (roots.has('')) return ''
 
   const segments = path.split('/')
-  const maxSegments = segments.length - (includeExactRoot ? 0 : 1)
+  const maxSegments = Math.min(
+    MAX_SKILL_MANIFEST_ROOT_SEGMENTS,
+    segments.length - (includeExactRoot ? 0 : 1)
+  )
   for (let length = 1; length <= maxSegments; length += 1) {
     const candidate = segments.slice(0, length).join('/')
     if (roots.has(candidate)) return candidate

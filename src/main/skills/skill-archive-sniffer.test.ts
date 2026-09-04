@@ -149,6 +149,25 @@ describe('isImportableSkillArchivePath', () => {
     await expectMatchesPreview(archive, false)
   })
 
+  it('bounds ownership checks for long unrelated ZIP paths', async () => {
+    const archive = buildZip([
+      {
+        path: 'release/skills/ppt-master/SKILL.md',
+        content: Buffer.from('---\nname: ppt-master\ndescription: d\n---\nRun it.')
+      },
+      {
+        path: `${'x/'.repeat(32_760)}unsupported.bin`,
+        content: Buffer.from('unsupported'),
+        method: 99
+      }
+    ])
+    const startedAt = performance.now()
+
+    await expect(inspect(archive)).resolves.toBe(true)
+
+    expect(performance.now() - startedAt).toBeLessThan(250)
+  })
+
   it('finds a named Skill manifest without inflating unrelated large entries', async () => {
     const archive = buildZip([
       { path: 'paper-finder/assets/model.bin', content: Buffer.alloc(2 * 1024 * 1024), method: 0 },
