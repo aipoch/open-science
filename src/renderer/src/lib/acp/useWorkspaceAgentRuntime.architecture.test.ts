@@ -507,7 +507,6 @@ const sendIntentKeys = [
   'attribution',
   'requireExistingSession',
   'turnIntent',
-  'planContinuation',
   'attachments',
   'annotations',
   'cwd',
@@ -601,7 +600,7 @@ describe('workspace runtime architecture', () => {
     expect(calls.get('resendEditedWorkspaceMessage')).toBe(1)
     expect(Object.fromEntries(propertyCallCounts(facadeFile, 'lifecycleOwner'))).toEqual({
       processRuntimeEvents: 1,
-      recordPromptPlanAuthority: 1,
+      recordPromptAdmission: 1,
       compact: 1,
       ensureReady: 1,
       reconfigureMemory: 1,
@@ -834,7 +833,7 @@ describe('workspace runtime architecture', () => {
       'createWorkspaceRuntimeSessionLifecycleOwner'
     )
     expectSameNames(propertyNames(directReturnObject(lifecycle)), [
-      'recordPromptPlanAuthority',
+      'recordPromptAdmission',
       'processRuntimeEvents',
       'compact',
       'ensureReady',

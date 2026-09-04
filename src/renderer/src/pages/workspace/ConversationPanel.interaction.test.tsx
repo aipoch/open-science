@@ -212,7 +212,6 @@ const completedPlanProjection: ActivePlanProjection = {
   revision: 4,
   approval: 'approved',
   lifecycle: 'completed',
-  requiresExplicitContinuation: false,
   document: {
     schema_version: 1,
     task_summary: 'Analyze one dataset',

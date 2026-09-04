@@ -1,7 +1,7 @@
-import type { SessionPlanContinuation } from '../../shared/session-persistence'
+import type { SessionPlanDelivery } from '../../shared/session-persistence'
 import type { SessionRuntimeContextCommands } from '../session-persistence/coordinator'
 
-type SessionPlanContinuationSessions = SessionRuntimeContextCommands
+type SessionPlanDeliverySessions = SessionRuntimeContextCommands
 
 const isRevisionConflict = (error: unknown): boolean =>
   typeof error === 'object' &&
@@ -9,13 +9,13 @@ const isRevisionConflict = (error: unknown): boolean =>
   'code' in error &&
   error.code === 'revision-conflict'
 
-class SessionPlanContinuationOwner {
-  constructor(private readonly sessions: SessionPlanContinuationSessions) {}
+class SessionPlanDeliveryOwner {
+  constructor(private readonly sessions: SessionPlanDeliverySessions) {}
 
   async begin(projectId: string, sessionId: string, commandId: string): Promise<boolean> {
-    return this.transitionTo(projectId, sessionId, commandId, 'queued', (continuation) => ({
-      ...continuation,
-      state: 'continuing'
+    return this.transitionTo(projectId, sessionId, commandId, 'queued', (delivery) => ({
+      ...delivery,
+      state: 'delivering'
     }))
   }
 
@@ -24,19 +24,19 @@ class SessionPlanContinuationOwner {
     sessionId: string,
     commandId: string
   ): Promise<boolean> {
-    return this.transitionTo(projectId, sessionId, commandId, 'continuing', (continuation) => ({
-      ...continuation,
+    return this.transitionTo(projectId, sessionId, commandId, 'delivering', (delivery) => ({
+      ...delivery,
       state: 'queued'
     }))
   }
 
   async clear(projectId: string, sessionId: string, commandId: string): Promise<boolean> {
-    return this.transitionTo(projectId, sessionId, commandId, 'continuing', () => undefined)
+    return this.transitionTo(projectId, sessionId, commandId, 'delivering', () => undefined)
   }
 
   async interrupt(projectId: string, sessionId: string, commandId: string): Promise<boolean> {
-    return this.transitionTo(projectId, sessionId, commandId, 'continuing', (continuation) => ({
-      ...continuation,
+    return this.transitionTo(projectId, sessionId, commandId, 'delivering', (delivery) => ({
+      ...delivery,
       state: 'interrupted'
     }))
   }
@@ -45,22 +45,22 @@ class SessionPlanContinuationOwner {
     projectId: string,
     sessionId: string,
     commandId: string,
-    expectedState: SessionPlanContinuation['state'],
-    apply: (continuation: SessionPlanContinuation) => SessionPlanContinuation | undefined
+    expectedState: SessionPlanDelivery['state'],
+    apply: (delivery: SessionPlanDelivery) => SessionPlanDelivery | undefined
   ): Promise<boolean> {
     const context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
     const plan = context.plan
-    const continuation = plan?.continuation
+    const delivery = plan?.delivery
     if (
       !plan ||
-      !continuation ||
-      continuation.commandId !== commandId ||
-      continuation.state !== expectedState
+      !delivery ||
+      delivery.commandId !== commandId ||
+      delivery.state !== expectedState
     ) {
       return false
     }
 
-    return this.patch(projectId, sessionId, context.revision, plan, apply(continuation))
+    return this.patch(projectId, sessionId, context.revision, plan, apply(delivery))
   }
 
   private async patch(
@@ -68,13 +68,13 @@ class SessionPlanContinuationOwner {
     sessionId: string,
     expectedRevision: number,
     plan: NonNullable<
-      Awaited<ReturnType<SessionPlanContinuationSessions['readSessionRuntimeContext']>>['plan']
+      Awaited<ReturnType<SessionPlanDeliverySessions['readSessionRuntimeContext']>>['plan']
     >,
-    continuation: SessionPlanContinuation | undefined
+    delivery: SessionPlanDelivery | undefined
   ): Promise<boolean> {
     const nextPlan = { ...plan }
-    if (continuation) nextPlan.continuation = continuation
-    else Reflect.deleteProperty(nextPlan, 'continuation')
+    if (delivery) nextPlan.delivery = delivery
+    else Reflect.deleteProperty(nextPlan, 'delivery')
     try {
       await this.sessions.patchSessionRuntimeContext({
         projectId,
@@ -90,5 +90,5 @@ class SessionPlanContinuationOwner {
   }
 }
 
-export { SessionPlanContinuationOwner }
-export type { SessionPlanContinuationSessions }
+export { SessionPlanDeliveryOwner }
+export type { SessionPlanDeliverySessions }

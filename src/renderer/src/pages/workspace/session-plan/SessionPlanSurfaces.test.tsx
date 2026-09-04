@@ -16,7 +16,6 @@ const projection: ActivePlanProjection = {
   revision: 3,
   approval: 'pending',
   lifecycle: 'awaiting_approval',
-  requiresExplicitContinuation: false,
   document: {
     schema_version: 1,
     task_summary: 'Analyze one dataset',
@@ -244,14 +243,6 @@ describe('Session Plan renderer surfaces', () => {
 
     expect(onRespond).toHaveBeenCalledOnce()
     expect(onRespond).toHaveBeenCalledWith('rejected')
-  })
-
-  it('explains why a pending Preview without a live response handler is read-only', () => {
-    render(<PlanPreviewSurface projection={projection} />)
-
-    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
-    expect(screen.getByText(/original Agent interaction has ended/u)).toBeTruthy()
   })
 
   it('renders the three-level Plan preview', () => {
@@ -485,26 +476,27 @@ describe('Session Plan renderer surfaces', () => {
     expect(screen.queryByText(/remains active until a new plan/u)).toBeNull()
   })
 
-  it('shows the progress chip for interrupted work without a running label', () => {
+  it('shows the progress chip for durable in-progress work', () => {
     render(
       <PlanProgressChip
         projection={{
           ...projection,
           approval: 'approved',
-          lifecycle: 'interrupted',
+          lifecycle: 'in_progress',
           stepStatuses: {
             'Analyze the data': { status: 'in_progress', updatedAt: 1 }
           },
           stepStates: {
             'Analyze the data': { status: 'in_progress' }
-          }
+          },
+          counts: { ...projection.counts, inProgress: 1 }
         }}
         onOpen={vi.fn()}
       />
     )
 
     expect(screen.getByRole('button', { name: /open plan, step 0 of 1/i })).toBeTruthy()
-    expect(screen.queryByText(/running/u)).toBeNull()
+    expect(screen.getByText(/running/u)).toBeTruthy()
   })
 
   it('hides the progress chip for awaiting-approval and terminal lifecycles', () => {
@@ -515,8 +507,6 @@ describe('Session Plan renderer surfaces', () => {
     }
     expect(isPlanProgressVisible(approved)).toBe(true)
     expect(isPlanProgressVisible({ ...approved, lifecycle: 'in_progress' as const })).toBe(true)
-    expect(isPlanProgressVisible({ ...approved, lifecycle: 'interrupted' as const })).toBe(true)
-
     expect(isPlanProgressVisible({ ...approved, lifecycle: 'awaiting_approval' as const })).toBe(
       false
     )
@@ -562,53 +552,22 @@ describe('Session Plan renderer surfaces', () => {
     expect(screen.getByRole('button', { name: 'Download Plan' })).toBeTruthy()
   })
 
-  it('prompts for an explicit continuation after passive restart recovery', () => {
-    const restored = {
-      ...projection,
-      approval: 'approved' as const,
-      lifecycle: 'interrupted' as const,
-      requiresExplicitContinuation: true,
-      stepStatuses: {
-        'Analyze the data': { status: 'in_progress' as const, updatedAt: 42 }
-      }
-    }
-    const { rerender } = render(
-      <WorkspacePlanCard
-        projection={restored}
-        onOpen={vi.fn()}
-        onRespond={vi.fn().mockResolvedValue(undefined)}
-      />
-    )
-    expect(screen.getByText('Plan interrupted')).toBeTruthy()
-    expect(screen.queryByText(/Send a message to continue/u)).toBeNull()
-
-    rerender(<PlanProgressChip projection={restored} onOpen={vi.fn()} />)
-    expect(screen.getByRole('button', { name: /open plan, step 0 of 1/i })).toBeTruthy()
-
-    rerender(<PlanPreviewSurface projection={restored} />)
-    expect(screen.getByText(/send a message to continue this approved plan/iu)).toBeTruthy()
-  })
-
-  it('explains that an approved Plan execution was interrupted', () => {
+  it('ignores legacy continuation fields when presenting approved Plan progress', () => {
     render(
       <PlanPreviewSurface
-        projection={{
-          ...projection,
-          approval: 'approved',
-          lifecycle: 'interrupted',
-          continuationState: 'interrupted',
-          requiresExplicitContinuation: true
-        }}
+        projection={
+          {
+            ...projection,
+            approval: 'approved',
+            lifecycle: 'in_progress',
+            continuationState: 'interrupted',
+            requiresExplicitContinuation: true
+          } as unknown as ActivePlanProjection
+        }
       />
     )
 
-    expect(
-      screen.getByText('Plan approved, but execution was interrupted. Send a message to continue.')
-    ).toBeTruthy()
-    expect(
-      screen.queryByText(
-        'Plan execution is not active. Send a message to continue this approved Plan.'
-      )
-    ).toBeNull()
+    expect(screen.queryByText(/Send a message to continue/u)).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Analyze one dataset' })).toBeTruthy()
   })
 })

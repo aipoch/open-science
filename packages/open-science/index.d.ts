@@ -97,13 +97,7 @@ export type Project = {
 }
 
 export type PlanLifecycle =
-  | 'awaiting_approval'
-  | 'approved'
-  | 'in_progress'
-  | 'interrupted'
-  | 'blocked'
-  | 'completed'
-  | 'rejected'
+  'awaiting_approval' | 'approved' | 'in_progress' | 'blocked' | 'completed' | 'rejected'
 
 export type SessionPlan = {
   artifactId: string
@@ -114,7 +108,6 @@ export type SessionPlan = {
   revision: number
   approval: 'pending' | 'approved' | 'rejected'
   lifecycle: PlanLifecycle
-  requiresExplicitContinuation: boolean
   document: unknown
   stepStatuses: Record<string, unknown>
   stepStates: Record<string, unknown>
@@ -132,7 +125,6 @@ export type RunAttention = { kind: 'plan-approval'; plan: SessionPlan }
 export type PlanDecisionResponse = {
   projection: SessionPlan
   changed: boolean
-  continuationCommandId?: string
 }
 
 export type PlanFeedbackResponse = {
@@ -151,8 +143,6 @@ export type PlanFeedbackResponse = {
     updatedAt: number
   }
   planRevision: number
-  continuationProjection?: SessionPlan
-  continuationCommandId: string
 }
 
 export type PlanResponse = PlanDecisionResponse | PlanFeedbackResponse

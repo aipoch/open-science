@@ -326,7 +326,8 @@ open-science plan revise <session-id> --feedback "Split the validation step" --j
 ```
 
 Version/revision matching prevents a stale automation client from deciding a newer Plan. Approval
-continues the parked Run; feedback asks the live Plan interaction for a revision.
+persists the exact decision and triggers a one-time Agent wakeup; feedback asks the live Plan
+interaction for a revision.
 
 ## Session configuration
 
@@ -382,8 +383,11 @@ schema migration:
   that omit it, and malformed values, restore as `allow`.
 - autoReviewEnabled and specialistId already existed and are reused. Historical
   autoReviewEnabled omissions remain disabled; an omitted specialistId remains Main Agent.
-- Plan artifacts/approval/continuation continue under runtimeContext.plan; delegated attempts,
-  messages, and questions continue under runtimeContext.delegatedWork.
+- Plan artifacts, persisted approval, active context, and delivery receipts remain under
+  runtimeContext.plan. The originating Conversation Turn remains the Plan owner; related later
+  ordinary or application Attempts on the same durable Message Branch receive it as active context
+  without taking ownership. Delegated attempts, messages, and questions remain under
+  runtimeContext.delegatedWork.
 
 Project Session defaults add one `sessionDefaults` JSON-text column to the Project table. Existing
 rows migrate to `{}` and therefore retain prior behavior. Agent routing reuses the existing Settings

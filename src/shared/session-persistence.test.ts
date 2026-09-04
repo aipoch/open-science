@@ -290,7 +290,6 @@ const createHistoricalPlan = (): ActivePlanProjection => ({
   revision: 3,
   approval: 'approved',
   lifecycle: 'completed',
-  requiresExplicitContinuation: false,
   document: {
     schema_version: 1,
     task_summary: 'Analyze the branched dataset',
@@ -2628,7 +2627,7 @@ describe('normalizeSessionFile with activities', () => {
     expect(restored?.runtimeContext?.plan?.materializedAt).toBe(42)
   })
 
-  it('restores a queued approved-Plan continuation command for durable dispatch', () => {
+  it('normalizes a legacy queued Plan continuation into a delivery receipt', () => {
     const persisted = createSessionFile({
       ...(createSessionWithActivity(undefined) as PersistedChatSession),
       activities: undefined,
@@ -2646,17 +2645,94 @@ describe('normalizeSessionFile with activities', () => {
             originatingPromptMessageId: 'prompt-plan-1',
             createdAt: 42
           }
-        }
+        } as unknown as SessionPlanRuntimeContext
       }
     })
 
-    expect(normalizeSessionFile(persisted)?.runtimeContext?.plan?.continuation).toEqual({
+    const restoredPlan = normalizeSessionFile(persisted)?.runtimeContext?.plan
+    expect(restoredPlan?.delivery).toEqual({
       commandId: 'continuation-1',
       kind: 'approved-plan',
       state: 'queued',
       originatingPromptMessageId: 'prompt-plan-1',
       createdAt: 42
     })
+    expect(restoredPlan).not.toHaveProperty('continuation')
+  })
+
+  it('prefers a current delivery receipt over legacy continuation data', () => {
+    const delivery = {
+      commandId: 'delivery-1',
+      kind: 'approved-plan' as const,
+      state: 'queued' as const,
+      originatingPromptMessageId: 'prompt-plan-1',
+      createdAt: 43
+    }
+    const restoredPlan = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 5,
+          plan: {
+            ...createRuntimePlan(),
+            approval: 'approved',
+            delivery,
+            continuation: { malformed: true }
+          } as unknown as SessionPlanRuntimeContext
+        }
+      })
+    )?.runtimeContext?.plan
+
+    expect(restoredPlan?.delivery).toEqual(delivery)
+    expect(restoredPlan).not.toHaveProperty('continuation')
+  })
+
+  it('does not fall back to legacy continuation when a current delivery receipt is malformed', () => {
+    const restoredPlan = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 5,
+          plan: {
+            ...createRuntimePlan(),
+            approval: 'approved',
+            delivery: { malformed: true },
+            continuation: {
+              commandId: 'legacy-delivery',
+              kind: 'approved-plan',
+              state: 'queued',
+              originatingPromptMessageId: 'prompt-plan-1',
+              createdAt: 42
+            }
+          } as unknown as SessionPlanRuntimeContext
+        }
+      })
+    )?.runtimeContext?.plan
+
+    expect(restoredPlan).not.toHaveProperty('delivery')
+    expect(restoredPlan).not.toHaveProperty('continuation')
+  })
+
+  it('ignores legacy continuation-only projection fields when restoring Plan history', () => {
+    const historical = {
+      ...createHistoricalPlan(),
+      continuationState: 'interrupted',
+      requiresExplicitContinuation: true
+    }
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      planHistoryProjections: [historical]
+    })
+
+    const [restored] = normalizeSessionFile(persisted)?.planHistoryProjections ?? []
+    expect(restored).toMatchObject({ lifecycle: 'completed' })
+    expect(restored).not.toHaveProperty('continuationState')
+    expect(restored).not.toHaveProperty('requiresExplicitContinuation')
   })
 
   it('preserves neutral Plan review feedback across restart while approval remains pending', () => {
@@ -2680,10 +2756,10 @@ describe('normalizeSessionFile with activities', () => {
     { approval: 'approved', kind: 'approved-plan' },
     { approval: 'rejected', kind: 'rejected-plan' }
   ] as const)(
-    'restores a queued $kind continuation paired to its $approval Plan',
+    'restores a queued $kind delivery paired to its $approval Plan',
     ({ approval, kind }) => {
-      const continuation = {
-        commandId: `continuation-${approval}`,
+      const delivery = {
+        commandId: `delivery-${approval}`,
         kind,
         state: 'queued' as const,
         originatingPromptMessageId: 'prompt-plan-1',
@@ -2696,18 +2772,18 @@ describe('normalizeSessionFile with activities', () => {
           runtimeContext: {
             version: 1,
             revision: 4,
-            plan: { ...createRuntimePlan(), approval, continuation }
+            plan: { ...createRuntimePlan(), approval, delivery }
           }
         })
       )
 
-      expect(restored?.runtimeContext?.plan?.continuation).toEqual(continuation)
+      expect(restored?.runtimeContext?.plan?.delivery).toEqual(delivery)
     }
   )
 
-  it('restores a queued review-feedback continuation paired to its pending Plan marker', () => {
-    const continuation = {
-      commandId: 'continuation-feedback',
+  it('restores a queued review-feedback delivery paired to its pending Plan marker', () => {
+    const delivery = {
+      commandId: 'delivery-feedback',
       kind: 'review-feedback' as const,
       state: 'queued' as const,
       originatingPromptMessageId: 'feedback-message-1',
@@ -2723,13 +2799,13 @@ describe('normalizeSessionFile with activities', () => {
           plan: {
             ...createRuntimePlan(),
             reviewFeedbackMessageId: 'feedback-message-1',
-            continuation
+            delivery
           }
         }
       })
     )
 
-    expect(restored?.runtimeContext?.plan?.continuation).toEqual(continuation)
+    expect(restored?.runtimeContext?.plan?.delivery).toEqual(delivery)
   })
 
   it.each([
@@ -2743,34 +2819,34 @@ describe('normalizeSessionFile with activities', () => {
       missing: 'reviewFeedbackMessageId'
     },
     {
-      name: 'review continuation whose origin differs from its marker',
+      name: 'review delivery whose origin differs from its marker',
       plan: {
         ...createRuntimePlan(),
         reviewFeedbackMessageId: 'feedback-message-1',
-        continuation: {
-          commandId: 'continuation-feedback',
+        delivery: {
+          commandId: 'delivery-feedback',
           kind: 'review-feedback' as const,
           state: 'queued' as const,
           originatingPromptMessageId: 'different-message',
           createdAt: 42
         }
       },
-      missing: 'continuation'
+      missing: 'delivery'
     },
     {
-      name: 'rejected continuation whose origin differs from the Plan origin',
+      name: 'rejected delivery whose origin differs from the Plan origin',
       plan: {
         ...createRuntimePlan(),
         approval: 'rejected' as const,
-        continuation: {
-          commandId: 'continuation-rejected',
+        delivery: {
+          commandId: 'delivery-rejected',
           kind: 'rejected-plan' as const,
           state: 'queued' as const,
           originatingPromptMessageId: 'different-message',
           createdAt: 42
         }
       },
-      missing: 'continuation'
+      missing: 'delivery'
     }
   ])('drops an invalid $name without losing the Plan', ({ plan, missing }) => {
     const restored = normalizeSessionFile(
@@ -2785,7 +2861,7 @@ describe('normalizeSessionFile with activities', () => {
     expect(restored?.runtimeContext?.plan).not.toHaveProperty(missing)
   })
 
-  it('preserves a continuing approved-Plan command as a fail-closed dispatch tombstone', () => {
+  it('normalizes a legacy continuing approved-Plan receipt as delivering', () => {
     const plan = {
       ...createRuntimePlan(),
       approval: 'approved' as const,
@@ -2803,17 +2879,18 @@ describe('normalizeSessionFile with activities', () => {
       runtimeContext: { version: 1, revision: 5, plan }
     })
 
-    expect(normalizeSessionFile(persisted)?.runtimeContext?.plan?.continuation).toEqual(
-      plan.continuation
-    )
+    expect(normalizeSessionFile(persisted)?.runtimeContext?.plan?.delivery).toEqual({
+      ...plan.continuation,
+      state: 'delivering'
+    })
   })
 
-  it('restores an interrupted approved-Plan command without making it dispatchable', () => {
+  it('restores an interrupted approved-Plan delivery receipt', () => {
     const plan = {
       ...createRuntimePlan(),
       approval: 'approved' as const,
-      continuation: {
-        commandId: 'continuation-1',
+      delivery: {
+        commandId: 'delivery-1',
         kind: 'approved-plan' as const,
         state: 'interrupted' as const,
         originatingPromptMessageId: 'prompt-plan-1',
@@ -2826,12 +2903,10 @@ describe('normalizeSessionFile with activities', () => {
       runtimeContext: { version: 1, revision: 6, plan }
     })
 
-    expect(normalizeSessionFile(persisted)?.runtimeContext?.plan?.continuation).toEqual(
-      plan.continuation
-    )
+    expect(normalizeSessionFile(persisted)?.runtimeContext?.plan?.delivery).toEqual(plan.delivery)
   })
 
-  it('drops a malformed continuation command without losing the approved Plan', () => {
+  it('drops a malformed delivery receipt without losing the approved Plan', () => {
     const restored = normalizeSessionFile(
       createSessionFile({
         ...(createSessionWithActivity(undefined) as PersistedChatSession),
@@ -2842,8 +2917,8 @@ describe('normalizeSessionFile with activities', () => {
           plan: {
             ...createRuntimePlan(),
             approval: 'approved',
-            continuation: {
-              commandId: 'continuation-1',
+            delivery: {
+              commandId: 'delivery-1',
               kind: 'approved-plan',
               state: 'unknown' as never,
               originatingPromptMessageId: 'prompt-plan-1',
@@ -2855,7 +2930,7 @@ describe('normalizeSessionFile with activities', () => {
     )
 
     expect(restored?.runtimeContext?.plan).toMatchObject({ approval: 'approved' })
-    expect(restored?.runtimeContext?.plan).not.toHaveProperty('continuation')
+    expect(restored?.runtimeContext?.plan).not.toHaveProperty('delivery')
   })
 
   it('normalizes legacy permission authority to pending and accepts only known lifecycle states', () => {

@@ -6,13 +6,13 @@ import {
   type SessionRuntimeContext
 } from '../../shared/session-persistence'
 import {
-  SessionPlanContinuationOwner,
-  type SessionPlanContinuationSessions
-} from './session-plan-continuation-owner'
+  SessionPlanDeliveryOwner,
+  type SessionPlanDeliverySessions
+} from './session-plan-delivery-owner'
 
 const createPlan = (
-  continuation: SessionPlanRuntimeContext['continuation'] = {
-    commandId: 'continuation-1',
+  delivery: SessionPlanRuntimeContext['delivery'] = {
+    commandId: 'delivery-1',
     kind: 'approved-plan',
     state: 'queued',
     originatingPromptMessageId: 'prompt-1',
@@ -24,21 +24,21 @@ const createPlan = (
   artifactChecksum: 'checksum-1',
   originatingPromptMessageId: 'prompt-1',
   approval: 'approved',
-  continuation,
+  delivery,
   stepStatuses: {}
 })
 
 const createSessions = (
-  continuation?: SessionPlanRuntimeContext['continuation']
+  delivery?: SessionPlanRuntimeContext['delivery']
 ): {
-  sessions: SessionPlanContinuationSessions
+  sessions: SessionPlanDeliverySessions
   context: () => SessionRuntimeContext
   patch: ReturnType<typeof vi.fn>
 } => {
   let context: SessionRuntimeContext = {
     version: 1,
     revision: 0,
-    plan: createPlan(continuation)
+    plan: createPlan(delivery)
   }
   const patch = vi.fn(async (command) => {
     if (command.expectedRevision !== context.revision) {
@@ -63,18 +63,18 @@ const createSessions = (
   }
 }
 
-describe('Session Plan continuation owner', () => {
-  it('claims one queued continuation before dispatch without changing Session status', async () => {
+describe('Session Plan delivery owner', () => {
+  it('claims one queued delivery before dispatch without changing Session status', async () => {
     const fixture = createSessions()
-    const owner = new SessionPlanContinuationOwner(fixture.sessions)
+    const owner = new SessionPlanDeliveryOwner(fixture.sessions)
 
-    await expect(owner.begin('project-1', 'session-1', 'continuation-1')).resolves.toBe(true)
+    await expect(owner.begin('project-1', 'session-1', 'delivery-1')).resolves.toBe(true)
 
     expect(fixture.context().plan).toEqual(
       createPlan({
-        commandId: 'continuation-1',
+        commandId: 'delivery-1',
         kind: 'approved-plan',
-        state: 'continuing',
+        state: 'delivering',
         originatingPromptMessageId: 'prompt-1',
         createdAt: 42
       })
@@ -87,110 +87,106 @@ describe('Session Plan continuation owner', () => {
     })
   })
 
-  it('lets only one competing consumer claim the queued continuation', async () => {
+  it('lets only one competing consumer claim the queued delivery', async () => {
     const fixture = createSessions()
-    const first = new SessionPlanContinuationOwner(fixture.sessions)
-    const second = new SessionPlanContinuationOwner(fixture.sessions)
+    const first = new SessionPlanDeliveryOwner(fixture.sessions)
+    const second = new SessionPlanDeliveryOwner(fixture.sessions)
 
     await expect(
       Promise.all([
-        first.begin('project-1', 'session-1', 'continuation-1'),
-        second.begin('project-1', 'session-1', 'continuation-1')
+        first.begin('project-1', 'session-1', 'delivery-1'),
+        second.begin('project-1', 'session-1', 'delivery-1')
       ])
     ).resolves.toEqual([true, false])
 
-    expect(fixture.context().plan?.continuation?.state).toBe('continuing')
+    expect(fixture.context().plan?.delivery?.state).toBe('delivering')
   })
 
-  it('rearms a claimed continuation only when dispatch is known not to have started', async () => {
+  it('rearms a claimed delivery only when dispatch is known not to have started', async () => {
     const fixture = createSessions({
-      commandId: 'continuation-1',
+      commandId: 'delivery-1',
       kind: 'approved-plan',
-      state: 'continuing',
+      state: 'delivering',
       originatingPromptMessageId: 'prompt-1',
       createdAt: 42
     })
-    const owner = new SessionPlanContinuationOwner(fixture.sessions)
+    const owner = new SessionPlanDeliveryOwner(fixture.sessions)
 
-    await expect(owner.rearmUndispatched('project-1', 'session-1', 'continuation-1')).resolves.toBe(
+    await expect(owner.rearmUndispatched('project-1', 'session-1', 'delivery-1')).resolves.toBe(
       true
     )
 
-    expect(fixture.context().plan?.continuation).toMatchObject({
-      commandId: 'continuation-1',
+    expect(fixture.context().plan?.delivery).toMatchObject({
+      commandId: 'delivery-1',
       state: 'queued'
     })
     expect(fixture.patch.mock.calls[0]?.[0]).not.toHaveProperty('sessionStatus')
   })
 
-  it('clears the claimed command after successful continuation without removing the Plan', async () => {
+  it('clears the claimed command after successful delivery without removing the Plan', async () => {
     const fixture = createSessions({
-      commandId: 'continuation-1',
+      commandId: 'delivery-1',
       kind: 'approved-plan',
-      state: 'continuing',
+      state: 'delivering',
       originatingPromptMessageId: 'prompt-1',
       createdAt: 42
     })
-    const owner = new SessionPlanContinuationOwner(fixture.sessions)
+    const owner = new SessionPlanDeliveryOwner(fixture.sessions)
 
-    await expect(owner.clear('project-1', 'session-1', 'continuation-1')).resolves.toBe(true)
+    await expect(owner.clear('project-1', 'session-1', 'delivery-1')).resolves.toBe(true)
 
-    expect(fixture.context().plan).not.toHaveProperty('continuation')
-    expect(fixture.patch.mock.calls[0]?.[0].patch.plan).not.toHaveProperty('continuation')
+    expect(fixture.context().plan).not.toHaveProperty('delivery')
+    expect(fixture.patch.mock.calls[0]?.[0].patch.plan).not.toHaveProperty('delivery')
     expect(fixture.patch.mock.calls[0]?.[0]).not.toHaveProperty('sessionStatus')
   })
 
   it('marks a claimed command interrupted after its dispatched prompt is explicitly cancelled', async () => {
     const fixture = createSessions({
-      commandId: 'continuation-1',
+      commandId: 'delivery-1',
       kind: 'approved-plan',
-      state: 'continuing',
+      state: 'delivering',
       originatingPromptMessageId: 'prompt-1',
       createdAt: 42
     })
-    const owner = new SessionPlanContinuationOwner(fixture.sessions)
+    const owner = new SessionPlanDeliveryOwner(fixture.sessions)
 
-    await expect(owner.interrupt('project-1', 'session-1', 'continuation-1')).resolves.toBe(true)
+    await expect(owner.interrupt('project-1', 'session-1', 'delivery-1')).resolves.toBe(true)
 
-    expect(fixture.context().plan?.continuation).toMatchObject({
-      commandId: 'continuation-1',
+    expect(fixture.context().plan?.delivery).toMatchObject({
+      commandId: 'delivery-1',
       state: 'interrupted'
     })
     expect(fixture.patch.mock.calls[0]?.[0]).not.toHaveProperty('sessionStatus')
   })
 
-  it('does not replay a continuing command when a new owner starts', async () => {
+  it('does not guess whether a delivering command crossed the provider boundary after restart', async () => {
     const fixture = createSessions({
-      commandId: 'continuation-1',
+      commandId: 'delivery-1',
       kind: 'approved-plan',
-      state: 'continuing',
+      state: 'delivering',
       originatingPromptMessageId: 'prompt-1',
       createdAt: 42
     })
 
-    const restartedOwner = new SessionPlanContinuationOwner(fixture.sessions)
+    const restartedOwner = new SessionPlanDeliveryOwner(fixture.sessions)
 
-    await expect(restartedOwner.begin('project-1', 'session-1', 'continuation-1')).resolves.toBe(
-      false
-    )
+    await expect(restartedOwner.begin('project-1', 'session-1', 'delivery-1')).resolves.toBe(false)
     expect(fixture.patch).not.toHaveBeenCalled()
-    expect(fixture.context().plan?.continuation?.state).toBe('continuing')
+    expect(fixture.context().plan?.delivery?.state).toBe('delivering')
   })
 
   it('does not replay an interrupted command when a new owner starts', async () => {
     const fixture = createSessions({
-      commandId: 'continuation-1',
+      commandId: 'delivery-1',
       kind: 'approved-plan',
       state: 'interrupted',
       originatingPromptMessageId: 'prompt-1',
       createdAt: 42
     })
 
-    const restartedOwner = new SessionPlanContinuationOwner(fixture.sessions)
+    const restartedOwner = new SessionPlanDeliveryOwner(fixture.sessions)
 
-    await expect(restartedOwner.begin('project-1', 'session-1', 'continuation-1')).resolves.toBe(
-      false
-    )
+    await expect(restartedOwner.begin('project-1', 'session-1', 'delivery-1')).resolves.toBe(false)
     expect(fixture.patch).not.toHaveBeenCalled()
   })
 })

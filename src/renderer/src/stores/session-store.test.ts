@@ -91,7 +91,6 @@ const createPlanProjection = (artifactVersionId: string): ActivePlanProjection =
   revision: 1,
   approval: 'pending',
   lifecycle: 'awaiting_approval',
-  requiresExplicitContinuation: false,
   document: {
     schema_version: 1,
     task_summary: `Plan ${artifactVersionId}`,
@@ -1217,8 +1216,7 @@ describe('session store', () => {
       ...createPlanProjection('version-1'),
       revision: 2,
       approval: 'approved' as const,
-      lifecycle: 'approved' as const,
-      requiresExplicitContinuation: true
+      lifecycle: 'approved' as const
     }
     useSessionStore.getState().setActivePlanProjection('session-1', newerProjection)
     const source = useSessionStore.getState().sessions[0]
@@ -2605,8 +2603,7 @@ describe('session store', () => {
     const approved = {
       ...createPlanProjection('version-1'),
       approval: 'approved' as const,
-      lifecycle: 'approved' as const,
-      requiresExplicitContinuation: true
+      lifecycle: 'approved' as const
     }
 
     useSessionStore.getState().setActivePlanProjection('session-1', approved)
@@ -2614,7 +2611,7 @@ describe('session store', () => {
     const session = useSessionStore.getState().sessions[0]
     expect(session).toMatchObject({
       status: 'idle',
-      activePlanProjection: { approval: 'approved', requiresExplicitContinuation: true }
+      activePlanProjection: { approval: 'approved' }
     })
     expect(session.activeRun).toBeUndefined()
   })
@@ -3938,12 +3935,13 @@ describe('session store', () => {
     })
   })
 
-  it('blocks ordinary sends while an approved durable Plan continuation is queued', () => {
+  it('does not derive Session activity from legacy Plan continuation fields', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
       content: 'Create a plan'
     })
-    const queued = {
+    useSessionStore.getState().finishRun('transport-session-1')
+    const approvedWithLegacyContinuation = {
       ...createPlanProjection('version-1'),
       approval: 'approved' as const,
       lifecycle: 'approved' as const,
@@ -3951,11 +3949,13 @@ describe('session store', () => {
       requiresExplicitContinuation: false
     }
 
-    useSessionStore.getState().setActivePlanProjection('transport-session-1', queued)
+    useSessionStore
+      .getState()
+      .setActivePlanProjection('transport-session-1', approvedWithLegacyContinuation)
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'running',
-      activePlanProjection: { continuationState: 'queued' }
+      status: 'idle',
+      activePlanProjection: { approval: 'approved' }
     })
   })
 

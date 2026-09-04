@@ -242,12 +242,6 @@ const registerAcpCommands = (
             : dependencies.runtime.compactSession(invocation.args[0])
         ),
       'acp:send-prompt': (invocation) => {
-        if (
-          invocation.args[0].planContinuation &&
-          !canSatisfyHumanApproval(invocation.callerContext)
-        ) {
-          throw new Error('Only a current human caller can continue a Session Plan.')
-        }
         return stateCommand(
           dependencies.workflows.sendPrompt({
             ...invocation.args[0],

@@ -1,8 +1,8 @@
 import type { ChatSession } from '@/stores/session-store'
 import type { ActivePlanProjection } from '../../../../../shared/session-plan/contract'
 
-// Plan execution authority remains Session-scoped. Historical projections are view-only and must
-// never replace the authoritative Plan in an actionable branch surface.
+// The authoritative Plan is Session-scoped, while historical projections are view-only. Only its
+// originating durable Message Branch may expose it as active context.
 const selectActiveBranchPlan = (
   session: ChatSession | undefined
 ): ActivePlanProjection | undefined => {
