@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { BrowserWindowConstructorOptions } from 'electron'
 
 import {
   CLOSE_ACTIVE_PANE_CHANNEL,
@@ -102,6 +103,7 @@ type CloseEvent = { preventDefault: () => void; defaultPrevented: boolean }
 // currentWindow and lastWindow both point at the latest window; two describe blocks, one shared fake.
 let currentWindow: FakeBrowserWindow | undefined
 let lastWindow: FakeBrowserWindow | undefined
+let lastWindowOptions: BrowserWindowConstructorOptions | undefined
 let loadRendererDocument = (): Promise<void> => Promise.resolve()
 
 class FakeBrowserWindow {
@@ -199,7 +201,8 @@ vi.mock('electron', () => ({
   // isPackaged=true skips the dev title-suffix branch, keeping the fake focused on the open + close handlers.
   app: { isPackaged: true, getAppPath: () => '/app' },
   BrowserWindow: class {
-    constructor() {
+    constructor(options: BrowserWindowConstructorOptions) {
+      lastWindowOptions = options
       currentWindow = new FakeBrowserWindow()
       lastWindow = currentWindow
       return currentWindow as unknown as object
@@ -279,6 +282,23 @@ describe('window presentation', () => {
     for (const handler of window.handlers.get('ready-to-show') ?? []) handler({} as CloseEvent)
 
     expect(window.showMock).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['linux', false],
+    ['darwin', true],
+    ['win32', true]
+  ] as const)('sets %s menu auto-hide to %s', (platformName, autoHideMenuBar) => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { value: platformName })
+
+    try {
+      createMainWindow()
+    } finally {
+      Object.defineProperty(process, 'platform', platform!)
+    }
+
+    expect(lastWindowOptions?.autoHideMenuBar).toBe(autoHideMenuBar)
   })
 
   it('gives the find overlay a dedicated least-privilege preload', () => {

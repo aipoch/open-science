@@ -92,7 +92,7 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   const e2eWindowMode = process.env[E2E_WINDOW_MODE_ENV]
   const window = new BrowserWindow({
     show: false,
-    autoHideMenuBar: true,
+    autoHideMenuBar: process.platform !== 'linux',
     ...(process.platform !== 'darwin' ? { icon } : {}),
     ...options,
     webPreferences: {
