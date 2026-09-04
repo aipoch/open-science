@@ -969,7 +969,7 @@ class ManagedFileVersionService {
     if (!project) operationError('FILE_NOT_FOUND', 'Managed file project was not found.')
     if (
       deleting ||
-      (origin && (origin.state !== 'active' || origin.deletedAt || origin.deletionOperationId)) ||
+      (origin && (origin.state === 'deleting' || origin.deletionOperationId)) ||
       sync?.deletedAt ||
       sync?.deleteOperationId ||
       projection?.deletedAt ||

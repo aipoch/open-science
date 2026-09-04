@@ -87,8 +87,7 @@ const isExplicitVersionVisible = async (
     project?.archivedAt ||
     deletionIntent ||
     !origin ||
-    origin.state !== 'active' ||
-    origin.deletedAt ||
+    origin.state === 'deleting' ||
     origin.deletionOperationId ||
     sync?.deletedAt ||
     sync?.deleteOperationId ||

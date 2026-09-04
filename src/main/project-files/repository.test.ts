@@ -3010,7 +3010,7 @@ describe('ManagedFileIndexRepository', () => {
     await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({ totalCount: 0 })
   })
 
-  it('hides native Artifact Versions with a deleted origin Session and restores the same head', async () => {
+  it('keeps native Artifact Versions readable with a deleted origin Session', async () => {
     const artifactPath = join(
       storageRoot,
       'artifacts',
@@ -3097,7 +3097,21 @@ describe('ManagedFileIndexRepository', () => {
         collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
         limit: 20
       })
-    ).resolves.toMatchObject({ items: [], totalCount: 0 })
+    ).resolves.toMatchObject({
+      items: [
+        {
+          sourceFileId: 'artifact-lineage-1',
+          sourceVersionId: 'artifact-version-1',
+          checksum: 'a'.repeat(64),
+          originSession: {
+            state: 'deleted',
+            title: 'Retained analysis',
+            deletedAt: '2026-07-27T12:00:00.000Z'
+          }
+        }
+      ],
+      totalCount: 1
+    })
     await expect(
       repository.searchArtifacts({
         primaryProjectId: PROJECT_ID,
@@ -3106,17 +3120,36 @@ describe('ManagedFileIndexRepository', () => {
         primaryLimit: 10,
         otherLimit: 0
       })
-    ).resolves.toMatchObject({ primary: { items: [], totalCount: 0 } })
+    ).resolves.toMatchObject({
+      primary: {
+        items: [
+          {
+            sourceFileId: 'artifact-lineage-1',
+            originSession: { state: 'deleted', title: 'Retained analysis' }
+          }
+        ],
+        totalCount: 1
+      }
+    })
     await expect(
       repository.listArtifactGroups({ projectId: PROJECT_ID, limit: 20 })
-    ).resolves.toMatchObject({ items: [], totalCount: 0 })
+    ).resolves.toMatchObject({
+      items: [
+        {
+          sessionId: SESSION_ID,
+          artifactCount: 1,
+          originSession: { state: 'deleted', title: 'Retained analysis' }
+        }
+      ],
+      totalCount: 1
+    })
 
     await repository.reconcileActiveSessions([])
 
     await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
-      totalCount: 0,
-      artifactCount: 0,
-      artifactGroupCount: 0
+      totalCount: 1,
+      artifactCount: 1,
+      artifactGroupCount: 1
     })
     await expect(
       repository.listFiles({
@@ -3124,12 +3157,7 @@ describe('ManagedFileIndexRepository', () => {
         collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
         limit: 20
       })
-    ).resolves.toMatchObject({ items: [], totalCount: 0 })
-
-    await client.fileOriginSession.update({
-      where: { projectId_sessionId: { projectId: PROJECT_ID, sessionId: SESSION_ID } },
-      data: { state: 'active', deletedAt: null, deletionOperationId: null }
-    })
+    ).resolves.toMatchObject({ totalCount: 1 })
 
     await expect(
       client.artifactLineage.findUniqueOrThrow({ where: { id: 'artifact-lineage-1' } })

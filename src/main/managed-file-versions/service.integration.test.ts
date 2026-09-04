@@ -273,7 +273,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
   )
 
   it.each(['artifact', 'upload'] as const)(
-    'restores all readable %s history when its Session is restored',
+    'keeps all %s history readable but immutable after its Session is deleted',
     async (source) => {
       const fixture = await createFixture(source)
       const service = new ManagedFileVersionService({
@@ -308,19 +308,38 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         }
       })
 
-      await expect(service.openLatest(identity)).rejects.toMatchObject({ code: 'FILE_DELETED' })
-      await expect(readCurrentVersionId()).resolves.toBe(fixture.versionIds[1])
-
-      await client.fileOriginSession.update({
-        where: { projectId_sessionId: { projectId: 'project-1', sessionId: 'session-1' } },
-        data: { state: 'active', deletedAt: null, deletionOperationId: null }
-      })
-      const restored = await service.openVersion(identity, fixture.versionIds[0])
+      const latest = await service.openLatest(identity)
       try {
-        expect(restored.version.id).toBe(fixture.versionIds[0])
+        await expect(latest.readRange(0, latest.size)).resolves.toEqual(
+          new Uint8Array(Buffer.from('second\n'))
+        )
+        expect(latest.version.id).toBe(fixture.versionIds[1])
       } finally {
-        await restored.close()
+        await latest.close()
       }
+
+      const historical = await service.openVersion(identity, fixture.versionIds[0])
+      try {
+        expect(historical.version.id).toBe(fixture.versionIds[0])
+      } finally {
+        await historical.close()
+      }
+
+      await expect(service.inspect(identity)).resolves.toMatchObject({
+        headVersionId: fixture.versionIds[1],
+        selectedVersionId: fixture.versionIds[1],
+        canEdit: false,
+        unavailableReason: 'FILE_DELETED'
+      })
+      await expect(
+        service.saveTextEdit({
+          ...identity,
+          basedOnVersionId: fixture.versionIds[1],
+          expectedHeadVersionId: fixture.versionIds[1],
+          content: 'third\n',
+          operationId: `${source}-deleted-edit`
+        })
+      ).rejects.toMatchObject({ code: 'FILE_DELETED' })
       await expect(readCurrentVersionId()).resolves.toBe(fixture.versionIds[1])
     }
   )

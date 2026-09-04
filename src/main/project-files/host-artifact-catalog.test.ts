@@ -489,10 +489,10 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
         retainedReviewIdsJson: null
       }
     })
-    await expectCatalogIds([])
+    await expectCatalogIds(['artifact-a', 'upload-a'])
   })
 
-  it('applies publication and deletion membership gates to an explicit Version lookup', async () => {
+  it('applies publication gates and keeps a deleted origin readable by explicit Version lookup', async () => {
     await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-v1')
 
     await client.artifactVersion.update({
@@ -538,7 +538,13 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
     })
     await expect(
       repository.readHostArtifactCatalog({ projectId: 'project-a', versionId: 'artifact-v1' })
-    ).resolves.toEqual([])
+    ).resolves.toEqual([
+      expect.objectContaining({
+        source: 'artifact',
+        sourceFileId: 'artifact-a',
+        versionId: 'artifact-v1'
+      })
+    ])
   })
 
   it('projects latest generated Artifacts and Uploads from the current Project catalog', async () => {
