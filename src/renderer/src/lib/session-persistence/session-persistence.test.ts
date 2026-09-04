@@ -1746,6 +1746,54 @@ describe('renderer session persistence bridge', () => {
     }
   })
 
+  it('relaxes the flush cadence while streaming and flushes the terminal commit promptly', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const api = createApi()
+      const save = createStoreSaver(api)
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Hi',
+        cwd: '/workspace/project',
+        projectId: 'project-a'
+      })
+      await save(useSessionStore.getState())
+      expect(api.saveSession).toHaveBeenCalledTimes(1)
+
+      const baseState = useSessionStore.getState()
+      const streamingState = (content: string, updatedAt: number): Parameters<typeof save>[0] => ({
+        sessions: baseState.sessions,
+        selectedSessionId: baseState.selectedSessionId,
+        streamingMessages: {
+          'message-1': { sessionId: 'session-1', content, eventIds: [], updatedAt }
+        }
+      })
+
+      void save(streamingState('chunk-1', 1))
+      await vi.advanceTimersByTimeAsync(300)
+      void save(streamingState('chunk-2', 2))
+      await vi.advanceTimersByTimeAsync(300)
+
+      // The relaxed streaming cadence (2s) has not elapsed; the normal 500ms cadence would have
+      // flushed by now.
+      expect(api.saveSession).toHaveBeenCalledTimes(1)
+
+      const terminalSave = save({
+        sessions: baseState.sessions,
+        selectedSessionId: baseState.selectedSessionId,
+        streamingMessages: {}
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await terminalSave
+
+      expect(api.saveSession).toHaveBeenCalledTimes(2)
+    } finally {
+      await vi.runAllTimersAsync()
+      vi.useRealTimers()
+    }
+  })
+
   it('invalidates a delayed save when a new hydration generation starts', async () => {
     const session = createPersistedSession({ revision: 1, title: 'Old local title' })
     const authority = createPersistedSession({ revision: 2, title: 'Hydrated title' })

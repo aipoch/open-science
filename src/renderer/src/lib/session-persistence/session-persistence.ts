@@ -118,7 +118,8 @@ type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'sa
   saveLatestSession: (
     target: string,
     task: LatestSessionSaveTask,
-    options?: SaveSessionOptions
+    options?: SaveSessionOptions,
+    streaming?: boolean
   ) => Promise<PersistedChatSession>
   saveSessionWithRecovery: (
     session: PersistedChatSession,
@@ -614,15 +615,21 @@ const mergeSaveSessionOptions = (
 }
 
 const LATEST_SESSION_SAVE_INTERVAL_MS = 500
+// While a turn is streaming, intermediate flushes only bound crash loss and the terminal commit
+// still flushes at the normal cadence, so relax the intermediate cadence: each flush serializes
+// the whole (growing) Session and must not run at the streaming tick rate.
+const STREAMING_SESSION_SAVE_INTERVAL_MS = 2_000
 
 type PendingLatestSessionSave = {
   target: string
   task: LatestSessionSaveTask
   options: SaveSessionOptions | undefined
   generation: number
+  streaming?: boolean
   promise?: Promise<PersistedChatSession>
   bypassCadence?: boolean
   releaseCadence?: () => void
+  recheckCadence?: () => void
 }
 
 class SessionPersistenceGenerationChangedError extends Error {
@@ -650,17 +657,29 @@ const createOrderedSessionPersistence = (
   const waitForLatestSessionSaveCadence = async (
     entry: PendingLatestSessionSave
   ): Promise<void> => {
-    const waitMs = latestSessionSaveStartedAt + LATEST_SESSION_SAVE_INTERVAL_MS - performance.now()
-    if (waitMs > 0 && !entry.bypassCadence) {
-      await new Promise<void>((resolve) => {
-        const timeout = setTimeout(resolve, waitMs)
+    // A terminal save may downgrade an in-flight wait from the relaxed streaming cadence back to
+    // the normal one; loop so the wait re-arms instead of sleeping out the streaming interval.
+    for (;;) {
+      const intervalMs = entry.streaming
+        ? STREAMING_SESSION_SAVE_INTERVAL_MS
+        : LATEST_SESSION_SAVE_INTERVAL_MS
+      const waitMs = latestSessionSaveStartedAt + intervalMs - performance.now()
+      if (waitMs <= 0 || entry.bypassCadence) break
+      const recheck = await new Promise<boolean>((resolve) => {
+        const timeout = setTimeout(() => resolve(false), waitMs)
         entry.releaseCadence = () => {
           clearTimeout(timeout)
-          resolve()
+          resolve(false)
+        }
+        entry.recheckCadence = () => {
+          clearTimeout(timeout)
+          resolve(true)
         }
       })
+      entry.releaseCadence = undefined
+      entry.recheckCadence = undefined
+      if (!recheck) break
     }
-    entry.releaseCadence = undefined
     if (entry.generation === hydrationGeneration) latestSessionSaveStartedAt = performance.now()
   }
 
@@ -737,12 +756,19 @@ const createOrderedSessionPersistence = (
   const saveLatestSession = (
     target: string,
     task: LatestSessionSaveTask,
-    options?: SaveSessionOptions
+    options?: SaveSessionOptions,
+    streaming?: boolean
   ): Promise<PersistedChatSession> => {
     const pending = pendingLatestByTarget.get(target)
     if (pending?.promise) {
       pending.task = task
       pending.options = mergeSaveSessionOptions(pending.options, options)
+      if (pending.streaming && !streaming) {
+        // The turn ended: flush the terminal snapshot at the normal cadence instead of waiting
+        // out the relaxed streaming interval.
+        pending.streaming = false
+        pending.recheckCadence?.()
+      }
       return pending.promise
     }
 
@@ -750,6 +776,7 @@ const createOrderedSessionPersistence = (
       target,
       task,
       options,
+      streaming,
       generation: hydrationGeneration
     }
     const runTask = async (): Promise<PersistedChatSession> => {
@@ -1402,6 +1429,10 @@ const createStoreSaver = (
     // the slice diff must also mark a Session dirty or in-flight text would never reach disk until
     // the next identity-changing event.
     const nextStreamingMessages = state.streamingMessages ?? {}
+    const streamingSessionIds = new Set<string>()
+    for (const entry of Object.values(nextStreamingMessages)) {
+      streamingSessionIds.add(entry.sessionId)
+    }
     const streamingDirtySessionIds = new Set<string>()
     if (nextStreamingMessages !== previousStreamingMessages) {
       for (const [messageId, entry] of Object.entries(nextStreamingMessages)) {
@@ -1613,7 +1644,10 @@ const createStoreSaver = (
                     )
                     return durableSession
                   },
-                  saveOptions
+                  saveOptions,
+                  // In-flight turns flush intermediate snapshots at the relaxed streaming cadence;
+                  // the terminal commit (streaming slice empty again) reverts to the normal one.
+                  streamingSessionIds.has(session.id)
                 )
         })
       }

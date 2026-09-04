@@ -105,6 +105,40 @@ describe('TextAnnotationSurface highlight restoration', () => {
     expect(range?.startOffset).toBe(7)
   })
 
+  it('defers the highlight reconcile while animating and reconciles once streaming ends', async () => {
+    const active = [annotation('streaming', 'repeat')]
+    const renderWith = async (isAnimating: boolean, content: string): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+            activeAnnotations={active}
+            onAdd={vi.fn()}
+            onError={vi.fn()}
+            isAnimating={isAnimating}
+          >
+            <p>{content}</p>
+          </TextAnnotationSurface>
+        )
+      )
+    }
+
+    await renderWith(false, 'repeat then repeat')
+    expect(Array.from(highlights.get('agent-annotation-draft') ?? [])[0]?.toString()).toBe('repeat')
+
+    // Streaming replaces the mounted text node; the live range collapses onto
+    // the parent per DOM range adjustment. While animating it is left stale
+    // instead of being re-anchored every frame.
+    await renderWith(true, 'prefix repeat then repeat')
+    const deferred = Array.from(highlights.get('agent-annotation-draft') ?? [])[0]
+    expect(deferred?.toString()).toBe('')
+
+    await renderWith(false, 'prefix repeat then repeat')
+    const reconciled = Array.from(highlights.get('agent-annotation-draft') ?? [])[0]
+    expect(reconciled?.toString()).toBe('repeat')
+    expect(reconciled?.startOffset).toBe(7)
+  })
+
   it('keeps a saved code quote highlighted and revealable after async syntax highlighting', async () => {
     const saved = {
       ...annotation('async-code', 'const answer = 42'),
@@ -698,6 +732,32 @@ describe('TextAnnotationSurface annotate trigger', () => {
     await commitSelection(paragraph)
     expect(annotateTrigger()).toBeDefined()
 
+    await act(async () => {
+      if (paragraph.firstChild) paragraph.firstChild.textContent = 'stream replaced the quote'
+    })
+    expect(annotateTrigger()).toBeUndefined()
+  })
+
+  it('keeps retargeting the draft selection while the surface is animating', async () => {
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface
+          source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+          activeAnnotations={[]}
+          onAdd={vi.fn()}
+          onError={vi.fn()}
+          isAnimating={true}
+        >
+          <p>selectable agent reply</p>
+        </TextAnnotationSurface>
+      )
+    )
+    const paragraph = container.querySelector('p')!
+    await commitSelection(paragraph)
+    expect(annotateTrigger()).toBeDefined()
+
+    // The highlight reconcile is deferred during streaming, but a manual
+    // selection must still follow (or drop with) the mutating text.
     await act(async () => {
       if (paragraph.firstChild) paragraph.firstChild.textContent = 'stream replaced the quote'
     })

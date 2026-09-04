@@ -1820,6 +1820,7 @@ const WorkspaceMessageItemImpl = ({
                   onAdd={annotationPort.onAdd}
                   onUpdateNote={annotationPort.onUpdateNote}
                   onError={annotationPort.onError}
+                  isAnimating={isAssistantPresenting}
                 >
                   <SessionMessageMarkdown
                     content={assistantPresentation.content}
