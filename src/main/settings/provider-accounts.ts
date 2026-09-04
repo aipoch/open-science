@@ -25,6 +25,7 @@ import {
   xaiSubscriptionProviderIdentity
 } from '../../shared/settings'
 import { defaultVendorModel, isOfficialVendorId } from '../../shared/provider-registry'
+import { getCustomProviderBaseUrlError } from '../../shared/provider-base-url'
 import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
@@ -231,6 +232,8 @@ class ProviderAccountsModule {
       const model = request.model?.trim() || existing?.model
       const tokenLimits = resolveCustomTokenLimits(request, existing)
       if (!baseUrl) throw new Error('Base URL is required for a custom provider.')
+      const baseUrlError = getCustomProviderBaseUrlError(baseUrl)
+      if (baseUrlError) throw new Error(baseUrlError)
       if (!model) throw new Error('Model is required for a custom provider.')
       if (!carryKey()) throw new Error('API key is required for a custom provider.')
       provider.baseUrl = baseUrl
@@ -360,7 +363,13 @@ class ProviderAccountsModule {
     await this.repository.setActiveProvider(id, this.resolveActiveModel(provider, model))
   }
   async validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult> {
-    if (request.draft) assertProviderDraftLimits(request.draft)
+    if (request.draft) {
+      assertProviderDraftLimits(request.draft)
+      if (request.draft.type === 'custom' && request.draft.baseUrl?.trim()) {
+        const baseUrlError = getCustomProviderBaseUrlError(request.draft.baseUrl.trim())
+        if (baseUrlError) throw new Error(baseUrlError)
+      }
+    }
     assertProviderModelLimit(request.model)
     const settings = await this.repository.getSettings()
     const resolved = this.resolveValidationTarget(request, settings)

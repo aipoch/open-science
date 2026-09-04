@@ -6,7 +6,9 @@ import {
   type Annotation,
   type ImagePointAnnotation
 } from '../../../../../shared/annotations'
+import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
 import type { AcquireManagedPreviewRequest } from '../../../../../shared/preview-resources'
+import { parseUploadVersionReference } from '../../../../../shared/uploads'
 
 type PreviewResourceValidationApi = Pick<Window['api']['previewResources'], 'acquire' | 'release'>
 
@@ -31,13 +33,29 @@ const localizeImageAnnotationSourceError = (
   return key ? t(key) : undefined
 }
 
-const acquireRequest = (source: ImagePointAnnotation['source']): AcquireManagedPreviewRequest => ({
-  source: source.kind === 'artifact-version' ? ('artifact' as const) : ('upload' as const),
-  projectId: source.projectId,
-  sessionId: source.sessionId,
-  path: source.path,
-  mimeType: source.mimeType
-})
+const acquireRequest = (source: ImagePointAnnotation['source']): AcquireManagedPreviewRequest => {
+  if (source.kind === 'artifact-version') {
+    const identity = parseArtifactVersionLocator(source.path)
+    if (!identity) throw new Error(IMAGE_ANNOTATION_SOURCE_UNAVAILABLE_MESSAGE)
+    return {
+      source: 'artifact',
+      projectId: source.projectId,
+      fileId: identity.artifactId,
+      versionId: source.versionId,
+      mimeType: source.mimeType
+    }
+  }
+
+  const identity = parseUploadVersionReference(source.path)
+  if (!identity?.fileId) throw new Error(IMAGE_ANNOTATION_SOURCE_UNAVAILABLE_MESSAGE)
+  return {
+    source: 'upload',
+    projectId: source.projectId,
+    fileId: identity.fileId,
+    versionId: source.versionId,
+    mimeType: source.mimeType
+  }
+}
 
 // Acquiring the exact immutable locator exercises the same main-process scope, existence, and
 // permission checks used when the prompt later resolves the file reference. Capabilities are

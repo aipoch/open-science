@@ -237,7 +237,33 @@ export type DeleteComputeHostRequest = {
   providerId: string
 }
 
-export type ComputeHostDeletionStatus = Readonly<{ blockedByJobs: boolean }>
+export type ComputeJobRemoteCleanupDisposition = 'pending' | 'cleaned' | 'abandoned'
+
+export type ComputeHostDeletionBlocker = Readonly<{
+  jobId: string
+  projectId: string
+  sessionId: string
+  status: ComputeJobStatus
+  cancellationStatus?: ComputeJobCancellationStatus
+  // Optional for additive compatibility; absence fails closed for terminal cleanup.
+  harvested?: boolean
+  intent: string
+  createdAt: number
+}>
+
+export type ComputeHostDeletionStatus = Readonly<{
+  blockedByJobs: boolean
+  // Optional for additive compatibility with older desktop/web clients.
+  blockingJobs?: ComputeHostDeletionBlocker[]
+}>
+
+export type SetComputeJobRemoteCleanupRequest = Readonly<{
+  jobId: string
+  providerId: string
+  projectId: string
+  sessionId: string
+  disposition: Exclude<ComputeJobRemoteCleanupDisposition, 'pending'>
+}>
 
 // Matches the UI character counter and the compute_details cap (32 KiB) in later issues.
 export const DETAILS_DOC_MAX_LENGTH = 32768
@@ -384,6 +410,8 @@ export type ComputeJob = {
   timeout_seconds: number | undefined
   remote_workdir: string | undefined
   remote_handle: string | undefined
+  // Persisted independently from execution status so local history can outlive remote cleanup.
+  remote_cleanup_disposition?: ComputeJobRemoteCleanupDisposition
   exit_code: number | undefined
   stdout_tail: string | undefined
   stderr_tail: string | undefined

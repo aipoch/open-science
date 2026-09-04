@@ -308,6 +308,7 @@ describe('session persistence startup', () => {
       errorCategory: 'error',
       fingerprint: expect.stringMatching(/^[a-f0-9]{8}$/)
     })
+    await expect(flushSessionPersistence()).rejects.toThrow('could not write')
 
     await act(async () => {
       useSessionStore.getState().appendUserMessage({
@@ -329,6 +330,52 @@ describe('session persistence startup', () => {
     expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
       'changes saved'
     )
+    await expect(flushSessionPersistence()).resolves.toBeUndefined()
+  })
+
+  it('keeps a failed Session blocking flush when another Session saves successfully', async () => {
+    let failedSessionWritesFail = true
+    loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+    saveSession.mockImplementation(async (session) => {
+      if (session.id === 'session-1' && failedSessionWritesFail) throw new Error('disk full')
+      return session
+    })
+
+    await act(async () => root.render(<Probe />))
+
+    await act(async () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Unsaved Session',
+        cwd: '/workspace/project',
+        projectId: 'project-a'
+      })
+      await Promise.resolve()
+    })
+    await act(async () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-2',
+        content: 'Durable Session',
+        cwd: '/workspace/project',
+        projectId: 'project-a'
+      })
+      await Promise.resolve()
+    })
+
+    await expect(flushSessionPersistence()).rejects.toThrow('disk full')
+    expect(saveSession.mock.calls.map(([session]) => session.id)).toEqual([
+      'session-1',
+      'session-2'
+    ])
+
+    failedSessionWritesFail = false
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')?.click()
+      await Promise.resolve()
+    })
+
+    await expect(flushSessionPersistence()).resolves.toBeUndefined()
+    expect(saveSession.mock.calls.at(-1)?.[0].id).toBe('session-1')
   })
 
   it('reloads after a Session revision conflict instead of resending stale JSON', async () => {
@@ -417,6 +464,7 @@ describe('session persistence startup', () => {
     expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
       'Open Science could not save the latest conversation changes. Retry before closing the app.'
     )
+    await expect(flushSessionPersistence()).rejects.toThrow('disk full')
 
     await act(async () => {
       // Production removes renderer state only after the authoritative delete IPC succeeds.
@@ -428,6 +476,7 @@ describe('session persistence startup', () => {
     expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
       'changes saved'
     )
+    await expect(flushSessionPersistence()).resolves.toBeUndefined()
   })
 
   it('ignores a save failure that arrives after its Session was deleted', async () => {
@@ -549,7 +598,6 @@ describe('session persistence startup', () => {
     const sessions = [manifestSession, selectedSession]
     const manifest = {
       version: SESSION_MANIFEST_VERSION,
-      lastProjectId: manifestSession.projectId,
       lastSessionId: manifestSession.id
     }
     loadAll
@@ -579,7 +627,6 @@ describe('session persistence startup', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe(selectedSession.id)
     expect(saveManifest).toHaveBeenCalledOnce()
     expect(saveManifest).toHaveBeenCalledWith({
-      lastProjectId: selectedSession.projectId,
       lastSessionId: selectedSession.id
     })
     expect(container.querySelector('div')?.dataset.ready).toBe('false')
@@ -600,7 +647,6 @@ describe('session persistence startup', () => {
       sessions: [manifestSession],
       manifest: {
         version: SESSION_MANIFEST_VERSION,
-        lastProjectId: manifestSession.projectId,
         lastSessionId: manifestSession.id
       }
     }
@@ -622,10 +668,7 @@ describe('session persistence startup', () => {
     expect(container.querySelector('div')?.dataset.ready).toBe('true')
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
     expect(saveManifest).toHaveBeenCalledOnce()
-    expect(saveManifest).toHaveBeenCalledWith({
-      lastProjectId: undefined,
-      lastSessionId: undefined
-    })
+    expect(saveManifest).toHaveBeenCalledWith({ lastSessionId: undefined })
   })
 
   it('keeps persistence blocked until a failed retry manifest write succeeds', async () => {
@@ -659,7 +702,6 @@ describe('session persistence startup', () => {
       sessions: [manifestSession],
       manifest: {
         version: SESSION_MANIFEST_VERSION,
-        lastProjectId: manifestSession.projectId,
         lastSessionId: manifestSession.id
       }
     }

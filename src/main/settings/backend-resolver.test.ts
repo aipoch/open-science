@@ -544,7 +544,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       })
     })
 
-    await harness.resolver.resolveExplicitTarget({
+    const backend = await harness.resolver.resolveExplicitTarget({
       frameworkId: 'codex',
       providerId: provider.id,
       model: { kind: 'required', id: 'gpt-5.4' },
@@ -552,6 +552,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     })
 
     expect(harness.ensureCodexSubscriptionHome).toHaveBeenCalledWith('https')
+    expect(backend.codexSubscriptionTransport).toBe('https')
   })
 
   it.each(['https', 'websocket'] as const)(
@@ -585,7 +586,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         })
       })
 
-      await harness.resolver.resolveExplicitTarget({
+      const backend = await harness.resolver.resolveExplicitTarget({
         frameworkId: 'codex',
         providerId: provider.id,
         model: { kind: 'required', id: 'gpt-5.4' },
@@ -593,6 +594,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       })
 
       expect(harness.ensureCodexSubscriptionHome).toHaveBeenCalledWith(codexTransport)
+      expect(backend.codexSubscriptionTransport).toBe(codexTransport)
     }
   )
 

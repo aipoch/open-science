@@ -3,9 +3,11 @@ import type { Prisma, PrismaClient, Project as PrismaProject } from '@prisma/cli
 import type {
   CreateProjectRequest,
   Project,
+  ProjectDeletionCleanup,
   UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from '../../shared/projects'
+import { PROJECT_NAME_MAX_LENGTH } from '../../shared/projects'
 import { MEMORY_SETTINGS_ID } from '../../shared/memory'
 import { migrationSqlExecutor } from '../database/migration-sql-executor'
 
@@ -258,6 +260,27 @@ class ProjectRepository {
       select: { projectId: true }
     })
     return rows.map((row) => row.projectId)
+  }
+
+  async listDeletionCleanupProjects(): Promise<
+    Array<Pick<ProjectDeletionCleanup, 'projectId' | 'projectName'>>
+  > {
+    const client = await this.getClient()
+    const intents = await client.projectDeletionIntent.findMany({
+      orderBy: { createdAt: 'asc' },
+      select: { projectId: true }
+    })
+    if (intents.length === 0) return []
+
+    const projects = await client.project.findMany({
+      where: { id: { in: intents.map(({ projectId }) => projectId) } },
+      select: { id: true, name: true }
+    })
+    const names = new Map(projects.map(({ id, name }) => [id, name]))
+    return intents.map(({ projectId }) => {
+      const projectName = names.get(projectId)?.slice(0, PROJECT_NAME_MAX_LENGTH)
+      return { projectId, ...(projectName ? { projectName } : {}) }
+    })
   }
 }
 

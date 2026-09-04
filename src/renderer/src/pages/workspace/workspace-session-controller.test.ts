@@ -93,6 +93,42 @@ const sessionWithRunningChild = (): ChatSession => {
   })
 }
 
+const sessionWithPendingDelegatedQuestion = (): ChatSession => {
+  const pending = sessionWithRunningChild()
+  const graph = pending.conversationGraph
+  const delegatedWork = pending.runtimeContext?.delegatedWork
+  const child = graph?.frames.find(({ id }) => id === 'child-frame')
+  const root = graph?.frames.find(({ id }) => id === graph.rootFrameId)
+  const attempt = delegatedWork?.records[0]?.attempts[0]
+  if (!graph || !delegatedWork || !child || !root || !attempt) {
+    throw new Error('Invalid delegated Session fixture')
+  }
+
+  Object.assign(child, { status: 'completed', delegateName: 'Researcher' })
+  Object.assign(attempt, { status: 'completed', endedAt: 3 })
+  Object.assign(delegatedWork, {
+    questionRequests: [
+      {
+        requestId: 'question-1',
+        canonicalDigest: 'a'.repeat(64),
+        sourceFrameId: child.id,
+        sourceAttemptId: attempt.id,
+        sourceRuntimeSegmentId: 'runtime-1',
+        sourceMessageBranchId: child.activeBranchId,
+        rootOriginMessageId: 'root-prompt',
+        rootBranchId: root.activeBranchId,
+        sourceName: 'Researcher',
+        questions: [{ question: 'Choose a source' }],
+        askedAt: 3,
+        status: 'pending',
+        draftAnswers: [],
+        draftQuestionIndex: 0
+      }
+    ]
+  })
+  return pending
+}
+
 const specialist = (id: string, name: string): SpecialistListItem =>
   ({ kind: 'custom', id, name, enabled: true }) as SpecialistListItem
 
@@ -269,6 +305,8 @@ describe('workspace session controller', () => {
     expect(editDetails).toHaveBeenCalledWith({
       projectId: active.projectId,
       sessionId: active.id,
+      expectedTitle: 'Original title',
+      expectedDescription: 'Before',
       title: '  After  ',
       description: ''
     })
@@ -306,6 +344,43 @@ describe('workspace session controller', () => {
       titleDraft: second.title,
       isSaving: false
     })
+  })
+
+  it.each([
+    [
+      Object.assign(new Error('Session details changed elsewhere.'), {
+        code: 'session-details-conflict'
+      }),
+      "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details."
+    ],
+    [new Error('disk failure'), 'Could not save session details.']
+  ])('keeps Edit session open with a visible save error', async (failure, expectedMessage) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const active = session({ description: 'Original description' })
+    const editDetails = vi.fn().mockRejectedValue(failure)
+    window.api = { sessions: { editDetails } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [active], selectedSessionId: active.id })
+    const hook = renderController({ activeSession: active })
+    mounted.push(hook)
+
+    try {
+      act(() => hook.result.current.actions.openEdit(active))
+      act(() => hook.result.current.actions.changeEditTitleDraft('Unsaved title'))
+      act(() => hook.result.current.actions.confirmEdit({ preventDefault: vi.fn() } as never))
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(hook.result.current.view.dialogs.edit).toMatchObject({
+        titleDraft: 'Unsaved title',
+        descriptionDraft: 'Original description',
+        isSaving: false,
+        error: expectedMessage
+      })
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('does not clear a new Edit save state when the previous save fails', async () => {
@@ -367,15 +442,15 @@ describe('workspace session controller', () => {
     const hook = renderController({ activeSession: active })
     mounted.push(hook)
 
-    act(() => hook.result.current.actions.renameTitle(active, '  Renamed inline  '))
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      await hook.result.current.actions.renameTitle(active, '  Renamed inline  ')
     })
 
     expect(editDetails).toHaveBeenCalledWith({
       projectId: active.projectId,
       sessionId: active.id,
+      expectedTitle: 'Original title',
+      expectedDescription: 'Keep me',
       title: 'Renamed inline',
       description: 'Keep me'
     })
@@ -394,18 +469,21 @@ describe('workspace session controller', () => {
     const hook = renderController({ activeSession: active })
     mounted.push(hook)
 
-    act(() => hook.result.current.actions.renameTitle(active, '   '))
-    act(() => hook.result.current.actions.renameTitle(active, 'Original title'))
+    act(() => {
+      void hook.result.current.actions.renameTitle(active, '   ')
+      void hook.result.current.actions.renameTitle(active, 'Original title')
+    })
 
     expect(editDetails).not.toHaveBeenCalled()
   })
 
   it('loads an unopened Session before an inline rename to preserve its description', async () => {
     const summary = session({ contentLoaded: false, activeMessageCount: 1 })
+    const latestSummary = { ...summary, title: 'Title updated in another window' }
     const persisted: PersistedChatSession = {
       id: summary.id,
       projectId: summary.projectId,
-      title: summary.title,
+      title: 'Title updated in another window',
       description: 'Durable description',
       cwd: summary.cwd,
       status: summary.status,
@@ -428,12 +506,12 @@ describe('workspace session controller', () => {
       .fn()
       .mockResolvedValue({ ...persisted, title: 'Renamed', sessionDetailsSource: 'manual' })
     window.api = { sessions: { loadOne, editDetails } } as unknown as Window['api']
-    useSessionStore.setState({ sessions: [summary], selectedSessionId: summary.id })
-    const hook = renderController({ activeSession: summary })
+    useSessionStore.setState({ sessions: [latestSummary], selectedSessionId: summary.id })
+    const hook = renderController({ activeSession: latestSummary })
     mounted.push(hook)
 
     await act(async () => {
-      hook.result.current.actions.renameTitle(summary, 'Renamed')
+      await hook.result.current.actions.renameTitle(latestSummary, 'Renamed', summary.title)
       await Promise.resolve()
       await Promise.resolve()
       await Promise.resolve()
@@ -443,9 +521,28 @@ describe('workspace session controller', () => {
     expect(editDetails).toHaveBeenCalledWith({
       projectId: 'project-a',
       sessionId: 'session-a',
+      expectedTitle: 'Original title',
+      expectedDescription: 'Durable description',
       title: 'Renamed',
       description: 'Durable description'
     })
+  })
+
+  it('reports an unopened Session load failure without turning it into a save failure', async () => {
+    const summary = session({ contentLoaded: false, activeMessageCount: 1 })
+    const loadOne = vi.fn().mockRejectedValue(new Error('read failure'))
+    const editDetails = vi.fn()
+    window.api = { sessions: { loadOne, editDetails } } as unknown as Window['api']
+    useSessionStore.setState({ sessions: [summary], selectedSessionId: summary.id })
+    const hook = renderController({ activeSession: summary })
+    mounted.push(hook)
+
+    await act(async () => {
+      await expect(hook.result.current.actions.renameTitle(summary, 'Renamed')).resolves.toBe(false)
+    })
+
+    expect(hook.result.current.view.exportError).toBe('Could not load this session for editing.')
+    expect(editDetails).not.toHaveBeenCalled()
   })
 
   it('loads an unopened Session before opening conversation export', async () => {
@@ -677,6 +774,18 @@ describe('workspace session controller', () => {
     mounted.push(hook)
 
     expect(hook.result.current.lifecycle.canArchive(active)).toBe(false)
+  })
+
+  it('does not archive an idle Session while a delegated question awaits an answer', () => {
+    const active = sessionWithPendingDelegatedQuestion()
+    const updateSessionArchive = vi.fn()
+    useSessionStore.setState({ sessions: [active], updateSessionArchive })
+    const hook = renderController({ activeSession: active })
+    mounted.push(hook)
+
+    expect(hook.result.current.lifecycle.canArchive(active)).toBe(false)
+    act(() => hook.result.current.actions.archive(active))
+    expect(updateSessionArchive).not.toHaveBeenCalled()
   })
 
   it('does not archive while Save as skill owns prompt admission', () => {

@@ -1,7 +1,5 @@
-import { readFile } from 'node:fs/promises'
-
 import type { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
-import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { SessionRuntimeContextRevisionConflictError } from '../session-persistence/coordinator'
 import { PlanService, type PlanServiceDependencies } from './plan-service'
@@ -10,7 +8,7 @@ import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
 type ProductionPlanServiceDependencies = Readonly<{
   interactions?: SessionPlanInteractionOwner
   artifactTurns: Pick<ArtifactTurnOwner, 'handleForExecution' | 'write'>
-  provenance: Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>
+  managedFileVersions: Pick<ManagedFileVersionService, 'openUnpublishedVersion'>
   sessions: Pick<
     SessionPersistenceCoordinator,
     'readSessionRuntimeContext' | 'patchSessionRuntimeContext' | 'appendUserMessageToInteraction'
@@ -19,10 +17,43 @@ type ProductionPlanServiceDependencies = Readonly<{
   onApprovalSettled?: PlanServiceDependencies['onApprovalSettled']
 }>
 
+type PlanArtifactVersionRequest = {
+  projectId: string
+  sessionId: string
+  artifactId: string
+  artifactVersionId: string
+}
+
+// The Plan document is read back while its Artifact Version is still pending message finalization
+// (write-then-verify after generate, and again during approval feedback), so this uses the
+// producer read instead of the published-version read.
+const readManagedArtifactVersion = async (
+  managedFileVersions: Pick<ManagedFileVersionService, 'openUnpublishedVersion'>,
+  request: PlanArtifactVersionRequest
+): Promise<{ content: string; checksum: string }> => {
+  const lease = await managedFileVersions.openUnpublishedVersion(
+    { source: 'artifact', projectId: request.projectId, fileId: request.artifactId },
+    request.artifactVersionId
+  )
+  try {
+    if (lease.logicalFile.sessionId !== request.sessionId) {
+      throw new Error('Artifact Version belongs to a different Session.')
+    }
+    const bytes = await lease.readRange(0, lease.size)
+    await lease.verifyUnchanged()
+    return {
+      content: Buffer.from(bytes).toString('utf8'),
+      checksum: lease.version.checksum
+    }
+  } finally {
+    await lease.close()
+  }
+}
+
 const createProductionPlanService = ({
   interactions = new SessionPlanInteractionOwner(),
   artifactTurns,
-  provenance,
+  managedFileVersions,
   sessions,
   onApprovalRequested,
   onApprovalSettled
@@ -31,16 +62,7 @@ const createProductionPlanService = ({
     interactions,
     writeArtifactForExecution: (executionId, input) =>
       artifactTurns.write(artifactTurns.handleForExecution(executionId), input),
-    readArtifactVersion: async ({ projectId, sessionId, artifactId, artifactVersionId }) => {
-      const resolved = await provenance.resolveVersionContent({
-        projectId,
-        appSessionId: sessionId,
-        artifactId,
-        versionId: artifactVersionId
-      })
-      if (!resolved.checksum) throw new Error('Artifact Version has no checksum.')
-      return { content: await readFile(resolved.path, 'utf8'), checksum: resolved.checksum }
-    },
+    readArtifactVersion: (request) => readManagedArtifactVersion(managedFileVersions, request),
     readRuntimeContext: (projectId, sessionId) =>
       sessions.readSessionRuntimeContext(projectId, sessionId),
     patchRuntimeContext: ({
@@ -93,5 +115,5 @@ const createProductionPlanService = ({
     onApprovalSettled
   })
 
-export { createProductionPlanService }
+export { createProductionPlanService, readManagedArtifactVersion }
 export type { ProductionPlanServiceDependencies }

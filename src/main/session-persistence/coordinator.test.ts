@@ -8,6 +8,7 @@ vi.mock('electron', () => ({
 }))
 
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
+import { hasAnswerableDelegatedQuestion } from '../../shared/delegated-work-projection'
 import {
   createLinearConversationGraph,
   forkEditedConversationMessage,
@@ -151,6 +152,73 @@ const createIdleSessionWithRunningChild = (originMessageId = 'root-prompt'): Per
       }
     }
   })
+
+const createIdleSessionWithPendingDelegatedQuestion = (): PersistedChatSession => {
+  const session = createIdleSessionWithRunningChild()
+  const delegatedWork = session.runtimeContext?.delegatedWork
+  const attempt = delegatedWork?.records[0]?.attempts[0]
+  const child = session.conversationGraph?.frames.find((frame) => frame.id === 'child')
+  if (!delegatedWork || !attempt || !child) throw new Error('Invalid delegated Session fixture')
+
+  Object.assign(attempt, {
+    status: 'completed',
+    runtimeSegmentIds: ['runtime-1'],
+    endedAt: 3,
+    terminalMessageId: 'child-terminal'
+  })
+  Object.assign(child, { status: 'completed', delegateName: 'Researcher' })
+  const childBranch = session.conversationGraph?.branches.find(
+    (branch) => branch.id === 'child-branch'
+  )
+  if (!childBranch) throw new Error('Invalid delegated Session fixture')
+  childBranch.headMessageId = 'child-terminal'
+  session.conversationGraph?.messages.push({
+    id: 'child-terminal',
+    role: 'agent',
+    content: 'Waiting for an answer',
+    status: 'complete',
+    eventIds: [],
+    agentFrameId: child.id,
+    introducedOnBranchId: childBranch.id,
+    runtimeSegmentId: 'runtime-1',
+    createdAt: 3,
+    updatedAt: 3
+  })
+  session.conversationGraph?.runtimeSegments.push({
+    id: 'runtime-1',
+    agentFrameId: child.id,
+    frameworkId: 'codex',
+    startedAt: 2,
+    endedAt: 3
+  })
+  Object.assign(delegatedWork, {
+    questionRequests: [
+      {
+        requestId: 'question-1',
+        canonicalDigest: 'a'.repeat(64),
+        sourceFrameId: child.id,
+        sourceAttemptId: attempt.id,
+        sourceRuntimeSegmentId: 'runtime-1',
+        sourceName: 'Researcher',
+        rootBranchId: 'root-branch',
+        rootOriginMessageId: 'root-prompt',
+        sourceMessageBranchId: 'child-branch',
+        questions: [
+          {
+            question: 'Choose a source',
+            options: [{ label: 'Primary' }, { label: 'Secondary' }]
+          }
+        ],
+        sequence: 1,
+        askedAt: 3,
+        status: 'pending',
+        draftAnswers: [],
+        draftQuestionIndex: 0
+      }
+    ]
+  })
+  return session
+}
 
 const createRuntimePlan = (
   overrides: Partial<SessionPlanRuntimeContext> = {}
@@ -297,6 +365,96 @@ const createProjectReconciliationSnapshot = (): ArtifactProjectReconciliationSna
   ({}) as ArtifactProjectReconciliationSnapshot
 
 describe('SessionPersistenceCoordinator', () => {
+  it('rejects a retry when any requested native Artifact run remains unresolved', async () => {
+    const session = createSession()
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session })
+    })
+    const artifactStorage = {
+      prepareProjectReconciliation: vi
+        .fn()
+        .mockResolvedValue(createProjectReconciliationSnapshot()),
+      reconcileSession: vi.fn().mockResolvedValue({
+        recoveredMessageArtifacts: [
+          { messageId: 'message-1', artifacts: [createRecoveredArtifact()] }
+        ],
+        nativeFinalizationRunIds: ['run-1', 'run-2'],
+        unresolvedNativeFinalizationRunIds: ['run-2']
+      })
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      artifactStorage
+    )
+
+    await expect(
+      coordinator.retryArtifactFinalization({
+        projectId: session.projectId,
+        sessionId: session.id,
+        messageId: 'message-1',
+        pendingPaths: [
+          '/artifacts/storage-session/.pending/run-1/a.txt',
+          '/artifacts/storage-session/.pending/run-2/b.txt'
+        ]
+      })
+    ).rejects.toThrow(/remains unresolved/u)
+  })
+
+  it('scopes an explicit Artifact retry so an unrelated native run cannot block it', async () => {
+    const session = createSession()
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session })
+    })
+    const reconcileSession = vi.fn(
+      async (
+        _projectId: string,
+        _sessionId: string,
+        _session: PersistedChatSession,
+        options?: { artifactRunIds?: string[] }
+      ) => {
+        if (!options?.artifactRunIds?.includes('run-legacy')) {
+          throw new Error('unrelated native recovery failed')
+        }
+        return {
+          recoveredMessageArtifacts: [],
+          nativeFinalizationRunIds: [],
+          unresolvedNativeFinalizationRunIds: []
+        }
+      }
+    )
+    const artifactStorage = {
+      prepareProjectReconciliation: vi
+        .fn()
+        .mockResolvedValue(createProjectReconciliationSnapshot()),
+      reconcileSession
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      artifactStorage
+    )
+    const request = {
+      projectId: session.projectId,
+      sessionId: session.id,
+      messageId: 'message-1',
+      pendingPaths: ['/artifacts/storage-session/.pending/run-legacy/result.txt']
+    }
+
+    await expect(coordinator.retryArtifactFinalization(request)).resolves.toBeUndefined()
+    expect(reconcileSession).toHaveBeenCalledWith(session.projectId, session.id, session, {
+      removeOrphanStaging: false,
+      artifactRunIds: ['run-legacy']
+    })
+    expect(artifactStorage.prepareProjectReconciliation).not.toHaveBeenCalled()
+  })
+
   it('resolves Message membership from the durable active Branch', async () => {
     const prompt = (id: string, createdAt: number): PersistedChatMessage => ({
       id,
@@ -1667,6 +1825,32 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable).toMatchObject({ title: 'Renderer rename', archivedAt: 10 })
   })
 
+  it('lets only Task-owned saves advance the Task Run commit witness', async () => {
+    let durable = createSession({ taskRunCommitId: 'committed-run' })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await coordinator.saveSession(
+      createSession({ title: 'Renderer rename', taskRunCommitId: 'forged-run' })
+    )
+    expect(durable).toMatchObject({ title: 'Renderer rename', taskRunCommitId: 'committed-run' })
+
+    await coordinator.saveSession(
+      { ...durable, taskRunCommitId: 'next-run' },
+      {},
+      { taskRunCommit: true }
+    )
+    expect(durable.taskRunCommitId).toBe('next-run')
+  })
+
   it('updates delegation policy through its dedicated durable Session owner', async () => {
     const previousUpdatedAt = Date.now() + 10_000
     let durable = createSession({ delegationPolicy: 'allow', updatedAt: previousUpdatedAt })
@@ -1679,7 +1863,20 @@ describe('SessionPersistenceCoordinator', () => {
         durable = structuredClone(session)
       })
     })
-    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const onDelegationPolicyUpdated = vi.fn()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onDelegationPolicyUpdated
+    )
 
     await expect(
       coordinator.setSessionDelegationPolicy('project-1', 'session-1', 'deny')
@@ -1687,6 +1884,9 @@ describe('SessionPersistenceCoordinator', () => {
 
     expect(durable.delegationPolicy).toBe('deny')
     expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
+    expect(onDelegationPolicyUpdated).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'session-1', delegationPolicy: 'deny' })
+    )
   })
 
   it('preserves main-owned delegation policy on an ordinary existing-Session save', async () => {
@@ -1708,6 +1908,52 @@ describe('SessionPersistenceCoordinator', () => {
       )
     ).resolves.toMatchObject({ title: 'Renderer rename', delegationPolicy: 'deny' })
     expect(durable.delegationPolicy).toBe('deny')
+  })
+
+  it('persists Compute concurrency through its dedicated Session owner', async () => {
+    const previousUpdatedAt = Date.now() + 10_000
+    let durable = createSession({ updatedAt: previousUpdatedAt })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session, expectedRevision) => {
+        durable = structuredClone({
+          ...session,
+          revision: (expectedRevision ?? session.revision ?? 0) + 1
+        })
+        return durable
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.setSessionComputeConcurrencyLimit('project-1', 'session-1', 2)
+    ).resolves.toMatchObject({ computeConcurrencyLimit: 2 })
+
+    expect(durable.computeConcurrencyLimit).toBe(2)
+    expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
+  })
+
+  it('preserves Main-owned Compute concurrency on an ordinary existing-Session save', async () => {
+    let durable = createSession({ computeConcurrencyLimit: 2 })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await coordinator.saveSession(
+      createSession({ title: 'Renderer rename', computeConcurrencyLimit: 9 })
+    )
+
+    expect(durable).toMatchObject({ title: 'Renderer rename', computeConcurrencyLimit: 2 })
   })
 
   it('updates enabled Compute Hosts through the durable Session owner', async () => {
@@ -2060,6 +2306,45 @@ describe('SessionPersistenceCoordinator', () => {
         expectedArchivedAt: null
       })
     ).resolves.toMatchObject({ archivedAt: expect.any(Number) })
+  })
+
+  it('rejects archive while an idle Session has an answerable delegated question', async () => {
+    const delegated = createIdleSessionWithPendingDelegatedQuestion()
+    const root = await mkdtemp(join(tmpdir(), 'open-science-pending-question-archive-'))
+    const repository = new SessionRepository(root)
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    try {
+      await repository.saveSession(delegated)
+      const persisted = await repository.loadSession(delegated.projectId, delegated.id)
+      expect(hasAnswerableDelegatedQuestion(persisted)).toBe(true)
+
+      const [projectArchive] = await Promise.allSettled([
+        coordinator.assertProjectArchivable(delegated.projectId)
+      ])
+      const [sessionArchive] = await Promise.allSettled([
+        coordinator.updateArchive({
+          projectId: delegated.projectId,
+          sessionId: delegated.id,
+          archived: true,
+          expectedArchivedAt: null
+        })
+      ])
+
+      expect([projectArchive.status, sessionArchive.status]).toEqual(['rejected', 'rejected'])
+      expect(projectArchive).toMatchObject({
+        status: 'rejected',
+        reason: { message: 'Finish or stop active sessions before archiving this project.' }
+      })
+      expect(sessionArchive).toMatchObject({
+        status: 'rejected',
+        reason: { message: 'Finish or stop this session before archiving.' }
+      })
+      await expect(
+        repository.loadSession(delegated.projectId, delegated.id)
+      ).resolves.not.toHaveProperty('archivedAt')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('does not let a renderer whole-session save create runtime authority', async () => {
@@ -3212,6 +3497,43 @@ describe('SessionPersistenceCoordinator', () => {
     )
     expect(fileIndex.syncSession).toHaveBeenCalledWith(session)
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
+  })
+
+  it('reconciles provisional managed workspaces during the first authoritative hydration', async () => {
+    const session = createSession()
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result: { sessions: [session], manifest: { version: 1 as const } },
+        isComplete: true
+      })
+    })
+    const reconcileProvisional = vi.fn().mockResolvedValue(undefined)
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        markProjectRetained: vi.fn().mockResolvedValue([]),
+        markRetained: vi.fn().mockResolvedValue(false),
+        restoreProjectActive: vi.fn().mockResolvedValue(undefined),
+        restoreActive: vi.fn().mockResolvedValue(undefined),
+        reconcileProvisional
+      }
+    )
+
+    await coordinator.loadAll()
+    await coordinator.loadAll()
+
+    expect(reconcileProvisional).toHaveBeenCalledOnce()
+    expect(reconcileProvisional).toHaveBeenCalledWith([session])
   })
 
   it('keeps cleanup closed across scans after quarantining corrupt Session authority', async () => {
@@ -5516,12 +5838,9 @@ describe('SessionPersistenceCoordinator', () => {
     const repository = createSessionRepository()
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
-    await coordinator.saveManifest({ lastProjectId: 'project-1', lastSessionId: 'session-1' })
+    await coordinator.saveManifest({ lastSessionId: 'session-1' })
 
-    expect(repository.saveManifest).toHaveBeenCalledWith({
-      lastProjectId: 'project-1',
-      lastSessionId: 'session-1'
-    })
+    expect(repository.saveManifest).toHaveBeenCalledWith({ lastSessionId: 'session-1' })
   })
 
   it('does not broadcast a files change when the files revision is already indexed', async () => {

@@ -12,7 +12,7 @@ export type ProjectFileItem = {
   id: string
   source: ProjectFileSource
   sourceFileId: string
-  sourceVersionId?: string
+  sourceVersionId: string
   checksum?: string
   projectId: string
   sessionId: string
@@ -55,6 +55,17 @@ export type ProjectFilesPage = {
   items: ProjectFileItem[]
   nextCursor?: string
   totalCount: number
+}
+
+// Compatibility lookup for a restored preview tab. Hints identify metadata only; callers still
+// read file bytes through the returned logical sourceFileId/sourceVersionId pair.
+export type ResolveProjectFileRequest = {
+  projectId: string
+  sessionId: string
+  source: ProjectFileSource
+  fileIdHint?: string
+  identityHint: 'logical' | 'legacy'
+  name: string
 }
 
 // Bounded global-search projection. The primary Project is independently paged; Other Projects

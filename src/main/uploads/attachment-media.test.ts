@@ -495,9 +495,24 @@ describe('buildImageContentData', () => {
     expect(sharpFactory).not.toHaveBeenCalled()
   })
 
+  it('reads small managed images from the trusted byte source instead of the path', async () => {
+    const bytes = Buffer.from('trusted-image-bytes')
+    const readBytes = vi.fn(async () => bytes)
+
+    const result = await buildImageContentData(
+      join(root, 'missing.png'),
+      'image/png',
+      bytes.byteLength,
+      readBytes
+    )
+
+    expect(result).toEqual({ data: bytes.toString('base64'), mimeType: 'image/png' })
+    expect(readBytes).toHaveBeenCalledOnce()
+  })
+
   it('downscales large images to the long-edge cap and re-encodes to JPEG', async () => {
     const filePath = join(root, 'large.jpg')
-    await writeFile(filePath, Buffer.from('ignored-because-nativeimage-is-mocked'))
+    await writeFile(filePath, Buffer.from('ignored-because-sharp-is-mocked'))
 
     const result = await buildImageContentData(filePath, 'image/jpeg', 3 * 1024 * 1024)
 
@@ -506,6 +521,23 @@ describe('buildImageContentData', () => {
       expect.objectContaining({ width: 1568, height: 784 })
     )
     expect(result.mimeType).toBe('image/jpeg')
+    expect(result.data).toBe(Buffer.from('jpeg-80').toString('base64'))
+  })
+
+  it('decodes large managed images from trusted bytes instead of reopening the path', async () => {
+    const bytes = Buffer.from('trusted-large-image')
+    const readBytes = vi.fn(async () => bytes)
+
+    const result = await buildImageContentData(
+      join(root, 'missing-large.jpg'),
+      'image/jpeg',
+      3 * 1024 * 1024,
+      readBytes
+    )
+
+    expect(sharpFactory).toHaveBeenCalledOnce()
+    expect(sharpFactory).toHaveBeenCalledWith(bytes)
+    expect(readBytes).toHaveBeenCalledOnce()
     expect(result.data).toBe(Buffer.from('jpeg-80').toString('base64'))
   })
 
@@ -642,6 +674,19 @@ describe('extractPdfText', () => {
     expect(result.pageCount).toBe(2)
     expect(result.truncated).toBe(false)
     expect(result.text).toBe('--- Page 1 ---\nHello world\n\n--- Page 2 ---\nSecond page')
+  })
+
+  it('extracts managed PDFs from the trusted byte source instead of the path', async () => {
+    const bytes = Buffer.from('%PDF-1.4 trusted')
+    const readBytes = vi.fn(async () => bytes)
+
+    const result = await extractPdfText(join(root, 'missing.pdf'), {
+      size: bytes.byteLength,
+      readBytes
+    })
+
+    expect(readBytes).toHaveBeenCalledOnce()
+    expect(result.text).toContain('Hello world')
   })
 
   it('restores missing whitespace between adjacent PDF text items', async () => {

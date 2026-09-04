@@ -1,4 +1,5 @@
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
+import type { ReconcilePendingArtifactsRequest } from '../../shared/artifacts'
 import {
   type DelegationPolicy,
   type LoadAllSessionsResult,
@@ -47,7 +48,8 @@ import {
   type AppendUserMessageToInteractionCommand,
   type PatchSessionRuntimeContextCommand,
   type SessionMetadata,
-  type SessionMetadataSnapshot
+  type SessionMetadataSnapshot,
+  type SessionSaveAuthority
 } from './state-owner'
 import {
   SessionSideChatPersistenceOwner,
@@ -59,11 +61,13 @@ import {
 import {
   SessionPersistenceDeletionOwner,
   type ComputeJobDeletionParticipant,
-  type ProjectSessionDeletionResult
+  type ProjectSessionDeletionResult,
+  type SessionWorkspaceOwnership
 } from './deletion-owner'
 import {
   SessionPersistenceReconciliationOwner,
   type ArtifactStorageReconciler,
+  type PendingArtifactFinalizationRecovery,
   type SessionPermissionGrantReconciliation,
   type SessionUploadPersistence
 } from './reconciliation-owner'
@@ -191,7 +195,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     permissionGrants?: SessionPermissionGrantReconciliation,
     private readonly log: Logger = createLogger('session-persistence'),
     private readonly computeJobs?: ComputeJobDeletionParticipant,
-    onDelegatedWorkSessionUpdated?: SessionUpdatePublisher
+    onDelegatedWorkSessionUpdated?: SessionUpdatePublisher,
+    onDelegationPolicyUpdated?: (session: PersistedChatSession) => void,
+    private readonly workspaceOwnership?: SessionWorkspaceOwnership
   ) {
     const publishSessionUpdate = safeSessionUpdates(onDelegatedWorkSessionUpdated, log)
     this.stateOwner = new SessionPersistenceStateOwner({
@@ -204,7 +210,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         this.assertMutable(projectId, sessionId, operation),
       notifyFilesChanged: (event) => this.notifyFilesChanged(event),
       notifyRuntimeContextSessionUpdated: (session) =>
-        publishSessionUpdate(session, 'runtime-context')
+        publishSessionUpdate(session, 'runtime-context'),
+      notifyDelegationPolicyUpdated: (session) => onDelegationPolicyUpdated?.(session)
     })
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
       repository,
@@ -219,6 +226,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       provenance,
       uploads,
       computeJobs,
+      workspaceOwnership,
       log,
       assertArchiveMutable: (projectId, sessionId) => {
         if (this.deletedProjects.has(projectId)) {
@@ -384,6 +392,20 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           warningCount: scan.warnings?.length ?? 0
         })
         return result
+      }
+
+      if (mayRunDestructiveStartupCleanup && this.workspaceOwnership) {
+        operation.phase('reconcile-provisional-managed-workspaces')
+        try {
+          await this.workspaceOwnership.reconcileProvisional(sessions)
+        } catch (error) {
+          emitRecoverableDiagnostic(this.log, 'managed workspace reconciliation failed', {
+            operation: 'session-hydration',
+            phase: 'reconcile-provisional-managed-workspaces',
+            outcome: 'degraded',
+            ...diagnosticErrorFields(error)
+          })
+        }
       }
 
       if (!this.delegatedStartupRecoveryComplete) {
@@ -710,11 +732,16 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   // incomplete state rather than silently presenting stale metadata as complete.
   saveSession(
     session: PersistedChatSession,
-    options: SaveSessionOptions = {}
+    options: SaveSessionOptions = {},
+    authority: SessionSaveAuthority = { taskRunCommit: false }
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(session.projectId, session.id, async () => {
       await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
-      return this.stateOwner.saveSession(session, sanitizeRendererSaveSessionOptions(options))
+      return this.stateOwner.saveSession(
+        session,
+        sanitizeRendererSaveSessionOptions(options),
+        authority
+      )
     })
   }
 
@@ -740,6 +767,16 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(projectId, sessionId, () =>
       this.stateOwner.setDelegationPolicy(projectId, sessionId, policy)
+    )
+  }
+
+  setSessionComputeConcurrencyLimit(
+    projectId: string,
+    sessionId: string,
+    limit: number
+  ): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
+      this.stateOwner.setComputeConcurrencyLimit(projectId, sessionId, limit)
     )
   }
 
@@ -798,6 +835,23 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         // Force the next save to validate Artifact finalization's binding before reusing topology.
         this.stateOwner.invalidateBindingTopology(projectId, sessionId)
       }
+    })
+  }
+
+  retryArtifactFinalization(
+    request: ReconcilePendingArtifactsRequest
+  ): Promise<PendingArtifactFinalizationRecovery | undefined> {
+    return this.operationScheduler.runSession(request.projectId, request.sessionId, async () => {
+      this.assertMutable(request.projectId, request.sessionId, 'mutate')
+      const authority = await this.repository.loadSessionWithDiagnostics(
+        request.projectId,
+        request.sessionId
+      )
+      if (authority.status !== 'found') {
+        throw new Error('Cannot retry Artifact finalization without a readable Session.')
+      }
+
+      return this.reconciliationOwner.retryArtifactFinalization(authority.session, request)
     })
   }
 

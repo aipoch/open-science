@@ -33,6 +33,7 @@ import {
   MIGRATED_DIRS,
   PROJECT_DATABASE_FILE,
   RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
+  RUNTIME_REPAIR_REGISTRY_FILE,
   runDataRootMigration,
   validateNewDataRoot
 } from './migration-service'
@@ -819,7 +820,12 @@ describe('runDataRootMigration (copy phase)', () => {
       expect.objectContaining({
         from: currentDataRoot,
         to: target,
-        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, join('runtime', 'pkgs')]
+        dirs: [
+          ...MIGRATED_DIRS,
+          RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
+          RUNTIME_REPAIR_REGISTRY_FILE,
+          join('runtime', 'pkgs')
+        ]
       })
     )
     expect(copyAndVerify).toHaveBeenCalledWith(
@@ -1028,7 +1034,7 @@ describe('runDataRootMigration (copy phase)', () => {
     expect(copyAndVerify).not.toHaveBeenCalled()
   })
 
-  it('moves immutable Environment manifests without relocating dirty runtime inventory', async () => {
+  it('moves immutable Environment manifests and runtime quarantine without dirty inventory', async () => {
     const deps = fakeDeps()
     const environmentKey = '6781bee2cc7128dad60abe39756695758edd2dc2f9b42bb53db430253a7d8b43'
     const inventoryTarget = join(
@@ -1056,6 +1062,14 @@ describe('runDataRootMigration (copy phase)', () => {
     const sourceManifest = join(currentDataRoot, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, manifestName)
     await mkdir(join(currentDataRoot, RUNTIME_ENVIRONMENT_MANIFESTS_DIR), { recursive: true })
     await writeFile(sourceManifest, '{"schemaVersion":1}\n')
+    const repairRegistry = {
+      runtimeIds: ['managed:python:default-python'],
+      reasons: { 'managed:python:default-python': 'interrupted-install' }
+    }
+    await writeFile(
+      join(currentDataRoot, RUNTIME_REPAIR_REGISTRY_FILE),
+      `${JSON.stringify(repairRegistry)}\n`
+    )
 
     const target = dataRootFor(emptyParent)
     const destinationInventory = join(
@@ -1075,6 +1089,9 @@ describe('runDataRootMigration (copy phase)', () => {
 
     expect(result).toEqual({ ok: true })
     expect(existsSync(join(target, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, manifestName))).toBe(true)
+    await expect(readFile(join(target, RUNTIME_REPAIR_REGISTRY_FILE), 'utf8')).resolves.toBe(
+      `${JSON.stringify(repairRegistry)}\n`
+    )
     expect(existsSync(join(target, 'runtime', 'provenance', 'environment-inventory'))).toBe(false)
   })
 
@@ -1428,6 +1445,53 @@ describe('commitDataRootSwitch (commit phase)', () => {
     expect(setDataRoot).toHaveBeenCalledWith(target)
     await expect(cleanupJournal.hasPending()).resolves.toBe(false)
     await expect(readMigrationMarker(target)).resolves.toBeNull()
+  })
+
+  it('commits and cleans a migrated runtime quarantine through the durable cleanup journal', async () => {
+    const sourceRegistry = join(currentDataRoot, RUNTIME_REPAIR_REGISTRY_FILE)
+    const contents =
+      '{"runtimeIds":["managed:python:default-python"],"reasons":{"managed:python:default-python":"interrupted-install"}}\n'
+    await mkdir(dirname(sourceRegistry), { recursive: true })
+    await writeFile(sourceRegistry, contents)
+
+    let token = ''
+    const copyResult = await runDataRootMigration(
+      {
+        ...fakeDeps(),
+        currentDataRoot,
+        validateProvenanceState: async () => undefined
+      },
+      emptyParent,
+      {
+        ...runOpts(),
+        onVerified: (staged) => {
+          token = staged.token
+        }
+      }
+    )
+    expect(copyResult).toEqual({ ok: true })
+
+    const target = dataRootFor(emptyParent)
+    const cleanupJournal = new DataRootCleanupJournal(join(emptyParent, 'config'))
+    const setDataRoot = vi.fn(async () => undefined)
+    const result = await commitDataRootSwitch(
+      {
+        currentDataRoot,
+        setDataRoot,
+        cleanupJournal,
+        expectedToken: token,
+        validateProvenanceState: async () => undefined
+      },
+      emptyParent
+    )
+
+    expect(result).toEqual({ ok: true })
+    expect(setDataRoot).toHaveBeenCalledWith(target)
+    await expect(readFile(join(target, RUNTIME_REPAIR_REGISTRY_FILE), 'utf8')).resolves.toBe(
+      contents
+    )
+    expect(existsSync(sourceRegistry)).toBe(false)
+    await expect(cleanupJournal.hasPending()).resolves.toBe(false)
   })
 
   it('preserves timestamps after target verification and the commit-time recheck', async () => {
@@ -2106,6 +2170,29 @@ describe('commitDataRootSwitch (commit phase)', () => {
     expect(deleteSources).not.toHaveBeenCalled()
   })
 
+  it('refuses a legacy staged marker that omitted an existing runtime quarantine', async () => {
+    await mkdir(dirname(join(currentDataRoot, RUNTIME_REPAIR_REGISTRY_FILE)), { recursive: true })
+    await writeFile(
+      join(currentDataRoot, RUNTIME_REPAIR_REGISTRY_FILE),
+      '{"runtimeIds":["managed:python:default-python"],"reasons":{}}\n'
+    )
+    await seedVerifiedMarker(emptyParent, currentDataRoot)
+    const setDataRoot = vi.fn(async () => {})
+    const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
+
+    const result = await commitDataRootSwitch(
+      { currentDataRoot, setDataRoot, deleteSources, expectedToken: 'tok-test' },
+      emptyParent
+    )
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'The staged copy does not include all required provenance data. Run the move again.'
+    })
+    expect(setDataRoot).not.toHaveBeenCalled()
+    expect(deleteSources).not.toHaveBeenCalled()
+  })
+
   it('refuses commit when the verified target inventory has changed', async () => {
     await mkdir(join(currentDataRoot, 'artifacts'), { recursive: true })
     await writeFile(join(currentDataRoot, 'artifacts', 'keep.txt'), 'hello')
@@ -2265,7 +2352,12 @@ describe('discardStagedCopy', () => {
 describe('runtime preservation + old-runtime cleanup', () => {
   it('exports env locks and copies the pkgs cache when envs are preserved', async () => {
     const deps = fakeDeps()
-    const exportRuntimeLocks = vi.fn(async () => ['default-python'])
+    const exportRuntimeLocks = vi.fn(async (_source: string, target: string) => {
+      const locks = join(target, 'runtime', 'envs.lock')
+      await mkdir(locks, { recursive: true })
+      await writeFile(join(locks, 'default-python.lock'), '@EXPLICIT\nhttps://example.test/pkg')
+      return ['default-python']
+    })
     const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
 
     const target = dataRootFor(emptyParent)
@@ -2285,8 +2377,17 @@ describe('runtime preservation + old-runtime cleanup', () => {
     // The (relocatable) pkgs cache is copied alongside the user data so envs rebuild offline there.
     expect(copyAndVerify).toHaveBeenCalledWith(
       expect.objectContaining({
-        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, join('runtime', 'pkgs')]
+        dirs: [
+          ...MIGRATED_DIRS,
+          RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
+          RUNTIME_REPAIR_REGISTRY_FILE,
+          join('runtime', 'pkgs')
+        ]
       })
+    )
+    const marker = await readMigrationMarker(target)
+    expect(marker?.runtimeLockInventory).toEqual(
+      await scanInventory(target, [join('runtime', 'envs.lock')])
     )
   })
 
@@ -2309,15 +2410,23 @@ describe('runtime preservation + old-runtime cleanup', () => {
 
     expect(copyAndVerify).toHaveBeenCalledWith(
       expect.objectContaining({
-        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, join('runtime', 'pkgs')]
+        dirs: [
+          ...MIGRATED_DIRS,
+          RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
+          RUNTIME_REPAIR_REGISTRY_FILE,
+          join('runtime', 'pkgs')
+        ]
       })
     )
   })
 
-  it('still copies user data when exportRuntimeLocks throws (best-effort)', async () => {
+  it('still copies user data but removes an unpublished bundle when lock export throws', async () => {
     const deps = fakeDeps()
     const logger = fakeDiagnosticLogger()
-    const exportRuntimeLocks = vi.fn(async () => {
+    const exportRuntimeLocks = vi.fn(async (_source: string, target: string) => {
+      const locks = join(target, 'runtime', 'envs.lock')
+      await mkdir(locks, { recursive: true })
+      await writeFile(join(locks, 'partial.lock'), '@EXPLICIT\nhttps://example.test/partial')
       throw new Error('micromamba boom')
     })
     const copyAndVerify = vi.fn(async (): Promise<MigrationResult> => ({ ok: true }))
@@ -2338,7 +2447,12 @@ describe('runtime preservation + old-runtime cleanup', () => {
     expect(result).toEqual({ ok: true })
     expect(copyAndVerify).toHaveBeenCalledWith(
       expect.objectContaining({
-        dirs: [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR, join('runtime', 'pkgs')]
+        dirs: [
+          ...MIGRATED_DIRS,
+          RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
+          RUNTIME_REPAIR_REGISTRY_FILE,
+          join('runtime', 'pkgs')
+        ]
       })
     )
     expect(diagnosticRecords(logger)).toContainEqual(
@@ -2351,15 +2465,22 @@ describe('runtime preservation + old-runtime cleanup', () => {
       })
     )
     expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('micromamba boom')
+    const target = dataRootFor(emptyParent)
+    expect((await readMigrationMarker(target))?.runtimeLockInventory).toBeUndefined()
+    expect(existsSync(join(target, 'runtime', 'envs.lock'))).toBe(false)
   })
 
-  it('deletes the old runtime too when the new root has a reconstructable bundle', async () => {
+  it('deletes the old runtime when the verified receipt matches the complete bundle', async () => {
     const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
     const deps = fakeDeps()
-    // Simulate the phase-1 preservation output on disk at the new root (runtime/ is outside the
-    // MIGRATED_DIRS inventory, so it does not affect the commit's verify recheck).
-    await mkdir(join(target, 'runtime', 'envs.lock'), { recursive: true })
+    const locks = join(target, 'runtime', 'envs.lock')
+    await mkdir(locks, { recursive: true })
+    await writeFile(join(locks, 'default-python.lock'), '@EXPLICIT\nhttps://example.test/pkg')
     await mkdir(join(target, 'runtime', 'pkgs'), { recursive: true })
+    await writeMigrationMarker(target, {
+      ...(await readMigrationMarker(target))!,
+      runtimeLockInventory: await scanInventory(target, [join('runtime', 'envs.lock')])
+    })
     const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
 
     await commitDataRootSwitch(
@@ -2370,11 +2491,78 @@ describe('runtime preservation + old-runtime cleanup', () => {
     expect(deleteSources).toHaveBeenCalledWith(currentDataRoot, [...MIGRATED_DIRS, 'runtime'])
   })
 
-  it('leaves the old runtime intact when the new root lacks the bundle', async () => {
+  it('leaves the old runtime intact when a legacy marker has no runtime lock receipt', async () => {
     const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
     const deps = fakeDeps()
-    // Only the pkgs cache, no envs.lock → not reconstructable → do not delete the old runtime.
+    const locks = join(target, 'runtime', 'envs.lock')
+    await mkdir(locks, { recursive: true })
+    await writeFile(join(locks, 'default-python.lock'), '@EXPLICIT\nhttps://example.test/pkg')
     await mkdir(join(target, 'runtime', 'pkgs'), { recursive: true })
+    const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
+
+    await commitDataRootSwitch(
+      { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources, expectedToken: 'tok-test' },
+      emptyParent
+    )
+
+    expect(deleteSources).toHaveBeenCalledWith(currentDataRoot, [...MIGRATED_DIRS])
+  })
+
+  it('leaves the old runtime intact when the runtime lock receipt was tampered with', async () => {
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
+    const deps = fakeDeps()
+    const locks = join(target, 'runtime', 'envs.lock')
+    await mkdir(locks, { recursive: true })
+    await writeFile(join(locks, 'default-python.lock'), '@EXPLICIT\nhttps://example.test/pkg')
+    await mkdir(join(target, 'runtime', 'pkgs'), { recursive: true })
+    const receipt = await scanInventory(target, [join('runtime', 'envs.lock')])
+    await writeMigrationMarker(target, {
+      ...(await readMigrationMarker(target))!,
+      runtimeLockInventory: { ...receipt, digest: '0'.repeat(64) }
+    })
+    const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
+
+    await commitDataRootSwitch(
+      { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources, expectedToken: 'tok-test' },
+      emptyParent
+    )
+
+    expect(deleteSources).toHaveBeenCalledWith(currentDataRoot, [...MIGRATED_DIRS])
+  })
+
+  it('leaves the old runtime intact when a runtime lock changes after verification', async () => {
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
+    const deps = fakeDeps()
+    const locks = join(target, 'runtime', 'envs.lock')
+    const lock = join(locks, 'default-python.lock')
+    await mkdir(locks, { recursive: true })
+    await writeFile(lock, '@EXPLICIT\nhttps://example.test/original')
+    await mkdir(join(target, 'runtime', 'pkgs'), { recursive: true })
+    await writeMigrationMarker(target, {
+      ...(await readMigrationMarker(target))!,
+      runtimeLockInventory: await scanInventory(target, [join('runtime', 'envs.lock')])
+    })
+    await writeFile(lock, '@EXPLICIT\nhttps://example.test/tampered')
+    const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
+
+    await commitDataRootSwitch(
+      { currentDataRoot, setDataRoot: deps.setDataRoot, deleteSources, expectedToken: 'tok-test' },
+      emptyParent
+    )
+
+    expect(deleteSources).toHaveBeenCalledWith(currentDataRoot, [...MIGRATED_DIRS])
+  })
+
+  it('leaves the old runtime intact when the verified locks have no package cache', async () => {
+    const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
+    const deps = fakeDeps()
+    const locks = join(target, 'runtime', 'envs.lock')
+    await mkdir(locks, { recursive: true })
+    await writeFile(join(locks, 'default-python.lock'), '@EXPLICIT\nhttps://example.test/pkg')
+    await writeMigrationMarker(target, {
+      ...(await readMigrationMarker(target))!,
+      runtimeLockInventory: await scanInventory(target, [join('runtime', 'envs.lock')])
+    })
     const deleteSources = vi.fn(async (): Promise<DeleteResult> => ({ deleted: [], failed: [] }))
 
     await commitDataRootSwitch(

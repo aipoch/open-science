@@ -21,6 +21,7 @@ type ProjectFilePreviewTarget = {
   artifact: MessageArtifact
   projectId: string
   sessionId: string
+  fileId: string
   cacheKey: string
   encoding?: 'utf8' | 'base64'
 }
@@ -48,7 +49,7 @@ const PREVIEW_READ_CONCURRENCY = 4
 const MAX_PREVIEW_CACHE_ENTRIES = 96
 
 const createProjectFilePreviewArtifact = (file: ProjectFileItem): MessageArtifact => ({
-  id: file.sourceVersionId ?? file.sourceFileId,
+  id: file.sourceVersionId,
   artifactId: file.source === 'artifact' ? file.sourceFileId : undefined,
   versionId: file.sourceVersionId,
   kind: 'managed-file',
@@ -77,7 +78,8 @@ const createProjectFilePreviewTarget = (file: ProjectFileItem): ProjectFilePrevi
     source: file.source,
     artifact,
     projectId: file.projectId,
-    sessionId: file.sessionId
+    sessionId: file.sessionId,
+    fileId: file.sourceFileId
   }
 
   return {
@@ -117,6 +119,7 @@ const readProjectFilePreview = async (
         source: target.source,
         path: target.path
       }),
+      fileId: target.fileId,
       maxBytes:
         target.encoding === 'base64' ? ARTIFACT_IMAGE_PREVIEW_BYTES : ARTIFACT_PREVIEW_BYTES,
       encoding: target.encoding

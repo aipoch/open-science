@@ -137,7 +137,7 @@ it('runs whole-tree architecture scans in one reused worker after the parallel u
   )
 })
 
-it('serializes real kernels, TCP servers, and integration files so they cannot starve the unit pool', () => {
+it('serializes real kernels, TCP servers, and integration files', () => {
   expect(VITEST_PROCESS_TEST_GLOBS).toEqual(
     expect.arrayContaining([
       '**/*.integration.test.ts',
@@ -148,6 +148,7 @@ it('serializes real kernels, TCP servers, and integration files so they cannot s
       'src/main/acp/mcp-http-host.test.ts'
     ])
   )
+  expect(VITEST_PROCESS_TEST_GLOBS).not.toContain('scripts/database-migration-ledger-smoke.test.ts')
   const processProject = projectByName('process')
   expect(processProject.include).toEqual([...VITEST_PROCESS_TEST_GLOBS])
   expect(processProject.isolate).toBe(true)

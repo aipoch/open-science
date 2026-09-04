@@ -117,6 +117,43 @@ describe('NotebookNetworkSandboxOwner', () => {
     ).toBe("& 'C:\\Program Files\\Python\\python.exe' 'O''Brien' '$(Write-Error injected)'")
   })
 
+  it('preserves the executable and arguments for a Windows sandbox launch', async () => {
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+
+    const wrapped = await owner.wrap({
+      executable: 'D:\\runtime\\python.exe',
+      args: ['D:\\app\\python_loop.py'],
+      env: { PATH: 'C:\\Windows\\System32' },
+      cwd: 'D:\\workspace',
+      commandText: 'python_loop.py',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      runtime: 'python',
+      filesystem: {
+        readOnlyRoots: ['D:\\runtime'],
+        readWriteRoots: ['D:\\workspace'],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    })
+
+    expect(backend.wrap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "& 'D:\\runtime\\python.exe' 'D:\\app\\python_loop.py'",
+        executable: 'D:\\runtime\\python.exe',
+        args: ['D:\\app\\python_loop.py']
+      })
+    )
+
+    wrapped.cleanup()
+  })
+
   it('applies allow-once to every matching connection in the next command only', async () => {
     const requestDecision = vi.fn().mockResolvedValue('allowOnce')
     const persistAlwaysAllow = vi.fn()

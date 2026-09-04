@@ -54,6 +54,7 @@ const dependencies = (
   interactions: { supersedeCurrent: vi.fn() },
   capabilities: { revokeSession: vi.fn() },
   promptContent: { resetSession: vi.fn() },
+  releasePromptResourcesForSession: vi.fn(),
   handoff: { clearSession: vi.fn() },
   contextUsage: { deleteSession: vi.fn() },
   projector: { clearSession: vi.fn() },
@@ -103,6 +104,7 @@ describe('AcpSessionDeletionWorkflow', () => {
       interactions: { supersedeCurrent: vi.fn(() => actions.push('interaction')) },
       capabilities: { revokeSession: vi.fn(() => actions.push('capability')) },
       promptContent: { resetSession: vi.fn(() => actions.push('prompt-content')) },
+      releasePromptResourcesForSession: vi.fn(() => actions.push('prompt-resources')),
       handoff: { clearSession: vi.fn(() => actions.push('handoff')) },
       contextUsage: { deleteSession: vi.fn(() => actions.push('context')) },
       projector: { clearSession: vi.fn(() => actions.push('projector')) },
@@ -144,6 +146,7 @@ describe('AcpSessionDeletionWorkflow', () => {
       'interaction',
       'capability',
       'prompt-content',
+      'prompt-resources',
       'handoff',
       'context',
       'projector',
@@ -210,6 +213,7 @@ describe('AcpSessionDeletionWorkflow', () => {
     expect(deps.interactions.supersedeCurrent).toHaveBeenCalledWith('app-session')
     expect(deps.capabilities.revokeSession).toHaveBeenCalledWith('app-session')
     expect(deps.promptContent.resetSession).toHaveBeenCalledWith('app-session')
+    expect(deps.releasePromptResourcesForSession).toHaveBeenCalledWith('app-session')
     expect(deps.handoff.clearSession).toHaveBeenCalledWith('app-session')
     expect(deps.contextUsage.deleteSession).toHaveBeenCalledWith('app-session')
     expect(deps.projector.clearSession).toHaveBeenCalledWith('app-session')
@@ -244,6 +248,7 @@ describe('AcpSessionDeletionWorkflow', () => {
     expect(deps.capabilities.revokeSession).not.toHaveBeenCalled()
     expect(deps.interactions.supersedeCurrent).not.toHaveBeenCalled()
     expect(deps.promptContent.resetSession).not.toHaveBeenCalled()
+    expect(deps.releasePromptResourcesForSession).not.toHaveBeenCalled()
     expect(deps.handoff.clearSession).not.toHaveBeenCalled()
     expect(deps.contextUsage.deleteSession).not.toHaveBeenCalled()
     expect(deps.projector.clearSession).not.toHaveBeenCalled()
@@ -346,6 +351,7 @@ describe('AcpSessionDeletionWorkflow', () => {
     expect(deps.interactions.supersedeCurrent).not.toHaveBeenCalled()
     expect(deps.capabilities.revokeSession).not.toHaveBeenCalled()
     expect(deps.promptContent.resetSession).not.toHaveBeenCalled()
+    expect(deps.releasePromptResourcesForSession).not.toHaveBeenCalled()
     expect(deps.handoff.clearSession).not.toHaveBeenCalled()
     expect(deps.contextUsage.deleteSession).not.toHaveBeenCalled()
     expect(deps.projector.clearSession).not.toHaveBeenCalled()
@@ -375,6 +381,7 @@ describe('AcpSessionDeletionWorkflow', () => {
     expect(deps.capabilities.revokeSession).not.toHaveBeenCalled()
     expect(deps.interactions.supersedeCurrent).not.toHaveBeenCalled()
     expect(deps.promptContent.resetSession).not.toHaveBeenCalled()
+    expect(deps.releasePromptResourcesForSession).not.toHaveBeenCalled()
     expect(deps.handoff.clearSession).not.toHaveBeenCalled()
     expect(deps.contextUsage.deleteSession).not.toHaveBeenCalled()
     expect(deps.projector.clearSession).not.toHaveBeenCalled()

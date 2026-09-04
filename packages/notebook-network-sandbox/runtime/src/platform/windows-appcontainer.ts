@@ -16,6 +16,8 @@ type WindowsShell = Readonly<{ kind: 'powershell' | 'cmd'; path: string }>
 
 type WindowsLaunchRequest = Readonly<{
   command: string
+  executable?: string
+  args?: readonly string[]
   shell?: string | WindowsShell
   cwd: string
   gatewayPort: number
@@ -28,10 +30,48 @@ type WindowsLaunchRequest = Readonly<{
   ownershipRoot: string
 }>
 
+const WINDOWS_BATCH_FILE = /\.(?:cmd|bat)$/i
+const CMD_META_CHARACTER = /([()\][%!^"`<>&|;, *?])/g
+
+// Ported from cross-spawn's Windows non-shell parser. Batch files require cmd.exe, while escaping
+// each token and asking the native host to preserve the resulting command line prevents cmd syntax
+// in an interpreter path or argument from becoming a second command.
+const escapeCmdCommand = (value: string): string => value.replace(CMD_META_CHARACTER, '^$1')
+
+const escapeCmdArgument = (value: string, doubleEscapeMetaCharacters: boolean): string => {
+  let escaped = value.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"').replace(/(?=(\\+?)?)\1$/, '$1$1')
+  escaped = `"${escaped}"`.replace(CMD_META_CHARACTER, '^$1')
+  return doubleEscapeMetaCharacters ? escaped.replace(CMD_META_CHARACTER, '^$1') : escaped
+}
+
+const windowsBatchInvocation = (
+  executable: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv
+): Readonly<{ executable: string; args: string[]; verbatimArguments: true }> => {
+  const command = [
+    escapeCmdCommand(executable),
+    // cmd.exe parses the invocation once and a batch file parses its expanded arguments again.
+    ...args.map((argument) => escapeCmdArgument(argument, true))
+  ].join(' ')
+  return {
+    executable: env.ComSpec ?? env.COMSPEC ?? 'cmd.exe',
+    args: ['/d', '/s', '/c', `"${command}"`],
+    verbatimArguments: true
+  }
+}
+
 type WindowsStandardLaunchRequest = Readonly<
   Pick<
     WindowsLaunchRequest,
-    'command' | 'shell' | 'gatewayPort' | 'gatewayCredentials' | 'env' | 'localRpcSocketPath'
+    | 'command'
+    | 'executable'
+    | 'args'
+    | 'shell'
+    | 'gatewayPort'
+    | 'gatewayCredentials'
+    | 'env'
+    | 'localRpcSocketPath'
   >
 >
 
@@ -320,11 +360,19 @@ const windowsLaunch = (
     shell.kind === 'powershell'
       ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command]
       : ['/d', '/s', '/c', request.command]
+  const directInvocation = request.executable
+    ? WINDOWS_BATCH_FILE.test(request.executable)
+      ? windowsBatchInvocation(request.executable, request.args ?? [], request.env)
+      : { executable: request.executable, args: [...(request.args ?? [])] }
+    : { executable: shell.path, args: childArgs }
   const layout = normalizeFilesystemLayout(request.filesystem)
   const specification = Buffer.from(
     JSON.stringify({
-      executable: shell.path,
-      arguments: childArgs,
+      executable: directInvocation.executable,
+      arguments: directInvocation.args,
+      ...('verbatimArguments' in directInvocation
+        ? { verbatimArguments: directInvocation.verbatimArguments }
+        : {}),
       cwd: request.cwd,
       readOnlyRoots: layout.readOnlyRoots,
       readWriteRoots: layout.readWriteRoots,
@@ -333,8 +381,13 @@ const windowsLaunch = (
     }),
     'utf8'
   ).toString('base64url')
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...request.env,
+    // CreateProcessW requires this base while applying AppContainer security capabilities. Windows
+    // maps it to the profile's isolated Packages/.../AC directory for the sandboxed child.
+    ...(request.env.LOCALAPPDATA === undefined && process.env.LOCALAPPDATA
+      ? { LOCALAPPDATA: process.env.LOCALAPPDATA }
+      : {}),
     ...proxyEnvironment(request.gatewayPort, request.gatewayCredentials)
   }
   if (request.localRpcSocketPath) {
@@ -362,10 +415,16 @@ const windowsStandardLaunch = (
       : request.shell
         ? { kind: 'cmd', path: request.shell }
         : { kind: 'powershell', path: 'powershell.exe' }
+  // PowerShell does not transparently relay a redirected stdin stream to a long-lived native child:
+  // a Notebook loop can observe EOF and exit before the executor writes its first protocol frame.
+  // Preserve structured native invocations in standard mode just as protected mode does. Batch
+  // shims still need a command shell, so retain the existing serialized-command path for them.
   const argv =
-    shell.kind === 'powershell'
-      ? [shell.path, '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command]
-      : [shell.path, '/d', '/s', '/c', request.command]
+    request.executable && !WINDOWS_BATCH_FILE.test(request.executable)
+      ? [request.executable, ...(request.args ?? [])]
+      : shell.kind === 'powershell'
+        ? [shell.path, '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command]
+        : [shell.path, '/d', '/s', '/c', request.command]
   const env = {
     ...request.env,
     ...proxyEnvironment(request.gatewayPort, request.gatewayCredentials)

@@ -6,6 +6,7 @@ import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import type { BundledSkill } from './registry'
 import { canonicalSkillDocument } from './skill-document-name'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
+import { publishUserFile } from '../user-file-publisher'
 import {
   inspectSkillPackage,
   SkillPackagePolicyError,
@@ -48,6 +49,7 @@ type SkillExportDialog = {
     filters: Array<{ name: string; extensions: string[] }>
   }) => Promise<{ canceled: boolean; filePath?: string }>
   writeFile: (filePath: string, bytes: Uint8Array) => Promise<unknown>
+  publishUserFile?: typeof publishUserFile
 }
 
 const collectFiles = async (directory: string, skillName: string): Promise<Zippable> => {
@@ -94,7 +96,7 @@ const collectFiles = async (directory: string, skillName: string): Promise<Zippa
     if (totalBytes > SKILL_IMPORT_LIMITS.maxTotalBytes) {
       throw new Error('Skill tree exceeds the total export size limit.')
     }
-    files[file.relativePath] = [bytes, { mtime: new Date('1980-01-01T00:00:00.000Z') }]
+    files[file.relativePath] = [bytes, { mtime: new Date(1980, 0, 1) }]
   }
   return files
 }
@@ -117,6 +119,8 @@ export const saveSkillExport = async (
     filters: [{ name: translate('Skill ZIP'), extensions: ['zip'] }]
   })
   if (selected.canceled || !selected.filePath) return { saved: false }
-  await adapter.writeFile(selected.filePath, archive.archiveBytes)
+  await (adapter.publishUserFile ?? publishUserFile)(selected.filePath, async (temporaryPath) => {
+    await adapter.writeFile(temporaryPath, archive.archiveBytes)
+  })
   return { saved: true }
 }

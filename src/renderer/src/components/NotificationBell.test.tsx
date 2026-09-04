@@ -4,10 +4,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeApprovalRequest } from '../../../shared/compute'
+import type { Project } from '../../../shared/projects'
 import type { ConnectorApprovalRequest } from '../../../shared/settings'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { useComputeStore } from '@/stores/compute-store'
+import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { NotificationBell } from './NotificationBell'
 
@@ -335,6 +337,44 @@ describe('NotificationBell', () => {
     expect(document.body.textContent).not.toContain('Waiting for your answer')
   })
 
+  it('loads Projects before deciding whether a project notification target is valid', async () => {
+    const targetProject = { id: 'project-2', name: 'Fresh project' } as Project
+    const listProjects = vi.fn(async () => [targetProject])
+    window.api = {
+      ...window.api,
+      projects: { list: listProjects }
+    } as unknown as Window['api']
+    useProjectStore.setState(createInitialProjectState())
+    const markRead = vi.fn(async () => undefined)
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      markRead,
+      items: item ? [{ ...item, projectId: targetProject.id, sessionId: undefined }] : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const message = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.includes('Approval needed')
+    )
+    expect(message).toBeDefined()
+    await act(async () => {
+      message?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(listProjects).toHaveBeenCalledOnce()
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: targetProject.id
+    })
+    expect(markRead).toHaveBeenCalledWith(['message-1'])
+    expect(document.body.querySelector('[aria-label="Message center"]')).toBeNull()
+  })
+
   it('makes target invalidation override pending labels, replay, and navigation', async () => {
     const replayConnectorApproval = vi.fn(async (): Promise<ConnectorApprovalRequest> => ({
       id: 'request-1',
@@ -343,8 +383,8 @@ describe('NotificationBell', () => {
       argsPreview: '{}',
       availableScopes: ['once']
     }))
-    const openSessionById = vi.fn()
-    const openProject = vi.fn()
+    const openSessionById = vi.fn(() => true)
+    const openProject = vi.fn(() => true)
     const markRead = vi.fn(async () => undefined)
     window.api.settings.replayConnectorApproval = replayConnectorApproval
     useNavigationStore.setState({ openSessionById, openProject })
@@ -426,6 +466,68 @@ describe('NotificationBell', () => {
     expect(markAllRead).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps a message unread and the center open when target navigation is rejected', async () => {
+    const openSessionById = vi.fn(() => false)
+    const markRead = vi.fn(async () => undefined)
+    useNavigationStore.setState({ openSessionById })
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      markRead,
+      items: item ? [{ ...item, sessionId: 'session-missing' }] : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const message = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Approval needed')
+    )
+    await act(async () => message?.click())
+
+    expect(openSessionById).toHaveBeenCalledWith(
+      'session-missing',
+      'notification',
+      expect.any(Function)
+    )
+    expect(markRead).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[aria-label="Message center"]')).not.toBeNull()
+  })
+
+  it('finishes a notification action after deferred preview confirmation', async () => {
+    let resumeNavigation: (() => void) | undefined
+    const openSessionById = vi.fn(
+      (_sessionId: string, _origin: string, afterNavigate?: () => void) => {
+        resumeNavigation = afterNavigate
+        return false
+      }
+    )
+    const markRead = vi.fn(async () => undefined)
+    useNavigationStore.setState({ openSessionById })
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      markRead,
+      items: item ? [{ ...item, sessionId: 'session-1' }] : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const message = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Approval needed')
+    )
+    await act(async () => message?.click())
+
+    expect(markRead).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[aria-label="Message center"]')).not.toBeNull()
+
+    await act(async () => resumeNavigation?.())
+
+    expect(markRead).toHaveBeenCalledWith(['message-1'])
+    expect(document.body.querySelector('[aria-label="Message center"]')).toBeNull()
+  })
+
   it('continues the notification action when marking the message as read fails', async () => {
     const connectorRequest = {
       id: 'request-1',
@@ -436,7 +538,7 @@ describe('NotificationBell', () => {
     } satisfies ConnectorApprovalRequest
     const replayConnectorApproval = vi.fn(async () => connectorRequest)
     const enqueueApproval = vi.fn()
-    const openSessionById = vi.fn()
+    const openSessionById = vi.fn(() => true)
     const markRead = vi.fn(async () => {
       throw new Error('notification write failed')
     })
@@ -461,12 +563,12 @@ describe('NotificationBell', () => {
     expect(markRead).toHaveBeenCalledWith(['message-1'])
     expect(replayConnectorApproval).toHaveBeenCalledWith('request-1')
     expect(enqueueApproval).toHaveBeenCalledWith(connectorRequest)
-    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification', expect.any(Function))
     expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
   })
 
   it('continues navigation when approval replay fails', async () => {
-    const openSessionById = vi.fn()
+    const openSessionById = vi.fn(() => true)
     const markRead = vi.fn(async () => undefined)
     window.api.settings.replayConnectorApproval = vi.fn(async () => {
       throw new Error('approval replay failed')
@@ -486,14 +588,14 @@ describe('NotificationBell', () => {
     )
     await act(async () => message?.click())
 
-    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification', expect.any(Function))
     expect(markRead).toHaveBeenCalledWith(['message-1'])
     expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
   })
 
   it('opens a credential wait without replaying it as a connector approval', async () => {
     const replayConnectorApproval = vi.fn(async () => null)
-    const openSessionById = vi.fn()
+    const openSessionById = vi.fn(() => true)
     window.api.settings.replayConnectorApproval = replayConnectorApproval
     useNavigationStore.setState({ openSessionById })
     const item = useNotificationInboxStore.getState().items[0]
@@ -520,7 +622,7 @@ describe('NotificationBell', () => {
     await act(async () => message?.click())
 
     expect(replayConnectorApproval).not.toHaveBeenCalled()
-    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification', expect.any(Function))
   })
 
   it('does not wait for the read write before navigating to the notification target', async () => {
@@ -531,7 +633,7 @@ describe('NotificationBell', () => {
           completeMarkRead = resolve
         })
     )
-    const openSessionById = vi.fn()
+    const openSessionById = vi.fn(() => true)
     useNavigationStore.setState({ openSessionById })
     const item = useNotificationInboxStore.getState().items[0]
     useNotificationInboxStore.setState({
@@ -549,7 +651,7 @@ describe('NotificationBell', () => {
     await act(async () => message?.click())
 
     expect(markRead).toHaveBeenCalledWith(['message-1'])
-    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification', expect.any(Function))
     expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
 
     completeMarkRead?.()
@@ -584,7 +686,7 @@ describe('NotificationBell', () => {
       const replayApproval = vi.fn(async () => computeRequest)
       const enqueueConnector = vi.fn()
       const enqueueCompute = vi.fn()
-      const openSessionById = vi.fn()
+      const openSessionById = vi.fn(() => true)
       window.api.settings.replayConnectorApproval = replayConnectorApproval
       window.api.compute.replayApproval = replayApproval
       useSettingsStore.setState({ enqueueApproval: enqueueConnector })
@@ -613,7 +715,11 @@ describe('NotificationBell', () => {
         expect(enqueueCompute).toHaveBeenCalledWith(computeRequest)
       }
       if (sessionId) {
-        expect(openSessionById).toHaveBeenCalledWith(sessionId, 'notification')
+        expect(openSessionById).toHaveBeenCalledWith(
+          sessionId,
+          'notification',
+          expect.any(Function)
+        )
       } else {
         expect(openSessionById).not.toHaveBeenCalled()
       }

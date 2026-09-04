@@ -176,7 +176,7 @@ describe('managed preview protocol', () => {
       resolvePath: async () => filePath,
       createId: () => 'resource-1'
     })
-    const request = { source: 'artifact' as const, path: filePath }
+    const request = { source: 'local' as const, path: filePath }
     const snapshot = await resources.inspect(request)
     await resources.acquire(17, request, { snapshot, maxBytes: 192 * 1024 })
 
@@ -200,6 +200,53 @@ describe('managed preview protocol', () => {
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
+  })
+
+  it('streams a logical managed resource from its verified lease after the path is replaced', async () => {
+    const verified = Buffer.from('verified managed version')
+    const close = vi.fn().mockResolvedValue(undefined)
+    const lease = {
+      path: '/managed/report.xlsx',
+      size: verified.byteLength,
+      versionToken: 42,
+      snapshot: { dev: 1n, ino: 2n, size: BigInt(verified.byteLength), mtimeNs: 3n },
+      read: vi.fn(async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+        buffer.set(verified.subarray(position, position + length), offset)
+        return { bytesRead: length }
+      }),
+      readRange: vi.fn(),
+      copyTo: vi.fn(),
+      verifyUnchanged: vi.fn().mockResolvedValue(undefined),
+      close
+    }
+    const openLatestManagedFile = vi.fn().mockResolvedValue(lease)
+    const openManagedFileVersion = vi.fn()
+    const resources = new (await import('./managed-preview-resources')).ManagedPreviewResources({
+      resolvePath: vi.fn(),
+      openLatestManagedFile,
+      openManagedFileVersion,
+      createId: () => 'trusted-resource'
+    } as never)
+    await resources.acquire(17, {
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: 'artifact-1'
+    })
+
+    const response = await createManagedPreviewProtocolHandler(resources)(
+      new Request('open-science-preview://trusted-resource/report.xlsx')
+    )
+
+    await expect(response.text()).resolves.toBe('verified managed version')
+    expect(lease.read).toHaveBeenCalled()
+    expect(openLatestManagedFile).toHaveBeenCalledWith('artifact', {
+      projectId: 'project-1',
+      fileId: 'artifact-1'
+    })
+    expect(openManagedFileVersion).not.toHaveBeenCalled()
+    expect(close).not.toHaveBeenCalled()
+    resources.release(17, { resourceId: 'trusted-resource' })
+    expect(close).toHaveBeenCalledOnce()
   })
 
   it('rejects URLs that are not an acquired resource capability', async () => {

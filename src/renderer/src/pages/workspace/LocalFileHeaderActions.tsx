@@ -217,7 +217,7 @@ export const LocalFileHeaderActions = ({
                 type="button"
                 variant="ghost"
                 size="icon-xs"
-                className="text-text-100 hover:text-text-000"
+                className="text-text-000 hover:text-text-000"
                 aria-label={t('Reload file')}
                 onClick={onReload}
               >
@@ -234,7 +234,7 @@ export const LocalFileHeaderActions = ({
             type="button"
             variant="ghost"
             size="icon-xs"
-            className="text-text-100 hover:text-text-000"
+            className="text-text-000 hover:text-text-000"
             aria-label={t('More actions')}
           >
             <MoreHorizontal aria-hidden="true" />

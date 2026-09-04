@@ -14,6 +14,7 @@ import type {
   PublishCompatibilityRouting,
   StagingArtifactVersionRecord
 } from './provenance-version-writer'
+import { requireAgentArtifactVersion } from './provenance-version-kind'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 // Reconciliation can also run from a read path while an active writer is between copying bytes and
@@ -182,7 +183,11 @@ export class ArtifactProvenanceStagingRecovery {
         data: { state: 'pending' }
       })
     })
-    return this.options.projectVersionFile(recovered, projectId, appSessionId)
+    return this.options.projectVersionFile(
+      requireAgentArtifactVersion(recovered),
+      projectId,
+      appSessionId
+    )
   }
 
   async reconcileSession(
@@ -199,13 +204,16 @@ export class ArtifactProvenanceStagingRecovery {
       quarantinedVersionIds: []
     }
     const client = await this.options.getClient()
-    const stagingVersions = await client.artifactVersion.findMany({
-      where: {
-        state: 'staging',
-        artifact: { is: { projectId, sessionId: appSessionId } }
-      },
-      include: { artifact: true }
-    })
+    const stagingVersions = await client.artifactVersion
+      .findMany({
+        where: {
+          originKind: 'agent_generated',
+          state: 'staging',
+          artifact: { is: { projectId, sessionId: appSessionId } }
+        },
+        include: { artifact: true }
+      })
+      .then((rows) => rows.map(requireAgentArtifactVersion))
 
     // A crash can leave a complete staging row after its immutable bytes were copied but before the
     // final state update. Resume those rows from SQLite authority before scanning unindexed folders.

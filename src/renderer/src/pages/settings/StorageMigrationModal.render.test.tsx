@@ -110,7 +110,13 @@ describe('StorageMigrationModal', () => {
     })
 
     await act(async () => {
-      root.render(<StorageMigrationModal targetPath="/mnt/data" onClose={vi.fn()} />)
+      root.render(
+        <StorageMigrationModal
+          targetPath="/mnt/data"
+          targetAvailableBytes={600}
+          onClose={vi.fn()}
+        />
+      )
     })
     await act(async () => {
       await Promise.resolve()
@@ -118,6 +124,21 @@ describe('StorageMigrationModal', () => {
 
     expect(api.detectActive).toHaveBeenCalled()
     expect(api.migrate).toHaveBeenCalledWith('/mnt/data')
+
+    act(() => {
+      progressListener?.({
+        phase: 'scan',
+        copiedBytes: 0,
+        totalBytes: 1000
+      })
+    })
+
+    expect(document.body.textContent).toContain('Copy phase requires 1.0 KB')
+    expect(document.body.textContent).toContain('Available on target disk: 600 B')
+    const capacityWarning = Array.from(document.body.querySelectorAll('p')).find((element) =>
+      element.textContent?.includes('may not have enough space for the copy')
+    )
+    expect(capacityWarning?.className).toContain('text-status-warning-foreground')
 
     act(() => {
       progressListener?.({

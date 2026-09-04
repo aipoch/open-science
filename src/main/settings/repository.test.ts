@@ -9,6 +9,7 @@ import { SettingsDocumentStore } from './document-store'
 import { SettingsRepository } from './repository'
 import type { StoredCustomMcpServer, StoredProvider } from './types'
 import { skillMutationOwnerFor } from '../skills/skill-mutation-owner'
+import { envDirectoryName } from '../notebook/runtime-paths'
 
 // Capture the warn calls the repository makes through createLogger. vi.hoisted runs before the
 // module's top-level code so the vi.mock factory can reference the same spy instance.
@@ -1127,6 +1128,67 @@ describe('settings repository', () => {
     expect(reloaded.dataRoot).toBe(normalize('/mnt/data-b'))
   })
 
+  it('relocates disabled managed runtime IDs atomically and idempotently with dataRoot', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+    const previousDataRoot = join(root, 'data-a')
+    const dataRoot = join(root, 'data-b')
+    const runtimeId = (
+      targetDataRoot: string,
+      language: 'python' | 'r',
+      environment: string
+    ): string => {
+      const prefix = join(
+        targetDataRoot,
+        'runtime',
+        'envs',
+        envDirectoryName(environment, process.platform)
+      )
+      if (process.platform !== 'win32')
+        return join(prefix, 'bin', language === 'python' ? 'python' : 'R')
+      return language === 'python'
+        ? join(prefix, 'python.exe')
+        : join(prefix, 'Lib', 'R', 'bin', 'R.exe')
+    }
+    const externalPython = join(root, 'external', 'python')
+    const previousPython = runtimeId(previousDataRoot, 'python', 'default-python')
+    const relocatedPython = runtimeId(dataRoot, 'python', 'default-python')
+    const previousR = runtimeId(previousDataRoot, 'r', 'analysis')
+    const relocatedR = runtimeId(dataRoot, 'r', 'analysis')
+
+    await repository.setRuntimeEnablement('python', () => ({
+      enabled: { [previousPython]: false, [externalPython]: false },
+      installAuthorized: { [previousPython]: true, [externalPython]: false }
+    }))
+    await repository.setRuntimeEnablement('r', () => ({
+      enabled: { [previousR]: false },
+      installAuthorized: { [previousR]: true }
+    }))
+
+    const first = await repository.setDataRoot({ dataRoot, previousDataRoot })
+    expect(first.notebookRuntimeEnablement).toEqual({
+      python: {
+        enabled: {
+          [previousPython]: false,
+          [relocatedPython]: false,
+          [externalPython]: false
+        },
+        installAuthorized: { [previousPython]: true, [externalPython]: false }
+      },
+      r: {
+        enabled: { [previousR]: false, [relocatedR]: false },
+        installAuthorized: { [previousR]: true }
+      }
+    })
+
+    const retried = await repository.setDataRoot({ dataRoot, previousDataRoot })
+    expect(retried.notebookRuntimeEnablement).toEqual(first.notebookRuntimeEnablement)
+    await expect(new SettingsRepository(root).getSettings()).resolves.toMatchObject({
+      dataRoot: normalize(dataRoot),
+      notebookRuntimeEnablement: first.notebookRuntimeEnablement
+    })
+  })
+
   it('sanitizeSettings drops a relative dataRoot and keeps only an absolute, normalized one', () => {
     // A relative dataRoot (corrupt or hand-edited settings.json) must be dropped so the data tree
     // never resolves against process.cwd(); initDataRoot then falls back to the default.
@@ -1166,67 +1228,6 @@ describe('settings repository', () => {
 
     const reloaded = await new SettingsRepository(root).getSettings()
     expect(reloaded.legacyDataMovePromptDismissedAt).toBe(1000)
-  })
-})
-
-describe('sanitizeSettings notebookRuntimes', () => {
-  it('keeps a valid per-language selection and coerces external flags', () => {
-    const result = sanitizeSettings({
-      version: 2,
-      providers: [],
-      notebookRuntimes: {
-        python: {
-          source: 'external',
-          interpreterPath: '/usr/bin/python3',
-          interpreterArgs: ['-3', 42],
-          appOwnedOverlay: true,
-          packageInstallAuthorized: 'yes'
-        },
-        r: { source: 'managed' }
-      }
-    })
-    expect(result.notebookRuntimes).toEqual({
-      python: {
-        source: 'external',
-        interpreterPath: '/usr/bin/python3',
-        interpreterArgs: ['-3'], // non-string arg dropped
-        appOwnedOverlay: true,
-        packageInstallAuthorized: false // only literal true authorizes; any other value is read-only
-      },
-      r: { source: 'managed' }
-    })
-  })
-
-  it('drops an external entry with no interpreter path and an unknown source', () => {
-    const result = sanitizeSettings({
-      version: 2,
-      providers: [],
-      notebookRuntimes: {
-        python: { source: 'external', appOwnedOverlay: true, packageInstallAuthorized: true },
-        r: { source: 'bogus' }
-      }
-    })
-    // Nothing valid -> the field stays absent (== use the managed default).
-    expect(result.notebookRuntimes).toBeUndefined()
-  })
-
-  it('rejects an external R selection (R is managed-only in v1) while keeping external python', () => {
-    const result = sanitizeSettings({
-      version: 2,
-      providers: [],
-      notebookRuntimes: {
-        python: {
-          source: 'external',
-          interpreterPath: '/usr/bin/python3',
-          appOwnedOverlay: true,
-          packageInstallAuthorized: true
-        },
-        r: { source: 'external', interpreterPath: '/usr/bin/Rscript', appOwnedOverlay: true }
-      }
-    })
-    expect(result.notebookRuntimes?.python).toMatchObject({ source: 'external' })
-    // External R is dropped; a managed R selection would still be allowed.
-    expect(result.notebookRuntimes?.r).toBeUndefined()
   })
 })
 
@@ -1446,63 +1447,6 @@ describe('settings repository: v2 official providers & activeModel migration', (
     )
 
     expect((await new SettingsRepository(root).getSettings()).disabledSkillIds).toEqual(['a', 'b'])
-  })
-
-  it('persists and clears a per-language runtime selection via setRuntimeSelection', async () => {
-    const repository = new SettingsRepository(await createStorageRoot())
-
-    const external = {
-      source: 'external' as const,
-      interpreterPath: '/usr/bin/python3',
-      appOwnedOverlay: false,
-      packageInstallAuthorized: true
-    }
-    await repository.setRuntimeSelection('python', external)
-    expect((await repository.getSettings()).notebookRuntimes).toEqual({ python: external })
-
-    // Clearing (null) deletes the language entry and drops the whole map when it becomes empty.
-    await repository.setRuntimeSelection('python', null)
-    expect((await repository.getSettings()).notebookRuntimes).toBeUndefined()
-  })
-
-  it('keeps other languages when one is cleared', async () => {
-    const repository = new SettingsRepository(await createStorageRoot())
-
-    await repository.setRuntimeSelection('python', { source: 'managed' })
-    await repository.setRuntimeSelection('r', { source: 'managed' })
-    await repository.setRuntimeSelection('python', null)
-
-    expect((await repository.getSettings()).notebookRuntimes).toEqual({ r: { source: 'managed' } })
-  })
-
-  it('rejects an external R selection (managed-only in v1)', async () => {
-    const repository = new SettingsRepository(await createStorageRoot())
-
-    await expect(
-      repository.setRuntimeSelection('r', {
-        source: 'external',
-        interpreterPath: '/usr/bin/Rscript',
-        appOwnedOverlay: false,
-        packageInstallAuthorized: false
-      })
-    ).rejects.toThrow(/managed/i)
-
-    expect((await repository.getSettings()).notebookRuntimes).toBeUndefined()
-  })
-
-  it('rejects malformed runtime selections before applying language constraints', async () => {
-    const repository = new SettingsRepository(await createStorageRoot())
-
-    for (const language of ['python', 'r'] as const) {
-      await expect(
-        repository.setRuntimeSelection(language, {
-          source: 'external',
-          interpreterPath: '',
-          appOwnedOverlay: false,
-          packageInstallAuthorized: false
-        })
-      ).rejects.toThrow(/invalid/i)
-    }
   })
 
   it('persists and clears a per-language runtime enablement via setRuntimeEnablement', async () => {

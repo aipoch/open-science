@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { classifyChanges } from './classify-pr-changes.mjs'
+import { classifyChanges, toGitHubOutputPlan } from './classify-pr-changes.mjs'
 import { runModuleImpactAuthorityCli } from './module-impact-authority.mjs'
 import {
   createModuleImpactShadowReport,
@@ -219,7 +219,10 @@ describe('module impact shadow', () => {
     })
     expect(append).toHaveBeenCalledWith(
       '/output',
-      expect.stringContaining(`plan=${JSON.stringify(plan)}`)
+      expect.stringContaining(`plan=${JSON.stringify(toGitHubOutputPlan(plan))}`)
+    )
+    expect(append.mock.calls.find(([path]) => path === '/output')?.[1]).not.toContain(
+      'reasonChains'
     )
     expect(append).toHaveBeenCalledWith('/summary', expect.stringContaining('Resolved mode'))
   })

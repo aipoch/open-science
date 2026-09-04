@@ -339,9 +339,9 @@ const codexMcpToolIdentity = (
   if (!mcpIdentity) return undefined
   // Runtime events intentionally omit oversized payloads. Keep correlation independent from that
   // projection while retaining at most the existing bounded execution preview for permission UI.
-  const permissionInput = isRecord(event.rawInput)
-    ? event.rawInput.arguments
-    : boundedNotebookPermissionInput(title, rawInput, mcpServerNames)
+  const permissionInput =
+    boundedNotebookPermissionInput(title, rawInput, mcpServerNames) ??
+    (isRecord(event.rawInput) ? event.rawInput.arguments : undefined)
   return {
     title,
     providerToolName: tool,
@@ -595,11 +595,7 @@ class AcpPermissionContext {
   ): Promise<void> {
     return this.broker.prepareRestoredDecision(permission, option, projectId).then(() => {
       const allowsReplay = option?.kind.toLowerCase().startsWith('allow_') === true
-      if (
-        !allowsReplay ||
-        !notebookExecutionMethod(permission.request.mcpIdentity) ||
-        permission.fingerprint !== permissionRequestFingerprint(permission.request)
-      ) {
+      if (!allowsReplay || !notebookExecutionMethod(permission.request.mcpIdentity)) {
         this.restoredNotebookPresentationCandidates.delete(permission.request.sessionId)
         return
       }
@@ -1292,23 +1288,32 @@ class AcpPermissionContext {
     sessionId: string,
     providerToolCallId: string,
     toolKind: AcpPermissionRequest['toolKind'],
-    identity: CodexMcpToolIdentity | ClaudeCodeMcpToolInput | OpenCodeMcpToolInput | undefined
+    identity: CodexMcpToolIdentity | ClaudeCodeMcpToolInput | OpenCodeMcpToolInput | undefined,
+    trustedRawInput?: Record<string, unknown>
   ): void {
     const candidate = this.restoredNotebookPresentationCandidates.get(sessionId)
     if (!candidate || !identity || !notebookExecutionMethod(identity.mcpIdentity)) return
-    const fingerprint = permissionRequestFingerprint({
-      requestId: 'restored-notebook-presentation',
-      sessionId,
-      toolCallId: providerToolCallId,
-      title: identity.title,
-      providerToolName: identity.providerToolName,
-      isMcp: true,
-      mcpIdentity: identity.mcpIdentity,
-      toolKind,
-      rawInput: identity.rawInput,
-      options: []
-    })
-    if (fingerprint !== candidate.fingerprint) return
+    const fingerprint = (rawInput: unknown): string | undefined =>
+      permissionRequestFingerprint({
+        requestId: 'restored-notebook-presentation',
+        sessionId,
+        toolCallId: providerToolCallId,
+        title: identity.title,
+        providerToolName: identity.providerToolName,
+        isMcp: true,
+        mcpIdentity: identity.mcpIdentity,
+        toolKind,
+        rawInput,
+        options: []
+      })
+    const trustedFingerprint =
+      trustedRawInput === undefined ? undefined : fingerprint(trustedRawInput)
+    if (
+      fingerprint(identity.rawInput) !== candidate.fingerprint &&
+      trustedFingerprint !== candidate.fingerprint
+    ) {
+      return
+    }
 
     const aliases = this.restoredNotebookPresentationAliases.get(sessionId) ?? new Map()
     aliases.set(providerToolCallId, candidate.originalToolCallId)
@@ -1332,7 +1337,12 @@ class AcpPermissionContext {
           sessionId,
           event.toolCallId,
           event.toolKind,
-          identity
+          identity,
+          trustedNotebookExecutionInput(
+            identity.title,
+            notification.update.rawInput,
+            mcpServerNames
+          )
         )
       }
       return
@@ -1348,15 +1358,19 @@ class AcpPermissionContext {
     const updateRawInput =
       notification.update.sessionUpdate === 'tool_call' ? notification.update.rawInput : undefined
     const rawInput =
-      framework === 'opencode'
-        ? (boundedNotebookPermissionInput(title, updateRawInput, mcpServerNames) ?? event.rawInput)
-        : event.rawInput
-    this.matchRestoredNotebookPresentation(sessionId, event.toolCallId, event.toolKind, {
-      title,
-      providerToolName,
-      mcpIdentity,
-      ...(isRecord(rawInput) ? { rawInput } : {})
-    })
+      boundedNotebookPermissionInput(title, updateRawInput, mcpServerNames) ?? event.rawInput
+    this.matchRestoredNotebookPresentation(
+      sessionId,
+      event.toolCallId,
+      event.toolKind,
+      {
+        title,
+        providerToolName,
+        mcpIdentity,
+        ...(isRecord(rawInput) ? { rawInput } : {})
+      },
+      trustedNotebookExecutionInput(title, updateRawInput, mcpServerNames)
+    )
   }
 
   private rememberNotebookExecutionInput(

@@ -42,7 +42,7 @@ type LegacyRecoveryOptions = {
 type LegacyUploadUpgradeOptions = {
   // Live callers cannot prove that every renderer has applied the returned path-free projection.
   // Orphan recovery also preserves the source but may only reuse pre-existing durable authority.
-  mode?: 'reconcile' | 'live-save' | 'orphan-recovery' | 'terminal-delete'
+  mode?: 'reconcile' | 'live-save' | 'orphan-recovery' | 'terminal-delete' | 'project-files-sync'
 }
 
 type LegacyRecoveryDependencies = {
@@ -93,7 +93,9 @@ class LegacyRecoveryOwner {
     options: LegacyUploadUpgradeOptions = {}
   ): Promise<PersistedChatSession> {
     this.assertConsistentSessionUploadReferences(session)
-    const isLiveSave = options.mode === 'live-save' || options.mode === 'orphan-recovery'
+    const isProjectFilesSync = options.mode === 'project-files-sync'
+    const isLiveSave =
+      options.mode === 'live-save' || options.mode === 'orphan-recovery' || isProjectFilesSync
     const requireExistingAuthority = options.mode === 'orphan-recovery'
     const isTerminalDelete = options.mode === 'terminal-delete'
     const upgrades = new Map<string, Promise<PersistedUploadedAttachment | undefined>>()
@@ -101,6 +103,7 @@ class LegacyRecoveryOwner {
     const upgrade = async (
       upload: PersistedUploadedAttachment
     ): Promise<PersistedUploadedAttachment | undefined> => {
+      if (isProjectFilesSync && upload.sessionId === PENDING_UPLOAD_SESSION_ID) return upload
       if (upload.versionId) {
         const persisted = toPersistedUploadedAttachment(
           toRuntimeUploadedAttachment(upload, session.projectId)
@@ -133,9 +136,35 @@ class LegacyRecoveryOwner {
       const existing = upgrades.get(upload.id)
       if (existing) return existing
       const operation = (async () => {
+        if (isProjectFilesSync && this.options.getClient) {
+          const client = await this.options.getClient()
+          const file = await client.uploadFile.findFirst({
+            where: {
+              id: upload.id,
+              projectId: session.projectId,
+              sessionId: upload.sessionId
+            },
+            include: { currentVersion: true }
+          })
+          if (file?.currentVersion?.state === 'ready') {
+            const version = file.currentVersion
+            return {
+              id: file.id,
+              versionId: version.id,
+              versionNumber: version.versionNumber,
+              ...(version.createdAt ? { createdAt: version.createdAt.toISOString() } : {}),
+              sessionId: file.sessionId,
+              name: version.filename,
+              originalName: version.originalFilename,
+              ...(version.contentType ? { mimeType: version.contentType } : {}),
+              size: Number(version.sizeBytes),
+              sha256: version.checksum
+            }
+          }
+        }
         if (!upload.path) throw new Error(`Legacy upload has no recoverable path: ${upload.id}`)
         const [finalized] = await this.dependencies.finalizeSessionUploads(
-          session.id,
+          isProjectFilesSync ? upload.sessionId : session.id,
           [toRuntimeUploadedAttachment(upload, session.projectId)],
           session.projectId,
           { preserveLegacySource: isLiveSave, requireExistingAuthority }
@@ -418,7 +447,20 @@ class LegacyRecoveryOwner {
         version.state === 'ready'
           ? version
           : await tx.uploadVersion.update({ where: { id: version.id }, data: { state: 'ready' } })
-      const timestamp = updated.createdAt ?? new Date()
+      const file = await tx.uploadFile.findUniqueOrThrow({
+        where: { id: version.uploadFileId },
+        include: { currentVersion: true }
+      })
+      const shouldAdvanceHead =
+        !file.currentVersion || file.currentVersion.versionNumber < updated.versionNumber
+      if (shouldAdvanceHead) {
+        await tx.uploadFile.update({
+          where: { id: file.id },
+          data: { currentVersionId: updated.id }
+        })
+      }
+      const head = shouldAdvanceHead ? updated : file.currentVersion!
+      const timestamp = head.createdAt ?? new Date()
       await tx.managedFile.upsert({
         where: {
           projectId_source_sourceFileId: {
@@ -430,25 +472,25 @@ class LegacyRecoveryOwner {
         create: {
           source: 'upload',
           sourceFileId: version.uploadFileId,
-          sourceVersionId: version.id,
-          checksum: version.checksum,
+          sourceVersionId: head.id,
+          checksum: head.checksum,
           projectId,
           sessionId,
-          displayName: version.originalFilename || version.filename,
-          storageKey: version.contentStorageKey,
-          mimeType: version.contentType,
-          sizeBytes: version.sizeBytes,
+          displayName: head.originalFilename || head.filename,
+          storageKey: head.contentStorageKey,
+          mimeType: head.contentType,
+          sizeBytes: head.sizeBytes,
           mtimeMs: BigInt(timestamp.getTime()),
           sortAtMs: BigInt(timestamp.getTime())
         },
         update: {
-          sourceVersionId: version.id,
-          checksum: version.checksum,
+          sourceVersionId: head.id,
+          checksum: head.checksum,
           sessionId,
-          displayName: version.originalFilename || version.filename,
-          storageKey: version.contentStorageKey,
-          mimeType: version.contentType,
-          sizeBytes: version.sizeBytes,
+          displayName: head.originalFilename || head.filename,
+          storageKey: head.contentStorageKey,
+          mimeType: head.contentType,
+          sizeBytes: head.sizeBytes,
           mtimeMs: BigInt(timestamp.getTime()),
           sortAtMs: BigInt(timestamp.getTime()),
           deletedAt: null,

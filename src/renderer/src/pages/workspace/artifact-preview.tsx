@@ -274,6 +274,8 @@ const ManagedImageThumbnail = ({
   source,
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   enabled
 }: {
   artifact: MessageArtifact
@@ -281,6 +283,8 @@ const ManagedImageThumbnail = ({
   source: PreviewFileSource
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
   enabled: boolean
 }): React.JSX.Element => {
   const requestKey = createPreviewResourceKey({
@@ -290,7 +294,9 @@ const ManagedImageThumbnail = ({
     path: artifact.path,
     mimeType: artifact.mimeType,
     size: artifact.size,
-    mtimeMs: artifact.mtimeMs
+    mtimeMs: artifact.mtimeMs,
+    managedFileId,
+    selectedVersionId
   })
   const { t } = useTranslation()
   const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
@@ -304,7 +310,9 @@ const ManagedImageThumbnail = ({
       source,
       mimeType: artifact.mimeType,
       size: artifact.size,
-      mtimeMs: artifact.mtimeMs
+      mtimeMs: artifact.mtimeMs,
+      managedFileId,
+      selectedVersionId
     },
     enabled && !hasFailed,
     hasFailed
@@ -331,6 +339,8 @@ export const ArtifactPreview = ({
   source = 'artifact',
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   isVisible = true
 }: {
   artifact: MessageArtifact
@@ -338,11 +348,24 @@ export const ArtifactPreview = ({
   source?: PreviewFileSource
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
   isVisible?: boolean
 }): React.JSX.Element => {
   const artifactName = getArtifactName(artifact)
   // Renderer selection is source-neutral; source remains relevant only to the nested file reader.
   const format = getArtifactPreviewFormat(artifact)
+
+  // Managed readers build their acquire request inside effects, where a missing logical identity
+  // throws. Cards for artifacts persisted before editable versions carry no identity — show the
+  // static file-type tile instead of unmounting the whole tree through the uncaught effect error.
+  // Only the reader-mounting branches need the gate; csv/fasta/text render the already-fetched
+  // preview prop and never acquire.
+  const readerMountsManagedAcquire =
+    (source === 'artifact' || source === 'upload') && !(projectId && managedFileId)
+  if (readerMountsManagedAcquire && ['pdf', 'image', 'tiff'].includes(format)) {
+    return <FileTypePreview artifact={artifact} />
+  }
 
   // PDFs render only their first page through the managed range transport.
   if (format === 'pdf') {
@@ -353,6 +376,8 @@ export const ArtifactPreview = ({
         source={source}
         projectId={projectId}
         sessionId={sessionId}
+        managedFileId={managedFileId}
+        selectedVersionId={selectedVersionId}
         mimeType={artifact.mimeType}
         size={artifact.size}
         mtimeMs={artifact.mtimeMs}
@@ -368,6 +393,8 @@ export const ArtifactPreview = ({
         source={source}
         projectId={projectId}
         sessionId={sessionId}
+        managedFileId={managedFileId}
+        selectedVersionId={selectedVersionId}
         enabled={isVisible}
       />
     )
@@ -381,6 +408,8 @@ export const ArtifactPreview = ({
         source={source}
         projectId={projectId}
         sessionId={sessionId}
+        managedFileId={managedFileId}
+        selectedVersionId={selectedVersionId}
         mimeType={artifact.mimeType}
         size={artifact.size}
         mtimeMs={artifact.mtimeMs}

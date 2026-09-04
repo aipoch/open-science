@@ -240,6 +240,16 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
+      - name: Review dependency changes
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          base-ref: ${{ needs.preflight.outputs.base }}
+          fail-on-severity: high
+          fail-on-scopes: runtime, development
+          head-ref: ${{ needs.preflight.outputs.head }}
+          license-check: false
+          show-openssf-scorecard: false
       - name: Validate pull request policy
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
@@ -979,11 +989,6 @@ jobs:
       - windows_e2e
     runs-on: ubuntu-latest
     timeout-minutes: 3
-    env:
-      PR_GATE_EXECUTION_MODE: bundles
-      PR_GATE_NEEDS: ${{ toJSON(needs) }}
-      PR_GATE_PLAN: ${{ needs.preflight.outputs.plan }}
-      PREFLIGHT_RESULT: ${{ needs.preflight.result }}
     steps:
       - name: Checkout trusted gate evaluator
         if: ${{ needs.preflight.result == 'success' }}
@@ -1001,6 +1006,13 @@ jobs:
           node-version: 22
       - name: Evaluate deterministic gate from trusted base
         shell: bash
+        # Keep process environment bounded. Embedding the complete needs payload in job env includes
+        # the preflight plan and exceeds Linux ARG_MAX on large diffs before checkout can start.
+        env:
+          PR_GATE_EXECUTION_MODE: bundles
+          PR_GATE_PLAN: ${{ needs.preflight.outputs.plan }}
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          PR_GATE_NEEDS: '{"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"coverage_macos":{"result":"${{ needs.coverage_macos.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}'
         run: |
           set -euo pipefail
           if [[ "$PREFLIGHT_RESULT" != "success" ]]; then

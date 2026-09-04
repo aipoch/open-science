@@ -196,6 +196,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     try {
       wrapped = await this.sandbox!.wrap({
         command: commandLine(invocation, this.platform),
+        ...(this.platform === 'win32'
+          ? { executable: invocation.executable, args: invocation.args }
+          : {}),
         cwd: invocation.cwd,
         env,
         ...(invocation.localRpcSocketPath

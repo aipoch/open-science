@@ -509,6 +509,133 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   })
 
+  it('reports the exit code and stderr when a kernel exits before replying', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-startup-exit-'))
+    const crashingLoop = join(cwdDir, 'crashing_loop.py')
+    await writeFile(
+      crashingLoop,
+      [
+        'import sys',
+        'sys.stderr.write("PowerShell FileSystem provider initialization failed.\\n")',
+        'sys.stderr.flush()',
+        'raise SystemExit(23)'
+      ].join('\n')
+    )
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: crashingLoop })
+
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'import numpy',
+        resolvedInterpreter: { command: python3 as string }
+      })
+
+      expect(result).toMatchObject({ status: 'failed' })
+      expect(result.stderr).toContain('Notebook kernel process exited with exit code 23.')
+      expect(result.stderr).toContain('PowerShell FileSystem provider initialization failed.')
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('annotates crash stderr before releasing its sandbox context', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-startup-sandbox-exit-'))
+    const crashingLoop = join(cwdDir, 'crashing_sandbox_loop.py')
+    await writeFile(
+      crashingLoop,
+      [
+        'import sys',
+        'sys.stderr.write("Permission denied: C:/hidden/credentials.txt\\n")',
+        'sys.stderr.flush()',
+        'raise SystemExit(25)'
+      ].join('\n')
+    )
+    let cleaned = false
+    const cleanup = vi.fn(() => {
+      cleaned = true
+    })
+    const annotateStderr = vi.fn((stderr: string) =>
+      cleaned ? stderr : `${stderr}<sandbox_violations>hidden path</sandbox_violations>`
+    )
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: invocation.env,
+        beginExecution: () => () => undefined,
+        annotateStderr,
+        cleanup
+      }))
+    }
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: crashingLoop,
+      processSandbox
+    })
+
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'kernel exits in sandbox',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        resolvedInterpreter: { command: python3 as string }
+      })
+
+      expect(result).toMatchObject({ status: 'failed' })
+      expect(result.stderr).toContain('<sandbox_violations>hidden path</sandbox_violations>')
+      expect(annotateStderr).toHaveBeenCalled()
+    } finally {
+      await executor.shutdown()
+    }
+    expect(cleanup).toHaveBeenCalledOnce()
+  })
+
+  it('settles when a dead kernel descendant keeps its stdio pipes open', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-descendant-stdio-'))
+    const releaseFile = join(cwdDir, 'release-descendant')
+    const finishedFile = join(cwdDir, 'descendant-finished')
+    const descendantCode = [
+      'import os, time',
+      `release_file = ${JSON.stringify(releaseFile)}`,
+      `finished_file = ${JSON.stringify(finishedFile)}`,
+      'while not os.path.exists(release_file): time.sleep(0.01)',
+      `os.chdir(${JSON.stringify(tmpdir())})`,
+      'with open(finished_file, "w", encoding="utf-8") as marker: marker.write("done")'
+    ].join('\n')
+    const crashingLoop = join(cwdDir, 'crashing_loop_with_descendant.py')
+    await writeFile(
+      crashingLoop,
+      [
+        'import subprocess, sys',
+        `subprocess.Popen([sys.executable, "-c", ${JSON.stringify(descendantCode)}], stdout=sys.stdout, stderr=sys.stderr, close_fds=False)`,
+        'raise SystemExit(24)'
+      ].join('\n')
+    )
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: crashingLoop })
+    const execution = executor.execute({
+      ...baseRequest(cwdDir),
+      code: 'kernel exits',
+      resolvedInterpreter: { command: python3 as string }
+    })
+
+    try {
+      const settledBeforeDescendant = await Promise.race([
+        execution.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 1_500))
+      ])
+
+      expect(settledBeforeDescendant).toBe(true)
+      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+    } finally {
+      await writeFile(releaseFile, 'release')
+      await execution
+      await executor.shutdown()
+      for (let attempt = 0; attempt < 200 && !existsSync(finishedFile); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+    }
+  })
+
   it('drops a kernel whose stdout exceeds the bounded protocol line', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-protocol-line-limit-')
     const terminated: string[] = []
@@ -3139,14 +3266,19 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
     }
   })
 
-  it.runIf(process.platform === 'darwin')(
+  it.runIf(
+    process.platform === 'darwin' ||
+      (process.platform === 'win32' && process.env.OPEN_SCIENCE_WINDOWS_APP_CONTAINER_TEST === '1')
+  )(
     'executes the repl loop through the production network sandbox',
     async () => {
       cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-sandbox-'))
       const inputRoot = `${cwdDir}-inputs`
       const inputPath = join(inputRoot, 'content')
+      const replLoopPath = join(inputRoot, 'repl_loop.js')
       await mkdir(inputRoot, { recursive: true })
       await writeFile(inputPath, 'verified input')
+      await writeFile(replLoopPath, await readFile(REPL_LOOP))
       const owner = new NotebookNetworkSandboxOwner({
         resourceRoot: resolve(
           import.meta.dirname,
@@ -3157,7 +3289,7 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
         requestDecision: async () => 'deny'
       })
       const executor = new NotebookKernelExecutor({
-        replLoopPath: REPL_LOOP,
+        replLoopPath,
         processSandbox: owner
       })
 
@@ -3248,6 +3380,41 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       }
       expect(child.spawnfile).toBe(process.execPath)
       expect(child.spawnargs).toContain(REPL_LOOP)
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('preserves the Windows repl main module without widening sandbox access', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-windows-main-'))
+    const cleanup = vi.fn()
+    const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => ({
+      executable: invocation.executable,
+      args: invocation.args,
+      env: invocation.env,
+      beginExecution: () => () => undefined,
+      annotateStderr: (stderr) => stderr,
+      cleanup
+    }))
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      platform: 'win32',
+      processSandbox: { wrap }
+    })
+
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'return 1',
+        kind: 'repl',
+        sessionId: 'session-1',
+        projectId: 'project-1'
+      })
+
+      expect(result.status, result.stderr || result.traceback).toBe('completed')
+      expect(wrap).toHaveBeenCalledWith(
+        expect.objectContaining({ args: ['--preserve-symlinks-main', REPL_LOOP] })
+      )
     } finally {
       await executor.shutdown()
     }

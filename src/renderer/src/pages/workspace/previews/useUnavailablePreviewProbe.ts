@@ -10,11 +10,13 @@ type UnavailableProbeResult = {
   unavailable: boolean
 }
 
-// Probes one managed path only while its card is near the viewport and caches the result per path.
+// Probes one managed file only while its card is near the viewport and caches by file revision.
 const useUnavailablePreviewProbe = ({
   enabled,
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   path,
   source,
   size,
@@ -23,6 +25,8 @@ const useUnavailablePreviewProbe = ({
   enabled: boolean
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
   path: string
   source: PreviewFileSource
   size?: number
@@ -32,6 +36,8 @@ const useUnavailablePreviewProbe = ({
     projectId ?? null,
     sessionId ?? null,
     source,
+    managedFileId ?? null,
+    selectedVersionId ?? null,
     path,
     size ?? null,
     mtimeMs ?? null
@@ -49,6 +55,8 @@ const useUnavailablePreviewProbe = ({
     void readPreview({
       ...createPreviewRequestScope({ projectId, sessionId, source, path }),
       path,
+      ...(managedFileId ? { fileId: managedFileId } : {}),
+      ...(selectedVersionId ? { versionId: selectedVersionId } : {}),
       maxBytes: 1,
       encoding: 'base64'
     }).then(
@@ -65,7 +73,17 @@ const useUnavailablePreviewProbe = ({
     return () => {
       canceled = true
     }
-  }, [enabled, hasCurrentResult, path, projectId, requestKey, sessionId, source])
+  }, [
+    enabled,
+    hasCurrentResult,
+    managedFileId,
+    path,
+    projectId,
+    requestKey,
+    selectedVersionId,
+    sessionId,
+    source
+  ])
 
   return hasCurrentResult ? result.unavailable : false
 }

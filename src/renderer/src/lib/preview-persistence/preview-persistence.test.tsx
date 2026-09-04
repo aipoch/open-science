@@ -172,6 +172,31 @@ describe('preview persistence projections', () => {
     expect(JSON.stringify(persisted)).not.toContain('https://example.com/private-paper')
   })
 
+  it('persists the 100 most recently used file tabs in their display order', () => {
+    const items = Array.from({ length: 101 }, (_, index) =>
+      createStoredFileItem({
+        id: `file-${index}`,
+        path: `/workspace/project/file-${index}.md`,
+        name: `file-${index}.md`,
+        title: `file-${index}.md`,
+        updatedAt: index === 50 ? 0 : index + 1
+      })
+    )
+    usePreviewWorkbenchStore.setState({
+      panelState: 'open',
+      activeItemId: 'file-100',
+      items
+    })
+
+    const persisted = toPersistedPreviewState(usePreviewWorkbenchStore.getState())
+
+    expect(persisted.items).toHaveLength(100)
+    expect(persisted.items.map((item) => item.id)).toEqual(
+      items.filter((item) => item.id !== 'file-50').map((item) => item.id)
+    )
+    expect(persisted.activeItemId).toBe('file-100')
+  })
+
   it('round-trips the one durable Session Subagents Preview and selected Frame', () => {
     usePreviewWorkbenchStore.setState({
       panelState: 'collapsed',
@@ -244,6 +269,7 @@ describe('preview persistence projections', () => {
           size: 4096,
           mtimeMs: 1710000001000,
           artifactId: 'artifact-1',
+          managedFileId: 'managed-file-1',
           selectedVersionId: 'artifact-version-2',
           versionNumber: 2,
           originSession: {
@@ -261,6 +287,7 @@ describe('preview persistence projections', () => {
       size: 4096,
       mtimeMs: 1710000001000,
       artifactId: 'artifact-1',
+      managedFileId: 'managed-file-1',
       selectedVersionId: 'artifact-version-2',
       versionNumber: 2,
       originSession: {

@@ -97,6 +97,9 @@ vi.mock('./ComposerAgentControlsMenu', () => ({
   ComposerAgentControlsMenu: (props: {
     readOnly?: boolean
     memoryReadOnly?: boolean
+    delegationReadOnly?: boolean
+    delegationHasLiveAttempts?: boolean
+    delegationDisabledReason?: string
     autoReviewReadOnly?: boolean
     permissionProfileReadOnly?: boolean
     grantActionsReadOnly?: boolean
@@ -109,6 +112,9 @@ vi.mock('./ComposerAgentControlsMenu', () => ({
       data-testid="mock-agent-controls"
       data-read-only={String(props.readOnly === true)}
       data-memory-read-only={String(props.memoryReadOnly)}
+      data-delegation-read-only={String(props.delegationReadOnly)}
+      data-delegation-live={String(props.delegationHasLiveAttempts)}
+      data-delegation-disabled-reason={props.delegationDisabledReason}
       data-auto-review-read-only={String(props.autoReviewReadOnly)}
       data-permission-read-only={String(props.permissionProfileReadOnly === true)}
       data-grants-read-only={String(props.grantActionsReadOnly === true)}
@@ -159,10 +165,12 @@ vi.mock('./WorkspaceMessageScroller', () => ({
   WorkspaceMessageScroller: ({
     credentialPending,
     isResumingSession,
+    visiblePermissionPending,
     pendingElicitations = []
   }: {
     credentialPending?: boolean
     isResumingSession?: boolean
+    visiblePermissionPending?: boolean
     pendingElicitations?: unknown[]
   }): React.JSX.Element => (
     <>
@@ -171,6 +179,9 @@ vi.mock('./WorkspaceMessageScroller', () => ({
       ) : null}
       <span data-testid="scroller-pending-elicitations">{pendingElicitations.length}</span>
       <span data-testid="scroller-credential-pending">{String(credentialPending ?? false)}</span>
+      <span data-testid="scroller-visible-permission-pending">
+        {String(visiblePermissionPending ?? false)}
+      </span>
     </>
   )
 }))
@@ -591,6 +602,10 @@ const createPanelDefaults = (): PanelProps => ({
     compact: vi.fn()
   },
   workflows: {
+    artifactFinalization: {
+      running: false,
+      request: vi.fn()
+    },
     review: {
       disabled: false,
       running: false,
@@ -729,6 +744,79 @@ describe('ConversationPanel composer errors', () => {
     expect(alert?.querySelector('section')).not.toBeNull()
     expect(alert?.querySelector('.bg-status-failure-surface')).not.toBeNull()
     expect(alert?.className).not.toContain('bg-red-50')
+  })
+
+  it('offers an immediate retry when Artifact publication fails', () => {
+    const request = vi.fn()
+    const pendingPath = '/data/artifacts/project-a/artifact-session-1/.pending/run-1/report.md'
+    const activeSession: ChatSession = {
+      id: 'session-artifact-retry',
+      projectId: 'project-a',
+      title: 'Artifact retry',
+      cwd: '/workspace',
+      status: 'error',
+      error: 'Generated file finalization failed: disk temporarily unavailable',
+      errorReportable: true,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'agent',
+          content: 'Created the report.',
+          status: 'complete',
+          eventIds: ['artifact-event-1'],
+          artifactIds: ['artifact-session-1:run-1:report.md'],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      artifacts: [
+        {
+          id: 'artifact-session-1:run-1:report.md',
+          kind: 'managed-file',
+          name: 'report.md',
+          path: pendingPath,
+          fileUrl: `file://${pendingPath}`,
+          size: 10,
+          mtimeMs: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    renderPanel({
+      view: { activeSession },
+      workflows: { artifactFinalization: { request } }
+    })
+
+    const retry = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Retry Artifact publication"]'
+    )
+    expect(retry).not.toBeNull()
+    act(() => retry?.click())
+    expect(request).toHaveBeenCalledOnce()
+  })
+
+  it('does not offer retry when Artifact provenance proof is invalid', () => {
+    const activeSession: ChatSession = {
+      id: 'session-artifact-invalid-proof',
+      projectId: 'project-a',
+      title: 'Artifact proof failure',
+      cwd: '/workspace',
+      status: 'error',
+      error:
+        'Generated file finalization cannot be retried: Artifact run claim is missing complete provenance context.',
+      errorReportable: true,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    renderPanel({ view: { activeSession } })
+
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Retry Artifact publication"]')
+    ).toBeNull()
   })
 })
 
@@ -907,6 +995,55 @@ describe('ConversationPanel composer intake', () => {
     )
     expect(dismissAutomaticReading).toHaveBeenCalledOnce()
     expect(container.textContent).toContain('paper.pdf')
+  })
+
+  it('shows automatic Reading follow-ups alongside linked PDF context', () => {
+    const dismissAutomaticReading = vi.fn()
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Reading session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      },
+      composer: {
+        view: {
+          readingContext: {
+            bindings: [
+              {
+                version: 1,
+                bindingId: 'binding-1',
+                sourceKind: 'artifact-version',
+                sourceFileId: 'artifact-1',
+                sourceVersionId: 'version-1',
+                sourceSessionId: 'source-session',
+                name: 'first.pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 12,
+                checksum: 'checksum-1',
+                linkedAt: 1
+              }
+            ],
+            automaticAttachmentCount: 1
+          }
+        },
+        actions: { dismissAutomaticReading }
+      }
+    })
+
+    expect(container.querySelector('[data-testid="pdf-context-bar"]')).not.toBeNull()
+    const suggestion = container.querySelector('[data-testid="automatic-reading-suggestion"]')
+    expect(suggestion?.textContent).toContain('1 PDF will be linked when sent')
+    act(() =>
+      suggestion?.querySelector<HTMLButtonElement>('[aria-label="Keep as attachments"]')?.click()
+    )
+    expect(dismissAutomaticReading).toHaveBeenCalledOnce()
   })
 
   it('shows linked PDF context as a single-line chip that opens its preview', () => {
@@ -1181,6 +1318,9 @@ describe('ConversationPanel composer intake', () => {
 
     expect(container.querySelector('[data-testid="permission-composer"]')).toBeNull()
     expect(container.querySelector('[data-testid="permission-approval-controls"]')).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="scroller-visible-permission-pending"]')?.textContent
+    ).toBe('true')
     expect(getComposerForm().hidden).toBe(false)
     expect(getComposerEditor().getAttribute('contenteditable')).toBe('true')
   })
@@ -2406,7 +2546,9 @@ describe('ConversationPanel composer intake', () => {
         canChange: false,
         canChangeAutoReview: true,
         canChangeMemory: true,
-        canChangeSpecialist: true
+        canChangeSpecialist: true,
+        canChangeDelegation: true,
+        delegationHasLiveAttempts: true
       }
     })
 
@@ -2414,6 +2556,8 @@ describe('ConversationPanel composer intake', () => {
     expect(controls?.getAttribute('data-read-only')).toBe('true')
     expect(controls?.getAttribute('data-memory-read-only')).toBe('false')
     expect(controls?.getAttribute('data-auto-review-read-only')).toBe('false')
+    expect(controls?.getAttribute('data-delegation-read-only')).toBe('false')
+    expect(controls?.getAttribute('data-delegation-live')).toBe('true')
     expect(controls?.getAttribute('data-specialist-read-only')).toBe('false')
   })
 

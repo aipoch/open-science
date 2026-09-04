@@ -1,3 +1,7 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
+/* Hallmark · macrostructure: Workbench · genre: modern-minimal · tone: technical/austere
+ * theme: existing Open Science Settings tokens · enrichment: none · motion: existing controls only
+ */
 import { CheckCircle2, FolderInput, Package, RefreshCw, Search, X } from 'lucide-react'
 import { AlertDialog, Dialog } from 'radix-ui'
 import { useEffect, useRef, useState } from 'react'
@@ -36,6 +40,7 @@ import {
   useSettingsSearchShortcut
 } from './settings-search-shortcut'
 import { PythonIcon, RIcon } from './language-icons'
+import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
 import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
 
 // v4 Runtime Registry write surface: one CARD per discovered interpreter per language. Each card can
@@ -50,16 +55,47 @@ const LANGUAGES: ReadonlyArray<{ id: NotebookLanguage; label: string; icon: Reac
   { id: 'r', label: 'R', icon: <RIcon /> }
 ]
 
+const DEFAULT_ENV_BY_LANGUAGE: Record<NotebookLanguage, string> = {
+  python: 'default-python',
+  r: 'default-r'
+}
+
+const isDefaultManagedRuntime = (language: NotebookLanguage, env: DiscoveredInterpreter): boolean =>
+  env.provenance === 'app-managed' && env.condaEnv === DEFAULT_ENV_BY_LANGUAGE[language]
+
+type ManagedRepairRequest = {
+  language: NotebookLanguage
+  runtimeIdentity: string
+  label: string
+  action: 'reinstall' | 'reset'
+}
+
+type ManagedOperationView = {
+  preparing: boolean
+  finishing: boolean
+  progress: number
+  message?: string
+  error?: string
+}
+
 type RuntimesPanelProps = {
   title: string
   description: React.ReactNode
+  onOpenNetworkProtection?: () => void
 }
 
-const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.Element => {
+const RuntimesPanel = ({
+  title,
+  description,
+  onOpenNetworkProtection
+}: RuntimesPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
   const envs = useRuntimeSettingsStore((state) => state.envs)
   const enablement = useRuntimeSettingsStore((state) => state.enablement)
+  const agentEnvironmentCreationEnabled = useRuntimeSettingsStore(
+    (state) => state.agentEnvironmentCreationEnabled
+  )
   const loaded = useRuntimeSettingsStore((state) => state.loaded)
   const checkedAt = useRuntimeSettingsStore((state) => state.checkedAt)
   const busy = useRuntimeSettingsStore((state) => state.busy)
@@ -70,6 +106,9 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   const setBusy = useRuntimeSettingsStore((state) => state.setBusy)
   const setError = useRuntimeSettingsStore((state) => state.setError)
   const setEnablement = useRuntimeSettingsStore((state) => state.setEnablement)
+  const setAgentEnvironmentCreationEnabled = useRuntimeSettingsStore(
+    (state) => state.setAgentEnvironmentCreationEnabled
+  )
   const updatePackageCount = useRuntimeSettingsStore((state) => state.updatePackageCount)
   const [managedOperations, setManagedOperations] = useState<
     Partial<Record<NotebookLanguage, boolean>>
@@ -82,6 +121,8 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     usage: RuntimeUsage
   } | null>(null)
   const dialogDisableImpact = useRetainedDialogValue(disableImpact)
+  const [managedRepair, setManagedRepair] = useState<ManagedRepairRequest | null>(null)
+  const dialogManagedRepair = useRetainedDialogValue(managedRepair)
   // The env whose installed-packages dialog is open (null = closed).
   const [packagesEnv, setPackagesEnv] = useState<DiscoveredInterpreter | null>(null)
   const dialogPackagesEnv = useRetainedDialogValue(packagesEnv)
@@ -101,6 +142,9 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   // Per-language provisioning state: python and R each track their own progress/preparing/error, so
   // requesting one never makes the other's card look cancelled (the provisioner serializes the runs).
   const byLang = useNotebookEnvStore((state) => state.byLang)
+
+  const languageOperationActive = (language: NotebookLanguage): boolean =>
+    managedOperations[language] === true || byLang[language]?.preparing === true
 
   useEffect(() => {
     void initEnv()
@@ -138,11 +182,12 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   // cleared after a successful refresh so every badge refetches against the new env list; a failed
   // refresh retains both the last complete registry snapshot and its matching counts.
   const recheck = async (): Promise<void> => {
+    if (LANGUAGES.some(({ id }) => languageOperationActive(id))) return
     setError(null)
     try {
       await recheckRuntimeSettings()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t('Could not re-check runtimes.'))
+    } catch {
+      setError('Could not re-check runtimes.')
     }
   }
 
@@ -158,6 +203,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     enabled: boolean,
     force?: boolean
   ): Promise<void> => {
+    if (languageOperationActive(language)) return
     setBusy(true)
     setError(null)
     try {
@@ -182,6 +228,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     language: NotebookLanguage,
     env: DiscoveredInterpreter
   ): Promise<void> => {
+    if (languageOperationActive(language)) return
     // Enabling never affects live sessions — apply immediately.
     if (!isEnabled(language, env)) {
       await applyEnabled(language, env, true)
@@ -226,6 +273,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     language: NotebookLanguage,
     env: DiscoveredInterpreter
   ): Promise<void> => {
+    if (languageOperationActive(language)) return
     setBusy(true)
     setError(null)
     try {
@@ -244,7 +292,23 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     }
   }
 
+  const toggleAgentEnvironmentCreation = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      const enabled = await window.api.runtime.setAgentEnvironmentCreationEnabled({
+        enabled: !agentEnvironmentCreationEnabled
+      })
+      setAgentEnvironmentCreationEnabled(enabled)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('Could not change Agent environment creation.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const addInterpreter = async (language: NotebookLanguage): Promise<void> => {
+    if (languageOperationActive(language)) return
     setBusy(true)
     setError(null)
     try {
@@ -268,7 +332,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   }
 
   const provisionManaged = async (language: NotebookLanguage): Promise<void> => {
-    if (statusError) return
+    if (statusError || languageOperationActive(language)) return
     // Provisioning deliberately avoids the panel-wide busy flag. Per-language store state marks only
     // the active runtime as preparing and leaves its Cancel action available throughout the download.
     setManagedOperations((current) => ({ ...current, [language]: true }))
@@ -287,18 +351,46 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
 
   // Explicit recovery for a recovery-BLOCKED runtime (a prior setup's worker couldn't be confirmed
   // stopped, so plain provision keeps refusing). Reset force-clears the quarantine and rebuilds.
-  const resetManaged = async (language: NotebookLanguage): Promise<void> => {
-    if (statusError) return
+  const resetManaged = async (
+    language: NotebookLanguage,
+    runtimeIdentity: string,
+    action: ManagedRepairRequest['action']
+  ): Promise<void> => {
+    if (statusError || languageOperationActive(language)) return
     setManagedOperations((current) => ({ ...current, [language]: true }))
     setError(null)
+    const fallbackError =
+      action === 'reinstall'
+        ? t('Could not reinstall the runtime.')
+        : t('Could not reset the runtime.')
     try {
-      await resetEnv(language)
+      await resetEnv(language, runtimeIdentity, fallbackError)
       await recheckRuntimeSettings()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t('Could not reset the runtime.'))
+    } catch {
+      setError(fallbackError)
     } finally {
       setManagedOperations((current) => ({ ...current, [language]: false }))
     }
+  }
+
+  const requestManagedRepair = (
+    language: NotebookLanguage,
+    runtimeIdentity: string,
+    label: string,
+    action: ManagedRepairRequest['action']
+  ): void => {
+    if (busy || statusError || languageOperationActive(language)) return
+    setManagedRepair({ language, runtimeIdentity, label, action })
+  }
+
+  const confirmManagedRepair = (): void => {
+    if (!dialogManagedRepair) return
+    const { language, runtimeIdentity, action } = dialogManagedRepair
+    if (busy || statusError || languageOperationActive(language)) return
+    setManagedRepair(null)
+    setPackagesEnv(null)
+    setPackages(null)
+    void resetManaged(language, runtimeIdentity, action)
   }
 
   // Cancels an in-flight app-managed download/setup so it is never a locked, un-abortable state.
@@ -315,17 +407,27 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   // Managed readiness is derived from discovery: the app-managed env for a language is present and
   // runnable once it is set up (replaces the old survey().managed readiness).
   const managedRunnableFor = (language: NotebookLanguage): boolean =>
-    (envs?.[language] ?? []).some((env) => env.provenance === 'app-managed' && env.runnable)
+    (envs?.[language] ?? []).some((env) => isDefaultManagedRuntime(language, env) && env.runnable)
 
   // One environment card (detected app-managed or user-own): identity + readiness + enable toggle,
   // plus the install-authorization row for an enabled external env. Shared by the managed-first card
   // and each own interpreter so they render identically.
   const renderEnvCard = (
     language: NotebookLanguage,
-    env: DiscoveredInterpreter
+    env: DiscoveredInterpreter,
+    operation?: ManagedOperationView
   ): React.JSX.Element => {
     const enabled = isEnabled(language, env)
     const external = env.provenance === 'user-own'
+    const operationActive = operation?.preparing === true || operation?.finishing === true
+    const statusText = operationActive
+      ? (operation?.message ?? (operation?.finishing ? t('Finishing setup…') : t('Reinstalling…')))
+      : operation?.error
+        ? t('Not runnable')
+        : envReadyLine(env, t)
+    const showReady = env.runnable && !operationActive && operation?.error === undefined
+    const defaultManaged = isDefaultManagedRuntime(language, env)
+    const recoveryBlocked = operation?.error?.includes('RUNTIME_RECOVERY_BLOCKED') === true
     return (
       <div
         key={env.envId}
@@ -339,11 +441,37 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
               <Badge variant="secondary">{providerType(env, t)}</Badge>
             </div>
             <div className="mt-0.5 flex items-center gap-1 text-[13px] text-muted-foreground">
-              {env.runnable ? (
+              {showReady ? (
                 <CheckCircle2 className="size-3.5 text-primary" aria-hidden="true" />
               ) : null}
-              <span>{envReadyLine(env, t)}</span>
+              <span>{statusText}</span>
             </div>
+            {operationActive ? (
+              <div
+                className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted"
+                role="progressbar"
+                aria-label={t('Setting up {{language}} runtime', { language: env.label })}
+                aria-valuenow={Math.round((operation?.progress ?? 0) * 100)}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-300"
+                  style={{
+                    width: `${Math.max(2, Math.min(100, Math.round((operation?.progress ?? 0) * 100)))}%`
+                  }}
+                />
+              </div>
+            ) : null}
+            {!operationActive && operation?.error ? (
+              <p
+                role="alert"
+                className="mt-1 text-[13px] text-destructive"
+                data-testid={`runtime-operation-error-${language}`}
+              >
+                {operation.error}
+              </p>
+            ) : null}
             <code className="mt-1 block truncate text-xs text-muted-foreground">
               {env.interpreterPath}
             </code>
@@ -351,33 +479,68 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
           <SettingsToggle
             enabled={enabled}
             onToggle={() => void toggleEnabled(language, env)}
-            disabled={busy}
+            disabled={busy || languageOperationActive(language)}
             aria-label={t('Enable {{label}}', { label: env.label })}
           />
         </div>
 
-        {env.runnable ? (
-          <div className="mt-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="runtime-packages-button"
-              onClick={() => {
-                setPackages(null)
-                setPackagesError(null)
-                setPackagesFilter('')
-                setPackagesEnv(env)
-              }}
-            >
-              <Package aria-hidden="true" />
-              {t('Packages')}
-              {typeof packageCounts[env.envId] === 'number' ? (
-                <Badge variant="secondary" data-testid="runtime-packages-count">
-                  {packageCounts[env.envId]}
-                </Badge>
-              ) : null}
-            </Button>
+        {env.runnable || defaultManaged ? (
+          <div
+            className="mt-2 flex flex-wrap items-center gap-2"
+            data-testid="runtime-card-actions"
+          >
+            {env.runnable ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="runtime-packages-button"
+                disabled={busy || languageOperationActive(language)}
+                onClick={() => {
+                  setPackages(null)
+                  setPackagesError(null)
+                  setPackagesFilter('')
+                  setPackagesEnv(env)
+                }}
+              >
+                <Package aria-hidden="true" />
+                {t('Packages')}
+                {typeof packageCounts[env.envId] === 'number' ? (
+                  <Badge variant="secondary" data-testid="runtime-packages-count">
+                    {packageCounts[env.envId]}
+                  </Badge>
+                ) : null}
+              </Button>
+            ) : null}
+            {defaultManaged ? (
+              operationActive ? (
+                <Button type="button" variant="outline" size="sm" disabled>
+                  {t('Reinstalling…')}
+                </Button>
+              ) : recoveryBlocked ? (
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  data-testid={`runtime-reset-${language}`}
+                  disabled={busy || Boolean(statusError)}
+                  onClick={() => requestManagedRepair(language, env.envId, env.label, 'reset')}
+                >
+                  {t('Reset runtime')}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid={`runtime-reinstall-${language}`}
+                  disabled={busy || Boolean(statusError)}
+                  onClick={() => requestManagedRepair(language, env.envId, env.label, 'reinstall')}
+                >
+                  {t('Reinstall')}
+                </Button>
+              )
+            ) : null}
           </div>
         ) : null}
 
@@ -400,7 +563,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                 <SettingsToggle
                   enabled={language !== 'r' && isInstallAuthorized(language, env)}
                   onToggle={() => void toggleInstallAuthorized(language, env)}
-                  disabled={busy || language === 'r'}
+                  disabled={busy || language === 'r' || languageOperationActive(language)}
                   aria-label={t('Allow package install for {{label}}', { label: env.label })}
                 />
               </div>
@@ -434,32 +597,58 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
         contentClassName="space-y-5"
         actionClassName="ml-auto"
         action={
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-col items-end gap-1.5">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="runtimes-recheck"
+              onClick={() => void recheck()}
+              disabled={busy || loading || LANGUAGES.some(({ id }) => languageOperationActive(id))}
+            >
+              <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
+              {t('Recheck')}
+            </Button>
             {checkedAt !== null ? (
-              <span className="text-xs text-muted-foreground" data-testid="runtimes-checked-at">
+              <span
+                className="whitespace-nowrap text-xs tabular-nums text-muted-foreground"
+                data-testid="runtimes-checked-at"
+              >
                 {t('Last checked {{time}}', {
                   time: formatDate(checkedAt, 'dateTime')
                 })}
               </span>
             ) : null}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void recheck()}
-              disabled={busy || loading}
-            >
-              <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
-              {t('Recheck')}
-            </Button>
           </div>
         }
       >
+        {onOpenNetworkProtection ? (
+          <NotebookNetworkProtectionBanner onOpen={onOpenNetworkProtection} />
+        ) : null}
         {error !== null && (
           <p role="alert" className="text-sm text-destructive" data-testid="runtimes-error">
-            {error === 'Could not load runtimes.' ? t('Could not load runtimes.') : error}
+            {error === 'Could not load runtimes.'
+              ? t('Could not load runtimes.')
+              : error === 'Could not re-check runtimes.'
+                ? t('Could not re-check runtimes.')
+                : error}
           </p>
         )}
+        {!loading && envs !== null ? (
+          <SettingsRow
+            label={t('Let the Agent create environments')}
+            description={t('Creates environments and sets up missing runtimes.')}
+          >
+            <div className="flex justify-end">
+              <SettingsToggle
+                enabled={agentEnvironmentCreationEnabled}
+                onToggle={() => void toggleAgentEnvironmentCreation()}
+                disabled={busy}
+                aria-label={t('Let the Agent create environments')}
+              />
+            </div>
+          </SettingsRow>
+        ) : null}
         {loading ? (
           <p className="text-sm text-muted-foreground">{t('Detecting runtimes…')}</p>
         ) : envs === null ? null : (
@@ -475,12 +664,21 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
             const progress = finishing ? 1 : (langProgress?.progress ?? 0)
             const langError = langState?.error
             const managedRunnable = managedRunnableFor(id)
+            const managedEnv = list.find((env) => isDefaultManagedRuntime(id, env))
+            const managedOperation: ManagedOperationView | undefined = managedEnv
+              ? {
+                  preparing,
+                  finishing,
+                  progress,
+                  message: finishing ? undefined : langProgress?.message,
+                  error: langError
+                }
+              : undefined
 
             // App-managed goes FIRST; the user's own detected interpreters follow. A provisioned
             // app-managed env appears in `list` (provenance app-managed) and renders as a normal card;
             // when it isn't set up yet there is no such entry, so a setup card is shown in its place.
-            const managedEnv = list.find((env) => env.provenance === 'app-managed')
-            const ownEnvs = list.filter((env) => env.provenance !== 'app-managed')
+            const ownEnvs = list.filter((env) => env !== managedEnv)
 
             return (
               <SettingsSection
@@ -488,7 +686,6 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                 title={label}
                 icon={icon}
                 aria-label={t('{{label}} runtime', { label })}
-                separated
                 action={
                   <TooltipProvider>
                     <Tooltip>
@@ -497,7 +694,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                           type="button"
                           variant="outline"
                           size="sm"
-                          disabled={busy}
+                          disabled={busy || languageOperationActive(id)}
                           onClick={() => void addInterpreter(id)}
                         >
                           <FolderInput aria-hidden="true" />
@@ -520,37 +717,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                 <div className="space-y-2" data-testid={`runtimes-cards-${id}`}>
                   {/* App-managed FIRST: a real card once provisioned, else a setup card in the same frame. */}
                   {managedEnv ? (
-                    <>
-                      {renderEnvCard(id, managedEnv)}
-                      {/* An interrupted upgrade/install usually leaves the interpreter present (so the
-                        card above still renders), but recovery may have quarantined its prefix. Surface
-                        the block + Reset here too, or the recovery entry would be unreachable whenever a
-                        runnable managed env exists. */}
-                      {!settingUp && langError?.includes('RUNTIME_RECOVERY_BLOCKED') ? (
-                        <div
-                          data-testid={`runtimes-recovery-blocked-${id}`}
-                          className="flex items-start justify-between gap-4 rounded-lg border border-destructive/40 bg-card p-3"
-                        >
-                          <p
-                            role="alert"
-                            className="text-[13px] text-destructive"
-                            data-testid={`runtimes-provision-error-${id}`}
-                          >
-                            {langError}
-                          </p>
-                          <Button
-                            type="button"
-                            variant="default"
-                            size="sm"
-                            className="shrink-0"
-                            disabled={busy || Boolean(statusError)}
-                            onClick={() => void resetManaged(id)}
-                          >
-                            {t('Reset runtime')}
-                          </Button>
-                        </div>
-                      ) : null}
-                    </>
+                    renderEnvCard(id, managedEnv, managedOperation)
                   ) : (
                     <div
                       data-testid="runtime-card"
@@ -630,7 +797,12 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                             disabled={busy || Boolean(statusError)}
                             onClick={() =>
                               langError?.includes('RUNTIME_RECOVERY_BLOCKED')
-                                ? void resetManaged(id)
+                                ? requestManagedRepair(
+                                    id,
+                                    DEFAULT_ENV_BY_LANGUAGE[id],
+                                    label,
+                                    'reset'
+                                  )
                                 : void provisionManaged(id)
                             }
                           >
@@ -652,6 +824,92 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
           })
         )}
       </SettingsSection>
+
+      <AlertDialog.Root
+        open={managedRepair !== null}
+        onOpenChange={(open) => {
+          if (!open) setManagedRepair(null)
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content
+            data-testid="runtime-reinstall-dialog"
+            className={dialogPanelClassName('w-[min(480px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <div className="min-w-0">
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  {dialogManagedRepair?.action === 'reset'
+                    ? t('Reset {{label}}?', { label: dialogManagedRepair.label })
+                    : t('Reinstall {{label}}?', { label: dialogManagedRepair?.label ?? '' })}
+                </AlertDialog.Title>
+              </div>
+              <TooltipProvider>
+                <Tooltip>
+                  <AlertDialog.Cancel asChild>
+                    <TooltipTrigger
+                      asChild
+                      onFocus={(event) => {
+                        if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                      }}
+                    >
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={t('Close')}
+                        className={dialogCloseButtonClassName}
+                      >
+                        <X className="size-4" aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                  </AlertDialog.Cancel>
+                  <TooltipContent>{t('Close')}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                <span>
+                  {t(
+                    'This deletes and recreates the app-managed {{label}} environment prefix. Active Notebook kernels will be stopped and idle kernels will be closed. Notebook files, artifacts, and other data are not deleted.',
+                    { label: dialogManagedRepair?.label ?? '' }
+                  )}
+                </span>
+                <span className="mt-2 block">
+                  {t('Packages installed after the original setup may need to be installed again.')}
+                </span>
+              </AlertDialog.Description>
+            </div>
+
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
+                  {t('Cancel')}
+                </Button>
+              </AlertDialog.Cancel>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={
+                  busy ||
+                  Boolean(statusError) ||
+                  (dialogManagedRepair
+                    ? languageOperationActive(dialogManagedRepair.language)
+                    : false)
+                }
+                onClick={confirmManagedRepair}
+              >
+                {dialogManagedRepair?.action === 'reset'
+                  ? t('Reset runtime')
+                  : t('Reinstall runtime')}
+              </Button>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
 
       <AlertDialog.Root
         open={disableImpact !== null}

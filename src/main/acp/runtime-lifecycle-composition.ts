@@ -30,6 +30,7 @@ type AcpRuntimeLifecycleHost = Readonly<{
     attempt: AcpConnectionResourceAttempt,
     onFrameworkResolved: (framework: AgentFramework['id']) => void
   ) => Promise<AcpAgentConnectionCandidate>
+  clearPromptResources?: () => void
 }>
 
 // Composes the model/connection lifecycle cycle around authoritative base and Session owners.
@@ -90,6 +91,7 @@ const composeAcpRuntimeLifecycleOwners = (
       }
     },
     clearPromptContent: (connectionGeneration) => {
+      host.clearPromptResources?.()
       if (connectionGeneration === undefined) base.promptContentOwner.clear()
       else base.promptContentOwner.clearGeneration(connectionGeneration)
     },

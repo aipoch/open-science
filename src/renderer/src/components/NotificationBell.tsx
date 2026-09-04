@@ -23,7 +23,7 @@ import { relativeTimeParts } from '@/lib/format-relative-time'
 import { sessionWaitReasonLabelKeys } from '@/lib/session-wait-reason-labels'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
-import { useNavigationStore } from '@/stores/navigation-store'
+import { openNotificationProject, useNavigationStore } from '@/stores/navigation-store'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
@@ -315,15 +315,27 @@ const NotificationBellContent = ({
       // Replaying an optional approval must not block navigation to the durable task.
     }
 
+    let completed = false
+    const completeOpen = (): void => {
+      if (completed) return
+      completed = true
+      setOpen(false)
+      if (item.readAt === undefined) runNotificationTask(() => markRead([item.id]))
+    }
+
     try {
       if (item.sessionId) {
-        useNavigationStore.getState().openSessionById(item.sessionId, 'notification')
-        setOpen(false)
+        const opened = useNavigationStore
+          .getState()
+          .openSessionById(item.sessionId, 'notification', completeOpen)
+        if (!opened) return
+        completeOpen()
       } else if (item.projectId) {
-        useNavigationStore.getState().openProject(item.projectId, 'notification')
-        setOpen(false)
+        const opened = await openNotificationProject(item.projectId, completeOpen)
+        if (!opened) return
+        completeOpen()
       } else if (replayedApproval) {
-        setOpen(false)
+        completeOpen()
       } else {
         if (item.readAt === undefined) runNotificationTask(() => markRead([item.id]))
         return
@@ -331,7 +343,6 @@ const NotificationBellContent = ({
     } catch {
       return
     }
-    if (item.readAt === undefined) runNotificationTask(() => markRead([item.id]))
   }
 
   return (

@@ -33,6 +33,7 @@ type AcpSessionReplacementWorkflowDependencies = Readonly<{
   clearUserChoiceProvenanceForSession: (sessionId: string) => void
   appContinuations: Pick<AcpAppContinuationOwner, 'delete'>
   promptContent: Pick<AcpPromptContentOwner, 'resetSession'>
+  releasePromptResourcesForSession: (sessionId: string) => void
   contextUsage: Pick<ContextUsageTracker, 'deleteSession'>
   interactions: Pick<AcpSessionInteractionOwner, 'current' | 'supersedeCurrent'>
   resolveSpecialistIdentity?: (
@@ -88,6 +89,7 @@ export class AcpSessionReplacementWorkflow {
         this.deps.registry.detach(attachment, 'provider')
       }
       this.deps.promptContent.resetSession(request.sessionId)
+      this.deps.releasePromptResourcesForSession(request.sessionId)
       this.deps.contextUsage.deleteSession(request.sessionId)
       this.deps.registry.lookup(request.sessionId)?.aggregate.clearAppliedModel()
       this.deps.interactions.supersedeCurrent(request.sessionId)

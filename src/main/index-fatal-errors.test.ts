@@ -162,9 +162,35 @@ afterEach(() => {
 })
 
 describe('main-process fatal errors', () => {
+  it('exits Electron after reporting a UI startup failure', async () => {
+    const originalExitCode = process.exitCode
+    let finishReporting!: () => void
+    mocks.reportApplicationStartupFailure.mockImplementationOnce(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finishReporting = () => resolve(undefined)
+        })
+    )
+
+    try {
+      await bootUntilFailureHandlersAreInstalled()
+
+      await vi.waitFor(() => expect(mocks.reportApplicationStartupFailure).toHaveBeenCalledOnce())
+      expect(mocks.app.exit).not.toHaveBeenCalled()
+
+      finishReporting()
+      await vi.waitFor(() => expect(mocks.app.exit).toHaveBeenCalledExactlyOnceWith(1))
+    } finally {
+      process.exitCode = originalExitCode
+    }
+  })
+
   it('observes both fatal origins without installing a consuming listener', async () => {
     const listeners = await bootUntilFailureHandlersAreInstalled()
     const monitor = listeners.get('uncaughtExceptionMonitor')
+
+    await vi.waitFor(() => expect(mocks.app.exit).toHaveBeenCalledExactlyOnceWith(1))
+    mocks.app.exit.mockClear()
 
     expect(monitor).toBeTypeOf('function')
     expect(listeners.has('uncaughtException')).toBe(false)

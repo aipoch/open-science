@@ -28,11 +28,10 @@ import {
   type ComputeJobRepository,
   UnencryptedComputeJobPersistenceApprovalRequiredError
 } from './job-repository'
-import { getJobHarvestDir } from './harvest-engine'
 import { validateHarvestConfig } from './harvest-classifier'
 import type { ComputeHostRepository } from './repository'
 import { GLOB_CHARS, SHELL_UNSAFE_CHARS } from './remote-path-security'
-import { workspaceRelativePath } from './workspace-path'
+import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
 
 const COMMAND_PREVIEW_MAX_LEN = 120
 const JOB_MAX_TIMEOUT_SECONDS = 7 * 24 * 3600

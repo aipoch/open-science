@@ -1,5 +1,5 @@
 import { statSync } from 'node:fs'
-import { delimiter, isAbsolute, win32 } from 'node:path'
+import { posix, win32 } from 'node:path'
 
 const COMMON_ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ'] as const
 
@@ -90,10 +90,10 @@ export const environmentPathRoots = (
     }
   }
 ): string[] => {
-  const separator = platform === 'win32' ? win32.delimiter : delimiter
+  const separator = platform === 'win32' ? win32.delimiter : posix.delimiter
   return (env.PATH ?? '')
     .split(separator)
     .map((entry) => entry.trim())
-    .filter((entry) => (platform === 'win32' ? win32.isAbsolute(entry) : isAbsolute(entry)))
+    .filter((entry) => (platform === 'win32' ? win32.isAbsolute(entry) : posix.isAbsolute(entry)))
     .filter(isDirectory)
 }

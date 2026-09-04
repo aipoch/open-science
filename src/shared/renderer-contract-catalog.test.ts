@@ -13,6 +13,25 @@ const paths = (
 ): string[] => RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
 
 describe('renderer contract catalog', () => {
+  it('does not expose the retired Runtime Selection API', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
+        ['runtime.setSelection', 'runtime.survey'].includes(publicPath)
+      )
+    ).toEqual([])
+    expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain('runtime:set-selection')
+    expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain('runtime:survey')
+  })
+
+  it('does not expose the obsolete disk-scanned Project Files command', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(
+        ({ publicPath }) => publicPath === 'artifacts.listProjectFiles'
+      )
+    ).toBeUndefined()
+    expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain('artifacts:list-project-files')
+  })
+
   it('keeps the Remote Access probe local-only', () => {
     expect(
       RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === 'remoteAccess.probe')
@@ -188,7 +207,6 @@ describe('renderer contract catalog', () => {
       'runtime.registerInterpreter',
       'runtime.setEnvironmentEnabled',
       'runtime.setInstallAuthorized',
-      'runtime.setSelection',
       'runtime.unregisterInterpreter',
       'storage.commitAndRelaunch',
       'storage.discardMigratedCopy',
@@ -235,7 +253,7 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(36)
+    expect(compute).toHaveLength(37)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
@@ -244,6 +262,7 @@ describe('renderer contract catalog', () => {
       'compute.changeAuthentication',
       'compute.createPassword',
       'compute.download',
+      'compute.jobsSetRemoteCleanup',
       'compute.passwordCapability',
       'compute.resetPassword',
       'compute.revealInFolder'
@@ -393,11 +412,15 @@ describe('renderer contract catalog', () => {
       'projects.delete',
       'projects.get',
       'projects.list',
+      'projects.listDeletionCleanup',
+      'projects.retryDeletionCleanup',
       'projects.update',
       'projects.updateArchive',
       'sessions.deleteSession',
+      'sessions.editDetails',
       'sessions.filterPdfContextCandidates',
       'sessions.linkPdfContext',
+      'sessions.setDelegationPolicy',
       'sessions.unlinkPdfContext',
       'tags.create',
       'tags.delete',
@@ -421,11 +444,15 @@ describe('renderer contract catalog', () => {
       'projects:delete',
       'projects:get',
       'projects:list',
+      'projects:list-deletion-cleanup',
+      'projects:retry-deletion-cleanup',
       'projects:update',
       'projects:update-archive',
       'sessions:delete-session',
+      'sessions:edit-details',
       'sessions:filter-pdf-context-candidates',
       'sessions:link-pdf-context',
+      'sessions:set-delegation-policy',
       'sessions:unlink-pdf-context',
       'tags:create',
       'tags:delete',

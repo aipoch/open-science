@@ -9,6 +9,7 @@ import {
   type ExecuteShellRequest,
   type FinishNotebookCodeCellRequest,
   type NotebookLanguage,
+  type NotebookRestartRequest,
   type NotebookSessionRequest,
   type RequestNotebookNetworkAccessRequest,
   type RunNotebookCellRequest
@@ -116,7 +117,13 @@ const notebookLocalRpcRequestSchemas = {
     command: z.string().min(1).optional()
   }),
   state: notebookSessionRequestSchema,
-  restart: notebookSessionRequestSchema,
+  restart: z.union([
+    notebookSessionRequestSchema,
+    notebookSessionRequestSchema.extend({
+      language: notebookLanguageSchema,
+      environment: z.string().min(1)
+    })
+  ]),
   shutdown: notebookSessionRequestSchema,
   inspectPackages: notebookSessionRequestSchema.extend({
     language: notebookLanguageSchema,
@@ -193,13 +200,13 @@ type NotebookLocalRpcCapability = {
   runCell(request: RunNotebookCellRequest, signal?: AbortSignal): Promise<unknown>
   execute(request: ExecuteNotebookCodeRequest, signal?: AbortSignal): Promise<unknown>
   executeControl(request: ExecuteNotebookControlRequest): Promise<unknown>
-  executeShell(request: ExecuteShellRequest): Promise<unknown>
+  executeShell(request: ExecuteShellRequest, signal?: AbortSignal): Promise<unknown>
   requestNetworkAccess(
     request: RequestNotebookNetworkAccessRequest,
     signal?: AbortSignal
   ): Promise<unknown>
   state(request: NotebookSessionRequest): Promise<unknown>
-  restart(request: NotebookSessionRequest): Promise<unknown>
+  restart(request: NotebookRestartRequest): Promise<unknown>
   shutdown(request: NotebookSessionRequest): Promise<unknown>
   inspectPackages(request: InspectPackagesRequest): Promise<unknown>
   managePackages(request: InstallRequest): Promise<InstallResult>
@@ -299,8 +306,8 @@ const resolveNotebookLocalRpcHandler = (
       return (request) =>
         capability.executeControl(parseNotebookLocalRpcRequest('executeControl', request))
     case 'executeShell':
-      return (request) =>
-        capability.executeShell(parseNotebookLocalRpcRequest('executeShell', request))
+      return (request, signal) =>
+        capability.executeShell(parseNotebookLocalRpcRequest('executeShell', request), signal)
     case 'requestNetworkAccess':
       return (request, signal) =>
         capability.requestNetworkAccess(

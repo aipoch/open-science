@@ -219,16 +219,19 @@ const SpecialistCapabilitiesSection = ({
   }, [connectors, customServers, selectedConnectorIds, excludedConnectorIds])
 
   // Main-disabled installed Skills remain selectable for a Specialist. Persisted IDs absent from
-  // the live catalog are rendered locally so the user can remove them without blocking the session.
+  // the runtime-available catalog are rendered locally so the user can remove them without blocking
+  // the session.
   const skillRows = useMemo(() => {
-    const known: SkillRow[] = skills.map((skill) => ({
-      id: skill.id,
-      name: skill.name,
-      description: skill.description,
-      source: skill.source,
-      mainEnabled: skill.enabled,
-      missing: false
-    }))
+    const known: SkillRow[] = skills
+      .filter((skill) => skill.available !== false)
+      .map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        source: skill.source,
+        mainEnabled: skill.enabled,
+        missing: false
+      }))
     const ids = new Set(known.map((skill) => skill.id))
     for (const id of [...excludedSkillIds, ...selectedSkillIds]) {
       if (!ids.has(id)) known.push({ id, name: id, mainEnabled: false, missing: true })
@@ -251,7 +254,7 @@ const SpecialistCapabilitiesSection = ({
   const addableSkills = useMemo(
     () =>
       skills
-        .filter((skill) => !selectedSkillIds.includes(skill.id))
+        .filter((skill) => skill.available !== false && !selectedSkillIds.includes(skill.id))
         .map((skill) => ({
           id: skill.id,
           name: skill.name,
@@ -351,7 +354,7 @@ const SpecialistCapabilitiesSection = ({
     updateConnectorIds((prev) => prev.filter((connectorId) => connectorId !== id))
 
   return (
-    <section className="border-t border-border pt-5">
+    <section>
       <h3 className="mb-1 text-base font-semibold text-foreground">{t('Capabilities')}</h3>
       <p className="mb-4 text-[13px] leading-5 text-muted-foreground">
         {t(

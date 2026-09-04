@@ -11,12 +11,13 @@ import {
   Pin,
   PinOff,
   Plus,
+  Search,
   Settings,
   Toolbox,
   Trash2,
   X
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   DropdownMenu,
@@ -25,6 +26,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 import { cn } from '@/lib/utils'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
@@ -35,6 +38,8 @@ import type { ChatSession, SessionStatus } from '@/stores/session-store'
 import { NotificationBell } from '@/components/NotificationBell'
 
 import { projectPresentedSessionActionability } from './session-wait-reason'
+import { HighlightedText } from './composer/HighlightedText'
+import { fuzzyScore } from './composer/fuzzy-match'
 import {
   SessionHoverPreview,
   SessionHoverPreviewProvider,
@@ -66,7 +71,11 @@ type WorkspaceSidebarProps = {
   onRenameSession: (session: ChatSession) => void
   // Desktop hover card: renames a session from the inline title editor. Absent or
   // `canMutateConversations === false` keeps the hover card title read-only.
-  onRenameSessionTitle?: (session: ChatSession, title: string) => void
+  onRenameSessionTitle?: (
+    session: ChatSession,
+    title: string,
+    expectedTitle: string
+  ) => Promise<boolean> | void
   canDownloadArtifacts: boolean
   onDownloadArtifacts: (session: ChatSession) => void
   onViewNotebook: (session: ChatSession) => void
@@ -104,6 +113,9 @@ type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
   onSessionActionsOpenChange?: (sessionId: string, open: boolean) => void
   showAllProjects?: boolean
   onShowAllProjectsChange?: (showAllProjects: boolean) => void
+  projectQuery?: string
+  onProjectQueryChange?: (query: string) => void
+  projectMatches?: ProjectMenuMatch[]
   onProjectMenuOpenChange?: (open: boolean) => void
 }
 
@@ -129,6 +141,7 @@ const sessionStatusLabelKeys = {
 const ACTIVE_SESSION_GRACE_MS = 15 * 60_000
 const EMPTY_CREDENTIAL_SESSION_IDS = new Set<string>()
 const INITIAL_PROJECT_MENU_LIMIT = 5
+const FIRST_PROJECT_MENU_DESTINATION_SELECTOR = '[data-project-id], [data-project-new]'
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
@@ -238,6 +251,63 @@ const sessionRowActionClassName =
 // Shared icon wrapper inside each menu item row.
 const sessionMenuIconClassName = 'flex size-4 shrink-0 items-center justify-center'
 
+const handleProjectMenuActionKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
+  if (event.key !== 'ArrowDown') return
+  const menu = event.currentTarget.closest<HTMLElement>('[role="menu"]')
+  const actions = Array.from(
+    menu?.querySelectorAll<HTMLElement>('[data-project-menu-action]:not([data-disabled])') ?? []
+  )
+  const search = menu?.querySelector<HTMLInputElement>('[data-project-search]')
+  if (actions.at(-1) !== event.currentTarget || !search) return
+
+  // Search is outside Radix's item collection, so bridge the visual order explicitly.
+  event.preventDefault()
+  event.stopPropagation()
+  search.focus()
+}
+
+type ProjectMenuMatch = {
+  project: NonNullable<WorkspaceSidebarProps['otherProjects']>[number]
+  description: string
+  titlePositions: number[]
+  descriptionPositions: number[]
+}
+
+const matchProjects = (
+  projects: NonNullable<WorkspaceSidebarProps['otherProjects']>,
+  query: string
+): ProjectMenuMatch[] => {
+  const needle = query.trim()
+  if (!needle) {
+    return projects.map((project) => ({
+      project,
+      description: project.description.trim(),
+      titlePositions: [],
+      descriptionPositions: []
+    }))
+  }
+
+  const titleMatches: ProjectMenuMatch[] = []
+  const descriptionMatches: ProjectMenuMatch[] = []
+  projects.forEach((project) => {
+    const description = project.description.trim()
+    const titleMatch = fuzzyScore(needle, project.name)
+    const descriptionMatch = description ? fuzzyScore(needle, description) : null
+    if (!titleMatch && !descriptionMatch) return
+
+    const match = {
+      project,
+      description,
+      titlePositions: titleMatch?.positions ?? [],
+      descriptionPositions: descriptionMatch?.positions ?? []
+    }
+    // Separate arrays make title priority absolute while preserving the store order within each tier.
+    if (titleMatch) titleMatches.push(match)
+    else descriptionMatches.push(match)
+  })
+  return [...titleMatches, ...descriptionMatches]
+}
+
 // Left navigation owns session selection, creation entry, and workspace settings.
 const WorkspaceSidebarView = ({
   projectName,
@@ -282,6 +352,9 @@ const WorkspaceSidebarView = ({
   onSessionActionsOpenChange,
   showAllProjects = false,
   onShowAllProjectsChange,
+  projectQuery = '',
+  onProjectQueryChange,
+  projectMatches: providedProjectMatches,
   onProjectMenuOpenChange
 }: WorkspaceSidebarViewProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -296,10 +369,11 @@ const WorkspaceSidebarView = ({
   const activeStarNudgeKey = (mobileMode ? isMobileOpen : sidebarToggle?.state !== 'collapsed')
     ? starNudgeKey
     : undefined
-  const visibleOtherProjects = showAllProjects
-    ? otherProjects
-    : otherProjects.slice(0, INITIAL_PROJECT_MENU_LIMIT)
-  const remainingProjectCount = Math.max(0, otherProjects.length - INITIAL_PROJECT_MENU_LIMIT)
+  const projectMatches = providedProjectMatches ?? matchProjects(otherProjects, projectQuery)
+  const visibleProjectMatches = showAllProjects
+    ? projectMatches
+    : projectMatches.slice(0, INITIAL_PROJECT_MENU_LIMIT)
+  const remainingProjectCount = Math.max(0, projectMatches.length - INITIAL_PROJECT_MENU_LIMIT)
 
   return (
     <aside
@@ -358,17 +432,31 @@ const WorkspaceSidebarView = ({
                 align="start"
                 sideOffset={6}
                 collisionPadding={8}
+                onFocus={(event) => {
+                  if (event.target !== event.currentTarget) return
+                  const search =
+                    event.currentTarget.querySelector<HTMLInputElement>('[data-project-search]')
+                  if (!search) return
+                  search.focus()
+                }}
               >
-                <DropdownMenuItem className="gap-2" onSelect={() => onOpenProjectSettings()}>
+                <DropdownMenuItem
+                  data-project-menu-action
+                  className="gap-2"
+                  onSelect={() => onOpenProjectSettings()}
+                  onKeyDown={handleProjectMenuActionKeyDown}
+                >
                   <span className={sessionMenuIconClassName}>
                     <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
                   </span>
                   {t('Project settings')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
+                  data-project-menu-action
                   className="gap-2"
                   disabled={!canDownloadProjectArtifacts || !onDownloadProjectArtifacts}
                   onSelect={() => onDownloadProjectArtifacts?.()}
+                  onKeyDown={handleProjectMenuActionKeyDown}
                 >
                   <span className={sessionMenuIconClassName}>
                     <Download className="size-4" strokeWidth={2} aria-hidden="true" />
@@ -376,36 +464,175 @@ const WorkspaceSidebarView = ({
                   {t('Download artifacts…')}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                {visibleOtherProjects.map((project) => {
-                  const description = project.description.trim()
-
-                  return (
+                {otherProjects.length > INITIAL_PROJECT_MENU_LIMIT ? (
+                  // Keep the input outside the Radix item collection so typing never selects a row.
+                  <div className="relative mx-1 mb-1">
+                    <Search
+                      className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      data-project-search
+                      type="search"
+                      aria-label={t('Search projects')}
+                      placeholder={t('Search projects…')}
+                      value={projectQuery}
+                      autoComplete="off"
+                      className="h-8 pl-7 pr-8 [&::-webkit-search-cancel-button]:hidden"
+                      onChange={(event) => onProjectQueryChange?.(event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.nativeEvent.isComposing) {
+                          event.stopPropagation()
+                          return
+                        }
+                        if (event.key === 'ArrowDown') {
+                          event.preventDefault()
+                          event.currentTarget
+                            .closest<HTMLElement>('[role="menu"]')
+                            ?.querySelector<HTMLElement>(FIRST_PROJECT_MENU_DESTINATION_SELECTOR)
+                            ?.focus()
+                          event.stopPropagation()
+                          return
+                        }
+                        if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
+                          event.preventDefault()
+                          const actions = Array.from(
+                            event.currentTarget
+                              .closest<HTMLElement>('[role="menu"]')
+                              ?.querySelectorAll<HTMLElement>(
+                                '[data-project-menu-action]:not([data-disabled])'
+                              ) ?? []
+                          )
+                          actions.at(-1)?.focus()
+                          event.stopPropagation()
+                          return
+                        }
+                        if (event.key === 'Tab') {
+                          event.preventDefault()
+                          const menu = event.currentTarget.closest<HTMLElement>('[role="menu"]')
+                          const nextTarget = projectQuery
+                            ? menu?.querySelector<HTMLElement>('[data-project-clear]')
+                            : menu?.querySelector<HTMLElement>(
+                                FIRST_PROJECT_MENU_DESTINATION_SELECTOR
+                              )
+                          nextTarget?.focus()
+                          event.stopPropagation()
+                          return
+                        }
+                        if (event.key !== 'Escape') event.stopPropagation()
+                      }}
+                    />
+                    {projectQuery ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        data-project-clear
+                        aria-label={t('Clear search')}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 text-text-100 hover:bg-bg-200 hover:text-text-100"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onKeyDown={(event) => {
+                          if (
+                            event.key === 'ArrowUp' ||
+                            event.key === 'ArrowLeft' ||
+                            (event.key === 'Tab' && event.shiftKey)
+                          ) {
+                            event.preventDefault()
+                            event.currentTarget.parentElement
+                              ?.querySelector<HTMLInputElement>('[data-project-search]')
+                              ?.focus()
+                            event.stopPropagation()
+                            return
+                          }
+                          if (event.key === 'ArrowDown' || event.key === 'Tab') {
+                            event.preventDefault()
+                            event.currentTarget
+                              .closest<HTMLElement>('[role="menu"]')
+                              ?.querySelector<HTMLElement>(FIRST_PROJECT_MENU_DESTINATION_SELECTOR)
+                              ?.focus()
+                            event.stopPropagation()
+                            return
+                          }
+                          if (event.key !== 'Escape') event.stopPropagation()
+                        }}
+                        onClick={(event) => {
+                          // Restore focus before the controlled clear unmounts this keyboard target.
+                          event.currentTarget.parentElement
+                            ?.querySelector<HTMLInputElement>('[data-project-search]')
+                            ?.focus()
+                          onProjectQueryChange?.('')
+                        }}
+                      >
+                        <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {projectQuery.trim() && projectMatches.length === 0 ? (
+                  <p role="status" className="px-2 py-3 text-center text-sm text-muted-foreground">
+                    {t('No matching projects')}
+                  </p>
+                ) : null}
+                {visibleProjectMatches.map(
+                  ({ project, description, titlePositions, descriptionPositions }, index) => (
                     <DropdownMenuItem
                       key={project.id}
                       data-project-id={project.id}
                       className="items-start py-2"
                       disabled={!onOpenProject}
                       onSelect={() => onOpenProject?.(project.id)}
+                      onKeyDown={(event) => {
+                        if (index !== 0 || event.key !== 'ArrowUp') return
+                        const search = event.currentTarget
+                          .closest<HTMLElement>('[role="menu"]')
+                          ?.querySelector<HTMLInputElement>('[data-project-search]')
+                        if (!search) return
+                        event.preventDefault()
+                        event.stopPropagation()
+                        search.focus()
+                      }}
                     >
                       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <span className="truncate font-medium" title={project.name}>
-                          {project.name}
+                        <span
+                          data-project-title
+                          className="truncate font-medium"
+                          title={project.name}
+                        >
+                          <HighlightedText
+                            text={project.name}
+                            positions={titlePositions}
+                            highlightClassName="bg-transparent text-primary"
+                          />
                         </span>
                         {description ? (
-                          <span className="line-clamp-2 break-words text-xs leading-4 text-muted-foreground">
-                            {description}
+                          <span
+                            data-project-description
+                            className="line-clamp-2 break-words text-xs leading-4 text-muted-foreground"
+                          >
+                            <HighlightedText
+                              text={description}
+                              positions={descriptionPositions}
+                              highlightClassName="bg-transparent text-primary"
+                            />
                           </span>
                         ) : null}
                       </span>
                     </DropdownMenuItem>
                   )
-                })}
+                )}
                 {!showAllProjects && remainingProjectCount > 0 ? (
                   <DropdownMenuItem
                     asChild
                     onSelect={(event) => {
                       event.preventDefault()
+                      const menu = (event.currentTarget as HTMLElement).closest<HTMLElement>(
+                        '[role="menu"]'
+                      )
                       onShowAllProjectsChange?.(true)
+                      // The selected control unmounts after expansion; restore focus after that commit.
+                      window.setTimeout(() => {
+                        menu?.querySelector<HTMLElement>('[data-project-id]')?.focus()
+                      }, 0)
                     }}
                   >
                     <button
@@ -427,7 +654,21 @@ const WorkspaceSidebarView = ({
                   </DropdownMenuItem>
                 ) : null}
                 {otherProjects.length > 0 ? <DropdownMenuSeparator /> : null}
-                <DropdownMenuItem className="gap-2" onSelect={() => onNewProject()}>
+                <DropdownMenuItem
+                  data-project-new
+                  className="gap-2"
+                  onSelect={() => onNewProject()}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'ArrowUp') return
+                    const menu = event.currentTarget.closest<HTMLElement>('[role="menu"]')
+                    if (menu?.querySelector('[data-project-id]')) return
+                    const search = menu?.querySelector<HTMLInputElement>('[data-project-search]')
+                    if (!search) return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    search.focus()
+                  }}
+                >
                   <span className={sessionMenuIconClassName}>
                     <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
                   </span>
@@ -757,7 +998,8 @@ const WorkspaceSidebarView = ({
                         previewSuppressed={openSessionActionsId === session.id}
                         onRenameTitle={
                           onRenameSessionTitle
-                            ? (title) => onRenameSessionTitle(session, title)
+                            ? (title, expectedTitle) =>
+                                onRenameSessionTitle(session, title, expectedTitle)
                             : undefined
                         }
                       >
@@ -818,6 +1060,17 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   const [showSessionShortcuts, setShowSessionShortcuts] = useState(false)
   const [openSessionActionsId, setOpenSessionActionsId] = useState<string | null>(null)
   const [showAllProjects, setShowAllProjects] = useState(false)
+  const [projectQuery, setProjectQuery] = useState('')
+  const canSearchProjects = (props.otherProjects?.length ?? 0) > INITIAL_PROJECT_MENU_LIMIT
+  const effectiveProjectQuery = canSearchProjects ? projectQuery : ''
+  if (!canSearchProjects && (projectQuery || showAllProjects)) {
+    setProjectQuery('')
+    setShowAllProjects(false)
+  }
+  const projectMatches = useMemo(
+    () => matchProjects(props.otherProjects ?? [], effectiveProjectQuery),
+    [effectiveProjectQuery, props.otherProjects]
+  )
   const nextSectionRefreshAt = getNextSessionSectionRefreshAt(sessions, now)
   const isMac = window.api?.platform === 'darwin'
 
@@ -895,8 +1148,17 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       }}
       showAllProjects={showAllProjects}
       onShowAllProjectsChange={setShowAllProjects}
+      projectQuery={effectiveProjectQuery}
+      projectMatches={projectMatches}
+      onProjectQueryChange={(query) => {
+        setProjectQuery(query)
+        setShowAllProjects(false)
+      }}
       onProjectMenuOpenChange={(open) => {
-        if (!open) setShowAllProjects(false)
+        if (!open) {
+          setProjectQuery('')
+          setShowAllProjects(false)
+        }
       }}
     />
   )

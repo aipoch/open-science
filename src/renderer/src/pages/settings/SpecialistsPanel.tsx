@@ -43,7 +43,11 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { specialistDiagnosticCopy } from '@/lib/specialist-diagnostics'
+import {
+  specialistDiagnosticCopy,
+  specialistInstallFailureCopy,
+  type SpecialistInstallFailureCode
+} from '@/lib/specialist-diagnostics'
 import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
 import { SettingsToggle } from './SettingsLayout'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -221,7 +225,9 @@ const InstalledSpecialistsPanel = ({
   const [templateSaved, setTemplateSaved] = useState(false)
   const [templateSaveError, setTemplateSaveError] = useState<string | undefined>()
   const [packageBusy, setPackageBusy] = useState(false)
-  const [packageErrorCode, setPackageErrorCode] = useState<string | undefined>()
+  const [packageErrorCode, setPackageErrorCode] = useState<
+    SpecialistInstallFailureCode | undefined
+  >()
   const [skillConflictResolutions, setSkillConflictResolutions] =
     useState<SkillConflictResolutionMap>({})
   const [overwriteConfirmationOpen, setOverwriteConfirmationOpen] = useState(false)
@@ -255,6 +261,9 @@ const InstalledSpecialistsPanel = ({
     [items]
   )
   const builtinItems = useMemo(() => items.filter((i) => i.kind === 'builtin'), [items])
+  const packageFailure = packageErrorCode
+    ? specialistInstallFailureCopy(packageErrorCode)
+    : undefined
 
   useEffect(() => {
     void load()
@@ -479,7 +488,7 @@ const InstalledSpecialistsPanel = ({
   if (view.kind === 'import' && templateSaved) {
     return (
       <div className="p-5">
-        <div className="mb-5 flex items-start justify-between gap-4 border-b border-border pb-4">
+        <div className="mb-5 flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-primary">
               {t('Import ZIP')}
@@ -556,7 +565,7 @@ const InstalledSpecialistsPanel = ({
     }
     return (
       <div className="p-5">
-        <div className="mb-5 flex items-start justify-between gap-4 border-b border-border pb-4">
+        <div className="mb-5 flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-primary">
               {t('Export ZIP')}
@@ -716,10 +725,18 @@ const InstalledSpecialistsPanel = ({
             item.id === specialist.id &&
             item.sourceId === specialist.marketplaceProvenance?.sourceId
         )
+        const sourceMissing =
+          marketplaceSnapshot !== undefined &&
+          specialist.marketplaceProvenance !== undefined &&
+          listing === undefined &&
+          !marketplaceSnapshot.sources.some(
+            (source) => source.id === specialist.marketplaceProvenance?.sourceId
+          )
         return (
           <MarketplaceManagedSpecialistDetail
             specialist={specialist as typeof specialist & { origin: 'marketplace' }}
             update={listing}
+            sourceMissing={sourceMissing}
             disabled={catalogReadOnly}
             onBack={() => onNavigate({ kind: 'list' })}
             onAppearanceChange={(patch) =>
@@ -748,6 +765,7 @@ const InstalledSpecialistsPanel = ({
                 updateAvailable: listing.updateAvailable
               })
             }}
+            onManageSources={() => onNavigate({ kind: 'marketplace-sources' })}
             onUninstall={() => {
               openDeleteDialog(specialist, 'uninstall')
               onNavigate({ kind: 'list' })
@@ -814,7 +832,7 @@ const InstalledSpecialistsPanel = ({
       : { error: [], warning: [], info: [] }
     return (
       <div className="p-5">
-        <div className="mb-5 flex items-start justify-between gap-4 border-b border-border pb-4">
+        <div className="mb-5 flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-primary">
               {packagePreview ? t('Import ZIP · Preview') : t('Import ZIP')}
@@ -886,6 +904,7 @@ const InstalledSpecialistsPanel = ({
                 type="button"
                 disabled={packageBusy}
                 onClick={() => {
+                  setPackageErrorCode(undefined)
                   setSkillConflictResolutions({})
                   setPackageBusy(true)
                   void selectPackage().finally(() => setPackageBusy(false))
@@ -1122,10 +1141,44 @@ const InstalledSpecialistsPanel = ({
                 {t('Local edits will be replaced by this import.')}
               </p>
             ) : null}
-            {packageErrorCode ? (
-              <p role="alert" className="text-xs text-destructive">
-                {t('Import failed:')} {packageErrorCode}
-              </p>
+            {packageFailure ? (
+              <div
+                role="alert"
+                className="rounded-lg border border-danger-000/30 bg-danger-000/10 p-3 text-xs text-danger-000"
+              >
+                <p>{t(packageFailure.body)}</p>
+                {packageFailure.previewAgain ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    disabled={packageBusy}
+                    onClick={() => {
+                      setPackageBusy(true)
+                      void cancelPackage()
+                        .then(() => {
+                          setPackageErrorCode(undefined)
+                          return selectPackage()
+                        })
+                        .finally(() => setPackageBusy(false))
+                    }}
+                  >
+                    {t('Preview again')}
+                  </Button>
+                ) : null}
+                {packageFailure.revealStorage ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => void window.api.storage.revealAppStorage()}
+                  >
+                    {t('Open data folder')}
+                  </Button>
+                ) : null}
+              </div>
             ) : null}
             <div className="flex justify-between gap-2">
               <Button
@@ -1558,6 +1611,13 @@ const InstalledSpecialistsPanel = ({
                       candidate.id === item.id &&
                       candidate.sourceId === item.marketplaceProvenance?.sourceId
                   )
+                  const sourceMissing =
+                    marketplaceSnapshot !== undefined &&
+                    item.marketplaceProvenance !== undefined &&
+                    listing === undefined &&
+                    !marketplaceSnapshot.sources.some(
+                      (source) => source.id === item.marketplaceProvenance?.sourceId
+                    )
                   return (
                     <li
                       key={item.id}
@@ -1637,6 +1697,11 @@ const InstalledSpecialistsPanel = ({
                             {listing?.updateAvailable ? (
                               <Badge className="h-5 border-primary/20 bg-primary/10 px-1.5 text-[11px] font-normal text-primary">
                                 {t('Update available')}
+                              </Badge>
+                            ) : null}
+                            {sourceMissing ? (
+                              <Badge className="h-5 border-warning-100/40 bg-warning-100/10 px-1.5 text-[11px] font-normal text-warning-900">
+                                {t('Source removed')}
                               </Badge>
                             ) : null}
                           </button>

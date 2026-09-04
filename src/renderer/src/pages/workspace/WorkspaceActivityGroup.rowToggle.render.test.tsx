@@ -4,6 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ToolActivity } from '@/stores/session-store'
+import type { SkillView } from '../../../../shared/settings'
+import { useSettingsStore } from '@/stores/settings-store'
 
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 
@@ -54,6 +56,7 @@ describe('WorkspaceActivityGroup row toggling', () => {
       root.unmount()
     })
     container.remove()
+    useSettingsStore.setState({ skills: [], skillsLoaded: false })
     vi.clearAllMocks()
   })
 
@@ -140,5 +143,60 @@ describe('WorkspaceActivityGroup row toggling', () => {
     expect(onToggleRow).toHaveBeenCalledWith('activity-skill-load-1', true)
 
     viewport.remove()
+  })
+
+  it('routes a documentless load_skill row to the catalog/IPC skill row, not the generic JSON details', async () => {
+    // Claude-reported skill loads arrive WITHOUT any payload (main strips it): the row must still
+    // expand into the SKILL.md document resolved by invocation name, never the raw input JSON.
+    const documentless: ToolActivity = {
+      ...SKILL_LOAD_ACTIVITY,
+      id: 'activity-skill-load-2',
+      title: 'Load skill: mcp-pubmed',
+      providerToolName: 'Skill',
+      toolContent: undefined
+    }
+    const catalogSkill: SkillView = {
+      id: 'imported-mcp-pubmed',
+      name: 'mcp-pubmed',
+      displayName: 'mcp-pubmed',
+      description: 'Search PubMed',
+      source: 'imported',
+      updatedAt: '2026-08-27T00:00:00Z',
+      enabled: true
+    }
+    useSettingsStore.setState({ skills: [catalogSkill], skillsLoaded: true })
+    const getSkillDetail = vi.fn().mockResolvedValue({
+      ...catalogSkill,
+      body: '# mcp-pubmed\n\nResolved document.',
+      references: [],
+      packageFiles: []
+    })
+    window.api = { settings: { getSkillDetail } } as unknown as Window['api']
+
+    await act(async () => {
+      root.render(
+        <WorkspaceActivityGroup
+          group={{
+            id: 'group-skill-2',
+            type: 'activity-group',
+            createdAt: 1,
+            sortIndex: 1,
+            title: '',
+            activities: [documentless]
+          }}
+          isExpanded={true}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{ 'activity-skill-load-2': true }}
+          onToggleRow={vi.fn()}
+        />
+      )
+    })
+
+    expect(getSkillDetail).toHaveBeenCalledWith('imported-mcp-pubmed')
+
+    const panel = container.querySelector('[data-testid="skill-load-details"]')
+
+    expect(panel?.querySelector('h1')?.textContent).toBe('mcp-pubmed')
+    expect(container.textContent).not.toContain('"skill"')
   })
 })

@@ -49,6 +49,8 @@ type NetworkAskCallback = (request: {
 
 type NetworkWrapRequest = Readonly<{
   command: string
+  executable?: string
+  args?: readonly string[]
   commandId: string
   shell?: string | WindowsShell
   cwd: string
@@ -164,6 +166,7 @@ const initialize = async (config: NetworkRuntimeConfig, ask: NetworkAskCallback)
 const wrap = async (
   request: NetworkWrapRequest
 ): Promise<{ argv: string[]; env: NodeJS.ProcessEnv }> => {
+  if (finishing.size > 0) await Promise.allSettled([...finishing])
   const config = runtimeConfig
   if (!config) throw new Error('Notebook process runtime is not initialized.')
   const filesystem = normalizeFilesystemLayout({
@@ -225,6 +228,7 @@ const wrap = async (
     if (process.platform === 'win32') {
       const launchRequest = {
         command: request.command,
+        ...(request.executable ? { executable: request.executable, args: request.args ?? [] } : {}),
         ...(request.shell ? { shell: request.shell } : {}),
         gatewayPort: gateway.port,
         gatewayCredentials: credentials,

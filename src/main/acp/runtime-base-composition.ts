@@ -4,6 +4,7 @@ import { claudeCodeFramework } from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { createLogger, errorLogFields } from '../logger'
+import { getNotebookInputRoot } from '../notebook/input-staging'
 import { createProductionPlanService } from '../session-plan/production-plan-service'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { AcpAgentConnectionAdapter } from './agent-connection-adapter'
@@ -30,6 +31,7 @@ import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import { createNotebookArtifactSourceScopeProvider } from '../notebook/artifact-source-scope'
 import { ArtifactTurnOwner } from './artifact-turn-owner'
 import { AcpTurnSkillOwner } from './turn-skill-owner'
+import { TurnResourceSnapshotStore } from './turn-resource-snapshot-store'
 
 const log = createLogger('acp')
 
@@ -184,14 +186,11 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       : undefined
   const planInteractions = new SessionPlanInteractionOwner()
   const planService =
-    options.plan && artifactTurns && options.artifacts?.provenance?.resolveVersionContent
+    options.plan && artifactTurns && options.artifacts?.managedFileVersions
       ? createProductionPlanService({
           interactions: planInteractions,
           artifactTurns,
-          provenance: {
-            resolveVersionContent: (request) =>
-              options.artifacts!.provenance!.resolveVersionContent!(request)
-          },
+          managedFileVersions: options.artifacts.managedFileVersions,
           sessions: options.plan.sessions,
           onApprovalRequested: options.plan.onApprovalRequested,
           onApprovalSettled: options.plan.onApprovalSettled
@@ -201,9 +200,10 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
   const fileReferenceResolver = createManagedFileReferenceResolver({
     uploads: uploadRepository,
     artifacts: artifactRepository,
-    artifactVersions: options.artifacts?.provenance,
-    grantedRoots: options.grantedRoots
+    grantedRoots: options.grantedRoots,
+    managedFileVersions: options.artifacts?.managedFileVersions
   })
+  const notebookInputStorageRoot = options.notebook ? options.artifacts?.dataRoot : undefined
 
   return Object.freeze({
     snapshotOwner,
@@ -234,8 +234,21 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     planService,
     promptContentOwner: new AcpPromptContentOwner({
       uploadRepository,
+      managedFileVersions: options.artifacts?.managedFileVersions,
       fileReferenceResolver,
-      inlineImageBudgetBytes: options.inlineImageBudgetBytes
+      inlineImageBudgetBytes: options.inlineImageBudgetBytes,
+      ...(notebookInputStorageRoot
+        ? {
+            createResourceSnapshotStore: ({ appSessionId, projectId }) =>
+              new TurnResourceSnapshotStore({
+                temporaryRoot: getNotebookInputRoot(
+                  notebookInputStorageRoot,
+                  projectId,
+                  appSessionId
+                )
+              })
+          }
+        : {})
     }),
     sessionPresentationPolicy: new AcpSessionPresentationPolicy(),
     promptOutcomeFinalizer: new AcpPromptOutcomeFinalizer()

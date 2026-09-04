@@ -31,6 +31,7 @@ import {
   removeMigrationMarker,
   scanInventory,
   writeMigrationMarker,
+  type MigrationInventory,
   type MigrationMarker
 } from './migration-marker'
 import { waitForDataRootWriters } from './migration-state'
@@ -436,9 +437,14 @@ export const validateNewDataRoot = async (
 // runtime/ is not copied wholesale (env prefixes and mutable inventory-cache keys bake absolute
 // paths), but its pkgs cache IS relocatable inert data — copied so envs can be rebuilt offline at the
 // new root from their exported locks. Immutable Environment manifests are copied separately because
-// Notebook and Artifact provenance reference them by checksum. Nested paths are intentional:
-// copyAndVerify mirrors `from/<dir>` → `to/<dir>`.
+// Notebook and Artifact provenance reference them by checksum. The repair-required registry is also
+// relocatable: managed keys use environment names, while external keys continue to name the same
+// user-owned runtimes. Preserving it is load-bearing because missing state could reactivate a runtime
+// quarantined after an interrupted or identity-changing operation. Nested paths are intentional:
+// copyAndVerify mirrors `from/<path>` → `to/<path>` and accepts regular files as roots.
 const RUNTIME_PKGS_DIR = join('runtime', 'pkgs')
+const RUNTIME_ENVS_LOCK_DIR = join('runtime', 'envs.lock')
+export const RUNTIME_REPAIR_REGISTRY_FILE = join('runtime', '.repair-required.json')
 export const RUNTIME_ENVIRONMENT_MANIFESTS_DIR = join(
   'runtime',
   'provenance',
@@ -448,12 +454,14 @@ const RUNTIME_ENVIRONMENT_INVENTORY_DIR = join('runtime', 'provenance', 'environ
 // The SQLite authority stays under the fixed config root. Keep the filename exported for migration
 // validation/tests, but never put it in the relocatable data-root copy/delete set.
 export const PROJECT_DATABASE_FILE = 'open-science.db'
-const BASE_MIGRATION_DIRS = [...MIGRATED_DIRS, RUNTIME_ENVIRONMENT_MANIFESTS_DIR]
+const BASE_MIGRATION_DIRS = [
+  ...MIGRATED_DIRS,
+  RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
+  RUNTIME_REPAIR_REGISTRY_FILE
+]
 
 const defaultValidateProvenanceState = (dataRoot: string): Promise<void> =>
   validateProvenanceMigrationState(dataRoot, resolveConfigRoot())
-
-type MigrationInventory = NonNullable<MigrationMarker['inventory']>
 
 const sameInventory = (left: MigrationInventory, right: MigrationInventory): boolean =>
   left.fileCount === right.fileCount &&
@@ -461,6 +469,53 @@ const sameInventory = (left: MigrationInventory, right: MigrationInventory): boo
   left.digest === right.digest &&
   left.dirs.length === right.dirs.length &&
   left.dirs.every((dir, index) => dir === right.dirs[index])
+
+const captureRuntimeLockInventory = async (
+  target: string,
+  preservedEnvs: string[]
+): Promise<MigrationInventory | undefined> => {
+  const expectedFiles = [...new Set(preservedEnvs)].map((name) => `${name}.lock`).sort()
+  if (expectedFiles.length === 0) return undefined
+
+  const entries = await readdir(join(target, RUNTIME_ENVS_LOCK_DIR), { withFileTypes: true })
+  if (
+    entries.some((entry) => !entry.isFile()) ||
+    entries.length !== expectedFiles.length ||
+    entries
+      .map((entry) => entry.name)
+      .sort()
+      .some((name, index) => name !== expectedFiles[index])
+  ) {
+    return undefined
+  }
+
+  const inventory = await scanInventory(target, [RUNTIME_ENVS_LOCK_DIR])
+  return inventory.dirs.length === 1 &&
+    inventory.dirs[0] === RUNTIME_ENVS_LOCK_DIR &&
+    inventory.fileCount === expectedFiles.length
+    ? inventory
+    : undefined
+}
+
+const hasVerifiedRuntimeLockBundle = async (
+  target: string,
+  receipt: MigrationInventory | undefined
+): Promise<boolean> => {
+  if (
+    !receipt ||
+    receipt.fileCount < 1 ||
+    receipt.dirs.length !== 1 ||
+    receipt.dirs[0] !== RUNTIME_ENVS_LOCK_DIR ||
+    !existsSync(join(target, RUNTIME_PKGS_DIR))
+  ) {
+    return false
+  }
+  try {
+    return sameInventory(receipt, await scanInventory(target, [RUNTIME_ENVS_LOCK_DIR]))
+  } catch {
+    return false
+  }
+}
 
 type DataRootWriterPauseDeps = {
   logger?: Logger
@@ -490,9 +545,9 @@ type MigrationCopyDeps = DataRootWriterPauseDeps & {
   // The composition root supplies Notebook-owned cache cleanup. A runtime-only target may contain
   // rebuildable residue, but migration must not commit a stale or ownership-unverified cache.
   cleanupRuntimeCache?: (runtimeRoot: string) => boolean
-  // Exports each conda env under the old runtime to an @EXPLICIT lock at the new root (offline
-  // reconstruction bundle). Returns the env names preserved; [] when nothing could be exported.
-  // Injectable/optional so tests and non-notebook contexts skip it. Best-effort (must not throw).
+  // Exports each conda env under the old runtime to an all-or-nothing @EXPLICIT lock bundle at the
+  // new root. Returns the env names preserved; [] when nothing could be exported. Injectable and
+  // optional so tests and non-notebook contexts can skip it; failures retain the old runtime.
   exportRuntimeLocks?: (fromDataRoot: string, toDataRoot: string) => Promise<string[]>
   // Injectable for tests; defaults to the real ./data-migration engine function.
   copyAndVerify?: (opts: {
@@ -673,10 +728,9 @@ export const runDataRootMigration = async (
     }
   }
 
-  // Preserve the runtime: export each env to an offline @EXPLICIT lock at the new root, then copy the
-  // (relocatable) pkgs archive store alongside the user data. Exporting environment locks is
-  // best-effort, but already-published durable archives follow Data Storage independently of whether
-  // any environment could be exported.
+  // Preserve the runtime: export every materialized env to one all-or-nothing offline @EXPLICIT
+  // bundle at the new root, then copy the relocatable pkgs archive store alongside user data.
+  // Already-published durable archives follow Data Storage even when lock export is unavailable.
   operation.phase('preserve-runtime')
   let preservedEnvs: string[] = []
   let runtimePreservationDegraded = false
@@ -685,6 +739,9 @@ export const runDataRootMigration = async (
       preservedEnvs = await deps.exportRuntimeLocks(deps.currentDataRoot, target)
     } catch {
       runtimePreservationDegraded = true
+      await rm(join(target, RUNTIME_ENVS_LOCK_DIR), { recursive: true, force: true }).catch(
+        () => undefined
+      )
     }
   }
   const sourceLinks = await validateMigrationSourceLinks(deps.currentDataRoot, migrateDirs)
@@ -769,6 +826,22 @@ export const runDataRootMigration = async (
     }
   }
 
+  let runtimeLockInventory: MigrationInventory | undefined
+  if (preservedEnvs.length > 0) {
+    try {
+      runtimeLockInventory = await captureRuntimeLockInventory(target, preservedEnvs)
+    } catch {
+      runtimeLockInventory = undefined
+    }
+    if (!runtimeLockInventory) {
+      runtimePreservationDegraded = true
+      preservedEnvs = []
+      await rm(join(target, RUNTIME_ENVS_LOCK_DIR), { recursive: true, force: true }).catch(
+        () => undefined
+      )
+    }
+  }
+
   // Record what was staged and promote the marker to 'verified' — the only state the commit gate accepts.
   let inventory
   try {
@@ -802,7 +875,8 @@ export const runDataRootMigration = async (
       ...marker,
       status: 'verified',
       migratedDirs: migrateDirs,
-      inventory
+      inventory,
+      ...(runtimeLockInventory ? { runtimeLockInventory } : {})
     })
     runOpts.onVerified?.({ token: marker.token, target })
   } catch (err) {
@@ -878,9 +952,11 @@ export const commitDataRootSwitch = async (
       error: 'The staged copy does not include all current data. Run the move again.'
     })
   }
-  const requiredPaths = [RUNTIME_ENVIRONMENT_MANIFESTS_DIR, RUNTIME_PKGS_DIR].filter((path) =>
-    existsSync(join(deps.currentDataRoot, path))
-  )
+  const requiredPaths = [
+    RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
+    RUNTIME_REPAIR_REGISTRY_FILE,
+    RUNTIME_PKGS_DIR
+  ].filter((path) => existsSync(join(deps.currentDataRoot, path)))
   if (requiredPaths.some((path) => !migratedDirs.includes(path))) {
     return failResult({
       ok: false,
@@ -939,9 +1015,7 @@ export const commitDataRootSwitch = async (
   // Persist the exact, already-validated cleanup capability before the pointer commit. A crash after
   // setDataRoot can then retry only this source→target operation; arbitrary paths from settings or a
   // renderer request are never treated as cleanup authority.
-  const newRuntime = join(target, 'runtime')
-  const runtimePreserved =
-    existsSync(join(newRuntime, 'envs.lock')) && existsSync(join(newRuntime, 'pkgs'))
+  const runtimePreserved = await hasVerifiedRuntimeLockBundle(target, marker.runtimeLockInventory)
   const dirsToDelete = runtimePreserved ? [...MIGRATED_DIRS, 'runtime'] : migratedDirs
   let stagedDirsToDelete = dirsToDelete
   if (deps.cleanupJournal) {

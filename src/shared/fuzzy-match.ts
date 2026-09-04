@@ -20,35 +20,61 @@ const PREFIX_BONUS = 4
 const CONSECUTIVE_BONUS = 5
 const MAX_GAP_PENALTY = 3
 
+const foldTargetWithSourcePositions = (
+  target: string
+): { folded: string; sourcePositions: number[] } => {
+  const folded = target.toLowerCase()
+  const sourcePositions: number[] = []
+  let sourceOffset = 0
+
+  // Lowercase the full string for context-sensitive mappings, while retaining the original index
+  // for every independently expanded UTF-16 unit.
+  for (const character of target) {
+    const foldedCharacter = character.toLowerCase()
+    for (let index = 0; index < foldedCharacter.length; index += 1) {
+      sourcePositions.push(sourceOffset + Math.min(index, character.length - 1))
+    }
+    sourceOffset += character.length
+  }
+
+  return { folded, sourcePositions }
+}
+
 export const fuzzyScore = (query: string, target: string): FuzzyMatch | null => {
   if (query.length === 0) return { score: 0, positions: [] }
 
   const q = query.toLowerCase()
-  const t = target.toLowerCase()
-  const positions: number[] = []
+  const { folded: t, sourcePositions } = foldTargetWithSourcePositions(target)
+  const foldedPositions: number[] = []
   let cursor = 0
   for (let qi = 0; qi < q.length; qi++) {
     const next = t.indexOf(q[qi], cursor)
     if (next === -1) return null
-    positions.push(next)
+    foldedPositions.push(next)
     cursor = next + 1
   }
 
   let score = 0
-  for (let k = 0; k < positions.length; k++) {
-    const pos = positions[k]
+  for (let k = 0; k < foldedPositions.length; k++) {
+    const foldedPosition = foldedPositions[k]
+    const sourcePosition = sourcePositions[foldedPosition]
+    const isFirstUnitAtSource =
+      k === 0 || sourcePosition !== sourcePositions[foldedPositions[k - 1]]
     score += BASE
-    if (isBoundary(target, pos)) score += BOUNDARY_BONUS
-    if (pos === 0) score += PREFIX_BONUS
+    if (isFirstUnitAtSource && isBoundary(target, sourcePosition)) score += BOUNDARY_BONUS
+    if (isFirstUnitAtSource && sourcePosition === 0) score += PREFIX_BONUS
     if (k === 0) {
-      score -= Math.min(pos, MAX_GAP_PENALTY)
+      score -= Math.min(foldedPosition, MAX_GAP_PENALTY)
     } else {
-      const gap = pos - positions[k - 1] - 1
+      const gap = foldedPosition - foldedPositions[k - 1] - 1
       if (gap === 0) score += CONSECUTIVE_BONUS
       else score -= Math.min(gap, MAX_GAP_PENALTY)
     }
   }
 
   score += Math.max(0, 8 - target.length / 8)
+  const positions = foldedPositions
+    .map((position) => sourcePositions[position])
+    .filter((position, index, allPositions) => index === 0 || position !== allPositions[index - 1])
   return { score, positions }
 }

@@ -9,6 +9,7 @@ import { Readable, Writable } from 'node:stream'
 
 const VERSION = '1.0.0'
 const PERMISSION_PROMPT = 'Request fixture permission.'
+const SKILL_PERMISSION_PROMPT = 'Request fixture skill permission.'
 const MEMORY_RECALL_PROMPT = 'Verify automatic memory recall.'
 const MEMORY_RECALL_ENTRY = 'Keep every response concise and welcoming.'
 const PROVIDER_BRIDGE_PROMPT = 'Verify the provider bridge.'
@@ -1351,6 +1352,29 @@ if (process.argv.includes('--version')) {
             permission.outcome.optionId === 'allow-once'
               ? 'Fixture permission allowed.'
               : 'Fixture permission denied.'
+        } else if (prompt.includes(SKILL_PERMISSION_PROMPT)) {
+          // The broker classifies mcp__skills__load_skill via the legacy Claude prefix into
+          // mcpIdentity 'skills/load_skill' without any server configuration.
+          const permission = await context.client.request(
+            acp.methods.client.session.requestPermission,
+            {
+              sessionId: context.params.sessionId,
+              toolCall: {
+                toolCallId: 'e2e-skill-permission-tool',
+                title: 'mcp__skills__load_skill',
+                rawInput: { skill: 'fixture-skill' }
+              },
+              options: [
+                { kind: 'allow_once', name: 'Allow once', optionId: 'allow-once' },
+                { kind: 'reject_once', name: 'Deny', optionId: 'deny-once' }
+              ]
+            }
+          )
+          reply =
+            permission.outcome.outcome === 'selected' &&
+            permission.outcome.optionId === 'allow-once'
+              ? 'Fixture skill permission allowed.'
+              : 'Fixture skill permission denied.'
         }
       } catch (error) {
         reply = `E2E fixture failure: ${error instanceof Error ? error.message : String(error)}`

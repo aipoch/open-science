@@ -9,11 +9,13 @@ import type { AcpRuntimeEvent } from '../../shared/acp'
 import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { Project } from '../../shared/projects'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { normalizeSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
+import type { TaskRun } from '../../shared/task-api'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
+import type { TaskRunJournalEntry } from './task-run-journal'
 import {
-  TASK_REVIEW_DISPOSAL_BUDGET_MS,
+  TASK_RUN_DISPOSAL_BUDGET_MS,
   TaskRunner,
   type TaskPreviewResourcePort,
   type TaskProjectPort,
@@ -93,6 +95,7 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
         throw new Error('Unexpected Compute preference update.')
       }
     },
+    runWithLifecycleContext: (operation) => operation(),
     createId: () => 'generated-id',
     now: () => 1,
     ...overrides,
@@ -751,7 +754,9 @@ describe('TaskRunner', () => {
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async () => undefined
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+        }
       }
     })
 
@@ -1229,7 +1234,7 @@ describe('TaskRunner', () => {
       })
 
       expect(review.mock.calls[0]?.[2].aborted).toBe(true)
-      await vi.advanceTimersByTimeAsync(TASK_REVIEW_DISPOSAL_BUDGET_MS)
+      await vi.advanceTimersByTimeAsync(TASK_RUN_DISPOSAL_BUDGET_MS)
       expect(disposed).toBe(true)
     } finally {
       vi.useRealTimers()
@@ -1304,7 +1309,9 @@ describe('TaskRunner', () => {
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async () => undefined
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+        }
       },
       reviewer: { review },
       createId: () => ids.shift() ?? 'generated-id'
@@ -1659,6 +1666,228 @@ describe('TaskRunner', () => {
     }
   })
 
+  it('does not persist a Task turn when ACP rejects admission for an active desktop turn', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      status: 'running',
+      messages: [
+        {
+          id: 'desktop-prompt',
+          role: 'user',
+          content: 'Desktop prompt',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      activeRun: { promptMessageId: 'desktop-prompt', startedAt: 1 }
+    }
+    const save = vi.fn(async () => undefined)
+    const runner = createRunner({
+      sessions: { list: async () => [existing], save },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [existing.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          throw new Error('An ACP interaction is already running for this session')
+        }
+      }
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Task API prompt'
+    })
+    const failed = await runner.waitForRun(started.id)
+
+    expect(save).not.toHaveBeenCalled()
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: 'An ACP interaction is already running for this session'
+    })
+  })
+
+  it('persists detached provider rebinding without a Task turn when admission rejects', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      revision: 1,
+      providerSessionId: 'provider-session-old',
+      providerContinuityToken: 'continuity-old',
+      messages: []
+    }
+    let durableSession = structuredClone(existing)
+    const save = vi.fn(async (candidate: PersistedChatSession) => {
+      durableSession = {
+        ...structuredClone(candidate),
+        revision: (candidate.revision ?? 0) + 1
+      }
+      return structuredClone(durableSession)
+    })
+    const runner = createRunner({
+      sessions: { list: async () => [structuredClone(durableSession)], save },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async () => ({
+          sessionId: existing.id,
+          frameworkId: 'opencode',
+          backendId: 'opencode:provider-new',
+          providerSessionId: 'provider-session-new',
+          providerContinuityToken: 'continuity-new',
+          contextReset: true
+        }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          throw new Error('An ACP interaction is already running for this session')
+        }
+      }
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Task API prompt'
+    })
+    const failed = await runner.waitForRun(started.id)
+
+    expect(save).toHaveBeenCalledOnce()
+    expect(durableSession).toMatchObject({
+      status: existing.status,
+      messages: existing.messages,
+      providerSessionId: 'provider-session-new',
+      providerContinuityToken: 'continuity-new',
+      agentFrameworkId: 'opencode',
+      agentBackendId: 'opencode:provider-new',
+      pendingHistoryReplay: { kind: 'all' }
+    })
+    expect(durableSession).not.toHaveProperty('activeRun')
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: 'An ACP interaction is already running for this session'
+    })
+  })
+
+  it('cleans up an admitted Task turn when Session persistence commits before rejecting', async () => {
+    let durableSession: PersistedChatSession = {
+      ...session,
+      revision: 1,
+      messages: []
+    }
+    const save = vi.fn(async (candidate: PersistedChatSession) => {
+      if (candidate.revision !== durableSession.revision) {
+        throw new Error('Session revision conflict')
+      }
+      durableSession = {
+        ...structuredClone(candidate),
+        revision: (candidate.revision ?? 0) + 1
+      }
+      throw new Error('index unavailable after durable commit')
+    })
+    const runner = createRunner({
+      sessions: { list: async () => [structuredClone(durableSession)], save },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [durableSession.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+        }
+      }
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: durableSession.id,
+      prompt: 'Task API prompt'
+    })
+    const failed = await runner.waitForRun(started.id)
+
+    expect(save).toHaveBeenCalledTimes(2)
+    expect(durableSession).toMatchObject({
+      status: 'error',
+      activeRun: undefined,
+      error: 'index unavailable after durable commit'
+    })
+    expect(failed).toMatchObject({
+      status: 'failed',
+      error: 'index unavailable after durable commit'
+    })
+  })
+
+  it('rebases an admitted Task turn onto concurrent Session metadata edits', async () => {
+    let durableSession: PersistedChatSession = {
+      ...session,
+      revision: 1,
+      messages: []
+    }
+    const list = vi.fn(async () => [structuredClone(durableSession)])
+    const save = vi.fn(async (candidate: PersistedChatSession) => {
+      if (candidate.revision !== durableSession.revision) {
+        throw new Error('Session revision conflict')
+      }
+      durableSession = {
+        ...structuredClone(candidate),
+        revision: (candidate.revision ?? 0) + 1
+      }
+      return structuredClone(durableSession)
+    })
+    const runner = createRunner({
+      sessions: { list, save },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [durableSession.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (_request, observer) => {
+          durableSession = {
+            ...durableSession,
+            title: 'Renamed concurrently',
+            description: 'Keep this edit',
+            revision: 2,
+            updatedAt: 3
+          }
+          await observer?.onPromptAdmitted?.()
+        }
+      },
+      createId: (() => {
+        const ids = ['task-user', 'task-run', 'unused-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: durableSession.id,
+      prompt: 'Task API prompt'
+    })
+    const completed = await runner.waitForRun(started.id)
+
+    expect(completed.status).toBe('completed')
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(durableSession).toMatchObject({
+      title: 'Renamed concurrently',
+      description: 'Keep this edit'
+    })
+    expect(durableSession.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'task-user', content: 'Task API prompt' })
+      ])
+    )
+  })
+
   it('rejects a new authored turn while a restored Plan awaits approval', async () => {
     const existing: PersistedChatSession = {
       ...session,
@@ -1796,7 +2025,8 @@ describe('TaskRunner', () => {
         },
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async (request) => {
+        prompt: async (request, observer) => {
+          await observer?.onPromptAdmitted?.()
           prompts.push(request)
         }
       },
@@ -1841,8 +2071,10 @@ describe('TaskRunner', () => {
     ])
     const promptRuntimeSegmentId = prompts[0]?.provenanceContext.runtimeSegmentId
     expect(
-      savedSessions[0]?.conversationGraph?.runtimeSegments.some(
-        ({ id }) => id === promptRuntimeSegmentId
+      savedSessions.some(
+        (saved) =>
+          saved.activeRun?.promptMessageId === 'new-user' &&
+          saved.conversationGraph?.runtimeSegments.some(({ id }) => id === promptRuntimeSegmentId)
       )
     ).toBe(true)
   })
@@ -1868,7 +2100,9 @@ describe('TaskRunner', () => {
         resumeSession,
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async () => undefined
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+        }
       },
       createId: () => ids.shift() ?? 'generated-id'
     })
@@ -1917,7 +2151,9 @@ describe('TaskRunner', () => {
         resumeSession,
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async () => undefined
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+        }
       },
       createId: () => ids.shift() ?? 'generated-id'
     })
@@ -2002,7 +2238,8 @@ describe('TaskRunner', () => {
         }),
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async (request) => {
+        prompt: async (request, observer) => {
+          await observer?.onPromptAdmitted?.()
           prompts.push(request)
         }
       },
@@ -2025,14 +2262,15 @@ describe('TaskRunner', () => {
       })
     ])
     expect(prompts[0]?.historyPreamble).not.toContain('Delete the duplicates')
-    expect(saved[0]).not.toHaveProperty('resumeRecovery')
-    expect(saved[0].pendingHistoryReplay).toEqual({
+    const admitted = saved.find(({ activeRun }) => activeRun?.promptMessageId === 'new-user')
+    expect(admitted).not.toHaveProperty('resumeRecovery')
+    expect(admitted?.pendingHistoryReplay).toEqual({
       kind: 'before-message',
       messageId: 'interrupted-user'
     })
     expect(saved.at(-1)).not.toHaveProperty('pendingHistoryReplay')
     expect(
-      saved[0]?.messages.filter((message) => message.content === 'Delete the duplicates')
+      admitted?.messages.filter((message) => message.content === 'Delete the duplicates')
     ).toHaveLength(1)
   })
 
@@ -2078,7 +2316,8 @@ describe('TaskRunner', () => {
         resumeSession: async () => ({ sessionId: 'unused' }),
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async (request) => {
+        prompt: async (request, observer) => {
+          await observer?.onPromptAdmitted?.()
           prompts.push(request)
         }
       },
@@ -2146,7 +2385,8 @@ describe('TaskRunner', () => {
         resumeSession: async () => ({ sessionId: 'unused' }),
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
-        prompt: async (request) => {
+        prompt: async (request, observer) => {
+          await observer?.onPromptAdmitted?.()
           prompts.push(request)
           throw new Error('provider rejected prompt')
         }
@@ -2887,26 +3127,53 @@ describe('TaskRunner', () => {
     expect(cancelPrompt).not.toHaveBeenCalled()
   })
 
-  it('observes cancellation accepted while the final Session save is draining', async () => {
+  it('recovers cancellation accepted while the final Session save is draining', async () => {
     let finalSaveStarted: (() => void) | undefined
     let releaseFinalSave: (() => void) | undefined
+    let terminalWriteStarted: (() => void) | undefined
+    let releaseTerminalWrite: (() => void) | undefined
     const finalSaveStart = new Promise<void>((resolve) => {
       finalSaveStarted = resolve
     })
     const finalSaveGate = new Promise<void>((resolve) => {
       releaseFinalSave = resolve
     })
+    const terminalWriteStart = new Promise<void>((resolve) => {
+      terminalWriteStarted = resolve
+    })
+    const terminalWriteGate = new Promise<void>((resolve) => {
+      releaseTerminalWrite = resolve
+    })
     let saveCount = 0
+    let durableSession: PersistedChatSession | undefined
+    let durableRuns: TaskRunJournalEntry[] = []
+    let terminalWriteBlocked = false
     const cancelPrompt = vi.fn(async () => undefined)
     const runner = createRunner({
       sessions: {
-        list: async () => [],
-        save: async () => {
+        list: async () => (durableSession ? [normalizeSessionFile(durableSession)!] : []),
+        save: async (session) => {
           saveCount += 1
           if (saveCount === 2) {
             finalSaveStarted?.()
             await finalSaveGate
           }
+          durableSession = { ...session, revision: (session.revision ?? 0) + 1 }
+          return durableSession
+        }
+      },
+      runJournal: {
+        load: async () => structuredClone(durableRuns),
+        replace: async (runs) => {
+          if (
+            !terminalWriteBlocked &&
+            runs.some((run) => run.id === 'save-run' && run.status === 'cancelled')
+          ) {
+            terminalWriteBlocked = true
+            terminalWriteStarted?.()
+            await terminalWriteGate
+          }
+          durableRuns = runs.map((run) => structuredClone(run))
         }
       },
       agent: {
@@ -2930,7 +3197,103 @@ describe('TaskRunner', () => {
     await vi.waitFor(() => expect(cancelPrompt).toHaveBeenCalledOnce())
     releaseFinalSave?.()
 
+    await terminalWriteStart
+    expect(durableRuns).toContainEqual(
+      expect.objectContaining({
+        id: started.id,
+        status: 'running',
+        sessionCommitStatus: 'cancelled'
+      })
+    )
+    const recoveredRunner = createRunner({
+      sessions: {
+        list: async () => (durableSession ? [normalizeSessionFile(durableSession)!] : [])
+      },
+      runJournal: {
+        load: async () => structuredClone(durableRuns),
+        replace: async () => undefined
+      }
+    })
+    await recoveredRunner.initialize()
+    expect(recoveredRunner.getRun(started.id)).toMatchObject({ status: 'cancelled' })
+
+    releaseTerminalWrite?.()
     await expect(cancellation).resolves.toMatchObject({ status: 'cancelled' })
+    expect(cancelPrompt).toHaveBeenCalledOnce()
+    await recoveredRunner.dispose()
+  })
+
+  it('waits for a queued Session commit marker before dispatching cancellation', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let markQueuedWriteStarted: (() => void) | undefined
+    let releaseQueuedWrite: (() => void) | undefined
+    const queuedWriteStarted = new Promise<void>((resolve) => {
+      markQueuedWriteStarted = resolve
+    })
+    const queuedWriteGate = new Promise<void>((resolve) => {
+      releaseQueuedWrite = resolve
+    })
+    let journalWriteCount = 0
+    const cancelPrompt = vi.fn(async () => undefined)
+    const runner = createRunner({
+      runJournal: {
+        load: async () => [],
+        replace: async () => {
+          journalWriteCount += 1
+          if (journalWriteCount === 3) {
+            markQueuedWriteStarted?.()
+            await queuedWriteGate
+          }
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-queued-marker-cancel' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'queued-plan-event',
+            timestamp: 10,
+            kind: 'plan',
+            level: 'info',
+            sessionId: 'session-queued-marker-cancel',
+            text: 'Queue another journal write.',
+            planProjection: {
+              artifactId: 'queued-plan',
+              artifactVersionId: 'queued-plan-version',
+              artifactChecksum: 'queued-plan-checksum',
+              revision: 1,
+              approval: 'pending',
+              lifecycle: 'awaiting_approval'
+            } as never
+          })
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: (() => {
+        const ids = ['queued-user', 'queued-run', 'queued-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Queue completion.' })
+    await queuedWriteStarted
+    const cancellation = runner.cancelRun(started.id)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(cancelPrompt).not.toHaveBeenCalled()
+
+    releaseQueuedWrite?.()
+
+    await expect(cancellation).resolves.toMatchObject({ status: 'cancelled' })
+    expect(cancelPrompt).toHaveBeenCalledOnce()
   })
 
   it('keeps a real Prompt failure when cancellation is requested afterward', async () => {
@@ -3134,5 +3497,864 @@ describe('TaskRunner', () => {
       expect.objectContaining({ code: 'run_not_found' })
     )
     expect(runner.getRun(latestRunId)).toMatchObject({ status: 'completed' })
+  })
+
+  it('persists a new Run identity before its running Session', async () => {
+    let markInitialSessionSaveStarted: (() => void) | undefined
+    let releaseInitialSessionSave: (() => void) | undefined
+    const initialSessionSaveStarted = new Promise<void>((resolve) => {
+      markInitialSessionSaveStarted = resolve
+    })
+    const initialSessionSaveGate = new Promise<void>((resolve) => {
+      releaseInitialSessionSave = resolve
+    })
+    let blockInitialSessionSave = true
+    let durableRuns: TaskRunJournalEntry[] = []
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async (value) => {
+          if (blockInitialSessionSave && value.status === 'running') {
+            blockInitialSessionSave = false
+            markInitialSessionSaveStarted?.()
+            await initialSessionSaveGate
+          }
+          return value
+        }
+      },
+      runJournal: {
+        load: async () => [],
+        replace: async (runs) => {
+          durableRuns = runs.map((run) => structuredClone(run))
+        }
+      },
+      createId: (() => {
+        const ids = ['ordered-prompt', 'ordered-run']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const starting = runner.startRun({ project: project.id, prompt: 'Persist in order.' })
+    await initialSessionSaveStarted
+    const runWasDurableBeforeSession = durableRuns.some(
+      (run) => run.id === 'ordered-run' && run.status === 'running'
+    )
+    releaseInitialSessionSave?.()
+    const started = await starting
+    await runner.waitForRun(started.id)
+
+    expect(runWasDurableBeforeSession).toBe(true)
+  })
+
+  it('keeps the Run identity when the initial Session save reports a post-commit failure', async () => {
+    let durableSession: PersistedChatSession | undefined
+    let rejectCommittedSave = true
+    let durableRuns: TaskRunJournalEntry[] = []
+    const sessions: TaskSessionPort = {
+      list: async () =>
+        durableSession ? [normalizeSessionFile(structuredClone(durableSession))!] : [],
+      save: async (value) => {
+        durableSession = structuredClone(value)
+        if (rejectCommittedSave && value.status === 'running') {
+          rejectCommittedSave = false
+          throw new Error('Session projection failed after commit.')
+        }
+        return value
+      },
+      setDelegationPolicy: async () => undefined
+    }
+    const runJournal = {
+      load: async () => structuredClone(durableRuns),
+      replace: async (runs: readonly TaskRunJournalEntry[]) => {
+        durableRuns = runs.map((run) => structuredClone(run))
+      }
+    }
+    const runner = createRunner({
+      sessions,
+      runJournal,
+      createId: (() => {
+        const ids = ['post-commit-prompt', 'post-commit-run']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    await expect(
+      runner.startRun({ project: project.id, prompt: 'Keep the durable identity.' })
+    ).rejects.toThrow('Session projection failed after commit.')
+
+    expect(durableRuns).toContainEqual(
+      expect.objectContaining({
+        id: 'post-commit-run',
+        status: 'failed',
+        error: 'Session projection failed after commit.'
+      })
+    )
+    expect(durableSession).toMatchObject({
+      status: 'error',
+      taskRunCommitId: 'post-commit-run',
+      error: 'Session projection failed after commit.'
+    })
+
+    const recoveredRunner = createRunner({ sessions, runJournal })
+    await recoveredRunner.initialize()
+    expect(recoveredRunner.getRun('post-commit-run')).toMatchObject({
+      status: 'failed',
+      error: 'Session projection failed after commit.'
+    })
+  })
+
+  it('recovers a post-commit Session failure before its compensation save completes', async () => {
+    let markCompensationStarted: (() => void) | undefined
+    let releaseCompensation: (() => void) | undefined
+    const compensationStarted = new Promise<void>((resolve) => {
+      markCompensationStarted = resolve
+    })
+    const compensationGate = new Promise<void>((resolve) => {
+      releaseCompensation = resolve
+    })
+    let durableSession: PersistedChatSession | undefined
+    let rejectCommittedSave = true
+    let blockCompensation = true
+    let durableRuns: TaskRunJournalEntry[] = []
+    const sessions: TaskSessionPort = {
+      list: async () =>
+        durableSession ? [normalizeSessionFile(structuredClone(durableSession))!] : [],
+      save: async (value) => {
+        if (rejectCommittedSave && value.status === 'running') {
+          durableSession = structuredClone(value)
+          rejectCommittedSave = false
+          throw new Error('Session projection failed after commit.')
+        }
+        if (blockCompensation && value.taskRunCommitId === 'crash-window-run') {
+          blockCompensation = false
+          markCompensationStarted?.()
+          await compensationGate
+        }
+        durableSession = structuredClone(value)
+        return value
+      },
+      setDelegationPolicy: async () => undefined
+    }
+    const runJournal = {
+      load: async () => structuredClone(durableRuns),
+      replace: async (runs: readonly TaskRunJournalEntry[]) => {
+        durableRuns = runs.map((run) => structuredClone(run))
+      }
+    }
+    const runner = createRunner({
+      sessions,
+      runJournal,
+      createId: (() => {
+        const ids = ['crash-window-prompt', 'crash-window-run']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const starting = runner.startRun({
+      project: project.id,
+      prompt: 'Recover the compensation window.'
+    })
+    await compensationStarted
+
+    expect(durableRuns).toContainEqual(
+      expect.objectContaining({
+        id: 'crash-window-run',
+        status: 'running',
+        sessionCommitStatus: 'failed',
+        error: 'Session projection failed after commit.'
+      })
+    )
+
+    const recoveredRunner = createRunner({ sessions, runJournal })
+    await recoveredRunner.initialize()
+    expect(recoveredRunner.getRun('crash-window-run')).toMatchObject({
+      status: 'failed',
+      failureCode: 'process_restarted',
+      error: 'Run interrupted because Open Science restarted.'
+    })
+    expect(durableSession).toMatchObject({
+      status: 'error',
+      taskRunCommitId: 'crash-window-run'
+    })
+
+    releaseCompensation?.()
+    await expect(starting).rejects.toThrow('Session projection failed after commit.')
+  })
+
+  it('terminates in memory and repairs the Session after its compensation save fails', async () => {
+    let durableSession: PersistedChatSession | undefined
+    let rejectCommittedSave = true
+    let rejectCompensationSave = true
+    let durableRuns: TaskRunJournalEntry[] = []
+    const sessions: TaskSessionPort = {
+      list: async () =>
+        durableSession ? [normalizeSessionFile(structuredClone(durableSession))!] : [],
+      save: async (value) => {
+        if (rejectCommittedSave && value.status === 'running') {
+          durableSession = structuredClone(value)
+          rejectCommittedSave = false
+          throw new Error('Session projection failed after commit.')
+        }
+        if (rejectCompensationSave && value.taskRunCommitId === 'compensation-failure-run') {
+          rejectCompensationSave = false
+          throw new Error('Session compensation save failed.')
+        }
+        durableSession = structuredClone(value)
+        return value
+      },
+      setDelegationPolicy: async () => undefined
+    }
+    const runJournal = {
+      load: async () => structuredClone(durableRuns),
+      replace: async (runs: readonly TaskRunJournalEntry[]) => {
+        durableRuns = runs.map((run) => structuredClone(run))
+      }
+    }
+    const runner = createRunner({
+      sessions,
+      runJournal,
+      createId: (() => {
+        const ids = ['compensation-failure-prompt', 'compensation-failure-run']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    await expect(
+      runner.startRun({ project: project.id, prompt: 'Fail the compensation save.' })
+    ).rejects.toThrow('Session projection failed after commit.')
+
+    expect(runner.getRun('compensation-failure-run')).toMatchObject({
+      status: 'failed',
+      error: 'Session projection failed after commit.'
+    })
+    expect(durableRuns).toContainEqual(
+      expect.objectContaining({
+        id: 'compensation-failure-run',
+        status: 'failed',
+        sessionCommitStatus: 'failed'
+      })
+    )
+
+    const recoveredRunner = createRunner({ sessions, runJournal })
+    await recoveredRunner.initialize()
+    expect(recoveredRunner.getRun('compensation-failure-run')).toMatchObject({
+      status: 'failed',
+      error: 'Session projection failed after commit.'
+    })
+    expect(durableSession).toMatchObject({
+      status: 'error',
+      taskRunCommitId: 'compensation-failure-run'
+    })
+  })
+
+  it('persists a witness for the recovered Session when an interrupted Run is restored', async () => {
+    let durableSession = normalizeSessionFile({
+      ...session,
+      status: 'running',
+      activeRun: { promptMessageId: 'interrupted-prompt', startedAt: 2 },
+      messages: [
+        {
+          id: 'interrupted-prompt',
+          role: 'user',
+          content: 'Resume after restart.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })!
+    let durableRuns: TaskRunJournalEntry[] = [
+      {
+        id: 'interrupted-run',
+        sessionId: session.id,
+        projectId: project.id,
+        cwd: session.cwd,
+        status: 'running',
+        startedAt: 2,
+        artifacts: [],
+        preferredComputeHostIds: [],
+        promptMessageId: 'interrupted-prompt'
+      }
+    ]
+    let failureWasStagedBeforeSessionSave = false
+    const runner = createRunner({
+      sessions: {
+        list: async () => [structuredClone(durableSession)],
+        save: async (value) => {
+          failureWasStagedBeforeSessionSave = durableRuns.some(
+            (run) =>
+              run.id === 'interrupted-run' &&
+              run.status === 'running' &&
+              run.sessionCommitStatus === 'failed'
+          )
+          durableSession = normalizeSessionFile(value)!
+          return durableSession
+        }
+      },
+      runJournal: {
+        load: async () => structuredClone(durableRuns),
+        replace: async (runs) => {
+          durableRuns = runs.map((run) => structuredClone(run))
+        }
+      }
+    })
+
+    await runner.initialize()
+
+    expect(runner.getRun('interrupted-run')).toMatchObject({
+      status: 'failed',
+      failureCode: 'process_restarted'
+    })
+    expect(durableSession).toMatchObject({
+      status: 'error',
+      taskRunCommitId: 'interrupted-run',
+      error: 'Session was interrupted before the app closed.'
+    })
+    expect(durableSession.activeRun).toBeUndefined()
+    expect(failureWasStagedBeforeSessionSave).toBe(true)
+  })
+
+  it('does not overwrite newer Session activity while reconciling an interrupted Run', async () => {
+    const interruptedSession = normalizeSessionFile({
+      ...session,
+      status: 'running',
+      activeRun: { promptMessageId: 'old-prompt', startedAt: 2 },
+      messages: [
+        {
+          id: 'old-prompt',
+          role: 'user',
+          content: 'Old work.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })!
+    const newerSession: PersistedChatSession = {
+      ...session,
+      status: 'running',
+      activeRun: { promptMessageId: 'new-prompt', startedAt: 4 },
+      messages: [
+        ...interruptedSession.messages,
+        {
+          id: 'new-prompt',
+          role: 'user',
+          content: 'New work.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 4,
+          updatedAt: 4
+        }
+      ],
+      updatedAt: 4
+    }
+    let reads = 0
+    const journalSnapshots: TaskRunJournalEntry[][] = []
+    let durableRuns: TaskRunJournalEntry[] = [
+      {
+        id: 'old-run',
+        sessionId: session.id,
+        projectId: project.id,
+        cwd: session.cwd,
+        status: 'running',
+        startedAt: 2,
+        artifacts: [],
+        preferredComputeHostIds: [],
+        promptMessageId: 'old-prompt'
+      }
+    ]
+    const save = vi.fn(async (value: PersistedChatSession) => value)
+    const runner = createRunner({
+      sessions: {
+        list: async () => structuredClone(reads++ === 0 ? [interruptedSession] : [newerSession]),
+        save
+      },
+      runJournal: {
+        load: async () => structuredClone(durableRuns),
+        replace: async (runs) => {
+          durableRuns = runs.map((run) => structuredClone(run))
+          journalSnapshots.push(structuredClone(durableRuns))
+        }
+      }
+    })
+
+    await runner.initialize()
+
+    expect(save).not.toHaveBeenCalled()
+    expect(runner.getRun('old-run')).toMatchObject({
+      status: 'failed',
+      failureCode: 'process_restarted'
+    })
+    expect(journalSnapshots[0]).toContainEqual(
+      expect.objectContaining({
+        id: 'old-run',
+        status: 'running',
+        sessionCommitStatus: 'failed'
+      })
+    )
+    expect(durableRuns[0]?.sessionCommitStatus).toBeUndefined()
+  })
+
+  it('does not report completion when the terminal Run record cannot be persisted', async () => {
+    let writes = 0
+    let durableSession: PersistedChatSession | undefined
+    const runner = createRunner({
+      sessions: {
+        list: async () => (durableSession ? [structuredClone(durableSession)] : []),
+        save: async (value) => {
+          durableSession = structuredClone(value)
+          return value
+        }
+      },
+      runJournal: {
+        load: async () => [],
+        replace: async () => {
+          writes += 1
+          if (writes > 2) throw new Error('disk full')
+        }
+      }
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Persist this Run.' })
+
+    await expect(runner.waitForRun(started.id)).rejects.toThrow('disk full')
+    expect(runner.getRun(started.id)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('Task Run terminal state could not be persisted.')
+    })
+    await expect(runner.listSessions()).resolves.toEqual([
+      expect.objectContaining({ id: started.sessionId, status: 'error' })
+    ])
+    expect(durableSession?.activeRun).toBeUndefined()
+  })
+
+  it('recovers a terminal persistence fallback without stale Session commit metadata', async () => {
+    let writes = 0
+    let durableRuns: TaskRunJournalEntry[] = []
+    const runJournal = {
+      load: async () => structuredClone(durableRuns),
+      replace: async (runs: readonly TaskRunJournalEntry[]) => {
+        writes += 1
+        if (writes === 4) throw new Error('terminal write failed once')
+        durableRuns = runs.map((run) => structuredClone(run))
+      }
+    }
+    const runner = createRunner({ runJournal })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Fallback durably.' })
+    await expect(runner.waitForRun(started.id)).resolves.toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('Task Run terminal state could not be persisted.')
+    })
+
+    const recoveredRunner = createRunner({ runJournal })
+    await recoveredRunner.initialize()
+
+    expect(recoveredRunner.getRun(started.id)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('Task Run terminal state could not be persisted.')
+    })
+    expect(durableRuns.find((run) => run.id === started.id)?.sessionCommitStatus).toBeUndefined()
+  })
+
+  it('recovers a completed Run when the Session commit precedes automatic review', async () => {
+    let durableSession: PersistedChatSession | undefined
+    let durableRuns: TaskRun[] = []
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let markReviewStarted: (() => void) | undefined
+    let releaseReview: (() => void) | undefined
+    const reviewStarted = new Promise<void>((resolve) => {
+      markReviewStarted = resolve
+    })
+    const reviewGate = new Promise<void>((resolve) => {
+      releaseReview = resolve
+    })
+    const sessions: TaskSessionPort = {
+      list: async () => (durableSession ? [normalizeSessionFile(durableSession)!] : []),
+      save: async (value) => {
+        const persisted = { ...value, revision: (value.revision ?? 0) + 1 }
+        durableSession = structuredClone(persisted)
+        return persisted
+      },
+      setDelegationPolicy: async () => undefined
+    }
+    const runJournal = {
+      load: async () => structuredClone(durableRuns),
+      replace: async (runs: readonly TaskRun[]) => {
+        durableRuns = runs.map((run) => structuredClone(run))
+      }
+    }
+    const ids = ['recovery-user', 'recovery-run', 'recovery-agent']
+    const runner = createRunner({
+      sessions,
+      runJournal,
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-review-recovery' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'recovery-message-event',
+            timestamp: 10,
+            kind: 'message',
+            level: 'info',
+            sessionId: 'session-review-recovery',
+            role: 'assistant',
+            text: 'Durable response.'
+          })
+        }
+      },
+      reviewer: {
+        review: async () => {
+          markReviewStarted?.()
+          await reviewGate
+          return { started: true }
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      prompt: 'Commit before review.',
+      autoReviewEnabled: true
+    })
+    await reviewStarted
+
+    expect(durableSession).toMatchObject({ status: 'idle', activeRun: undefined })
+    expect(durableSession?.taskRunCommitId).toBe(started.id)
+    expect(durableRuns).toContainEqual(expect.objectContaining({ status: 'running' }))
+    expect(runner.getRun(started.id)).toMatchObject({ status: 'running', output: undefined })
+
+    const recoveredRunner = createRunner({ sessions, runJournal })
+    await recoveredRunner.initialize()
+
+    expect(recoveredRunner.getRun(started.id)).toMatchObject({
+      status: 'completed',
+      output: 'Durable response.'
+    })
+
+    releaseReview?.()
+    await runner.waitForRun(started.id)
+    await recoveredRunner.dispose()
+  })
+
+  it('recovers the original failure when the failed Session commit precedes terminalization', async () => {
+    let durableSession: PersistedChatSession | undefined
+    let durableRuns: TaskRunJournalEntry[] = []
+    let markTerminalWriteStarted: (() => void) | undefined
+    let releaseTerminalWrite: (() => void) | undefined
+    const terminalWriteStarted = new Promise<void>((resolve) => {
+      markTerminalWriteStarted = resolve
+    })
+    const terminalWriteGate = new Promise<void>((resolve) => {
+      releaseTerminalWrite = resolve
+    })
+    let terminalWriteBlocked = false
+    const sessions: TaskSessionPort = {
+      list: async () => (durableSession ? [normalizeSessionFile(durableSession)!] : []),
+      save: async (value) => {
+        const persisted = { ...value, revision: (value.revision ?? 0) + 1 }
+        durableSession = structuredClone(persisted)
+        return persisted
+      },
+      setDelegationPolicy: async () => undefined
+    }
+    const runJournal = {
+      load: async () => structuredClone(durableRuns),
+      replace: async (runs: readonly TaskRunJournalEntry[]) => {
+        if (
+          !terminalWriteBlocked &&
+          runs.some((run) => run.id === 'failure-run' && run.status === 'failed')
+        ) {
+          terminalWriteBlocked = true
+          markTerminalWriteStarted?.()
+          await terminalWriteGate
+        }
+        durableRuns = runs.map((run) => structuredClone(run))
+      }
+    }
+    const ids = ['failure-user', 'failure-run', 'failure-agent']
+    const runner = createRunner({
+      sessions,
+      runJournal,
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-failure-recovery' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          throw new Error('provider failed')
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Fail durably.' })
+    await terminalWriteStarted
+
+    expect(durableSession).toMatchObject({ status: 'error', error: 'provider failed' })
+    expect(durableSession?.taskRunCommitId).toBe(started.id)
+    expect(durableRuns).toContainEqual(
+      expect.objectContaining({
+        id: started.id,
+        status: 'running',
+        sessionCommitStatus: 'failed',
+        error: 'provider failed'
+      })
+    )
+
+    const recoveredRunner = createRunner({ sessions, runJournal })
+    await recoveredRunner.initialize()
+
+    expect(recoveredRunner.getRun(started.id)).toMatchObject({
+      status: 'failed',
+      error: 'provider failed',
+      failureCode: undefined
+    })
+
+    releaseTerminalWrite?.()
+    await runner.waitForRun(started.id)
+    await recoveredRunner.dispose()
+  })
+
+  it('does not recover a staged completion after an unrelated startup Session save', async () => {
+    const normalizedSession = normalizeSessionFile({
+      ...session,
+      status: 'running',
+      activeRun: { promptMessageId: 'staged-prompt', startedAt: 2 },
+      messages: [
+        {
+          id: 'staged-prompt',
+          role: 'user',
+          content: 'Finish this work.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })!
+    const startupSession = { ...normalizedSession, status: 'idle' as const, revision: 1 }
+    const runner = createRunner({
+      sessions: {
+        list: async () => [startupSession]
+      },
+      runJournal: {
+        load: async () => [
+          {
+            id: 'staged-run',
+            sessionId: session.id,
+            projectId: project.id,
+            cwd: session.cwd,
+            status: 'running',
+            startedAt: 2,
+            completedAt: 3,
+            output: 'Not committed yet.',
+            artifacts: [],
+            preferredComputeHostIds: [],
+            promptMessageId: 'staged-prompt',
+            sessionCommitStatus: 'completed'
+          }
+        ],
+        replace: async () => undefined
+      }
+    })
+
+    await runner.initialize()
+
+    expect(runner.getRun('staged-run')).toMatchObject({
+      status: 'failed',
+      failureCode: 'process_restarted'
+    })
+  })
+
+  it('clears stale attention when recovering a committed cancellation', async () => {
+    const runner = createRunner({
+      sessions: {
+        list: async () => [
+          normalizeSessionFile({
+            ...session,
+            status: 'idle',
+            activeRun: undefined,
+            taskRunCommitId: 'cancelled-run'
+          })!
+        ]
+      },
+      runJournal: {
+        load: async () => [
+          {
+            id: 'cancelled-run',
+            sessionId: session.id,
+            projectId: project.id,
+            cwd: session.cwd,
+            status: 'running',
+            startedAt: 2,
+            completedAt: 3,
+            cancelledAt: 3,
+            artifacts: [],
+            preferredComputeHostIds: [],
+            promptMessageId: 'cancelled-prompt',
+            sessionCommitStatus: 'cancelled',
+            attention: { kind: 'plan-approval', plan: {} as never }
+          }
+        ],
+        replace: async () => undefined
+      }
+    })
+
+    await runner.initialize()
+
+    expect(runner.getRun('cancelled-run')).toMatchObject({
+      status: 'cancelled',
+      attention: undefined
+    })
+  })
+
+  it('rolls back a staged cancellation when its journal write fails', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let markReviewStarted: (() => void) | undefined
+    let releaseReview: (() => void) | undefined
+    const reviewStarted = new Promise<void>((resolve) => {
+      markReviewStarted = resolve
+    })
+    const reviewGate = new Promise<void>((resolve) => {
+      releaseReview = resolve
+    })
+    let journalWriteCount = 0
+    let durableRuns: TaskRunJournalEntry[] = []
+    let sessionCount = 0
+    const ids = ['cancel-user', 'cancel-run', 'cancel-agent', 'next-user', 'next-run', 'next-agent']
+    const runner = createRunner({
+      runJournal: {
+        load: async () => [],
+        replace: async (runs) => {
+          journalWriteCount += 1
+          if (journalWriteCount === 4) throw new Error('cancel journal failed')
+          durableRuns = runs.map((run) => structuredClone(run))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: `session-${++sessionCount}` }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (request) => {
+          emitEvent?.({
+            id: `${request.sessionId}-message`,
+            timestamp: 10,
+            kind: 'message',
+            level: 'info',
+            sessionId: request.sessionId,
+            role: 'assistant',
+            text: 'Durable response.'
+          })
+        }
+      },
+      reviewer: {
+        review: async () => {
+          markReviewStarted?.()
+          await reviewGate
+          return { started: true }
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const first = await runner.startRun({
+      project: project.id,
+      prompt: 'Review before cancellation.',
+      autoReviewEnabled: true
+    })
+    await reviewStarted
+    await expect(runner.cancelRun(first.id)).rejects.toThrow('cancel journal failed')
+
+    const next = await runner.startRun({ project: project.id, prompt: 'Persist another Run.' })
+    await runner.waitForRun(next.id)
+
+    expect(durableRuns.find((run) => run.id === first.id)).toMatchObject({
+      status: 'running',
+      sessionCommitStatus: 'completed'
+    })
+
+    releaseReview?.()
+    await expect(runner.waitForRun(first.id)).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it('excludes a failed initial Run from snapshots queued behind its rejected write', async () => {
+    let releaseFirstWrite: (() => void) | undefined
+    let markFirstWriteStarted: (() => void) | undefined
+    let finishPrompt: (() => void) | undefined
+    const firstWriteStarted = new Promise<void>((resolve) => {
+      markFirstWriteStarted = resolve
+    })
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve
+    })
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const snapshots: (readonly TaskRun[])[] = []
+    let writeCount = 0
+    let sessionCount = 0
+    const ids = ['user-1', 'run-1', 'user-2', 'run-2']
+    const runner = createRunner({
+      runJournal: {
+        load: async () => [],
+        replace: async (runs) => {
+          writeCount += 1
+          if (writeCount === 1) {
+            markFirstWriteStarted?.()
+            await firstWriteGate
+            throw new Error('initial journal write failed')
+          }
+          snapshots.push(structuredClone(runs))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: `session-${++sessionCount}` }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => promptGate
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const rejectedStart = runner.startRun({ project: project.id, prompt: 'First Run.' })
+    await firstWriteStarted
+    const acceptedStart = runner.startRun({ project: project.id, prompt: 'Second Run.' })
+    await vi.waitFor(() => expect(() => runner.getRun('run-2')).not.toThrow())
+    releaseFirstWrite?.()
+
+    await expect(rejectedStart).rejects.toThrow('initial journal write failed')
+    const accepted = await acceptedStart
+    expect(snapshots[0]?.map(({ id }) => id)).toEqual(['run-2'])
+
+    finishPrompt?.()
+    await runner.waitForRun(accepted.id)
   })
 })

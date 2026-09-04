@@ -60,6 +60,28 @@ describe('project store', () => {
     warn.mockRestore()
   })
 
+  it('loads cleanup status and requests an immediate retry', async () => {
+    const cleanup = [
+      {
+        projectId: 'project-1',
+        projectName: 'Research',
+        phase: 'retry-scheduled' as const,
+        failureCount: 2,
+        nextRetryAt: 6_000
+      }
+    ]
+    const listDeletionCleanup = vi.fn().mockResolvedValue(cleanup)
+    const retryDeletionCleanup = vi.fn().mockResolvedValue(undefined)
+    setProjectsApi({ listDeletionCleanup, retryDeletionCleanup })
+
+    await useProjectStore.getState().loadDeletionCleanup()
+    await useProjectStore.getState().retryDeletionCleanup()
+
+    expect(useProjectStore.getState().deletionCleanup).toEqual(cleanup)
+    expect(retryDeletionCleanup).toHaveBeenCalledOnce()
+    expect(listDeletionCleanup).toHaveBeenCalledTimes(2)
+  })
+
   it('ignores an older project load that resolves after a newer request', async () => {
     const first = createDeferred<Project[]>()
     const second = createDeferred<Project[]>()
@@ -209,11 +231,18 @@ describe('project store', () => {
 
     expect(outcome).toEqual({ status: 'cleanup-pending' })
     expect(useProjectStore.getState().projects.map((project) => project.id)).toEqual(['keep'])
-    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has('drop')).toBe(true)
+    expect(useProjectStore.getState().deletionCleanup).toEqual([
+      {
+        projectId: 'drop',
+        projectName: 'Research',
+        phase: 'running',
+        failureCount: 0
+      }
+    ])
 
     useProjectStore.getState().removeProject('drop')
 
-    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has('drop')).toBe(false)
+    expect(useProjectStore.getState().deletionCleanup).toEqual([])
   })
 
   it('does not let a late pending command result supersede terminal lifecycle state', async () => {
@@ -229,7 +258,7 @@ describe('project store', () => {
     commandResult.resolve({ status: 'cleanup-pending' })
 
     await expect(deletion).resolves.toEqual({ status: 'cleanup-pending' })
-    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has('drop')).toBe(false)
+    expect(useProjectStore.getState().deletionCleanup).toEqual([])
     expect(useProjectStore.getState().projectDeletionRequests.size).toBe(0)
   })
 })

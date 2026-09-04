@@ -199,8 +199,9 @@ describe('release and scheduled workflow topology', () => {
     const plan = publishWorkflow.jobs.plan
     const publish = publishWorkflow.jobs.publish
     const download = step(publish, 'Download prepared nightly artifacts')
-    const reset = step(publish, 'Reset nightly release')
+    const refresh = step(publish, 'Refresh nightly release')
     const release = step(publish, 'Publish nightly pre-release')
+    const advance = step(publish, 'Advance nightly tag')
     const workflowRun = publishWorkflow.on?.workflow_run as {
       branches: string[]
       types: string[]
@@ -245,14 +246,34 @@ describe('release and scheduled workflow topology', () => {
     expect(
       publish.steps?.some(({ run }) => run?.includes('release-certification-evidence.mjs'))
     ).toBe(false)
-    expect(reset.if).toBeUndefined()
-    expect(reset.run).toContain('repos/$GITHUB_REPOSITORY/releases/tags/nightly')
-    expect(reset.run).toContain('repos/$GITHUB_REPOSITORY/releases/$release_id')
-    expect(reset.run).toContain('repos/$GITHUB_REPOSITORY/git/refs/tags/nightly')
-    expect(reset.run).toContain("grep -Eq 'HTTP 404'")
-    expect(reset.run).not.toContain('--cleanup-tag')
-    expect(reset.run).not.toMatch(/\|\|\s*true/)
+    expect(refresh.if).toBeUndefined()
+    expect(refresh.run).toContain('repos/$GITHUB_REPOSITORY/releases/tags/nightly')
+    expect(refresh.run).toContain('refusing to create a new Zenodo-visible release')
+    expect(refresh.run).toContain('repos/$GITHUB_REPOSITORY/git/ref/tags/nightly')
+    expect(refresh.run).toContain('refusing to publish without a retry marker')
+    expect(refresh.run).not.toContain('--method PATCH')
+    expect(refresh.run).not.toContain('--method POST')
+    expect(refresh.run).toContain('repos/$GITHUB_REPOSITORY/releases/$release_id/assets')
+    expect(refresh.run).toContain('repos/$GITHUB_REPOSITORY/releases/assets/$asset_id')
+    expect(refresh.run).not.toContain('DELETE "repos/$GITHUB_REPOSITORY/releases/$release_id"')
+    expect(refresh.run).not.toMatch(/\|\|\s*true/)
     expect(release.if).toBeUndefined()
+    expect(advance.run).toContain('--method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly"')
+    expect(advance.run).toContain('-F force=true')
+    const publishSteps = publish.steps ?? []
+    expect(publishSteps.indexOf(refresh)).toBeLessThan(publishSteps.indexOf(release))
+    expect(publishSteps.indexOf(release)).toBeLessThan(publishSteps.indexOf(advance))
+  })
+
+  it('publishes stable release notes as the GitHub and Zenodo description', () => {
+    const publish = workflow('release.yml').jobs.publish
+    const resolve = step(publish, 'Resolve release notes')
+    const release = step(publish, 'Publish GitHub Release')
+
+    expect(resolve.run).toContain('release-notes/${GITHUB_REF_NAME#v}/en.md')
+    expect(resolve.run).toContain('if [ ! -s "$path" ]')
+    expect(release.with?.body_path).toBe('${{ steps.release_notes.outputs.path }}')
+    expect(release.with).not.toHaveProperty('generate_release_notes')
   })
 
   it('dispatches the advisory Windows upgrade drill only after stable publication', () => {

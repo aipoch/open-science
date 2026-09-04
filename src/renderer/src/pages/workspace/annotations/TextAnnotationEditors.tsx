@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Pencil } from 'lucide-react'
+import { CircleAlert, Pencil } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -172,6 +172,7 @@ const AnnotationDraftEditor = ({
   onCancel,
   onNoteChange,
   onAdd,
+  annotationBlockedByHistoricalVersion = false,
   triggerActions
 }: {
   range: Range
@@ -184,51 +185,98 @@ const AnnotationDraftEditor = ({
   onCancel: () => void
   onNoteChange: (note: string) => void
   onAdd: () => void
+  annotationBlockedByHistoricalVersion?: boolean
   triggerActions?: readonly AnnotationTriggerAction[]
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const presentation = editorPresentation[variant]
+  // The blocked state keeps the selection trigger visible while its explanation is open.
+  const [blockedRange, setBlockedRange] = useState<Range>()
+  const blockedOpen = annotationBlockedByHistoricalVersion && (open || blockedRange === range)
+  const effectiveTriggerActions = triggerActions?.map((action) =>
+    action.availableWhenAnnotationBlocked
+      ? action
+      : {
+          ...action,
+          onActivate: () => {
+            if (annotationBlockedByHistoricalVersion) setBlockedRange(range)
+            else action.onActivate()
+          }
+        }
+  )
 
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    <Popover
+      open={open || blockedOpen}
+      onOpenChange={(next) => {
+        if (blockedOpen) {
+          if (!next) setBlockedRange(undefined)
+          if (open) onOpenChange(false)
+        } else onOpenChange(next)
+      }}
+    >
       <AnnotationTrigger
         range={range}
         backward={backward}
-        hidden={open}
+        hidden={open && !blockedOpen}
         label={t('Annotate')}
-        onActivate={() => onOpenChange(true)}
-        actions={triggerActions}
+        onActivate={() => {
+          if (annotationBlockedByHistoricalVersion) setBlockedRange(range)
+          else onOpenChange(true)
+        }}
+        actions={effectiveTriggerActions}
         actionMenuLabel={triggerActions ? t('Selection actions') : undefined}
       />
-      <PopoverContent
-        align="start"
-        side="bottom"
-        collisionPadding={presentation.collisionPadding}
-        className={presentation.contentClassName}
-      >
-        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {t('To Agent')}
-        </div>
-        <label className="block text-xs font-medium" htmlFor={noteInputId}>
-          {t('Note (optional)')}
-        </label>
-        <Textarea
-          id={noteInputId}
-          autoFocus
-          value={note}
-          maxLength={2_000}
-          placeholder={t('Add context for the Agent')}
-          onChange={(event) => onNoteChange(event.target.value)}
-        />
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-            {t('Cancel')}
-          </Button>
-          <Button type="button" size="sm" onClick={onAdd}>
-            {t('Annotate')}
-          </Button>
-        </div>
-      </PopoverContent>
+      {blockedOpen ? (
+        <PopoverContent
+          role="alert"
+          align="start"
+          side="bottom"
+          sideOffset={6}
+          collisionPadding={presentation.collisionPadding}
+          className="z-[110] w-72 border border-destructive/30 bg-popover p-3 text-popover-foreground"
+          onOpenAutoFocus={(event) => event.preventDefault()}
+        >
+          <div className="flex items-start gap-2 text-xs leading-5 text-destructive">
+            <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <span>
+              {t(
+                'Historical versions cannot be annotated. Switch to the latest version to annotate.'
+              )}
+            </span>
+          </div>
+        </PopoverContent>
+      ) : (
+        <PopoverContent
+          align="start"
+          side="bottom"
+          collisionPadding={presentation.collisionPadding}
+          className={presentation.contentClassName}
+        >
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {t('To Agent')}
+          </div>
+          <label className="block text-xs font-medium" htmlFor={noteInputId}>
+            {t('Note (optional)')}
+          </label>
+          <Textarea
+            id={noteInputId}
+            autoFocus
+            value={note}
+            maxLength={2_000}
+            placeholder={t('Add context for the Agent')}
+            onChange={(event) => onNoteChange(event.target.value)}
+          />
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+              {t('Cancel')}
+            </Button>
+            <Button type="button" size="sm" onClick={onAdd}>
+              {t('Annotate')}
+            </Button>
+          </div>
+        </PopoverContent>
+      )}
     </Popover>
   )
 }

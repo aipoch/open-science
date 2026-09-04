@@ -182,6 +182,59 @@ describe('annotations', () => {
     )
   })
 
+  it('preserves complete managed project-file identity and rejects partial identity', () => {
+    const annotation = textAnnotation({
+      source: {
+        kind: 'project-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        path: '/stale/report.md',
+        name: 'report.md',
+        fileSource: 'artifact',
+        sourceFileId: 'artifact-1',
+        versionId: 'version-2'
+      }
+    })
+
+    expect(sanitizeAnnotations([annotation])).toEqual([annotation])
+    expect(
+      sanitizeAnnotations([
+        {
+          ...annotation,
+          source: { ...annotation.source, sourceFileId: undefined }
+        }
+      ])
+    ).toEqual([])
+  })
+
+  it('rejects managed project-file identity without an immutable or consistent Version', () => {
+    const annotation = textAnnotation({
+      source: {
+        kind: 'project-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        path: '/stale/report.md',
+        name: 'report.md',
+        fileSource: 'artifact',
+        sourceFileId: 'artifact-1'
+      }
+    })
+
+    expect(sanitizeAnnotations([annotation])).toEqual([])
+    expect(
+      sanitizeAnnotations([
+        {
+          ...annotation,
+          source: {
+            ...annotation.source,
+            path: 'artifact-version:project-1/session-1/artifact-2/version-2',
+            versionId: 'version-2'
+          }
+        }
+      ])
+    ).toEqual([])
+  })
+
   it('keeps immutable PDF text anchors in persisted and Agent context', () => {
     const annotation = pdfAnnotation()
 
@@ -346,7 +399,7 @@ describe('annotations', () => {
     },
     {
       kind: 'upload-version' as const,
-      path: 'upload-version:project-1/session-1/version-1'
+      path: 'upload-version:project-1/session-1/upload-1/version-1'
     }
   ])('accepts a fixed $kind identity only when every locator field matches', ({ kind, path }) => {
     const source = {

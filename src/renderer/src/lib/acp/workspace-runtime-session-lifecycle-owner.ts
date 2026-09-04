@@ -5,7 +5,10 @@ import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/run-error-classification'
 import { useSessionStore, type ChatMessage, type ChatSession } from '../../stores/session-store'
-import { flushSessionPersistence } from '../session-persistence/session-persistence'
+import {
+  confirmPendingDelegationPolicyAuthority,
+  flushSessionPersistence
+} from '../session-persistence/session-persistence'
 import type { useAcpRuntime } from './useAcpRuntime'
 import { resolveHistoryReplayTarget, type HistoryReplayDescriptor } from './history-preamble'
 import { getResumeFailureMessage } from './workspace-runtime-prompt-preparation-owner'
@@ -169,6 +172,14 @@ const resumeInterruptedWorkspaceSession = async (
   const session = workspaceSession(sessionId)
 
   if (!session) return
+  if (session.delegationPolicyAuthorityPending) {
+    try {
+      await confirmPendingDelegationPolicyAuthority(session)
+    } catch (error) {
+      useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
+      return
+    }
+  }
 
   const runtimeAlreadyAttached =
     runtime.state.sessionIds.includes(sessionId) && !options?.agentTarget

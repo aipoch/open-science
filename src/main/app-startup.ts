@@ -23,6 +23,7 @@ export type SecondInstanceRelay = {
 type SystemShutdownRelay = {
   signal: () => void
   bind: (handler: () => void) => void
+  cancel: () => void
 }
 
 const STARTUP_SYSTEM_SHUTDOWN_TIMEOUT_MS = 5_000
@@ -87,9 +88,17 @@ const createSystemShutdownRelay = (
   let pending = false
   let handler: (() => void) | undefined
   let forceExitTimer: ReturnType<typeof setTimeout> | undefined
+  let cancelled = false
+
+  const clearForceExitTimer = (): void => {
+    if (!forceExitTimer) return
+    clearTimeout(forceExitTimer)
+    forceExitTimer = undefined
+  }
 
   return {
     signal: () => {
+      if (cancelled) return
       if (handler) handler()
       else {
         pending = true
@@ -99,14 +108,18 @@ const createSystemShutdownRelay = (
       }
     },
     bind: (next) => {
+      if (cancelled) return
       handler = next
-      if (forceExitTimer) {
-        clearTimeout(forceExitTimer)
-        forceExitTimer = undefined
-      }
+      clearForceExitTimer()
       if (!pending) return
       pending = false
       handler()
+    },
+    cancel: () => {
+      cancelled = true
+      pending = false
+      handler = undefined
+      clearForceExitTimer()
     }
   }
 }
@@ -136,6 +149,9 @@ export type AppStartupDeps<Context> = {
     onSecondInstance: (argv: string[]) => void
     onSystemShutdown?: () => void
   }
+  // Best-effort, bounded cleanup for failures after prepare() has transferred runtime ownership.
+  // The callback owns cleanup diagnostics; a cleanup failure must not replace the startup error.
+  cleanupAfterStartupFailure?: (context: Context, error: unknown) => Promise<void> | void
   // Publishes renderer readiness only after lifecycle installation and adapter wiring complete.
   markReady?: (context: Context) => void
   diagnostics?: DiagnosticOperation
@@ -221,6 +237,7 @@ export const orchestrateAppStartup = async <Context>(
     deps.forceExit,
     deps.startupSystemShutdownTimeoutMs
   )
+  let preparedContext: { value: Context } | undefined
 
   try {
     deps.diagnostics?.phase('single-instance-lock')
@@ -233,6 +250,7 @@ export const orchestrateAppStartup = async <Context>(
     deps.installSystemShutdownListeners?.(systemShutdownRelay.signal)
     deps.diagnostics?.phase('prepare-runtime')
     const context = await deps.prepare()
+    preparedContext = { value: context }
     deps.diagnostics?.phase('install-lifecycle')
     deps.installMigrationQuitGuard(context)
     const { onSecondInstance, onSystemShutdown } = deps.installAppLifecycle(context)
@@ -241,7 +259,15 @@ export const orchestrateAppStartup = async <Context>(
     relay.bind(onSecondInstance)
     deps.diagnostics?.complete({ instance: 'primary' })
   } catch (error) {
+    systemShutdownRelay.cancel()
     deps.diagnostics?.fail(error)
+    if (preparedContext && deps.cleanupAfterStartupFailure) {
+      try {
+        await deps.cleanupAfterStartupFailure(preparedContext.value, error)
+      } catch {
+        // The original startup failure remains authoritative; cleanup owns its own diagnostics.
+      }
+    }
     throw error
   }
 }

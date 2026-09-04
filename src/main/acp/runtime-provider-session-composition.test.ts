@@ -22,7 +22,8 @@ describe('ACP Runtime Provider Session composition', () => {
       })
     })
     const owners = composeAcpRuntimeProviderSessionOwners(options, base, session, lifecycle, {
-      clearUserChoiceProvenanceForSession: vi.fn()
+      clearUserChoiceProvenanceForSession: vi.fn(),
+      releasePromptResourcesForSession: vi.fn()
     })
     const dependencies = (
       owners.providerSessionResumer as unknown as { deps: { resumeTimeoutMs: number } }
@@ -49,7 +50,8 @@ describe('ACP Runtime Provider Session composition', () => {
       }
       const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, lifecycleHost)
       const owners = composeAcpRuntimeProviderSessionOwners(options, base, session, lifecycle, {
-        clearUserChoiceProvenanceForSession: vi.fn()
+        clearUserChoiceProvenanceForSession: vi.fn(),
+        releasePromptResourcesForSession: vi.fn()
       })
 
       expect(lifecycleHost.connect).not.toHaveBeenCalled()
@@ -96,7 +98,8 @@ describe('ACP Runtime Provider Session composition', () => {
       })
     })
     const owners = composeAcpRuntimeProviderSessionOwners(options, base, session, lifecycle, {
-      clearUserChoiceProvenanceForSession: vi.fn()
+      clearUserChoiceProvenanceForSession: vi.fn(),
+      releasePromptResourcesForSession: vi.fn()
     })
 
     // deps is constructor-private; the composition contract is that each workflow holds the exact

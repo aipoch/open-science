@@ -76,6 +76,7 @@ const computePaths = [
   'compute.jobsList',
   'compute.jobsMarkConsumed',
   'compute.jobsPendingNotification',
+  'compute.jobsSetRemoteCleanup',
   'compute.jobsTransitionAnalysis',
   'compute.list',
   'compute.listDir',
@@ -145,6 +146,30 @@ const projectThroughRendererAdapters = (
 }
 
 describe('renderer surface compatibility matrix', () => {
+  it('publishes the authoritative Session delegation mutation on Electron and both Web locations', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(
+        ({ publicPath }) => publicPath === 'sessions.setDelegationPolicy'
+      )
+    ).toMatchObject({
+      channel: 'sessions:set-delegation-policy',
+      applicationCommand: 'runtime-validated',
+      surfaceInstallation: {
+        electron: 'preload',
+        localWeb: 'web-rpc',
+        remoteWeb: 'web-rpc'
+      },
+      authorityFlow: {
+        electron: 'electron-sender',
+        localWeb: 'caller-context',
+        remoteWeb: 'caller-context'
+      }
+    })
+    expect(WEB_INVOKE_CHANNELS['sessions.setDelegationPolicy']).toBe(
+      'sessions:set-delegation-policy'
+    )
+  })
+
   it('derives remote Web rejecting channels from the renderer catalog', () => {
     const expected = RENDERER_CONTRACT_CATALOG.flatMap(({ channel, surfaceInstallation }) =>
       channel !== null &&
@@ -273,6 +298,7 @@ describe('renderer surface compatibility matrix', () => {
       'compute:change-authentication',
       'compute:create-password',
       'compute:download',
+      'compute:jobs:set-remote-cleanup',
       'compute:password-capability',
       'compute:reset-password',
       'compute:reveal-in-folder'
@@ -290,6 +316,7 @@ describe('renderer surface compatibility matrix', () => {
       changeAuthentication(): Promise<unknown>
       createPassword(): Promise<unknown>
       download(): Promise<unknown>
+      jobsSetRemoteCleanup(): Promise<unknown>
       passwordCapability(): Promise<unknown>
       resetPassword(): Promise<unknown>
       revealInFolder(): Promise<unknown>
@@ -302,6 +329,9 @@ describe('renderer surface compatibility matrix', () => {
     )
     await expect(remoteCompute.download()).rejects.toThrow(
       'This action is only available in the local desktop app (compute:download).'
+    )
+    await expect(remoteCompute.jobsSetRemoteCleanup()).rejects.toThrow(
+      'This action is only available in the local desktop app (compute:jobs:set-remote-cleanup).'
     )
     await expect(remoteCompute.revealInFolder()).rejects.toThrow(
       'This action is only available in the local desktop app (compute:reveal-in-folder).'

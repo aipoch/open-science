@@ -73,18 +73,30 @@ export const CloseConfirmModal = ({
   if (!dialogRequest) return null
 
   const isQuitVariant = dialogRequest.variant === 'quit'
+  const isPersistenceFailure = dialogRequest.variant === 'persistence-failed'
   const hasSessions = dialogRequest.sessions.length > 0
   const hasDelegatedWork = hasDelegatedActiveSession(dialogRequest.sessions)
-  const title = hasDelegatedWork
-    ? 'Subagents are still running'
-    : isQuitVariant
-      ? 'Quit Open Science?'
-      : 'Minimize or quit?'
-  const description = hasDelegatedWork
-    ? 'Return to the listed tasks and stop their subagents before quitting Open Science.'
-    : isQuitVariant
-      ? 'Work is still running and will be interrupted if you quit.'
-      : 'This app can keep running in the tray, or you can quit.'
+  const title = isPersistenceFailure
+    ? t('Saving is not finished', { ns: 'common' })
+    : t(
+        hasDelegatedWork
+          ? 'Subagents are still running'
+          : isQuitVariant
+            ? 'Quit Open Science?'
+            : 'Minimize or quit?'
+      )
+  const description = isPersistenceFailure
+    ? t(
+        'Open Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.',
+        { ns: 'common' }
+      )
+    : t(
+        hasDelegatedWork
+          ? 'Return to the listed tasks and stop their subagents before quitting Open Science.'
+          : isQuitVariant
+            ? 'Work is still running and will be interrupted if you quit.'
+            : 'This app can keep running in the tray, or you can quit.'
+      )
 
   return (
     <AlertDialog.Root
@@ -99,12 +111,12 @@ export const CloseConfirmModal = ({
           className={dialogPanelClassName('z-[60] w-[min(420px,calc(100vw-2rem))] p-0')}
         >
           <div className={dialogHeaderClassName}>
-            <AlertDialog.Title className={dialogTitleClassName}>{t(title)}</AlertDialog.Title>
+            <AlertDialog.Title className={dialogTitleClassName}>{title}</AlertDialog.Title>
           </div>
 
           <div className={dialogBodyClassName}>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              {t(description)}
+              {description}
             </AlertDialog.Description>
             {hasSessions ? (
               <ul className="mt-3 space-y-1 text-xs">
@@ -116,8 +128,7 @@ export const CloseConfirmModal = ({
                     if (!row.projectId) return
                     useNavigationStore
                       .getState()
-                      .openSession(row.projectId, session.sessionId, 'user')
-                    reply('cancel')
+                      .openSession(row.projectId, session.sessionId, 'user', () => reply('cancel'))
                   }
                   return (
                     // title lives on the li, not the button: a disabled button dispatches no hover
@@ -145,7 +156,7 @@ export const CloseConfirmModal = ({
                 })}
               </ul>
             ) : null}
-            {!isQuitVariant ? (
+            {!isQuitVariant && !isPersistenceFailure ? (
               <label className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
                 <input
                   type="checkbox"
@@ -159,7 +170,21 @@ export const CloseConfirmModal = ({
           </div>
 
           <div className={dialogFooterClassName}>
-            {hasDelegatedWork && isQuitVariant ? (
+            {isPersistenceFailure ? (
+              <>
+                <AlertDialog.Cancel asChild>
+                  <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
+                    {t('Stay', { ns: 'common' })}
+                  </Button>
+                </AlertDialog.Cancel>
+                <Button type="button" onClick={() => reply('retry')}>
+                  {t('Retry saving', { ns: 'common' })}
+                </Button>
+                <Button type="button" variant="destructive" onClick={() => reply('force-quit')}>
+                  {t('Force quit', { ns: 'common' })}
+                </Button>
+              </>
+            ) : hasDelegatedWork && isQuitVariant ? (
               <AlertDialog.Cancel asChild>
                 <Button type="button">{t('Return to tasks')}</Button>
               </AlertDialog.Cancel>
@@ -174,7 +199,7 @@ export const CloseConfirmModal = ({
                 {t('Minimize to tray')}
               </Button>
             )}
-            {!hasDelegatedWork ? (
+            {!hasDelegatedWork && !isPersistenceFailure ? (
               <Button type="button" onClick={() => reply('quit')}>
                 {t('Quit', { context: 'verb', ns: 'common' })}
               </Button>

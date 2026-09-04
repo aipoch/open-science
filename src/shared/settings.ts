@@ -1057,6 +1057,12 @@ export type SkillSource = 'featured' | 'imported' | 'personal'
 // Renderer-safe view of one bundled skill (no file contents).
 export type SkillView = {
   id: string
+  // Settings may surface an on-disk package that runtime identity checks excluded. Omitted by an
+  // older main process means available.
+  available?: boolean
+  availability?: 'identity-conflict'
+  // Ephemeral row identity for conflicting packages that reuse the same durable id.
+  catalogEntryKey?: string
   // Stable invocation name from SKILL.md.
   name: string
   // Presentation label supplied by the catalog source, falling back to name.
@@ -1084,6 +1090,20 @@ export type SkillDetailView = SkillView & {
 export type ExportSkillRequest = { id: string }
 
 export type ExportSkillResult = { saved: boolean }
+
+// Resolves a renderable SKILL.md document by its canonical invocation name across every source the
+// runtime can load from: the managed Skills catalog, enabled bundled connectors (rendered on the
+// fly), and materialized custom MCP server skills. Electron-only — the document sources live on the
+// main-process filesystem. A null result means no source provides the name.
+export type ResolveSkillDocumentRequest = { name: string }
+
+export type ResolvedSkillDocument = {
+  name: string
+  displayName?: string
+  description?: string
+  // SKILL.md body with the YAML frontmatter stripped, matching SkillDetailView.body.
+  body: string
+}
 
 // A reference file's name and byte size, without its content.
 export type SkillReferenceInfo = {
@@ -1446,6 +1466,8 @@ export type CustomServerView = {
 export type ConnectorsSnapshot = {
   connectors: ConnectorView[]
   customServers: CustomServerView[]
+  // Derived Agent Skill documents can fail independently after durable Connector settings save.
+  skillProjectionStatus?: 'degraded'
   // Local IDs reserved until interrupted custom Connector deletion cleanup completes.
   reservedCustomServerIds?: string[]
   ncbi: NcbiCredentialsView

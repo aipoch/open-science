@@ -96,9 +96,9 @@ const createNotebookLocalRpcModule = <Server extends NotebookLocalRpcLifecycle>(
 const installNotebookEnvironmentSurface = (
   lifecycle: NotebookEnvironmentLifecycle,
   register: (lifecycle: NotebookEnvironmentLifecycle) => void
-): void => {
+): Promise<void> => {
   register(lifecycle)
-  void lifecycle.startup()
+  return lifecycle.startup()
 }
 
 export {

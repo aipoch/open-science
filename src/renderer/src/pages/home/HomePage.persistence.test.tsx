@@ -362,7 +362,14 @@ describe('HomePage persistence recovery', () => {
   it('removes committed Project state and explains pending background cleanup', async () => {
     deleteProject.mockImplementationOnce(async () => {
       useProjectStore.setState({
-        pendingDeletionCleanupProjectIds: new Set([project.id])
+        deletionCleanup: [
+          {
+            projectId: project.id,
+            projectName: project.name,
+            phase: 'running',
+            failureCount: 0
+          }
+        ]
       } as never)
       return { status: 'cleanup-pending' }
     })
@@ -388,8 +395,8 @@ describe('HomePage persistence recovery', () => {
     )
 
     expect(useSessionStore.getState().sessions).toEqual([])
-    expect(container.querySelector('[role="status"]')?.textContent).toBe(
-      'Project deleted. Cleanup will continue in the background.'
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      `Cleaning up ${project.name}…`
     )
     expect(
       container.querySelector<HTMLButtonElement>('[data-testid="confirm-project-delete"]')?.dataset

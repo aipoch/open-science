@@ -55,7 +55,7 @@ describe('createComputeJobRuntime', () => {
 
     pollerDeps?.onJobUpdated?.(job)
     await pollerDeps?.harvestFn?.(job)
-    runtime.start()
+    await runtime.start()
     await runtime.stop()
 
     expect(handleJobUpdated).toHaveBeenCalledWith(job)
@@ -76,6 +76,42 @@ describe('createComputeJobRuntime', () => {
       resume: expect.any(Function)
     })
     expect(unbind).toHaveBeenCalledOnce()
+  })
+
+  it('keeps queued promotion stopped when Session limit restoration fails', async () => {
+    const start = vi.fn()
+    const stop = vi.fn(async () => undefined)
+    const startQueueReconciliation = vi.fn(async () => {
+      throw new Error('Session catalog unavailable')
+    })
+    const runtime = createComputeJobRuntime(
+      {
+        computeService: {
+          handleJobUpdated: vi.fn(),
+          handleJobCancellationConfirmed: vi.fn(async () => undefined),
+          startQueueReconciliation,
+          stopQueueReconciliation: vi.fn(async () => undefined)
+        },
+        hostRepository: {} as ComputeHostRepository,
+        jobRepository: {} as ComputeJobRepository,
+        connectionBroker: {} as ComputeConnectionBroker,
+        storageRoot: '/data'
+      },
+      {
+        createPoller: () => ({
+          start,
+          stop,
+          pause: vi.fn(async () => undefined),
+          resume: vi.fn()
+        })
+      }
+    )
+
+    await expect(runtime.start()).resolves.toBeUndefined()
+    expect(start).toHaveBeenCalledOnce()
+    expect(startQueueReconciliation).toHaveBeenCalledOnce()
+    await runtime.stop()
+    expect(stop).toHaveBeenCalledOnce()
   })
 
   it('waits for already-started polling work when the runtime stops', async () => {
@@ -104,7 +140,7 @@ describe('createComputeJobRuntime', () => {
       storageRoot: '/data'
     })
 
-    runtime.start()
+    await runtime.start()
     await vi.waitFor(() => expect(findTerminalUnharvested).toHaveBeenCalledOnce())
 
     let stopped = false
@@ -166,6 +202,49 @@ describe('createComputeJobRuntime', () => {
     await stopping
 
     expect(events).toEqual(['reconciliation-stopping', 'reconciliation-stopped', 'poller-stopped'])
+  })
+
+  it('does not reopen queue reconciliation when stop overlaps poller startup', async () => {
+    let releasePollerStart!: () => void
+    const pollerStart = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releasePollerStart = resolve
+        })
+    )
+    const startQueueReconciliation = vi.fn(async () => undefined)
+    const stopQueueReconciliation = vi.fn(async () => undefined)
+    const runtime = createComputeJobRuntime(
+      {
+        computeService: {
+          handleJobUpdated: vi.fn(),
+          handleJobCancellationConfirmed: vi.fn(async () => undefined),
+          startQueueReconciliation,
+          stopQueueReconciliation
+        },
+        hostRepository: {} as ComputeHostRepository,
+        jobRepository: {} as ComputeJobRepository,
+        connectionBroker: {} as ComputeConnectionBroker,
+        storageRoot: '/data'
+      },
+      {
+        createPoller: () => ({
+          start: pollerStart,
+          stop: vi.fn(async () => undefined),
+          pause: vi.fn(async () => undefined),
+          resume: vi.fn()
+        })
+      }
+    )
+
+    const starting = runtime.start()
+    await vi.waitFor(() => expect(pollerStart).toHaveBeenCalledOnce())
+    const stopping = runtime.stop()
+    await vi.waitFor(() => expect(stopQueueReconciliation).toHaveBeenCalledOnce())
+    releasePollerStart()
+    await Promise.all([starting, stopping])
+
+    expect(startQueueReconciliation).not.toHaveBeenCalled()
   })
 
   it('cancels in-flight polling and harvest work when the runtime stops', async () => {
@@ -240,7 +319,7 @@ describe('createComputeJobRuntime', () => {
       { harvest }
     )
 
-    runtime.start()
+    await runtime.start()
     await vi.waitFor(() => {
       expect(harvest).toHaveBeenCalledOnce()
       expect(run).toHaveBeenCalledOnce()

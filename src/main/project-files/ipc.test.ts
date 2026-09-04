@@ -40,6 +40,18 @@ describe('project files IPC handlers', () => {
       isIndexComplete: true
     }
     const filePage = { items: [], totalCount: 1 }
+    const resolvedFile = {
+      id: 'artifact-1',
+      source: 'artifact' as const,
+      sourceFileId: 'artifact-1',
+      sourceVersionId: 'version-2',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      name: 'report.md',
+      path: 'artifact-version:project-1/session-1/artifact-1/version-2',
+      size: 12,
+      sortAtMs: 2
+    }
     const groupPage = { items: [], totalCount: 1 }
     const artifactSearch = {
       primary: { items: [], totalCount: 0 },
@@ -49,6 +61,7 @@ describe('project files IPC handlers', () => {
     const repository = {
       getOverview: vi.fn().mockResolvedValue(overview),
       listFiles: vi.fn().mockResolvedValue(filePage),
+      resolveFile: vi.fn().mockResolvedValue(resolvedFile),
       listArtifactGroups: vi.fn().mockResolvedValue(groupPage),
       searchArtifacts: vi.fn().mockResolvedValue(artifactSearch)
     }
@@ -68,6 +81,14 @@ describe('project files IPC handlers', () => {
       limit: 24
     }
     const groupsRequest = { projectId: 'project-1', limit: 10 }
+    const resolveRequest = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      source: 'artifact' as const,
+      fileIdHint: 'legacy-artifact',
+      identityHint: 'legacy' as const,
+      name: 'report.md'
+    }
     const artifactSearchRequest = {
       primaryProjectId: 'project-1',
       otherProjectIds: ['project-2'],
@@ -82,9 +103,11 @@ describe('project files IPC handlers', () => {
     }
     await expect(handlers.getOverview(overviewRequest)).resolves.toBe(overview)
     await expect(handlers.listFiles(filesRequest)).resolves.toBe(filePage)
+    await expect(handlers.resolveFile(resolveRequest)).resolves.toBe(resolvedFile)
     await expect(handlers.listArtifactGroups(groupsRequest)).resolves.toBe(groupPage)
     await expect(handlers.searchArtifacts(artifactSearchRequest)).resolves.toBe(artifactSearch)
     expect(repository.listFiles).toHaveBeenCalledWith(filesRequest)
+    expect(repository.resolveFile).toHaveBeenCalledWith(resolveRequest)
     expect(repository.listArtifactGroups).toHaveBeenCalledWith(groupsRequest)
     expect(repository.getOverview).toHaveBeenCalledWith(overviewRequest)
     expect(repository.searchArtifacts).toHaveBeenCalledWith(artifactSearchRequest)
@@ -94,6 +117,7 @@ describe('project files IPC handlers', () => {
     const repository = {
       getOverview: vi.fn(),
       listFiles: vi.fn(),
+      resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(),
       searchArtifacts: vi.fn()
     }
@@ -113,6 +137,7 @@ describe('project files IPC handlers', () => {
     const repository = {
       getOverview: vi.fn(),
       listFiles: vi.fn(),
+      resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(),
       searchArtifacts: vi.fn()
     }
@@ -146,6 +171,10 @@ describe('project files IPC handlers', () => {
         order.push('files')
         return { items: [], totalCount: 0 }
       }),
+      resolveFile: vi.fn(async () => {
+        order.push('resolve')
+        return undefined
+      }),
       listArtifactGroups: vi.fn(async () => {
         order.push('groups')
         return { items: [], totalCount: 0 }
@@ -176,6 +205,13 @@ describe('project files IPC handlers', () => {
       collection: { kind: 'uploads' },
       limit: 20
     })
+    await handlers.resolveFile({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      source: 'artifact',
+      identityHint: 'legacy',
+      name: 'report.md'
+    })
     await handlers.listArtifactGroups({ projectId: 'project-1', limit: 10 })
     await handlers.searchArtifacts({
       primaryProjectId: 'project-1',
@@ -191,6 +227,8 @@ describe('project files IPC handlers', () => {
       'recover',
       'files',
       'recover',
+      'resolve',
+      'recover',
       'groups',
       'recover',
       'search',
@@ -200,7 +238,8 @@ describe('project files IPC handlers', () => {
     expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(1, ['project-1'])
     expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(2, ['project-1'])
     expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(3, ['project-1'])
-    expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(4, ['project-1', 'project-2'])
+    expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(4, ['project-1'])
+    expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(5, ['project-1', 'project-2'])
     expect(recovery.recoverPendingDeletions).toHaveBeenCalledOnce()
   })
 })
@@ -223,6 +262,7 @@ describe('registerProjectFilesIpcHandlers', () => {
         isIndexComplete: true
       }),
       listFiles: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }),
+      resolveFile: vi.fn().mockResolvedValue(undefined),
       listArtifactGroups: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }),
       searchArtifacts: vi.fn().mockResolvedValue({
         primary: { items: [], totalCount: 0 },
@@ -242,6 +282,7 @@ describe('registerProjectFilesIpcHandlers', () => {
 
     expect(handlers.has('project-files:get-overview')).toBe(true)
     expect(handlers.has('project-files:list-files')).toBe(true)
+    expect(handlers.has('project-files:resolve-file')).toBe(true)
     expect(handlers.has('project-files:list-artifact-groups')).toBe(true)
     expect(handlers.has('project-files:search-artifacts')).toBe(true)
     expect(handlers.has('project-files:repair-index')).toBe(true)
@@ -258,6 +299,7 @@ describe('registerProjectFilesIpcHandlers', () => {
     const injected: ProjectFilesHandlers = {
       getOverview: vi.fn().mockResolvedValue(overview),
       listFiles: vi.fn(),
+      resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(),
       searchArtifacts: vi.fn(),
       repairIndex: vi.fn()
@@ -284,6 +326,7 @@ describe('registerProjectFilesIpcHandlers', () => {
         isIndexComplete: true
       }),
       listFiles: vi.fn(),
+      resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(),
       searchArtifacts: vi.fn(),
       repairIndex: vi.fn()
@@ -316,6 +359,7 @@ describe('registerProjectFilesIpcHandlers', () => {
         }
       }),
       listFiles: vi.fn(),
+      resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(),
       searchArtifacts: vi.fn()
     }
@@ -344,6 +388,7 @@ describe('registerProjectFilesIpcHandlers', () => {
         order.push('files')
         return { items: [], totalCount: 0 }
       }),
+      resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(),
       searchArtifacts: vi.fn()
     }
@@ -374,6 +419,7 @@ describe('registerProjectFilesIpcHandlers', () => {
     const localRepository: ProjectFilesQueryRepository = {
       getOverview: vi.fn(),
       listFiles: vi.fn(),
+      resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(async () => {
         order.push('groups')
         return { items: [], totalCount: 0 }
@@ -403,6 +449,7 @@ describe('registerProjectFilesIpcHandlers', () => {
     const localRepository: ProjectFilesQueryRepository = {
       getOverview: vi.fn(),
       listFiles: vi.fn(),
+      resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(),
       searchArtifacts: vi.fn()
     }
@@ -438,10 +485,17 @@ describe('registerProjectFilesIpcHandlers', () => {
       collection: { kind: 'uploads' },
       limit: 1
     })
+    await invoke('project-files:resolve-file', {
+      projectId: 'p1',
+      sessionId: 'session-1',
+      source: 'artifact',
+      identityHint: 'legacy',
+      name: 'report.md'
+    })
     await invoke('project-files:list-artifact-groups', { projectId: 'p1', limit: 1 })
     await invoke('project-files:repair-index', { projectId: 'p1' })
 
-    expect(recoveryBackend.waitForProjectOperations).toHaveBeenCalledTimes(3)
+    expect(recoveryBackend.waitForProjectOperations).toHaveBeenCalledTimes(4)
     expect(recoveryBackend.recoverPendingDeletions).toHaveBeenCalledOnce()
   })
 })

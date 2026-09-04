@@ -9,7 +9,7 @@ import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { isUnavailableFileError } from '../preview-errors'
 import { createPreviewResourceKey } from '../preview-resource-key'
-import { createPreviewRequestScope } from '../preview-file-reader'
+import { createManagedPreviewRequest } from '../preview-file-reader'
 import { useNearViewport } from '../useNearViewport'
 
 const THUMBNAIL_WIDTH = 220
@@ -270,6 +270,8 @@ export const PdfThumbnail = ({
   source = 'artifact',
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   mimeType,
   size,
   mtimeMs,
@@ -282,6 +284,8 @@ export const PdfThumbnail = ({
   source?: PreviewFileSource
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
   mimeType?: string
   size?: number
   mtimeMs?: number
@@ -297,7 +301,9 @@ export const PdfThumbnail = ({
     path,
     mimeType,
     size,
-    mtimeMs
+    mtimeMs,
+    managedFileId,
+    selectedVersionId
   })
   const requestKey = `${resourceKey}:pdf-thumbnail:${renderWidth}`
   const [setElement, isNearViewport] = useNearViewport<HTMLDivElement>()
@@ -315,12 +321,15 @@ export const PdfThumbnail = ({
 
     const subscription = subscribeThumbnailJob(
       requestKey,
-      {
+      createManagedPreviewRequest({
         source,
         path,
-        ...createPreviewRequestScope({ projectId, sessionId, source, path }),
-        ...(mimeType ? { mimeType } : {})
-      },
+        projectId,
+        sessionId,
+        managedFileId,
+        selectedVersionId,
+        mimeType
+      }),
       renderWidth
     )
     let subscribed = true
@@ -339,7 +348,18 @@ export const PdfThumbnail = ({
       subscribed = false
       subscription.unsubscribe()
     }
-  }, [mimeType, path, projectId, renderWidth, requestKey, sessionId, shouldRender, source])
+  }, [
+    managedFileId,
+    mimeType,
+    path,
+    projectId,
+    renderWidth,
+    requestKey,
+    selectedVersionId,
+    sessionId,
+    shouldRender,
+    source
+  ])
 
   return (
     <div

@@ -37,7 +37,10 @@ import { SpecialistDeleteDetail } from './SpecialistDeleteDetail'
 import { SpecialistSwitchDetail } from './SpecialistSwitchDetail'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
+import { SkillDocumentSheet } from './WorkspaceSkillLoadRow'
 import { buildLiteratureToolSummary } from './literature-tool-presentation'
+import { getSkillLoadPermissionSkillName } from './workspace-skill-load'
+import { useSkillDocument } from './use-skill-document'
 
 type PermissionApprovalControlsProps = {
   requests: AcpPermissionRequest[]
@@ -320,6 +323,74 @@ const PermissionCodeSection = ({
       {expanded && (
         <div className="mx-1 mb-1.5 md:ml-[30px]">
           <WorkspaceToolCodeBlock code={code} language={language} copyable />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Activity-style collapsible card for a skills/load_skill approval. The request carries only the
+// skill's invocation name, so — like the transcript's load_skill rows — the SKILL.md body is
+// resolved through useSkillDocument: the managed catalog when listed, the main-process
+// connector-aware resolver otherwise. It defaults to expanded and fetches on mount (rather than on
+// first expand) because the document IS the payload under review. When no source provides the
+// name, the raw JSON input stays reviewable as the fallback block.
+const PermissionSkillSection = ({
+  skillName,
+  fallback
+}: {
+  skillName: string
+  fallback?: PermissionCode
+}): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(true)
+  const document = useSkillDocument(skillName)
+
+  if (document.status === 'unavailable' && !fallback) return null
+
+  return (
+    <div className="w-full overflow-hidden rounded-lg bg-muted/60 px-2 py-1.5">
+      <button
+        type="button"
+        data-testid="permission-skill-toggle"
+        aria-expanded={expanded}
+        className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-[13px] transition-colors hover:bg-muted"
+        onClick={() => setExpanded((e) => !e)}
+      >
+        <span
+          className={cn(
+            'inline-flex w-4 shrink-0 items-center justify-center text-muted-foreground transition-transform duration-200',
+            expanded && 'rotate-90'
+          )}
+        >
+          <ChevronRight className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+        </span>
+        <span className="min-w-0 truncate text-left font-medium text-foreground">
+          {document.status === 'ready' ? document.title : skillName}
+        </span>
+        <span className="ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+          {t('Skill')}
+        </span>
+      </button>
+      {expanded && (
+        // The sheet caps at a quarter of its own width (25cqw against this container),
+        // so the preview scales with the card instead of a fixed pixel ceiling.
+        <div className="@container mx-1 mb-1.5 md:ml-[30px]">
+          {document.status === 'ready' ? (
+            <SkillDocumentSheet markdown={document.markdown} maxHeightClassName="max-h-[25cqw]" />
+          ) : document.status === 'failed' ? (
+            <button
+              type="button"
+              className="rounded-md px-1 py-1 text-[12px] text-text-300 transition-colors hover:text-text-100"
+              onClick={document.retry}
+            >
+              {t('Retry')}
+            </button>
+          ) : document.status === 'unavailable' && fallback ? (
+            <WorkspaceToolCodeBlock code={fallback.code} language={fallback.language} copyable />
+          ) : (
+            <div className="px-1 py-1 text-[12px] text-text-300">{t('Loading preview…')}</div>
+          )}
         </div>
       )}
     </div>
@@ -682,6 +753,10 @@ const PermissionApprovalCard = ({
   // Guard against a stale scope no longer offered by the current request.
   const effectiveScope = availableScopes.has(scope) ? scope : defaultScope
   const permCode = extractPermissionCode(request)
+  // A skills/load_skill approval names the skill being loaded; the section resolves the SKILL.md
+  // document (managed catalog first, then the connector-aware main resolver) and falls back to the
+  // raw JSON input when no source provides the name.
+  const skillLoadName = getSkillLoadPermissionSkillName(request)
   const literatureSummary = isLiteratureReadRequest(request)
     ? buildLiteratureToolSummary(request.rawInput)
     : undefined
@@ -891,7 +966,8 @@ const PermissionApprovalCard = ({
       ) : null}
 
       {/* Specialist switch/delete requests show a friendly detail block instead of the raw
-          redacted payload; all other requests keep the activity-style code preview. */}
+          redacted payload; all other requests keep the activity-style code preview. Skill loads
+          show the SKILL.md document itself — it is the payload being approved. */}
       {literatureSummary ? (
         <WorkspaceLiteratureToolCard summary={literatureSummary} />
       ) : isNotebookNetworkApprovalRequest(request) ? (
@@ -900,6 +976,8 @@ const PermissionApprovalCard = ({
         <SpecialistSwitchDetail request={request} />
       ) : isSpecialistDeleteRequest(request) ? (
         <SpecialistDeleteDetail request={request} />
+      ) : skillLoadName ? (
+        <PermissionSkillSection key={requestId} skillName={skillLoadName} fallback={permCode} />
       ) : permCode ? (
         <PermissionCodeSection
           key={requestId}

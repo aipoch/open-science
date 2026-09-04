@@ -164,8 +164,11 @@ def deny(event, args):
     if event == "open" or event == "import" or event.startswith(("socket.", "subprocess.", "os.system", "os.exec", "os.spawn")):
         raise PermissionError("host access is unavailable during helper validation")
 
-sys.addaudithook(deny)
 request = json.loads(base64.b64decode(sys.stdin.read()).decode("utf-8"))
+if hasattr(sys, "addaudithook"):
+    sys.addaudithook(deny)
+elif not request.get("trustedSource", False):
+    raise PermissionError("external helper validation requires Python audit-hook support")
 safe_names = (
     "__build_class__", "abs", "all", "any", "bool", "bytes", "callable", "dict", "enumerate",
     "Exception", "float", "int", "isinstance", "len", "list", "map", "max", "min", "object",
@@ -184,7 +187,7 @@ export const validateNotebookHelperExports = async (
   helperId: string,
   source: string,
   exports: readonly string[],
-  deps: { python?: PythonCommand; env?: NodeJS.ProcessEnv } = {}
+  deps: { python?: PythonCommand; env?: NodeJS.ProcessEnv; trustedSource?: boolean } = {}
 ): Promise<void> => {
   const python = deps.python ?? (await resolvePythonCommand())
   await new Promise<void>((resolveValidation, rejectValidation) => {
@@ -226,6 +229,11 @@ export const validateNotebookHelperExports = async (
         )
       )
     })
-    child.stdin.end(Buffer.from(JSON.stringify({ source, exports }), 'utf8').toString('base64'))
+    child.stdin.end(
+      Buffer.from(
+        JSON.stringify({ source, exports, trustedSource: deps.trustedSource ?? false }),
+        'utf8'
+      ).toString('base64')
+    )
   })
 }

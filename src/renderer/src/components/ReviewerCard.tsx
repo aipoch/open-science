@@ -29,9 +29,9 @@ type ReviewerCardProps = {
   defaultExpanded?: boolean
   // Called when the user clicks "Go to transcript" on any item card.
   onGoToTranscript?: (intent: GoToTranscriptIntent) => void
-  // Called when the user asks to re-run a stale review (its turn changed after it ran). Resolves to
-  // whether a review actually started; a false result (e.g. session load failed) releases the button
-  // latch so the turn stays retriable.
+  // Called when the user asks to re-run a stale review or a terminal review with unresolved findings.
+  // Resolves to whether a review actually started; a false result (e.g. session load failed) releases
+  // the button latch so the turn stays retriable.
   onRerun?: (review: ReviewWithChecks) => Promise<boolean>
 }
 
@@ -215,20 +215,27 @@ export const ReviewerCard = ({
 }: ReviewerCardProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(defaultExpanded)
-  // Latches on the first Re-run click so the button can't fire twice. Reset whenever the review updates
-  // (a fresh review row arrived, or its lifecycle/timestamp changed) so a later re-stale review can be
-  // re-run again. setState-during-render pattern, matching the composer popup's query reset.
+  // Latches on the first Re-run click so the button can't fire twice. Once main confirms that the
+  // replacement Review row was created, that new card owns progress and this card drops its notice.
+  // Reset if this row itself changes so a later re-stale Review can be re-run again.
   const [rerunRequested, setRerunRequested] = useState(false)
+  const [rerunStarted, setRerunStarted] = useState(false)
   const [lastReviewStamp, setLastReviewStamp] = useState(review.updatedAt)
   if (lastReviewStamp !== review.updatedAt) {
     setLastReviewStamp(review.updatedAt)
     setRerunRequested(false)
+    setRerunStarted(false)
   }
 
-  const isRunning = review.lifecycle === 'running'
+  const hasPersistedFlaggedChecks = review.checks.some(
+    (check) => check.status === 'warn' || check.status === 'fail'
+  )
+  const isRunningAssessment = review.lifecycle === 'running' && !hasPersistedFlaggedChecks
+  const isFixLoopActive = review.lifecycle === 'running' && hasPersistedFlaggedChecks
 
-  // A live review is status, not a result card; keep completed-review controls out of the DOM.
-  if (isRunning) {
+  // An assessment with no persisted flagged checks is status, not a result card. A running Review
+  // with durable warn/fail checks stays visible while its Fix Loop owns the Session.
+  if (isRunningAssessment) {
     return (
       <div
         className={cn('mt-2 flex items-center gap-1.5 px-0 py-2 text-xs text-text-300', className)}
@@ -244,7 +251,8 @@ export const ReviewerCard = ({
   }
 
   const isError = review.lifecycle === 'error'
-  const isComplete = review.lifecycle === 'complete'
+  const isTerminal = review.lifecycle === 'complete'
+  const isComplete = isTerminal || isFixLoopActive
 
   // Current reads carry the exact submitted projection. Older in-memory snapshots fall back to the
   // Review-owned Findings without inventing tracked assessment content.
@@ -252,10 +260,9 @@ export const ReviewerCard = ({
   const warnFailCount = submittedChecks.filter((item) => item.isWarnOrFail).length
   const totalCheckCount = submittedChecks.length
   const hasWarnOrFail = warnFailCount > 0
-  // The durable Review verdict is authoritative. A fix-loop Review may commit its tracked failing
-  // assessments as dispositions on earlier Findings, leaving this Review with no local warn/fail
-  // rows (or only newly assessed pass rows) while its outcome correctly remains flagged.
-  const isFlagged = isComplete && review.outcome === 'flagged'
+  // Terminal Reviews use their durable outcome. While a Fix Loop is active, persisted warn/fail
+  // checks are the durable signal because the existing schema requires a running outcome to be null.
+  const isFlagged = isComplete && (review.outcome === 'flagged' || isFixLoopActive)
 
   // Terminal dispositions distinguish a true round cap from correction transport/persistence failure.
   const isCapReached =
@@ -270,6 +277,10 @@ export const ReviewerCard = ({
     submittedChecks.some(
       (item) => item.isUnaddressed && item.unaddressedTrigger === 'correction_failed'
     )
+  const isInterrupted =
+    isTerminal &&
+    hasWarnOrFail &&
+    submittedChecks.some((item) => item.isUnaddressed && item.unaddressedTrigger === 'aborted')
 
   // A complete review is expandable if it has any checks; an error review is expandable if it carries
   // a message (kept out of the status bar so a verbose Prisma-style error doesn't overflow the line).
@@ -279,7 +290,29 @@ export const ReviewerCard = ({
   // The turn changed after this review ran (e.g. an artifact was edited) — the verdict may not
   // describe the current turn. Computed at load time (see flagStaleReviews); only meaningful for a
   // completed review, since running/error reviews have no verdict to go stale.
-  const isStale = isComplete && review.stale === true
+  const isStale = isTerminal && review.stale === true
+  const hasUnresolvedFindings =
+    review.submittedChecks === undefined
+      ? review.checks.some(
+          (check) =>
+            (check.status === 'warn' || check.status === 'fail') && check.resolution !== 'resolved'
+        )
+      : review.submittedChecks.some((item) => {
+          if (item.kind === 'new') {
+            return (
+              (item.check.status === 'warn' || item.check.status === 'fail') &&
+              item.check.resolution !== 'resolved'
+            )
+          }
+          const status = item.assessment?.status ?? item.sourceCheck.status
+          return (
+            (status === 'warn' || status === 'fail') &&
+            item.dispositionOutcome !== 'resolved' &&
+            item.sourceCheck.resolution !== 'resolved'
+          )
+        })
+  const canRerunUnresolved = isTerminal && hasUnresolvedFindings
+  const showRerunNotice = (isStale || canRerunUnresolved) && !rerunStarted
 
   // Compact summary line.
   const summaryText = (): string => {
@@ -357,6 +390,12 @@ export const ReviewerCard = ({
             <span className="text-yellow-600 dark:text-yellow-400">{t('correction failed')}</span>
           </>
         )}
+        {isInterrupted && (
+          <>
+            <span className="mx-1 text-text-400">&middot;</span>
+            <span className="text-yellow-600 dark:text-yellow-400">{t('interrupted')}</span>
+          </>
+        )}
         {canExpand && (
           <span className="ml-auto">
             {expanded ? (
@@ -371,13 +410,13 @@ export const ReviewerCard = ({
       {/* Stale notice + explicit re-run: the verdict above may no longer describe the turn (an artifact
           was edited after the review ran). This is the actionable refresh path for THIS review's turn —
           including earlier turns that the composer's "Request review" (last-turn only) cannot reach. */}
-      {isStale && (
+      {showRerunNotice && (
         <div
           className="mt-2 flex items-center justify-between gap-2 rounded-md bg-bg-300 px-2 py-1"
-          data-testid="reviewer-stale-notice"
+          data-testid={isStale ? 'reviewer-stale-notice' : 'reviewer-unresolved-notice'}
         >
           <span className="text-[11px] text-amber-800 dark:text-amber-300">
-            {t('Turn changed after this review ran.')}
+            {isStale ? t('Turn changed after this review ran.') : t('Issues found')}
           </span>
           {onRerun && (
             <button
@@ -388,10 +427,12 @@ export const ReviewerCard = ({
               className="shrink-0 rounded bg-bg-000 px-2 py-0.5 text-[11px] text-amber-800 transition-colors hover:bg-bg-300 disabled:cursor-default disabled:opacity-50 dark:text-amber-300"
               onClick={() => {
                 setRerunRequested(true)
-                // Release the latch if no review actually started (e.g. the session couldn't load), so
-                // the button stays usable; on success the running-review push clears it via updatedAt.
+                // Release the latch if no review actually started (e.g. the session couldn't load).
+                // A true result is emitted only after the replacement running Review row was pushed,
+                // so its new card can take over while this superseded notice disappears.
                 void onRerun(review).then((started) => {
-                  if (!started) setRerunRequested(false)
+                  setRerunRequested(false)
+                  if (started) setRerunStarted(true)
                 })
               }}
             >
@@ -429,11 +470,15 @@ export const ReviewerCard = ({
           ))}
 
           {/* Self-correct footer note — shown only for warn/fail (flagged) expansions. */}
-          {hasWarnOrFail && !isCapReached && !isCorrectionFailed && (
-            <p className="mt-1 text-[11px] italic text-text-400">
-              {t('The agent reads these findings and self-corrects in its next message.')}
-            </p>
-          )}
+          {hasWarnOrFail &&
+            !isCapReached &&
+            !isCorrectionFailed &&
+            !isInterrupted &&
+            !canRerunUnresolved && (
+              <p className="mt-1 text-[11px] italic text-text-400">
+                {t('The agent reads these findings and self-corrects in its next message.')}
+              </p>
+            )}
         </div>
       )}
     </div>

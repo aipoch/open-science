@@ -474,6 +474,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
     expect(harness.handles.failPendingSkillActivities).toHaveBeenCalledOnce()
     expect(harness.context.supersede).toHaveBeenCalledOnce()
     expect(harness.handles.skill.close).toHaveBeenCalledWith('failed')
+    expect(harness.handles.prepared?.close).toHaveBeenCalledOnce()
   })
 
   it('keeps a replacement interaction current when the old provider outcome is superseded', async () => {
@@ -493,6 +494,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
     expect(harness.handles.permission.clearCorrelationsForSession).not.toHaveBeenCalled()
     expect(harness.handles.onPromptEnded).not.toHaveBeenCalled()
     expect(harness.context.supersede).toHaveBeenCalledOnce()
+    expect(harness.handles.prepared?.close).toHaveBeenCalledOnce()
   })
 
   it.each([
@@ -541,5 +543,6 @@ describe('AcpPromptOutcomeFinalizer', () => {
     )
     expect(harness.context.fail).toHaveBeenCalledOnce()
     expect(harness.handles.skill.close).toHaveBeenCalledWith('cancelled')
+    expect(harness.handles.prepared?.close).toHaveBeenCalledOnce()
   })
 })

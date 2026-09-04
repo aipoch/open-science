@@ -100,7 +100,9 @@ export type DelegatedReviewEvidenceScope = {
   artifactVersionIds: readonly string[]
 }
 
-// Task state of the review itself (did it run/finish/fail), orthogonal to its outcome.
+// Task state of the review itself (did it run/finish/fail). A Review with persisted warn/fail checks
+// remains running while its automatic Fix Loop owns the audited Session, then becomes complete when
+// remediation settles.
 export type ReviewLifecycle = 'running' | 'complete' | 'error'
 // Result of a completed review: no warn/fail checks = pass, at least one warn/fail = flagged.
 export type ReviewOutcome = 'pass' | 'flagged'

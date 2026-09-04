@@ -301,6 +301,10 @@ describe('application surface shutdown', () => {
         notebook: {
           dispose: async () => ({ reaped: true }),
           shutdownAll: async () => ({ reaped: true })
+        },
+        sideChat: {
+          shutdown: async () => undefined,
+          suspendAll: async () => undefined
         }
       })
       const runtime = await composeApplicationRuntime(async (modules) => {
@@ -451,6 +455,29 @@ describe('application surface shutdown', () => {
       'remote-access',
       'ipc-handlers'
     ])
+  })
+
+  it('shares one application surface shutdown across concurrent lifecycle requests', async () => {
+    const disposeApplicationRuntime = vi.fn()
+    const shutdownRemoteAccess = vi.fn()
+    const disposeWebController = vi.fn()
+    const disposeIpcHandlers = vi.fn()
+    const lifecycle = withApplicationRuntimeShutdown(
+      {},
+      {
+        disposeApplicationRuntime,
+        remoteAccess: { shutdown: shutdownRemoteAccess },
+        webController: { dispose: disposeWebController },
+        disposeIpcHandlers
+      }
+    )
+
+    await Promise.all([lifecycle.shutdownBackends(), lifecycle.shutdownBackends()])
+
+    expect(disposeApplicationRuntime).toHaveBeenCalledOnce()
+    expect(shutdownRemoteAccess).toHaveBeenCalledOnce()
+    expect(disposeWebController).toHaveBeenCalledOnce()
+    expect(disposeIpcHandlers).toHaveBeenCalledOnce()
   })
 
   it('diagnoses runtime failure and continues closing surfaces without rejecting lifecycle', async () => {

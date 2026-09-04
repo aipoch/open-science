@@ -7,13 +7,15 @@ import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/di
 import { STREAMDOWN_FULLSCREEN_SELECTOR } from '@/components/streamdown/dom-selectors'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import { dialogPreviewGuardScope } from '@/stores/preview-leave-guard'
 
-import { PreviewFileSurface } from './PreviewFileSurface'
+import { PreviewFileSurface, type PreviewFileSurfaceHandle } from './PreviewFileSurface'
 import type { PreviewInteractionPort } from './previews/preview-types'
 
 type FilePreviewDialogProps = PreviewInteractionPort & {
   item: PreviewFileItem | undefined
-  onClose: () => void
+  onClose: (skipGuard?: boolean) => void
+  onItemChange?: (item: PreviewFileItem, skipGuard?: boolean) => void
   onPdfContextError?: (message: string | null) => void
 }
 
@@ -51,6 +53,7 @@ const setBackgroundIsolation = (isolated: boolean): void => {
 const FilePreviewDialog = ({
   item,
   onClose,
+  onItemChange,
   onPdfContextError,
   ...annotationPort
 }: FilePreviewDialogProps): React.JSX.Element | null => {
@@ -59,6 +62,17 @@ const FilePreviewDialog = ({
   const open = Boolean(item)
   const [hasNestedFullscreen, setHasNestedFullscreen] = useState(hasStreamdownFullscreen)
   const isBackgroundIsolatedRef = useRef(false)
+  const previewSurfaceRef = useRef<PreviewFileSurfaceHandle | null>(null)
+  const requestClose = useCallback(
+    (checkGuard = true): void => {
+      if (checkGuard && previewSurfaceRef.current) {
+        previewSurfaceRef.current.requestLeave(() => onClose(true))
+        return
+      }
+      onClose(true)
+    },
+    [onClose]
+  )
 
   const acquireBackgroundIsolation = useCallback((): void => {
     if (isBackgroundIsolatedRef.current) return
@@ -92,7 +106,7 @@ const FilePreviewDialog = ({
       modal={false}
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen) onClose()
+        if (!nextOpen) requestClose(true)
       }}
     >
       <Dialog.Portal>
@@ -120,14 +134,20 @@ const FilePreviewDialog = ({
             <div className="flex size-full min-h-0 min-w-0">
               {dialogItem ? (
                 <PreviewFileSurface
+                  ref={previewSurfaceRef}
                   item={dialogItem}
-                  onClose={onClose}
+                  onClose={() => requestClose(false)}
+                  {...(onItemChange
+                    ? { onItemChange: (nextItem: PreviewFileItem) => onItemChange(nextItem, true) }
+                    : {})}
                   provenanceEntry="trailing"
                   // The modal overlays the conversation panel, so a View in context navigation must
                   // also close the dialog for the switched session to become visible.
                   onViewInContextNavigate={onClose}
                   onPdfContextError={onPdfContextError}
                   tooltipClassName="z-[70]"
+                  leaveGuardScope={dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)}
+                  retryResolutionEnabled={open}
                   {...annotationPort}
                 />
               ) : null}

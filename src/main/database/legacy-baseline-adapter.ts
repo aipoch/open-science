@@ -1,6 +1,8 @@
 import { Prisma, type PrismaClient } from '@prisma/client'
 
 import {
+  RUNTIME_SCHEMA_INDEX_DDLS as CURRENT_RUNTIME_SCHEMA_INDEX_DDLS,
+  RUNTIME_SCHEMA_TABLE_DDLS as CURRENT_RUNTIME_SCHEMA_TABLE_DDLS,
   RUNTIME_SCHEMA_TABLES as CURRENT_RUNTIME_SCHEMA_TABLES,
   RUNTIME_SCHEMA_TARGET_SQL as CURRENT_RUNTIME_SCHEMA_TARGET_SQL
 } from './generated/runtime-schema'
@@ -16,7 +18,8 @@ import {
 import {
   applySqliteCheckConstraints,
   findPendingSqliteCheckConstraints,
-  type SqliteCheckConstraintMigration
+  type SqliteCheckConstraintMigration,
+  type SqliteMigrationOperation
 } from './sqlite-schema-migrations'
 import { DatabaseValidationError } from './database-validation-error'
 import { migrationSqlExecutor } from './migration-sql-executor'
@@ -342,6 +345,12 @@ const TARGET_TABLES = createTargetTables(RUNTIME_SCHEMA_BASELINE_TARGET_SQL)
 const TARGET_INDEXES = createTargetIndexes(RUNTIME_SCHEMA_BASELINE_TARGET_SQL)
 const CURRENT_TARGET_TABLES = createTargetTables(CURRENT_RUNTIME_SCHEMA_TARGET_SQL)
 const CURRENT_TARGET_INDEXES = createTargetIndexes(CURRENT_RUNTIME_SCHEMA_TARGET_SQL)
+const CURRENT_RUNTIME_SCHEMA_TABLE_DDL_BY_NAME = new Map(
+  CURRENT_RUNTIME_SCHEMA_TABLE_DDLS.flatMap((ddl) => {
+    const parsed = parseTargetTable(ddl)
+    return parsed ? [[parsed[0], ddl] as const] : []
+  })
+)
 // Non-exact baseline adoption may recognize only released suffix FKs named here. Do not derive this
 // list from the generated current target: doing so would silently admit every future suffix FK.
 const NON_EXACT_BASELINE_FOREIGN_KEY_ALLOWLIST: ReadonlyMap<string, readonly TargetForeignKey[]> =
@@ -443,9 +452,113 @@ const addColumnIfMissing = async (
 // Creates the schema if missing. Idempotent; no projects are seeded, so a fresh install starts empty.
 type PreparedRuntimeSchemaBaseline = {
   pendingCheckConstraints: readonly SqliteCheckConstraintMigration[]
+  verificationTarget: 'baseline' | 'current'
 }
 
-const classifyLegacySchema = async (client: PrismaClient): Promise<void> => {
+const CURRENT_PROVENANCE_CHECK_CONSTRAINT_MIGRATIONS: readonly SqliteCheckConstraintMigration[] =
+  PROVENANCE_CHECK_CONSTRAINT_MIGRATIONS.map((migration) => {
+    const target = CURRENT_TARGET_TABLES.get(migration.tableName)
+    const canonicalTableDdl = CURRENT_RUNTIME_SCHEMA_TABLE_DDL_BY_NAME.get(migration.tableName)
+    if (!target || !canonicalTableDdl) {
+      throw new Error(`Current SQLite schema is missing ${migration.tableName}.`)
+    }
+    return {
+      ...migration,
+      constraintNames: [...target.checks.keys()],
+      canonicalTableDdl
+    }
+  })
+
+const hasCurrentManagedFileVersionFoundation = async (client: PrismaClient): Promise<boolean> => {
+  const requiredColumns = [
+    ['ArtifactLineage', 'currentVersionId'],
+    ['UploadFile', 'currentVersionId'],
+    ['ArtifactVersion', 'originKind'],
+    ['ArtifactVersion', 'basedOnVersionId'],
+    ['ArtifactVersion', 'storageTag'],
+    ['ArtifactVersion', 'storedFilename'],
+    ['UploadVersion', 'originKind'],
+    ['UploadVersion', 'basedOnVersionId'],
+    ['UploadVersion', 'storageTag'],
+    ['UploadVersion', 'storedFilename']
+  ] as const
+  const present = await Promise.all(
+    requiredColumns.map(([tableName, columnName]) => hasTableColumn(client, tableName, columnName))
+  )
+  return present.every(Boolean)
+}
+
+type AdaptedMigrationOperations = {
+  operations: readonly SqliteMigrationOperation[]
+  currentTableNames: readonly string[]
+}
+
+const adaptMigrationOperationsForCurrentSchema = async (
+  client: PrismaClient,
+  operations: readonly SqliteMigrationOperation[]
+): Promise<AdaptedMigrationOperations> => {
+  const adaptedOperations: SqliteMigrationOperation[] = []
+  const currentTableNames = new Set<string>()
+  for (const operation of operations) {
+    if (operation.kind !== 'rebuild-table-set') {
+      adaptedOperations.push(operation)
+      continue
+    }
+    const adaptedTableNames = new Set<string>()
+    const tables: (typeof operation.tables)[number][] = []
+    for (const table of operation.tables) {
+      const current = CURRENT_TARGET_TABLES.get(table.tableName)
+      const canonicalTableDdl = CURRENT_RUNTIME_SCHEMA_TABLE_DDL_BY_NAME.get(table.tableName)
+      if (!current || !canonicalTableDdl) {
+        throw new Error(`Current SQLite schema is missing ${table.tableName}.`)
+      }
+      const columns = await migrationSqlExecutor.query<Array<{ name: string }>>(
+        client,
+        `PRAGMA table_info(${quoteSqliteIdentifier(table.tableName)})`
+      )
+      const existingColumns = new Set(columns.map(({ name }) => name))
+      if ([...current.columns.keys()].every((column) => existingColumns.has(column))) {
+        adaptedTableNames.add(table.tableName)
+        currentTableNames.add(table.tableName)
+        tables.push({
+          ...table,
+          canonicalTableDdl,
+          columns: [...current.columns.keys()]
+        })
+      } else {
+        tables.push(table)
+      }
+    }
+    const retainedIndexes = operation.indexes.filter((ddl) => {
+      const target = [...createTargetIndexes([ddl]).values()][0]
+      return target ? !adaptedTableNames.has(target.tableName) : true
+    })
+    const currentIndexes = CURRENT_RUNTIME_SCHEMA_INDEX_DDLS.filter((ddl) => {
+      const current = [...createTargetIndexes([ddl]).values()][0]
+      return current ? adaptedTableNames.has(current.tableName) : false
+    })
+    adaptedOperations.push({
+      ...operation,
+      tables,
+      indexes: [...retainedIndexes, ...currentIndexes]
+    })
+  }
+  return { operations: adaptedOperations, currentTableNames: [...currentTableNames] }
+}
+
+type LegacySchemaExtensions = {
+  tableNames?: readonly string[]
+  schemaObjects?: readonly { type: 'trigger' | 'view'; name: string }[]
+  columns?: Readonly<Record<string, readonly string[]>>
+}
+
+const classifyLegacySchema = async (
+  client: PrismaClient,
+  extensions: LegacySchemaExtensions = {}
+): Promise<void> => {
+  const allowedSchemaObjects = new Set(
+    (extensions.schemaObjects ?? []).map(({ type, name }) => `${type}:${name}`)
+  )
   const unsupportedObjects = await migrationSqlExecutor.query<
     Array<{ name: string; type: string }>
   >(
@@ -454,10 +567,13 @@ const classifyLegacySchema = async (client: PrismaClient): Promise<void> => {
      WHERE "type" IN ('trigger', 'view') AND "name" NOT LIKE 'sqlite_%'
      ORDER BY "type", "name"`
   )
-  if (unsupportedObjects.length > 0) {
+  const unknownObjects = unsupportedObjects.filter(
+    ({ type, name }) => !allowedSchemaObjects.has(`${type}:${name}`)
+  )
+  if (unknownObjects.length > 0) {
     throw new DatabaseValidationError(
       `Legacy database classification blocked by unsupported schema objects.`,
-      { kind: 'unsupported-schema-objects', actual: unsupportedObjects }
+      { kind: 'unsupported-schema-objects', actual: unknownObjects }
     )
   }
 
@@ -471,7 +587,10 @@ const classifyLegacySchema = async (client: PrismaClient): Promise<void> => {
   )
   const unknownTables = tables
     .map((table) => table.name)
-    .filter((tableName) => !CURRENT_TABLE_COLUMNS.has(tableName))
+    .filter(
+      (tableName) =>
+        !CURRENT_TABLE_COLUMNS.has(tableName) && !extensions.tableNames?.includes(tableName)
+    )
   if (unknownTables.length > 0) {
     throw new DatabaseValidationError(`Legacy database classification found unknown tables.`, {
       kind: 'unknown-tables',
@@ -480,10 +599,12 @@ const classifyLegacySchema = async (client: PrismaClient): Promise<void> => {
   }
 
   for (const { name: tableName } of tables) {
-    const currentColumns = CURRENT_TABLE_COLUMNS.get(tableName)!
+    const currentColumns = CURRENT_TABLE_COLUMNS.get(tableName)
+    if (!currentColumns) continue
     const allowedColumns = new Set([
       ...currentColumns,
-      ...(RETIRED_LEGACY_COLUMNS[tableName] ?? [])
+      ...(RETIRED_LEGACY_COLUMNS[tableName] ?? []),
+      ...(extensions.columns?.[tableName] ?? [])
     ])
     const columns = await migrationSqlExecutor.query<SqliteTableColumn[]>(
       client,
@@ -533,14 +654,21 @@ const targetColumnDiagnostic = (column: TargetColumn): Record<string, unknown> =
 })
 
 const prepareRuntimeSchemaBaseline = async (
-  client: PrismaClient
+  client: PrismaClient,
+  extensions: LegacySchemaExtensions = {}
 ): Promise<PreparedRuntimeSchemaBaseline> => {
-  await classifyLegacySchema(client)
+  await classifyLegacySchema(client, extensions)
+  const verificationTarget = (await hasCurrentManagedFileVersionFoundation(client))
+    ? 'current'
+    : 'baseline'
   return {
     pendingCheckConstraints: await findPendingSqliteCheckConstraints(
       client,
-      PROVENANCE_CHECK_CONSTRAINT_MIGRATIONS
-    )
+      verificationTarget === 'current'
+        ? CURRENT_PROVENANCE_CHECK_CONSTRAINT_MIGRATIONS
+        : PROVENANCE_CHECK_CONSTRAINT_MIGRATIONS
+    ),
+    verificationTarget
   }
 }
 
@@ -908,11 +1036,35 @@ const verifyCurrentRuntimeSchema = (
   extensions: RuntimeSchemaExtensions = {}
 ): Promise<void> => verifyRuntimeSchemaTarget(client, CURRENT_SCHEMA_TARGET, true, {}, extensions)
 
+const verifyCurrentRuntimeSchemaTables = (
+  client: PrismaClient,
+  tableNames: readonly string[]
+): Promise<void> => {
+  const selectedTables = new Set(tableNames)
+  return verifyRuntimeSchemaTarget(
+    client,
+    {
+      tableNames,
+      tables: new Map(
+        [...CURRENT_TARGET_TABLES].filter(([tableName]) => selectedTables.has(tableName))
+      ),
+      indexes: new Map(
+        [...CURRENT_TARGET_INDEXES].filter(([, index]) => selectedTables.has(index.tableName))
+      )
+    },
+    false
+  )
+}
+
 const applyRuntimeSchemaBaseline = async (
   client: PrismaClient,
   prepared: PreparedRuntimeSchemaBaseline
 ): Promise<void> => {
-  for (const ddl of RUNTIME_SCHEMA_TABLE_DDLS) {
+  const tableDdls =
+    prepared.verificationTarget === 'current'
+      ? CURRENT_RUNTIME_SCHEMA_TABLE_DDLS
+      : RUNTIME_SCHEMA_TABLE_DDLS
+  for (const ddl of tableDdls) {
     await migrationSqlExecutor.execute(client, ddl)
   }
 
@@ -961,7 +1113,11 @@ const applyRuntimeSchemaBaseline = async (
     COMPUTE_JOB_ADD_NOTIFICATION_CONSUMED_AT_DDL
   )
 
-  await applySqliteCheckConstraints(client, prepared.pendingCheckConstraints)
+  await applySqliteCheckConstraints(
+    client,
+    prepared.pendingCheckConstraints,
+    prepared.verificationTarget === 'current' ? CURRENT_RUNTIME_SCHEMA_INDEX_DDLS : []
+  )
   for (const ddl of RUNTIME_SCHEMA_INDEX_DDLS) {
     await migrationSqlExecutor.execute(client, ddl)
   }
@@ -971,9 +1127,16 @@ export {
   RUNTIME_SCHEMA_BASELINE_CONTRACT,
   RUNTIME_SCHEMA_BASELINE_TARGET_SQL,
   applyRuntimeSchemaBaseline,
+  adaptMigrationOperationsForCurrentSchema,
+  hasCurrentManagedFileVersionFoundation,
   prepareRuntimeSchemaBaseline,
   normalizeSchemaObjectSql,
   verifyCurrentRuntimeSchema,
+  verifyCurrentRuntimeSchemaTables,
   verifyRuntimeSchemaBaseline
 }
-export type { AllowedSuffixCheckConstraints, PreparedRuntimeSchemaBaseline }
+export type {
+  AdaptedMigrationOperations,
+  AllowedSuffixCheckConstraints,
+  PreparedRuntimeSchemaBaseline
+}

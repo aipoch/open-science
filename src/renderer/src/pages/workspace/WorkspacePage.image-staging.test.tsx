@@ -25,6 +25,7 @@ import {
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import { usePdfContextAction } from './use-pdf-context-action'
+import { markWorkspaceReviewHistoryLoaded } from './workspace-page-test-fixtures'
 
 // Capture the ConversationPanel props the page computes on each render.
 let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
@@ -149,6 +150,7 @@ describe('WorkspacePage image attachment gating', () => {
   }
 
   beforeEach(() => {
+    markWorkspaceReviewHistoryLoaded({ projectId: 'proj-1', sessionId: 'sess-a' })
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useProjectStore.setState({ projects: [] })
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'proj-1' })
@@ -283,6 +285,53 @@ describe('WorkspacePage image attachment gating', () => {
     })
     expect(stageLocalFile).not.toHaveBeenCalled()
     expect(conversationProps.composer.view.attachments).toEqual([])
+  })
+
+  it('blocks a raster image with missing MIME before staging starts', async () => {
+    setActiveProviderImageSupport(false)
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.stageFiles([
+        new File([new Uint8Array([1, 2, 3])], 'pic.png')
+      ])
+    })
+
+    expect(conversationProps.view.actionError).toBe(IMAGE_BLOCKED_MESSAGE)
+    expect(stageLocalFile).not.toHaveBeenCalled()
+  })
+
+  it('stages and sends SVG as an ordinary file without image input support', async () => {
+    setActiveProviderImageSupport(false)
+    const staged: UploadedAttachment = {
+      id: 'att-svg',
+      sessionId: '.pending',
+      name: 'diagram.svg',
+      originalName: 'diagram.svg',
+      path: '/uploads/diagram.svg',
+      mimeType: 'image/svg+xml',
+      size: 3
+    }
+    stageLocalFile.mockResolvedValue(staged)
+    runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a' })
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.stageFiles([
+        new File([new Uint8Array([1, 2, 3])], 'diagram.svg', { type: 'image/svg+xml' })
+      ])
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(conversationProps.composer.view.attachments).toEqual([staged]))
+    })
+
+    await act(async () => {
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(runtime.sendMessage).toHaveBeenCalledTimes(1))
+    })
+    expect(runtime.sendMessage.mock.calls[0][0].attachments).toEqual([staged])
   })
 
   it('stages and sends an image through a configured Vision model', async () => {
@@ -429,6 +478,7 @@ describe('WorkspacePage image attachment gating', () => {
     const manualSelection = {
       kind: 'version' as const,
       sourceKind: 'artifact-version' as const,
+      sourceFileId: 'artifact-9',
       sourceVersionId: 'version-9',
       previewItemId: 'other-preview'
     }
@@ -480,6 +530,70 @@ describe('WorkspacePage image attachment gating', () => {
 
     expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['proj-1']).toBeUndefined()
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  })
+
+  it('routes a follow-up PDF into Reading when the active Session already has PDF context', async () => {
+    setActiveProviderImageSupport(false)
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        createSession({
+          runtimeContext: {
+            version: 1,
+            revision: 1,
+            pdfContext: {
+              version: 1,
+              bindings: [
+                {
+                  version: 1,
+                  bindingId: 'binding-1',
+                  sourceKind: 'upload-version',
+                  sourceFileId: 'pdf-1',
+                  sourceVersionId: 'pdf-version-1',
+                  sourceSessionId: 'sess-a',
+                  name: 'first.pdf',
+                  mimeType: 'application/pdf',
+                  sizeBytes: 3,
+                  checksum: 'a'.repeat(64),
+                  linkedAt: 1
+                }
+              ]
+            }
+          }
+        })
+      ],
+      selectedSessionId: 'sess-a'
+    })
+    const staged = {
+      id: 'pdf-2',
+      sessionId: '.pending',
+      name: 'second.pdf',
+      originalName: 'second.pdf',
+      path: '/uploads/.pending/second.pdf',
+      mimeType: 'application/pdf',
+      size: 3
+    } satisfies UploadedAttachment
+    stageLocalFile.mockResolvedValueOnce(staged)
+    runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a' })
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.stageFiles([pdfFile('second.pdf')])
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(conversationProps.composer.view.attachments).toEqual([staged]))
+    })
+    await act(async () => {
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(runtime.sendMessage).toHaveBeenCalledOnce())
+    })
+
+    expect(runtime.sendMessage.mock.calls[0][0]).toMatchObject({
+      attachments: [staged],
+      pendingPdfContextAttachmentIds: ['pdf-2']
+    })
   })
 
   it('allows explicitly linking a staged PDF from the preview surface', async () => {

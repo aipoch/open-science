@@ -40,10 +40,6 @@ export const rebaseSafeSessionFields = (
       case 'agentConfiguration':
         rebased.agentConfiguration = submitted.agentConfiguration
         break
-      case 'enabledComputeHosts':
-      case 'selectedComputeHosts':
-        // Retained in the wire-compatible enum, but this field is now changed only by its command.
-        break
       case 'pinned':
         rebased.pinned = submitted.pinned
         break

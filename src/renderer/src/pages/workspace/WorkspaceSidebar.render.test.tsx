@@ -30,6 +30,20 @@ const createSession = (overrides: Partial<ChatSession>): ChatSession => ({
   ...overrides
 })
 
+const deferred = <T,>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason: unknown) => void
+} => {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 const createDelegatedQuestionSession = (): ChatSession =>
   createSession({
     id: 'delegated-question',
@@ -170,6 +184,75 @@ const renderSidebar = async (
       onMobileClose={vi.fn()}
     />
   )
+}
+
+type SidebarProject = { id: string; name: string; description: string }
+
+const mountProjectSidebar = async (
+  otherProjects: readonly SidebarProject[],
+  onOpenProject: (projectId: string) => void = vi.fn()
+): Promise<{
+  cleanup: () => void
+  openMenu: () => void
+  rerenderProjects: (projects: readonly SidebarProject[]) => Promise<void>
+  rerenderSessions: (sessions: ChatSession[]) => Promise<void>
+}> => {
+  const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+
+  let renderedProjects = otherProjects
+  let renderedSessions = [createSession({ id: 'session-a' })]
+  const render = (): void => {
+    root.render(
+      <WorkspaceSidebar
+        projectName="Example project"
+        otherProjects={renderedProjects}
+        sessions={renderedSessions}
+        activeSessionId="session-a"
+        canCreateConversation
+        canMutateConversations
+        canDeleteConversations
+        onGoHome={vi.fn()}
+        onNewConversation={vi.fn()}
+        isFilesOpen={false}
+        onOpenFiles={vi.fn()}
+        onOpenSession={vi.fn()}
+        onOpenProject={onOpenProject}
+        onRenameSession={vi.fn()}
+        canDownloadArtifacts
+        onDownloadArtifacts={vi.fn()}
+        onViewNotebook={vi.fn()}
+        onTogglePin={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onOpenProjectSettings={vi.fn()}
+        onNewProject={vi.fn()}
+      />
+    )
+  }
+
+  await act(async () => {
+    render()
+  })
+
+  return {
+    cleanup: () => {
+      act(() => root.unmount())
+      container.remove()
+    },
+    openMenu: () =>
+      openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]')),
+    rerenderProjects: async (projects) => {
+      renderedProjects = projects
+      await act(async () => render())
+    },
+    rerenderSessions: async (sessions) => {
+      renderedSessions = sessions
+      await act(async () => render())
+    }
+  }
 }
 
 type ElementWithProps = ReactElement<Record<string, unknown>>
@@ -575,11 +658,172 @@ describe('WorkspaceSidebar accessible render', () => {
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
       )
 
-      expect(onRenameTitle).toHaveBeenCalledWith('Renamed title')
+      expect(onRenameTitle).toHaveBeenCalledWith('Renamed title', 'Old title')
       expect(onRenameTitle).toHaveBeenCalledOnce()
       expect(
         document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
       ).toBeNull()
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
+  })
+
+  it('submits the title visible when inline editing began after an external update', async () => {
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const onRenameTitle = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const renderPreview = async (title: string): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview
+              session={{ id: 'externally-renamed', title }}
+              canRename
+              onRenameTitle={onRenameTitle}
+            >
+              <button type="button">Rename trigger</button>
+            </SessionHoverPreview>
+          </SessionHoverPreviewProvider>
+        )
+      })
+    }
+
+    try {
+      await renderPreview('Title when editing began')
+      const trigger = container.querySelector('button')
+      if (!trigger) throw new Error('Session preview trigger did not render')
+      const pointerOver = new MouseEvent('pointerover', { bubbles: true })
+      Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
+      await act(async () => trigger.dispatchEvent(pointerOver))
+      const titleButton = document.body.querySelector<HTMLElement>(
+        '[data-slot="session-hover-preview-title-button"]'
+      )
+      await act(async () => titleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+      const input = document.body.querySelector<HTMLInputElement>(
+        '[data-slot="hovercard-content"] [data-slot="input"]'
+      )
+      if (!input) throw new Error('Session preview title editor did not render')
+      input.value = 'My stale draft'
+
+      await renderPreview('Title updated in another window')
+      await act(async () =>
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      )
+
+      expect(onRenameTitle).toHaveBeenCalledWith('My stale draft', 'Title when editing began')
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
+  })
+
+  it('keeps an inline rename open and announces a save failure', async () => {
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const save = deferred<void>()
+    void save.promise.catch(() => undefined)
+    const onRenameTitle = vi.fn(() => save.promise)
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview
+              session={{ id: 'failed-rename', title: 'Old title' }}
+              canRename
+              onRenameTitle={onRenameTitle}
+            >
+              <button type="button">Rename trigger</button>
+            </SessionHoverPreview>
+          </SessionHoverPreviewProvider>
+        )
+      })
+      const trigger = container.querySelector('button')
+      if (!trigger) throw new Error('Session preview trigger did not render')
+      const pointerOver = new MouseEvent('pointerover', { bubbles: true })
+      Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
+      await act(async () => trigger.dispatchEvent(pointerOver))
+      const titleButton = document.body.querySelector<HTMLElement>(
+        '[data-slot="session-hover-preview-title-button"]'
+      )
+      await act(async () => titleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+      const input = document.body.querySelector<HTMLInputElement>(
+        '[data-slot="hovercard-content"] [data-slot="input"]'
+      )
+      if (!input) throw new Error('Session preview title editor did not render')
+      input.value = 'Unsaved title'
+      await act(async () =>
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      )
+
+      await act(async () => {
+        save.reject(new Error('disk failure'))
+        await save.promise.catch(() => undefined)
+      })
+
+      expect(
+        document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
+      ).toBeInstanceOf(HTMLInputElement)
+      expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+        'Could not save session details.'
+      )
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
+  })
+
+  it('keeps an inline rename open without a save error when preparation could not load', async () => {
+    const { SessionHoverPreview, SessionHoverPreviewProvider } =
+      await import('./SessionHoverPreview')
+    const onRenameTitle = vi.fn().mockResolvedValue(false)
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <SessionHoverPreviewProvider>
+            <SessionHoverPreview
+              session={{ id: 'load-failed-rename', title: 'Old title' }}
+              canRename
+              onRenameTitle={onRenameTitle}
+            >
+              <button type="button">Rename trigger</button>
+            </SessionHoverPreview>
+          </SessionHoverPreviewProvider>
+        )
+      })
+      const trigger = container.querySelector('button')
+      if (!trigger) throw new Error('Session preview trigger did not render')
+      const pointerOver = new MouseEvent('pointerover', { bubbles: true })
+      Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
+      await act(async () => trigger.dispatchEvent(pointerOver))
+      const titleButton = document.body.querySelector<HTMLElement>(
+        '[data-slot="session-hover-preview-title-button"]'
+      )
+      await act(async () => titleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+      const input = document.body.querySelector<HTMLInputElement>(
+        '[data-slot="hovercard-content"] [data-slot="input"]'
+      )
+      if (!input) throw new Error('Session preview title editor did not render')
+      input.value = 'Unsaved title'
+      await act(async () =>
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      )
+
+      expect(
+        document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
+      ).toBeInstanceOf(HTMLInputElement)
+      expect(document.body.querySelector('[role="alert"]')).toBeNull()
     } finally {
       act(() => root.unmount())
       container.remove()
@@ -687,7 +931,7 @@ describe('WorkspaceSidebar accessible render', () => {
       const committedInput = await openEditor()
       committedInput.value = 'Blurred rename'
       await act(async () => committedInput.blur())
-      expect(onRenameTitle).toHaveBeenCalledWith('Blurred rename')
+      expect(onRenameTitle).toHaveBeenCalledWith('Blurred rename', 'Blur title')
       expect(onRenameTitle).toHaveBeenCalledOnce()
     } finally {
       act(() => root.unmount())
@@ -1021,49 +1265,440 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(onNewProject).toHaveBeenCalledTimes(1)
   })
 
-  it('shows five other projects, expands in place, switches projects, and resets after close', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+  it('shows project search only when more than five other projects are available', async () => {
+    const projects = Array.from({ length: 6 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const fiveProjects = await mountProjectSidebar(projects.slice(0, 5))
+    try {
+      fiveProjects.openMenu()
+      expect(document.body.querySelector('[aria-label="Search projects"]')).toBeNull()
+    } finally {
+      fiveProjects.cleanup()
+    }
+
+    const sixProjects = await mountProjectSidebar(projects)
+    try {
+      sixProjects.openMenu()
+      expect(document.body.querySelector('[aria-label="Search projects"]')).not.toBeNull()
+    } finally {
+      sixProjects.cleanup()
+    }
+  })
+
+  it('keeps menu-item arrow navigation when project search is hidden', async () => {
+    const projects = Array.from({ length: 5 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const mounted = await mountProjectSidebar(projects)
+
+    try {
+      mounted.openMenu()
+      const settings = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+      ).find((item) => item.textContent?.trim() === 'Project settings')
+      const firstProject = document.body.querySelector<HTMLElement>('[data-project-id]')
+
+      await act(async () => {
+        settings?.focus()
+        settings?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+        await new Promise((resolve) => window.setTimeout(resolve, 0))
+      })
+
+      expect(document.activeElement).toBe(firstProject)
+
+      await act(async () => {
+        firstProject?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+        await new Promise((resolve) => window.setTimeout(resolve, 0))
+      })
+
+      expect(document.activeElement).toBe(settings)
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('centers project search and uses the shared clear button treatment', async () => {
+    const projects = Array.from({ length: 6 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const mounted = await mountProjectSidebar(projects)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const searchContainer = search?.parentElement
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+
+      expect(searchContainer?.className).toContain('mx-1')
+      expect(search?.className).toContain('[&::-webkit-search-cancel-button]:hidden')
+      expect(search?.className).toContain('pr-8')
+      expect(document.body.querySelector('[aria-label="Clear search"]')).toBeNull()
+
+      await act(async () => {
+        valueSetter?.call(search, 'Project')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+
+      const clearButton = document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Clear search"]'
+      )
+      expect(clearButton?.getAttribute('data-slot')).toBe('button')
+      expect(clearButton?.getAttribute('data-variant')).toBe('ghost')
+      expect(clearButton?.getAttribute('data-size')).toBe('icon-xs')
+      expect(clearButton?.className).toContain('text-text-100')
+      expect(clearButton?.className).toContain('hover:bg-bg-200')
+      expect(clearButton?.className).toContain('focus-visible:ring-3')
+
+      const mouseDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      await act(async () => {
+        search?.focus()
+        clearButton?.dispatchEvent(mouseDown)
+        clearButton?.click()
+      })
+      expect(mouseDown.defaultPrevented).toBe(true)
+      expect(document.activeElement).toBe(search)
+      expect(search?.value).toBe('')
+      expect(document.body.querySelector('[aria-label="Clear search"]')).toBeNull()
+      expect(document.body.querySelector('[aria-label="Project actions"]')).not.toBeNull()
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('returns keyboard focus to project search after clearing', async () => {
+    const projects = Array.from({ length: 6 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const mounted = await mountProjectSidebar(projects)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, 'Project')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+
+      const clearButton = document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Clear search"]'
+      )
+      await act(async () => {
+        search?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+      })
+      expect(document.activeElement).toBe(clearButton)
+
+      await act(async () => {
+        clearButton?.click()
+      })
+
+      expect(search?.value).toBe('')
+      expect(document.activeElement).toBe(search)
+      expect(document.body.querySelector('[aria-label="Project actions"]')).not.toBeNull()
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('keeps keyboard navigation moving when project search has no results', async () => {
+    const projects = Array.from({ length: 6 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const mounted = await mountProjectSidebar(projects)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, 'no matches')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+
+      const clearButton = document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Clear search"]'
+      )
+      const newProjectItem = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+      ).find((item) => item.textContent?.trim() === 'New project')
+
+      await act(async () => {
+        search?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+      })
+      expect(document.activeElement).toBe(clearButton)
+
+      await act(async () => {
+        clearButton?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
+        )
+      })
+      expect(document.activeElement).toBe(newProjectItem)
+
+      await act(async () => {
+        newProjectItem?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })
+        )
+      })
+      expect(document.activeElement).toBe(search)
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('clears a hidden project query when the search threshold is no longer met', async () => {
+    const projects = Array.from({ length: 6 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const mounted = await mountProjectSidebar(projects)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, 'Project 6')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      expect(document.body.querySelectorAll('[data-project-id]')).toHaveLength(1)
+
+      await mounted.rerenderProjects(projects.slice(0, 5))
+      expect(document.body.querySelector('[aria-label="Search projects"]')).toBeNull()
+      expect(document.body.querySelectorAll('[data-project-id]')).toHaveLength(5)
+
+      await mounted.rerenderProjects(projects)
+      expect(
+        document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')?.value
+      ).toBe('')
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('does not recompute project matches for session-only rerenders', async () => {
+    let descriptionReadCount = 0
+    const projects = Array.from({ length: 6 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      get description(): string {
+        descriptionReadCount += 1
+        return `Description ${index + 1}`
+      }
+    }))
+    const mounted = await mountProjectSidebar(projects)
+
+    try {
+      const readsAfterMount = descriptionReadCount
+      await mounted.rerenderSessions([
+        createSession({ id: 'session-a', title: 'Updated session title' })
+      ])
+      expect(descriptionReadCount).toBe(readsAfterMount)
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('fuzzy matches project titles before descriptions without reordering either group', async () => {
+    const otherProjects = [
+      { id: 'title-first', name: 'Alpha Lab', description: 'Alpha outcomes' },
+      { id: 'description-first', name: 'Genome Atlas', description: 'Alpha description' },
+      { id: 'title-second', name: 'Alpine Study', description: 'Clinical cohort' },
+      { id: 'description-second', name: 'Signal Cohort', description: 'Alpine follow-up' },
+      { id: 'unmatched-1', name: 'Control Study', description: 'Baseline cohort' },
+      { id: 'unmatched-2', name: 'Reference Set', description: 'Control samples' }
+    ]
+    const mounted = await mountProjectSidebar(otherProjects)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, ' aLp ')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+
+      const projectItems = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[data-project-id]')
+      )
+      expect(projectItems.map((item) => item.dataset.projectId)).toEqual([
+        'title-first',
+        'title-second',
+        'description-first',
+        'description-second'
+      ])
+
+      const titleFirst = projectItems[0]
+      const descriptionFirst = projectItems[2]
+      expect(titleFirst?.querySelector('[data-project-title] .text-primary')?.textContent).toBe(
+        'Alp'
+      )
+      expect(
+        titleFirst?.querySelector('[data-project-description] .text-primary')?.textContent
+      ).toBe('Alp')
+      expect(descriptionFirst?.querySelector('[data-project-title] .text-primary')).toBeNull()
+      expect(
+        descriptionFirst?.querySelector('[data-project-description] .text-primary')?.textContent
+      ).toBe('Alp')
+      expect(document.body.textContent).not.toContain('Show remaining')
+
+      await act(async () => {
+        valueSetter?.call(search, 'zzzz')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      expect(document.body.querySelectorAll('[data-project-id]')).toHaveLength(0)
+      expect(document.body.textContent).toContain('No matching projects')
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('highlights Unicode matches at their original text positions', async () => {
+    const otherProjects = [
+      { id: 'project-1', name: 'İstanbul', description: 'City study' },
+      { id: 'project-2', name: 'Alpha', description: 'First cohort' },
+      { id: 'project-3', name: 'Beta', description: 'Second cohort' },
+      { id: 'project-4', name: 'Gamma', description: 'Third cohort' },
+      { id: 'project-5', name: 'Delta', description: 'Fourth cohort' },
+      { id: 'project-6', name: 'Epsilon', description: 'Fifth cohort' }
+    ]
+    const mounted = await mountProjectSidebar(otherProjects)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, 's')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+
+      const istanbul = document.body.querySelector<HTMLElement>('[data-project-id="project-1"]')
+      expect(istanbul?.querySelector('[data-project-title] .text-primary')?.textContent).toBe('s')
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('moves from project search into the first result and opens it with the keyboard', async () => {
     const onOpenProject = vi.fn()
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    const root = createRoot(container)
+    const otherProjects = [
+      { id: 'project-1', name: 'Alpha', description: 'First cohort' },
+      { id: 'project-2', name: 'Beta', description: 'Second cohort' },
+      { id: 'project-3', name: 'Gamma', description: 'Third cohort' },
+      { id: 'project-4', name: 'Delta', description: 'Fourth cohort' },
+      { id: 'project-5', name: 'Epsilon', description: 'Fifth cohort' },
+      { id: 'project-6', name: 'Target Project', description: 'Selected cohort' }
+    ]
+    const mounted = await mountProjectSidebar(otherProjects, onOpenProject)
+
+    try {
+      mounted.openMenu()
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      expect(document.activeElement).toBe(search)
+      await act(async () => {
+        search?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, isComposing: true })
+        )
+      })
+      expect(document.activeElement).toBe(search)
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, 'TARGET')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      await act(async () => {
+        search?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      })
+
+      const firstResult = document.body.querySelector<HTMLElement>('[data-project-id]')
+      expect(firstResult?.dataset.projectId).toBe('project-6')
+      expect(document.activeElement).toBe(firstResult)
+
+      await act(async () => {
+        firstResult?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+      })
+      expect(document.activeElement).toBe(search)
+
+      await act(async () => {
+        search?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      })
+      expect(document.activeElement).toBe(firstResult)
+
+      await act(async () => {
+        firstResult?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      })
+      expect(onOpenProject).toHaveBeenCalledWith('project-6')
+
+      mounted.openMenu()
+      const reopenedSearch = document.body.querySelector<HTMLInputElement>(
+        '[aria-label="Search projects"]'
+      )
+      expect(reopenedSearch?.value).toBe('')
+      expect(document.activeElement).toBe(reopenedSearch)
+      await act(async () => {
+        reopenedSearch?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+        )
+      })
+      expect(document.body.querySelector('[aria-label="Project actions"]')).toBeNull()
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('keeps keyboard focus on project results after expanding the menu', async () => {
+    const otherProjects = Array.from({ length: 7 }, (_, index) => ({
+      id: `project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      description: `Description ${index + 1}`
+    }))
+    const mounted = await mountProjectSidebar(otherProjects)
+
+    try {
+      mounted.openMenu()
+      const showRemaining = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+      ).find((item) => item.textContent?.trim() === 'Show remaining 2 projects')
+
+      await act(async () => {
+        showRemaining?.focus()
+        showRemaining?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        await new Promise((resolve) => window.setTimeout(resolve, 0))
+      })
+
+      expect(document.body.querySelectorAll('[data-project-id]')).toHaveLength(7)
+      expect(document.activeElement).toBe(
+        document.body.querySelector<HTMLElement>('[data-project-id]')
+      )
+    } finally {
+      mounted.cleanup()
+    }
+  })
+
+  it('shows five other projects, expands in place, switches projects, and resets after close', async () => {
+    const onOpenProject = vi.fn()
     const otherProjects = Array.from({ length: 7 }, (_, index) => ({
       id: `project-${index + 1}`,
       name: `Project ${index + 1}`,
       description: index === 4 ? '' : `Description ${index + 1}`
     }))
+    const mounted = await mountProjectSidebar(otherProjects, onOpenProject)
 
     try {
-      await act(async () => {
-        root.render(
-          <WorkspaceSidebar
-            projectName="Example project"
-            otherProjects={otherProjects}
-            sessions={[createSession({ id: 'session-a' })]}
-            activeSessionId="session-a"
-            canCreateConversation
-            canMutateConversations
-            canDeleteConversations
-            onGoHome={vi.fn()}
-            onNewConversation={vi.fn()}
-            isFilesOpen={false}
-            onOpenFiles={vi.fn()}
-            onOpenSession={vi.fn()}
-            onOpenProject={onOpenProject}
-            onRenameSession={vi.fn()}
-            canDownloadArtifacts
-            onDownloadArtifacts={vi.fn()}
-            onViewNotebook={vi.fn()}
-            onTogglePin={vi.fn()}
-            onDeleteSession={vi.fn()}
-            onOpenSettings={vi.fn()}
-            onOpenProjectSettings={vi.fn()}
-            onNewProject={vi.fn()}
-          />
-        )
-      })
-
-      openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]'))
+      mounted.openMenu()
 
       let projectItems = Array.from(
         document.body.querySelectorAll<HTMLElement>('[data-project-id]')
@@ -1090,14 +1725,35 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(projectItems).toHaveLength(7)
       expect(document.body.querySelector('[aria-label="Project actions"]')).not.toBeNull()
 
-      clickRadixMenuItem(projectItems[6])
+      const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      await act(async () => {
+        valueSetter?.call(search, 'Description')
+        search?.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      projectItems = Array.from(document.body.querySelectorAll<HTMLElement>('[data-project-id]'))
+      expect(projectItems).toHaveLength(5)
+      const filteredShowRemaining = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+      ).find((item) => item.textContent?.trim() === 'Show remaining 1 project')
+      expect(filteredShowRemaining).toBeDefined()
+
+      clickRadixMenuItem(filteredShowRemaining)
+      projectItems = Array.from(document.body.querySelectorAll<HTMLElement>('[data-project-id]'))
+      expect(projectItems).toHaveLength(6)
+      expect(document.body.querySelector('[aria-label="Search projects"]')).not.toBeNull()
+
+      clickRadixMenuItem(projectItems[5])
       expect(onOpenProject).toHaveBeenCalledWith('project-7')
 
-      openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]'))
+      mounted.openMenu()
       expect(document.body.querySelectorAll('[data-project-id]')).toHaveLength(5)
+      expect(
+        document.body.querySelector<HTMLInputElement>('[aria-label="Search projects"]')?.value
+      ).toBe('')
+      expect(document.body.textContent).toContain('Show remaining 2 projects')
     } finally {
-      act(() => root.unmount())
-      container.remove()
+      mounted.cleanup()
     }
   })
 

@@ -247,17 +247,6 @@ const projectIncompleteSummaries = (
     .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
 }
 
-// Production storage lives under ~/.open-science; dev builds use an isolated sibling directory.
-export const PROD_SESSION_DIR_NAME = '.open-science'
-export const DEV_SESSION_DIR_NAME = '.open-science-project'
-
-// Builds the app-owned session directory in the user's home folder. Kept pure (no electron) so it
-// stays unit-testable; the dev/prod choice is applied by the main-only resolveStorageRoot helper.
-const getSessionPersistenceDir = (
-  homePath: string,
-  dirName: string = PROD_SESSION_DIR_NAME
-): string => join(homePath, dirName)
-
 // Rejects path segments that could escape the sessions tree. Real session/project ids are id-like, so
 // this only guards against corrupt or malicious values before they become file paths.
 const assertSafeSegment = (segment: unknown): string => {
@@ -1701,6 +1690,7 @@ const isMissingFileError = (error: unknown): boolean =>
   'code' in error &&
   (error as { code?: unknown }).code === 'ENOENT'
 
-export { SessionRepository, getSessionPersistenceDir }
+export { DEV_SESSION_DIR_NAME, PROD_SESSION_DIR_NAME, getSessionPersistenceDir } from './paths'
+export { SessionRepository }
 export type { ProjectSessionDeletionState, ProjectSessionLoadDiagnostics, SessionLoadDiagnostic }
 export type { SessionLoadDiagnostics, SessionScanMetrics }

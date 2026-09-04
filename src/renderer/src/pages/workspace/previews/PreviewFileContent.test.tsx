@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -8,6 +8,7 @@ import type { PreviewFileRendererProps } from './preview-types'
 import { createCachedImageFetchResponse } from './cached-preview-image.test-support'
 import { createManagedPreviewTestTransport } from './managed-preview-test-support'
 import { PreviewFileContent } from './PreviewFileContent'
+import type { PreviewDownloadVersionContext } from './preview-runtime-context'
 
 const highlightSpy = vi.hoisted(() => vi.fn())
 const addModel = vi.fn()
@@ -79,12 +80,15 @@ let restorePdbLayoutMocks: (() => void) | undefined
 
 const createFileItem = (overrides: Partial<PreviewFileItem>): PreviewFileItem => ({
   id: 'file-1',
+  projectId: 'project-1',
   sessionId: 'session-1',
   title: 'data.json',
   type: 'file',
+  source: 'artifact',
   path: '/workspace/data.json',
   name: 'data.json',
   format: 'json',
+  managedFileId: 'file-1',
   ...overrides
 })
 
@@ -185,6 +189,86 @@ describe('PreviewFileContent', () => {
     highlightSpy.mockClear()
   })
 
+  it('downloads the selected historical version from the unsupported-preview fallback menu', async () => {
+    const saveManagedFile = vi.fn().mockResolvedValue({ saved: false })
+    window.api.saveManagedFile = saveManagedFile
+    const unsupportedItem: PreviewFileItem = {
+      id: 'upload:upload-1',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      title: 'archive.bin',
+      type: 'file',
+      source: 'upload',
+      path: 'upload-version:stale-projection',
+      name: 'archive.bin',
+      format: 'unknown',
+      managedFileId: 'upload-1',
+      selectedVersionId: 'upload-v5',
+      versionNumber: 5
+    }
+
+    await renderFile(unsupportedItem, {
+      downloadVersionContext: {
+        versionId: 'upload-v5',
+        versionNumber: 5,
+        latestVersionId: 'upload-v7',
+        latestVersionNumber: 7
+      }
+    })
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Download options for archive.bin"]')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await Promise.resolve()
+    })
+    expect(saveManagedFile).not.toHaveBeenCalled()
+
+    const selectedVersion = [
+      ...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ].find((item) => item.textContent === 'Download version v5')
+    expect(selectedVersion).toBeDefined()
+    await act(async () => {
+      selectedVersion?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(saveManagedFile).toHaveBeenCalledWith({
+      source: 'upload',
+      projectId: 'project-1',
+      fileId: 'upload-1',
+      versionId: 'upload-v5',
+      suggestedName: 'archive.bin'
+    })
+  })
+
+  it('does not download a managed fallback while version context is pending', async () => {
+    const saveManagedFile = vi.fn().mockResolvedValue({ saved: false })
+    window.api.saveManagedFile = saveManagedFile
+
+    await renderFile(
+      createFileItem({
+        source: 'upload',
+        projectId: 'project-1',
+        managedFileId: 'upload-1',
+        selectedVersionId: 'upload-v5',
+        path: 'upload-version:stale-projection',
+        name: 'archive.bin',
+        title: 'archive.bin',
+        format: 'unknown'
+      })
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>('button')
+    expect(trigger?.disabled).toBe(true)
+    await act(async () => {
+      trigger?.click()
+      await Promise.resolve()
+    })
+
+    expect(saveManagedFile).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[role="menuitem"]')).toBeNull()
+  })
+
   afterEach(async () => {
     await act(async () => {
       root.unmount()
@@ -197,11 +281,14 @@ describe('PreviewFileContent', () => {
 
   const renderFile = async (
     item: PreviewFileItem,
-    annotationProps: Omit<PreviewFileRendererProps, 'item'> = {}
+    options: Omit<PreviewFileRendererProps, 'item'> & {
+      downloadVersionContext?: PreviewDownloadVersionContext
+      onRetry?: () => Promise<void>
+    } = {}
   ): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
-      root.render(<PreviewFileContent item={item} {...annotationProps} />)
+      root.render(<PreviewFileContent item={item} {...options} />)
     })
   }
 
@@ -358,6 +445,103 @@ describe('PreviewFileContent', () => {
     consoleError.mockRestore()
   })
 
+  it('waits for managed logical identity refresh before restarting a failed preview', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let finishIdentityRefresh: (() => void) | undefined
+    const onRetry = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishIdentityRefresh = resolve
+        })
+    )
+    vi.mocked(window.api.artifacts.readPreview)
+      .mockRejectedValueOnce(new Error('stale managed identity'))
+      .mockResolvedValueOnce({
+        content: 'logical preview',
+        encoding: 'utf8',
+        size: 15,
+        truncated: false
+      })
+
+    await renderFile(createFileItem({ format: 'text', name: 'notes.txt' }), { onRetry })
+    await vi.waitFor(() => expect(container.textContent).toContain("File couldn't be read"))
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+
+    await act(async () => {
+      retry?.click()
+      retry?.click()
+      await Promise.resolve()
+    })
+
+    expect(onRetry).toHaveBeenCalledOnce()
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      finishIdentityRefresh?.()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await vi.waitFor(() => expect(container.textContent).toContain('logical preview'))
+    expect(window.api.artifacts.readPreview).toHaveBeenCalledTimes(2)
+    consoleError.mockRestore()
+  })
+
+  it('retries with the refreshed logical identity instead of the stale physical path', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const legacyItem = createFileItem({
+      managedFileId: undefined,
+      path: '/stale/notes.txt',
+      format: 'text',
+      name: 'notes.txt'
+    })
+    const canonicalItem = {
+      ...legacyItem,
+      managedFileId: 'canonical-artifact-id',
+      path: 'artifact-version:project-1/session-1/canonical-artifact-id/version-3'
+    }
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'logical preview',
+      encoding: 'utf8',
+      size: 15,
+      truncated: false
+    })
+    const RetryHarness = (): React.JSX.Element => {
+      const [currentItem, setCurrentItem] = useState(legacyItem)
+      return (
+        <PreviewFileContent
+          item={currentItem}
+          onRetry={async () => setCurrentItem(canonicalItem)}
+        />
+      )
+    }
+
+    root = createRoot(container)
+    await act(async () => root.render(<RetryHarness />))
+    await vi.waitFor(() => expect(container.textContent).toContain("File couldn't be read"))
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+
+    await act(async () => {
+      retry?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await vi.waitFor(() => expect(container.textContent).toContain('logical preview'))
+    expect(window.api.previewResources.acquire).toHaveBeenCalledOnce()
+    expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: 'canonical-artifact-id',
+      maxBytes: expect.any(Number)
+    })
+    consoleError.mockRestore()
+  })
+
   it('formats valid JSON previews with indentation', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
       content: '{"name":"sample","values":[1,true]}',
@@ -370,8 +554,9 @@ describe('PreviewFileContent', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/workspace/data.json',
-      sessionId: 'session-1'
+      projectId: 'project-1',
+      fileId: 'file-1',
+      maxBytes: 1024 * 1024
     })
     expect(container.querySelector('pre')?.textContent).toContain('"name": "sample"')
     expect(container.querySelector('pre')?.textContent).toContain('"values": [')
@@ -581,7 +766,7 @@ describe('PreviewFileContent', () => {
     })
 
     expect(fetch).toHaveBeenLastCalledWith(
-      'open-science-preview://resource-2/large.txt',
+      'open-science-preview://resource-2/file-1',
       expect.objectContaining({ headers: { Range: expect.stringMatching(/^bytes=5-/u) } })
     )
     expect(container.textContent).toContain('second page')
@@ -708,7 +893,7 @@ describe('PreviewFileContent', () => {
     expect(iframe).not.toBeNull()
     expect(iframe?.getAttribute('sandbox')).toBe('allow-scripts')
     expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer')
-    expect(iframe?.getAttribute('src')).toBe('open-science-preview://resource-1/data.json')
+    expect(iframe?.getAttribute('src')).toBe('open-science-preview://resource-1/file-1')
     expect(iframe?.hasAttribute('srcdoc')).toBe(false)
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
   })
@@ -738,7 +923,7 @@ describe('PreviewFileContent', () => {
       await Promise.resolve()
     })
     expect(window.api.artifacts.readPreview).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/workspace/data.json', offset: 0 })
+      expect.objectContaining({ path: 'file-1', projectId: 'project-1', offset: 0 })
     )
   })
 
@@ -1060,8 +1245,9 @@ describe('PreviewFileContent', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
-      path: '/Users/example/.open-science/uploads/default-project/session-1/notes.txt',
-      sessionId: 'session-1'
+      projectId: 'project-1',
+      fileId: 'file-1',
+      maxBytes: 1024 * 1024
     })
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
     expect(container.textContent).toContain('uploaded content')

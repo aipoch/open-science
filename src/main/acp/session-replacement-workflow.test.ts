@@ -49,6 +49,7 @@ describe('AcpSessionReplacementWorkflow', () => {
     const clearLivePermissionProfile = vi.fn()
     const clearUserChoiceProvenanceForSession = vi.fn()
     const resetPromptContent = vi.fn()
+    const releasePromptResourcesForSession = vi.fn()
     const resetContextUsage = vi.fn()
     const supersedeInteraction = vi.fn()
     const adopt = vi.fn(async () => replacement)
@@ -68,6 +69,7 @@ describe('AcpSessionReplacementWorkflow', () => {
       clearUserChoiceProvenanceForSession,
       appContinuations: { delete: vi.fn() },
       promptContent: { resetSession: resetPromptContent },
+      releasePromptResourcesForSession,
       contextUsage: { deleteSession: resetContextUsage },
       interactions: { current: vi.fn(), supersedeCurrent: supersedeInteraction }
     })
@@ -88,6 +90,7 @@ describe('AcpSessionReplacementWorkflow', () => {
     expect(clearUserChoiceProvenanceForSession).toHaveBeenCalledWith('app-session')
     expect(clearLivePermissionProfile).toHaveBeenCalledWith('app-session')
     expect(resetPromptContent).toHaveBeenCalledWith('app-session')
+    expect(releasePromptResourcesForSession).toHaveBeenCalledWith('app-session')
     expect(resetContextUsage).toHaveBeenCalledWith('app-session')
     expect(supersedeInteraction).toHaveBeenCalledWith('app-session')
     expect(registry.lookup('app-session')?.aggregate.snapshot().memoryEnabled).toBe(false)
@@ -135,6 +138,7 @@ describe('AcpSessionReplacementWorkflow', () => {
       clearUserChoiceProvenanceForSession: vi.fn(),
       appContinuations: { delete: vi.fn() },
       promptContent: { resetSession: vi.fn() },
+      releasePromptResourcesForSession: vi.fn(),
       contextUsage: { deleteSession: vi.fn() },
       interactions: { current: vi.fn(), supersedeCurrent: vi.fn() }
     })
@@ -176,6 +180,7 @@ describe('AcpSessionReplacementWorkflow', () => {
       clearUserChoiceProvenanceForSession: vi.fn(),
       appContinuations: { delete: vi.fn() },
       promptContent: { resetSession: vi.fn() },
+      releasePromptResourcesForSession: vi.fn(),
       contextUsage: { deleteSession: vi.fn() },
       interactions: { current: vi.fn(), supersedeCurrent: vi.fn() },
       resolveSpecialistIdentity: vi.fn(async () => ({
@@ -228,6 +233,7 @@ describe('AcpSessionReplacementWorkflow', () => {
         clearUserChoiceProvenanceForSession: vi.fn(),
         appContinuations: { delete: vi.fn() },
         promptContent: { resetSession: vi.fn() },
+        releasePromptResourcesForSession: vi.fn(),
         contextUsage: { deleteSession: vi.fn() },
         interactions: { current: vi.fn(), supersedeCurrent: vi.fn() },
         resolveSpecialistIdentity: vi.fn(async () => ({
@@ -274,6 +280,7 @@ describe('AcpSessionReplacementWorkflow', () => {
       clearUserChoiceProvenanceForSession: vi.fn(),
       appContinuations: { delete: vi.fn() },
       promptContent: { resetSession: vi.fn() },
+      releasePromptResourcesForSession: vi.fn(),
       contextUsage: { deleteSession: vi.fn() },
       interactions: {
         current: vi.fn(() => ({ kind: 'prompt' }) as never),

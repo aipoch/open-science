@@ -25,7 +25,7 @@ const image = (
     path:
       kind === 'artifact-version'
         ? `artifact-version:project-1/session-1/artifact-1/${versionId}`
-        : `upload-version:project-1/session-1/${versionId}`,
+        : `upload-version:project-1/session-1/upload-1/${versionId}`,
     mimeType: kind === 'artifact-version' ? 'image/png' : 'image/avif'
   },
   point: { x: 0.25, y: 0.75 },
@@ -36,8 +36,8 @@ const api = (): {
   acquire: ReturnType<typeof vi.fn<Window['api']['previewResources']['acquire']>>
   release: ReturnType<typeof vi.fn<Window['api']['previewResources']['release']>>
 } => ({
-  acquire: vi.fn<Window['api']['previewResources']['acquire']>(async ({ path }) => ({
-    id: `resource:${path}`,
+  acquire: vi.fn<Window['api']['previewResources']['acquire']>(async (request) => ({
+    id: `resource:${request.source}:${request.source === 'artifact' || request.source === 'upload' ? request.fileId : request.path}`,
     url: 'open-science-preview://resource',
     size: 1024,
     mimeType: 'image/png',
@@ -75,15 +75,15 @@ describe('image annotation source preflight', () => {
     expect(resources.acquire).toHaveBeenNthCalledWith(1, {
       source: 'artifact',
       projectId: 'project-1',
-      sessionId: 'session-1',
-      path: artifact.source.path,
+      fileId: 'artifact-1',
+      versionId: 'artifact-v1',
       mimeType: 'image/png'
     })
     expect(resources.acquire).toHaveBeenNthCalledWith(2, {
       source: 'upload',
       projectId: 'project-1',
-      sessionId: 'session-1',
-      path: 'upload-version:project-1/session-1/upload-v1',
+      fileId: 'upload-1',
+      versionId: 'upload-v1',
       mimeType: 'image/avif'
     })
     expect(resources.release).toHaveBeenCalledTimes(2)
@@ -106,7 +106,7 @@ describe('image annotation source preflight', () => {
 
       expect(resources.acquire).toHaveBeenCalledOnce()
       expect(resources.acquire).toHaveBeenCalledWith(
-        expect.objectContaining({ path: annotation.source.path })
+        expect.objectContaining({ fileId: 'artifact-1', versionId: 'deleted-version' })
       )
       expect(resources.release).not.toHaveBeenCalled()
     }

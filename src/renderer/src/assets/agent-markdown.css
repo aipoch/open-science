@@ -581,7 +581,8 @@
     display: block;
 
     & > img {
-      @apply m-0! max-w-full rounded-lg;
+      /* height:auto keeps the width/height attribute box proportional when max-w-full shrinks it */
+      @apply m-0! h-auto max-w-full rounded-lg;
       display: block;
     }
 

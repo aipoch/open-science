@@ -17,6 +17,7 @@ export type CreateStrategyOptions = {
   // Immutable pre-install backend shutdown gate for in-place strategies. The manual installer flow
   // ignores it because applying there does not quit or replace the running app.
   installGate?: InstallGate
+  releaseInstallHandoff?: () => void
   translate?: NativeTranslator
 }
 
@@ -60,6 +61,7 @@ export const createUpdateStrategy = (
   const createInPlaceStrategy = (): ElectronUpdaterStrategy =>
     new ElectronUpdaterStrategy({
       ...(opts.installGate ? { installGate: opts.installGate } : {}),
+      ...(opts.releaseInstallHandoff ? { releaseInstallHandoff: opts.releaseInstallHandoff } : {}),
       log
     })
 

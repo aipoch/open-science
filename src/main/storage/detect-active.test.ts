@@ -39,6 +39,7 @@ describe('detectActiveSessions', () => {
   it('tags runtime prompts as agent and notebook sessions as notebook', () => {
     const result = detectActiveSessions({
       runtime: { getActivePromptSessions: () => [{ projectId: 'p', sessionId: 's1' }] },
+      sideChat: { getActivePromptSessions: () => [] },
       delegated: {
         getActiveDelegatedSessions: () => [{ projectId: 'p', sessionId: 'delegated-1' }]
       },
@@ -53,9 +54,10 @@ describe('detectActiveSessions', () => {
     ])
   })
 
-  it('returns an empty array when both sources are idle', () => {
+  it('returns an empty array when all sources are idle', () => {
     const result = detectActiveSessions({
       runtime: { getActivePromptSessions: () => [] },
+      sideChat: { getActivePromptSessions: () => [] },
       delegated: { getActiveDelegatedSessions: () => [] },
       notebook: { getActiveNotebookSessions: () => [] }
     })
@@ -63,10 +65,26 @@ describe('detectActiveSessions', () => {
     expect(result).toEqual([])
   })
 
+  it('includes a running Side Chat in active Session detection', () => {
+    const sources = {
+      runtime: { getActivePromptSessions: () => [] },
+      delegated: { getActiveDelegatedSessions: () => [] },
+      notebook: { getActiveNotebookSessions: () => [] },
+      sideChat: {
+        getActivePromptSessions: () => [{ projectId: 'p', sessionId: 'side-chat-parent' }]
+      }
+    }
+
+    expect(detectActiveSessions(sources)).toEqual([
+      { projectId: 'p', sessionId: 'side-chat-parent', kind: 'agent' }
+    ])
+  })
+
   it('deduplicates root and delegated agent work for the same Session', () => {
     const source = { projectId: 'p', sessionId: 's1' }
     const result = detectActiveSessions({
       runtime: { getActivePromptSessions: () => [source] },
+      sideChat: { getActivePromptSessions: () => [source] },
       delegated: { getActiveDelegatedSessions: () => [source] },
       notebook: { getActiveNotebookSessions: () => [{ projectId: 'p', sessionId: 's1' }] }
     })
@@ -82,6 +100,7 @@ describe('detectActiveSessions', () => {
     const detect = (): ReturnType<typeof detectActiveSessions> =>
       detectActiveSessions({
         runtime: { getActivePromptSessions: () => [] },
+        sideChat: { getActivePromptSessions: () => [] },
         delegated,
         notebook: { getActiveNotebookSessions: () => [] }
       })

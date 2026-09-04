@@ -21,7 +21,7 @@ import { normalizeNetworkProxySettings } from '../../shared/network-proxy'
 import { normalizeNotebookNetworkSettings } from '../../shared/notebook-network'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
-import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { ProjectFilesFilterPreference } from '../../shared/settings'
 import {
   createEmptySettings,
@@ -37,6 +37,7 @@ import {
   sanitizePackageMirror,
   sanitizeProvider
 } from './record-codec'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { isRecord } from '../value-guards'
 
 // Checks for plain JSON objects so untrusted settings payloads can be sanitized safely.
@@ -154,37 +155,6 @@ const sanitizeManualInterpreters = (
   return Object.keys(result).length > 0 ? result : undefined
 }
 
-// Validates one persisted RuntimeSelection and defaults explicit authority flags to false.
-const sanitizeRuntimeSelection = (value: unknown): RuntimeSelection | undefined => {
-  if (!isRecord(value)) return undefined
-  if (value.source === 'managed') return { source: 'managed' }
-  if (value.source !== 'external') return undefined
-  const interpreterPath = asString(value.interpreterPath)
-  if (!interpreterPath) return undefined
-  const interpreterArgs = asStringArray(value.interpreterArgs)
-  return {
-    source: 'external',
-    interpreterPath,
-    ...(interpreterArgs.length > 0 ? { interpreterArgs } : {}),
-    appOwnedOverlay: value.appOwnedOverlay === true,
-    packageInstallAuthorized: value.packageInstallAuthorized === true
-  }
-}
-
-// Keeps only known languages; R remains managed-only in the current persisted contract.
-const sanitizeNotebookRuntimes = (
-  value: unknown
-): Partial<Record<NotebookLanguage, RuntimeSelection>> | undefined => {
-  if (!isRecord(value)) return undefined
-  const result: Partial<Record<NotebookLanguage, RuntimeSelection>> = {}
-  for (const language of ['python', 'r'] as const) {
-    const selection = sanitizeRuntimeSelection(value[language])
-    if (!selection || (language === 'r' && selection.source === 'external')) continue
-    result[language] = selection
-  }
-  return Object.keys(result).length > 0 ? result : undefined
-}
-
 const sanitizeRuntimeEnablementEntry = (value: unknown): RuntimeEnablement => ({
   enabled: asBooleanRecord(isRecord(value) ? value.enabled : undefined),
   installAuthorized: asBooleanRecord(isRecord(value) ? value.installAuthorized : undefined)
@@ -204,21 +174,38 @@ const sanitizeRuntimeEnablement = (
   return Object.keys(result).length > 0 ? result : undefined
 }
 
-// Rebuilds the whole settings document, applying migrations before cross-field selection cleanup.
+// Rebuilds the whole settings document, applying migrations before durable-field cleanup.
 const sanitizeSettings = (value: unknown): StoredSettings => {
   if (!isRecord(value)) return createEmptySettings()
 
-  const sanitizedProviders = Array.isArray(value.providers)
-    ? value.providers
-        .map(sanitizeProvider)
-        .filter((provider): provider is StoredProvider => !!provider)
-    : []
   const legacyActiveProviderId = asString(value.activeProviderId)
-  const codexProviders = sanitizedProviders.filter((provider) =>
-    isCodexSubscriptionProvider(provider.type)
-  )
-  const selectedCodexProvider =
-    codexProviders.find((provider) => provider.id === legacyActiveProviderId) ?? codexProviders[0]
+  const sanitizedProviders: StoredProvider[] = []
+  const sanitizedProviderIds = new Set<string>()
+  let selectedCodexProvider: StoredProvider | undefined
+  if (Array.isArray(value.providers)) {
+    for (const candidate of value.providers) {
+      const provider = sanitizeProvider(candidate)
+      if (!provider) continue
+      if (isCodexSubscriptionProvider(provider.type)) {
+        if (
+          !selectedCodexProvider ||
+          (provider.id === legacyActiveProviderId &&
+            selectedCodexProvider.id !== legacyActiveProviderId)
+        ) {
+          selectedCodexProvider = provider
+        }
+        continue
+      }
+      if (
+        sanitizedProviders.length >= PROVIDER_RESOURCE_LIMITS.providers ||
+        sanitizedProviderIds.has(provider.id)
+      ) {
+        continue
+      }
+      sanitizedProviderIds.add(provider.id)
+      sanitizedProviders.push(provider)
+    }
+  }
   const migratedCodexProvider = selectedCodexProvider
     ? {
         ...selectedCodexProvider,
@@ -236,10 +223,21 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     delete migratedCodexProvider.expiresAt
   }
 
-  const providers = [
-    ...sanitizedProviders.filter((provider) => !isCodexSubscriptionProvider(provider.type)),
+  const nonCodexProviderLimit = PROVIDER_RESOURCE_LIMITS.providers - (migratedCodexProvider ? 1 : 0)
+  const migratedProviders = [
+    ...sanitizedProviders
+      .filter((provider) => provider.id !== migratedCodexProvider?.id)
+      .slice(0, nonCodexProviderLimit),
     ...(migratedCodexProvider ? [migratedCodexProvider] : [])
   ]
+  const providerIds = new Set<string>()
+  const providers = migratedProviders.filter((provider) => {
+    if (providerIds.has(provider.id) || providerIds.size >= PROVIDER_RESOURCE_LIMITS.providers) {
+      return false
+    }
+    providerIds.add(provider.id)
+    return true
+  })
   const visionModel = sanitizeVisionModel(value.visionModel)
   const settings: StoredSettings = {
     version: SETTINGS_FILE_VERSION,
@@ -372,10 +370,12 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     if (codebuddyVersion) settings.codebuddyVersion = codebuddyVersion
   }
 
-  const notebookRuntimes = sanitizeNotebookRuntimes(value.notebookRuntimes)
-  if (notebookRuntimes) settings.notebookRuntimes = notebookRuntimes
   const notebookRuntimeEnablement = sanitizeRuntimeEnablement(value.notebookRuntimeEnablement)
   if (notebookRuntimeEnablement) settings.notebookRuntimeEnablement = notebookRuntimeEnablement
+  const agentEnvironmentCreationEnabled = asBoolean(value.agentEnvironmentCreationEnabled)
+  if (agentEnvironmentCreationEnabled !== undefined) {
+    settings.agentEnvironmentCreationEnabled = agentEnvironmentCreationEnabled
+  }
   const notebookManualInterpreters = sanitizeManualInterpreters(value.notebookManualInterpreters)
   if (notebookManualInterpreters) settings.notebookManualInterpreters = notebookManualInterpreters
 

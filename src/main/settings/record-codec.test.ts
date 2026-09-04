@@ -6,6 +6,7 @@ import {
   sanitizeComputeGrant,
   sanitizeProvider
 } from './record-codec'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 
 describe('settings record codec', () => {
   it('keeps the private owner interface explicit', async () => {
@@ -65,6 +66,38 @@ describe('settings record codec', () => {
     expect(
       sanitizeComputeGrant({ projectId: 'p1', operation: 42, providerId: 'c1' })
     ).toBeUndefined()
+  })
+
+  it('applies provider field and fetched-model limits while decoding', () => {
+    expect(
+      sanitizeProvider({
+        id: 'provider-1',
+        type: 'custom',
+        name: 'n'.repeat(PROVIDER_RESOURCE_LIMITS.nameCharacters + 1)
+      })
+    ).toBeUndefined()
+
+    const provider = sanitizeProvider({
+      id: 'provider-1',
+      type: 'custom',
+      name: 'Gateway',
+      baseUrl: 'u'.repeat(PROVIDER_RESOURCE_LIMITS.baseUrlCharacters + 1),
+      model: 'm'.repeat(PROVIDER_RESOURCE_LIMITS.modelIdCharacters + 1),
+      fetchedModels: [
+        ...Array.from(
+          { length: PROVIDER_RESOURCE_LIMITS.fetchedModels + 1 },
+          (_, index) => `model-${index}`
+        ),
+        'x'.repeat(PROVIDER_RESOURCE_LIMITS.modelIdCharacters + 1)
+      ]
+    })
+
+    expect(provider).not.toHaveProperty('baseUrl')
+    expect(provider).not.toHaveProperty('model')
+    expect(provider?.fetchedModels).toHaveLength(PROVIDER_RESOURCE_LIMITS.fetchedModels)
+    expect(provider?.fetchedModels).not.toContain(
+      'x'.repeat(PROVIDER_RESOURCE_LIMITS.modelIdCharacters + 1)
+    )
   })
 
   it.each([

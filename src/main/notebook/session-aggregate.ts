@@ -245,6 +245,7 @@ export class NotebookSessionAggregate<
   private mcpRpcConnection: NotebookSessionMcpRpcConnection | undefined
   private readonly terminatedKernels = new Set<string>()
   private readonly kernelStatuses = new Map<string, NotebookKernelMetadata['lastKnownStatus']>()
+  private readonly restoredKernelStatusValue?: NotebookKernelMetadata['lastKnownStatus']
   private readonly durableTerminatedKernelKeys = new Set<string>()
   private durableUnknownKernelTermination: boolean
   private readonly runtimeBindings = new Map<NotebookLanguage, NotebookSessionRuntimeBinding>()
@@ -271,6 +272,7 @@ export class NotebookSessionAggregate<
     this.durableUnknownKernelTermination =
       init.initialKernelStatus === 'terminated' &&
       init.initialTerminatedKernelInstances === undefined
+    this.restoredKernelStatusValue = init.initialKernelStatus
     this.executorValue = init.executor
     this.executorGenerationValue = init.executorGeneration
   }
@@ -478,6 +480,10 @@ export class NotebookSessionAggregate<
     return this.kernelStatuses.get(processKey)
   }
 
+  restoredKernelStatus(): NotebookKernelMetadata['lastKnownStatus'] | undefined {
+    return this.restoredKernelStatusValue
+  }
+
   kernelStatusEntries(): Array<[string, NotebookKernelMetadata['lastKnownStatus']]> {
     return Array.from(this.kernelStatuses.entries())
   }
@@ -504,6 +510,10 @@ export class NotebookSessionAggregate<
 
   hasDurableKernelTermination(processKey: string): boolean {
     return this.durableTerminatedKernelKeys.has(processKey)
+  }
+
+  hasAnyDurableKernelTermination(): boolean {
+    return this.durableUnknownKernelTermination || this.durableTerminatedKernelKeys.size > 0
   }
 
   markDurableKernelTermination(processKey: string): void {

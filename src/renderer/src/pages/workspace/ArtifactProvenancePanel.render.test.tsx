@@ -470,6 +470,156 @@ afterEach(() => {
 })
 
 describe('ArtifactProvenancePanel', () => {
+  it('shows user-edit lineage without requesting Agent provenance', async () => {
+    act(() => root.unmount())
+    container.replaceChildren()
+    root = createRoot(container)
+    const editedDescriptor = {
+      ...secondDescriptor,
+      originKind: 'user_edit' as const,
+      basedOnVersionId: 'version-1'
+    }
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+      versions: [{ ...descriptor, originKind: 'legacy' }, editedDescriptor]
+    })
+    getVersionProvenance.mockClear()
+
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, selectedVersionId: 'version-2' }}
+          projectId="project-1"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await flush()
+
+    expect(container.textContent).toContain('Edited in Open Science')
+    expect(container.textContent).toContain('Based on v1')
+    expect(container.querySelector('[role="tablist"]')).toBeNull()
+    expect(getVersionProvenance).not.toHaveBeenCalled()
+    expect(getCodeReconstruction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ versionId: 'version-2' })
+    )
+  })
+
+  it('opens the exact source Version from a user-edit Based on link', async () => {
+    act(() => root.unmount())
+    container.replaceChildren()
+    root = createRoot(container)
+    const editedDescriptor = {
+      ...secondDescriptor,
+      originKind: 'user_edit' as const,
+      basedOnVersionId: 'version-1'
+    }
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+      versions: [{ ...descriptor, originKind: 'agent_generated' }, editedDescriptor]
+    })
+    const onVersionChange = vi.fn(() => true)
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, selectedVersionId: 'version-2' }}
+          projectId="project-1"
+          onClose={vi.fn()}
+          onVersionChange={onVersionChange}
+        />
+      )
+    )
+    await flush()
+
+    const sourceLink = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open source version v1"]'
+    )
+    expect(sourceLink).not.toBeNull()
+    await act(async () => sourceLink?.click())
+
+    expect(onVersionChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        managedFileId: 'artifact-1',
+        selectedVersionId: 'version-1',
+        versionNumber: 1
+      })
+    )
+  })
+
+  it('keeps the user edit selected when the dirty guard rejects its legacy source Version', async () => {
+    act(() => root.unmount())
+    container.replaceChildren()
+    root = createRoot(container)
+    const editedDescriptor = {
+      ...secondDescriptor,
+      originKind: 'user_edit' as const,
+      basedOnVersionId: 'version-1'
+    }
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+      versions: [{ ...descriptor, originKind: 'legacy' }, editedDescriptor]
+    })
+    const onVersionChange = vi.fn(() => false)
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, selectedVersionId: 'version-2' }}
+          projectId="project-1"
+          onClose={vi.fn()}
+          onVersionChange={onVersionChange}
+        />
+      )
+    )
+    await flush()
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Open source version v1"]')?.click()
+    )
+
+    expect(onVersionChange).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedVersionId: 'version-1', versionNumber: 1 })
+    )
+    expect(container.textContent).toContain('Edited in Open Science')
+    expect(container.textContent).toContain('Based on v1')
+  })
+
+  it('shows a legacy Version without requesting Agent provenance', async () => {
+    act(() => root.unmount())
+    container.replaceChildren()
+    root = createRoot(container)
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+      versions: [
+        { ...descriptor, originKind: 'legacy' },
+        { ...secondDescriptor, originKind: 'user_edit', basedOnVersionId: 'version-1' }
+      ]
+    })
+    getVersionProvenance.mockClear()
+
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, selectedVersionId: 'version-1' }}
+          projectId="project-1"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await flush()
+
+    expect(container.textContent).toContain('Provenance is not available for this legacy version.')
+    expect(container.querySelector('[role="tablist"]')).toBeNull()
+    expect(getVersionProvenance).not.toHaveBeenCalled()
+  })
+
   it('shows an empty legacy state without requesting Version provenance', async () => {
     act(() => root.unmount())
     container.replaceChildren()
@@ -821,7 +971,7 @@ describe('ArtifactProvenancePanel', () => {
   })
 
   it('loads the selected Version section when switching Versions inside Provenance', async () => {
-    const renderPanel = (selectedItem: PreviewFileItem): void => {
+    const renderPanel = (selectedItem: PreviewFileItem): boolean => {
       root.render(
         <ArtifactProvenancePanel
           item={selectedItem}
@@ -830,6 +980,7 @@ describe('ArtifactProvenancePanel', () => {
           onVersionChange={renderPanel}
         />
       )
+      return true
     }
     await act(async () => renderPanel(item))
     await flush()
@@ -862,6 +1013,32 @@ describe('ArtifactProvenancePanel', () => {
     )
     expect(container.textContent).toContain('version-2: The plot is ready.')
     expect(container.textContent).not.toContain('(not-loaded)')
+  })
+
+  it('does not commit its selected Version when the owning surface rejects the switch', async () => {
+    const onVersionChange = vi.fn(() => false)
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={item}
+          projectId="project-1"
+          onClose={vi.fn()}
+          onVersionChange={onVersionChange}
+        />
+      )
+    )
+    await flush()
+
+    const next = container.querySelector<HTMLButtonElement>('[aria-label="Next Artifact version"]')
+    expect(next).not.toBeNull()
+    await act(async () => next?.click())
+    await flush()
+
+    expect(onVersionChange).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('v1')
+    expect(getVersionProvenance).not.toHaveBeenCalledWith(
+      expect.objectContaining({ versionId: 'version-2' })
+    )
   })
 
   it('renders producer inputs in Code and opens the exact immutable input Version', async () => {

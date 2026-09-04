@@ -8,7 +8,8 @@ import type {
 import { toAcpTurnTokenUsage } from '../../shared/acp'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { AcpBackendGenerationOwner } from './backend-generation-owner'
-import { claudeCodeTurnAdapter } from './claude-turn-adapter'
+import { createClaudeTranscriptReader } from './claude-transcript-reader'
+import { createClaudeCodeTurnAdapter } from './claude-turn-adapter'
 import { codeBuddyTurnAdapter } from './codebuddy-turn-adapter'
 import { createCodexTurnAdapter } from './codex-turn-adapter'
 import { AcpOpenCodeTurnAdapter } from './opencode-turn-adapter'
@@ -37,7 +38,8 @@ type ProviderPromptExecutionInput = Readonly<{
 }>
 
 type AcpProviderPromptExecutorOptions = Readonly<{
-  backendGeneration: Pick<AcpBackendGenerationOwner, 'openCodeUsageApi'>
+  backendGeneration: Pick<AcpBackendGenerationOwner, 'openCodeUsageApi'> &
+    Readonly<{ current: Pick<AcpBackendGenerationOwner['current'], 'adapter'> }>
   opencodeUsageFetch?: typeof fetch
 }>
 
@@ -321,7 +323,12 @@ class AcpProviderPromptExecutor {
   }
 
   private adapterFor(frameworkId: AgentFrameworkId): AcpProviderTurnAdapter {
-    if (frameworkId === 'claude-code') return claudeCodeTurnAdapter
+    if (frameworkId === 'claude-code') {
+      const configDir = this.options.backendGeneration.current.adapter.claudeConfigDir
+      return createClaudeCodeTurnAdapter({
+        ...(configDir ? { readTranscriptMessages: createClaudeTranscriptReader(configDir) } : {})
+      })
+    }
     if (frameworkId === 'codex') return createCodexTurnAdapter()
     if (frameworkId === 'codebuddy') return codeBuddyTurnAdapter
 

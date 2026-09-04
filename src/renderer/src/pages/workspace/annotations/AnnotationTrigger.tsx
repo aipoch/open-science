@@ -41,6 +41,7 @@ type AnnotationTriggerAction = Readonly<{
   showLabel?: boolean
   primary?: boolean
   disabled?: boolean
+  availableWhenAnnotationBlocked?: boolean
   onActivate: () => void
 }>
 

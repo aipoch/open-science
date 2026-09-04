@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getUploadedAttachmentPath } from '../../../shared/uploads'
-
 import { planTestProjection } from '../pages/workspace/session-plan/plan-test-fixtures'
-
+import { previewLeaveGuards } from './preview-leave-guard'
 import { useSessionStore } from './session-store'
 import {
   createNotebookPreviewItem,
@@ -23,7 +22,191 @@ describe('preview workbench store', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    previewLeaveGuards.clear()
     useSessionStore.setState({ sessions: [] })
+  })
+
+  it('refreshes a file tab recency timestamp when it becomes active', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.upsertAndActivateItem({
+      id: 'file-1',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'one.md',
+      path: '/one.md',
+      format: 'markdown',
+      name: 'one.md'
+    })
+    store.upsertAndActivateItem({
+      id: 'file-2',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'two.md',
+      path: '/two.md',
+      format: 'markdown',
+      name: 'two.md'
+    })
+    const previousTimestamp = usePreviewWorkbenchStore
+      .getState()
+      .items.find((item) => item.id === 'file-1')?.updatedAt
+    vi.advanceTimersByTime(1_000)
+
+    store.activateItem('file-1')
+
+    expect(
+      usePreviewWorkbenchStore.getState().items.find((item) => item.id === 'file-1')?.updatedAt
+    ).toBe(Date.now())
+    expect(Date.now()).toBeGreaterThan(previousTimestamp ?? 0)
+  })
+
+  it('does not switch, remove, collapse, or close a dialog when its active draft rejects leaving', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-a')
+    store.upsertAndActivateItem({
+      id: 'file-1',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'one.md',
+      path: '/one.md',
+      format: 'markdown',
+      name: 'one.md'
+    })
+    store.upsertItem({
+      id: 'file-2',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'two.md',
+      path: '/two.md',
+      format: 'markdown',
+      name: 'two.md'
+    })
+    const unregisterWorkbench = previewLeaveGuards.register(
+      'workbench:project-a:file-1',
+      () => false
+    )
+
+    store.activateItem('file-2')
+    store.upsertAndActivateItem({
+      id: 'file-3',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'three.md',
+      path: '/three.md',
+      format: 'markdown',
+      name: 'three.md'
+    })
+    store.upsertAndActivateItem({
+      id: 'file-1',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'one.md',
+      path: '/one-v2.md',
+      format: 'markdown',
+      name: 'one.md',
+      selectedVersionId: 'version-2'
+    })
+    store.removeItem('file-1')
+    store.collapsePanel()
+    store.syncPanelState('collapsed')
+    store.removeSessionItems('session-1')
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'file-1',
+      panelState: 'open'
+    })
+    expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toContain('file-1')
+    expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).not.toContain('file-3')
+    const retainedFile = usePreviewWorkbenchStore
+      .getState()
+      .items.find((item) => item.id === 'file-1')
+    expect(retainedFile).toMatchObject({ path: '/one.md' })
+    expect(retainedFile).not.toHaveProperty('selectedVersionId')
+
+    unregisterWorkbench()
+    const dialogItem = {
+      id: 'dialog-1',
+      projectId: 'project-a',
+      sessionId: 'session-1',
+      type: 'file' as const,
+      title: 'dialog.md',
+      path: '/dialog.md',
+      format: 'markdown' as const,
+      name: 'dialog.md'
+    }
+    store.openFileDialog(dialogItem)
+    previewLeaveGuards.register('dialog:project-a:dialog-1', () => false)
+    store.openFileDialog({ ...dialogItem, id: 'dialog-2', name: 'other.md', title: 'other.md' })
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem?.id).toBe('dialog-1')
+    store.closeFileDialog()
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem?.id).toBe('dialog-1')
+    store.removeSessionItems('session-1')
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem?.id).toBe('dialog-1')
+  })
+
+  it('guards same-id workbench and dialog locator replacements and applies them only after acceptance', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-a')
+    const workbenchItem = {
+      id: 'upload:file-1',
+      projectId: 'project-a',
+      sessionId: 'session-1',
+      type: 'file' as const,
+      source: 'upload' as const,
+      managedFileId: 'file-1',
+      selectedVersionId: 'version-1',
+      title: 'README.md',
+      path: 'upload-version:project-a/session-1/version-1',
+      format: 'markdown' as const,
+      name: 'README.md'
+    }
+    store.upsertAndActivateItem(workbenchItem)
+    const rejectWorkbench = previewLeaveGuards.register(
+      'workbench:project-a:upload:file-1',
+      () => false
+    )
+
+    store.upsertItem({
+      ...workbenchItem,
+      selectedVersionId: 'version-2',
+      path: 'upload-version:project-a/session-1/version-2'
+    })
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      selectedVersionId: 'version-1',
+      path: 'upload-version:project-a/session-1/version-1'
+    })
+    rejectWorkbench()
+    previewLeaveGuards.register('workbench:project-a:upload:file-1', () => true)
+    store.upsertItem({
+      ...workbenchItem,
+      selectedVersionId: 'version-2',
+      path: 'upload-version:project-a/session-1/version-2'
+    })
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      selectedVersionId: 'version-2',
+      path: 'upload-version:project-a/session-1/version-2'
+    })
+
+    store.openFileDialog(workbenchItem)
+    const rejectDialog = previewLeaveGuards.register('dialog:project-a:upload:file-1', () => false)
+    store.openFileDialog({
+      ...workbenchItem,
+      selectedVersionId: 'version-3',
+      path: 'upload-version:project-a/session-1/version-3'
+    })
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
+      selectedVersionId: 'version-1',
+      path: 'upload-version:project-a/session-1/version-1'
+    })
+    rejectDialog()
+    previewLeaveGuards.register('dialog:project-a:upload:file-1', () => true)
+    store.openFileDialog({
+      ...workbenchItem,
+      selectedVersionId: 'version-3',
+      path: 'upload-version:project-a/session-1/version-3'
+    })
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
+      selectedVersionId: 'version-3',
+      path: 'upload-version:project-a/session-1/version-3'
+    })
   })
 
   it('starts with the preview panel collapsed', () => {
@@ -249,7 +432,7 @@ describe('preview workbench store', () => {
         id: 'upload:upload-b',
         sessionId: 'session-b',
         path: getUploadedAttachmentPath(
-          { versionId: 'version-b', sessionId: 'session-b' },
+          { id: 'upload-b', versionId: 'version-b', sessionId: 'session-b' },
           'project-b'
         )
       }
@@ -261,7 +444,7 @@ describe('preview workbench store', () => {
         id: 'upload:upload-a',
         sessionId: 'session-a',
         path: getUploadedAttachmentPath(
-          { versionId: 'version-a', sessionId: 'session-a' },
+          { id: 'upload-a', versionId: 'version-a', sessionId: 'session-a' },
           'project-a'
         )
       }
@@ -271,6 +454,102 @@ describe('preview workbench store', () => {
         .getState()
         .items.some((item) => item.id === 'upload:upload-never-opened')
     ).toBe(false)
+  })
+
+  it('preserves a rejected active upload while reconciling other finalized tabs', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-b')
+    store.upsertAndActivateItem({
+      id: 'upload:upload-c',
+      projectId: 'project-b',
+      sessionId: '.pending',
+      type: 'file',
+      source: 'upload',
+      managedFileId: 'upload-c',
+      title: 'c.md',
+      path: '/uploads/default-project/.pending/c.md',
+      format: 'markdown',
+      name: 'c.md'
+    })
+    store.activateProject('project-a')
+    store.upsertAndActivateItem({
+      id: 'upload:upload-a',
+      projectId: 'project-a',
+      sessionId: '.pending',
+      type: 'file',
+      source: 'upload',
+      managedFileId: 'upload-a',
+      title: 'a.md',
+      path: '/uploads/default-project/.pending/a.md',
+      format: 'markdown',
+      name: 'a.md'
+    })
+    store.upsertItem({
+      id: 'upload:upload-b',
+      projectId: 'project-a',
+      sessionId: '.pending',
+      type: 'file',
+      source: 'upload',
+      managedFileId: 'upload-b',
+      title: 'b.md',
+      path: '/uploads/default-project/.pending/b.md',
+      format: 'markdown',
+      name: 'b.md'
+    })
+    previewLeaveGuards.register('workbench:project-a:upload:upload-a', () => false)
+
+    store.reconcileFinalizedUploads([
+      {
+        id: 'upload-a',
+        versionId: 'version-a',
+        sessionId: 'session-a',
+        name: 'a.md',
+        originalName: 'a.md',
+        path: '/uploads/default-project/session-a/a.md',
+        mimeType: 'text/markdown',
+        size: 12
+      },
+      {
+        id: 'upload-b',
+        versionId: 'version-b',
+        sessionId: 'session-b',
+        name: 'b.md',
+        originalName: 'b.md',
+        path: '/uploads/default-project/session-b/b.md',
+        mimeType: 'text/markdown',
+        size: 12
+      },
+      {
+        id: 'upload-c',
+        versionId: 'version-c',
+        sessionId: 'session-c',
+        name: 'c.md',
+        originalName: 'c.md',
+        path: '/uploads/default-project/session-c/c.md',
+        mimeType: 'text/markdown',
+        size: 12
+      }
+    ])
+
+    const state = usePreviewWorkbenchStore.getState()
+    expect(state.items.find((item) => item.id === 'upload:upload-a')).toMatchObject({
+      sessionId: '.pending',
+      path: '/uploads/default-project/.pending/a.md'
+    })
+    expect(state.items.find((item) => item.id === 'upload:upload-b')).toMatchObject({
+      sessionId: 'session-b',
+      path: getUploadedAttachmentPath(
+        { id: 'upload-b', versionId: 'version-b', sessionId: 'session-b' },
+        'project-a'
+      )
+    })
+    expect(state.byProject['project-b']?.items[0]).toMatchObject({
+      sessionId: 'session-c',
+      path: getUploadedAttachmentPath(
+        { id: 'upload-c', versionId: 'version-c', sessionId: 'session-c' },
+        'project-b'
+      )
+    })
   })
 
   it('keeps a staged PDF selection until its Session context link succeeds', () => {
@@ -469,6 +748,36 @@ describe('preview workbench store', () => {
     })
   })
 
+  it('keeps all tabs when the active preview rejects close-others', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-a')
+    store.upsertAndActivateItem({
+      id: 'file-a',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'a.md',
+      path: '/workspace/project/a.md',
+      format: 'markdown',
+      name: 'a.md'
+    })
+    store.upsertItem({
+      id: 'file-b',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'b.md',
+      path: '/workspace/project/b.md',
+      format: 'markdown',
+      name: 'b.md'
+    })
+    previewLeaveGuards.register('workbench:project-a:file-a', () => false)
+
+    expect(store.removeOtherItems('file-b')).toBe(false)
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'file-a',
+      items: [expect.objectContaining({ id: 'file-a' }), expect.objectContaining({ id: 'file-b' })]
+    })
+  })
+
   it('closing others clears the expanded surface only when its tab is closed', () => {
     usePreviewWorkbenchStore.getState().activateProject('project-1')
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectFilesPreviewItem())
@@ -651,6 +960,34 @@ describe('preview workbench store', () => {
     expect(usePreviewWorkbenchStore.getState()).toMatchObject({
       activeProjectId: 'project-a',
       activeItemId: PROJECT_FILES_PREVIEW_ID,
+      panelState: 'open'
+    })
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
+  })
+
+  it('hydrates a persisted slice after navigation has atomically activated an empty project scope', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-a')
+
+    store.activateProject('project-a', {
+      panelState: 'open',
+      activeItemId: 'restored-file',
+      items: [
+        {
+          id: 'restored-file',
+          sessionId: 'session-a',
+          type: 'file',
+          title: 'restored.md',
+          path: '/restored.md',
+          format: 'markdown',
+          name: 'restored.md'
+        }
+      ]
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeProjectId: 'project-a',
+      activeItemId: 'restored-file',
       panelState: 'open'
     })
     expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)

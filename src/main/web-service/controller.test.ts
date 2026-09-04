@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 const { log } = vi.hoisted(() => ({
@@ -10,6 +14,7 @@ import { ApplicationEventHub } from '../application-events'
 import type { ApplicationEventSource } from '../application-events'
 import type { ApplicationCommandComposition } from '../application-command-composition'
 import type { TaskAgentPort, TaskComputePreferencePort } from '../tasks/task-runner'
+import { FileTaskRunJournal } from '../tasks/task-run-journal'
 import { createWebServiceController, type WebServiceControllerDeps } from './index'
 
 type StartOptions = Parameters<WebServiceControllerDeps['startServer']>[0]
@@ -68,6 +73,10 @@ const makeController = (
     loadWebToken: async () => 'tok-123',
     writeState,
     removeState,
+    createTaskRunJournal: () => ({
+      load: async () => [],
+      replace: async () => undefined
+    }),
     appInfo: () => ({
       appPath: '/fake/app',
       appName: 'Open Science',
@@ -346,6 +355,139 @@ describe('createWebServiceController', () => {
     const restartedTasks = h.lastOptions().tasks!
     expect(restartedTasks).toBe(firstTasks)
     expect(restartedTasks.getRun(run.id)).toMatchObject({ id: run.id, sessionId: run.sessionId })
+  })
+
+  it('recovers a terminal Task run after the Web service controller is reconstructed', async () => {
+    const configRoot = await mkdtemp(join(tmpdir(), 'open-science-task-runs-'))
+    const project = {
+      id: 'project-restart',
+      name: 'Project',
+      description: '',
+      isExample: false,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const sessions: unknown[] = []
+    const applicationCommands = {
+      localWeb: { commandNames: () => [], invoke: vi.fn() },
+      remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() },
+      task: {
+        commandNames: () => [],
+        invoke: vi.fn(async (name, invocation) => {
+          if (name === 'projects:list') return [project]
+          if (name === 'sessions:load-all') return { sessions, manifest: { version: 1 } }
+          if (name === 'sessions:save-session') {
+            sessions.splice(0, sessions.length, invocation.args[0])
+            return invocation.args[0]
+          }
+          throw new Error(`Unexpected Task command: ${name}`)
+        })
+      }
+    } satisfies Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
+    const taskAgent: TaskAgentPort = {
+      withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+      listAttachedSessionIds: vi.fn(async () => []),
+      createSession: vi.fn(async () => ({ sessionId: 'session-restart' })),
+      resumeSession: vi.fn(async (request) => ({ sessionId: request.sessionId })),
+      setPermissionProfile: vi.fn(async () => undefined),
+      cancelPrompt: vi.fn(async () => undefined),
+      prompt: vi.fn(async () => undefined)
+    }
+    const controllers: ReturnType<typeof makeController>[] = []
+
+    try {
+      const first = makeController(
+        {
+          resolveConfigRoot: () => configRoot,
+          createTaskRunJournal: (root) => new FileTaskRunJournal(root)
+        },
+        vi.fn(),
+        applicationCommands,
+        { taskAgent }
+      )
+      controllers.push(first)
+      await first.controller.ensureStarted(44100, { attached: false })
+      const started = await first.lastOptions().tasks!.startRun({
+        project: project.id,
+        prompt: 'Research across a restart.'
+      })
+      await vi.waitFor(() => {
+        expect(first.lastOptions().tasks!.getRun(started.id).status).toBe('completed')
+      })
+      const terminal = first.lastOptions().tasks!.getRun(started.id)
+      expect(terminal.status).toBe('completed')
+      await first.controller.dispose()
+
+      const second = makeController(
+        {
+          resolveConfigRoot: () => configRoot,
+          createTaskRunJournal: (root) => new FileTaskRunJournal(root)
+        },
+        vi.fn(),
+        applicationCommands,
+        { taskAgent }
+      )
+      controllers.push(second)
+      await second.controller.ensureStarted(44101, { attached: false })
+
+      expect(second.lastOptions().tasks!.getRun(started.id)).toMatchObject({
+        id: started.id,
+        sessionId: started.sessionId,
+        projectId: project.id,
+        status: 'completed'
+      })
+    } finally {
+      await Promise.all(
+        controllers.map(({ controller }) => controller.dispose().catch(() => undefined))
+      )
+      await rm(configRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('marks a recorded running Task as failed when the process restarts', async () => {
+    const configRoot = await mkdtemp(join(tmpdir(), 'open-science-task-runs-'))
+    const journal = new FileTaskRunJournal(configRoot)
+    await journal.replace([
+      {
+        id: 'run-interrupted',
+        sessionId: 'session-interrupted',
+        projectId: 'project-interrupted',
+        cwd: configRoot,
+        status: 'running',
+        startedAt: 10,
+        artifacts: [],
+        preferredComputeHostIds: []
+      }
+    ])
+    const h = makeController({
+      resolveConfigRoot: () => configRoot,
+      createTaskRunJournal: (root) => new FileTaskRunJournal(root)
+    })
+
+    try {
+      await h.controller.ensureStarted(44100, { attached: false })
+      const tasks = h.lastOptions().tasks!
+
+      expect(tasks.getRun('run-interrupted')).toMatchObject({
+        status: 'failed',
+        failureCode: 'process_restarted',
+        error: 'Run interrupted because Open Science restarted.'
+      })
+      await expect(tasks.cancelRun('run-interrupted')).resolves.toMatchObject({
+        status: 'failed',
+        failureCode: 'process_restarted'
+      })
+      await expect(journal.load()).resolves.toEqual([
+        expect.objectContaining({
+          id: 'run-interrupted',
+          status: 'failed',
+          failureCode: 'process_restarted'
+        })
+      ])
+    } finally {
+      await h.controller.dispose().catch(() => undefined)
+      await rm(configRoot, { recursive: true, force: true })
+    }
   })
 
   it('terminal dispose is idempotent, releases Task once, and rejects later starts', async () => {

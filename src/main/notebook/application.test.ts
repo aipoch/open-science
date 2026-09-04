@@ -110,7 +110,7 @@ describe('Notebook application composition', () => {
     expect(module.dispose).toBeUndefined()
   })
 
-  it('registers the environment surface before starting its lifecycle once', () => {
+  it('registers the environment surface before starting its lifecycle once', async () => {
     const order: string[] = []
     const startup = vi.fn().mockImplementation(async () => {
       order.push('startup')
@@ -119,7 +119,7 @@ describe('Notebook application composition', () => {
       startup
     } as unknown as NotebookEnvironmentLifecycle
 
-    installNotebookEnvironmentSurface(lifecycle, () => order.push('register'))
+    await installNotebookEnvironmentSurface(lifecycle, () => order.push('register'))
 
     expect(order).toEqual(['register', 'startup'])
     expect(startup).toHaveBeenCalledOnce()

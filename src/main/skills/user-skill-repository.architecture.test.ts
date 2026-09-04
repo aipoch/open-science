@@ -236,7 +236,7 @@ describe('User Skill repository architecture', () => {
     expect(readSource(repositoryPath)).not.toContain('skillMutationOwnerFor(')
     expect(readSource(repositoryPath)).toContain('mutationOwner?: SkillMutationOwner')
     expect(readSource(repositoryPath)).toContain(
-      'new SkillPackageTransactionOwner(storageRoot, mutationOwner)'
+      'new SkillPackageTransactionOwner(\n      storageRoot,\n      mutationOwner,\n      withExternalRecoveryBarrier\n    )'
     )
     expect(readSource(repositoryPath)).toContain(
       'new UserSkillStore(storageRoot, this.transactions, this.compatibilityIndex)'

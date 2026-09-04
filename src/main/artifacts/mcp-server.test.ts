@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 
 const { log } = vi.hoisted(() => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
@@ -18,6 +19,7 @@ import {
   createArtifactMcpEnvironmentFromProcess,
   createArtifactMcpServerConfig,
   toWriteArtifactToolResult,
+  writeArtifactFileToolDefinition,
   writeArtifactFileForCurrentRun,
   type ArtifactMcpEnvironment
 } from './mcp-server'
@@ -56,6 +58,30 @@ afterEach(async () => {
 })
 
 describe('artifact MCP server', () => {
+  it('directs small text artifacts to inline publication without a prior disk write', () => {
+    expect(writeArtifactFileToolDefinition.description).toContain(
+      'For small generated text such as Markdown or plain text, pass inline content directly'
+    )
+    expect(writeArtifactFileToolDefinition.description).not.toContain(
+      'The file must ALREADY EXIST on disk before you call this.'
+    )
+  })
+
+  it('publishes filename as a required write_artifact_file argument', () => {
+    const schema = z.object(writeArtifactFileToolDefinition.inputSchema)
+
+    expect(schema.safeParse({}).error?.issues).toEqual([
+      expect.objectContaining({ path: ['filename'] })
+    ])
+    expect(
+      schema.parse({
+        filename: 'plot.png',
+        source: { kind: 'localPath', path: 'plot.png' },
+        producerRunId: 'notebook-run-1'
+      })
+    ).toMatchObject({ filename: 'plot.png', producerRunId: 'notebook-run-1' })
+  })
+
   it('keeps legacy content and encoding input working for the current run', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)

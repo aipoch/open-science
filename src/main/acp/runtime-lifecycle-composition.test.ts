@@ -13,6 +13,7 @@ describe('ACP Runtime lifecycle composition', () => {
     const create = (): {
       base: AcpRuntimeBaseOwners
       disconnect: ReturnType<typeof vi.fn>
+      clearPromptResources: ReturnType<typeof vi.fn>
       lifecycle: AcpRuntimeLifecycleOwners
     } => {
       const base = composeAcpRuntimeBaseOwners(options)
@@ -20,6 +21,7 @@ describe('ACP Runtime lifecycle composition', () => {
       const host = {
         connect: vi.fn(async () => session.publication.getSnapshot()),
         disconnect: vi.fn(async () => session.publication.getSnapshot()),
+        clearPromptResources: vi.fn(),
         openAgentConnection: vi.fn(async () => {
           throw new Error('not called during composition')
         })
@@ -28,7 +30,12 @@ describe('ACP Runtime lifecycle composition', () => {
       expect(host.connect).not.toHaveBeenCalled()
       expect(host.disconnect).not.toHaveBeenCalled()
       expect(host.openAgentConnection).not.toHaveBeenCalled()
-      return { base, disconnect: host.disconnect, lifecycle }
+      return {
+        base,
+        disconnect: host.disconnect,
+        clearPromptResources: host.clearPromptResources,
+        lifecycle
+      }
     }
 
     const first = create()
@@ -49,6 +56,7 @@ describe('ACP Runtime lifecycle composition', () => {
     await expect(first.lifecycle.connectionClose.disconnect(false)).resolves.toMatchObject({
       status: 'idle'
     })
+    expect(first.clearPromptResources).toHaveBeenCalledOnce()
     expect(first.disconnect).toHaveBeenCalledOnce()
   })
 })

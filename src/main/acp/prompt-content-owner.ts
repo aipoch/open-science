@@ -17,11 +17,16 @@ import {
 } from '../../shared/pdf-preparation-scope'
 import type { PdfReadingPosition } from '../../shared/session-persistence'
 import {
+  createUploadVersionReference,
   imageAttachmentMimeType,
   PENDING_UPLOAD_SESSION_ID,
   type UploadedAttachment
 } from '../../shared/uploads'
-import { readBoundedManagedFilePreview } from '../managed-file-preview'
+import {
+  readBoundedManagedFilePreview,
+  readBoundedManagedFilePreviewLease
+} from '../managed-file-preview'
+import { createLogger, errorLogFields } from '../logger'
 import {
   buildImageContentData,
   canInlineImageInSession,
@@ -33,9 +38,12 @@ import {
   MAX_SESSION_INLINE_IMAGE_BYTES,
   type InlineImageBudget
 } from '../uploads/attachment-media'
+import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { UploadRepository } from '../uploads/repository'
-import { createLogger } from '../logger'
-import { isImportableSkillArchivePath } from '../skills/skill-archive-sniffer'
+import {
+  isImportableSkillArchive,
+  isImportableSkillArchivePath
+} from '../skills/skill-archive-sniffer'
 import {
   ATTACHMENT_PREVIEW_BYTES,
   MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
@@ -48,7 +56,8 @@ import {
   isTextLikeAttachment,
   mimeEssence
 } from './attachment-content'
-import type { FileReferenceResolver } from './file-reference-resolver'
+import type { FileReferenceResolver, TrustedFileReferenceLease } from './file-reference-resolver'
+import { TurnResourceSnapshotStore } from './turn-resource-snapshot-store'
 import type { VisionEvidenceSource } from './vision-evidence-repository'
 
 type CodexSkillInput = {
@@ -56,10 +65,17 @@ type CodexSkillInput = {
   path: string
 }
 
+type ResourceSnapshotScope = Readonly<{
+  appSessionId: string
+  projectId: string
+}>
+
 type AcpPromptContentOwnerOptions = {
   uploadRepository?: UploadRepository
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openLatest'>
   fileReferenceResolver: FileReferenceResolver
   inlineImageBudgetBytes?: number
+  createResourceSnapshotStore?: (scope: ResourceSnapshotScope) => TurnResourceSnapshotStore
 }
 
 type PrepareAcpPromptContentInput = {
@@ -90,15 +106,18 @@ type PreparedAcpPromptContent = {
   historyImageCount: number
   imageSources?: ReadonlyArray<VisionEvidenceSource | undefined>
   turnInputs?: AcpPromptTurnInputs
+  close: () => void
 }
 
 type ResolvedPromptFile = {
   absolutePath: string
   uri: string
+  skillImportUri?: string
   name: string
   mimeType?: string
   size: number
   allowSkillImportReference: boolean
+  trustedLease?: TrustedFileReferenceLease
 }
 
 type PromptFileTextBudget = {
@@ -166,6 +185,7 @@ const errorMessage = (error: unknown): string => {
 // with the runtime; every piece of content resolved here is supplied explicitly by the caller.
 class AcpPromptContentOwner {
   private readonly sessionInlineImageBytes = new Map<number, Map<string, number>>()
+  private readonly activePreparedResources = new Set<() => void>()
   private readonly inlineImageBudgetBytes: number
 
   constructor(private readonly options: AcpPromptContentOwnerOptions) {
@@ -173,6 +193,40 @@ class AcpPromptContentOwner {
   }
 
   async prepare(input: PrepareAcpPromptContentInput): Promise<PreparedAcpPromptContent> {
+    const snapshots =
+      this.options.createResourceSnapshotStore?.({
+        appSessionId: input.appSessionId,
+        projectId: input.projectId
+      }) ?? new TurnResourceSnapshotStore()
+    let closed = false
+    const close = (): void => {
+      if (closed) return
+      closed = true
+      this.activePreparedResources.delete(close)
+      try {
+        snapshots.close()
+      } catch (error) {
+        try {
+          log.error('turn resource snapshot cleanup failed', errorLogFields(error))
+        } catch {
+          // Snapshot cleanup cannot replace the provider outcome.
+        }
+      }
+    }
+    this.activePreparedResources.add(close)
+    try {
+      return await this.prepareOwned(input, snapshots, close)
+    } catch (error) {
+      close()
+      throw error
+    }
+  }
+
+  private async prepareOwned(
+    input: PrepareAcpPromptContentInput,
+    snapshots: TurnResourceSnapshotStore,
+    close: () => void
+  ): Promise<PreparedAcpPromptContent> {
     const hasUploads = input.historyUploads.length > 0 || input.currentUploads.length > 0
     if ((input.currentImages?.length ?? 0) > MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE) {
       throw new Error(
@@ -192,6 +246,7 @@ class AcpPromptContentOwner {
       return image
     })
     let promptUploads: UploadedAttachment[] = []
+    const resolvedReferences: FileReference[] = []
     let historyImageCount = 0
     const imageSources: Array<VisionEvidenceSource | undefined> = []
 
@@ -296,19 +351,24 @@ class AcpPromptContentOwner {
 
         // Preserve the existing order: history uploads, current uploads, then explicit references.
         for (let index = 0; index < promptUploads.length; index += 1) {
-          const attachment = promptUploads[index]
-          const blocks = await this.createAttachmentContentBlocks(
+          const resolved = await this.createAttachmentContentBlocks(
             input,
-            attachment,
+            promptUploads[index],
             index < input.historyUploads.length,
-            fileTextBudget
+            fileTextBudget,
+            snapshots
           )
-          for (const block of blocks) {
+          promptUploads[index] = resolved.attachment
+          for (const block of resolved.blocks) {
             const appended = appendBlock(
               block,
-              this.imageOverflowResourceLink(block, attachment.originalName, attachment.size),
-              attachment.versionId
-                ? { kind: 'upload-version', uploadVersionId: attachment.versionId }
+              this.imageOverflowResourceLink(
+                block,
+                resolved.attachment.originalName,
+                resolved.attachment.size
+              ),
+              resolved.attachment.versionId
+                ? { kind: 'upload-version', uploadVersionId: resolved.attachment.versionId }
                 : undefined
             )
             if (index < input.historyUploads.length && isImageBlock(block) && appended) {
@@ -319,12 +379,14 @@ class AcpPromptContentOwner {
       }
 
       for (const reference of input.references) {
-        const blocks = await this.createReferencedArtifactContentBlocks(
+        const resolved = await this.createReferencedArtifactContentBlocks(
           input,
           reference,
-          fileTextBudget
+          fileTextBudget,
+          snapshots
         )
-        for (const block of blocks) {
+        resolvedReferences.push(resolved.reference)
+        for (const block of resolved.blocks) {
           appendBlock(block, this.imageOverflowResourceLink(block, reference.name))
         }
       }
@@ -336,17 +398,18 @@ class AcpPromptContentOwner {
     const turnInputUploads = promptUploads.filter(
       (upload, index) => index >= input.historyUploads.length || upload.versionId
     )
-    const hasTurnInputs = turnInputUploads.length > 0 || input.references.length > 0
+    const hasTurnInputs = turnInputUploads.length > 0 || resolvedReferences.length > 0
 
     return {
       content: preparedContent,
+      close,
       historyImageCount,
       ...(imageSources.length > 0 ? { imageSources } : {}),
       ...(hasTurnInputs
         ? {
             turnInputs: {
               uploads: turnInputUploads,
-              references: [...input.references]
+              references: resolvedReferences
             }
           }
         : {})
@@ -364,6 +427,7 @@ class AcpPromptContentOwner {
   clear(): void {
     this.options.fileReferenceResolver.clear()
     this.sessionInlineImageBytes.clear()
+    for (const close of [...this.activePreparedResources]) close()
   }
 
   clearGeneration(connectionGeneration: number): void {
@@ -421,9 +485,67 @@ class AcpPromptContentOwner {
     input: PrepareAcpPromptContentInput,
     attachment: UploadedAttachment,
     isHistoryUpload: boolean,
-    fileTextBudget: PromptFileTextBudget
-  ): Promise<ContentBlock[]> {
+    fileTextBudget: PromptFileTextBudget,
+    snapshots: TurnResourceSnapshotStore
+  ): Promise<{ attachment: UploadedAttachment; blocks: ContentBlock[] }> {
     if (!this.options.uploadRepository) throw new Error('Upload storage is not configured.')
+
+    if (this.options.managedFileVersions) {
+      const lease = await this.options.managedFileVersions.openLatest({
+        source: 'upload',
+        projectId: input.projectId,
+        fileId: attachment.id
+      })
+
+      let prepared: { attachment: UploadedAttachment; blocks: ContentBlock[] }
+      try {
+        const exactAttachment: UploadedAttachment = {
+          id: lease.logicalFile.id,
+          versionId: lease.version.id,
+          versionNumber: lease.version.versionNumber,
+          sessionId: lease.logicalFile.sessionId,
+          name: lease.version.filename,
+          originalName: lease.logicalFile.displayName,
+          path: createUploadVersionReference(lease.version.id, {
+            projectId: lease.logicalFile.projectId,
+            sessionId: lease.logicalFile.sessionId,
+            fileId: lease.logicalFile.id
+          }),
+          ...(lease.version.contentType ? { mimeType: lease.version.contentType } : {}),
+          size: lease.size,
+          checksum: lease.version.checksum,
+          createdAt: lease.version.createdAt.toISOString()
+        }
+        // Provider adapters may dereference file URIs after prompt preparation returns. Keep an
+        // exact private copy alive for the prepared turn instead of exposing the managed path after
+        // its integrity lease closes.
+        const snapshot = await snapshots.create(exactAttachment.originalName, lease)
+        prepared = {
+          attachment: exactAttachment,
+          blocks: await this.buildFileContentBlocks(
+            input,
+            {
+              absolutePath: snapshot.absolutePath,
+              uri: snapshot.uri,
+              name: exactAttachment.originalName || exactAttachment.name,
+              mimeType: exactAttachment.mimeType,
+              size: lease.size,
+              allowSkillImportReference: true,
+              skillImportUri: exactAttachment.path,
+              trustedLease: lease
+            },
+            fileTextBudget,
+            isHistoryUpload,
+            isHistoryUpload ? 'history-upload' : 'current-upload'
+          )
+        }
+      } catch (error) {
+        await lease.close().catch(() => undefined)
+        throw error
+      }
+      await lease.close()
+      return prepared
+    }
 
     const filePath = await this.options.uploadRepository.resolveManagedUploadPath(
       { path: attachment.path },
@@ -438,27 +560,31 @@ class AcpPromptContentOwner {
     )
     const { size } = await stat(filePath)
 
-    return this.buildFileContentBlocks(
-      input,
-      {
-        absolutePath: filePath,
-        uri: pathToFileURL(filePath).href,
-        name: attachment.originalName || attachment.name,
-        mimeType: attachment.mimeType,
-        size,
-        allowSkillImportReference: true
-      },
-      fileTextBudget,
-      isHistoryUpload,
-      isHistoryUpload ? 'history-upload' : 'current-upload'
-    )
+    return {
+      attachment,
+      blocks: await this.buildFileContentBlocks(
+        input,
+        {
+          absolutePath: filePath,
+          uri: pathToFileURL(filePath).href,
+          name: attachment.originalName || attachment.name,
+          mimeType: attachment.mimeType,
+          size,
+          allowSkillImportReference: true
+        },
+        fileTextBudget,
+        isHistoryUpload,
+        isHistoryUpload ? 'history-upload' : 'current-upload'
+      )
+    }
   }
 
   private async createReferencedArtifactContentBlocks(
     input: PrepareAcpPromptContentInput,
     reference: FileReference,
-    fileTextBudget: PromptFileTextBudget
-  ): Promise<ContentBlock[]> {
+    fileTextBudget: PromptFileTextBudget,
+    snapshots: TurnResourceSnapshotStore
+  ): Promise<{ blocks: ContentBlock[]; reference: FileReference }> {
     const resolvedReference = await this.options.fileReferenceResolver.resolve(
       {
         sessionId: input.appSessionId,
@@ -468,23 +594,81 @@ class AcpPromptContentOwner {
       reference
     )
 
-    return this.buildFileContentBlocks(
-      input,
-      resolvedReference,
-      fileTextBudget,
-      false,
-      'file-reference',
-      reference.source === 'linked-folder'
-        ? undefined
-        : sanitizePdfReadingPosition(reference.pdfReadingPosition),
-      reference.source === 'linked-folder' || !reference.pdfContextDocumentId
-        ? undefined
-        : {
-            documentId: reference.pdfContextDocumentId,
-            documentCount: Math.min(Math.max(reference.pdfContextDocumentCount ?? 1, 1), 3),
-            active: reference.pdfContextActive === true
+    let prepared: { blocks: ContentBlock[]; reference: FileReference }
+    try {
+      const snapshot = resolvedReference.trustedLease
+        ? await snapshots.create(resolvedReference.name, resolvedReference.trustedLease)
+        : undefined
+      const versionReference =
+        reference.source === 'upload' &&
+        resolvedReference.sourceFileId &&
+        resolvedReference.sourceSessionId &&
+        resolvedReference.versionId
+          ? createUploadVersionReference(resolvedReference.versionId, {
+              projectId: input.projectId,
+              sessionId: resolvedReference.sourceSessionId,
+              fileId: resolvedReference.sourceFileId
+            })
+          : undefined
+      const promptReference = snapshot
+        ? {
+            ...resolvedReference,
+            absolutePath: snapshot.absolutePath,
+            uri: snapshot.uri,
+            ...(versionReference ? { skillImportUri: versionReference } : {})
           }
-    )
+        : {
+            ...resolvedReference,
+            ...(versionReference ? { skillImportUri: versionReference } : {})
+          }
+      const exactReference: FileReference =
+        reference.source !== 'linked-folder' &&
+        resolvedReference.sourceFileId &&
+        resolvedReference.versionId
+          ? {
+              ...reference,
+              ...(versionReference ? { path: versionReference } : {}),
+              sourceFileId: resolvedReference.sourceFileId,
+              name: resolvedReference.name,
+              versionId: resolvedReference.versionId,
+              ...(resolvedReference.checksum ? { checksum: resolvedReference.checksum } : {})
+            }
+          : reference
+      prepared = {
+        blocks: await this.buildFileContentBlocks(
+          input,
+          promptReference,
+          fileTextBudget,
+          false,
+          'file-reference',
+          reference.source === 'linked-folder'
+            ? undefined
+            : sanitizePdfReadingPosition(reference.pdfReadingPosition),
+          reference.source === 'linked-folder' || !reference.pdfContextDocumentId
+            ? undefined
+            : {
+                documentId: reference.pdfContextDocumentId,
+                documentCount: Math.min(Math.max(reference.pdfContextDocumentCount ?? 1, 1), 3),
+                active: reference.pdfContextActive === true
+              }
+        ),
+        reference: exactReference
+      }
+    } catch (error) {
+      await resolvedReference.trustedLease?.close().catch(() => undefined)
+      throw error
+    }
+    await resolvedReference.trustedLease?.close()
+    return prepared
+  }
+
+  private async readPromptFileBytes(descriptor: ResolvedPromptFile): Promise<Buffer> {
+    if (!descriptor.trustedLease) return readFile(descriptor.absolutePath)
+    if (descriptor.size === 0) {
+      await descriptor.trustedLease.verifyUnchanged()
+      return Buffer.alloc(0)
+    }
+    return Buffer.from(await descriptor.trustedLease.readRange(0, descriptor.size))
   }
 
   private async buildFileContentBlocks(
@@ -496,19 +680,21 @@ class AcpPromptContentOwner {
     pdfReadingPosition?: PdfReadingPosition,
     linkedPdfContext?: LinkedPdfContext
   ): Promise<ContentBlock[]> {
-    const { absolutePath, uri, name, mimeType, size, allowSkillImportReference } = descriptor
+    const { absolutePath, uri, skillImportUri, name, mimeType, size, allowSkillImportReference } =
+      descriptor
 
     const attachmentTextReference = (
       tag: 'attached_skill_package' | 'attached_local_archive',
       skillImportEligible: boolean,
-      turnToken?: string
+      turnToken?: string,
+      attachmentUri: string = uri
     ): ContentBlock => ({
       type: 'text',
       text: [
         `<${tag}>`,
         JSON.stringify({
           name,
-          uri,
+          uri: attachmentUri,
           mimeType,
           size,
           skillImportEligible,
@@ -553,16 +739,17 @@ class AcpPromptContentOwner {
     if (
       input.skillImportEnabled &&
       allowSkillImportReference &&
-      (await this.isSkillPackageFile(name, absolutePath))
+      (await this.isSkillPackageFile(name, descriptor))
     ) {
       const turnToken = input.skillImportTurnToken
       if (turnToken) {
+        const attachmentUri = skillImportUri ?? uri
         try {
-          input.onSkillImportAttachmentEligible?.(uri)
+          input.onSkillImportAttachmentEligible?.(attachmentUri)
         } catch {
           // Eligibility notification is observational and must not abort prompt preparation.
         }
-        return [attachmentTextReference('attached_skill_package', true, turnToken)]
+        return [attachmentTextReference('attached_skill_package', true, turnToken, attachmentUri)]
       }
     }
 
@@ -592,7 +779,8 @@ class AcpPromptContentOwner {
       const { data, mimeType: outMimeType } = await buildImageContentData(
         absolutePath,
         imageMimeType,
-        size
+        size,
+        descriptor.trustedLease ? () => this.readPromptFileBytes(descriptor) : undefined
       )
 
       if (!input.imageCompatibilityRelay) {
@@ -781,7 +969,11 @@ class AcpPromptContentOwner {
       if (size <= MAX_EMBEDDED_TEXT_UPLOAD_BYTES) {
         const block: ContentBlock = {
           type: 'resource',
-          resource: { uri, mimeType, text: await readFile(absolutePath, 'utf8') }
+          resource: {
+            uri,
+            mimeType,
+            text: (await this.readPromptFileBytes(descriptor)).toString('utf8')
+          }
         }
         return this.admitTextResource(
           block,
@@ -860,25 +1052,35 @@ class AcpPromptContentOwner {
     } else {
       const previewBytes = Math.min(ATTACHMENT_PREVIEW_BYTES, Math.max(256, previewBudget * 3))
       const startBytes = tabular ? previewBytes : Math.ceil(previewBytes / 2)
-      const start = await readBoundedManagedFilePreview(
-        absolutePath,
-        { path: absolutePath, maxBytes: startBytes, encoding: 'utf8' },
-        'Attachment preview requires UTF-8 encoding.'
-      )
+      const readPreview = (
+        request: Parameters<typeof readBoundedManagedFilePreview>[1]
+      ): ReturnType<typeof readBoundedManagedFilePreview> =>
+        descriptor.trustedLease
+          ? readBoundedManagedFilePreviewLease(
+              descriptor.trustedLease,
+              request,
+              'Attachment preview requires UTF-8 encoding.'
+            )
+          : readBoundedManagedFilePreview(
+              absolutePath,
+              request,
+              'Attachment preview requires UTF-8 encoding.'
+            )
+      const start = await readPreview({
+        path: absolutePath,
+        maxBytes: startBytes,
+        encoding: 'utf8'
+      })
       if (tabular) {
         rawPreview = start.content
       } else {
         const endBytes = Math.max(1, previewBytes - startBytes)
-        const end = await readBoundedManagedFilePreview(
-          absolutePath,
-          {
-            path: absolutePath,
-            offset: Math.max(0, size - endBytes),
-            maxBytes: endBytes,
-            encoding: 'utf8'
-          },
-          'Attachment preview requires UTF-8 encoding.'
-        )
+        const end = await readPreview({
+          path: absolutePath,
+          offset: Math.max(0, size - endBytes),
+          maxBytes: endBytes,
+          encoding: 'utf8'
+        })
         rawPreview = `${start.content}\n\n[…middle of file omitted…]\n\n${end.content}`
       }
     }
@@ -927,10 +1129,32 @@ class AcpPromptContentOwner {
     return name.toLowerCase().endsWith('.pdf')
   }
 
-  private async isSkillPackageFile(name: string, filePath: string): Promise<boolean> {
+  private async isSkillPackageFile(name: string, descriptor: ResolvedPromptFile): Promise<boolean> {
     const normalizedName = name.toLowerCase()
     if (!normalizedName.endsWith('.skill') && !normalizedName.endsWith('.zip')) return false
-    return isImportableSkillArchivePath(filePath)
+    if (!descriptor.trustedLease) {
+      return isImportableSkillArchivePath(descriptor.absolutePath)
+    }
+    const lease = descriptor.trustedLease
+    return isImportableSkillArchive({
+      size: descriptor.size,
+      read: async (position, length) => {
+        if (
+          !Number.isSafeInteger(position) ||
+          !Number.isSafeInteger(length) ||
+          position < 0 ||
+          length < 0 ||
+          position + length > descriptor.size
+        ) {
+          return undefined
+        }
+        if (length === 0) {
+          await lease.verifyUnchanged()
+          return Buffer.alloc(0)
+        }
+        return Buffer.from(await lease.readRange(position, position + length))
+      }
+    })
   }
 
   private async createPdfContentBlock(

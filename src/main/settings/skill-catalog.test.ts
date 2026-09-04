@@ -183,6 +183,51 @@ describe('SkillCatalogModule', () => {
     ])
   })
 
+  it('surfaces every same-name user Skill in the Settings catalog', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
+    roots.push(storageRoot)
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: { list: async () => [] } as unknown as SkillRegistry,
+      userSkills: {
+        list: async () => [
+          {
+            id: 'personal-shared',
+            name: 'shared',
+            displayName: 'Personal Shared',
+            description: '',
+            source: 'personal' as const,
+            updatedAt: '2026-02-01T00:00:00.000Z',
+            sourceDir: storageRoot
+          },
+          {
+            id: 'imported-shared',
+            name: 'shared',
+            displayName: 'Imported Shared',
+            description: '',
+            source: 'imported' as const,
+            updatedAt: '2026-03-01T00:00:00.000Z',
+            sourceDir: storageRoot
+          }
+        ]
+      } as unknown as UserSkillRepository
+    })
+
+    expect(
+      (await catalog.listSkills())
+        .map((skill) => ({
+          id: skill.id,
+          available: skill.available,
+          availability: skill.availability
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id))
+    ).toEqual([
+      { id: 'imported-shared', available: true, availability: undefined },
+      { id: 'personal-shared', available: false, availability: 'identity-conflict' }
+    ])
+  })
+
   it.each(['personal', 'imported'] as const)(
     'keeps bundled names authoritative over newer %s packages',
     async (source) => {
@@ -262,7 +307,13 @@ describe('SkillCatalogModule', () => {
     })
 
     expect((await catalog.listHostSkills()).map((skill) => skill.id)).toEqual(['internal-helper'])
-    expect(await catalog.listSkills()).toEqual([])
+    await expect(catalog.listSkills()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'personal-internal-helper',
+        available: false,
+        availability: 'identity-conflict'
+      })
+    ])
   })
 
   it.each(['personal', 'imported'] as const)(
@@ -351,7 +402,11 @@ describe('SkillCatalogModule', () => {
     const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-skill-runtime-'))
     roots.push(runtimeRoot)
 
-    expect((await catalog.listSkills()).map((skill) => skill.name)).toEqual(['demo'])
+    expect((await catalog.listSkills()).map((skill) => skill.name)).toEqual([
+      'demo',
+      'imported-package',
+      'personal-package'
+    ])
     await expect(
       catalog.withHostSkillRead('shared-sidecar-id', async (skill) => skill.name)
     ).resolves.toBeUndefined()
@@ -360,6 +415,51 @@ describe('SkillCatalogModule', () => {
       readFile(join(runtimeRoot, 'skills', 'os-shared-sidecar-id', 'SKILL.md'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await chmod(join(runtimeRoot, 'skills', 'os-demo'), 0o755)
+  })
+
+  it('surfaces every duplicate user Skill id in the Settings catalog', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
+    roots.push(storageRoot)
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: { list: async () => [] } as unknown as SkillRegistry,
+      userSkills: {
+        list: async () => [
+          {
+            id: 'shared-sidecar-id',
+            name: 'personal-package',
+            displayName: 'Personal Package',
+            description: '',
+            source: 'personal' as const,
+            updatedAt: '2026-02-01T00:00:00.000Z',
+            sourceDir: storageRoot
+          },
+          {
+            id: 'shared-sidecar-id',
+            name: 'imported-package',
+            displayName: 'Imported Package',
+            description: '',
+            source: 'imported' as const,
+            updatedAt: '2026-03-01T00:00:00.000Z',
+            sourceDir: storageRoot
+          }
+        ]
+      } as unknown as UserSkillRepository
+    })
+
+    const skills = await catalog.listSkills()
+    expect(skills.map((skill) => skill.displayName).sort()).toEqual([
+      'Imported Package',
+      'Personal Package'
+    ])
+    expect(skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ available: false, availability: 'identity-conflict' }),
+        expect.objectContaining({ available: false, availability: 'identity-conflict' })
+      ])
+    )
+    expect(new Set(skills.map((skill) => skill.catalogEntryKey)).size).toBe(2)
   })
 
   it('ignores an unsafe Personal sidecar id instead of materializing outside the Skills root', async () => {

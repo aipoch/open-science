@@ -4,14 +4,25 @@ export type ManagedPreviewSource = 'artifact' | 'upload' | 'notebook-input' | 'l
 
 export const MANAGED_PREVIEW_LOAD_ERROR = 'open-science-preview-load-error'
 
-export type AcquireManagedPreviewRequest = {
-  source: ManagedPreviewSource
-  path: string
-  projectId?: string
-  sessionId?: string
+type ManagedPreviewPresentation = {
   mimeType?: string
   maxBytes?: number
 }
+
+type AcquireManagedVersionPreviewRequest = ManagedPreviewPresentation & {
+  projectId: string
+  fileId: string
+  versionId?: string
+} & ({ source: 'artifact' } | { source: 'upload' })
+
+type AcquirePathPreviewRequest = ManagedPreviewPresentation & {
+  path: string
+  projectId?: string
+  sessionId?: string
+} & ({ source: 'notebook-input' } | { source: 'local' })
+
+export type AcquireManagedPreviewRequest =
+  AcquireManagedVersionPreviewRequest | AcquirePathPreviewRequest
 
 export type ManagedPreviewResource = {
   id: string
@@ -19,6 +30,10 @@ export type ManagedPreviewResource = {
   size: number
   mimeType: string
   version: number
+  // Pixel dimensions for image resources, probed from the file header at acquire time.
+  // Absent for non-images and for images whose header could not be parsed.
+  width?: number
+  height?: number
 }
 
 export type ReadManagedPreviewRangeRequest = {

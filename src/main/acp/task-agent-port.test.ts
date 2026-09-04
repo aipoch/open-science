@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
-import type { AgentTurnProvenanceContext } from '../../shared/acp'
+import type { AcpPromptRequest, AgentTurnProvenanceContext } from '../../shared/acp'
 import type { TaskAgentPort } from '../tasks/task-runner'
 import {
   materializeSessionAgentConfiguration,
@@ -281,9 +281,17 @@ describe('ACP Task Agent port', () => {
 
   it('forwards provider acceptance through the provider-neutral Task prompt observer', async () => {
     const onProviderPromptAccepted = vi.fn()
-    const sendPrompt = vi.fn(async (_request, onAccepted?: () => void) => {
-      onAccepted?.()
-    })
+    const onPromptAdmitted = vi.fn(async () => undefined)
+    const sendPrompt = vi.fn(
+      async (
+        _request,
+        onAccepted?: () => void,
+        onAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+      ) => {
+        await onAdmitted?.()
+        onAccepted?.()
+      }
+    )
     const port = createAcpTaskAgentPort(
       {
         getSnapshot: () => ({ sessionIds: [] }),
@@ -303,9 +311,10 @@ describe('ACP Task Agent port', () => {
         provenanceContext: taskProvenanceContext('prompt-1'),
         text: 'Research this.'
       },
-      { onProviderPromptAccepted }
+      { onPromptAdmitted, onProviderPromptAccepted }
     )
 
+    expect(onPromptAdmitted).toHaveBeenCalledOnce()
     expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
   })
 })

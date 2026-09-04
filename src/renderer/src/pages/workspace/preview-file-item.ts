@@ -1,6 +1,7 @@
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
 import type { ArtifactFile } from '../../../../shared/artifacts'
+import type { ProjectFileItem, ResolveProjectFileRequest } from '../../../../shared/project-files'
 import type { MessagePart, SessionPdfBinding } from '../../../../shared/session-persistence'
 import { sessionPdfBindingToFileReference } from '../../../../shared/session-pdf-context'
 import {
@@ -9,7 +10,13 @@ import {
   type ArtifactLineageProvenance,
   type ArtifactVersionDescriptor
 } from '../../../../shared/artifact-provenance'
-import { getUploadedAttachmentName, getUploadedAttachmentPath } from '../../../../shared/uploads'
+import {
+  createUploadVersionReference,
+  getUploadedAttachmentName,
+  getUploadedAttachmentPath,
+  parseUploadVersionReference
+} from '../../../../shared/uploads'
+import type { ManagedFileVersionDescriptor } from '../../../../shared/managed-file-versions'
 
 import { getArtifactName } from './artifact-preview-utils'
 import { getPreviewFormatForFile } from './preview-support'
@@ -33,6 +40,7 @@ export const createPreviewFileItem = ({
   size,
   mtimeMs,
   artifactId,
+  managedFileId,
   selectedVersionId,
   versionNumber,
   originSession
@@ -47,6 +55,7 @@ export const createPreviewFileItem = ({
   size?: number
   mtimeMs?: number
   artifactId?: string
+  managedFileId?: string
   selectedVersionId?: string
   versionNumber?: number
   originSession?: PreviewFileItem['originSession']
@@ -68,11 +77,86 @@ export const createPreviewFileItem = ({
   if (typeof size === 'number') item.size = size
   if (typeof mtimeMs === 'number') item.mtimeMs = mtimeMs
   if (artifactId) item.artifactId = artifactId
+  if (managedFileId) item.managedFileId = managedFileId
   if (selectedVersionId) item.selectedVersionId = selectedVersionId
   if (typeof versionNumber === 'number') item.versionNumber = versionNumber
   if (originSession) item.originSession = originSession
 
   return item
+}
+
+// Builds the metadata-only lookup used before a managed preview retry. A restored upload keeps its
+// stable `upload:` tab id, while Artifact ids may need the main process's scoped filename fallback.
+export const createProjectFileResolveRequest = (
+  item: PreviewFileItem,
+  projectId: string | undefined
+): ResolveProjectFileRequest | undefined => {
+  const source = item.source ?? 'artifact'
+  if (!projectId || (source !== 'artifact' && source !== 'upload')) return undefined
+
+  const artifactLocator = source === 'artifact' ? parseArtifactVersionLocator(item.path) : undefined
+  const uploadLocator = source === 'upload' ? parseUploadVersionReference(item.path) : undefined
+  const uploadTabId = source === 'upload' && item.id.startsWith('upload:') ? item.id.slice(7) : ''
+  const logicalFileId =
+    source === 'artifact'
+      ? (item.managedFileId ?? item.artifactId ?? artifactLocator?.artifactId)
+      : (item.managedFileId ?? uploadLocator?.fileId ?? uploadTabId)
+  const fileIdHint = logicalFileId || item.id
+  // Old persisted Artifacts may have used their physical path as the display name. The database
+  // compatibility lookup is scoped by filename, so strip either POSIX or Windows directories.
+  const name =
+    source === 'artifact' && !logicalFileId
+      ? item.name.split(/[\\/]/u).at(-1) || item.name
+      : item.name
+
+  return {
+    projectId,
+    sessionId: item.sessionId,
+    source,
+    ...(fileIdHint ? { fileIdHint } : {}),
+    identityHint: logicalFileId ? 'logical' : 'legacy',
+    name
+  }
+}
+
+// Replaces a stale physical projection with the catalog's logical identity. Explicit history
+// selections stay pinned; an ordinary tab continues following the database head returned here.
+export const refreshPreviewFileItemFromProjectFile = (
+  item: PreviewFileItem,
+  file: ProjectFileItem
+): PreviewFileItem => {
+  const selectedVersionId = item.selectedVersionId
+  const path = selectedVersionId
+    ? file.source === 'artifact'
+      ? createArtifactVersionLocator({
+          projectId: file.projectId,
+          appSessionId: file.sessionId,
+          artifactId: file.sourceFileId,
+          versionId: selectedVersionId
+        })
+      : createUploadVersionReference(selectedVersionId, {
+          projectId: file.projectId,
+          sessionId: file.sessionId,
+          fileId: file.sourceFileId
+        })
+    : file.path
+
+  return createPreviewFileItem({
+    id: item.id,
+    projectId: file.projectId,
+    sessionId: file.sessionId,
+    path,
+    name: file.name,
+    mimeType: file.mimeType,
+    source: file.source === 'upload' ? 'upload' : undefined,
+    size: file.size,
+    mtimeMs: file.mtimeMs,
+    artifactId: file.source === 'artifact' ? file.sourceFileId : undefined,
+    managedFileId: file.sourceFileId,
+    selectedVersionId,
+    versionNumber: selectedVersionId ? item.versionNumber : undefined,
+    originSession: file.originSession
+  })
 }
 
 // Converts app-managed generated files into preview tabs and ignores unmanaged artifacts.
@@ -104,7 +188,7 @@ export const createPreviewFileItemFromArtifact = (
     size: artifact.size,
     mtimeMs: artifact.mtimeMs,
     artifactId: artifact.artifactId,
-    selectedVersionId: artifact.versionId,
+    managedFileId: artifact.artifactId,
     versionNumber: artifact.versionNumber
   })
 }
@@ -122,6 +206,7 @@ export const createPreviewFileItemForArtifactVersion = ({
 }): PreviewFileItem => ({
   ...item,
   projectId,
+  managedFileId: version.artifactId,
   selectedVersionId: version.versionId,
   versionNumber: version.versionNumber,
   path: createArtifactVersionLocator({
@@ -134,6 +219,41 @@ export const createPreviewFileItemForArtifactVersion = ({
   title: version.name,
   size: version.size,
   mtimeMs: version.mtimeMs
+})
+
+export const createPreviewFileItemForManagedVersion = ({
+  item,
+  version,
+  projectId,
+  sessionId
+}: {
+  item: PreviewFileItem
+  version: ManagedFileVersionDescriptor
+  projectId: string
+  sessionId: string
+}): PreviewFileItem => ({
+  ...item,
+  projectId,
+  managedFileId: version.fileId,
+  artifactId: version.source === 'artifact' ? version.fileId : undefined,
+  selectedVersionId: version.id,
+  versionNumber: version.versionNumber,
+  path:
+    version.source === 'artifact'
+      ? createArtifactVersionLocator({
+          projectId,
+          appSessionId: sessionId,
+          artifactId: version.fileId,
+          versionId: version.id
+        })
+      : createUploadVersionReference(version.id, {
+          projectId,
+          sessionId,
+          fileId: version.fileId
+        }),
+  name: version.displayName,
+  title: version.displayName,
+  size: version.sizeBytes
 })
 
 // An omitted selection opens the newest finalized Version. An explicit selection is immutable
@@ -159,10 +279,12 @@ export const createPreviewFileItemFromUpload = (
     projectId,
     sessionId,
     source: 'upload',
+    managedFileId: attachment.id,
     path: getUploadedAttachmentPath(attachment, projectId),
     name: attachmentName,
     mimeType: attachment.mimeType,
-    size: attachment.size
+    size: attachment.size,
+    versionNumber: attachment.versionNumber
   })
 }
 
@@ -187,7 +309,8 @@ export const createPreviewFileItemFromPdfContext = (
     size: context.sizeBytes,
     source: isArtifact ? undefined : 'upload',
     artifactId: isArtifact ? context.sourceFileId : undefined,
-    selectedVersionId: isArtifact ? context.sourceVersionId : undefined
+    managedFileId: context.sourceFileId,
+    selectedVersionId: context.sourceVersionId
   })
 }
 
@@ -228,23 +351,28 @@ export const createPreviewFileItemFromMention = (
   sessionId: string,
   projectId?: string
 ): PreviewFileItem => {
-  const identity = part.source === 'artifact' ? parseArtifactVersionLocator(part.path) : undefined
+  const artifactIdentity =
+    part.source === 'artifact' ? parseArtifactVersionLocator(part.path) : undefined
+  const uploadIdentity =
+    part.source === 'upload' ? parseUploadVersionReference(part.path) : undefined
   const artifactId =
     part.source === 'artifact'
-      ? (identity?.artifactId ?? (part.versionId ? part.id : undefined))
+      ? (artifactIdentity?.artifactId ?? (part.versionId ? part.id : undefined))
       : undefined
-  const selectedVersionId =
-    part.source === 'artifact' ? (identity?.versionId ?? part.versionId) : undefined
-
+  const managedFileId =
+    part.source === 'artifact'
+      ? (part.sourceFileId ?? artifactId)
+      : (part.sourceFileId ??
+        (part.id.startsWith('upload:') ? part.id.slice('upload:'.length) || undefined : undefined))
   return createPreviewFileItem({
     id: artifactId ?? part.id,
-    projectId: identity?.projectId ?? projectId,
-    sessionId: identity?.appSessionId ?? sessionId,
+    projectId: artifactIdentity?.projectId ?? uploadIdentity?.projectId ?? projectId,
+    sessionId: artifactIdentity?.appSessionId ?? uploadIdentity?.sessionId ?? sessionId,
     path: part.path,
     name: part.name,
     mimeType: part.mimeType,
     source: part.source === 'upload' ? 'upload' : undefined,
     artifactId,
-    selectedVersionId
+    managedFileId
   })
 }

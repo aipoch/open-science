@@ -6,6 +6,7 @@ import {
   resolveActiveConversationActivities,
   resolveActiveConversationMessages
 } from '../../../shared/conversation-graph'
+import { normalizeDelegationPolicy } from '../../../shared/session-persistence'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
 import {
   buildUserMessage,
@@ -213,6 +214,7 @@ export const createSessionMessageGraphOwner = <
     agentModel,
     agentConfiguration,
     memoryEnabled,
+    delegationPolicy,
     isPending,
     specialistId,
     enabledComputeHosts,
@@ -350,6 +352,8 @@ export const createSessionMessageGraphOwner = <
         id: sessionId,
         projectId: projectId ?? '',
         isPending: isPending ? true : undefined,
+        delegationPolicyAuthorityPending:
+          isPending && delegationPolicy !== undefined ? true : undefined,
         ...sessionDetails.prepareNewRootSessionDetails(
           userMessage,
           createTitleFromMessage(trimmedContent || createTitleFromUploads(uploads))
@@ -362,6 +366,7 @@ export const createSessionMessageGraphOwner = <
         agentModel: normalizedAgentModel,
         ...(agentConfiguration ? { agentConfiguration } : {}),
         memoryEnabled: memoryEnabled !== false,
+        ...(delegationPolicy ? { delegationPolicy } : {}),
         ...(specialistId ? { specialistId } : {}),
         ...(enabledComputeHosts?.length
           ? {
@@ -411,6 +416,7 @@ export const createSessionMessageGraphOwner = <
     agentModel,
     agentConfiguration,
     memoryEnabled,
+    delegationPolicy,
     specialistId,
     agentTarget
   }) => {
@@ -466,6 +472,7 @@ export const createSessionMessageGraphOwner = <
       projectId: source.projectId,
       branchSource: createSessionBranchSource(source, sourceMessage?.id),
       isPending: true,
+      delegationPolicyAuthorityPending: true,
       title: sourceMessage
         ? source.title
         : trimmedContent
@@ -482,12 +489,16 @@ export const createSessionMessageGraphOwner = <
       ...(source.autoReviewEnabled !== undefined
         ? { autoReviewEnabled: source.autoReviewEnabled }
         : {}),
+      delegationPolicy: delegationPolicy ?? normalizeDelegationPolicy(source.delegationPolicy),
       memoryEnabled: memoryEnabled ?? source.memoryEnabled ?? true,
       ...(source.enabledComputeHosts
         ? { enabledComputeHosts: [...source.enabledComputeHosts] }
         : {}),
       ...(source.selectedComputeHosts
         ? { selectedComputeHosts: [...source.selectedComputeHosts] }
+        : {}),
+      ...(source.computeConcurrencyLimit !== undefined
+        ? { computeConcurrencyLimit: source.computeConcurrencyLimit }
         : {}),
       ...(nextSpecialistId ? { specialistId: nextSpecialistId } : {}),
       messages,

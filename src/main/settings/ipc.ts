@@ -36,6 +36,7 @@ import {
   type ExportCustomServerTemplateResult,
   type RemoveCustomServerRequest,
   type RemoveDeviceCredentialRequest,
+  type ResolveSkillDocumentRequest,
   type SelectCustomServerTemplateRequest,
   type SetCustomServerEnabledRequest,
   type UpdateCustomServerRequest,
@@ -357,6 +358,9 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle('settings:remove-github-token', () => service.removeGitHubToken())
   ipcMainHandle('settings:get-skill-detail', (_event, id: string) => service.getSkillDetail(id))
+  ipcMainHandle('settings:resolve-skill-document', (_event, request: ResolveSkillDocumentRequest) =>
+    service.resolveSkillDocument(request)
+  )
   ipcMainHandle('settings:export-skill', async (event, request: ExportSkillRequest) => {
     if (!skillExportFiles) throw new Error('Skill export is unavailable')
     return skillExportFiles.save(await service.buildSkillExport(request.id), event.sender)
@@ -408,6 +412,9 @@ const registerSettingsIpcHandlers = ({
   )
 
   ipcMainHandle('settings:list-connectors', () => service.listConnectors())
+  ipcMainHandle('settings:retry-connector-projection', () =>
+    workflows.connectors.retryConnectorProjection()
+  )
   ipcMainHandle('settings:retry-custom-server', (_event, request: DisconnectCustomServerRequest) =>
     workflows.connectors.retryCustomServer(request)
   )

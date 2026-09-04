@@ -5,6 +5,7 @@ import {
   type AcpPermissionRequest
 } from '../../../../shared/acp'
 import {
+  ARTIFACT_FINALIZATION_INVALID_PROOF,
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile
 } from '../../../../shared/artifacts'
@@ -2731,7 +2732,10 @@ describe('workspace runtime events', () => {
     })
     const finalizeRunArtifacts = vi.fn().mockImplementation(async () => {
       operationOrder.push('finalize')
-      throw new Error('Artifact finalization message is not a Branch descendant of its prompt.')
+      throw Object.assign(
+        new Error('Artifact finalization message is not a Branch descendant of its prompt.'),
+        { code: ARTIFACT_FINALIZATION_INVALID_PROOF }
+      )
     })
 
     await applyWorkspaceRuntimeEvent(
@@ -2753,6 +2757,9 @@ describe('workspace runtime events', () => {
 
     expect(operationOrder).toEqual(['save', 'finalize'])
     expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].error).toMatch(
+      /^Generated file finalization cannot be retried:/u
+    )
   })
 
   it('attempts the recoverable ownership persistence race at most twice', async () => {
@@ -2830,7 +2837,6 @@ describe('workspace runtime events', () => {
       expect.objectContaining({
         id: 'artifact-lineage-1',
         artifactId: 'artifact-lineage-1',
-        selectedVersionId: 'artifact-version-2',
         versionNumber: 2,
         path: 'artifact-version:default-project/transport-session-1/artifact-lineage-1/artifact-version-2',
         type: 'file',
@@ -2880,7 +2886,6 @@ describe('workspace runtime events', () => {
       items: [
         expect.objectContaining({
           id: 'artifact-lineage-activating',
-          selectedVersionId: 'artifact-version-activating',
           format: 'molecule'
         })
       ]
@@ -3573,6 +3578,52 @@ describe('loop guard: suppressNextAutoReview', () => {
     expect(reviewerRun).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'transport-session-1' })
     )
+
+    vi.unstubAllGlobals()
+  })
+
+  it('does not auto-review a Reviewer correction when the one-shot suppression event was missed', async () => {
+    const reviewerRun = vi.fn().mockResolvedValue(undefined)
+    stubReviewerApi(reviewerRun)
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'reviewer-correction-prompt',
+        role: 'user',
+        messageId: 'reviewer-correction-prompt',
+        promptMessageId: 'reviewer-correction-prompt',
+        text: '[Auditor] Correct the unsupported claim.',
+        attribution: {
+          kind: 'application',
+          feature: 'reviewer',
+          purpose: 'correction',
+          causeReviewId: 'review-1'
+        }
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'reviewer-correction-response',
+        role: 'assistant',
+        messageId: 'reviewer-correction-response',
+        promptMessageId: 'reviewer-correction-prompt',
+        text: 'Corrected the unsupported claim.'
+      })
+    )
+
+    // Simulate a refreshed or late-joining renderer: it has the durable correction attribution but
+    // never received reviewer:suppress-next-auto-review before the correction turn stopped.
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'reviewer-correction-stop',
+        kind: 'stop',
+        sessionId: 'transport-session-1',
+        promptMessageId: 'reviewer-correction-prompt'
+      })
+    )
+    await vi.runAllTimersAsync()
+
+    expect(reviewerRun).not.toHaveBeenCalled()
 
     vi.unstubAllGlobals()
   })

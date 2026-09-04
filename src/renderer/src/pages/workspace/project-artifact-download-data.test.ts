@@ -7,6 +7,7 @@ const file = (id: string, source: ProjectFileItem['source'] = 'artifact'): Proje
   id,
   source,
   sourceFileId: id,
+  sourceVersionId: id,
   projectId: 'project-1',
   sessionId: 'session-1',
   name: `${id}.csv`,

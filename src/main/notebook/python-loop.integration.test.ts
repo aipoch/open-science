@@ -3,7 +3,15 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  existsSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { framePythonNamespaceRequest } from './kernel-protocol'
 
@@ -265,6 +273,34 @@ gate('python_loop.py', () => {
       child.kill()
       rmSync(runtimeRoot, { recursive: true, force: true })
       rmSync(workspace, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('allows libraries to create workload caches without opening the managed runtime', async () => {
+    const runtimeRoot = mkdtempSync(join(tmpdir(), 'os-python-runtime-cache-'))
+    const cacheRoot = join(runtimeRoot, 'cache', 'notebook')
+    const matplotlibCache = join(cacheRoot, 'matplotlib')
+    mkdirSync(cacheRoot, { recursive: true })
+    const { child, send } = startLoop(pyBin as string, {
+      OPEN_SCIENCE_RUNTIME_DIR: runtimeRoot,
+      OPEN_SCIENCE_NOTEBOOK_CACHE_DIR: cacheRoot,
+      MPLCONFIGDIR: matplotlibCache,
+      MPLBACKEND: 'Agg'
+    })
+    try {
+      const imported = await send('import matplotlib; print(matplotlib.get_configdir())')
+
+      expect(imported.error).toBeNull()
+      expect(imported.stderr).not.toContain('Package/environment mutation is not allowed')
+      expect(imported.stdout.trim()).toBe(realpathSync.native(matplotlibCache))
+
+      const blocked = await send(
+        `import os; os.makedirs(${JSON.stringify(join(runtimeRoot, 'blocked'))})`
+      )
+      expect(blocked.error).toMatch(/manage_packages/)
+    } finally {
+      child.kill()
+      rmSync(runtimeRoot, { recursive: true, force: true })
     }
   }, 60_000)
 

@@ -154,6 +154,47 @@ describe('delegated-work Session records', () => {
     expect(durable().runtimeContext?.delegatedWork?.records ?? []).toEqual([])
   })
 
+  it('linearizes a policy denial submitted before child admission for the same Session', async () => {
+    const { coordinator, durable } = createHarness()
+    const parentFrameId = durable().conversationGraph!.rootFrameId
+    const expectedDelegatedWorkRevision = durable().runtimeContext?.revision ?? 0
+
+    const denial = coordinator.setSessionDelegationPolicy(key.projectId, key.sessionId, 'deny')
+    const admission = coordinator.createChildren(key, {
+      expectedRevision: expectedDelegatedWorkRevision,
+      parentFrameId,
+      originMessageId: rootPrompt.id,
+      children: [child(1)]
+    })
+
+    await expect(denial).resolves.toMatchObject({ delegationPolicy: 'deny' })
+    await expect(admission).rejects.toMatchObject({ code: 'admission_rejection' })
+    expect(durable().delegationPolicy).toBe('deny')
+    expect(durable().runtimeContext?.delegatedWork?.records ?? []).toEqual([])
+  })
+
+  it('keeps an admitted child when admission is submitted before a later policy denial', async () => {
+    const { coordinator, durable } = createHarness()
+    const parentFrameId = durable().conversationGraph!.rootFrameId
+    const expectedDelegatedWorkRevision = durable().runtimeContext?.revision ?? 0
+
+    const admission = coordinator.createChildren(key, {
+      expectedRevision: expectedDelegatedWorkRevision,
+      parentFrameId,
+      originMessageId: rootPrompt.id,
+      children: [child(1)]
+    })
+    const denial = coordinator.setSessionDelegationPolicy(key.projectId, key.sessionId, 'deny')
+
+    await expect(admission).resolves.toEqual([
+      expect.objectContaining({ frameId: 'child-frame-1' })
+    ])
+    await expect(denial).resolves.toMatchObject({ delegationPolicy: 'deny' })
+    expect(durable().runtimeContext?.delegatedWork?.records[0]?.attempts.at(-1)?.status).toBe(
+      'running'
+    )
+  })
+
   it('publishes durable child start and finish projections after each repository commit', async () => {
     const published: PersistedChatSession[] = []
     const { coordinator, durable } = createHarness(createRootSession(), (session) => {

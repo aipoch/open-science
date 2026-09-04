@@ -97,6 +97,15 @@ const canAccessSessionPlan = (context: CallerContext): boolean =>
       context.principalKind === 'automation' &&
       context.actionOrigin === 'automation'))
 
+const canMutateSessionDelegationPolicy = (context: CallerContext): boolean =>
+  context.isAuthorizationCurrent() &&
+  ((context.principalKind === 'human' &&
+    context.actionOrigin === 'human' &&
+    (context.surface === 'electron' || context.surface === 'web')) ||
+    (context.surface === 'task' &&
+      context.principalKind === 'automation' &&
+      context.actionOrigin === 'automation'))
+
 export type ClientLease = Readonly<{
   clientId: string
   release: () => void
@@ -167,6 +176,7 @@ export class ClientLeaseRegistry {
 export {
   callerContextForEvent,
   canAccessSessionPlan,
+  canMutateSessionDelegationPolicy,
   canSatisfyHumanApproval,
   createCallerContext,
   createElectronCallerContext,

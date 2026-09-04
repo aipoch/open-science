@@ -2,7 +2,6 @@ import { createReadStream } from 'node:fs'
 
 import type { PrismaClient } from '@prisma/client'
 
-import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import {
   DEFAULT_UPLOAD_PROJECT_ID,
   type AppendUploadTransferRequest,
@@ -152,12 +151,6 @@ class UploadRepository {
     scope: { projectId?: string; sessionId?: string } = {}
   ): Promise<ResolvedManagedUpload> {
     return this.managedUploadResolver.resolveManagedUpload(request, scope)
-  }
-
-  async readManagedUploadPreview(
-    request: ReadArtifactPreviewRequest
-  ): Promise<ArtifactPreviewResult> {
-    return this.managedUploadResolver.readManagedUploadPreview(request)
   }
 }
 

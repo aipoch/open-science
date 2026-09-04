@@ -12,9 +12,12 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { isPathWithin } from '../../shared/local-fs'
 import { MAX_UPLOAD_FILE_BYTES } from '../../shared/uploads'
 import type { ArtifactRepository } from '../artifacts/repository'
-import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { createLogger, errorLogFields } from '../logger'
 import type { UploadRepository } from '../uploads/repository'
+import type {
+  ManagedFileReadLease,
+  ManagedFileVersionService
+} from '../managed-file-versions/service'
 
 const log = createLogger('acp-file-reference-resolver')
 
@@ -24,6 +27,11 @@ export type FileReferenceContext = {
   connectionGeneration?: number
 }
 
+export type TrustedFileReferenceLease = Pick<
+  ManagedFileReadLease,
+  'size' | 'read' | 'readRange' | 'copyTo' | 'verifyUnchanged' | 'close'
+>
+
 export type ResolvedFileReference = {
   absolutePath: string
   uri: string
@@ -31,6 +39,11 @@ export type ResolvedFileReference = {
   mimeType?: string
   size: number
   allowSkillImportReference: boolean
+  sourceFileId?: string
+  sourceSessionId?: string
+  versionId?: string
+  checksum?: string
+  trustedLease?: TrustedFileReferenceLease
 }
 
 // This adapter is the deliberate extension seam for linked folders and other future file origins.
@@ -288,13 +301,18 @@ export class FileReferenceResolver {
     if (!adapter) throw new Error(`File reference source is not configured: ${reference.source}`)
 
     const resolved = await adapter.resolve(context, reference)
-    const fileInfo = await stat(resolved.absolutePath)
-    if (!fileInfo.isFile()) throw new Error('Referenced path is not a file.')
+    try {
+      const fileInfo = resolved.trustedLease ? undefined : await stat(resolved.absolutePath)
+      if (fileInfo && !fileInfo.isFile()) throw new Error('Referenced path is not a file.')
 
-    return {
-      ...resolved,
-      uri: pathToFileURL(resolved.absolutePath).href,
-      size: fileInfo.size
+      return {
+        ...resolved,
+        uri: pathToFileURL(resolved.absolutePath).href,
+        size: resolved.trustedLease?.size ?? fileInfo!.size
+      }
+    } catch (error) {
+      await resolved.trustedLease?.close().catch(() => undefined)
+      throw error
     }
   }
 
@@ -314,79 +332,89 @@ export class FileReferenceResolver {
 export const createManagedFileReferenceResolver = (dependencies: {
   uploads?: UploadRepository
   artifacts?: ArtifactRepository
-  artifactVersions?: Partial<Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>>
   readOnlyProjectionMaxSessionBytes?: number
   // Resolves a granted local root id and current access level (settings-backed). Absent ⇒
   // linked-folder references stay unavailable, matching the pre-grant behavior.
   grantedRoots?: {
     resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
   }
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openLatest'>
 }): FileReferenceResolver => {
   const adapters: FileReferenceAdapter[] = []
   const readOnlyProjection = dependencies.grantedRoots
     ? new ReadOnlyLinkedFileProjection(dependencies.readOnlyProjectionMaxSessionBytes)
     : undefined
 
-  if (dependencies.uploads) {
+  const resolveLogicalReference = async (
+    projectId: string,
+    reference: Extract<FileReference, { source: 'artifact' | 'upload' }>
+  ): Promise<ManagedFileReadLease> => {
+    let sourceFileId = reference.sourceFileId
+    if (reference.source === 'artifact') {
+      const versionIdentity = parseArtifactVersionLocator(reference.path)
+      if (versionIdentity) {
+        if (versionIdentity.projectId !== projectId) {
+          throw new Error('Artifact Version belongs to a different project.')
+        }
+        if (sourceFileId !== undefined && sourceFileId !== versionIdentity.artifactId) {
+          throw new Error('Artifact source file does not match its Version locator.')
+        }
+        sourceFileId = versionIdentity.artifactId
+        if (!dependencies.managedFileVersions) {
+          throw new Error('Latest managed file resolution is not configured.')
+        }
+      }
+    }
+    if (!sourceFileId) {
+      throw new Error('Managed file reference requires a logical identity.')
+    }
+    if (!dependencies.managedFileVersions) {
+      throw new Error('Latest managed file resolution is not configured.')
+    }
+    return dependencies.managedFileVersions.openLatest({
+      source: reference.source,
+      projectId,
+      fileId: sourceFileId
+    })
+  }
+
+  if (dependencies.uploads || dependencies.managedFileVersions) {
     adapters.push({
       source: 'upload',
-      resolve: async ({ projectId, sessionId }, reference) => {
+      resolve: async ({ projectId }, reference) => {
         if (reference.source !== 'upload') throw new Error('Invalid upload reference.')
-        let absolutePath: string
-        try {
-          absolutePath = await dependencies.uploads!.resolveSessionUploadPath(
-            sessionId,
-            { path: reference.path },
-            projectId
-          )
-        } catch {
-          // A turn-scoped `@` selection is an explicit user capability and may intentionally refer
-          // to a managed upload from another Session. Project ownership remains an app-issued
-          // boundary: native Versions and trusted legacy mappings must still belong to this Project.
-          absolutePath = await dependencies.uploads!.resolveManagedUploadPath(
-            { path: reference.path },
-            { projectId }
-          )
-        }
+        const logical = await resolveLogicalReference(projectId, reference)
         return {
-          absolutePath,
-          name: reference.name,
-          mimeType: reference.mimeType,
-          allowSkillImportReference: true
+          absolutePath: logical.path,
+          name: logical.logicalFile.displayName,
+          mimeType: logical.version.contentType ?? reference.mimeType,
+          allowSkillImportReference: true,
+          sourceFileId: logical.logicalFile.id,
+          sourceSessionId: logical.logicalFile.sessionId,
+          versionId: logical.version.id,
+          checksum: logical.version.checksum,
+          trustedLease: logical
         }
       }
     })
   }
 
-  if (dependencies.artifacts) {
+  if (dependencies.artifacts || dependencies.managedFileVersions) {
     adapters.push({
       source: 'artifact',
       resolve: async ({ projectId }, reference) => {
         if (reference.source !== 'artifact') throw new Error('Invalid artifact reference.')
-        const versionIdentity = parseArtifactVersionLocator(reference.path)
-        if (versionIdentity) {
-          if (versionIdentity.projectId !== projectId) {
-            throw new Error('Artifact Version belongs to a different project.')
-          }
-          if (!dependencies.artifactVersions?.resolveVersionContent) {
-            throw new Error('Artifact Provenance is not configured.')
-          }
-          const resolved =
-            await dependencies.artifactVersions.resolveVersionContent(versionIdentity)
-          return {
-            absolutePath: resolved.path,
-            name: resolved.filename,
-            mimeType: resolved.contentType ?? reference.mimeType,
-            allowSkillImportReference: false
-          }
-        }
+        const logical = await resolveLogicalReference(projectId, reference)
         return {
-          absolutePath: await dependencies.artifacts!.resolveManagedFilePath({
-            path: reference.path
-          }),
-          name: reference.name,
-          mimeType: reference.mimeType,
-          allowSkillImportReference: false
+          absolutePath: logical.path,
+          name: logical.logicalFile.displayName,
+          mimeType: logical.version.contentType ?? reference.mimeType,
+          allowSkillImportReference: false,
+          sourceFileId: logical.logicalFile.id,
+          sourceSessionId: logical.logicalFile.sessionId,
+          versionId: logical.version.id,
+          checksum: logical.version.checksum,
+          trustedLease: logical
         }
       }
     })

@@ -598,7 +598,7 @@ const SpecialistEditor = ({
         </section>
 
         {/* Instructions section */}
-        <section className="mb-6 border-t border-border pt-5">
+        <section className="mb-6">
           <h3 className="mb-1 text-base font-semibold text-foreground">{t('Instructions')}</h3>
           <p className="mb-4 text-[13px] leading-5 text-muted-foreground">
             {t(

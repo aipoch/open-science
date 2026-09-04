@@ -839,6 +839,15 @@ const inspectOuterArchive = async (
   return false
 }
 
+const isImportableSkillArchive = async (reader: ArchiveReader): Promise<boolean> => {
+  try {
+    if (reader.size > SKILL_IMPORT_LIMITS.maxBundleBytes) return false
+    return await inspectOuterArchive(reader)
+  } catch {
+    return false
+  }
+}
+
 // Classifies a ZIP without loading the whole upload. Central records and entry validation are streamed;
 // validated bodies are discarded, while only selected frontmatter and one importer-supported nested
 // archive are retained under the same caps as full discovery. Any ambiguity fails closed to the ordinary
@@ -848,8 +857,7 @@ const isImportableSkillArchivePath = async (filePath: string): Promise<boolean> 
   try {
     handle = await open(filePath, 'r')
     const { size } = await handle.stat()
-    if (size > SKILL_IMPORT_LIMITS.maxBundleBytes) return false
-    return await inspectOuterArchive(fileReader(handle, size))
+    return await isImportableSkillArchive(fileReader(handle, size))
   } catch {
     return false
   } finally {
@@ -857,4 +865,5 @@ const isImportableSkillArchivePath = async (filePath: string): Promise<boolean> 
   }
 }
 
-export { inspectOuterArchive, isImportableSkillArchivePath }
+export { inspectOuterArchive, isImportableSkillArchive, isImportableSkillArchivePath }
+export type { ArchiveReader }

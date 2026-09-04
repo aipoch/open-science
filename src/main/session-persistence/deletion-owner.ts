@@ -1,5 +1,8 @@
 import type { ProjectFilesChangedEvent, ProjectFileSource } from '../../shared/project-files'
-import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
+import {
+  hasAnswerableDelegatedQuestion,
+  hasCurrentRunningDelegatedAttempt
+} from '../../shared/delegated-work-projection'
 import type {
   LoadAllSessionsResult,
   PersistedChatSession,
@@ -9,6 +12,7 @@ import type {
   UpdateSessionArchiveRequest
 } from '../../shared/session-persistence'
 import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
+import { ArchiveAvailabilityError } from '../archive/availability-error'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
 import type { Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
@@ -94,6 +98,16 @@ type ComputeJobDeletionParticipant = {
   abortProjectJobDeletion?(projectId: string): Promise<void>
 }
 
+type SessionWorkspaceOwnership = {
+  reconcileProvisional(sessions: readonly PersistedChatSession[]): Promise<void>
+  markProjectRetained(projectId: string): Promise<readonly string[]>
+  restoreProjectActive(projectId: string, directories: readonly string[]): Promise<void>
+  markRetained(
+    session: Pick<PersistedChatSession, 'cwd' | 'projectId' | 'id' | 'createdAt' | 'updatedAt'>
+  ): Promise<boolean>
+  restoreActive(session: Pick<PersistedChatSession, 'cwd' | 'projectId' | 'id'>): Promise<void>
+}
+
 type SessionPersistenceDeletionOwnerOptions = {
   repository: SessionDeletionRepository
   fileIndex: SessionDeletionFileIndex
@@ -101,6 +115,7 @@ type SessionPersistenceDeletionOwnerOptions = {
   provenance?: SessionDeletionProvenance
   uploads?: SessionDeletionUploads
   computeJobs?: ComputeJobDeletionParticipant
+  workspaceOwnership?: SessionWorkspaceOwnership
   log: Logger
   assertArchiveMutable(projectId: string, sessionId: string): void
   notifyFilesChanged(event: ProjectFilesChangedEvent): void
@@ -124,7 +139,9 @@ const isSessionArchiveBlocked = (session: PersistedChatSession): boolean =>
   ARCHIVE_BLOCKING_SESSION_STATUSES.has(session.status)
 
 const isSessionArchiveBlockedByPersistedWork = (session: PersistedChatSession): boolean =>
-  isSessionArchiveBlocked(session) || hasCurrentRunningDelegatedAttempt(session)
+  isSessionArchiveBlocked(session) ||
+  hasCurrentRunningDelegatedAttempt(session) ||
+  hasAnswerableDelegatedQuestion(session)
 
 class SessionPersistenceDeletionOwner {
   private readonly repository: SessionDeletionRepository
@@ -133,6 +150,7 @@ class SessionPersistenceDeletionOwner {
   private readonly provenance: SessionDeletionProvenance | undefined
   private readonly uploads: SessionDeletionUploads | undefined
   private readonly computeJobs: ComputeJobDeletionParticipant | undefined
+  private readonly workspaceOwnership: SessionWorkspaceOwnership | undefined
   private readonly log: Logger
   private readonly assertArchiveMutable: (projectId: string, sessionId: string) => void
   private readonly notifyFilesChanged: (event: ProjectFilesChangedEvent) => void
@@ -145,6 +163,7 @@ class SessionPersistenceDeletionOwner {
     this.provenance = options.provenance
     this.uploads = options.uploads
     this.computeJobs = options.computeJobs
+    this.workspaceOwnership = options.workspaceOwnership
     this.log = options.log
     this.assertArchiveMutable = options.assertArchiveMutable
     this.notifyFilesChanged = options.notifyFilesChanged
@@ -176,7 +195,7 @@ class SessionPersistenceDeletionOwner {
     }
     if (loaded.status === 'missing') return
     if (loaded.session.archivedAt !== undefined) {
-      throw new Error('Restore this archived Session before continuing.')
+      throw new ArchiveAvailabilityError('session-archived')
     }
   }
 
@@ -332,21 +351,66 @@ class SessionPersistenceDeletionOwner {
             if (cleanup.hasUnsafeResidual) this.fileIndex.markReconciliationIncomplete()
           }
         }
-        if (deletionState === 'legacy-committed') {
-          await this.repository.markCommittedProjectSessionsPrepared(projectId)
-        }
-        await this.repository.deleteProjectSessions(projectId)
-        await this.computeJobs?.commitProjectJobDeletion(projectId)
-        this.stateOwner.removeProject(projectId, deletedSessionIds)
-        await this.fileIndex.softDeleteProject(projectId)
+        const retainedWorkspaceSessions: PersistedChatSession[] = []
+        let retainedProjectWorkspaceDirectories: readonly string[] = []
+        let sessionAuthorityDeleted = false
+        try {
+          if (this.workspaceOwnership) {
+            for (const session of scan.sessions) {
+              retainedWorkspaceSessions.push(session)
+              if (!(await this.workspaceOwnership.markRetained(session))) {
+                retainedWorkspaceSessions.pop()
+              }
+            }
+            if (!scan.isComplete) {
+              retainedProjectWorkspaceDirectories =
+                await this.workspaceOwnership.markProjectRetained(projectId)
+            }
+          }
+          if (deletionState === 'legacy-committed') {
+            await this.repository.markCommittedProjectSessionsPrepared(projectId)
+          }
+          await this.repository.deleteProjectSessions(projectId)
+          sessionAuthorityDeleted = true
+          await this.computeJobs?.commitProjectJobDeletion(projectId)
+          this.stateOwner.removeProject(projectId, deletedSessionIds)
+          await this.fileIndex.softDeleteProject(projectId)
 
-        this.notifyFilesChanged({
-          projectId,
-          sources: ['artifact', 'upload'],
-          kind: 'reset'
-        })
-        await this.notifySessionsDeleted(deletedSessionIds)
-        return { status: 'completed' }
+          this.notifyFilesChanged({
+            projectId,
+            sources: ['artifact', 'upload'],
+            kind: 'reset'
+          })
+          await this.notifySessionsDeleted(deletedSessionIds)
+          return { status: 'completed' }
+        } catch (error) {
+          if (sessionAuthorityDeleted || !this.workspaceOwnership) throw error
+          const recoveryErrors: unknown[] = []
+          if (retainedProjectWorkspaceDirectories.length > 0) {
+            try {
+              await this.workspaceOwnership.restoreProjectActive(
+                projectId,
+                retainedProjectWorkspaceDirectories
+              )
+            } catch (recoveryError) {
+              recoveryErrors.push(recoveryError)
+            }
+          }
+          for (const session of retainedWorkspaceSessions.reverse()) {
+            try {
+              await this.workspaceOwnership.restoreActive(session)
+            } catch (recoveryError) {
+              recoveryErrors.push(recoveryError)
+            }
+          }
+          if (recoveryErrors.length > 0) {
+            throw new AggregateError(
+              [error, ...recoveryErrors],
+              `Project Session deletion and managed workspace rollback failed: ${projectId}`
+            )
+          }
+          throw error
+        }
       }
     )
   }
@@ -379,6 +443,7 @@ class SessionPersistenceDeletionOwner {
     let receipt: SessionDeletionReceipt = { kind: 'ordinary', projectId, sessionId }
     let jsonDeleted = false
     let computeJobsPrepared = false
+    let managedWorkspaceRetained = false
     let session: PersistedChatSession | undefined
 
     try {
@@ -409,6 +474,12 @@ class SessionPersistenceDeletionOwner {
         failurePhase = 'soft-delete-file-index'
         operation.phase(failurePhase)
         token = await this.fileIndex.softDeleteSession(projectId, sessionId)
+      }
+      if (session && this.workspaceOwnership) {
+        failurePhase = 'retain-managed-workspace'
+        operation.phase(failurePhase)
+        managedWorkspaceRetained = true
+        managedWorkspaceRetained = await this.workspaceOwnership.markRetained(session)
       }
       failurePhase = 'delete-authority'
       operation.phase(failurePhase)
@@ -447,6 +518,15 @@ class SessionPersistenceDeletionOwner {
             } catch (computeRestoreError) {
               recoveryPhase = 'abort-compute-cleanup'
               recoveryError = computeRestoreError
+              recoveryFailed = true
+            }
+          }
+          if (managedWorkspaceRetained && session) {
+            try {
+              recoveryPhase = 'restore-managed-workspace'
+              await this.workspaceOwnership?.restoreActive(session)
+            } catch (workspaceRestoreError) {
+              recoveryError = workspaceRestoreError
               recoveryFailed = true
             }
           }
@@ -561,6 +641,7 @@ class SessionPersistenceDeletionOwner {
 export { SessionPersistenceDeletionOwner, hasLegacySessionUpload }
 export type {
   ComputeJobDeletionParticipant,
+  SessionWorkspaceOwnership,
   ProjectSessionDeletionResult,
   SessionPersistenceDeletionOwnerOptions
 }

@@ -195,6 +195,7 @@ describe('Provenance Message snapshots', () => {
     expect(findVersions).toHaveBeenLastCalledWith(
       expect.objectContaining({
         select: {
+          originKind: true,
           rootFrameId: true,
           agentFrameId: true,
           messageBranchId: true,

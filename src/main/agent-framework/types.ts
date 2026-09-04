@@ -3,7 +3,11 @@ import type { ClientConnection, McpServer, SessionModeState } from '@agentclient
 
 import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { AgentFrameworkId, ChatApiEndpoint } from '../../shared/settings'
+import type {
+  AgentFrameworkId,
+  ChatApiEndpoint,
+  CodexSubscriptionTransport
+} from '../../shared/settings'
 import type {
   CustomReasoningEffortTransport,
   ModelReasoningEffort,
@@ -241,6 +245,14 @@ export interface AgentFramework {
   // Launch the ACP agent subprocess (stdio JSON-RPC), wrapping the per-framework binary + args.
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams
 
+  // Materialize a framework-owned, isolated spawn profile for one delegated Attempt. Generic
+  // orchestration supplies the admitted backend and runtime home without knowing credential or
+  // configuration details for the framework.
+  prepareDelegatedSpawn?(
+    backend: ResolvedAgentBackend,
+    runtimeHome: string
+  ): Promise<AgentSpawnInput>
+
   // Some ACP servers keep process-global current-session state. When present, the prompt workflow
   // calls this immediately before session.prompt() for the target provider session.
   beforePromptDispatch?(input: {
@@ -302,6 +314,10 @@ export type ResolvedAgentBackend = {
   // Stable app provider/account identity used for usage attribution. This remains separate from
   // backendId because a framework may normalize provider selections onto one session store.
   providerId?: string
+  // Effective transport for an app-owned Codex subscription profile. Settings resolves Auto and
+  // its learned HTTPS fallback once; disposable child/restricted homes project this exact choice
+  // instead of re-reading or guessing it from a sanitized config snapshot.
+  codexSubscriptionTransport?: CodexSubscriptionTransport
   // Stable identity of the framework/provider storage boundary. Two providers can use the same
   // framework while keeping incompatible session stores (for example Codex shared vs isolated login).
   backendId?: string

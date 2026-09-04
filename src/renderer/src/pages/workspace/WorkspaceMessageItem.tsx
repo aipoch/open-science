@@ -72,9 +72,14 @@ import {
 import {
   ARTIFACT_PREVIEW_BYTES,
   getArtifactName,
+  isPendingArtifactPublication,
   shouldReadArtifactPreview
 } from './artifact-preview-utils'
-import { FILE_MISSING_TAG_KEY, isUnavailableFileError } from './previews/preview-errors'
+import {
+  FILE_MISSING_TAG_KEY,
+  isManagedFilePublicationPendingError,
+  isUnavailableFileError
+} from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 import { resolveSessionProviderId } from './error-report'
@@ -98,7 +103,10 @@ type EditAnnotationTarget = {
   add: (annotation: TextAnnotation) => AnnotationValidationError | undefined
 }
 
-type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
+type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
+  resolvedProjectId?: string
+  resolvedSessionId?: string
+}
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
 type MessageImage = NonNullable<ChatMessage['images']>[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
@@ -857,17 +865,33 @@ const VisibleArtifactPreview = ({
   } | null>(null)
 
   useEffect(() => {
-    if (!shouldReadArtifactPreview(artifact)) return
+    if (
+      !shouldReadArtifactPreview(artifact) ||
+      !artifact.resolvedProjectId ||
+      !artifact.artifactId
+    ) {
+      return
+    }
 
     let canceled = false
     void window.api.artifacts
-      .readPreview({ path: artifact.path, maxBytes: ARTIFACT_PREVIEW_BYTES, encoding: 'utf8' })
+      .readPreview({
+        path: artifact.path,
+        projectId: artifact.resolvedProjectId,
+        ...(artifact.resolvedSessionId ? { sessionId: artifact.resolvedSessionId } : {}),
+        fileId: artifact.artifactId,
+        ...(artifact.versionId ? { versionId: artifact.versionId } : {}),
+        maxBytes: ARTIFACT_PREVIEW_BYTES,
+        encoding: 'utf8'
+      })
       .then((preview) => {
         if (!canceled) setPreviewState({ requestKey, preview })
       })
       .catch((error: unknown) => {
         // Missing or cross-root files are represented by the card badge, not noisy console errors.
-        if (!isUnavailableFileError(error)) console.error('Failed to read artifact preview', error)
+        if (!isUnavailableFileError(error) && !isManagedFilePublicationPendingError(error)) {
+          console.error('Failed to read artifact preview', error)
+        }
         if (!canceled) setPreviewState({ requestKey, preview: undefined })
       })
 
@@ -877,7 +901,17 @@ const VisibleArtifactPreview = ({
   }, [artifact, requestKey])
 
   const preview = previewState?.requestKey === requestKey ? previewState.preview : undefined
-  return <ArtifactPreview artifact={artifact} preview={preview} isVisible />
+  return (
+    <ArtifactPreview
+      artifact={artifact}
+      preview={preview}
+      projectId={artifact.resolvedProjectId}
+      sessionId={artifact.resolvedSessionId}
+      managedFileId={artifact.artifactId}
+      selectedVersionId={artifact.versionId}
+      isVisible
+    />
+  )
 }
 
 // Thumbnail button for one generated file; clicking it previews the file instead of opening it.
@@ -892,14 +926,25 @@ const ArtifactCard = ({
   const artifactName = getArtifactName(artifact)
   const sizeLabel = formatByteSize(artifact.size) ?? ''
   const [setElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
+  const publicationPending = isPendingArtifactPublication(artifact)
   const requestKey = JSON.stringify([
     artifact.id,
+    artifact.artifactId ?? null,
+    artifact.resolvedProjectId ?? null,
+    artifact.resolvedSessionId ?? null,
     artifact.path,
     artifact.size ?? null,
     artifact.mtimeMs ?? null
   ])
   const missing = useUnavailablePreviewProbe({
-    enabled: isNearViewport,
+    enabled:
+      isNearViewport &&
+      !publicationPending &&
+      Boolean(artifact.resolvedProjectId && artifact.artifactId),
+    projectId: artifact.resolvedProjectId,
+    sessionId: artifact.resolvedSessionId,
+    managedFileId: artifact.artifactId,
+    selectedVersionId: artifact.versionId,
     path: artifact.path,
     source: 'artifact',
     size: artifact.size,
@@ -911,6 +956,7 @@ const ArtifactCard = ({
       ref={setElement}
       type="button"
       className={cn('group flex min-w-0 flex-col', artifactCardClassName)}
+      disabled={publicationPending}
       onClick={() => {
         onPreviewArtifact(artifact)
       }}
@@ -920,10 +966,17 @@ const ArtifactCard = ({
       <div className={cn('relative', artifactPreviewClassName)}>
         <span className={cn('block size-full', missing && 'opacity-40')}>
           {/* Unmount the reader outside the overscan window so message history stays lightweight. */}
-          {isNearViewport ? (
+          {publicationPending ? null : isNearViewport ? (
             <VisibleArtifactPreview artifact={artifact} requestKey={requestKey} />
           ) : (
-            <ArtifactPreview artifact={artifact} isVisible={false} />
+            <ArtifactPreview
+              artifact={artifact}
+              projectId={artifact.resolvedProjectId}
+              sessionId={artifact.resolvedSessionId}
+              managedFileId={artifact.artifactId}
+              selectedVersionId={artifact.versionId}
+              isVisible={false}
+            />
           )}
         </span>
         {missing ? (

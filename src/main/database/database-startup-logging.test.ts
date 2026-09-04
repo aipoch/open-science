@@ -90,11 +90,6 @@ describe('database startup logging', () => {
         }),
         expect.objectContaining({
           level: 'info',
-          message: 'database pre-migration backup ready',
-          data: expect.objectContaining({ migrationId: '0002_project_agent_context' })
-        }),
-        expect.objectContaining({
-          level: 'info',
           message: 'database migration completed',
           data: expect.objectContaining({
             applied: [
@@ -121,13 +116,22 @@ describe('database startup logging', () => {
               '0021_compute_job_analysis_constraints',
               '0022_memory_global_content_unique',
               '0023_compute_job_operation',
-              '0024_compute_job_file_evidence'
+              '0024_compute_job_file_evidence',
+              '0025_managed_file_version_foundation',
+              '0026_compute_job_remote_cleanup'
             ],
             adoptedLegacy: true
           })
         })
       ])
     )
+    expect(
+      records.filter(({ message }) => message === 'database pre-migration backup ready')
+    ).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({ migrationId: '0001_runtime_schema_baseline' })
+      })
+    ])
   })
 
   it('records a timed operation for each database startup attempt', () => {

@@ -20,7 +20,11 @@ import type { SessionPersistenceCoordinator } from './coordinator'
 const log = createLogger('literature-reading-context')
 
 type SessionPdfContextOwnerOptions = Readonly<{
-  inputs: Pick<ImmutableInputAuthority, 'resolveVersion' | 'resolveContent'>
+  inputs: Pick<ImmutableInputAuthority, 'resolveVersion'> & {
+    openContent?: ImmutableInputAuthority['openContent']
+    // Test-only compatibility for fixtures that predate immutable read leases.
+    resolveContent?: (input: NotebookRunInputFile) => Promise<string>
+  }
   pendingUploads?: Readonly<{
     resolveContent: (request: { projectId: string; path: string }) => Promise<string>
   }>
@@ -57,7 +61,8 @@ class SessionPdfContextOwner {
       const input = await this.options.inputs.resolveVersion({
         projectId: request.projectId,
         sourceKind: source.sourceKind,
-        inputFileVersionId: source.sourceVersionId
+        inputFileVersionId: source.sourceVersionId,
+        expectedSourceFileId: source.sourceFileId
       })
       if (
         !input ||
@@ -140,7 +145,8 @@ class SessionPdfContextOwner {
       const input = await this.options.inputs.resolveVersion({
         projectId: request.projectId,
         sourceKind: source.sourceKind,
-        inputFileVersionId: source.sourceVersionId
+        inputFileVersionId: source.sourceVersionId,
+        expectedSourceFileId: source.sourceFileId
       })
       if (!input) throw new Error('PDF context Version is unavailable in this Project.')
       if (!isPdf(input.filename, input.contentType)) {
@@ -230,13 +236,24 @@ class SessionPdfContextOwner {
   private pageCount(input: NotebookRunInputFile): Promise<number> {
     const cached = this.pageCounts.get(input.checksum)
     if (cached) return cached
-    const pending = this.options.inputs
-      .resolveContent(input)
-      .then((path) => inspectPdfPageCount(path))
-      .catch((error) => {
-        this.pageCounts.delete(input.checksum)
-        throw error
-      })
+    const pending = (async () => {
+      if (this.options.inputs.openContent) {
+        const lease = await this.options.inputs.openContent(input)
+        try {
+          const pageCount = await inspectPdfPageCount(lease.path)
+          await lease.verifyUnchanged()
+          return pageCount
+        } finally {
+          await lease.close()
+        }
+      }
+      const path = await this.options.inputs.resolveContent?.(input)
+      if (!path) throw new Error('Immutable input content reader is unavailable.')
+      return inspectPdfPageCount(path)
+    })().catch((error) => {
+      this.pageCounts.delete(input.checksum)
+      throw error
+    })
     if (this.pageCounts.size >= 256) {
       const oldest = this.pageCounts.keys().next().value
       if (oldest) this.pageCounts.delete(oldest)

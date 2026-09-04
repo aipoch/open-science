@@ -1,4 +1,9 @@
-import type { AcpCreateSessionRequest, AcpCreateSessionResponse } from '../../shared/acp'
+import type {
+  AcpCreateSessionRequest,
+  AcpCreateSessionResponse,
+  AcpDeleteSessionRequest
+} from '../../shared/acp'
+import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
 import { withDataRootWrite } from '../storage/migration-state'
 import {
   createManagedSessionWorkspaceCapability,
@@ -7,6 +12,7 @@ import {
 
 type AcpSessionCreator = {
   createSession(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
+  deleteSession(request: AcpDeleteSessionRequest): Promise<unknown>
 }
 
 type DataRootWrite = <Result>(write: () => Promise<Result>) => Promise<Result>
@@ -36,25 +42,49 @@ const createAcpCreateSessionWorkflow = (
 
   return {
     async create(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse> {
+      const requestedProjectId = request.projectId?.trim() || undefined
+      const normalizedRequest =
+        requestedProjectId === request.projectId
+          ? request
+          : { ...request, projectId: requestedProjectId }
       const createAvailableSession = async (): Promise<AcpCreateSessionResponse> => {
         const explicitCwd = request.cwd?.trim()
         if (explicitCwd) {
-          return sessions.createSession({ ...request, cwd: explicitCwd })
+          return sessions.createSession({ ...normalizedRequest, cwd: explicitCwd })
         }
 
         return runDataRootWrite(async () => {
-          const workspace = await workspaces.acquire()
+          const projectId = requestedProjectId ?? DEFAULT_ARTIFACT_PROJECT_ID
+          const workspace = await workspaces.acquire({ projectId })
+          let releaseWorkspace = true
           try {
-            const response = await sessions.createSession({ ...request, cwd: workspace.cwd })
-            workspace.commit()
+            const response = await sessions.createSession({
+              ...normalizedRequest,
+              projectId,
+              cwd: workspace.cwd
+            })
+            try {
+              await workspace.commit(response.sessionId)
+            } catch (publicationError) {
+              try {
+                await sessions.deleteSession({ sessionId: response.sessionId })
+              } catch (cleanupError) {
+                releaseWorkspace = false
+                throw new AggregateError(
+                  [publicationError, cleanupError],
+                  'Managed workspace publication and Session rollback failed.'
+                )
+              }
+              throw publicationError
+            }
             return response
           } finally {
-            await workspace.release()
+            if (releaseWorkspace) await workspace.release()
           }
         })
       }
       return dependencies.withProjectAvailable
-        ? dependencies.withProjectAvailable(request.projectId, createAvailableSession)
+        ? dependencies.withProjectAvailable(requestedProjectId, createAvailableSession)
         : createAvailableSession()
     }
   }

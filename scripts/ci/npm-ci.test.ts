@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  DEFAULT_NPM_CI_ARGS,
   GITHUB_ELECTRON_BUILDER_BINARIES_MIRROR,
   GITHUB_ELECTRON_MIRROR,
   npmCiCommand,
@@ -42,7 +43,7 @@ describe('npm ci Electron mirror policy', () => {
 
     expect(
       runNpmCi({
-        args: ['--no-audit'],
+        args: ['--prefer-offline'],
         env: { GITHUB_ACTIONS: 'true' },
         platform: 'linux',
         spawn
@@ -52,16 +53,17 @@ describe('npm ci Electron mirror policy', () => {
     expect(npmCiCommand('win32')).toBe('npm.cmd')
     expect(spawn).toHaveBeenCalledWith(
       'npm',
-      ['ci', '--no-audit'],
+      ['ci', '--no-audit', '--prefer-offline'],
       expect.objectContaining({
         env: expect.objectContaining({ ELECTRON_MIRROR: GITHUB_ELECTRON_MIRROR }),
         shell: false,
         stdio: 'inherit'
       })
     )
+    expect(DEFAULT_NPM_CI_ARGS).toEqual(['--no-audit'])
   })
 
-  it('routes Electron-installing workflow npm ci through the GitHub mirror helper', () => {
+  it('routes Electron-installing workflow npm ci through the GitHub mirror helper and disables audit for direct installs', () => {
     const workflowDir = join(process.cwd(), '.github', 'workflows')
     const leftover: string[] = []
     for (const name of readdirSync(workflowDir).filter((file) => file.endsWith('.yml'))) {
@@ -69,7 +71,7 @@ describe('npm ci Electron mirror policy', () => {
       for (const [lineNumber, line] of text.split('\n').entries()) {
         const match = line.match(/^\s+run:\s*(npm ci.*)$/)
         if (!match) continue
-        if (match[1].includes('--ignore-scripts')) continue
+        if (match[1].includes('--ignore-scripts') && match[1].includes('--no-audit')) continue
         leftover.push(`${name}:${lineNumber + 1}: ${match[1]}`)
       }
     }

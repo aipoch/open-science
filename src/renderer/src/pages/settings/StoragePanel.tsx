@@ -132,6 +132,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   const [migrationTarget, setMigrationTarget] = useState<{
     path: string
     recoveryStatus?: DataRootRecoveryStatus
+    targetAvailableBytes?: number
   } | null>(null)
   const [adoptConfirmOpen, setAdoptConfirmOpen] = useState(false)
   const [isAdopting, setIsAdopting] = useState(false)
@@ -271,7 +272,10 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     setDefaultError(undefined)
     const result = await window.api.storage.inspectDataRoot(info.defaultParent)
     if (result.kind === 'move') {
-      setMigrationTarget({ path: info.defaultParent })
+      setMigrationTarget({
+        path: info.defaultParent,
+        targetAvailableBytes: result.targetAvailableBytes
+      })
       return
     }
     if (result.kind === 'adopt') {
@@ -284,7 +288,8 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     if (result.kind === 'recover' && result.recoveryStatus) {
       setMigrationTarget({
         path: info.defaultParent,
-        recoveryStatus: result.recoveryStatus
+        recoveryStatus: result.recoveryStatus,
+        targetAvailableBytes: result.targetAvailableBytes
       })
       return
     }
@@ -390,7 +395,6 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
           'Where Open Science stores your projects, artifacts, and other app data on this device.'
         )}
         aria-label={t('Data location')}
-        separated={storageRepairActive}
         action={
           info !== null && !isEditing ? (
             <Button type="button" variant="outline" onClick={() => setWarnOpen(true)}>
@@ -477,13 +481,22 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                 ) : null}
 
                 {(kind === 'move' || kind === 'adopt' || kind === 'recover') && inspection ? (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    <Trans
-                      i18nKey="Data will be stored in <path>{{path}}</path>"
-                      values={{ path: inspection.dataRoot }}
-                      components={{ path: <span className="font-mono" /> }}
-                    />
-                  </p>
+                  <>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      <Trans
+                        i18nKey="Data will be stored in <path>{{path}}</path>"
+                        values={{ path: inspection.dataRoot }}
+                        components={{ path: <span className="font-mono" /> }}
+                      />
+                    </p>
+                    {inspection.targetAvailableBytes !== undefined ? (
+                      <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+                        {t('Available on target disk: {{size}}', {
+                          size: formatBytes(inspection.targetAvailableBytes)
+                        })}
+                      </p>
+                    ) : null}
+                  </>
                 ) : null}
 
                 {kind === 'adopt' ? (
@@ -514,7 +527,17 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {t(
-                        'Python/R environments are rebuilt at the new location on first use (not moved).'
+                        'Python/R environments are rebuilt at the new location after restart (not copied).'
+                      )}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t(
+                        'The shared runtime package cache is copied to support offline rebuilds. Rebuilding environments may require additional disk space that cannot be estimated reliably in advance.'
+                      )}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t(
+                        'Packages installed only with pip or from CRAN are not guaranteed to be restored by this relocation.'
                       )}
                     </p>
                   </>
@@ -548,7 +571,8 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                       onClick={() =>
                         setMigrationTarget({
                           path: trimmedNewPath,
-                          recoveryStatus: inspection.recoveryStatus
+                          recoveryStatus: inspection.recoveryStatus,
+                          targetAvailableBytes: inspection.targetAvailableBytes
                         })
                       }
                     >
@@ -559,7 +583,12 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                     <Button
                       type="button"
                       disabled={!canChangeLocation}
-                      onClick={() => setMigrationTarget({ path: trimmedNewPath })}
+                      onClick={() =>
+                        setMigrationTarget({
+                          path: trimmedNewPath,
+                          targetAvailableBytes: inspection?.targetAvailableBytes
+                        })
+                      }
                     >
                       <FolderInput className="size-4" aria-hidden="true" />
                       {t('Change location')}
@@ -580,7 +609,6 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
           title={t('Disk usage')}
           description={scanTime ? t('Last scanned {{time}}', { time: scanTime }) : undefined}
           aria-label={t('Disk usage')}
-          separated
           action={
             info ? (
               <Button
@@ -846,6 +874,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
         <StorageMigrationModal
           targetPath={migrationTarget.path}
           recoveryStatus={migrationTarget.recoveryStatus}
+          targetAvailableBytes={migrationTarget.targetAvailableBytes}
           onClose={handleMigrationClose}
         />
       ) : null}

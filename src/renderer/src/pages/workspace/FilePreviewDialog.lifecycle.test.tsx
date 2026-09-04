@@ -47,7 +47,11 @@ vi.mock('radix-ui', () => ({
 }))
 
 vi.mock('./PreviewFileSurface', () => ({
-  PreviewFileSurface: (props: { item: PreviewFileItem; provenanceEntry?: string }) => {
+  PreviewFileSurface: (props: {
+    item: PreviewFileItem
+    provenanceEntry?: string
+    retryResolutionEnabled?: boolean
+  }) => {
     previewSurfaceSpy(props)
     return <div data-testid="preview-surface">{props.item.title}</div>
   }
@@ -124,6 +128,9 @@ describe('FilePreviewDialog closing lifecycle', () => {
     )
     expect(container.querySelector('[data-testid="preview-surface"]')?.textContent).toBe(
       'report.pdf'
+    )
+    expect(previewSurfaceSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ retryResolutionEnabled: false })
     )
   })
 

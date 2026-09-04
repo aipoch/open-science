@@ -13,6 +13,7 @@ import type {
 } from '../../../../shared/notebook'
 import type { ProvisionStatus } from '../../../../shared/notebook-env'
 import { createInitialNotebookEnvState, useNotebookEnvStore } from '../../stores/notebook-env-store'
+import { createInitialSettingsState, useSettingsStore } from '../../stores/settings-store'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
 import { EnvProvisionOverlay } from './EnvProvisionOverlay'
 import { NotebookPreview, type NotebookPreviewItem } from './NotebookPreview'
@@ -44,6 +45,7 @@ let root: Root
 beforeEach(() => {
   notebookCodeBlockSpy.mockClear()
   useNotebookEnvStore.setState(createInitialNotebookEnvState())
+  useSettingsStore.setState(createInitialSettingsState())
   useSessionStore.setState({
     ...createInitialSessionState(),
     sessions: [
@@ -243,6 +245,51 @@ describe('NotebookPreview env gate (mounted)', () => {
       })
     })
     expect(container.querySelector('[data-testid="notebook-env-gate"]')).not.toBeNull()
+  })
+
+  it('shows the initial notebook state failure even when no kernel terminal exists', async () => {
+    vi.mocked(window.api.notebook.state).mockRejectedValueOnce(
+      new Error('Could not load notebook state')
+    )
+
+    await act(async () => {
+      root.render(<NotebookPreview item={item} />)
+    })
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+    }
+
+    expect(container.textContent).toContain('Could not load notebook state')
+
+    vi.mocked(window.api.notebook.state).mockResolvedValueOnce({
+      id: 'session-1',
+      sessionId: 'session-1',
+      cwd: '/tmp/proj',
+      notebookSessionRoot: '/tmp/proj/.notebook',
+      dataRoot: '/tmp/proj/.notebook/data',
+      runtimeRoot: '/tmp/proj/.notebook/runtime',
+      kernelStatus: 'idle',
+      runJsonPath: '/tmp/proj/.notebook/run.json',
+      cells: [],
+      runCount: 0,
+      runs: [],
+      recentRuns: [],
+      environments: [],
+      latestRunEnvironments: {}
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    })
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+    }
+
+    expect(window.api.notebook.state).toHaveBeenCalledTimes(2)
+    expect(container.textContent).not.toContain('Could not load notebook state')
   })
 })
 
@@ -670,6 +717,9 @@ describe('NotebookPreview per-kernel tabs', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
+    expect(window.api.notebook.restart).toHaveBeenCalledWith(
+      expect.objectContaining({ language: 'r', environment: 'default-r' })
+    )
     expect(window.api.notebook.inspectNamespace).toHaveBeenCalledTimes(2)
     expect(window.api.notebook.inspectNamespace).toHaveBeenLastCalledWith(
       expect.objectContaining({ language: 'r', environment: 'default-r' })
@@ -1515,6 +1565,140 @@ describe('NotebookPreview per-environment selector', () => {
     )
   })
 
+  it.each([
+    {
+      language: 'python' as const,
+      environment: 'external-python',
+      runtimeId: '/usr/local/bin/python3',
+      label: 'External Python'
+    },
+    {
+      language: 'r' as const,
+      environment: 'external-r',
+      runtimeId: '/usr/local/bin/R',
+      label: 'External R'
+    }
+  ])(
+    'keeps an externally bound $language runtime usable when managed runtimes are unavailable',
+    async ({ language, environment, runtimeId, label }) => {
+      await mountWithRuns(
+        [makeRun({ runId: `${language}-1`, kernelKind: language, environment })],
+        [],
+        { [language]: environment },
+        {
+          [language]: {
+            runtimeId,
+            language,
+            label,
+            source: 'external',
+            provenance: 'user-own',
+            interpreterPath: runtimeId,
+            ...(language === 'r' ? { status: 'active' as const } : {})
+          }
+        }
+      )
+
+      const unavailableManagedStatus: ProvisionStatus = {
+        pythonReady: false,
+        rReady: false,
+        version: 1,
+        provisioning: false
+      }
+      act(() => {
+        useNotebookEnvStore.setState({
+          status: unavailableManagedStatus,
+          ui: deriveProvisionUi(unavailableManagedStatus, undefined, undefined, undefined)
+        })
+      })
+
+      expect(container.querySelector('[data-testid="notebook-env-gate"]')).toBeNull()
+      expect(
+        (container.querySelector('[data-testid="kernel-terminal-input"]') as HTMLTextAreaElement)
+          .disabled
+      ).toBe(false)
+
+      if (language === 'r') {
+        await act(async () => {
+          fireEvent.click(
+            container.querySelector('[data-testid="kernel-switcher-r"]') as HTMLElement
+          )
+        })
+        expect(window.api.notebookEnv.provision).not.toHaveBeenCalled()
+      }
+    }
+  )
+
+  it.each([
+    {
+      language: 'python' as const,
+      environment: 'external-python',
+      runtimeId: '/usr/local/bin/python3'
+    },
+    {
+      language: 'r' as const,
+      environment: 'external-r',
+      runtimeId: '/usr/local/bin/R'
+    }
+  ])(
+    'does not fall back to managed provisioning for an unavailable explicit $language binding',
+    async ({ language, environment, runtimeId }) => {
+      await mountWithRuns(
+        [makeRun({ runId: `${language}-1`, kernelKind: language, environment })],
+        [],
+        { [language]: environment },
+        {
+          [language]: {
+            runtimeId,
+            language,
+            label: `Unavailable ${language}`,
+            source: 'external',
+            provenance: 'user-own',
+            interpreterPath: runtimeId,
+            status: 'unavailable',
+            reason: 'missing'
+          }
+        }
+      )
+
+      const unavailableManagedStatus: ProvisionStatus = {
+        pythonReady: false,
+        rReady: false,
+        version: 1,
+        provisioning: false
+      }
+      act(() => {
+        useNotebookEnvStore.setState({
+          status: unavailableManagedStatus,
+          ui: deriveProvisionUi(unavailableManagedStatus, undefined, undefined, undefined)
+        })
+      })
+
+      expect(container.querySelector('[data-testid="notebook-env-gate"]')).toBeNull()
+      expect(
+        (container.querySelector('[data-testid="kernel-terminal-input"]') as HTMLTextAreaElement)
+          .disabled
+      ).toBe(true)
+      expect(
+        container.querySelector('[data-testid="notebook-runtime-binding-status"]')?.textContent
+      ).toBe('Unavailable')
+
+      const binding = container.querySelector<HTMLButtonElement>(
+        '[data-testid="notebook-runtime-binding"]'
+      )
+      fireEvent.focus(binding as HTMLButtonElement)
+      expect((await screen.findByRole('tooltip')).textContent).toContain('Missing')
+
+      if (language === 'r') {
+        await act(async () => {
+          fireEvent.click(
+            container.querySelector('[data-testid="kernel-switcher-r"]') as HTMLElement
+          )
+        })
+        expect(window.api.notebookEnv.provision).not.toHaveBeenCalled()
+      }
+    }
+  )
+
   it('shows the current R runtime binding on the R kernel tab', async () => {
     await mountWithRuns(
       [
@@ -1543,6 +1727,36 @@ describe('NotebookPreview per-environment selector', () => {
     expect(container.querySelector('[data-testid="notebook-runtime-binding"]')?.textContent).toBe(
       'renv-analysis'
     )
+  })
+
+  it('opens Runtime settings from an unavailable binding', async () => {
+    const openSettingsToPanel = vi.fn()
+    useSettingsStore.setState({ openSettingsToPanel })
+    await mountWithRuns(
+      [makeRun({ runId: 'p1', kernelKind: 'python', environment: 'external-python' })],
+      [],
+      { python: 'external-python' },
+      {
+        python: {
+          runtimeId: '/usr/local/bin/python3',
+          language: 'python',
+          label: 'External Python',
+          source: 'external',
+          provenance: 'user-own',
+          interpreterPath: '/usr/local/bin/python3',
+          status: 'unavailable',
+          reason: 'disabled'
+        }
+      }
+    )
+
+    const binding = container.querySelector(
+      '[data-testid="notebook-runtime-binding"]'
+    ) as HTMLElement
+    expect(binding.getAttribute('aria-label')).toContain('Open settings for External Python')
+    fireEvent.click(binding)
+
+    expect(openSettingsToPanel).toHaveBeenCalledWith('runtimes')
   })
 
   it('does not apply data runtime bindings to Agent SDK or Bash tabs', async () => {

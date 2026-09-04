@@ -1,22 +1,10 @@
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
-import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { SetPackageMirrorRequest } from '../../shared/settings'
 import type { NotebookRuntimeSettings, NotebookRuntimeSettingsSnapshot } from './capabilities'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
-
-const cloneRuntimeSelection = (
-  selection: RuntimeSelection | undefined
-): RuntimeSelection | undefined => {
-  if (!selection) return undefined
-  if (selection.source === 'managed') return { source: 'managed' }
-
-  return {
-    ...selection,
-    ...(selection.interpreterArgs ? { interpreterArgs: [...selection.interpreterArgs] } : {})
-  }
-}
 
 const cloneRuntimeEnablement = (enablement: RuntimeEnablement | undefined): RuntimeEnablement => ({
   enabled: { ...enablement?.enabled },
@@ -30,9 +18,6 @@ const toNotebookRuntimeSettingsSnapshot = (
   language: NotebookLanguage
 ): NotebookRuntimeSettingsSnapshot => ({
   language,
-  ...(settings.notebookRuntimes?.[language]
-    ? { runtimeSelection: cloneRuntimeSelection(settings.notebookRuntimes[language]) }
-    : {}),
   runtimeEnablement: cloneRuntimeEnablement(settings.notebookRuntimeEnablement?.[language]),
   manualInterpreters: [...(settings.notebookManualInterpreters?.[language] ?? [])],
   packageMirror: clonePackageMirror(settings.packageMirror)
@@ -47,14 +32,6 @@ class NotebookRuntimeSettingsModule implements NotebookRuntimeSettings {
 
   async getPackageMirror(): Promise<PackageMirror> {
     return clonePackageMirror((await this.repository.getSettings()).packageMirror)
-  }
-
-  async setRuntimeSelection(
-    language: NotebookLanguage,
-    selection: RuntimeSelection | null
-  ): Promise<RuntimeSelection | undefined> {
-    const settings = await this.repository.setRuntimeSelection(language, selection)
-    return cloneRuntimeSelection(settings.notebookRuntimes?.[language])
   }
 
   async setEnvironmentEnabled(
@@ -81,6 +58,18 @@ class NotebookRuntimeSettingsModule implements NotebookRuntimeSettings {
     }))
 
     return cloneRuntimeEnablement(settings.notebookRuntimeEnablement?.[language])
+  }
+
+  async getAgentEnvironmentCreationEnabled(): Promise<boolean> {
+    return (await this.repository.getSettings()).agentEnvironmentCreationEnabled ?? true
+  }
+
+  async setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<boolean> {
+    if (typeof enabled !== 'boolean') {
+      throw new TypeError('Agent environment creation enabled must be a boolean.')
+    }
+    const settings = await this.repository.setAgentEnvironmentCreationEnabled(enabled)
+    return settings.agentEnvironmentCreationEnabled ?? true
   }
 
   async addManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]> {

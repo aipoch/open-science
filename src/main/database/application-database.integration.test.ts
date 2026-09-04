@@ -30,6 +30,32 @@ const removeAgentMemoryTriggers = async (client: PrismaClient): Promise<void> =>
   await client.$executeRawUnsafe('DROP TABLE "MemoryEntryFts"')
 }
 
+const removeComputePasswordAuthSchema = async (client: PrismaClient): Promise<void> => {
+  await client.$executeRawUnsafe('DROP TABLE "ComputeCredential"')
+  await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
+  await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
+  await client.$executeRawUnsafe(`CREATE TABLE "ComputeHost" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "providerId" TEXT NOT NULL,
+    "displayName" TEXT NOT NULL,
+    "shape" TEXT NOT NULL DEFAULT 'direct_ssh',
+    "sshAlias" TEXT NOT NULL,
+    "sshOverrides" TEXT,
+    "scratchRoot" TEXT,
+    "scratchPinned" BOOLEAN NOT NULL DEFAULT false,
+    "concurrencyLimit" INTEGER,
+    "probeResult" TEXT,
+    "detailsDoc" TEXT NOT NULL DEFAULT '',
+    "detailsUpdatedAt" DATETIME,
+    "detailsUpdatedBy" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL
+  )`)
+  await client.$executeRawUnsafe(
+    'CREATE UNIQUE INDEX "ComputeHost_providerId_key" ON "ComputeHost"("providerId")'
+  )
+}
+
 const removeComputeAnalysisSchema = async (client: PrismaClient): Promise<void> => {
   await client.$executeRawUnsafe('DROP TABLE "ComputeJobOperation"')
   await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
@@ -38,6 +64,8 @@ const removeComputeAnalysisSchema = async (client: PrismaClient): Promise<void> 
     `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
   )
   const removedLines = [
+    '"remoteCleanupDisposition" TEXT',
+    'CONSTRAINT "ComputeJob_remoteCleanupDisposition_check"',
     'CONSTRAINT "ComputeJob_analysisState_check"',
     'CONSTRAINT "ComputeJob_analysisBundle_check"',
     'CONSTRAINT "ComputeJob_analysisConsumption_check"',
@@ -55,7 +83,11 @@ const removeComputeAnalysisSchema = async (client: PrismaClient): Promise<void> 
   )
   const copiedColumns = columns
     .map(({ name }) => name)
-    .filter((name) => !['analysisState', 'analysisMessageId', 'analysisUpdatedAt'].includes(name))
+    .filter(
+      (name) =>
+        name !== 'remoteCleanupDisposition' &&
+        !['analysisState', 'analysisMessageId', 'analysisUpdatedAt'].includes(name)
+    )
     .map((name) => `"${name}"`)
     .join(', ')
 
@@ -179,7 +211,9 @@ describe('application database (integration)', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation',
+        '0026_compute_job_remote_cleanup'
       ]
     })
 
@@ -531,7 +565,8 @@ describe('application database (integration)', () => {
         sizeBytes: 3n,
         checksum: 'c'.repeat(64),
         evidenceJson: '{}',
-        evidenceChecksum: 'd'.repeat(64)
+        evidenceChecksum: 'd'.repeat(64),
+        evidenceSchemaVersion: 1
       }
     })
     await client.artifactVersionInput.create({
@@ -649,14 +684,14 @@ describe('application database (integration)', () => {
       CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version'))
     )`)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
-    await client.$executeRawUnsafe('DROP TABLE "ComputeCredential"')
-    await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
-    await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
+    await client.$executeRawUnsafe('DROP TABLE "TagAssignment"')
+    await client.$executeRawUnsafe('DROP TABLE "Tag"')
     await removeAgentMemoryTriggers(client)
-    // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
+    // Simulate a current pre-ledger schema with the targeted legacy table shape.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
+    await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
 
@@ -712,7 +747,8 @@ describe('application database (integration)', () => {
         sizeBytes: 3n,
         checksum: 'a'.repeat(64),
         evidenceJson: '{}',
-        evidenceChecksum: 'b'.repeat(64)
+        evidenceChecksum: 'b'.repeat(64),
+        evidenceSchemaVersion: 1
       }
     })
 
@@ -733,14 +769,14 @@ describe('application database (integration)', () => {
       'ALTER TABLE "ArtifactVersionLegacy" RENAME TO "ArtifactVersion"'
     )
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
-    await client.$executeRawUnsafe('DROP TABLE "ComputeCredential"')
-    await client.$executeRawUnsafe('DROP TABLE "ComputeAuthOperation"')
-    await client.$executeRawUnsafe('DROP TABLE "ComputeHost"')
     await client.$executeRawUnsafe('DROP TABLE "VisionEvidence"')
+    await client.$executeRawUnsafe('DROP TABLE "TagAssignment"')
+    await client.$executeRawUnsafe('DROP TABLE "Tag"')
     await removeAgentMemoryTriggers(client)
-    // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
+    // Simulate a current pre-ledger schema with the targeted legacy table shape.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
+    await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
 
@@ -775,9 +811,12 @@ describe('application database (integration)', () => {
       $queryRawUnsafe: vi.fn(async () => [])
     } as unknown as PrismaClient
 
-    await expect(applyRuntimeSchemaBaseline(client, { pendingCheckConstraints: [] })).rejects.toBe(
-      migrationFailure
-    )
+    await expect(
+      applyRuntimeSchemaBaseline(client, {
+        pendingCheckConstraints: [],
+        verificationTarget: 'baseline'
+      })
+    ).rejects.toBe(migrationFailure)
   })
 
   it('releases and recreates the shared client for exclusive migration validation', async () => {
@@ -795,7 +834,7 @@ describe('application database (integration)', () => {
   it('backs up legacy data through the shared client on a portable storage path', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
-    const backupPath = `${databasePath}.before-0024_compute_job_file_evidence.backup`
+    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
     const seedClient = createProjectDbClient(storageRoot)
     try {
       await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -832,10 +871,10 @@ describe('application database (integration)', () => {
         `
       ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])
       await expect(
-        backupClient.$queryRaw<Array<{ id: string }>>`
-          SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
+        backupClient.$queryRaw<Array<{ name: string }>>`
+          SELECT "name" FROM "sqlite_schema" WHERE "name" = '_open_science_migrations'
         `
-      ).resolves.toEqual([{ id: '0023_compute_job_operation' }])
+      ).resolves.toEqual([])
     } finally {
       await backupClient.$disconnect()
     }
@@ -918,7 +957,8 @@ describe('application database (integration)', () => {
         sizeBytes: 3n,
         checksum: 'b'.repeat(64),
         evidenceJson: '{"schema_version":1}',
-        evidenceChecksum: 'c'.repeat(64)
+        evidenceChecksum: 'c'.repeat(64),
+        evidenceSchemaVersion: 1
       }
     })
 
@@ -1218,7 +1258,9 @@ describe('application database (integration)', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation',
+        '0026_compute_job_remote_cleanup'
       ]
     })
 

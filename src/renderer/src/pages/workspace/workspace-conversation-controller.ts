@@ -3,11 +3,16 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import {
+  normalizeDelegationPolicy,
+  type DelegationPolicy
+} from '../../../../shared/session-persistence'
+import {
   annotationRequiresImageInput,
   sideChatAnnotationText,
   type Annotation
 } from '../../../../shared/annotations'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
+import { imageAttachmentMimeType } from '../../../../shared/uploads'
 import type {
   ChatMessage,
   ChatSession,
@@ -99,6 +104,7 @@ type WorkspaceConversationControllerOptions = {
   agentConfigurationReady: boolean
   permissionProfile: PermissionProfileId
   isReviewing: boolean
+  isTurnAdmissionBlocked: boolean
   promptInFlightSessionIds: string[]
   sendPreparationInFlightSessionIds: string[]
   saveAsSkillInFlightSessionIds: string[]
@@ -106,6 +112,7 @@ type WorkspaceConversationControllerOptions = {
   hasPendingPermissionRequest: (sessionId: string) => boolean
   newConversationAutoReviewEnabled: boolean
   newConversationMemoryEnabled?: boolean
+  newConversationDelegationPolicyOverride?: DelegationPolicy
   newConversationEnabledComputeHosts: string[]
   newConversationSelectedComputeHosts?: string[]
   composer: ConversationComposer
@@ -153,6 +160,20 @@ type WorkspaceConversationController = {
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+
+const resolveDelegationPolicyForSend = (
+  branchInNewSession: boolean,
+  activeSession: ChatSession | undefined,
+  newConversationPolicyOverride: DelegationPolicy | undefined
+): DelegationPolicy | undefined => {
+  if (branchInNewSession) {
+    return (
+      newConversationPolicyOverride ?? normalizeDelegationPolicy(activeSession?.delegationPolicy)
+    )
+  }
+  if (!activeSession) return newConversationPolicyOverride ?? 'allow'
+  return undefined
+}
 
 const usePlanProjectionRecovery = (
   activeSession: ChatSession | undefined,
@@ -242,6 +263,7 @@ const canSubmitImmediately = (options: WorkspaceConversationControllerOptions): 
       composer.view.annotations.length > 0) &&
     (options.actionability?.actions.startTurn.allowed ?? true) &&
     !hasRuntimeInteraction(options) &&
+    !options.isTurnAdmissionBlocked &&
     !activeSession?.fixLoopActive &&
     !activeSession?.conversationGraphSyncBlocked &&
     !activeSession?.compacting &&
@@ -263,6 +285,7 @@ const canQueueDraft = (options: WorkspaceConversationControllerOptions): boolean
       composer.view.annotations.length > 0) &&
     !options.sendPreparationInFlightSessionIds.includes(activeSession.id) &&
     !options.saveAsSkillInFlightSessionIds.includes(activeSession.id) &&
+    !options.isTurnAdmissionBlocked &&
     !activeSession.fixLoopActive &&
     !activeSession.conversationGraphSyncBlocked &&
     !activeSession.compacting &&
@@ -280,6 +303,7 @@ const canRevise = (options: WorkspaceConversationControllerOptions): boolean => 
     (options.actionability?.actions.revise.allowed ?? true) &&
     !hasRuntimeInteraction(options) &&
     !options.isReviewing &&
+    !options.isTurnAdmissionBlocked &&
     !activeSession?.fixLoopActive &&
     !activeSession?.conversationGraphSyncBlocked &&
     !activeSession?.compacting &&
@@ -298,6 +322,7 @@ const canQueueRevision = (options: WorkspaceConversationControllerOptions): bool
     !options.isReviewing &&
     !options.sendPreparationInFlightSessionIds.includes(activeSession.id) &&
     !options.saveAsSkillInFlightSessionIds.includes(activeSession.id) &&
+    !options.isTurnAdmissionBlocked &&
     !activeSession.fixLoopActive &&
     !activeSession.conversationGraphSyncBlocked &&
     !activeSession.compacting &&
@@ -313,6 +338,7 @@ const canBranch = (options: WorkspaceConversationControllerOptions): boolean =>
     options.activeSession &&
     !options.activeSession.activeRun &&
     options.actionability?.actions.branchFromMessage.allowed !== false &&
+    !options.isTurnAdmissionBlocked &&
     !options.activeSession.fixLoopActive &&
     !options.activeSession.compacting &&
     !options.activeSession.branchSwitchBlocked &&
@@ -395,8 +421,9 @@ const useWorkspaceConversationController = (
       if (activeSession && session.lifecycle.isBarrierInFlight(activeSession.id)) return
       if (
         current.supportsImageInput !== true &&
-        (composer.view.attachments.some((attachment) =>
-          attachment.mimeType?.startsWith('image/')
+        (composer.view.attachments.some(
+          (attachment) =>
+            imageAttachmentMimeType(attachment.name, attachment.mimeType) !== undefined
         ) ||
           composer.view.annotations.some(annotationRequiresImageInput))
       ) {
@@ -476,6 +503,11 @@ const useWorkspaceConversationController = (
             permissionProfile: current.permissionProfile,
             agentConfiguration: current.agentConfiguration,
             memoryEnabled,
+            delegationPolicy: resolveDelegationPolicyForSend(
+              branchInNewSession,
+              activeSession,
+              current.newConversationDelegationPolicyOverride
+            ),
             forcedSkillIds,
             ...(mode === 'plan-first' ? { turnIntent: 'plan-first' as const } : {}),
             specialistId: draftSpecialistId,
@@ -609,7 +641,17 @@ const useWorkspaceConversationController = (
             branchSourceMessageId: messageId,
             text: '',
             agentConfiguration: current.agentConfiguration,
+            delegationPolicy: resolveDelegationPolicyForSend(
+              true,
+              current.activeSession,
+              current.newConversationDelegationPolicyOverride
+            ),
             specialistId: draftSpecialistId
+          })
+          .then((result) => {
+            if (!result) return
+            current.resetNewConversationSettings()
+            current.session.actions.resetNewConversationSpecialist()
           })
           .catch((error: unknown) => current.composer.actions.setError(errorMessage(error)))
       },

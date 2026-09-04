@@ -34,9 +34,19 @@ describe('shared notebook types', () => {
     expect(
       notebookEnvironmentApplicationCommandContracts.provision.args.parse(['python', null])
     ).toEqual(['python'])
-    expect(notebookEnvironmentApplicationCommandContracts.repair.args.parse(['r', null])).toEqual([
-      'r'
-    ])
+    expect(
+      notebookEnvironmentApplicationCommandContracts.repair.args.parse(['r', 'default-r', null])
+    ).toEqual(['r', 'default-r'])
+    expect(
+      notebookEnvironmentApplicationCommandContracts.repair.args.parse([
+        'python',
+        '/runtime/default-python/python',
+        'repair-1'
+      ])
+    ).toEqual(['python', '/runtime/default-python/python', 'repair-1'])
+    expect(() =>
+      notebookEnvironmentApplicationCommandContracts.repair.args.parse(['python', ''])
+    ).toThrow()
     expect(() =>
       notebookEnvironmentApplicationCommandContracts.provision.args.parse([null])
     ).toThrow()

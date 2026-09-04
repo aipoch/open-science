@@ -26,6 +26,7 @@ import type {
   AgentModelConfig,
   AgentSpawnInput,
   ModelConfigContext,
+  ResolvedAgentBackend,
   SessionSetup,
   SessionSetupContext
 } from './types'
@@ -111,16 +112,25 @@ export const createCodeBuddyFramework = ({
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
     const needsShell = platform === 'win32' && /\.(cmd|bat)$/i.test(input.executablePath)
-    return spawnProcess(
-      needsShell ? `"${input.executablePath}"` : input.executablePath,
-      ['--acp', ...input.args],
-      {
-        env: { ...augmentedPathEnv(sourceEnv), ...input.env },
-        stdio: 'pipe',
-        windowsHide: true,
-        shell: needsShell
-      }
-    )
+    const args = ['--acp', ...input.args].map((arg) => (needsShell && arg === '' ? '""' : arg))
+    return spawnProcess(needsShell ? `"${input.executablePath}"` : input.executablePath, args, {
+      env: { ...augmentedPathEnv(sourceEnv), ...input.env },
+      stdio: 'pipe',
+      windowsHide: true,
+      shell: needsShell
+    })
+  },
+
+  async prepareDelegatedSpawn(
+    backend: ResolvedAgentBackend,
+    runtimeHome: string
+  ): Promise<AgentSpawnInput> {
+    return {
+      executablePath: backend.executablePath,
+      args: [...(backend.args ?? [])],
+      env: await isolateCodeBuddyEnvironment(backend.env, join(runtimeHome, 'codebuddy')),
+      proxyEnvironmentMode: backend.proxyEnvironmentMode
+    }
   },
 
   async beforePromptDispatch({

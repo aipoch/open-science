@@ -60,6 +60,17 @@ describe('workspace tool activity details', () => {
     expect(buildToolActivityDetails(activity)).toBeUndefined()
   })
 
+  it('recognizes the imperative Claude Skill activity title variant', () => {
+    const activity = createActivity({
+      providerToolName: 'Skill',
+      title: 'Load skill: self-awareness'
+    })
+
+    expect(isSkillActivity(activity)).toBe(true)
+    expect(getLoadedSkillName(activity)).toBe('self-awareness')
+    expect(buildToolActivityDetails(activity)).toBeUndefined()
+  })
+
   it('labels a load_skill MCP row with the loaded Skill name and keeps its generic details', () => {
     const activity = createActivity({
       providerToolName: 'mcp__skills__load_skill',
@@ -1050,7 +1061,7 @@ describe('workspace tool activity details', () => {
     expect(parseManagePackagesResult(activity)).toMatchObject({ method: 'conda', packageChanges })
   })
 
-  it('renders an image artifact-write result as an inline preview section', () => {
+  it('summarizes a path-only image artifact without reading its bytes', () => {
     const activity = createActivity({
       providerToolName: 'write_artifact_file',
       toolKind: 'other',
@@ -1088,12 +1099,16 @@ describe('workspace tool activity details', () => {
     const section = details?.sections[0]
 
     expect(section).toMatchObject({
-      kind: 'image',
-      label: 'Output',
-      path: '/files/report.png',
-      mimeType: 'image/png',
-      name: 'report.png',
-      sizeLabel: '2 KB'
+      kind: 'code',
+      label: 'Tool output image',
+      language: 'json'
+    })
+    if (section?.kind !== 'code') throw new Error('Expected an artifact summary.')
+    expect(JSON.parse(section.text)).toEqual({
+      file: 'report.png',
+      type: 'image/png',
+      size: '2 KB',
+      path: '/files/report.png'
     })
   })
 
@@ -1205,7 +1220,7 @@ describe('workspace tool activity details', () => {
     expect(details?.subtitle).toBe('sin.png')
     expect(details?.metaLabel).toBe('41 KB')
     expect(details?.sections.map((section) => 'label' in section && section.label)).toEqual([
-      'File'
+      'Tool output image'
     ])
     expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).toContain('sin.png')
     expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).not.toContain(

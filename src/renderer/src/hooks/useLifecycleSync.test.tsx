@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
+  MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID,
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
   MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
@@ -37,6 +38,7 @@ const listeners: {
   projectCreated?: (project: Project) => void
   projectUpdated?: (project: Project) => void
   projectDeleted?: (event: ProjectDeletedEvent) => void
+  projectDeletionCleanupChanged?: () => void
   sessionCreated?: (event: SessionUpsertEvent) => void
   sessionUpdated?: (event: SessionUpsertEvent) => void
   sessionDeleted?: (event: SessionDeletedEvent) => void
@@ -109,7 +111,9 @@ describe('useLifecycleSync', () => {
       projects: {
         onCreated: subscribe<Project>('projectCreated'),
         onUpdated: subscribe<Project>('projectUpdated'),
-        onDeleted: subscribe<ProjectDeletedEvent>('projectDeleted')
+        onDeleted: subscribe<ProjectDeletedEvent>('projectDeleted'),
+        onDeletionCleanupChanged: subscribe<undefined>('projectDeletionCleanupChanged'),
+        listDeletionCleanup: vi.fn().mockResolvedValue([])
       },
       sessions: {
         onCreated: subscribe<SessionUpsertEvent>('sessionCreated'),
@@ -334,6 +338,125 @@ describe('useLifecycleSync', () => {
     expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
   })
 
+  it('converges to an external Delegation policy update without accepting an older revision', async () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        ...session,
+        revision: 1,
+        title: 'Live renderer title',
+        status: 'running',
+        delegationPolicy: 'allow',
+        runtimeContext: {
+          version: 1,
+          revision: 2,
+          delegatedWork: { records: [] }
+        }
+      }
+    ])
+    useSessionStore.getState().appendUserMessage({
+      sessionId: session.id,
+      content: 'Keep this live prompt'
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((candidate) =>
+        candidate.id === session.id
+          ? { ...candidate, agentStatus: 'Thinking', awaitingFirstAgentOutput: true }
+          : candidate
+      )
+    }))
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: { ...session, revision: 3, delegationPolicy: 'deny', updatedAt: 3 },
+        originClientId: MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
+      })
+    })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      revision: 3,
+      title: 'Live renderer title',
+      status: 'running',
+      delegationPolicy: 'deny',
+      agentStatus: 'Thinking',
+      awaitingFirstAgentOutput: true,
+      runtimeContext: {
+        revision: 2,
+        delegatedWork: { records: [] }
+      },
+      messages: [expect.objectContaining({ content: 'Keep this live prompt' })]
+    })
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: { ...session, revision: 2, delegationPolicy: 'allow', updatedAt: 4 },
+        originClientId: MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
+      })
+    })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      revision: 3,
+      delegationPolicy: 'deny'
+    })
+  })
+
+  it('keeps acknowledged Delegation policy while applying a later running continuation projection', async () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        ...session,
+        revision: 1,
+        status: 'running',
+        delegationPolicy: 'allow'
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDelegationPolicyAuthority({
+      ...toPersistedSession(source),
+      revision: 2,
+      delegationPolicy: 'deny',
+      updatedAt: 2
+    })
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: {
+          ...session,
+          revision: 3,
+          title: 'Running activity updated',
+          status: 'running',
+          delegationPolicy: 'allow',
+          updatedAt: 3
+        },
+        originClientId: MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID
+      })
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      revision: 3,
+      title: 'Running activity updated',
+      status: 'running',
+      delegationPolicy: 'deny'
+    })
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: {
+          ...session,
+          revision: 4,
+          title: 'External policy authority',
+          status: 'running',
+          delegationPolicy: 'allow',
+          updatedAt: 4
+        },
+        originClientId: MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
+      })
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      revision: 4,
+      title: 'Running activity updated',
+      status: 'running',
+      delegationPolicy: 'allow'
+    })
+  })
+
   it('projects enabled Compute Host authority without replacing live chat state', async () => {
     useSessionStore.getState().hydrateSessions([session])
     const source = useSessionStore.getState().sessions[0]
@@ -348,6 +471,7 @@ describe('useLifecycleSync', () => {
         session: {
           ...toPersistedSession(source),
           enabledComputeHosts: ['ssh:lab'],
+          computeConcurrencyLimit: 2,
           updatedAt: source.updatedAt + 1
         }
       })
@@ -355,6 +479,7 @@ describe('useLifecycleSync', () => {
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       enabledComputeHosts: ['ssh:lab'],
+      computeConcurrencyLimit: 2,
       messages: [expect.objectContaining({ content: 'Keep this live prompt' })]
     })
   })
@@ -1320,7 +1445,14 @@ describe('useLifecycleSync', () => {
 
     expect(useProjectStore.getState().projects).toEqual([])
     expect(useSessionStore.getState().sessions).toEqual([])
-    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has(project.id)).toBe(true)
+    expect(useProjectStore.getState().deletionCleanup).toEqual([
+      {
+        projectId: project.id,
+        projectName: project.name,
+        phase: 'running',
+        failureCount: 0
+      }
+    ])
     expect(useNavigationStore.getState().view).toBe('home')
 
     await act(async () => {
@@ -1330,6 +1462,23 @@ describe('useLifecycleSync', () => {
       })
     })
 
-    expect(useProjectStore.getState().pendingDeletionCleanupProjectIds.has(project.id)).toBe(false)
+    expect(useProjectStore.getState().deletionCleanup).toEqual([])
+  })
+
+  it('refreshes sanitized cleanup status after a recovery lifecycle event', async () => {
+    const cleanup = [
+      {
+        projectId: project.id,
+        projectName: project.name,
+        phase: 'retry-scheduled' as const,
+        failureCount: 2,
+        nextRetryAt: 6_000
+      }
+    ]
+    vi.mocked(window.api.projects.listDeletionCleanup).mockResolvedValueOnce(cleanup)
+
+    await act(async () => listeners.projectDeletionCleanupChanged?.())
+
+    expect(useProjectStore.getState().deletionCleanup).toEqual(cleanup)
   })
 })

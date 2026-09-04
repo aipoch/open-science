@@ -100,23 +100,33 @@ const OfficeDownloadFallback = ({
   source: OfficePreviewSource
   title: string
   message: string
-}): React.JSX.Element => (
-  <PreviewFallbackCard
-    icon={FileWarning}
-    name={item.name}
-    title={title}
-    message={message}
-    action={
-      <ManagedFileDownloadButton
-        source={source}
-        path={item.path}
-        suggestedName={item.name}
-        appearance="primary"
-        wrapperClassName="mt-3"
-      />
-    }
-  />
-)
+}): React.JSX.Element => {
+  const runtime = usePreviewRuntime()
+
+  return (
+    <PreviewFallbackCard
+      icon={FileWarning}
+      name={item.name}
+      title={title}
+      message={message}
+      action={
+        <ManagedFileDownloadButton
+          source={source}
+          path={item.path}
+          projectId={item.projectId}
+          fileId={item.managedFileId}
+          versionId={item.selectedVersionId}
+          versionNumber={runtime?.downloadVersionContext?.versionNumber}
+          latestVersionId={runtime?.downloadVersionContext?.latestVersionId}
+          latestVersionNumber={runtime?.downloadVersionContext?.latestVersionNumber}
+          suggestedName={item.name}
+          appearance="primary"
+          wrapperClassName="mt-3"
+        />
+      }
+    />
+  )
+}
 
 // Returns the catalog key for errors that leave download as the only remedy, or undefined when the
 // error is a plain render failure that keeps the retryable card.
@@ -158,6 +168,8 @@ const RemoteOfficePreviewContent = ({
   const [state, setState] = useState<OfficeHostState>(OFFICE_CHECKING_STATE)
   const [frame, setFrame] = useState<OfficePreviewFrame | undefined>(undefined)
   const [frameLoadGeneration, setFrameLoadGeneration] = useState(0)
+  const hasSourceIdentity =
+    source === 'notebook-input' || Boolean(item.projectId && item.managedFileId)
 
   useEffect(
     () =>
@@ -171,7 +183,16 @@ const RemoteOfficePreviewContent = ({
   )
 
   useEffect(() => {
-    if (!ownsLease) return
+    if (!ownsLease || !hasSourceIdentity) return
+    const sourceIdentity =
+      source === 'notebook-input'
+        ? { source, path: item.path }
+        : {
+            source,
+            projectId: item.projectId!,
+            fileId: item.managedFileId!,
+            ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {})
+          }
 
     const requestId = createOfficePreviewRequestId(hostId)
     let active = true
@@ -205,7 +226,13 @@ const RemoteOfficePreviewContent = ({
     )
 
     void window.api.officePreview
-      .open({ requestId, source, path: item.path, name: item.name, extension, attempt })
+      .open({
+        requestId,
+        ...sourceIdentity,
+        name: item.name,
+        extension,
+        attempt
+      })
       .then((result) => {
         if (!active) {
           if (result.kind === 'started') void window.api.officePreview.close(result.sessionId)
@@ -243,7 +270,19 @@ const RemoteOfficePreviewContent = ({
       removeStateListener()
       if (openedSessionId) void window.api.officePreview.close(openedSessionId)
     }
-  }, [attempt, extension, hostId, item.name, item.path, ownsLease, source])
+  }, [
+    attempt,
+    extension,
+    hasSourceIdentity,
+    hostId,
+    item.managedFileId,
+    item.name,
+    item.path,
+    item.projectId,
+    item.selectedVersionId,
+    ownsLease,
+    source
+  ])
 
   useEffect(() => {
     if (!frame || frameLoadGeneration === 0) return
@@ -302,7 +341,10 @@ const RemoteOfficePreviewContent = ({
     }
   }, [frame, frameLoadGeneration])
 
-  if (state.kind === 'too-large') {
+  const visibleState: OfficeHostState =
+    ownsLease && !hasSourceIdentity ? { kind: 'error', error: 'FILE_READ_FAILED' } : state
+
+  if (visibleState.kind === 'too-large') {
     return (
       <OfficeDownloadFallback
         item={item}
@@ -312,8 +354,8 @@ const RemoteOfficePreviewContent = ({
       />
     )
   }
-  if (state.kind === 'error') {
-    const downloadOnlyMessageKey = getDownloadOnlyErrorMessageKey(state.error)
+  if (visibleState.kind === 'error') {
+    const downloadOnlyMessageKey = getDownloadOnlyErrorMessageKey(visibleState.error)
     if (downloadOnlyMessageKey) {
       return (
         <OfficeDownloadFallback
@@ -329,14 +371,14 @@ const RemoteOfficePreviewContent = ({
         icon={FileWarning}
         name={item.name}
         message={t("This Office file couldn't be rendered for preview")}
-        retryable={isRetryableOfficeError(state.error)}
+        retryable={isRetryableOfficeError(visibleState.error)}
       />
     )
   }
 
   return (
     <div
-      data-office-preview-state={state.kind}
+      data-office-preview-state={visibleState.kind}
       className="relative size-full overflow-hidden bg-bg-000"
     >
       {frame ? (
@@ -355,9 +397,9 @@ const RemoteOfficePreviewContent = ({
           className="absolute inset-0 size-full border-0 bg-transparent"
         />
       ) : null}
-      {state.kind === 'loading' ? (
+      {visibleState.kind === 'loading' ? (
         <div className="absolute inset-0 z-10 bg-bg-000">
-          <PreviewLoadingContent {...officeLoadingCopy(state.phase, extension, t)} />
+          <PreviewLoadingContent {...officeLoadingCopy(visibleState.phase, extension, t)} />
         </div>
       ) : null}
     </div>

@@ -3,6 +3,7 @@ import { CirclePlus, Sparkles } from 'lucide-react'
 // Import the bare icon components so this shared renderer stays free of @lobehub/ui.
 import ClaudeColor from '@lobehub/icons/es/Claude/components/Color'
 import Codex from '@lobehub/icons/es/Codex/components/Mono'
+import NvidiaColor from '@lobehub/icons/es/Nvidia/components/Color'
 import OpenCode from '@lobehub/icons/es/OpenCode/components/Mono'
 import TencentCloudColor from '@lobehub/icons/es/TencentCloud/components/Color'
 
@@ -117,6 +118,10 @@ export const ProviderKindIcon = ({
         aria-hidden="true"
       />
     )
+  }
+
+  if (kindKey === 'official:nvidia') {
+    return <NvidiaColor size={20} className={cn('size-5 shrink-0', className)} aria-hidden="true" />
   }
 
   if (

@@ -239,6 +239,35 @@ FunctionEnd
 # These callbacks cover cancellation or an installer failure before the post-uninstall hooks run.
 # The normal path restores each directory immediately after its matching old-uninstaller pass.
 !macro customHeader
+  # NSIS extracts the new uninstaller after the application package. Probe the same write access
+  # its File command will request before extracting anything, so a stale locked uninstaller cannot
+  # turn a silent install into a false success or leave an interactive install offering the unsafe
+  # Ignore choice. OPEN_EXISTING keeps this check non-destructive; Retry lets the user release a
+  # transient lock, while silent installs take the Cancel path and return a failure code.
+  Function ensureExistingUninstallerIsWritable
+    IfFileExists "$INSTDIR\${UNINSTALL_FILENAME}" ensureExistingUninstallerIsWritable_retry ensureExistingUninstallerIsWritable_done
+
+    ensureExistingUninstallerIsWritable_retry:
+      System::Call 'kernel32::SetLastError(i 0)'
+      System::Call 'kernel32::CreateFile(t "$INSTDIR\${UNINSTALL_FILENAME}", i 0x40000000, i 1, i 0, i 3, i 0x80, i 0) i.rR0 ?e'
+      Pop $R1
+      StrCmp $R1 0 0 ensureExistingUninstallerIsWritable_failed
+      System::Call 'kernel32::CloseHandle(i rR0)'
+      Return
+
+    ensureExistingUninstallerIsWritable_failed:
+      DetailPrint `Cannot replace the existing uninstaller: "$INSTDIR\${UNINSTALL_FILENAME}".`
+      IfSilent ensureExistingUninstallerIsWritable_cancel
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(uninstallFailed)$\r$\n$INSTDIR\${UNINSTALL_FILENAME}" IDRETRY ensureExistingUninstallerIsWritable_retry
+
+    ensureExistingUninstallerIsWritable_cancel:
+      SetErrorLevel 2
+      Quit
+
+    ensureExistingUninstallerIsWritable_done:
+      Return
+  FunctionEnd
+
   Function protectNestedDataRootsForInstall
     !ifdef openScienceOriginalInstFilesPre
       Call ${openScienceOriginalInstFilesPre}
@@ -436,6 +465,7 @@ FunctionEnd
   ${else}
     !insertmacro restoreAllNestedDataRoots
     !insertmacro quitIfDataRestoreFailed
+    Call ensureExistingUninstallerIsWritable
   ${endif}
 !macroend
 
@@ -461,6 +491,7 @@ FunctionEnd
   # still-preserved backup is what keeps a recreated data directory from short-circuiting retry.
   !insertmacro restoreNestedDataRoot $perUserInstallDirCache $perUserDataBackup
   !insertmacro quitIfDataRestoreFailed
+  Call ensureExistingUninstallerIsWritable
 !macroend
 
 !endif

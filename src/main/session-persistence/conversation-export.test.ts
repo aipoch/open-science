@@ -1,4 +1,6 @@
 import { join } from 'node:path'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -23,6 +25,7 @@ import {
   createConversationExportService,
   registerConversationExportIpcHandler
 } from './conversation-export'
+import { publishUserFile as productionPublishUserFile } from '../user-file-publisher'
 
 const session: PersistedChatSession = {
   id: 'session-1',
@@ -61,6 +64,14 @@ describe('conversation export service', () => {
     webContents: { executeJavaScript, printToPDF },
     destroy
   }))
+  const publishDirectly: typeof productionPublishUserFile = async (
+    destinationPath,
+    write,
+    options
+  ) => {
+    await write(destinationPath)
+    await options?.validateDestination?.()
+  }
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -75,7 +86,9 @@ describe('conversation export service', () => {
     printToPDF.mockResolvedValue(Buffer.from('pdf'))
   })
 
-  const createService = (): ReturnType<typeof createConversationExportService> =>
+  const createService = (
+    overrides: Record<string, unknown> = {}
+  ): ReturnType<typeof createConversationExportService> =>
     createConversationExportService({
       loadSession,
       isSessionActive,
@@ -86,8 +99,10 @@ describe('conversation export service', () => {
       createPrintWindow,
       getDownloadsPath: () => '/downloads',
       getTempPath: () => '/tmp',
-      now: () => 3
-    })
+      now: () => 3,
+      publishUserFile: publishDirectly,
+      ...overrides
+    } as Parameters<typeof createConversationExportService>[0])
 
   it('loads the durable session and saves normalized Markdown', async () => {
     const result = await createService().exportConversation({
@@ -110,6 +125,30 @@ describe('conversation export service', () => {
     )
     expect(createPrintWindow).not.toHaveBeenCalled()
     expect(result).toEqual({ saved: true, filePath: '/downloads/export.md' })
+  })
+
+  it('preserves an existing Markdown destination when writing fails after partial output', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-conversation-export-failure-'))
+    const destinationPath = join(root, 'export.md')
+    await writeFile(destinationPath, 'existing conversation')
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    writeExportFile.mockImplementation(async (path: string) => {
+      await writeFile(path, 'partial conversation')
+      throw new Error('disk full')
+    })
+
+    try {
+      await expect(
+        createService({ publishUserFile: productionPublishUserFile }).exportConversation({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          format: 'markdown'
+        })
+      ).rejects.toThrow('disk full')
+      await expect(readFile(destinationPath, 'utf8')).resolves.toBe('existing conversation')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('saves only the selected durable turns in conversation order', async () => {
@@ -217,6 +256,92 @@ describe('conversation export service', () => {
     expect(destroy).toHaveBeenCalledOnce()
     expect(removeDirectory).toHaveBeenCalledWith('/tmp/open-science-conversation-export-test')
     expect(result).toEqual({ saved: true, filePath: '/downloads/export.pdf' })
+  })
+
+  it('rejects oversized message and image selections before opening Save As', async () => {
+    loadSession.mockResolvedValue({
+      ...session,
+      messages: [
+        ...session.messages,
+        {
+          ...session.messages[0],
+          id: 'message-2',
+          images: [{ id: 'image-1', mimeType: 'image/png', data: 'AAAAAA' }]
+        }
+      ]
+    })
+    const exportLimits = {
+      maxMessages: 1,
+      maxImageBase64Bytes: 5,
+      maxHtmlBytes: 1_000_000,
+      pdfPrintTimeoutMs: 1_000
+    }
+
+    await expect(
+      createService({ exportLimits }).exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'pdf'
+      })
+    ).rejects.toThrow(/select fewer conversation turns/i)
+    await expect(
+      createService({ exportLimits: { ...exportLimits, maxMessages: 10 } }).exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'pdf'
+      })
+    ).rejects.toThrow(/select fewer conversation turns/i)
+    expect(showSaveDialog).not.toHaveBeenCalled()
+  })
+
+  it('rejects oversized rendered HTML before creating a print window', async () => {
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: '/downloads/export.pdf' })
+
+    await expect(
+      createService({
+        exportLimits: {
+          maxMessages: 10,
+          maxImageBase64Bytes: 1_000_000,
+          maxHtmlBytes: 100,
+          pdfPrintTimeoutMs: 1_000
+        }
+      }).exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'pdf'
+      })
+    ).rejects.toThrow(/select fewer conversation turns/i)
+    expect(createPrintWindow).not.toHaveBeenCalled()
+  })
+
+  it('times out PDF printing and destroys the hidden window', async () => {
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: '/downloads/export.pdf' })
+    printToPDF.mockReturnValue(new Promise(() => undefined))
+    const exportPromise = createService({
+      exportLimits: {
+        maxMessages: 10,
+        maxImageBase64Bytes: 1_000_000,
+        maxHtmlBytes: 1_000_000,
+        pdfPrintTimeoutMs: 5
+      }
+    }).exportConversation({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      format: 'pdf'
+    })
+
+    const outcome = await Promise.race([
+      exportPromise.then(
+        () => 'resolved',
+        (error: unknown) => error
+      ),
+      new Promise<'still-pending'>((resolve) => setTimeout(() => resolve('still-pending'), 50))
+    ])
+
+    expect(outcome).toBeInstanceOf(Error)
+    expect((outcome as Error).message).toMatch(/timed out/i)
+    expect(destroy).toHaveBeenCalledOnce()
+    expect(removeDirectory).toHaveBeenCalledWith('/tmp/open-science-conversation-export-test')
   })
 
   it('destroys the print window when PDF generation fails', async () => {

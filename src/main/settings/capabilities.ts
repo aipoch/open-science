@@ -1,6 +1,6 @@
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
-import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type {
   AppIconVariant,
@@ -29,6 +29,7 @@ export type SettingsPreferencesSnapshot = {
 
 export type SetDataRootOptions = Readonly<{
   completeOnboarding?: boolean
+  previousDataRoot?: string
 }>
 
 export interface SettingsPreferences {
@@ -52,10 +53,9 @@ export interface SettingsPreferences {
 }
 
 // One language's complete persisted Notebook policy, projected as detached values. Package mirrors
-// are process-global, while runtime selection, enablement, and manual interpreters are per-language.
+// are process-global, while enablement and manual interpreters are per-language.
 export type NotebookRuntimeSettingsSnapshot = {
   language: NotebookLanguage
-  runtimeSelection?: RuntimeSelection
   runtimeEnablement: RuntimeEnablement
   manualInterpreters: string[]
   packageMirror: PackageMirror
@@ -64,10 +64,6 @@ export type NotebookRuntimeSettingsSnapshot = {
 export interface NotebookRuntimeSettings {
   getSnapshot(language: NotebookLanguage): Promise<NotebookRuntimeSettingsSnapshot>
   getPackageMirror(): Promise<PackageMirror>
-  setRuntimeSelection(
-    language: NotebookLanguage,
-    selection: RuntimeSelection | null
-  ): Promise<RuntimeSelection | undefined>
   setEnvironmentEnabled(
     language: NotebookLanguage,
     envId: string,
@@ -78,6 +74,8 @@ export interface NotebookRuntimeSettings {
     envId: string,
     authorized: boolean
   ): Promise<RuntimeEnablement>
+  getAgentEnvironmentCreationEnabled(): Promise<boolean>
+  setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<boolean>
   addManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
   removeManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]>
   setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror>

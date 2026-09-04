@@ -1,4 +1,12 @@
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -8,7 +16,7 @@ import {
   hiddenByFilesystemLayout,
   normalizeFilesystemLayout
 } from '../runtime/src/platform/filesystem-layout.js'
-import { seatbeltProfile } from '../runtime/src/platform/macos-isolation.js'
+import { macosLaunch, seatbeltProfile } from '../runtime/src/platform/macos-isolation.js'
 import { linuxLaunch } from '../runtime/src/platform/linux-isolation.js'
 import { ViolationLog } from '../runtime/src/gateway/violation-log.js'
 
@@ -29,8 +37,8 @@ describe('Notebook filesystem policy', () => {
         deniedWriteRoots: []
       })
     ).toMatchObject({
-      readOnlyRoots: [realpathSync(root)],
-      readWriteRoots: [realpathSync(nested)]
+      readOnlyRoots: [absolutePhysicalPath(root)],
+      readWriteRoots: [absolutePhysicalPath(nested)]
     })
   })
 
@@ -69,8 +77,58 @@ describe('Notebook filesystem policy', () => {
         absolutePhysicalPath('/tmp/open-science-notebook.sock')
       )}))`
     )
+    expect(profile).toContain('(allow network-outbound (remote ip "localhost:3128"))')
     expect(profile).not.toContain('(deny system-socket')
   })
+
+  const expectMacosShellLaunch = (shell: string, extraFlags: readonly string[]): void => {
+    const root = mkdtempSync(join(tmpdir(), 'open-science-shell-rc-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+
+    try {
+      const launch = macosLaunch({
+        command: '/usr/bin/curl --silent http://example.com/',
+        gatewayPort: 4312,
+        gatewayCredentials: { username: 'command', password: 'secret' },
+        shell,
+        env: { PATH: '/usr/bin:/bin' },
+        filesystem: {
+          privateRoot: root,
+          readOnlyRoots: ['/bin', '/usr/bin'],
+          readWriteRoots: [workspace],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+
+      expect(launch.argv).toEqual([
+        '/usr/bin/sandbox-exec',
+        '-p',
+        expect.any(String),
+        shell,
+        ...extraFlags,
+        '-c',
+        '/usr/bin/curl --silent http://example.com/'
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+
+  it.skipIf(process.platform === 'win32')(
+    'launches bash without reading profile or rc files',
+    () => {
+      expectMacosShellLaunch('/bin/bash', ['--noprofile', '--norc'])
+    }
+  )
+
+  it.skipIf(process.platform === 'win32' || !existsSync('/bin/zsh'))(
+    'launches zsh without reading profile or rc files',
+    () => {
+      expectMacosShellLaunch('/bin/zsh', ['-d', '-f'])
+    }
+  )
 
   it('turns native permission failures into an actionable structured violation', () => {
     const log = new ViolationLog()

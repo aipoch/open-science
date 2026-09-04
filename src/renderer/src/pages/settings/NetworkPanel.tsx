@@ -7,6 +7,7 @@ import type { NetworkConnectionType, NetworkInfo } from '../../../../shared/netw
 import type { EnvironmentCheckItem } from '../../../../shared/settings'
 import { EnvironmentCheckRow, PendingCheckRow } from '@/components/environment-check-row'
 import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { useNetworkStore } from '@/stores/network-store'
@@ -23,7 +24,11 @@ const actionButtonClassName =
 // Package-mirror list vs. configure form. The configure form is a settings-nav sub-view (not local
 // state) so the shared header shows a "Network / Package mirror" breadcrumb with back/forward.
 type NetworkView = { kind: 'list' | 'mirror' | 'proxy' | 'domains' }
-type NetworkPanelProps = { view: NetworkView; onNavigate: (view: NetworkView) => void }
+type NetworkPanelProps = {
+  view: NetworkView
+  onNavigate: (view: NetworkView) => void
+  notebookNetworkAvailable?: boolean
+}
 
 // Identity of the single check row this panel renders (and its pending placeholder). Only the id
 // lives here: the label travels to the row as *data* rather than as JSX, so holding it as a bare
@@ -44,7 +49,11 @@ const CONNECTION_TYPE_LABELS: Partial<Record<NetworkConnectionType, string>> = {
 // behind a firewall or on a slow route to the public conda-forge / pip hosts point package
 // fetches at a mirror instead. Notebook domains configures the application-owned egress policy used
 // by local Notebook and command-line processes.
-const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Element => {
+const NetworkPanel = ({
+  view,
+  onNavigate,
+  notebookNetworkAvailable = true
+}: NetworkPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const packageMirror = useSettingsStore((state) => state.packageMirror)
   const networkProxy = useSettingsStore((state) => state.networkProxy)
@@ -61,6 +70,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   const isConfiguring = view.kind === 'mirror'
   const [draft, setDraft] = useState<PackageMirror>({})
   const [isSaving, setIsSaving] = useState(false)
+  const [saveConfirmationOpen, setSaveConfirmationOpen] = useState(false)
   const [message, setMessage] = useState<string | undefined>(undefined)
   const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null)
   const [networkInfoError, setNetworkInfoError] = useState(false)
@@ -127,25 +137,30 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
     onNavigate({ kind: 'list' })
   }
 
-  const handleSave = async (): Promise<void> => {
-    if (
-      packageMirror?.caBundle !== draft.caBundle &&
-      window.confirm(t('Changing the CA bundle will stop active Notebook kernels. Continue?')) ===
-        false
-    )
-      return
+  const savePackageMirror = async (): Promise<void> => {
+    if (isSaving) return
     setIsSaving(true)
     setMessage(undefined)
 
+    let saved = false
     try {
       await setPackageMirror(draft)
-      onNavigate({ kind: 'list' })
-    } catch (error) {
-      // An IPC-supplied error message is passed through verbatim; only the fallback is translated.
-      setMessage(error instanceof Error ? error.message : t('Could not save the package mirror.'))
+      saved = true
+    } catch {
+      setMessage(t('Could not save the package mirror.'))
     } finally {
       setIsSaving(false)
+      setSaveConfirmationOpen(false)
     }
+    if (saved) onNavigate({ kind: 'list' })
+  }
+
+  const handleSave = (): void => {
+    if (packageMirror?.caBundle !== draft.caBundle) {
+      setSaveConfirmationOpen(true)
+      return
+    }
+    void savePackageMirror()
   }
 
   // Connection type + IP fold into the check row's detail line, e.g. "Wi-Fi · 192.168.1.42".
@@ -208,7 +223,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
         : Network
 
   if (view.kind === 'proxy') return <NetworkProxyForm onDone={() => onNavigate({ kind: 'list' })} />
-  if (view.kind === 'domains') return <NotebookNetworkDomainsForm />
+  if (view.kind === 'domains' && notebookNetworkAvailable) return <NotebookNetworkDomainsForm />
 
   return (
     <div className="space-y-6 p-5">
@@ -256,7 +271,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
         </section>
       ) : null}
 
-      {!isConfiguring ? (
+      {!isConfiguring && notebookNetworkAvailable ? (
         <section aria-label={t('Notebook network access')}>
           <h3 className="mb-1 text-sm font-semibold text-foreground">
             {t('Notebook network access')}
@@ -398,7 +413,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
 
               {message ? (
                 <p className="text-xs text-destructive" role="alert">
-                  {message}
+                  {t('Could not save the package mirror.')}
                 </p>
               ) : null}
 
@@ -413,7 +428,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
                 </button>
                 <button
                   type="button"
-                  onClick={() => void handleSave()}
+                  onClick={handleSave}
                   disabled={isSaving}
                   className="rounded-lg border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
                 >
@@ -428,6 +443,18 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
           <ExternalTextLink href={MIRROR_HELP_URL}>{t('View available mirrors')}</ExternalTextLink>
         </p>
       </section>
+      <ConfirmActionDialog
+        open={saveConfirmationOpen}
+        title={t('Package mirror')}
+        description={t('Changing the CA bundle will stop active Notebook kernels. Continue?')}
+        cancelLabel={t('Cancel')}
+        confirmLabel={t('Continue')}
+        loadingLabel={t('Saving…')}
+        loading={isSaving}
+        testId="package-mirror-confirmation"
+        onCancel={() => setSaveConfirmationOpen(false)}
+        onConfirm={() => void savePackageMirror()}
+      />
     </div>
   )
 }

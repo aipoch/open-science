@@ -41,7 +41,7 @@ import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { pdfjsLib } from '../pdfjs'
 import { isUnavailableFileError } from '../preview-errors'
 import { createPreviewResourceKey } from '../preview-resource-key'
-import { createPreviewRequestScope } from '../preview-file-reader'
+import { createManagedPreviewRequest } from '../preview-file-reader'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { useNearViewport } from '../useNearViewport'
@@ -1090,9 +1090,11 @@ const PdfPageCanvas = ({
 export const PdfPreviewContent = ({
   path,
   name,
-  source = 'artifact',
+  source = 'local',
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   mimeType,
   size,
   mtimeMs,
@@ -1106,6 +1108,8 @@ export const PdfPreviewContent = ({
   source?: PreviewFileSource
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
   mimeType?: string
   size?: number
   mtimeMs?: number
@@ -1120,6 +1124,8 @@ export const PdfPreviewContent = ({
     sessionId,
     source,
     path,
+    managedFileId,
+    selectedVersionId,
     mimeType,
     size,
     mtimeMs
@@ -1313,12 +1319,17 @@ export const PdfPreviewContent = ({
 
     void (async () => {
       try {
-        const resource = await window.api.previewResources.acquire({
-          source,
-          path,
-          ...createPreviewRequestScope({ projectId, sessionId, source, path }),
-          ...(mimeType ? { mimeType } : {})
-        })
+        const resource = await window.api.previewResources.acquire(
+          createManagedPreviewRequest({
+            source,
+            path,
+            projectId,
+            sessionId,
+            managedFileId,
+            selectedVersionId,
+            mimeType
+          })
+        )
         resourceId = resource.id
         if (canceled) {
           await dispose()
@@ -1344,7 +1355,7 @@ export const PdfPreviewContent = ({
       canceled = true
       if (resourceId) void dispose()
     }
-  }, [mimeType, path, projectId, requestKey, sessionId, source])
+  }, [managedFileId, mimeType, path, projectId, requestKey, selectedVersionId, sessionId, source])
 
   const currentDocumentState = documentState?.requestKey === requestKey ? documentState : null
   const hasError = currentDocumentState?.status === 'error'
@@ -1848,9 +1859,11 @@ export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.E
     <PdfPreviewContent
       path={props.item.path}
       name={props.item.name}
-      source={props.item.source}
+      source={props.item.source ?? 'artifact'}
       projectId={props.item.projectId}
       sessionId={props.item.sessionId}
+      managedFileId={props.item.managedFileId}
+      selectedVersionId={props.item.selectedVersionId}
       mimeType={props.item.mimeType}
       size={props.item.size}
       mtimeMs={props.item.mtimeMs}

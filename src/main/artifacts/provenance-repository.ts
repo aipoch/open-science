@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { PrismaClient } from '@prisma/client'
+import { ManagedFileVersionService } from '../managed-file-versions/service'
 
 import type {
   AppGeneratedArtifactProducer,
@@ -53,9 +54,19 @@ import { ArtifactProvenanceReadModel } from './provenance-read-model'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ArtifactProvenanceDependencyReader } from './provenance-dependency-reader'
 import type { HostLineageDependencyRelation, HostLineageDirection } from '../../shared/host-lineage'
-import { LOCAL_RESOURCE_BUDGETS, type LocalResourceBudgetOverrides } from '../resource-budget'
+import { requireAgentArtifactVersion } from './provenance-version-kind'
+import type { LocalResourceBudgetOverrides } from '../resource-budget'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
-import { digestFileWithinBudget } from '../bounded-file-io'
+import {
+  NodeVersionFileOperator,
+  VERSION_FILE_CANDIDATE_LIMIT,
+  VersionFileOperatorError,
+  type Integrity,
+  type PlanImmutableInput,
+  type PlannedFile,
+  type VersionFileOperator,
+  type VersionFileRecovery
+} from '../managed-file-versions/version-file-operator'
 import { bindArtifactReconstructionEvidence } from './provenance-reconstruction-evidence'
 import { ReviewerTurnFileEvidenceReader } from './reviewer-turn-file-evidence-reader'
 
@@ -75,6 +86,19 @@ type ArtifactProvenanceRepositoryOptions = {
   now?: () => Date
   durability?: ArtifactDurability
   resourceBudgets?: LocalResourceBudgetOverrides
+  versionFileOperator?: VersionFileOperator & VersionFileRecovery
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'>
+}
+
+type ProjectableVersionFileRecord = Omit<PersistedVersionFileRecord, 'artifactRunId'> & {
+  artifactRunId: string | null
+}
+
+type VersionDescriptorRecord = ProjectableVersionFileRecord & {
+  state: string
+  messageId: string | null
+  originKind: string
+  basedOnVersionId: string | null
 }
 
 export type WriteAppGeneratedArtifactVersionRequest = Omit<
@@ -99,6 +123,31 @@ type ArtifactStorageReconciliationResult = {
   recoveredVersionIds: string[]
   quarantinedVersionIds: string[]
   recoveredMessageArtifacts: Array<{ messageId: string; artifacts: ArtifactVersionFile[] }>
+  nativeFinalizationRunIds: string[]
+  unresolvedNativeFinalizationRunIds: string[]
+  invalidProofNativeFinalizationRunIds?: string[]
+}
+
+type ProjectVersionWriteOperation = {
+  operationId: string
+  source: string
+  projectId: string
+  sourceFileId: string
+  storageTag: string
+  storedFilename: string
+  contentStorageKey: string
+  checksum: string
+  sizeBytes: bigint
+}
+
+type JournalRecoveryPlan = {
+  input: PlanImmutableInput
+  plannedFile: PlannedFile
+}
+
+type ProjectLogicalFileOwner = {
+  sessionId: string
+  logicalFilename: string
 }
 
 const assertSafeSegment = (value: string, label: string): string => {
@@ -123,6 +172,39 @@ const hasServerInferredProducer = (evidenceJson: string): boolean => {
   }
 }
 
+const journalRecoveryPlan = (
+  operator: VersionFileOperator,
+  operation: ProjectVersionWriteOperation,
+  owner: ProjectLogicalFileOwner | undefined
+): JournalRecoveryPlan | undefined => {
+  if ((operation.source !== 'artifact' && operation.source !== 'upload') || !owner) return undefined
+  // Storage references remain operator-owned. The database supplies the logical owner fields needed
+  // to reproduce a plan without teaching project deletion about any adapter's physical layout.
+  for (let candidateIndex = 0; candidateIndex < VERSION_FILE_CANDIDATE_LIMIT; candidateIndex += 1) {
+    const input: PlanImmutableInput = {
+      operationId: operation.operationId,
+      scope: {
+        source: operation.source,
+        projectId: operation.projectId,
+        sessionId: owner.sessionId,
+        logicalFileId: operation.sourceFileId
+      },
+      logicalFilename: owner.logicalFilename,
+      candidateIndex
+    }
+    const plannedFile = operator.planImmutable(input)
+    if (
+      plannedFile.storageRef === operation.contentStorageKey &&
+      plannedFile.storedFilename === operation.storedFilename &&
+      `v${plannedFile.versionToken}` === operation.storageTag &&
+      plannedFile.candidateIndex === candidateIndex
+    ) {
+      return { input, plannedFile }
+    }
+  }
+  return undefined
+}
+
 class ArtifactProvenanceRepository {
   private readonly compatibilityRepository: ArtifactRepository
   private readonly createId: () => string
@@ -139,6 +221,7 @@ class ArtifactProvenanceRepository {
   private readonly unindexedRecovery: ArtifactProvenanceUnindexedRecovery
   private readonly versionWriter: ArtifactProvenanceVersionWriter
   private readonly writeBudgetOwner: ArtifactWriteBudgetOwner
+  private readonly versionFileOperator: VersionFileOperator & VersionFileRecovery
 
   constructor(private readonly options: ArtifactProvenanceRepositoryOptions) {
     this.compatibilityRepository =
@@ -148,6 +231,9 @@ class ArtifactProvenanceRepository {
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? (() => new Date())
     this.durability = options.durability ?? defaultArtifactDurability
+    this.versionFileOperator =
+      options.versionFileOperator ??
+      new NodeVersionFileOperator({ storageRoot: options.storageRoot })
     this.writeBudgetOwner = new ArtifactWriteBudgetOwner({
       storageRoot: options.storageRoot,
       getClient: options.getClient,
@@ -159,7 +245,13 @@ class ArtifactProvenanceRepository {
       options.inputAuthority ??
       new ImmutableInputAuthority({
         storageRoot: options.storageRoot,
-        getClient: options.getClient
+        managedFileVersions:
+          options.managedFileVersions ??
+          new ManagedFileVersionService({
+            storageRoot: options.storageRoot,
+            getClient: options.getClient,
+            versionFileOperator: this.versionFileOperator
+          })
       })
     this.dependencyReader = new ArtifactProvenanceDependencyReader(options.getClient)
     this.reviewerTurnFileEvidenceReader = new ReviewerTurnFileEvidenceReader({
@@ -176,7 +268,34 @@ class ArtifactProvenanceRepository {
       reconcileSession: (projectId, appSessionId) => this.reconcileSession(projectId, appSessionId),
       projectVersionDescriptor: (version, projectId, appSessionId) =>
         this.toDescriptor(version, projectId, appSessionId),
-      resolveVersionContent: (request) => this.resolveVersionContent(request),
+      resolveArtifactVersion: options.managedFileVersions
+        ? async (request) => {
+            if (!request.fileId) {
+              throw new Error('Artifact Version content requires a logical file identity.')
+            }
+            const lease = await options.managedFileVersions!.openVersion(
+              {
+                source: 'artifact',
+                projectId: request.projectId,
+                fileId: request.fileId
+              },
+              request.versionId
+            )
+            if (lease.logicalFile.sessionId !== request.sessionId) {
+              await lease.close()
+              throw new Error('Artifact Version belongs to a different Session.')
+            }
+            return {
+              filename: lease.version.filename,
+              ...(lease.version.contentType ? { contentType: lease.version.contentType } : {}),
+              checksum: lease.version.checksum,
+              size: lease.size,
+              readRange: lease.readRange,
+              verifyUnchanged: lease.verifyUnchanged,
+              close: lease.close
+            }
+          }
+        : undefined,
       resolveVersionDerivedPath: (request, filename) =>
         this.resolveVersionDerivedPath(request, filename)
     })
@@ -244,6 +363,7 @@ class ArtifactProvenanceRepository {
     })
     this.messageFinalizer = new ArtifactProvenanceMessageFinalizer({
       getClient: options.getClient,
+      now: this.now,
       loadSession: options.loadSession,
       projectVersionFile: (version, projectId, appSessionId) =>
         this.toArtifactVersionFile(version, projectId, appSessionId)
@@ -429,42 +549,44 @@ class ArtifactProvenanceRepository {
       include: { artifact: true }
     })
     if (!existing) return undefined
+    const agentVersion = requireAgentArtifactVersion(existing)
     const producerMatches =
       request.producerRunId !== undefined
-        ? (existing.producerRunId ?? undefined) === request.producerRunId
-        : existing.producerRunId === null || hasServerInferredProducer(existing.evidenceJson)
+        ? (agentVersion.producerRunId ?? undefined) === request.producerRunId
+        : agentVersion.producerRunId === null ||
+          hasServerInferredProducer(agentVersion.evidenceJson)
     if (
-      existing.artifact.projectId !== projectId ||
-      existing.artifact.sessionId !== appSessionId ||
-      existing.artifactRunId !== artifactRunId ||
-      existing.artifact.normalizedFilename !== normalizedFilename ||
-      (existing.contentType ?? undefined) !== request.contentType ||
+      agentVersion.artifact.projectId !== projectId ||
+      agentVersion.artifact.sessionId !== appSessionId ||
+      agentVersion.artifactRunId !== artifactRunId ||
+      agentVersion.artifact.normalizedFilename !== normalizedFilename ||
+      (agentVersion.contentType ?? undefined) !== request.contentType ||
       !producerMatches
     ) {
       throw new Error(
         `Artifact write operation was reused for a different request: ${writeOperationId}`
       )
     }
-    if (existing.state === 'staging') {
+    if (agentVersion.state === 'staging') {
       return this.stagingRecovery.recoverVersion(
-        existing,
+        agentVersion,
         projectId,
         appSessionId,
         request.filename,
         this.stagingRecovery.routingPublisher(projectId, artifactStorageSessionId, request.filename)
       )
     }
-    if (existing.state !== 'pending' && existing.state !== 'finalized') {
+    if (agentVersion.state !== 'pending' && agentVersion.state !== 'finalized') {
       throw new Error(`Artifact write has an invalid lifecycle state: ${writeOperationId}`)
     }
-    if (existing.state === 'pending') {
+    if (agentVersion.state === 'pending') {
       await this.stagingRecovery.routingPublisher(
         projectId,
         artifactStorageSessionId,
         request.filename
-      )(existing, { replaceUnroutedBytes: true })
+      )(agentVersion, { replaceUnroutedBytes: true })
     }
-    return this.toArtifactVersionFile(existing, projectId, appSessionId)
+    return this.toArtifactVersionFile(agentVersion, projectId, appSessionId)
   }
 
   async validateFinalizationOwnership(request: FinalizeArtifactVersionsRequest): Promise<void> {
@@ -473,6 +595,12 @@ class ArtifactProvenanceRepository {
 
   async finalizeRun(request: FinalizeArtifactVersionsRequest): Promise<ArtifactVersionFile[]> {
     return this.messageFinalizer.finalizeRun(request)
+  }
+
+  async activateFinalizedRun(
+    request: FinalizeArtifactVersionsRequest
+  ): Promise<ArtifactVersionFile[]> {
+    return this.messageFinalizer.activateFinalizedRun(request)
   }
 
   async listRunVersions(request: {
@@ -486,6 +614,7 @@ class ArtifactProvenanceRepository {
     const client = await this.options.getClient()
     const versions = await client.artifactVersion.findMany({
       where: {
+        originKind: 'agent_generated',
         artifactRunId,
         state: { in: ['pending', 'finalized'] },
         artifact: { is: { projectId, sessionId: appSessionId } }
@@ -495,7 +624,9 @@ class ArtifactProvenanceRepository {
     })
 
     return Promise.all(
-      versions.map((version) => this.toArtifactVersionFile(version, projectId, appSessionId))
+      versions.map((version) =>
+        this.toArtifactVersionFile(requireAgentArtifactVersion(version), projectId, appSessionId)
+      )
     )
   }
 
@@ -513,6 +644,8 @@ class ArtifactProvenanceRepository {
     options?: {
       removeOrphanStaging?: boolean
       projectReconciliation?: ArtifactProjectReconciliationSnapshot
+      artifactRunIds?: string[]
+      artifactVersionIds?: string[]
     }
   ): Promise<ArtifactStorageReconciliationResult> {
     const projectId = assertSafeSegment(projectIdInput, 'project id')
@@ -524,7 +657,9 @@ class ArtifactProvenanceRepository {
     const result: ArtifactStorageReconciliationResult = {
       recoveredVersionIds: [],
       quarantinedVersionIds: [],
-      recoveredMessageArtifacts: []
+      recoveredMessageArtifacts: [],
+      nativeFinalizationRunIds: [],
+      unresolvedNativeFinalizationRunIds: []
     }
     const unindexedSnapshot = await this.unindexedRecovery.prepareSession(projectId, appSessionId)
     const stagingResult = await this.stagingRecovery.reconcileSession(
@@ -538,10 +673,21 @@ class ArtifactProvenanceRepository {
       projectId,
       appSessionId,
       durableSession,
-      options?.projectReconciliation
+      options?.projectReconciliation,
+      options?.artifactRunIds,
+      options?.artifactVersionIds
     )
     result.recoveredVersionIds.push(...finalizationResult.recoveredVersionIds)
     result.recoveredMessageArtifacts.push(...finalizationResult.recoveredMessageArtifacts)
+    result.nativeFinalizationRunIds.push(...finalizationResult.nativeFinalizationRunIds)
+    result.unresolvedNativeFinalizationRunIds.push(
+      ...finalizationResult.unresolvedNativeFinalizationRunIds
+    )
+    if (finalizationResult.invalidProofNativeFinalizationRunIds?.length) {
+      result.invalidProofNativeFinalizationRunIds = [
+        ...finalizationResult.invalidProofNativeFinalizationRunIds
+      ]
+    }
 
     const unindexedResult = await this.unindexedRecovery.reconcileSession(unindexedSnapshot)
     result.recoveredVersionIds.push(...unindexedResult.recoveredVersionIds)
@@ -625,12 +771,18 @@ class ArtifactProvenanceRepository {
     const versions = await client.artifactVersion.findMany({
       where: {
         id: { in: versionIds },
+        originKind: 'agent_generated',
         state: 'finalized',
         artifact: { is: { projectId } }
       },
       include: { artifact: true }
     })
-    const versionsById = new Map(versions.map((version) => [version.id, version]))
+    const versionsById = new Map(
+      versions.map((version) => {
+        const agentVersion = requireAgentArtifactVersion(version)
+        return [agentVersion.id, agentVersion] as const
+      })
+    )
 
     return Promise.all(
       versionIds.flatMap((versionId) => {
@@ -727,106 +879,152 @@ class ArtifactProvenanceRepository {
     )
   }
 
-  private async resolveVersionContentMetadata(request: {
-    projectId: string
-    versionId: string
-    appSessionId?: string
-    artifactId?: string
-  }): Promise<{ path: string; filename: string; contentType?: string; checksum?: string }> {
-    const projectId = assertSafeSegment(request.projectId, 'project id')
-    const versionId = assertSafeSegment(request.versionId, 'version id')
-    const appSessionId = request.appSessionId
-      ? assertSafeSegment(request.appSessionId, 'app session id')
-      : undefined
-    const artifactId = request.artifactId
-      ? assertSafeSegment(request.artifactId, 'artifact id')
-      : undefined
-    const client = await this.options.getClient()
-    const version = await client.artifactVersion.findFirst({
-      where: {
-        id: versionId,
-        ...(artifactId ? { artifactId } : {}),
-        state: { in: ['pending', 'finalized'] },
-        artifact: { is: { projectId, ...(appSessionId ? { sessionId: appSessionId } : {}) } }
-      },
-      include: { artifact: true }
-    })
-    if (!version && !artifactId) {
-      const uploadVersion = await client.uploadVersion.findFirst({
-        where: {
-          id: versionId,
-          state: 'ready',
-          uploadFile: {
-            is: { projectId, ...(appSessionId ? { sessionId: appSessionId } : {}) }
-          }
-        }
-      })
-      if (uploadVersion) {
-        return {
-          path: resolveStorageKey(this.options.storageRoot, uploadVersion.contentStorageKey),
-          filename: uploadVersion.filename,
-          contentType: uploadVersion.contentType ?? undefined,
-          checksum: uploadVersion.checksum
-        }
-      }
-    }
-    if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
-
-    return {
-      path: resolveStorageKey(this.options.storageRoot, version.contentStorageKey),
-      filename: version.filename,
-      contentType: version.contentType ?? undefined,
-      checksum: version.checksum
-    }
-  }
-
-  // Reviewer reads hash the full source while retaining only one page, so they request metadata
-  // without a redundant verification pass. The Reviewer host compares this checksum itself.
-  resolveVersionContentForStreamingVerification(request: {
-    projectId: string
-    versionId: string
-    appSessionId?: string
-    artifactId?: string
-  }): Promise<{ path: string; filename: string; contentType?: string; checksum?: string }> {
-    return this.resolveVersionContentMetadata(request)
-  }
-
-  // Resolves preview/consumer reads through the Version authority. Callers that do not stream and
-  // verify content themselves keep the existing verified-path contract.
-  async resolveVersionContent(request: {
-    projectId: string
-    versionId: string
-    appSessionId?: string
-    artifactId?: string
-  }): Promise<{ path: string; filename: string; contentType?: string; checksum?: string }> {
-    const resolved = await this.resolveVersionContentMetadata(request)
-    const digest = await digestFileWithinBudget(
-      resolved.path,
-      LOCAL_RESOURCE_BUDGETS.artifactFileBytes
-    )
-    if (digest.checksum !== resolved.checksum) {
-      throw new Error(`Artifact Version content checksum mismatch: ${request.versionId}`)
-    }
-    return resolved
-  }
-
   // Project deletion is the terminal provenance boundary. Session deletion intentionally keeps this
   // graph; deleting the Project removes every SQLite authority row plus immutable managed bytes.
   async deleteProjectProvenance(projectIdValue: string): Promise<void> {
     const projectId = assertSafeSegment(projectIdValue, 'project id')
     const client = await this.options.getClient()
-    const uploadVersions = await client.uploadVersion.findMany({
-      where: { uploadFile: { is: { projectId } } },
-      select: { contentStorageKey: true }
-    })
-
-    // Delete managed Upload bytes while their authority rows still make the operation replayable.
-    // Any failure leaves the Project deletion intent and storage keys available for a later retry.
-    for (const version of uploadVersions) {
-      await rm(resolveStorageKey(this.options.storageRoot, version.contentStorageKey), {
-        force: true
+    const [artifactVersions, uploadVersions, versionWriteOperations, artifactOwners, uploadOwners] =
+      await Promise.all([
+        client.artifactVersion.findMany({
+          where: { artifact: { is: { projectId } } },
+          select: { contentStorageKey: true, sizeBytes: true, checksum: true }
+        }),
+        client.uploadVersion.findMany({
+          where: { uploadFile: { is: { projectId } } },
+          select: { contentStorageKey: true, sizeBytes: true, checksum: true }
+        }),
+        client.managedFileVersionWriteOperation.findMany({
+          where: { projectId, source: { in: ['artifact', 'upload'] } },
+          orderBy: { operationId: 'asc' },
+          select: {
+            operationId: true,
+            source: true,
+            projectId: true,
+            sourceFileId: true,
+            storageTag: true,
+            storedFilename: true,
+            contentStorageKey: true,
+            sizeBytes: true,
+            checksum: true
+          }
+        }),
+        client.artifactLineage.findMany({
+          where: { projectId },
+          select: { id: true, sessionId: true, filename: true }
+        }),
+        client.uploadFile.findMany({
+          where: { projectId },
+          select: { id: true, sessionId: true, filename: true, originalFilename: true }
+        })
+      ])
+    const journalOwners = new Map<string, ProjectLogicalFileOwner>()
+    for (const owner of artifactOwners) {
+      journalOwners.set(`artifact:${owner.id}`, {
+        sessionId: owner.sessionId,
+        logicalFilename: owner.filename
       })
     }
+    for (const owner of uploadOwners) {
+      journalOwners.set(`upload:${owner.id}`, {
+        sessionId: owner.sessionId,
+        logicalFilename: owner.originalFilename || owner.filename
+      })
+    }
+
+    // Version rows remain the retry authority until every immutable byte has been removed. A write
+    // journal may share that storage reference only when both authorities agree on its integrity.
+    const immutableStorage = new Map<string, Integrity>()
+    const integrityFor = (entry: {
+      contentStorageKey: string
+      sizeBytes: bigint
+      checksum: string
+    }): Integrity => {
+      const sizeBytes = Number(entry.sizeBytes)
+      if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+        throw new Error(
+          `Immutable Version size is outside the supported range: ${entry.contentStorageKey}`
+        )
+      }
+      return { sizeBytes, checksum: entry.checksum }
+    }
+    for (const entry of [...artifactVersions, ...uploadVersions]) {
+      const integrity = integrityFor(entry)
+      const existing = immutableStorage.get(entry.contentStorageKey)
+      if (
+        existing &&
+        (existing.sizeBytes !== integrity.sizeBytes || existing.checksum !== integrity.checksum)
+      ) {
+        throw new Error(`Conflicting immutable Version integrity: ${entry.contentStorageKey}`)
+      }
+      immutableStorage.set(entry.contentStorageKey, integrity)
+    }
+    for (const [storageRef, expectedIntegrity] of immutableStorage) {
+      await this.versionFileOperator.removeImmutable(storageRef, expectedIntegrity)
+    }
+
+    for (const operation of versionWriteOperations) {
+      const expectedIntegrity = integrityFor(operation)
+      const versionIntegrity = immutableStorage.get(operation.contentStorageKey)
+      if (versionIntegrity) {
+        if (
+          versionIntegrity.sizeBytes !== expectedIntegrity.sizeBytes ||
+          versionIntegrity.checksum !== expectedIntegrity.checksum
+        ) {
+          throw new Error(`Conflicting immutable Version integrity: ${operation.contentStorageKey}`)
+        }
+        continue
+      }
+
+      // Legacy journals have no durable claim and can only be removed when their complete bytes
+      // match. Current journals use the operator claim to distinguish owned partial writes from
+      // unrelated occupants before any incomplete content is removed.
+      const recoveryPlan = journalRecoveryPlan(
+        this.versionFileOperator,
+        operation,
+        journalOwners.get(`${operation.source}:${operation.sourceFileId}`)
+      )
+      if (!recoveryPlan) {
+        await this.versionFileOperator.removeImmutable(
+          operation.contentStorageKey,
+          expectedIntegrity
+        )
+        continue
+      }
+      const inspection = await this.versionFileOperator.inspectRecovery({
+        ...recoveryPlan.input,
+        plannedFile: recoveryPlan.plannedFile,
+        expectedIntegrity
+      })
+      if (inspection.state === 'complete') {
+        await this.versionFileOperator.removeImmutable(
+          operation.contentStorageKey,
+          expectedIntegrity
+        )
+      } else if (inspection.state === 'incomplete') {
+        await this.versionFileOperator.removeIncomplete({
+          ...recoveryPlan.input,
+          plannedFile: recoveryPlan.plannedFile,
+          actualIntegrity: inspection.actualIntegrity
+        })
+      } else if (inspection.state === 'occupied') {
+        throw new VersionFileOperatorError(
+          'INTEGRITY_FAILED',
+          `Unclaimed Version journal storage is occupied: ${operation.contentStorageKey}`
+        )
+      }
+    }
+
+    // Auxiliary provenance evidence and legacy compatibility files are not immutable Version
+    // content. Remove both source roots before the database transaction so failure keeps authority.
+    await rm(resolveStorageKey(this.options.storageRoot, storageKey('artifacts', projectId)), {
+      recursive: true,
+      force: true
+    })
+    await rm(resolveStorageKey(this.options.storageRoot, storageKey('uploads', projectId)), {
+      recursive: true,
+      force: true
+    })
 
     await client.$transaction(async (tx) => {
       await tx.artifactVersionInput.deleteMany({
@@ -837,20 +1035,40 @@ class ArtifactProvenanceRepository {
           ]
         }
       })
+      await tx.managedFileVersionWriteOperation.deleteMany({ where: { projectId } })
+      await tx.artifactLineage.updateMany({
+        where: { projectId },
+        data: { currentVersionId: null }
+      })
+      await tx.uploadFile.updateMany({
+        where: { projectId },
+        data: { currentVersionId: null }
+      })
+      const artifactVersions = await tx.artifactVersion.findMany({
+        where: { artifact: { is: { projectId } } },
+        orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
+        select: { id: true }
+      })
+      for (const version of artifactVersions) {
+        await tx.artifactVersion.delete({ where: { id: version.id } })
+      }
+      const uploadVersionRows = await tx.uploadVersion.findMany({
+        where: { uploadFile: { is: { projectId } } },
+        orderBy: [{ versionNumber: 'desc' }, { id: 'desc' }],
+        select: { id: true }
+      })
+      for (const version of uploadVersionRows) {
+        await tx.uploadVersion.delete({ where: { id: version.id } })
+      }
       await tx.artifactLineage.deleteMany({ where: { projectId } })
       await tx.uploadFile.deleteMany({ where: { projectId } })
       await tx.artifactMessageSnapshot.deleteMany({ where: { projectId } })
       await tx.fileOriginSession.deleteMany({ where: { projectId } })
     })
-
-    await rm(resolveStorageKey(this.options.storageRoot, storageKey('artifacts', projectId)), {
-      recursive: true,
-      force: true
-    })
   }
 
   private async toArtifactVersionFile(
-    version: PersistedVersionFileRecord,
+    version: ProjectableVersionFileRecord,
     projectId: string,
     appSessionId: string
   ): Promise<ArtifactVersionFile> {
@@ -889,7 +1107,7 @@ class ArtifactProvenanceRepository {
       environment,
       projectId,
       sessionId: appSessionId,
-      runId: version.artifactRunId,
+      runId: version.artifactRunId ?? undefined,
       name: version.filename,
       path: filePath,
       fileUrl: pathToFileURL(filePath).toString(),
@@ -900,7 +1118,7 @@ class ArtifactProvenanceRepository {
   }
 
   private async toDescriptor(
-    version: PersistedVersionFileRecord & { state: string; messageId: string | null },
+    version: VersionDescriptorRecord,
     projectId: string,
     appSessionId: string
   ): Promise<ArtifactVersionDescriptor> {
@@ -911,7 +1129,9 @@ class ArtifactProvenanceRepository {
     return {
       ...relocatableFile,
       state: version.state as 'pending' | 'finalized',
-      messageId: version.messageId ?? undefined
+      messageId: version.messageId ?? undefined,
+      originKind: version.originKind as 'agent_generated' | 'user_edit' | 'legacy',
+      basedOnVersionId: version.basedOnVersionId ?? undefined
     }
   }
 }

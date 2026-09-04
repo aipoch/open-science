@@ -204,7 +204,7 @@ describe('WorkspaceSidebarContainer Project switching', () => {
     }
   })
 
-  it('closes mobile navigation before opening the selected project', async () => {
+  it('closes mobile navigation after opening the selected project', async () => {
     useProjectStore.setState({
       ...createInitialProjectState(),
       projects: [
@@ -214,7 +214,7 @@ describe('WorkspaceSidebarContainer Project switching', () => {
       isLoaded: true
     })
     const onMobileClose = vi.fn(() => {
-      expect(useNavigationStore.getState().activeProjectId).toBe('project-1')
+      expect(useNavigationStore.getState().activeProjectId).toBe('project-2')
     })
     const container = document.createElement('div')
     const root = createRoot(container)

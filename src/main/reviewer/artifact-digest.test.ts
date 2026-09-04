@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { resolveTurnScopeWithArtifactDigests } from './artifact-digest'
+import type { ArtifactVersionContentResolver } from './host-sdk'
 
 let storageRoot: string | undefined
 
@@ -44,6 +45,16 @@ const buildSession = (): PersistedChatSession => ({
       artifactIds: ['session-1:a1:report.csv'],
       createdAt: 1002,
       updatedAt: 1002
+    }
+  ],
+  artifacts: [
+    {
+      id: 'session-1:a1:report.csv',
+      artifactId: 'artifact-1',
+      versionId: 'session-1:a1:report.csv',
+      kind: 'managed-file',
+      path: 'report.csv',
+      mimeType: 'text/csv'
     }
   ],
   createdAt: 1000,
@@ -96,6 +107,16 @@ describe('resolveTurnScopeWithArtifactDigests', () => {
     const nativePath = join(storageRoot, 'native.csv')
     const session: PersistedChatSession = {
       ...buildSession(),
+      artifacts: [
+        {
+          id: nativeVersionId,
+          artifactId: 'artifact-1',
+          versionId: nativeVersionId,
+          kind: 'managed-file',
+          path: 'native.csv',
+          mimeType: 'text/csv'
+        }
+      ],
       messages: [
         buildSession().messages[0],
         { ...buildSession().messages[1], artifactIds: [nativeVersionId] }
@@ -103,15 +124,17 @@ describe('resolveTurnScopeWithArtifactDigests', () => {
     }
     let contents = 'first native version'
     await writeFile(nativePath, contents)
-    const resolveVersion = async (): Promise<{
-      path: string
-      filename: string
-      checksum: string
-    }> => ({
-      path: nativePath,
-      filename: 'native.csv',
-      checksum: createHash('sha256').update(contents).digest('hex')
-    })
+    const resolveVersion: ArtifactVersionContentResolver = async () => {
+      const bytes = Buffer.from(contents)
+      return {
+        filename: 'native.csv',
+        checksum: createHash('sha256').update(bytes).digest('hex'),
+        size: bytes.byteLength,
+        readRange: async (begin: number, end: number) => bytes.subarray(begin, end),
+        verifyUnchanged: async () => undefined,
+        close: async () => undefined
+      }
+    }
 
     const before = await resolveTurnScopeWithArtifactDigests(
       session,
@@ -144,20 +167,15 @@ describe('resolveTurnScopeWithArtifactDigests', () => {
     ).rejects.toThrow(authorityError.message)
   })
 
-  it('falls back to legacy managed bytes when no provenance Version exists', async () => {
+  it('does not fall back to legacy managed bytes when Version authority rejects the read', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'reviewer-legacy-digest-'))
     await writeArtifact(storageRoot, 'legacy bytes')
 
-    const scope = await resolveTurnScopeWithArtifactDigests(
-      buildSession(),
-      'a1',
-      storageRoot,
-      async () => {
+    await expect(
+      resolveTurnScopeWithArtifactDigests(buildSession(), 'a1', storageRoot, async () => {
         throw new Error('Version not found')
-      }
-    )
-
-    expect(scope.blocks.find((block) => block.sourceId === 'a1')?.contentHash).toBeDefined()
+      })
+    ).rejects.toThrow('Version not found')
   })
 
   it('streams a large artifact fully (a late-byte edit still changes the hash)', async () => {

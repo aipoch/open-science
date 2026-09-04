@@ -1778,7 +1778,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     expect(String(sent[1]?.historyPreamble)).not.toContain('Failed follow-up')
   })
 
-  it('keeps durable state and provider data when app shutdown interrupts a turn', async () => {
+  it('keeps durable state and blocks prompt admission until a handoff is released', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-shutdown-'))
     const persistence = createPersistence()
     let runtimeOptions: AcpRuntimeOptions | undefined
@@ -1807,6 +1807,11 @@ describe('SideChatRuntimeOwner lifecycle', () => {
             sessionId: 'provider-shutdown',
             frameworkId: 'claude-code' as const
           })),
+          resumeSession: vi.fn(async () => ({
+            sessionId: 'provider-shutdown',
+            providerSessionId: 'provider-shutdown',
+            frameworkId: 'claude-code' as const
+          })),
           sendPrompt: vi.fn((request: { sessionId: string }) => {
             runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
             return turn
@@ -1824,7 +1829,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       projectId: 'project-1',
       text: 'Still running'
     })
-    await owner.shutdown()
+    await owner.suspendAll({ holdAdmission: true })
 
     expect(cancelPrompt).toHaveBeenCalledWith({ sessionId: 'provider-shutdown' })
     expect(deleteSession).not.toHaveBeenCalled()
@@ -1848,6 +1853,107 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     await expect(
       stat(join(temporaryRoot, 'runtime-support', 'side-chat', started.sideSessionId))
     ).resolves.toBeDefined()
+
+    await expect(
+      owner.send({ sideSessionId: started.sideSessionId, text: 'Blocked during handoff' })
+    ).rejects.toThrow('Side chat is shutting down.')
+
+    owner.resumeAfterHandoff()
+    await expect(
+      owner.send({ sideSessionId: started.sideSessionId, text: 'Continue after handoff' })
+    ).resolves.toBeUndefined()
+
+    await owner.suspendAll()
+    await expect(
+      owner.send({
+        sideSessionId: started.sideSessionId,
+        text: 'Continue after ordinary suspension'
+      })
+    ).resolves.toBeUndefined()
+    await owner.close({ sideSessionId: started.sideSessionId })
+  })
+
+  it('waits for an admitted prompt before completing handoff suspension', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-handoff-dispatch-'))
+    const persistence = createPersistence()
+    const followUpSave = deferred<void>()
+    let blockedFollowUpSave = false
+    persistence.save.mockImplementation(async (input) => {
+      if (
+        !blockedFollowUpSave &&
+        input.sideChat.entries.some(
+          (entry) => entry.kind === 'message' && entry.text === 'Admitted before handoff'
+        )
+      ) {
+        blockedFollowUpSave = true
+        await followUpSave.promise
+      }
+      return input.sideChat
+    })
+
+    let runtimeOptions: AcpRuntimeOptions | undefined
+    const followUpTurn = deferred<{ stopReason: 'cancelled' }>()
+    let promptCount = 0
+    const sendPrompt = vi.fn((request: { sessionId: string }) => {
+      promptCount += 1
+      runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+      if (promptCount === 1) return Promise.resolve({ stopReason: 'end_turn' as const })
+      return followUpTurn.promise
+    })
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeOptions = options
+        return {
+          createSession: vi.fn(async () => ({
+            sessionId: 'provider-handoff-dispatch',
+            frameworkId: 'claude-code' as const
+          })),
+          sendPrompt,
+          cancelPrompt: vi.fn(async () => {
+            followUpTurn.resolve({ stopReason: 'cancelled' })
+            return { stopReason: 'cancelled' as const }
+          }),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit: vi.fn(async () => undefined)
+        } as never
+      }
+    })
+
+    const started = await owner.start({
+      parentSessionId: 'main-handoff-dispatch',
+      projectId: 'project-1',
+      text: 'Initial question'
+    })
+    await vi.waitFor(() => expect(owner.list().chats[0]?.running).toBe(false))
+
+    const send = owner.send({
+      sideSessionId: started.sideSessionId,
+      text: 'Admitted before handoff'
+    })
+    await vi.waitFor(() => expect(blockedFollowUpSave).toBe(true))
+    const suspension = owner.suspendAll({ holdAdmission: true })
+    followUpSave.resolve()
+    await expect(send).rejects.toThrow('Side chat is shutting down.')
+    await suspension
+    expect(sendPrompt).toHaveBeenCalledOnce()
+    expect(persistence.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sideChat: expect.objectContaining({
+          lifecycle: 'interrupted',
+          entries: expect.arrayContaining([
+            expect.objectContaining({ text: 'Admitted before handoff' })
+          ])
+        })
+      })
+    )
   })
 
   it('waits for dormant activation and blocks prompt admission during app shutdown', async () => {

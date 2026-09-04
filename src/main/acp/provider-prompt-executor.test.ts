@@ -1,10 +1,16 @@
 import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
-const { claudeBegin } = vi.hoisted(() => ({ claudeBegin: vi.fn() }))
+const { claudeBegin, createClaudeAdapter } = vi.hoisted(() => ({
+  claudeBegin: vi.fn(),
+  createClaudeAdapter: vi.fn()
+}))
 
 vi.mock('./claude-turn-adapter', () => ({
-  claudeCodeTurnAdapter: { begin: (...args: unknown[]) => claudeBegin(...args) }
+  createClaudeCodeTurnAdapter: (...args: unknown[]) => {
+    createClaudeAdapter(...args)
+    return { begin: (...beginArgs: unknown[]) => claudeBegin(...beginArgs) }
+  }
 }))
 
 import {
@@ -90,7 +96,12 @@ const setup = (
   const routeNotification = vi.fn()
   const report = vi.fn()
   const executor = new AcpProviderPromptExecutor({
-    backendGeneration: { openCodeUsageApi: () => undefined }
+    backendGeneration: {
+      openCodeUsageApi: () => undefined,
+      current: {
+        adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+      }
+    }
   })
   claudeBegin.mockImplementation((input) => adapter.begin(input))
   return {
@@ -118,6 +129,36 @@ const setup = (
 }
 
 describe('AcpProviderPromptExecutor', () => {
+  it('gives the Claude adapter a transcript reader for the active config root', async () => {
+    const executor = new AcpProviderPromptExecutor({
+      backendGeneration: {
+        openCodeUsageApi: () => undefined,
+        current: {
+          adapter: {
+            claudeConfigDir: '/profiles/app-claude',
+            nativeMcpEnabled: true,
+            bridgeMcpAliasesEnabled: false
+          }
+        }
+      }
+    })
+    claudeBegin.mockResolvedValue({
+      finalize: () => ({}),
+      cancel: () => undefined
+    })
+
+    const probe = await executor.beginObservation({
+      providerSessionId: 'provider-1',
+      cwd: '/workspace',
+      frameworkId: 'claude-code'
+    })
+
+    expect(createClaudeAdapter).toHaveBeenCalledWith({
+      readTranscriptMessages: expect.any(Function)
+    })
+    await probe.cancel()
+  })
+
   it('captures one OpenCode generation API for both usage snapshots', async () => {
     const api = { baseUrl: 'https://usage.example/v1', authorization: 'Bearer generation-1' }
     const openCodeUsageApi = vi.fn(() => api)
@@ -145,7 +186,12 @@ describe('AcpProviderPromptExecutor', () => {
       nextUpdate: vi.fn(async () => stop(response))
     } as unknown as ProviderPromptExecutionInput['session']
     const executor = new AcpProviderPromptExecutor({
-      backendGeneration: { openCodeUsageApi },
+      backendGeneration: {
+        openCodeUsageApi,
+        current: {
+          adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+        }
+      },
       opencodeUsageFetch: fetchImpl
     })
 

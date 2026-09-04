@@ -61,9 +61,10 @@ export const SkillMentionPopup = ({
   const matches = useMemo<SkillMatch[]>(() => {
     const needle = query.trim()
     const allowed = allowedSkillIds ? new Set(allowedSkillIds) : undefined
+    const availableSkills = skills.filter((skill) => skill.available !== false)
     const visibleSkills = allowed
-      ? skills.filter((skill) => allowed.has(skill.id))
-      : skills.filter((skill) => skill.enabled)
+      ? availableSkills.filter((skill) => allowed.has(skill.id))
+      : availableSkills.filter((skill) => skill.enabled)
     if (needle.length === 0) return visibleSkills.map((skill) => ({ skill, positions: [] }))
 
     const descNeedle = needle.toLowerCase()

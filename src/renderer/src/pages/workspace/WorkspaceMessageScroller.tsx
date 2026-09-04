@@ -102,6 +102,7 @@ import type { AnnotationPort } from './annotations/annotation-port'
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
   credentialPending?: boolean
+  visiblePermissionPending?: boolean
   isResumingSession?: boolean
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: SendEditedMessage
@@ -391,6 +392,7 @@ const EditableWorkspaceMessageItem = (
 const WorkspaceMessageScrollerImpl = ({
   activeSession,
   credentialPending = false,
+  visiblePermissionPending = false,
   isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
@@ -1739,12 +1741,19 @@ const WorkspaceMessageScrollerImpl = ({
               {presentationBarrierIndex < 0 ? trailingContent : null}
 
               {isResumingSession && activeSession ? (
-                <WorkspaceAgentLoadingRow sessionId={activeSession.id} phase="resuming" />
+                <WorkspaceAgentLoadingRow
+                  sessionId={activeSession.id}
+                  phase="resuming"
+                  visiblePermissionPending={visiblePermissionPending}
+                />
               ) : agentLoadingPhase !== 'hidden' && activeSession ? (
                 <WorkspaceAgentLoadingRow
                   sessionId={activeSession.id}
                   phase={agentLoadingPhase}
                   agentStatus={activeSession.agentStatus}
+                  visiblePermissionPending={
+                    visiblePermissionPending || activeSession.status === 'waiting-plan-approval'
+                  }
                 />
               ) : null}
             </MessageScrollerContent>
@@ -1872,6 +1881,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
 ): boolean =>
   previous.onSendEditedMessage === next.onSendEditedMessage &&
   (previous.credentialPending ?? false) === (next.credentialPending ?? false) &&
+  (previous.visiblePermissionPending ?? false) === (next.visiblePermissionPending ?? false) &&
   previous.optimisticMessage === next.optimisticMessage &&
   (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
   (previous.reportPresentationRevealing ?? false) === (next.reportPresentationRevealing ?? false) &&

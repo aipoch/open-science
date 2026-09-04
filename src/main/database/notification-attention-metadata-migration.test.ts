@@ -83,14 +83,16 @@ describe('notification attention metadata migration', () => {
         '0021_compute_job_analysis_constraints',
         '0022_memory_global_content_unique',
         '0023_compute_job_operation',
-        '0024_compute_job_file_evidence'
+        '0024_compute_job_file_evidence',
+        '0025_managed_file_version_foundation',
+        '0026_compute_job_remote_cleanup'
       ],
       from: '0006_database_domain_constraints',
-      to: '0024_compute_job_file_evidence'
+      to: '0026_compute_job_remote_cleanup'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)
-    ).rejects.toMatchObject({ code: 'ENOENT' })
+    ).resolves.toBeUndefined()
     await expect(
       access(`${databasePath}.before-0011_cross_resource_tags.backup`)
     ).rejects.toMatchObject({ code: 'ENOENT' })
@@ -123,10 +125,13 @@ describe('notification attention metadata migration', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0023_compute_job_operation.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0024_compute_job_file_evidence.backup`)
-    ).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      access(`${databasePath}.before-0025_managed_file_version_foundation.backup`)
+    ).rejects.toMatchObject({ code: 'ENOENT' })
 
     await expect(
       client.$queryRaw<

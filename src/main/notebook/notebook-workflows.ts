@@ -10,6 +10,7 @@ import type {
   NotebookCell,
   NotebookNamespaceRequest,
   NotebookNamespaceSnapshot,
+  NotebookRestartRequest,
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
@@ -53,7 +54,7 @@ type NotebookCommandRuntime = {
   execute(request: ExecuteNotebookCodeRequest): Promise<NotebookRunSummary>
   exportIpynb(request: ExportNotebookKernelRequest): Promise<ExportNotebookResult>
   exportIpynbAll(request: ExportNotebookAllRequest): Promise<ExportNotebookAllResult>
-  restart(request: NotebookSessionRequest): Promise<NotebookSessionState>
+  restart(request: NotebookRestartRequest): Promise<NotebookSessionState>
   shutdown(request: NotebookSessionRequest): Promise<NotebookShutdownResult>
 }
 
@@ -68,7 +69,7 @@ type NotebookCommandWorkflows = {
   execute(request: ExecuteNotebookCodeRequest): Promise<NotebookRunSummary>
   exportIpynb(request: ExportNotebookKernelRequest): Promise<ExportNotebookResult>
   exportIpynbAll(request: ExportNotebookAllRequest): Promise<ExportNotebookAllResult>
-  restart(request: NotebookSessionRequest): Promise<NotebookSessionState>
+  restart(request: NotebookRestartRequest): Promise<NotebookSessionState>
   shutdown(request: NotebookSessionRequest): Promise<NotebookShutdownResult>
 }
 

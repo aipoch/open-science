@@ -8,6 +8,7 @@ import {
   type ContributionTemplateExportResult
 } from '../../../shared/specialist-package'
 import { englishNativeTranslator, type NativeTranslator } from '../../locale/main-process-messages'
+import { publishUserFile } from '../../user-file-publisher'
 
 export const CONTRIBUTION_TEMPLATE_FILENAME = 'openscience-specialist-template.zip'
 
@@ -26,6 +27,7 @@ type ContributionTemplateExporterDependencies = {
   }) => Promise<{ canceled: boolean; filePath?: string }>
   readReadme: () => Promise<string>
   writeFile: (filePath: string, bytes: Uint8Array) => Promise<void>
+  publishUserFile?: typeof publishUserFile
   generatePackageId?: () => string
   translate?: NativeTranslator
 }
@@ -38,7 +40,7 @@ const assertValidAppVersion = (appVersion: string): void => {
 export const buildDeterministicSpecialistZip = (
   files: Readonly<Record<string, Uint8Array>>
 ): Uint8Array => {
-  const zipOptions = { mtime: new Date('1980-01-01T00:00:00.000Z') }
+  const zipOptions = { mtime: new Date(1980, 0, 1) }
   const entries: Zippable = {}
   for (const [path, bytes] of Object.entries(files).sort(([left], [right]) =>
     left.localeCompare(right)
@@ -98,7 +100,10 @@ export const createContributionTemplateExporter =
         readme,
         packageId: (dependencies.generatePackageId ?? randomUUID)()
       })
-      await dependencies.writeFile(destination.filePath, archive)
+      await (dependencies.publishUserFile ?? publishUserFile)(
+        destination.filePath,
+        (temporaryPath) => dependencies.writeFile(temporaryPath, archive)
+      )
       return { saved: true }
     } catch {
       throw new Error('Could not save contribution template.')

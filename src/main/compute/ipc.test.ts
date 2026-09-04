@@ -991,6 +991,72 @@ describe('compute handlers — jobsList', () => {
 // ---------------------------------------------------------------------------
 
 describe('host delete guard', () => {
+  const blockingJob = {
+    job_id: 'job-1',
+    provider_id: 'ssh:biowulf',
+    project_id: 'project-1',
+    session_id: 'session-1',
+    status: 'success',
+    intent: 'completed research',
+    created_at: 1
+  } as ComputeJob
+
+  it('returns the Jobs that block Host deletion', async () => {
+    const findDeletionBlockingJobsForProvider = vi.fn(async () => [blockingJob])
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({}),
+      undefined,
+      undefined,
+      mockJobRepo({ findDeletionBlockingJobsForProvider })
+    )
+
+    await expect(handlers.deletionStatus('ssh:biowulf')).resolves.toEqual({
+      blockedByJobs: true,
+      blockingJobs: [
+        {
+          jobId: 'job-1',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          status: 'success',
+          cancellationStatus: undefined,
+          harvested: false,
+          intent: 'completed research',
+          createdAt: 1
+        }
+      ]
+    })
+  })
+
+  it('settles an explicitly abandoned remote cleanup without deleting Job history', async () => {
+    const settleRemoteCleanup = vi.fn(async () => ({
+      ...blockingJob,
+      remote_cleanup_disposition: 'abandoned' as const
+    }))
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({}),
+      undefined,
+      undefined,
+      mockJobRepo({
+        get: vi.fn(async () => blockingJob),
+        settleRemoteCleanup
+      })
+    )
+    const request = {
+      jobId: 'job-1',
+      providerId: 'ssh:biowulf',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      disposition: 'abandoned' as const
+    }
+
+    await expect(handlers.jobsSetRemoteCleanup(request)).resolves.toBeUndefined()
+    expect(settleRemoteCleanup).toHaveBeenCalledWith(request)
+  })
+
   it('rejects password Credential deletion when the application caller is not local', async () => {
     const del = vi.fn(async () => undefined)
     const passwordHost = sampleHost({
@@ -2384,6 +2450,7 @@ describe('installComputeIpcHandlers', () => {
       'compute:approval-replay',
       'compute:approval-replay-pending',
       'compute:jobs:cancel',
+      'compute:jobs:set-remote-cleanup',
       COMPUTE_JOBS_LIST_CHANNEL,
       'compute:jobs:pending-notification',
       'compute:jobs:mark-consumed',

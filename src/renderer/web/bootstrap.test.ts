@@ -11,6 +11,7 @@ import {
   WEB_EVENT_CONSUMERS_READY_EVENT,
   WEB_EVENTS_OPEN_EVENT
 } from '../../shared/web-event-connection'
+import type { SaveManagedFileRequest } from '../../shared/file-save'
 
 const themeMocks = vi.hoisted(() => ({
   applyTheme: vi.fn(),
@@ -61,11 +62,7 @@ type WebApi = {
     create: (request: unknown) => Promise<unknown>
     onCreated: (listener: (payload: unknown) => void) => () => void
   }
-  saveManagedFile: (request: {
-    source: 'artifact' | 'upload'
-    path: string
-    suggestedName: string
-  }) => Promise<{ saved: boolean }>
+  saveManagedFile: (request: SaveManagedFileRequest) => Promise<{ saved: boolean }>
 }
 
 const bootstrapPayload = {
@@ -118,6 +115,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.resetModules()
   FakeWebSocket.instances = []
+  document.documentElement.removeAttribute('data-open-science-notebook-network-unavailable')
   document.body.innerHTML = `
     <div id=open-science-connection-state role=status>
       <div class=open-science-connection-panel>
@@ -153,6 +151,28 @@ afterEach(() => {
 })
 
 describe('Web bootstrap event connection', () => {
+  it('marks Notebook network settings unavailable when the RPC is remote-restricted', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...bootstrapPayload,
+              restrictedRpcChannels: ['settings:get-notebook-network-status']
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          )
+      )
+    )
+
+    await loadBootstrap()
+
+    expect(
+      document.documentElement.hasAttribute('data-open-science-notebook-network-unavailable')
+    ).toBe(true)
+  })
+
   // Bootstrap owns this pre-React connection surface, so its copy must use the initialized i18n.
   it('localizes the initial connection message with the initialized locale', async () => {
     localStorage.setItem('open-science-language', 'zh-Hans')
@@ -231,7 +251,7 @@ describe('Web bootstrap event connection', () => {
                 message: 'Invalid project request.'
               }
             }),
-            { status: 500, headers: { 'content-type': 'application/json' } }
+            { status: 400, headers: { 'content-type': 'application/json' } }
           )
         }
         throw new Error(`Unexpected fetch: ${String(input)}`)
@@ -484,9 +504,10 @@ describe('Web bootstrap event connection', () => {
     const resourceResponse = new Response(new Uint8Array([1, 2, 3]))
     const blob = vi.spyOn(resourceResponse, 'blob')
     let released = false
+    let acquireRequest: unknown
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (input: RequestInfo | URL) => {
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input)
         if (url === '/api/bootstrap') {
           return new Response(JSON.stringify(bootstrapPayload), {
@@ -495,6 +516,7 @@ describe('Web bootstrap event connection', () => {
           })
         }
         if (url === '/rpc/preview-resources%3Aacquire') {
+          acquireRequest = JSON.parse(String(init?.body))
           return new Response(
             JSON.stringify({
               protocolVersion: WEB_RPC_PROTOCOL_VERSION,
@@ -532,15 +554,29 @@ describe('Web bootstrap event connection', () => {
     await expect(
       api.saveManagedFile({
         source: 'artifact',
-        path: 'artifact-1/report.bin',
+        projectId: 'project-1',
+        fileId: 'artifact-1',
+        versionId: 'version-3',
+        path: 'artifact-version:project-1/session-1/artifact-1/version-3',
         suggestedName: 'report.bin'
-      })
+      } as SaveManagedFileRequest)
     ).resolves.toEqual({ saved: true })
 
     expect(showSaveFilePicker).toHaveBeenCalledWith({ suggestedName: 'report.bin' })
     expect(createWritable).toHaveBeenCalledOnce()
     expect(blob).not.toHaveBeenCalled()
     expect(savedBytes).toEqual([1, 2, 3])
+    expect(acquireRequest).toEqual({
+      protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+      args: [
+        {
+          source: 'artifact',
+          projectId: 'project-1',
+          fileId: 'artifact-1',
+          versionId: 'version-3'
+        }
+      ]
+    })
     expect(released).toBe(true)
   })
 
@@ -602,7 +638,8 @@ describe('Web bootstrap event connection', () => {
     await expect(
       api.saveManagedFile({
         source: 'upload',
-        path: 'upload-1/data.bin',
+        projectId: 'project-1',
+        fileId: 'upload-1',
         suggestedName: 'data.bin'
       })
     ).rejects.toMatchObject({ name: 'WebManagedFileSizeLimitError' })
@@ -675,7 +712,8 @@ describe('Web bootstrap event connection', () => {
     const api = await loadBootstrap()
     const request = api.saveManagedFile({
       source: 'artifact',
-      path: 'artifact-1/report.pdf',
+      projectId: 'project-1',
+      fileId: 'artifact-1',
       suggestedName: 'report.pdf'
     })
     const outcome = Promise.race([

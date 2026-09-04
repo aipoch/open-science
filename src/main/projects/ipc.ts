@@ -9,6 +9,7 @@ import type {
 import type {
   CreateProjectRequest,
   Project,
+  ProjectDeletionCleanup,
   ProjectDeletionOutcome,
   UpdateProjectArchiveRequest,
   UpdateProjectRequest
@@ -26,6 +27,8 @@ type ProjectHandlers = {
   update: (request: UpdateProjectRequest) => Promise<Project>
   updateArchive: (request: UpdateProjectArchiveRequest) => Promise<Project>
   delete: (id: string) => Promise<ProjectDeletionOutcome>
+  listDeletionCleanup: () => Promise<ProjectDeletionCleanup[]>
+  retryDeletionCleanup: () => Promise<void>
 }
 
 // Production repositories backed by the SQLite database under the (dev-aware) storage root. The client is
@@ -39,7 +42,7 @@ const createDefaultPreviewStateRepository = (): PreviewStateRepository =>
 
 type ProjectDeleteHandler = Pick<
   ProjectDeletionCoordinator,
-  'deleteProject' | 'waitForProjectOperations'
+  'deleteProject' | 'listDeletionCleanup' | 'retryDeletionCleanup' | 'waitForProjectOperations'
 >
 type ProjectCrudRepository = Pick<ProjectRepository, 'list' | 'get' | 'create' | 'update'> &
   Partial<Pick<ProjectRepository, 'updateArchive'>>
@@ -90,7 +93,9 @@ const createProjectHandlers = (
   delete: async (id) => {
     await deletionCoordinator.waitForProjectOperations([id])
     return deletionCoordinator.deleteProject(id)
-  }
+  },
+  listDeletionCleanup: () => deletionCoordinator.listDeletionCleanup(),
+  retryDeletionCleanup: async () => deletionCoordinator.retryDeletionCleanup()
 })
 
 const registerPreviewStateIpcHandlers = (previewRepository: PreviewStateRepository): void => {

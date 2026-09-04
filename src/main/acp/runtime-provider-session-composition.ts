@@ -25,6 +25,7 @@ const composeAcpRuntimeProviderSessionOwners = (
   lifecycle: AcpRuntimeLifecycleOwners,
   runtime: Readonly<{
     clearUserChoiceProvenanceForSession: (sessionId: string) => void
+    releasePromptResourcesForSession: (sessionId: string) => void
   }>
 ) => {
   const currentConnection = (): ClientConnection | undefined => base.connectionResources.connection
@@ -124,6 +125,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     clearUserChoiceProvenanceForSession: runtime.clearUserChoiceProvenanceForSession,
     appContinuations: session.appContinuations,
     promptContent: base.promptContentOwner,
+    releasePromptResourcesForSession: runtime.releasePromptResourcesForSession,
     contextUsage: base.contextUsageTracker,
     interactions: base.sessionInteractions,
     resolveSpecialistIdentity: options.resolveSpecialistIdentity,
@@ -142,6 +144,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     interactions: base.sessionInteractions,
     capabilities: base.sessionCapabilities,
     promptContent: base.promptContentOwner,
+    releasePromptResourcesForSession: runtime.releasePromptResourcesForSession,
     handoff: base.handoffContinuity,
     contextUsage: base.contextUsageTracker,
     projector: session.sessionUpdateProjector,

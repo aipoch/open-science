@@ -78,6 +78,54 @@ describe('ConcurrencyManager', () => {
       await manager.setSessionLimit('session-1', 7)
       expect(manager['sessionLimits'].get('session-1')).toBe(7)
     })
+
+    it('does not change the live limit when durable persistence fails', async () => {
+      const durableManager = new ConcurrencyManager(
+        jobRepo,
+        hostRepo,
+        dispatchJob,
+        onJobUpdated,
+        undefined,
+        undefined,
+        {
+          load: async () => [],
+          save: async () => {
+            throw new Error('Session write failed')
+          }
+        }
+      )
+
+      await expect(durableManager.setSessionLimit('session-1', 5)).rejects.toThrow(
+        'Session write failed'
+      )
+      expect(durableManager['sessionLimits'].has('session-1')).toBe(false)
+    })
+
+    it('projects an already-persisted limit without writing the Session again', async () => {
+      const save = vi.fn(async () => undefined)
+      const durableManager = new ConcurrencyManager(
+        jobRepo,
+        hostRepo,
+        dispatchJob,
+        onJobUpdated,
+        undefined,
+        undefined,
+        { load: async () => [], save }
+      )
+
+      await durableManager.projectPersistedSessionLimit('session-1', 2)
+
+      expect(durableManager['sessionLimits'].get('session-1')).toBe(2)
+      expect(save).not.toHaveBeenCalled()
+    })
+
+    it('clears projected limits when their Sessions are deleted', async () => {
+      await manager.projectPersistedSessionLimit('session-1', 2)
+
+      await manager.clearProjectedSessionLimits(['session-1'])
+
+      expect(manager['sessionLimits'].has('session-1')).toBe(false)
+    })
   })
 
   describe('setProviderLimit', () => {
@@ -135,6 +183,85 @@ describe('ConcurrencyManager', () => {
       )
       expect(hostRepo.updateConcurrencyLimit).not.toHaveBeenCalled()
     })
+  })
+
+  it('keeps queued reconciliation stopped when durable limits cannot be restored', async () => {
+    const durableManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      dispatchJob,
+      onJobUpdated,
+      undefined,
+      undefined,
+      {
+        load: async () => {
+          throw new Error('Session catalog unavailable')
+        },
+        save: async () => undefined
+      }
+    )
+
+    await expect(durableManager.startQueueReconciliation()).rejects.toThrow(
+      'Session catalog unavailable'
+    )
+    await durableManager.reconcileQueuedJobs()
+    expect(jobRepo.findQueuedJobs).not.toHaveBeenCalled()
+  })
+
+  it('queues new admissions when durable limits cannot be restored', async () => {
+    const durableManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      dispatchJob,
+      onJobUpdated,
+      undefined,
+      undefined,
+      {
+        load: async () => {
+          throw new Error('Session catalog unavailable')
+        },
+        save: async () => undefined
+      }
+    )
+    vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+    vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+    vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 10 } as ComputeHost)
+    const commit = vi.fn(async () => undefined)
+
+    await expect(durableManager.startQueueReconciliation()).rejects.toThrow(
+      'Session catalog unavailable'
+    )
+    await expect(
+      durableManager.admit({ sessionId: 'session-1', providerId: 'ssh:cluster-a' }, commit)
+    ).resolves.toBe('queued')
+    expect(commit).toHaveBeenCalledWith('queued')
+  })
+
+  it('does not hold the admission lock while loading durable limits', async () => {
+    const managerRef: { current?: ConcurrencyManager } = {}
+    const durableManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      dispatchJob,
+      onJobUpdated,
+      undefined,
+      undefined,
+      {
+        load: async () => {
+          await managerRef.current?.clearProjectedSessionLimits(['deleted-session'])
+          return [['session-1', 1]]
+        },
+        save: async () => undefined
+      }
+    )
+    managerRef.current = durableManager
+
+    await expect(
+      Promise.race([
+        durableManager.startQueueReconciliation().then(() => 'restored' as const),
+        new Promise<'timed_out'>((resolve) => setTimeout(() => resolve('timed_out'), 100))
+      ])
+    ).resolves.toBe('restored')
   })
 
   describe('enqueue - global queue limit', () => {

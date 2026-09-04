@@ -139,6 +139,28 @@ describe('PR Gate aggregation', () => {
     })
   })
 
+  it('accepts a compact GitHub Actions plan that omits reason chains', () => {
+    const result = evaluatePrGate(
+      {
+        schemaVersion: 1,
+        mode: 'selective',
+        roots: ['documentation'],
+        lanes: ['policy', 'docs', 'format'],
+        bundles: ['policy', 'static']
+      },
+      {
+        preflight: 'success',
+        policy: 'success',
+        static: 'success',
+        coverage_macos: 'skipped'
+      },
+      { executionMode: 'bundles' }
+    )
+
+    expect(result.ok).toBe(true)
+    expect(result.selectedBundles).toEqual(['policy', 'static'])
+  })
+
   it('uses bundle execution mode through the trusted CLI interface', () => {
     const result = spawnSync(process.execPath, [resolve('scripts/ci/evaluate-pr-gate.mjs')], {
       encoding: 'utf8',

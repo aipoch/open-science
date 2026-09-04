@@ -1,20 +1,23 @@
 version: 2
 updates:
-  # Track npm lockfile drift and open grouped update PRs weekly. Keeps transitive advisories moving
-  # (the app ships native modules + spawns child processes, so a stale vulnerable dep reaches users).
-  - package-ecosystem: npm
-    directory: /
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 0
-    groups:
-      # Batch low-risk dev/tooling bumps into one PR to cut review noise.
-      dev-dependencies:
-        dependency-type: development
-
   # Keep the GitHub Actions used by the workflows current (checkout, setup-node, upload-artifact, ...).
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 2
+    commit-message:
+      prefix: 'ci(dependencies): update'
+    pull-request-branch-name:
+      prefix: ci
+      template: '{prefix}/{group_name}'
+      branch-name-case: lowercase
+    groups:
+      github-actions-security-updates:
+        applies-to: security-updates
+        patterns:
+          - '*'
+      github-actions-version-updates:
+        applies-to: version-updates
+        patterns:
+          - '*'

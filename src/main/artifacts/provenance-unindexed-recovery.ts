@@ -429,6 +429,7 @@ class ArtifactProvenanceUnindexedRecovery {
           checksum,
           evidenceJson,
           evidenceChecksum: sha256(evidenceJson),
+          evidenceSchemaVersion: 1,
           executionSnapshotJson,
           executionSnapshotChecksum,
           executionSnapshotStorageKey: executionSnapshotJson

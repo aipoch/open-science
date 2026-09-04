@@ -62,6 +62,7 @@ export type ReplaceMessageArtifactsInput = {
   sessionId: string
   messageId: string
   artifacts: ArtifactFile[]
+  preserveArtifactIds?: string[]
 }
 
 export type ReplaceMessageUploadsInput = {
@@ -524,11 +525,21 @@ export const projectMessageArtifacts = (
   const incomingArtifacts = input.artifacts.map((artifact) =>
     createPersistedArtifact(artifact, ownerTimestamp)
   )
-  const incomingArtifactIds = incomingArtifacts.map((artifact) => artifact.id)
+  const preservedArtifactIds = (artifactOwner?.artifactIds ?? []).filter((artifactId) =>
+    input.preserveArtifactIds?.includes(artifactId)
+  )
+  const incomingArtifactIds = appendUniqueStrings(
+    preservedArtifactIds,
+    incomingArtifacts.map((artifact) => artifact.id)
+  )
 
   if (!message) {
     if (!graphMessage || !session.conversationGraph) return session
-    const replacedArtifactIds = new Set(graphMessage.artifactIds ?? [])
+    const replacedArtifactIds = new Set(
+      (graphMessage.artifactIds ?? []).filter(
+        (artifactId) => !preservedArtifactIds.includes(artifactId)
+      )
+    )
     const preservedArtifacts = (session.artifacts ?? []).filter(
       (artifact) => !replacedArtifactIds.has(artifact.id)
     )
@@ -550,7 +561,9 @@ export const projectMessageArtifacts = (
     }
   }
 
-  const replacedArtifactIds = new Set(message.artifactIds ?? [])
+  const replacedArtifactIds = new Set(
+    (message.artifactIds ?? []).filter((artifactId) => !preservedArtifactIds.includes(artifactId))
+  )
   const preservedArtifacts = (session.artifacts ?? []).filter(
     (artifact) => !replacedArtifactIds.has(artifact.id)
   )

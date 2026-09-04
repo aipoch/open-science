@@ -1,8 +1,8 @@
-// Coordinates a bounded, best-effort shutdown of the app's backend subsystems (agent runtime and
-// notebook kernels). Kept free of Electron imports so it stays trivially unit-testable: callers inject
-// the runtime/notebook handles. Every operation is time-bounded so app quit can never hang on a backend
-// that refuses to settle, and reports { reaped } so the update-install gate can tell a clean teardown
-// (all process trees gone, file handles released) from a degraded one (taskkill fell back to the parent).
+// Coordinates a bounded, best-effort shutdown of the app's backend subsystems (main/Side Chat agent
+// runtimes and notebook kernels). Kept free of Electron imports so it stays trivially unit-testable:
+// callers inject the runtime handles. Every operation is time-bounded so app quit can never hang on a
+// backend that refuses to settle, and reports { reaped } so the update-install gate can tell a clean
+// teardown (all process trees gone, file handles released) from a degraded one.
 
 import { diagnosticErrorFields, type Logger } from './logger'
 
@@ -55,6 +55,25 @@ export type BackendShutdownDeps = QuitShutdownDeps & {
   notebook: QuitShutdownDeps['notebook'] & {
     // Reusable kernel teardown for update checks that may leave the current app running.
     shutdownAll: () => Promise<{ reaped: boolean }>
+  }
+  sideChat: {
+    shutdown: () => Promise<void>
+    // Reusable Side Chat suspension for handoffs that may leave the current app running.
+    suspendAll: (options?: { holdAdmission?: boolean }) => Promise<void>
+  }
+}
+
+const withSideChatShutdown = async (
+  runtimeTeardown: Promise<{ reaped: boolean }>,
+  sideChatTeardown: Promise<void>
+): Promise<{ reaped: boolean }> => {
+  const [runtimeResult, sideChatResult] = await Promise.allSettled([
+    runtimeTeardown,
+    sideChatTeardown
+  ])
+  if (runtimeResult.status === 'rejected') throw runtimeResult.reason
+  return {
+    reaped: runtimeResult.value?.reaped === true && sideChatResult.status === 'fulfilled'
   }
 }
 
@@ -155,8 +174,8 @@ export const shutdownBackends = async (deps: QuitShutdownDeps): Promise<void> =>
   )
 }
 
-// Single shared owner of backend teardown, used by BOTH the before-quit handler and the pre-update-install
-// gate so the two paths agree on the backend handles. The two entry points differ deliberately:
+// Single shared owner of backend teardown, used by BOTH the before-quit handler and the
+// pre-update-install gate so the two paths agree on the backend handles. The two entry points differ:
 //   - runForQuit uses the LATCHING runtime teardown and a short budget (the app is going down regardless).
 //   - runForUpdateGate uses the NON-LATCHING runtime teardown and a longer budget, so a degraded teardown
 //     can be refused without wedging a runtime that must keep serving the still-open app.
@@ -169,16 +188,22 @@ export class BackendShutdownCoordinator {
     budgetMs: number = this.deps.timeoutMs ?? QUIT_SHUTDOWN_BUDGET_MS
   ): Promise<ShutdownOutcome> {
     return runBounded(
-      this.deps.runtime.shutdownForQuit(),
+      withSideChatShutdown(this.deps.runtime.shutdownForQuit(), this.deps.sideChat.shutdown()),
       this.deps.notebook.dispose(),
       budgetMs,
       this.deps.log
     )
   }
 
-  runForUpdateGate(budgetMs: number = UPDATE_SHUTDOWN_BUDGET_MS): Promise<ShutdownOutcome> {
+  runForUpdateGate(
+    budgetMs: number = UPDATE_SHUTDOWN_BUDGET_MS,
+    options: { holdSideChatAdmission?: boolean } = {}
+  ): Promise<ShutdownOutcome> {
     return runBounded(
-      this.deps.runtime.shutdownForUpdateGate(),
+      withSideChatShutdown(
+        this.deps.runtime.shutdownForUpdateGate(),
+        this.deps.sideChat.suspendAll({ holdAdmission: options.holdSideChatAdmission === true })
+      ),
       this.deps.notebook.shutdownAll(),
       budgetMs,
       this.deps.log

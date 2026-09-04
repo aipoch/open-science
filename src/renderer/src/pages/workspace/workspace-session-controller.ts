@@ -16,7 +16,6 @@ import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
 } from '../../../../shared/specialist'
-import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { projectSessionActionability, useSessionStore } from '@/stores/session-store'
@@ -40,6 +39,7 @@ import {
   type WorkspaceSpecialistReconfigureError as ReconfigureError
 } from './workspace-specialist-reconfiguration'
 import { useWorkspaceSessionDetailsController } from './workspace-session-details-controller'
+import { projectPresentedSessionActionability } from './session-wait-reason'
 
 type WorkspaceSessionControllerOptions = {
   activeSession: ChatSession | undefined
@@ -77,6 +77,7 @@ type WorkspaceSessionController = {
         titleDraft: string
         descriptionDraft: string
         isSaving: boolean
+        error: string | null
       } | null
       delete: SessionDeleteDialogState | null
       downloadArtifacts: ChatSession | null
@@ -103,7 +104,7 @@ type WorkspaceSessionController = {
     changeEditTitleDraft: (draft: string) => void
     changeEditDescriptionDraft: (draft: string) => void
     confirmEdit: (event: FormEvent<HTMLFormElement>) => void
-    renameTitle: (session: ChatSession, title: string) => void
+    renameTitle: (session: ChatSession, title: string, expectedTitle?: string) => Promise<boolean>
     togglePin: (session: ChatSession) => void
     archive: (session: ChatSession) => void
     openExportConversation: (session: ChatSession) => void
@@ -244,9 +245,7 @@ const useWorkspaceSessionController = ({
     !promptInFlightSessionIds.includes(session.id) &&
     !sendPreparationInFlightSessionIds.includes(session.id) &&
     !saveAsSkillInFlightSessionIds.includes(session.id) &&
-    projectSessionActionability(session, {
-      hasRunningWork: hasCurrentRunningDelegatedAttempt(session)
-    }).actions.archive.allowed &&
+    projectPresentedSessionActionability(session).actions.archive.allowed &&
     !hasUnfinishedTransfers(session.id)
   const archive = (session: ChatSession): void => {
     if (!canArchive(session)) return

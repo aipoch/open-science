@@ -555,7 +555,8 @@ export class AgentRuntimeManager {
           installId,
           onEvent,
           dataRoot: this.storageRoot,
-          registries
+          registries,
+          verifyBinary: this.detectDeps.getVersion
         })
 
         if (outcome.result.ok && outcome.resolvedPath) {

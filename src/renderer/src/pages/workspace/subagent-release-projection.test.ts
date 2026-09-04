@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 
-import { i18next } from '@/i18n'
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import type {
   DelegatedQuestionRequest,
@@ -10,7 +9,6 @@ import type {
 import {
   projectDelegatedQuestionQueue,
   projectSessionSubagents,
-  resolveDelegatedWorkAvailability,
   selectSubagentFrame
 } from './subagent-release-projection'
 
@@ -374,30 +372,5 @@ describe('release-gate Subagent projection', () => {
     graph.branches.find(({ id }) => id === 'root-branch')!.headMessageId = 'alternate-root'
 
     expect(projectSessionSubagents(session, []).children).toEqual([])
-  })
-
-  it('fails closed when framework support is absent and returns actionable availability copy', () => {
-    // Pinned to English so the copy assertions stay readable; the Chinese wiring is covered by the
-    // catalog parity test.
-    const t = i18next.getFixedT('en')
-    expect(
-      resolveDelegatedWorkAvailability(
-        'opencode',
-        [
-          {
-            id: 'opencode',
-            displayName: 'OpenCode',
-            supportsSkills: true,
-            supportsDelegatedWork: false
-          }
-        ],
-        t
-      )
-    ).toEqual({
-      available: false,
-      title: 'Subagents unavailable for OpenCode',
-      description:
-        'Choose a certified agent framework in Settings before asking the Main Agent to delegate work.'
-    })
   })
 })

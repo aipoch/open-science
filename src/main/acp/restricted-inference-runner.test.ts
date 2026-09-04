@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { CODEX_SHARED_PROVIDER_ID } from '../../shared/settings'
+import { CODEX_SHARED_PROVIDER_ID, CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 import type { AcpRuntimeEvent, AcpTurnTokenUsage } from '../../shared/acp'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import { claudeCodeFramework } from '../agent-framework/claude-code'
@@ -178,6 +178,7 @@ describe('RestrictedInferenceRunner', () => {
 
     const prepared = await prepareRestrictedBackend(
       backend(codexFramework, {
+        providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
         backendId: `codex:${CODEX_SHARED_PROVIDER_ID}`,
         env: {
           CODEX_HOME: sourceHome,

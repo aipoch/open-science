@@ -113,14 +113,27 @@ const sessionWithInvalidProjection = (id: string, createdAt = 100): PersistedCha
   return { ...session(id, createdAt), updatedAt: Number.MAX_VALUE }
 }
 
+const removeStorageRoot = async (root: string): Promise<void> => {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      await rm(root, { recursive: true, force: true })
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if ((code !== 'EBUSY' && code !== 'EPERM') || attempt === 7) throw error
+      await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)))
+    }
+  }
+}
+
 describe('Session projection', () => {
   let client: PrismaClient | undefined
   let storageRoot: string | undefined
 
   afterEach(async () => {
     await client?.$disconnect()
-    if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
     client = undefined
+    if (storageRoot) await removeStorageRoot(storageRoot)
     storageRoot = undefined
   })
 

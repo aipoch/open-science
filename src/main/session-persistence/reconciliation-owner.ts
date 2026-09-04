@@ -1,5 +1,7 @@
+import { basename, dirname } from 'node:path'
+
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
-import { artifactCreatedAtMs } from '../../shared/artifacts'
+import { ARTIFACT_FINALIZATION_INVALID_PROOF, artifactCreatedAtMs } from '../../shared/artifacts'
 import type { ProjectFileSource } from '../../shared/project-files'
 import {
   materializeSessionConversationGraph,
@@ -51,6 +53,8 @@ type ArtifactStorageReconciler = {
     options?: {
       removeOrphanStaging?: boolean
       projectReconciliation?: ArtifactProjectReconciliationSnapshot
+      artifactRunIds?: string[]
+      artifactVersionIds?: string[]
     }
   ): Promise<
     | {
@@ -58,9 +62,17 @@ type ArtifactStorageReconciler = {
           messageId: string
           artifacts: ArtifactVersionFile[]
         }>
+        nativeFinalizationRunIds?: string[]
+        unresolvedNativeFinalizationRunIds?: string[]
+        invalidProofNativeFinalizationRunIds?: string[]
       }
     | undefined
   >
+}
+
+type PendingArtifactFinalizationRecovery = {
+  artifacts: ArtifactVersionFile[]
+  nativeRunIds: string[]
 }
 
 type SessionPersistenceReconciliationOwnerOptions = {
@@ -211,6 +223,52 @@ class SessionPersistenceReconciliationOwner {
     this.permissionGrants = options.permissionGrants
   }
 
+  async retryArtifactFinalization(
+    session: PersistedChatSession,
+    request: { messageId: string; pendingPaths: string[]; artifactVersionIds?: string[] }
+  ): Promise<PendingArtifactFinalizationRecovery | undefined> {
+    if (!this.artifactStorage) return undefined
+
+    const requestedRunIds = [
+      ...new Set(request.pendingPaths.map((pendingPath) => basename(dirname(pendingPath))))
+    ]
+    const artifactRecovery = await this.artifactStorage.reconcileSession(
+      session.projectId,
+      session.id,
+      session,
+      {
+        removeOrphanStaging: false,
+        artifactRunIds: requestedRunIds,
+        artifactVersionIds: request.artifactVersionIds
+      }
+    )
+    const artifacts = (artifactRecovery?.recoveredMessageArtifacts ?? []).flatMap((recovery) =>
+      recovery.messageId === request.messageId ? recovery.artifacts : []
+    )
+    const nativeFinalizationRunIds = artifactRecovery?.nativeFinalizationRunIds
+    if (!nativeFinalizationRunIds) {
+      return artifacts.length > 0 ? { artifacts, nativeRunIds: [] } : undefined
+    }
+
+    const nativeRunIds = nativeFinalizationRunIds
+    if (nativeRunIds.length === 0) return undefined
+
+    const unresolvedRunIds = new Set(artifactRecovery?.unresolvedNativeFinalizationRunIds ?? [])
+    if (nativeRunIds.some((runId) => unresolvedRunIds.has(runId))) {
+      const invalidProofRunIds = new Set(
+        artifactRecovery?.invalidProofNativeFinalizationRunIds ?? []
+      )
+      if (nativeRunIds.some((runId) => invalidProofRunIds.has(runId))) {
+        throw Object.assign(new Error('Native Artifact finalization proof is invalid.'), {
+          code: ARTIFACT_FINALIZATION_INVALID_PROOF
+        })
+      }
+      throw new Error('Native Artifact finalization remains unresolved.')
+    }
+
+    return { artifacts, nativeRunIds }
+  }
+
   async reconcileLoadedSessions(
     input: ReconcileLoadedSessionsInput
   ): Promise<ReconcileLoadedSessionsOutcome> {
@@ -358,6 +416,7 @@ const sessionKey = (projectId: string, sessionId: string): string => `${projectI
 export { SessionPersistenceReconciliationOwner }
 export type {
   ArtifactStorageReconciler,
+  PendingArtifactFinalizationRecovery,
   SessionPermissionGrantReconciliation,
   SessionUploadPersistence
 }

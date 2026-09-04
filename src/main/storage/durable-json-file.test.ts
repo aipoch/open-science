@@ -155,6 +155,19 @@ describe('durable JSON file publication', () => {
 })
 
 describe('durable JSON file recovery', () => {
+  it('rejects an oversized primary before reading it', async () => {
+    const filePath = join('config', 'settings.json')
+    const dependencies = createDependencies({
+      stat: vi.fn().mockResolvedValue({ mtimeMs: 1, size: 11 }),
+      readFile: vi.fn().mockResolvedValue('{"ok":true}')
+    })
+
+    await expect(
+      readDurableJsonFile(filePath, JSON.parse, dependencies, { maxBytes: 10 })
+    ).rejects.toThrow('settings.json exceeds the 10 byte read limit.')
+    expect(dependencies.readFile).not.toHaveBeenCalled()
+  })
+
   it('keeps a valid primary authoritative and removes recognized temps', async () => {
     const root = await mkdtemp(join(tmpdir(), 'durable-json-primary-'))
     roots.push(root)
@@ -189,6 +202,28 @@ describe('durable JSON file recovery', () => {
     await expect(readDurableJsonFile(filePath, decode)).rejects.toThrow('future version')
     await expect(readFile(filePath, 'utf8')).resolves.toBe(primaryContents)
     await expect(readFile(temporaryPath, 'utf8')).resolves.toBe(futureContents)
+  })
+
+  it('preserves an oversized recovery temp when a valid primary exists', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'durable-json-primary-oversized-temp-'))
+    roots.push(root)
+    const filePath = join(root, 'settings.json')
+    const temporaryPath = `${filePath}.1700000000000-1.tmp`
+    const primaryContents = '{"ok":true}\n'
+    const oversizedContents = '{"future":"settings that exceed the current limit"}\n'
+    await writeFile(filePath, primaryContents, 'utf8')
+    await writeFile(temporaryPath, oversizedContents, 'utf8')
+
+    await expect(
+      readDurableJsonFile(
+        filePath,
+        JSON.parse,
+        {},
+        { maxBytes: Buffer.byteLength(primaryContents) }
+      )
+    ).rejects.toThrow('settings.json.1700000000000-1.tmp exceeds')
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(primaryContents)
+    await expect(readFile(temporaryPath, 'utf8')).resolves.toBe(oversizedContents)
   })
 
   it('does not treat an unrelated tmp file as publication residue', async () => {

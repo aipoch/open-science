@@ -141,6 +141,28 @@ describe('RemoteSessionPairingManager', () => {
       principalId: expect.any(String),
       isCurrent: expect.any(Function)
     })
+    await expect(
+      manager.webAccess.authorizeWebSocket(
+        request('/api/v1/events', {
+          host: 'home.example.ts.net:4443',
+          cookie: sessionCookie,
+          origin: 'https://home.example.ts.net:4443'
+        }),
+        new URL('https://home.example.ts.net:4443/api/v1/events')
+      )
+    ).resolves.toMatchObject({
+      principalId: expect.any(String),
+      isCurrent: expect.any(Function)
+    })
+    await expect(
+      manager.webAccess.authorizeWebSocket(
+        request('/api/v1/events', {
+          cookie: sessionCookie,
+          origin: 'https://home.example.ts.net:4443'
+        }),
+        new URL('https://home.example.ts.net/api/v1/events')
+      )
+    ).resolves.toBeUndefined()
     expect(manager.trustedViews()).toHaveLength(0)
     expect(changed).toHaveBeenCalled()
   })

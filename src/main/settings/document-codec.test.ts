@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { CODEX_SUBSCRIPTION_PROVIDER_ID, SETTINGS_FILE_VERSION } from '../../shared/settings'
 import { sanitizeSettings } from './document-codec'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 
 describe('settings document codec', () => {
   it('exposes one pure document boundary', async () => {
@@ -22,7 +23,45 @@ describe('settings document codec', () => {
     })
   })
 
-  it('preserves cross-field migrations and durable settings families', () => {
+  it('bounds providers and keeps the first valid record for duplicate IDs', () => {
+    const providers = Array.from(
+      { length: PROVIDER_RESOURCE_LIMITS.providers + 1 },
+      (_, index) => ({ id: `provider-${index}`, type: 'custom', name: `Provider ${index}` })
+    )
+    providers.splice(1, 0, { id: 'provider-0', type: 'custom', name: 'Duplicate' })
+
+    const settings = sanitizeSettings({ providers })
+
+    expect(settings.providers).toHaveLength(PROVIDER_RESOURCE_LIMITS.providers)
+    expect(settings.providers.filter(({ id }) => id === 'provider-0')).toEqual([
+      expect.objectContaining({ name: 'Provider 0' })
+    ])
+    expect(settings.providers.at(-1)?.id).toBe(`provider-${PROVIDER_RESOURCE_LIMITS.providers - 1}`)
+  })
+
+  it('preserves a Codex provider that follows the non-Codex provider cap', () => {
+    const providers = [
+      ...Array.from({ length: PROVIDER_RESOURCE_LIMITS.providers }, (_, index) => ({
+        id: `provider-${index}`,
+        type: 'custom',
+        name: `Provider ${index}`
+      })),
+      {
+        id: 'builtin-codex-shared',
+        type: 'codex-shared',
+        name: 'Legacy Codex'
+      }
+    ]
+
+    const settings = sanitizeSettings({ providers })
+
+    expect(settings.providers).toHaveLength(PROVIDER_RESOURCE_LIMITS.providers)
+    expect(settings.providers).toContainEqual(
+      expect.objectContaining({ id: CODEX_SUBSCRIPTION_PROVIDER_ID, type: 'codex-isolated' })
+    )
+  })
+
+  it('preserves current durable settings families and drops retired Runtime selections', () => {
     const dataRoot = resolve('portable-settings-data')
     const settings = sanitizeSettings({
       providers: [
@@ -44,6 +83,7 @@ describe('settings document codec', () => {
       },
       computeGrants: [{ projectId: 'p1', operation: 'download', providerId: 'c1' }],
       notebookRuntimes: { python: { source: 'managed' } },
+      agentEnvironmentCreationEnabled: false,
       defaultPermissionProfile: 'ask',
       dataRoot,
       unknown: true
@@ -59,7 +99,7 @@ describe('settings document codec', () => {
         pendingCustomServerDeletionIds: ['rna-reviewer']
       },
       computeGrants: [{ projectId: 'p1', operation: 'download', providerId: 'c1' }],
-      notebookRuntimes: { python: { source: 'managed' } },
+      agentEnvironmentCreationEnabled: false,
       defaultPermissionProfile: 'ask',
       dataRoot
     })
@@ -72,7 +112,14 @@ describe('settings document codec', () => {
       })
     ])
     expect(settings.providers[0]).not.toHaveProperty('apiKey')
+    expect(settings).not.toHaveProperty('notebookRuntimes')
     expect(settings).not.toHaveProperty('unknown')
+  })
+
+  it('drops a malformed Agent environment creation policy', () => {
+    expect(
+      sanitizeSettings({ providers: [], agentEnvironmentCreationEnabled: 'false' })
+    ).not.toHaveProperty('agentEnvironmentCreationEnabled')
   })
 })
 

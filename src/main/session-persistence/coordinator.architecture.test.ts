@@ -445,6 +445,7 @@ describe('Session persistence coordinator architecture', () => {
         'recoverInterruptedDelegatedWork',
         'replaceSessionMetadata',
         'repairProjectFiles',
+        'retryArtifactFinalization',
         'runSessionMutation',
         'saveManifest',
         'saveSession',
@@ -452,6 +453,7 @@ describe('Session persistence coordinator architecture', () => {
         'saveSideChatProjection',
         'sessionMetadataSnapshot',
         'sessionProjectId',
+        'setSessionComputeConcurrencyLimit',
         'setSessionDelegationPolicy',
         'setSessionDeletionHandlers',
         'setSessionEnabledComputeHosts',
@@ -490,7 +492,9 @@ describe('Session persistence coordinator architecture', () => {
       'permissionGrants:optional',
       'log:defaulted',
       'computeJobs:optional',
-      'onDelegatedWorkSessionUpdated:optional'
+      'onDelegatedWorkSessionUpdated:optional',
+      'onDelegationPolicyUpdated:optional',
+      'workspaceOwnership:optional'
     ])
     expect(exportedNames(facadeFile, 'value')).toEqual(
       ['SessionPersistenceCoordinator', 'SessionRuntimeContextRevisionConflictError'].sort()
@@ -528,7 +532,8 @@ describe('Session persistence coordinator architecture', () => {
         'repository',
         'sessionDeletionHandlers',
         'sideChatOwner',
-        'stateOwner'
+        'stateOwner',
+        'workspaceOwnership'
       ].sort()
     )
     expect(mutableFields(facade)).toEqual(
@@ -575,7 +580,8 @@ describe('Session persistence coordinator architecture', () => {
         'provenance',
         'repository',
         'stateOwner',
-        'uploads'
+        'uploads',
+        'workspaceOwnership'
       ].sort()
     )
     expect(fields(reconciliationOwner)).toEqual(
@@ -663,10 +669,12 @@ describe('Session persistence coordinator architecture', () => {
         'mutateSessionDetailsAuthority',
         'patchSessionRuntimeContext',
         'readSessionRuntimeContext',
+        'retryArtifactFinalization',
         'runSessionMutation',
         'saveSession',
         'saveSessionSpecialistBinding',
         'saveSideChatProjection',
+        'setSessionComputeConcurrencyLimit',
         'setSessionDelegationPolicy',
         'setSessionEnabledComputeHosts',
         'updateArchive'
@@ -723,7 +731,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(34)
+    expect(expectedSchedulerRoute.size).toBe(36)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
@@ -867,6 +875,7 @@ describe('Session persistence coordinator architecture', () => {
         'saveSession',
         'saveSessionSpecialistBinding',
         'sessionProjectId',
+        'setComputeConcurrencyLimit',
         'setDelegationPolicy',
         'setEnabledComputeHosts'
       ].sort()
@@ -896,7 +905,7 @@ describe('Session persistence coordinator architecture', () => {
       ].sort()
     )
     expect(methods(reconciliationOwner, 'public')).toEqual(
-      ['reconcileLoadedSessions', 'repairFileProjection'].sort()
+      ['reconcileLoadedSessions', 'repairFileProjection', 'retryArtifactFinalization'].sort()
     )
     expect(methods(reconciliationOwner, 'private')).toEqual([])
     expect(methods(sideChatOwner, 'public')).toEqual(
@@ -956,6 +965,7 @@ describe('Session persistence coordinator architecture', () => {
       saveSideChatProjection: ['sideChatOwner.saveProjection'],
       sessionMetadataSnapshot: ['stateOwner.metadataSnapshot'],
       sessionProjectId: ['stateOwner.sessionProjectId'],
+      setSessionComputeConcurrencyLimit: ['stateOwner.setComputeConcurrencyLimit'],
       setSessionDelegationPolicy: ['stateOwner.setDelegationPolicy'],
       setSessionEnabledComputeHosts: ['stateOwner.setEnabledComputeHosts'],
       readChildren: ['delegatedWorkOwner.readChildren'],
@@ -1037,6 +1047,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/coordinator-contract.test.ts'
     ])
     expect(sessionPersistence.testFiles.consumer).toEqual([
+      'src/main/delegation/durable-delegated-work.test.ts',
+      'src/main/delegation/session-record-adapter.test.ts',
       'src/main/session-persistence/artifact-finalization-recovery.integration.test.ts',
       'src/main/session-persistence/deletion-integration.test.ts'
     ])

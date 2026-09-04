@@ -551,8 +551,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const modelView: ModelView = currentRoute.panel === 'model' ? currentRoute.view : { kind: 'list' }
   const connectorsView: ConnectorsView =
     currentRoute.panel === 'connectors' ? currentRoute.view : { kind: 'list' }
+  const notebookNetworkAvailable =
+    typeof window.api.settings.getNotebookNetworkStatus === 'function' &&
+    !document.documentElement.hasAttribute('data-open-science-notebook-network-unavailable')
   const networkView: NetworkView =
-    currentRoute.panel === 'network' ? currentRoute.view : { kind: 'list' }
+    currentRoute.panel === 'network' &&
+    (currentRoute.view.kind !== 'domains' || notebookNetworkAvailable)
+      ? currentRoute.view
+      : { kind: 'list' }
   const computeView: ComputeView =
     currentRoute.panel === 'compute' ? currentRoute.view : { kind: 'list' }
   const specialistsView: SpecialistsView =
@@ -1050,6 +1056,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 : t('request failed')
             })
       )
+    } catch {
+      setStatusOk(false)
+      setStatusMessage(t('Could not refresh models from the vendor.'))
     } finally {
       setIsRefreshingModels(false)
     }
@@ -1473,8 +1482,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       view={memoryView}
                       onNavigate={navigateMemory}
                       onOpenProject={(projectId) => {
-                        useNavigationStore.getState().openProject(projectId, 'user')
-                        onClose()
+                        useNavigationStore.getState().openProject(projectId, 'user', onClose)
                       }}
                     />
                   ) : activePanel === 'connectors' ? (
@@ -1634,11 +1642,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     <RuntimesPanel
                       title={t('Notebook runtimes')}
                       description={t(
-                        'Enable the environments each notebook language may run in. The app-managed environment is on by default; enable your own interpreters to make them available to the agent.'
+                        'Choose which Python and R environments notebooks and the Agent can use. App-managed environments are enabled by default.'
                       )}
+                      onOpenNetworkProtection={
+                        notebookNetworkAvailable
+                          ? () => navigateNetwork({ kind: 'domains' })
+                          : undefined
+                      }
                     />
                   ) : activePanel === 'network' ? (
-                    <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
+                    <NetworkPanel
+                      view={networkView}
+                      onNavigate={navigateNetwork}
+                      notebookNetworkAvailable={notebookNetworkAvailable}
+                    />
                   ) : activePanel === 'usage' ? (
                     <TokenUsagePanel sessions={sessions} projects={projects} />
                   ) : activePanel === 'general' ? (

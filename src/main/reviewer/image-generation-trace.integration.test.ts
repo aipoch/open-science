@@ -8,6 +8,7 @@ import type { TurnScope } from '../../shared/reviewer'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { createPngBytes } from '../artifacts/artifact-test-fixtures'
 import { createProvenanceTestFixture, provenanceGraph } from '../artifacts/provenance-test-fixtures'
+import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ReviewerHostServer } from './host-sdk'
 import { ReviewerMcpServer } from './mcp-server'
 import { callSubmitFindingsAfterReadingEvidence } from './reviewer-mcp-test-client'
@@ -17,6 +18,11 @@ describe('Reviewer image-generation trace fixture', () => {
     const fixture = await createProvenanceTestFixture()
     let mcp: ReviewerMcpServer | undefined
     try {
+      await fixture.client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+      const managedFileVersions = new ManagedFileVersionService({
+        storageRoot: fixture.storageRoot,
+        getClient: () => Promise.resolve(fixture.client)
+      })
       const lane = createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1')
       const notebook = await fixture.notebookRepository.loadOrCreate({
         projectId: 'project-1',
@@ -153,9 +159,26 @@ describe('Reviewer image-generation trace fixture', () => {
         ],
         artifactVersionIds: [version.versionId]
       }
-      const contentResolver = vi.fn((request: { projectId: string; versionId: string }) =>
-        fixture.repository.resolveVersionContentForStreamingVerification(request)
-      )
+      const contentResolver = vi.fn(async (request: { projectId: string; versionId: string }) => {
+        const lease = await managedFileVersions.openVersion(
+          {
+            source: 'artifact',
+            projectId: request.projectId,
+            fileId: version.artifactId
+          },
+          request.versionId
+        )
+        return {
+          path: lease.path,
+          filename: lease.version.filename,
+          ...(lease.version.contentType ? { contentType: lease.version.contentType } : {}),
+          checksum: lease.version.checksum,
+          size: lease.size,
+          readRange: lease.readRange,
+          verifyUnchanged: lease.verifyUnchanged,
+          close: lease.close
+        }
+      })
       const host = new ReviewerHostServer(
         session,
         scope,

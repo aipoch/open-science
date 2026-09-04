@@ -18,6 +18,7 @@ import {
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
+  launchUninstallerLockHolder,
   observeChildClose,
   packagedArtifactSmokeRpcResult,
   packagedMainEntryPath,
@@ -107,6 +108,16 @@ describe('Windows installer smoke plan', () => {
         ])
       ).toThrow(/migration count must be a positive/)
     }
+  })
+
+  it('accepts only the orphaned-uninstaller lock scenario', () => {
+    expect(
+      parseArguments(['--installer-dir', 'dist', '--scenario', 'orphaned-uninstaller-lock'])
+        .scenario
+    ).toBe('orphaned-uninstaller-lock')
+    expect(() => parseArguments(['--installer-dir', 'dist', '--scenario', 'unsupported'])).toThrow(
+      /Unsupported Windows installer smoke scenario/
+    )
   })
 
   it('accepts only explicit packaged Artifact RPC contracts', () => {
@@ -486,6 +497,26 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
         terminateSlowly
       )
     ).rejects.toThrow(/timed out after 25ms/)
+  })
+
+  it('terminates a lock holder when readiness fails', async () => {
+    const installDirectory = await mkdtemp(join(tmpdir(), 'open-science-lock-holder-'))
+    await writeFile(join(installDirectory, 'Uninstall open-science.exe'), '')
+    const child = Object.assign(new EventEmitter(), { pid: 4242 })
+    const spawnProcess = vi.fn(() => child)
+    const waitForReady = vi.fn().mockRejectedValue(new Error('lock readiness failed'))
+    const terminate = vi.fn().mockResolvedValue(undefined)
+
+    await expect(
+      launchUninstallerLockHolder(
+        installDirectory,
+        { TEMP: installDirectory },
+        spawnProcess,
+        waitForReady,
+        terminate
+      )
+    ).rejects.toThrow('lock readiness failed')
+    expect(terminate).toHaveBeenCalledWith(child)
   })
 
   it('terminates and awaits an aborted process', async () => {

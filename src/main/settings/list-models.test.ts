@@ -26,7 +26,7 @@ describe('listProviderModels', () => {
       )
 
     const result = await listProviderModels(
-      { url: 'https://api.deepseek.com/v1/models', key: 'sk-1' },
+      { url: 'https://api.deepseek.com/v1/models', vendorId: 'deepseek', key: 'sk-1' },
       { fetchImpl: fetchImpl as unknown as typeof fetch }
     )
 
@@ -34,7 +34,22 @@ describe('listProviderModels', () => {
     const [url, init] = fetchImpl.mock.calls[0]
     expect(url).toBe('https://api.deepseek.com/v1/models')
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer sk-1')
-    expect((init.headers as Record<string, string>)['x-api-key']).toBe('sk-1')
+    expect((init.headers as Record<string, string>)['x-api-key']).toBeUndefined()
+  })
+
+  it('uses only x-api-key for the Anthropic model catalog', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(Response.json({ data: [{ id: 'claude-opus-5' }] }))
+
+    await expect(
+      listProviderModels(
+        { url: 'https://api.anthropic.com/v1/models', vendorId: 'anthropic', key: 'sk-ant-1' },
+        { fetchImpl: fetchImpl as unknown as typeof fetch }
+      )
+    ).resolves.toMatchObject({ ok: true })
+
+    const headers = fetchImpl.mock.calls[0][1].headers as Record<string, string>
+    expect(headers.authorization).toBeUndefined()
+    expect(headers['x-api-key']).toBe('sk-ant-1')
   })
 
   it('reports a non-2xx status without throwing', async () => {

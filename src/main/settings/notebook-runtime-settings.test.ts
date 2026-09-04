@@ -33,28 +33,21 @@ describe('NotebookRuntimeSettingsModule', () => {
     })
   })
 
-  it('persists and clears a runtime selection through the repository policy', async () => {
+  it('defaults Agent environment creation to allowed and persists an explicit choice', async () => {
     const settings = await createModule()
-    const interpreterPath = resolve('/usr/bin/python3')
-    const selection = {
-      source: 'external' as const,
-      interpreterPath,
-      interpreterArgs: ['-I'],
-      appOwnedOverlay: false,
-      packageInstallAuthorized: true
-    }
 
-    await expect(settings.setRuntimeSelection('python', selection)).resolves.toEqual(selection)
+    await expect(settings.getAgentEnvironmentCreationEnabled()).resolves.toBe(true)
+    await expect(settings.setAgentEnvironmentCreationEnabled(false)).resolves.toBe(false)
+    await expect(settings.getAgentEnvironmentCreationEnabled()).resolves.toBe(false)
+  })
 
-    const snapshot = await settings.getSnapshot('python')
-    expect(snapshot.runtimeSelection).toEqual(selection)
-    if (snapshot.runtimeSelection?.source === 'external') {
-      snapshot.runtimeSelection.interpreterArgs?.push('--mutated')
-    }
-    expect((await settings.getSnapshot('python')).runtimeSelection).toEqual(selection)
+  it('rejects a non-boolean Agent environment creation choice before persistence', async () => {
+    const settings = await createModule()
 
-    await expect(settings.setRuntimeSelection('python', null)).resolves.toBeUndefined()
-    expect((await settings.getSnapshot('python')).runtimeSelection).toBeUndefined()
+    await expect(settings.setAgentEnvironmentCreationEnabled('false' as never)).rejects.toThrow(
+      'Agent environment creation enabled must be a boolean.'
+    )
+    await expect(settings.getAgentEnvironmentCreationEnabled()).resolves.toBe(true)
   })
 
   it('keeps environment enablement and install authorization as separate choices', async () => {

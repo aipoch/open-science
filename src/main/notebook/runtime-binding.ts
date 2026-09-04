@@ -26,6 +26,12 @@ import type {
   NotebookSessionResolvedInterpreter,
   NotebookSessionRuntimeBinding
 } from './session-aggregate'
+import { historicalPosixManagedEnvironment } from './posix-runtime-binding'
+import {
+  historicalWindowsManagedEnvironment,
+  managedRuntimeEnvironmentNamesMatch,
+  managedRuntimeIdsDiffer
+} from './windows-runtime-binding'
 
 const log = createLogger('notebook:runtime-binding')
 
@@ -43,9 +49,11 @@ type RuntimeBindingRepository = Pick<NotebookRunRepository, 'setRuntimeBindings'
 type NotebookRuntimeBindingOwnerOptions = {
   dataRoot: string
   repository: RuntimeBindingRepository
-  runtimeSettings: Pick<NotebookRuntimeSettings, 'getSnapshot'>
+  runtimeSettings: Pick<NotebookRuntimeSettings, 'getSnapshot'> &
+    Partial<Pick<NotebookRuntimeSettings, 'setEnvironmentEnabled'>>
   repairPolicy: Pick<NotebookRuntimeRepairPolicy, 'bindingRequirement'>
   discoverRuntimes?: (language: NotebookLanguage) => Promise<DiscoveredInterpreter[]>
+  waitForEnvironmentStartup?: () => Promise<void>
   platform?: NodeJS.Platform
 }
 
@@ -62,7 +70,9 @@ const admissionGate = (): AdmissionGate => {
   return { promise, release }
 }
 
-const defaultEnvironment = (language: NotebookLanguage): string =>
+const defaultEnvironment = (
+  language: NotebookLanguage
+): typeof DEFAULT_PY_ENV | typeof DEFAULT_R_ENV =>
   language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
 
 /** Owns Notebook runtime discovery, selection, binding transitions, and durable wire snapshots. */
@@ -349,12 +359,7 @@ export class NotebookRuntimeBindingOwner {
 
   async persist(session: RuntimeBindingSession): Promise<void> {
     try {
-      await this.options.repository.setRuntimeBindings(
-        session.projectId,
-        session.sessionId,
-        this.snapshot(session),
-        session.lane
-      )
+      await this.persistStrict(session)
     } catch (error) {
       log.error('failed to persist runtime bindings', {
         sessionId: session.sessionId,
@@ -363,11 +368,53 @@ export class NotebookRuntimeBindingOwner {
     }
   }
 
+  async persistStrict(session: RuntimeBindingSession): Promise<void> {
+    await this.options.repository.setRuntimeBindings(
+      session.projectId,
+      session.sessionId,
+      this.snapshot(session),
+      session.lane
+    )
+  }
+
+  async requireManagedDefault(
+    language: NotebookLanguage,
+    expectedRuntimeId?: string
+  ): Promise<NotebookSessionRuntimeBinding> {
+    const environment = defaultEnvironment(language)
+    const settings = await this.runtimeSettingsSnapshot(language)
+    const discovered = await this.discover(language, settings?.manualInterpreters ?? [])
+    const match = discovered.find(
+      (env) =>
+        env.provenance === 'app-managed' &&
+        env.condaEnv === environment &&
+        (expectedRuntimeId === undefined || env.envId === expectedRuntimeId)
+    )
+    // A user-triggered reinstall must accept the exact discovered app-managed default even when its
+    // interpreter is broken. The identity/provenance/env-name checks above still prove ownership;
+    // only post-repair discovery (no expectedRuntimeId) requires the replacement to be runnable.
+    if (!match || (expectedRuntimeId === undefined && !match.runnable)) {
+      throw new Error(
+        expectedRuntimeId === undefined
+          ? `The app-managed ${language} runtime is not runnable.`
+          : `The selected runtime is no longer the app-managed ${language} default. Recheck runtimes and try again.`
+      )
+    }
+    return this.toInternalBinding(match)
+  }
+
   async reload(
     session: RuntimeBindingSession,
     persisted: NotebookRuntimeBindings | undefined
   ): Promise<void> {
     if (!persisted) return
+    // A relocated managed prefix is rebuilt asynchronously from envs.lock during application startup.
+    // Do not classify its old-root binding as missing while that restore is still in flight: the live
+    // aggregate would otherwise remain unavailable even after the replacement interpreter appears.
+    if (Object.values(persisted).some((binding) => binding?.source === 'managed')) {
+      await this.options.waitForEnvironmentStartup?.()
+    }
+    let migratedHistoricalBinding = false
     for (const language of ['python', 'r'] as const) {
       const wire = persisted[language]
       if (!wire) continue
@@ -377,6 +424,12 @@ export class NotebookRuntimeBindingOwner {
           await this.resolveEnabledRuntime(language, wire.runtimeId)
         )
       } catch {
+        const migrated = await this.historicalManagedEnvironmentReplacement(language, wire)
+        if (migrated) {
+          session.setRuntimeBinding(language, migrated)
+          migratedHistoricalBinding = true
+          continue
+        }
         const settings = await this.runtimeSettingsSnapshot(language)
         const discovered = await this.discover(language, settings?.manualInterpreters ?? [])
         const stillDetected = discovered.some((env) => env.envId === wire.runtimeId)
@@ -393,6 +446,65 @@ export class NotebookRuntimeBindingOwner {
         })
       }
     }
+    if (migratedHistoricalBinding) {
+      // Persist once after both languages are restored so migrating one binding never temporarily
+      // drops the other. A later launch must not rediscover the old-root prefix as missing.
+      await this.persistStrict(session)
+    }
+  }
+
+  private async historicalManagedEnvironmentReplacement(
+    language: NotebookLanguage,
+    wire: NotebookRuntimeBinding
+  ): Promise<NotebookSessionRuntimeBinding | undefined> {
+    const platform = this.options.platform ?? process.platform
+    const historical =
+      historicalWindowsManagedEnvironment({ language, platform, wire }) ??
+      historicalPosixManagedEnvironment({ language, platform, wire })
+    if (!historical) return undefined
+
+    const settings = await this.runtimeSettingsSnapshot(language)
+    const discovered = await this.discover(language, settings?.manualInterpreters ?? [])
+    const previousEnablement = settings?.runtimeEnablement.enabled[wire.runtimeId]
+    const wasDisabled =
+      previousEnablement === false ||
+      (previousEnablement === undefined && wire.reason === 'disabled')
+    const replacement = discovered.find(
+      (env) =>
+        env.provenance === wire.provenance &&
+        managedRuntimeEnvironmentNamesMatch({
+          platform,
+          candidate: env.condaEnv,
+          expected: historical.environment
+        }) &&
+        env.runnable &&
+        managedRuntimeIdsDiffer({
+          platform,
+          candidate: env.envId,
+          previous: historical.interpreterKey
+        }) &&
+        (wasDisabled || isEnvEnabled(env, settings?.runtimeEnablement))
+    )
+    if (!replacement) return undefined
+
+    const binding = this.toInternalBinding(replacement)
+    if (wasDisabled) {
+      const setEnvironmentEnabled = this.options.runtimeSettings.setEnvironmentEnabled
+      if (!setEnvironmentEnabled) return undefined
+      try {
+        await setEnvironmentEnabled(language, replacement.envId, false)
+      } catch {
+        return undefined
+      }
+      return { ...binding, status: 'unavailable', reason: 'disabled' }
+    }
+    return this.options.repairPolicy.bindingRequirement(
+      language,
+      binding.envName ?? historical.environment,
+      binding
+    ).required
+      ? { ...binding, status: 'unavailable', reason: 'repair-required' }
+      : binding
   }
 
   private async discover(

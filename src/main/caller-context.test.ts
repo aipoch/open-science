@@ -4,6 +4,7 @@ import {
   ClientLeaseRegistry,
   callerContextForEvent,
   canAccessSessionPlan,
+  canMutateSessionDelegationPolicy,
   canSatisfyHumanApproval,
   createCallerContext,
   createElectronCallerContext,
@@ -75,6 +76,40 @@ describe('caller context', () => {
     expect(canSatisfyHumanApproval(currentTask)).toBe(false)
     expect(canAccessSessionPlan(currentTask)).toBe(true)
     expect(canAccessSessionPlan(staleTask)).toBe(false)
+  })
+
+  it('authorizes Session delegation policy mutations only for current human surfaces and Task automation', () => {
+    expect(canMutateSessionDelegationPolicy(createElectronCallerContext(7))).toBe(true)
+    expect(canMutateSessionDelegationPolicy(createWebCallerContext('local-browser'))).toBe(true)
+    expect(
+      canMutateSessionDelegationPolicy(
+        createWebCallerContext('remote-browser', { location: 'remote' })
+      )
+    ).toBe(true)
+    expect(canMutateSessionDelegationPolicy(createTaskCallerContext())).toBe(true)
+
+    const rejected = [
+      createWebCallerContext('expired', { isAuthorizationCurrent: () => false }),
+      createWebCallerContext('agent', {
+        principalKind: 'agent-session',
+        actionOrigin: 'agent-session'
+      }),
+      createWebCallerContext('human-agent-origin', { actionOrigin: 'agent-session' }),
+      createWebCallerContext('automation-human-origin', {
+        principalKind: 'automation',
+        actionOrigin: 'human'
+      }),
+      createCallerContext({
+        clientId: 'task-human',
+        lifecycleClientId: 'web:task-human',
+        leaseId: 'task-human',
+        surface: 'task',
+        location: 'local',
+        principalKind: 'human',
+        actionOrigin: 'human'
+      })
+    ]
+    expect(rejected.map(canMutateSessionDelegationPolicy)).toEqual(rejected.map(() => false))
   })
 
   it('never treats an agent-originated action as a human approval', () => {

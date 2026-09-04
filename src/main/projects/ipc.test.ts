@@ -32,6 +32,8 @@ describe('createProjectHandlers', () => {
     }
     const deletionCoordinator = {
       deleteProject: vi.fn().mockResolvedValue(undefined),
+      listDeletionCleanup: vi.fn().mockResolvedValue([]),
+      retryDeletionCleanup: vi.fn(),
       waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
     }
     const handlers = createProjectHandlers(repository, deletionCoordinator)
@@ -40,6 +42,36 @@ describe('createProjectHandlers', () => {
 
     expect(deletionCoordinator.deleteProject).toHaveBeenCalledWith('project-1')
     expect(repository.delete).not.toHaveBeenCalled()
+  })
+
+  it('routes cleanup status and immediate retry through the deletion coordinator', async () => {
+    const repository = {
+      list: vi.fn(),
+      get: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn()
+    }
+    const cleanup = [
+      {
+        projectId: 'project-1',
+        projectName: 'Research',
+        phase: 'retry-scheduled' as const,
+        failureCount: 2,
+        nextRetryAt: 6_000
+      }
+    ]
+    const deletionCoordinator = {
+      deleteProject: vi.fn(),
+      listDeletionCleanup: vi.fn().mockResolvedValue(cleanup),
+      retryDeletionCleanup: vi.fn(),
+      waitForProjectOperations: vi.fn()
+    }
+    const handlers = createProjectHandlers(repository, deletionCoordinator)
+
+    await expect(handlers.listDeletionCleanup()).resolves.toBe(cleanup)
+    await handlers.retryDeletionCleanup()
+
+    expect(deletionCoordinator.retryDeletionCleanup).toHaveBeenCalledOnce()
   })
 
   it('recovers durable deletions before listing projects', async () => {
@@ -51,6 +83,8 @@ describe('createProjectHandlers', () => {
     }
     const deletionCoordinator = {
       deleteProject: vi.fn(),
+      listDeletionCleanup: vi.fn().mockResolvedValue([]),
+      retryDeletionCleanup: vi.fn(),
       waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
     }
     const handlers = createProjectHandlers(repository, deletionCoordinator)
@@ -72,6 +106,8 @@ describe('createProjectHandlers', () => {
     }
     const deletionCoordinator = {
       deleteProject: vi.fn(),
+      listDeletionCleanup: vi.fn().mockResolvedValue([]),
+      retryDeletionCleanup: vi.fn(),
       waitForProjectOperations: vi.fn(async (projectIds: readonly string[]) => {
         if (projectIds.includes('project-1')) throw deletionFailure
       })
@@ -112,6 +148,8 @@ describe('createProjectHandlers', () => {
     }
     const deletionCoordinator = {
       deleteProject: vi.fn(),
+      listDeletionCleanup: vi.fn().mockResolvedValue([]),
+      retryDeletionCleanup: vi.fn(),
       waitForProjectOperations: vi.fn(async () => {
         order.push('recover')
       })
@@ -134,6 +172,8 @@ describe('createProjectHandlers', () => {
     }
     const deletionCoordinator = {
       deleteProject: vi.fn(),
+      listDeletionCleanup: vi.fn().mockResolvedValue([]),
+      retryDeletionCleanup: vi.fn(),
       waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
     }
     const handlers = createProjectHandlers(repository, deletionCoordinator)
@@ -163,6 +203,8 @@ describe('createProjectHandlers', () => {
     }
     const deletionCoordinator = {
       deleteProject: vi.fn(),
+      listDeletionCleanup: vi.fn().mockResolvedValue([]),
+      retryDeletionCleanup: vi.fn(),
       waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
     }
     const onAgentContextChanged = vi.fn()

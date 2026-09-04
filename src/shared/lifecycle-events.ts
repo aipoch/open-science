@@ -13,6 +13,7 @@ const MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID = 'main:runtime-context'
 const MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID = 'main:durable-continuation'
 const MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID = 'main:enabled-compute-hosts'
 const MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID = 'main:delegated-work'
+const MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID = 'main:delegation-policy'
 const MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID = 'main:session-details'
 
 type ProjectDeletedEvent = ProjectDeletionOutcome & {
@@ -29,6 +30,7 @@ const LIFECYCLE_CHANNELS = {
   projectCreated: 'project:created',
   projectUpdated: 'project:updated',
   projectDeleted: 'project:deleted',
+  projectDeletionCleanupChanged: 'project:deletion-cleanup-changed',
   sessionCreated: 'session:created',
   sessionUpdated: 'session:updated',
   sessionDeleted: 'session:deleted'
@@ -37,6 +39,7 @@ const LIFECYCLE_CHANNELS = {
 export {
   LIFECYCLE_CHANNELS,
   MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
+  MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID,
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
   MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID,
   MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID,

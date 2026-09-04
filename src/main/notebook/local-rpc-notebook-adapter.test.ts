@@ -65,7 +65,7 @@ const requestByMethod = {
     reason: 'Download the requested public dataset.'
   },
   state: request,
-  restart: request,
+  restart: { ...request, language: 'r', environment: 'default-r' },
   shutdown: request,
   inspectPackages: { ...request, language: 'python', packages: ['numpy'] },
   managePackages: { ...request, language: 'python', packages: ['numpy'] },
@@ -229,6 +229,17 @@ describe('notebook local RPC adapter', () => {
     expect(capability.requestNetworkAccess).toHaveBeenCalledWith(methodRequest, cancellation.signal)
   })
 
+  it('forwards request cancellation to shell execution', async () => {
+    const capability = createCapability()
+    const methodRequest = requestByMethod.executeShell
+    const handler = resolveNotebookLocalRpcHandler(capability, 'executeShell', methodRequest)
+    const cancellation = new AbortController()
+
+    await handler(methodRequest, cancellation.signal)
+
+    expect(capability.executeShell).toHaveBeenCalledWith(methodRequest, cancellation.signal)
+  })
+
   it('validates common notebook routing fields before resolving a handler', () => {
     const capability = createCapability()
 
@@ -252,6 +263,17 @@ describe('notebook local RPC adapter', () => {
       })
     ).not.toThrow()
   })
+
+  it.each([{ language: 'r' }, { environment: 'default-r' }])(
+    'rejects a half-specified restart target',
+    (target) => {
+      const capability = createCapability()
+
+      expect(() =>
+        resolveNotebookLocalRpcHandler(capability, 'restart', { ...request, ...target })
+      ).toThrow('Invalid notebook RPC params for restart')
+    }
+  )
 
   it('rejects unknown methods after validating common routing fields', () => {
     const capability = createCapability()

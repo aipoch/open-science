@@ -14,6 +14,8 @@ import {
   type PreviewFileItem
 } from '@/stores/preview-workbench-store'
 import type { Annotation } from '../../../../../shared/annotations'
+import { createUploadVersionReference } from '../../../../../shared/uploads'
+import { createManagedPreviewRequest } from '../previews/preview-file-reader'
 
 class TestHighlight extends Set<Range> {}
 
@@ -237,6 +239,38 @@ describe('annotation reveal', () => {
     expect(state.items[0]).toMatchObject({ size: 123, selectedVersionId: 'version-1' })
   })
 
+  it('reconstructs a missing image annotation with its managed Artifact identity', () => {
+    requestAnnotationReveal({
+      id: 'point-missing',
+      kind: 'image-point',
+      target: 'agent',
+      note: 'Inspect this point',
+      source: {
+        kind: 'artifact-version',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        versionId: 'version-3',
+        name: 'figure.png',
+        path: 'artifact-version:project-1/session-1/artifact-9/version-3',
+        mimeType: 'image/png'
+      },
+      point: { x: 0.4, y: 0.6 },
+      naturalSize: { width: 800, height: 600 }
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'artifact-9',
+      items: [
+        expect.objectContaining({
+          id: 'artifact-9',
+          artifactId: 'artifact-9',
+          managedFileId: 'artifact-9',
+          selectedVersionId: 'version-3'
+        })
+      ]
+    })
+  })
+
   it('opens a missing source file tab from the annotation version identity', () => {
     const sourcePath = 'artifact-version:project-1/session-1/artifact-9/version-3'
     const annotation: Annotation = {
@@ -270,6 +304,203 @@ describe('annotation reveal', () => {
           artifactId: 'artifact-9',
           selectedVersionId: 'version-3'
         })
+      ]
+    })
+
+    const reopened = usePreviewWorkbenchStore.getState().items[0] as PreviewFileItem
+    expect(
+      createManagedPreviewRequest({
+        projectId: reopened.projectId,
+        sessionId: reopened.sessionId,
+        source: reopened.source,
+        path: reopened.path,
+        managedFileId: reopened.managedFileId,
+        selectedVersionId: reopened.selectedVersionId
+      })
+    ).toEqual({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: 'artifact-9',
+      versionId: 'version-3'
+    })
+  })
+
+  it('reopens a missing upload annotation with its stable file and Version identity', () => {
+    const sourcePath = createUploadVersionReference('upload-version-3', {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      fileId: 'upload-file-9'
+    })
+    const annotation: Annotation = {
+      id: 'upload-quote-1',
+      kind: 'text',
+      target: 'agent',
+      quote: 'Uploaded evidence',
+      source: {
+        kind: 'project-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        path: sourcePath,
+        name: 'evidence.md',
+        versionId: 'upload-version-3'
+      }
+    }
+
+    requestAnnotationReveal(annotation)
+
+    const state = usePreviewWorkbenchStore.getState()
+    expect(state.activeItemId).toBe('upload:upload-file-9')
+    const reopened = state.items[0] as PreviewFileItem
+    expect(reopened).toMatchObject({
+      id: 'upload:upload-file-9',
+      source: 'upload',
+      managedFileId: 'upload-file-9',
+      selectedVersionId: 'upload-version-3'
+    })
+    expect(
+      createManagedPreviewRequest({
+        projectId: reopened.projectId,
+        sessionId: reopened.sessionId,
+        source: reopened.source,
+        path: reopened.path,
+        managedFileId: reopened.managedFileId,
+        selectedVersionId: reopened.selectedVersionId
+      })
+    ).toEqual({
+      source: 'upload',
+      projectId: 'project-1',
+      fileId: 'upload-file-9',
+      versionId: 'upload-version-3'
+    })
+  })
+
+  it('reopens a raw-path annotation from its explicit managed identity', () => {
+    const annotation: Annotation = {
+      id: 'raw-managed-quote-1',
+      kind: 'text',
+      target: 'agent',
+      quote: 'Managed evidence',
+      source: {
+        kind: 'project-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        path: '/stale/managed-file-projection.md',
+        name: 'evidence.md',
+        fileSource: 'artifact',
+        sourceFileId: 'artifact-9',
+        versionId: 'version-3'
+      }
+    }
+
+    requestAnnotationReveal(annotation)
+
+    const state = usePreviewWorkbenchStore.getState()
+    expect(state.activeItemId).toBe('artifact-9')
+    const reopened = state.items[0] as PreviewFileItem
+    expect(reopened).toMatchObject({
+      id: 'artifact-9',
+      managedFileId: 'artifact-9',
+      artifactId: 'artifact-9',
+      selectedVersionId: 'version-3'
+    })
+    expect(
+      createManagedPreviewRequest({
+        projectId: reopened.projectId,
+        sessionId: reopened.sessionId,
+        source: reopened.source,
+        path: reopened.path,
+        managedFileId: reopened.managedFileId,
+        selectedVersionId: reopened.selectedVersionId
+      })
+    ).toEqual({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: 'artifact-9',
+      versionId: 'version-3'
+    })
+  })
+
+  it('reopens a raw-path upload annotation from its explicit managed identity', () => {
+    const annotation: Annotation = {
+      id: 'raw-upload-quote-1',
+      kind: 'text',
+      target: 'agent',
+      quote: 'Uploaded evidence',
+      source: {
+        kind: 'project-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        path: '/stale/upload-projection.md',
+        name: 'upload.md',
+        fileSource: 'upload',
+        sourceFileId: 'upload-file-9',
+        versionId: 'upload-version-3'
+      }
+    }
+
+    requestAnnotationReveal(annotation)
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'upload:upload-file-9',
+      items: [
+        expect.objectContaining({
+          id: 'upload:upload-file-9',
+          source: 'upload',
+          managedFileId: 'upload-file-9',
+          selectedVersionId: 'upload-version-3'
+        })
+      ]
+    })
+  })
+
+  it('does not fall back to a matching path when managed identities conflict', () => {
+    const path = 'artifact-version:project-1/session-1/artifact-9/version-3'
+    usePreviewWorkbenchStore.getState().upsertItem({
+      id: 'artifact-other',
+      type: 'file',
+      title: 'evidence.md',
+      name: 'evidence.md',
+      path,
+      format: 'markdown',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactId: 'artifact-other',
+      managedFileId: 'artifact-other',
+      selectedVersionId: 'version-3'
+    })
+    usePreviewWorkbenchStore.getState().upsertItem({
+      id: 'control-tab',
+      type: 'file',
+      title: 'control.md',
+      name: 'control.md',
+      path: '/project/control.md',
+      format: 'markdown',
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+    usePreviewWorkbenchStore.getState().activateItem('control-tab')
+
+    requestAnnotationReveal({
+      id: 'conflicting-managed-identity',
+      kind: 'text',
+      target: 'agent',
+      quote: 'Managed evidence',
+      source: {
+        kind: 'project-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        path,
+        fileSource: 'artifact',
+        sourceFileId: 'artifact-other',
+        versionId: 'version-3'
+      }
+    })
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'control-tab',
+      items: [
+        expect.objectContaining({ id: 'artifact-other' }),
+        expect.objectContaining({ id: 'control-tab' })
       ]
     })
   })

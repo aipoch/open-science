@@ -5,6 +5,7 @@ import { Dialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogCancelButtonClassName,
   dialogCloseButtonClassName,
   dialogOverlayClassName,
   dialogPanelClassName
@@ -135,17 +136,18 @@ const DownloadSessionArtifactsDialog = ({
         projectId: session.projectId,
         sessionId: session.id,
         files: selectedArtifacts.map((artifact) => ({
-          path: artifact.path,
+          fileId: artifact.sourceFileId,
+          versionId: artifact.sourceVersionId,
           suggestedName: artifact.name
         }))
       })
       if (!result.saved) return
       if (result.failures?.length) {
-        const failedPaths = new Set(result.failures.map((failure) => failure.path))
+        const failedFileIds = new Set(result.failures.map((failure) => failure.fileId))
         setSelectedIds(
           new Set(
             artifacts
-              .filter((artifact) => failedPaths.has(artifact.path))
+              .filter((artifact) => failedFileIds.has(artifact.sourceFileId))
               .map((artifact) => artifact.id)
           )
         )
@@ -169,7 +171,7 @@ const DownloadSessionArtifactsDialog = ({
     <Dialog.Root
       open={Boolean(session)}
       onOpenChange={(open) => {
-        if (!open) onClose()
+        if (!open && !isDownloading) onClose()
       }}
     >
       <Dialog.Portal>
@@ -178,6 +180,12 @@ const DownloadSessionArtifactsDialog = ({
           className={dialogPanelClassName(
             'flex max-h-[80svh] w-[min(640px,calc(100vw-2rem))] flex-col overflow-hidden p-0'
           )}
+          onEscapeKeyDown={(event) => {
+            if (isDownloading) event.preventDefault()
+          }}
+          onInteractOutside={(event) => {
+            if (isDownloading) event.preventDefault()
+          }}
         >
           <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border-300/90 px-5 py-3.5">
             <div className="flex min-w-0 items-center gap-2">
@@ -202,6 +210,7 @@ const DownloadSessionArtifactsDialog = ({
               size="icon-sm"
               aria-label={t('Close')}
               className={dialogCloseButtonClassName}
+              disabled={isDownloading}
               onClick={onClose}
             >
               <X className="size-4" aria-hidden="true" />
@@ -280,6 +289,16 @@ const DownloadSessionArtifactsDialog = ({
                     : downloadError.message}
                 </p>
               ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={dialogCancelButtonClassName}
+                disabled={isDownloading}
+                onClick={onClose}
+              >
+                {t('Cancel')}
+              </Button>
               <Button
                 type="button"
                 size="sm"

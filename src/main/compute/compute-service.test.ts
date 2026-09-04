@@ -167,10 +167,10 @@ describe('ComputeService remote operation facade', () => {
               timedOut: false
             })
           }
-          if (command.includes("stat -c '%s'")) {
+          if (command.includes("-maxdepth 0 -printf '%s %i %T@'")) {
             return Promise.resolve({
               exitCode: 0,
-              stdout: 'f 4',
+              stdout: 'f 4 1 0',
               stderr: '',
               truncated: false,
               timedOut: false

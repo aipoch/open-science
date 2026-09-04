@@ -135,10 +135,7 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'uploads:stage-local-file'
 ])
 
-const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
-  'sessions:set-delegation-policy',
-  'reviewer:abort'
-])
+const TASK_NATIVE_COMMAND_NAMES = Object.freeze(['reviewer:abort'])
 
 const TASK_COMMAND_NAMES = Object.freeze([
   'projects:list',

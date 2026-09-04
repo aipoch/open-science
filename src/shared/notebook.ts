@@ -91,15 +91,19 @@ const languageAndOptionalOperationId = parsedArgs(
   z.union([z.tuple([notebookLanguageSchema]), z.tuple([notebookLanguageSchema, z.string()])])
 )
 
+const repairArgs = parsedArgs(
+  z.union([
+    z.tuple([notebookLanguageSchema, z.string().min(1)]),
+    z.tuple([notebookLanguageSchema, z.string().min(1), z.string()])
+  ])
+)
+
 export const notebookEnvironmentApplicationCommandContracts = Object.freeze({
   provision: defineApplicationCommandContract(
     languageAndOptionalOperationId,
     validationCodec(z.undefined())
   ),
-  repair: defineApplicationCommandContract(
-    languageAndOptionalOperationId,
-    validationCodec(z.undefined())
-  ),
+  repair: defineApplicationCommandContract(repairArgs, validationCodec(z.undefined())),
   cancel: defineApplicationCommandContract(
     parsedArgs(z.union([z.tuple([]), z.tuple([notebookLanguageSchema])])),
     validationCodec(z.undefined())
@@ -292,9 +296,19 @@ export type NotebookRunInputFile = {
 
 export type NotebookInputFileSummary = Omit<NotebookRunInputFile, 'storageKey'>
 
+// Transient model-facing projection of one exact Notebook input Version. The relative path is
+// materialized under the current Notebook data directory and is never persisted in run history.
+export type NotebookPromptInput = Pick<
+  NotebookRunInputFile,
+  'sourceKind' | 'inputFileVersionId' | 'filename'
+> & {
+  notebookPath: string
+}
+
 export type NotebookInputPreviewIdentity = {
   projectId: string
   sourceKind: NotebookRunInputFile['sourceKind']
+  sourceFileId: string
   inputFileVersionId: string
 }
 
@@ -302,7 +316,12 @@ const NOTEBOOK_INPUT_PREVIEW_PREFIX = 'notebook-input:'
 
 export const createNotebookInputPreviewKey = (identity: NotebookInputPreviewIdentity): string =>
   `${NOTEBOOK_INPUT_PREVIEW_PREFIX}${encodeURIComponent(
-    JSON.stringify([identity.projectId, identity.sourceKind, identity.inputFileVersionId])
+    JSON.stringify([
+      identity.projectId,
+      identity.sourceKind,
+      identity.sourceFileId,
+      identity.inputFileVersionId
+    ])
   )}`
 
 export const parseNotebookInputPreviewKey = (key: string): NotebookInputPreviewIdentity => {
@@ -314,7 +333,7 @@ export const parseNotebookInputPreviewKey = (key: string): NotebookInputPreviewI
   ) as unknown
   if (
     !Array.isArray(parsed) ||
-    parsed.length !== 3 ||
+    parsed.length !== 4 ||
     parsed.some((value) => typeof value !== 'string') ||
     (parsed[1] !== 'upload-version' && parsed[1] !== 'artifact-version')
   ) {
@@ -323,7 +342,8 @@ export const parseNotebookInputPreviewKey = (key: string): NotebookInputPreviewI
   return {
     projectId: parsed[0] as string,
     sourceKind: parsed[1],
-    inputFileVersionId: parsed[2] as string
+    sourceFileId: parsed[2] as string,
+    inputFileVersionId: parsed[3] as string
   }
 }
 
@@ -461,7 +481,9 @@ export type NotebookRunRecord = {
   executionCount?: number
   text: NotebookTextOutput
   outputs: NotebookOutput[]
-  artifacts: ArtifactFile[]
+  // Retained only for reading/exporting historical run.json documents. New native Artifact
+  // relationships are recorded by ArtifactVersion provenance and omit this field.
+  artifacts?: ArtifactFile[]
   workingFiles: NotebookWorkingFile[]
   // Immutable file-generation evidence is stored in a checksummed per-run sidecar. Optional keeps
   // historical run.json documents readable without fabricating capture coverage.
@@ -671,6 +693,12 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
   inputRunLeaseId?: string
 }
 
+// Restarts either every kernel in the Session (target omitted, preserving the historical behavior)
+// or one exact data-kernel target. Runtime boundaries reject half-specified targets.
+export type NotebookRestartRequest =
+  | (NotebookSessionRequest & { language: NotebookLanguage; environment: string })
+  | (NotebookSessionRequest & { language?: never; environment?: never })
+
 // A normal state read returns the latest renderer window. Transcript hydration may additionally
 // request immutable historical Runs by id without changing or widening that default window.
 export const NOTEBOOK_STATE_TARGET_RUN_LIMIT = 20
@@ -831,15 +859,14 @@ export type ExecuteNotebookCodeRequest = NotebookSessionRequest & {
 }
 
 // Runs code on the control-plane REPL kernel (JS; the only kernel with host.mcp connector access).
-// Distinct from data cells: no run history, no NotebookLanguage — just code and an optional timeout.
+// Distinct from data cells: durable Run history uses kernelKind "repl", with no NotebookLanguage.
 export type ExecuteNotebookControlRequest = NotebookSessionRequest & {
   code: string
   timeoutMs?: number
 }
 
-// Runs one shell command in a fresh, stateless process in the session workspace. Distinct from every
-// other kernel: no persistent process, no run history, no NotebookLanguage — just a command and an
-// optional timeout.
+// Runs one shell command in a fresh, stateless process in the session workspace. It has no
+// persistent process or NotebookLanguage, but each invocation is persisted as a "bash" Run.
 export type ExecuteShellRequest = NotebookSessionRequest & {
   command: string
   timeoutMs?: number

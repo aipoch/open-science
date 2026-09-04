@@ -4,8 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
+import { PdfPreviewContent, PdfPreviewRenderer } from './PdfPreview'
 import { requestAnnotationReveal } from '../../annotations/annotation-reveal'
-import { PdfPreviewContent } from './PdfPreview'
 
 vi.mock('../managed-pdf-document', () => ({ createManagedPdfLoadingTask: vi.fn() }))
 const { cancelTextLayer, renderTextLayer } = vi.hoisted(() => ({
@@ -176,6 +176,7 @@ describe('PdfPreviewContent', () => {
           source="artifact"
           projectId="project-1"
           sessionId="session-1"
+          managedFileId="artifact-1"
         />
       )
     })
@@ -186,8 +187,7 @@ describe('PdfPreviewContent', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
       projectId: 'project-1',
-      sessionId: 'session-1',
-      path: 'artifact-version:version-1'
+      fileId: 'artifact-1'
     })
     expect(createManagedPdfLoadingTask).toHaveBeenCalledWith(
       expect.objectContaining({ size: 80 * 1024 * 1024 })
@@ -205,6 +205,37 @@ describe('PdfPreviewContent', () => {
     expect(destroyDocument).toHaveBeenCalled()
     expect(destroyDocument.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(window.api.previewResources.release).mock.invocationCallOrder[0] as number
+    )
+  })
+
+  it('acquires the exact managed Artifact version selected by the preview item', async () => {
+    await act(async () => {
+      root.render(
+        <PdfPreviewRenderer
+          item={{
+            id: 'artifact-1',
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            title: 'report.pdf',
+            type: 'file',
+            source: 'artifact',
+            path: 'artifact-version:stale-projection',
+            name: 'report.pdf',
+            format: 'pdf',
+            managedFileId: 'artifact-1',
+            selectedVersionId: 'artifact-v2'
+          }}
+        />
+      )
+    })
+
+    await vi.waitFor(() =>
+      expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: 'artifact-1',
+        versionId: 'artifact-v2'
+      })
     )
   })
 
@@ -232,7 +263,7 @@ describe('PdfPreviewContent', () => {
 
     await act(async () => {
       root.render(
-        <PdfPreviewContent path="/workspace/outline.pdf" name="outline.pdf" source="artifact" />
+        <PdfPreviewContent path="/workspace/outline.pdf" name="outline.pdf" source="local" />
       )
       await Promise.resolve()
       await Promise.resolve()
@@ -318,9 +349,7 @@ describe('PdfPreviewContent', () => {
     } as never)
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/plain.pdf" name="plain.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/plain.pdf" name="plain.pdf" source="local" />)
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -714,9 +743,7 @@ describe('PdfPreviewContent', () => {
     } as never)
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/live.pdf" name="live.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/live.pdf" name="live.pdf" source="local" />)
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -998,7 +1025,7 @@ describe('PdfPreviewContent', () => {
         <PdfPreviewContent
           path="/workspace/reading.pdf"
           name="reading.pdf"
-          source="artifact"
+          source="local"
           onReadingPositionChange={onReadingPositionChange}
         />
       )
@@ -1067,7 +1094,7 @@ describe('PdfPreviewContent', () => {
 
     await act(async () => {
       root.render(
-        <PdfPreviewContent path="/workspace/landscape.pdf" name="landscape.pdf" source="artifact" />
+        <PdfPreviewContent path="/workspace/landscape.pdf" name="landscape.pdf" source="local" />
       )
     })
     await act(async () => {
@@ -1098,9 +1125,7 @@ describe('PdfPreviewContent', () => {
     })
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/sharp.pdf" name="sharp.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/sharp.pdf" name="sharp.pdf" source="local" />)
     })
     await act(async () => {
       await Promise.resolve()
@@ -1130,9 +1155,7 @@ describe('PdfPreviewContent', () => {
     })
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/zoom.pdf" name="zoom.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/zoom.pdf" name="zoom.pdf" source="local" />)
     })
     // At fit width (100%) the 400pt page backs the canvas at its own width.
     await vi.waitFor(() =>
@@ -1173,11 +1196,7 @@ describe('PdfPreviewContent', () => {
 
     await act(async () => {
       root.render(
-        <PdfPreviewContent
-          path="/workspace/text-scale.pdf"
-          name="text-scale.pdf"
-          source="artifact"
-        />
+        <PdfPreviewContent path="/workspace/text-scale.pdf" name="text-scale.pdf" source="local" />
       )
     })
     await vi.waitFor(() =>
@@ -1231,6 +1250,8 @@ describe('PdfPreviewContent', () => {
           source="upload"
           projectId={source.projectId}
           sessionId={source.sessionId}
+          managedFileId="upload-1"
+          selectedVersionId={source.versionId}
           pdfEvidenceSource={source}
           annotationProps={{
             item: {
@@ -1459,6 +1480,8 @@ describe('PdfPreviewContent', () => {
           source="upload"
           projectId={source.projectId}
           sessionId={source.sessionId}
+          managedFileId="upload-1"
+          selectedVersionId={source.versionId}
           pdfRevealSource={source}
           annotationProps={{
             item: {
@@ -1507,9 +1530,7 @@ describe('PdfPreviewContent', () => {
     })
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/align.pdf" name="align.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/align.pdf" name="align.pdf" source="local" />)
     })
     await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBe(400))
 
@@ -1560,7 +1581,7 @@ describe('PdfPreviewContent', () => {
 
     await act(async () => {
       root.render(
-        <PdfPreviewContent path="/workspace/anchor.pdf" name="anchor.pdf" source="artifact" />
+        <PdfPreviewContent path="/workspace/anchor.pdf" name="anchor.pdf" source="local" />
       )
     })
     await vi.waitFor(() =>
@@ -1621,9 +1642,7 @@ describe('PdfPreviewContent', () => {
     })
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/a11y.pdf" name="a11y.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/a11y.pdf" name="a11y.pdf" source="local" />)
     })
     await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBe(400))
 
@@ -1654,9 +1673,7 @@ describe('PdfPreviewContent', () => {
     })
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/wide.pdf" name="wide.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/wide.pdf" name="wide.pdf" source="local" />)
     })
     await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBeGreaterThan(0))
 
@@ -1723,9 +1740,7 @@ describe('PdfPreviewContent', () => {
     })
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/wheel.pdf" name="wheel.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/wheel.pdf" name="wheel.pdf" source="local" />)
     })
     await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBe(400))
 
@@ -1800,9 +1815,7 @@ describe('PdfPreviewContent', () => {
     })
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/first.pdf" name="first.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/first.pdf" name="first.pdf" source="local" />)
     })
     await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBe(400))
 
@@ -1821,7 +1834,7 @@ describe('PdfPreviewContent', () => {
     // cancels the queued frame, so the stale delta cannot re-apply on top of the reset.
     await act(async () => {
       root.render(
-        <PdfPreviewContent path="/workspace/second.pdf" name="second.pdf" source="artifact" />
+        <PdfPreviewContent path="/workspace/second.pdf" name="second.pdf" source="local" />
       )
     })
     await act(async () => {
@@ -1851,9 +1864,7 @@ describe('PdfPreviewContent', () => {
     })
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/first.pdf" name="first.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/first.pdf" name="first.pdf" source="local" />)
     })
     await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBe(400))
 
@@ -1866,7 +1877,7 @@ describe('PdfPreviewContent', () => {
     // The Files-tab dialog swaps the file in place (same component instance, no remount / key).
     await act(async () => {
       root.render(
-        <PdfPreviewContent path="/workspace/second.pdf" name="second.pdf" source="artifact" />
+        <PdfPreviewContent path="/workspace/second.pdf" name="second.pdf" source="local" />
       )
     })
 
@@ -1908,7 +1919,7 @@ describe('PdfPreviewContent', () => {
 
     await act(async () => {
       root.render(
-        <PdfPreviewContent path="/workspace/resize.pdf" name="resize.pdf" source="artifact" />
+        <PdfPreviewContent path="/workspace/resize.pdf" name="resize.pdf" source="local" />
       )
     })
     await vi.waitFor(() => expect(render).toHaveBeenCalledTimes(1))
@@ -2040,9 +2051,7 @@ describe('PdfPreviewContent', () => {
     })
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/tall.pdf" name="tall.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/tall.pdf" name="tall.pdf" source="local" />)
     })
     await act(async () => {
       await vi.waitFor(() => expect(container.querySelector('canvas')?.height).toBeGreaterThan(0))
@@ -2075,9 +2084,7 @@ describe('PdfPreviewContent', () => {
     })
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/hidpi.pdf" name="hidpi.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/hidpi.pdf" name="hidpi.pdf" source="local" />)
     })
     await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBeGreaterThan(0))
 
@@ -2119,9 +2126,7 @@ describe('PdfPreviewContent', () => {
     })
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/deep.pdf" name="deep.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/deep.pdf" name="deep.pdf" source="local" />)
     })
     await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBeGreaterThan(0))
 
@@ -2183,7 +2188,7 @@ describe('PdfPreviewContent', () => {
 
     await act(async () => {
       root.render(
-        <PdfPreviewContent path="/workspace/scroll.pdf" name="scroll.pdf" source="artifact" />
+        <PdfPreviewContent path="/workspace/scroll.pdf" name="scroll.pdf" source="local" />
       )
       await Promise.resolve()
     })
@@ -2230,7 +2235,7 @@ describe('PdfPreviewContent', () => {
 
     await act(async () => {
       root.render(
-        <PdfPreviewContent path="/workspace/broken.pdf" name="broken.pdf" source="artifact" />
+        <PdfPreviewContent path="/workspace/broken.pdf" name="broken.pdf" source="local" />
       )
       await Promise.resolve()
     })
@@ -2275,11 +2280,7 @@ describe('PdfPreviewContent', () => {
 
     await act(async () => {
       root.render(
-        <PdfPreviewContent
-          path="/workspace/lazy-pages.pdf"
-          name="lazy-pages.pdf"
-          source="artifact"
-        />
+        <PdfPreviewContent path="/workspace/lazy-pages.pdf" name="lazy-pages.pdf" source="local" />
       )
       await Promise.resolve()
       await Promise.resolve()
@@ -2334,6 +2335,8 @@ describe('PdfPreviewContent', () => {
           source="upload"
           projectId={source.projectId}
           sessionId={source.sessionId}
+          managedFileId="upload-1"
+          selectedVersionId={source.versionId}
           pdfEvidenceSource={source}
           annotationProps={{
             item: {
@@ -2379,7 +2382,7 @@ describe('PdfPreviewContent', () => {
 
     await act(async () => {
       root.render(
-        <PdfPreviewContent path="/workspace/loading.pdf" name="loading.pdf" source="artifact" />
+        <PdfPreviewContent path="/workspace/loading.pdf" name="loading.pdf" source="local" />
       )
       await Promise.resolve()
       await Promise.resolve()
@@ -2403,9 +2406,7 @@ describe('PdfPreviewContent', () => {
     } as never)
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/long.pdf" name="long.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/long.pdf" name="long.pdf" source="local" />)
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -2440,9 +2441,7 @@ describe('PdfPreviewContent', () => {
     } as never)
 
     await act(async () => {
-      root.render(
-        <PdfPreviewContent path="/workspace/late.pdf" name="late.pdf" source="artifact" />
-      )
+      root.render(<PdfPreviewContent path="/workspace/late.pdf" name="late.pdf" source="local" />)
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -2485,7 +2484,7 @@ describe('PdfPreviewContent', () => {
 
     await act(async () => {
       root.render(
-        <PdfPreviewContent path="/workspace/active.pdf" name="active.pdf" source="artifact" />
+        <PdfPreviewContent path="/workspace/active.pdf" name="active.pdf" source="local" />
       )
       await Promise.resolve()
       await Promise.resolve()

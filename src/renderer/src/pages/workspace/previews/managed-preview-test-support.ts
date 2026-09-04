@@ -39,7 +39,9 @@ export const createManagedPreviewTestTransport = ({
   return {
     acquire: async (request) => {
       const id = `resource-${nextResourceId++}`
-      const filename = request.path.split('/').at(-1) ?? 'preview'
+      const sourcePath =
+        request.source === 'artifact' || request.source === 'upload' ? request.fileId : request.path
+      const filename = sourcePath.split('/').at(-1) ?? 'preview'
       const url = `open-science-preview://${id}/${filename}`
       requests.set(url, request)
       return {
@@ -69,9 +71,12 @@ export const createManagedPreviewTestTransport = ({
       const offset = Number(range[1])
       const requestedBytes = Number(range[2]) - offset + 1
       const result = await read(acquired.source, {
-        path: acquired.path,
+        path:
+          acquired.source === 'artifact' || acquired.source === 'upload'
+            ? acquired.fileId
+            : acquired.path,
         ...(acquired.projectId ? { projectId: acquired.projectId } : {}),
-        ...(acquired.sessionId ? { sessionId: acquired.sessionId } : {}),
+        ...('sessionId' in acquired && acquired.sessionId ? { sessionId: acquired.sessionId } : {}),
         maxBytes: Math.max(1, requestedBytes - (encoding === 'utf8' ? 3 : 0)),
         encoding,
         offset

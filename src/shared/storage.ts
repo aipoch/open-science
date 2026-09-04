@@ -11,7 +11,16 @@ export const STORAGE_USAGE_CATEGORY_KEYS = [
   'workspaces'
 ] as const
 export type UsageCategoryKey = (typeof STORAGE_USAGE_CATEGORY_KEYS)[number]
-export type UsageChild = { name: string; bytes: number }
+export type UsageChild = {
+  name: string
+  bytes: number
+  workspaceId?: string
+  projectId?: string
+  sessionId?: string
+  createdAt?: number
+  lastUsedAt?: number
+  retainedAfterDelete?: boolean
+}
 export type UsageCategory = { key: UsageCategoryKey; bytes: number; children?: UsageChild[] }
 export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
 
@@ -96,18 +105,27 @@ export type DataRootInspection =
       kind: 'recover'
       dataRoot: string
       recoveryStatus: DataRootRecoveryStatus
+      // Free bytes on the filesystem that contains the candidate data root. This is advisory: the
+      // migration's scan performs the authoritative preflight immediately before copying.
+      targetAvailableBytes?: number
       error?: string
     }
   | {
       kind: 'move'
       dataRoot: string
       targetWasAbsent?: boolean
+      // Free bytes on the filesystem that contains the candidate data root. This is advisory: the
+      // migration's scan performs the authoritative preflight immediately before copying.
+      targetAvailableBytes?: number
       recoveryStatus?: never
       error?: string
     }
   | {
       kind: Exclude<DataRootKind, 'recover' | 'move'>
       dataRoot: string
+      // Free bytes on the filesystem that contains the candidate data root. This is advisory: the
+      // migration's scan performs the authoritative preflight immediately before copying.
+      targetAvailableBytes?: number
       recoveryStatus?: never
       error?: string
     }

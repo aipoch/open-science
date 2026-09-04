@@ -38,8 +38,18 @@ type SessionEnabledComputeHostsOwnerOptions = Readonly<{
   hostExists(providerId: string): Promise<boolean>
   listHostIds(): Promise<readonly string[]>
   sessionAuthority: SessionEnabledComputeHostsAuthority
+  projectSessionConcurrencyLimit?(sessionId: string, limit: number): Promise<void>
+  clearSessionConcurrencyLimits?(sessionIds: readonly string[]): Promise<void>
   withDataRootWrite<Result>(operation: () => Promise<Result>): Promise<Result>
 }>
+
+const validateSessionConcurrencyLimit = (limit: number | undefined): void => {
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 500)) {
+    throw new Error(
+      `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
+    )
+  }
+}
 
 class SessionEnabledComputeHostsOwner {
   private queue: Promise<unknown> = Promise.resolve()
@@ -142,6 +152,7 @@ class SessionEnabledComputeHostsOwner {
 
   clear(sessionIds: readonly string[]): Promise<void> {
     return this.enqueue(async () => {
+      await this.options.clearSessionConcurrencyLimits?.(sessionIds)
       for (const sessionId of sessionIds) this.options.registry.clear(sessionId)
     })
   }
@@ -287,6 +298,7 @@ class SessionEnabledComputeHostsOwner {
     commit: (session: PersistedChatSession) => Promise<PersistedChatSession>
   ): Promise<PersistedChatSession> {
     return this.enqueueWrite(async () => {
+      validateSessionConcurrencyLimit(session.computeConcurrencyLimit)
       const enabledComputeHosts = await this.validateProviderIds(session.enabledComputeHosts ?? [])
       const selectedComputeHosts = await this.validateProviderIds(
         session.selectedComputeHosts ?? enabledComputeHosts
@@ -307,6 +319,15 @@ class SessionEnabledComputeHostsOwner {
           ? { selectedComputeHosts }
           : {})
       })
+      if (durableSession.computeConcurrencyLimit !== undefined) {
+        if (!this.options.projectSessionConcurrencyLimit) {
+          throw new Error('Session concurrency ownership is not initialized.')
+        }
+        await this.options.projectSessionConcurrencyLimit(
+          durableSession.id,
+          durableSession.computeConcurrencyLimit
+        )
+      }
       this.project(durableSession)
       return durableSession
     })

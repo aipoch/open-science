@@ -83,6 +83,8 @@ type FixLoopFakeAgentOptions = {
   reReviewChecksByRound?: ReReviewChecks[]
   // Called when a correction prompt arrives at the main session
   onCorrectionPrompt?: (text: string, round: number) => void
+  // Lets a test inspect durable state while the correction turn is in flight.
+  beforeCorrectionReply?: () => Promise<void>
 }
 
 type FixLoopAgentState = {
@@ -199,6 +201,7 @@ const startFixLoopFakeAgent = (
         // This is a main-session correction prompt
         state.correctionCount++
         options.onCorrectionPrompt?.(text, state.correctionCount)
+        await options.beforeCorrectionReply?.()
 
         // Simulate the session JSON being updated with a new agent correction message.
         // The fix loop needs to reload the session to see new messages after the correction.
@@ -350,6 +353,184 @@ afterEach(async () => {
 })
 
 describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
+  it('keeps the flagged initial review running until the Fix Loop settles', async () => {
+    const process = new FakeAgentProcess()
+    const shared = makeSharedSession(makeSession())
+    let enterCorrection!: () => void
+    let releaseCorrection!: () => void
+    const correctionEntered = new Promise<void>((resolve) => {
+      enterCorrection = resolve
+    })
+    const correctionReleased = new Promise<void>((resolve) => {
+      releaseCorrection = resolve
+    })
+
+    startFixLoopFakeAgent(
+      process,
+      {
+        mainSessionId: 'main-session-1',
+        initialChecks: [
+          {
+            status: 'fail',
+            claim: 'Agent claimed 42 results',
+            evidence: 'Tool output shows 0 results',
+            locator: { blockRef: { blockIndex: 1 }, contentHash: 'abc123' }
+          }
+        ],
+        reReviewChecksByRound: [
+          [
+            {
+              status: 'pass',
+              claim: 'Agent claimed 42 results',
+              evidence: 'Correction confirmed: results now correct'
+            }
+          ]
+        ],
+        beforeCorrectionReply: async () => {
+          enterCorrection()
+          await correctionReleased
+        }
+      },
+      shared
+    )
+
+    const runtime = createFixLoopRuntime(process, shared)
+    await runtime.createSession({ cwd: '/workspace' })
+    const client = createProjectDbClient(temporaryRoot!)
+    await migrateApplicationDatabase(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+    const onReviewUpdate = vi.fn()
+
+    const reviewRun = runReview({
+      sessionId: 'session-1',
+      turnMessageId: 'msg-2',
+      projectId: 'project-1',
+      getSession: () => shared.getSession(),
+      reviewRepository: repository,
+      acpRuntime: runtime,
+      artifactStorageRoot: temporaryRoot!,
+      mainSessionId: 'main-session-1',
+      onReviewUpdate,
+      agentTarget: {
+        frameworkId: 'codex',
+        providerId: 'provider-1',
+        model: 'model-1',
+        reasoningEffort: 'high'
+      }
+    })
+
+    await Promise.race([
+      correctionEntered,
+      reviewRun.then((review) => {
+        throw new Error(
+          `Review run ended before the correction turn started: ${review.lifecycle}/${review.outcome}, ${review.checks.length} checks, ${review.errorMessage ?? 'no error'}.`
+        )
+      })
+    ])
+    let initialReviewId: string | undefined
+    try {
+      const initialReview = (await repository.getReviewsForSession('session-1')).find(
+        (review) => review.turnMessageId === 'msg-2'
+      )
+      initialReviewId = initialReview?.id
+      expect(initialReview).toMatchObject({
+        lifecycle: 'running',
+        outcome: null,
+        checks: [expect.objectContaining({ status: 'fail' })]
+      })
+      expect(onReviewUpdate).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          id: initialReview?.id,
+          lifecycle: 'running',
+          outcome: null,
+          checks: [expect.objectContaining({ status: 'fail' })]
+        })
+      )
+    } finally {
+      releaseCorrection()
+    }
+
+    await reviewRun
+    const initialReview = (await repository.getReviewsForSession('session-1')).find(
+      (review) => review.id === initialReviewId
+    )
+    expect({
+      lifecycle: initialReview?.lifecycle,
+      outcome: initialReview?.outcome,
+      errorMessage: initialReview?.errorMessage
+    }).toEqual({ lifecycle: 'complete', outcome: 'flagged', errorMessage: undefined })
+    await client.$disconnect()
+  })
+
+  it('publishes the terminal review when the Fix Loop exits exceptionally', async () => {
+    const process = new FakeAgentProcess()
+    const shared = makeSharedSession(makeSession())
+
+    startFixLoopFakeAgent(
+      process,
+      {
+        mainSessionId: 'main-session-1',
+        initialChecks: [
+          {
+            status: 'fail',
+            claim: 'Agent claimed 42 results',
+            evidence: 'Tool output shows 0 results',
+            locator: { blockRef: { blockIndex: 1 }, contentHash: 'abc123' }
+          }
+        ],
+        reReviewChecksByRound: [
+          [
+            {
+              status: 'pass',
+              claim: 'Agent claimed 42 results',
+              evidence: 'Correction confirmed: results now correct'
+            }
+          ]
+        ]
+      },
+      shared
+    )
+
+    const runtime = createFixLoopRuntime(process, shared)
+    await runtime.createSession({ cwd: '/workspace' })
+    const client = createProjectDbClient(temporaryRoot!)
+    await migrateApplicationDatabase(client)
+    const repository = new ReviewRepository(() => Promise.resolve(client))
+    const onReviewUpdate = vi.fn()
+    const onFixLoopStart = vi.fn(() => {
+      vi.spyOn(repository, 'commitFindingDispositions').mockRejectedValueOnce(
+        new Error('disposition write failed')
+      )
+    })
+
+    await expect(
+      runReview({
+        sessionId: 'session-1',
+        turnMessageId: 'msg-2',
+        projectId: 'project-1',
+        getSession: () => shared.getSession(),
+        reviewRepository: repository,
+        acpRuntime: runtime,
+        artifactStorageRoot: temporaryRoot!,
+        mainSessionId: 'main-session-1',
+        onReviewUpdate,
+        onFixLoopStart,
+        fixLoopMaxRounds: 0,
+        agentTarget: {
+          frameworkId: 'codex',
+          providerId: 'provider-1',
+          model: 'model-1',
+          reasoningEffort: 'high'
+        }
+      })
+    ).rejects.toThrow('disposition write failed')
+
+    expect(onReviewUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lifecycle: 'complete', outcome: 'flagged' })
+    )
+    await client.$disconnect()
+  })
+
   it('resolves all checks when re-review passes; exactly 1 [Auditor] injection for 1 round', async () => {
     const process = new FakeAgentProcess()
     const shared = makeSharedSession(

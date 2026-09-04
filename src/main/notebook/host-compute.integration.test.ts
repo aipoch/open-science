@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { listenForLocalRpc } from '../local-rpc-transport'
 import { NotebookKernelExecutor } from './kernel-executor'
 
 // host.compute lives ONLY in the control-plane repl kernel (a Node process), reached via the same
@@ -44,12 +45,15 @@ const makeNotebookRoots = (): {
 // snake_case result projections.
 const startStub = async (
   options: {
+    transport?: 'tcp' | 'pipe'
+    dropFirstListHostsBody?: boolean
     dropFirstSubmitResponse?: boolean
     dropFirstSubmitBody?: boolean
     rejectSubmit?: boolean
   } = {}
 ): Promise<{
   endpoint: string
+  socketPath?: string
   close: () => void
   received: () => Array<{ params?: Record<string, unknown> }>
 }> => {
@@ -63,6 +67,20 @@ const startStub = async (
       const request = body ? JSON.parse(body) : {}
       requests.push(request)
       const op = request.params?.op
+      if (op === 'list_hosts' && options.dropFirstListHostsBody && !droppedFirstSubmitResponse) {
+        droppedFirstSubmitResponse = true
+        const responseBody = JSON.stringify({
+          result: [{ provider_id: 'ssh:x', display_name: 'x', role: 'selected' }]
+        })
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(responseBody)
+        })
+        res.flushHeaders()
+        res.write(responseBody.slice(0, -1))
+        setImmediate(() => res.destroy())
+        return
+      }
       if (op === 'submit_job' && options.dropFirstSubmitResponse && !droppedFirstSubmitResponse) {
         droppedFirstSubmitResponse = true
         res.destroy()
@@ -99,10 +117,12 @@ const startStub = async (
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ result }))
     })
   })
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
-  const addr = server.address() as { port: number }
+  const connection = await listenForLocalRpc(server, {
+    name: 'host-compute-integration-test',
+    transport: options.transport
+  })
   return {
-    endpoint: `http://127.0.0.1:${addr.port}`,
+    ...connection,
     close: () => server.close(),
     received: () => requests
   }
@@ -115,6 +135,7 @@ const baseRequest = (
   overrides: Partial<{
     code: string
     mcpRpcEndpoint: string
+    mcpRpcSocketPath: string
     mcpRpcToken: string
     sessionId: string
     projectId: string
@@ -127,6 +148,44 @@ const baseRequest = (
 })
 
 gate('repl kernel host.compute', () => {
+  it('keeps the kernel alive when a pipe listHosts response is interrupted', async () => {
+    const stub = await startStub({ transport: 'pipe', dropFirstListHostsBody: true })
+    if (!stub.socketPath) throw new Error('Expected pipe transport.')
+    const exec = makeExecutor()
+    const request = baseRequest({
+      code: 'await host.compute.listHosts()',
+      mcpRpcEndpoint: stub.endpoint,
+      mcpRpcSocketPath: stub.socketPath,
+      mcpRpcToken: 'tok',
+      sessionId: 'session-7'
+    })
+
+    const execution = exec.execute(request)
+    const outcome = await Promise.race([
+      execution.then((result) => ({ kind: 'settled' as const, result })),
+      new Promise<{ kind: 'stalled' }>((resolve) =>
+        setTimeout(() => resolve({ kind: 'stalled' }), 1_000)
+      )
+    ])
+    const subsequent =
+      outcome.kind === 'settled'
+        ? await exec.execute({ ...request, code: "console.log('still alive')" })
+        : undefined
+    await exec.shutdown()
+    if (outcome.kind === 'stalled') await execution
+    stub.close()
+
+    if (outcome.kind === 'stalled') {
+      throw new Error(
+        'host.compute.listHosts() stalled after its pipe response was interrupted, forcing the Notebook kernel to time out or exit.'
+      )
+    }
+    expect(outcome.result.status).toBe('failed')
+    expect(outcome.result.traceback).not.toContain('Notebook kernel process exited')
+    expect(subsequent?.status).toBe('completed')
+    expect(subsequent?.stdout).toContain('still alive')
+  })
+
   it('callCommand posts unchanged call_command wire params and returns the ExecResult', async () => {
     const stub = await startStub()
     const exec = makeExecutor()

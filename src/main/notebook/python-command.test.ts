@@ -146,6 +146,27 @@ describe('resolvePythonCommand', () => {
 })
 
 describe('validateNotebookHelperExports', () => {
+  it('validates trusted bundled helpers when Python lacks audit hooks', async () => {
+    const python = await resolvePythonCommand()
+    const legacyPython = {
+      ...python,
+      baseArgs: [...python.baseArgs, '-c', 'import sys; del sys.addaudithook; exec(sys.argv[-1])']
+    }
+    const source = 'def compose_figure():\n    return None\n'
+
+    await expect(
+      validateNotebookHelperExports('figure-composer', source, ['compose_figure'], {
+        python: legacyPython,
+        trustedSource: true
+      })
+    ).resolves.toBeUndefined()
+    await expect(
+      validateNotebookHelperExports('external-helper', source, ['compose_figure'], {
+        python: legacyPython
+      })
+    ).rejects.toThrow('external helper validation requires Python audit-hook support')
+  })
+
   it('validates UTF-8 helper source when the interpreter defaults stdin to a legacy encoding', async () => {
     const python = await resolvePythonCommand()
 

@@ -84,6 +84,62 @@ describe('Session file envelope versions', () => {
     expect(normalizeSessionFile({ ...legacySession(), revision: -1 })?.revision).toBe(0)
     expect(normalizeSessionFile({ ...legacySession(), revision: '7' })?.revision).toBe(0)
   })
+
+  it('restores a valid Compute concurrency limit and keeps historical Sessions unlimited', () => {
+    expect(normalizeSessionFile(legacySession())?.computeConcurrencyLimit).toBeUndefined()
+    expect(
+      normalizeSessionFile({ ...legacySession(), computeConcurrencyLimit: 1 })
+        ?.computeConcurrencyLimit
+    ).toBe(1)
+    expect(
+      normalizeSessionFile({ ...legacySession(), computeConcurrencyLimit: 500 })
+        ?.computeConcurrencyLimit
+    ).toBe(500)
+  })
+
+  it.each([0, 501, 1.5, '1'])('rejects malformed Compute concurrency limit %j', (limit) => {
+    expect(
+      normalizeSessionFile({ ...legacySession(), computeConcurrencyLimit: limit })
+    ).toBeUndefined()
+  })
+
+  it('redacts credentials while decoding a historical Session file', () => {
+    const activity = normalizeSessionFile(
+      createSessionWithActivity({
+        id: 'tool-secret',
+        status: 'completed',
+        title: 'curl https://example.test/data?token=test-persisted-title-secret',
+        rawInput: {
+          query: 'safe input',
+          connection: {
+            apiKey: 'test-api-key-secret',
+            accessKey: 'test-persisted-structured-access-key-secret'
+          },
+          command: 'provider --access-key test-persisted-cli-access-key-secret'
+        },
+        rawOutput: {
+          result: 'safe output',
+          authorization: 'Bearer test-authorization-secret'
+        }
+      })
+    )?.activities?.[0]
+
+    expect(activity?.rawInput).toMatchObject({
+      query: 'safe input',
+      connection: { apiKey: '[redacted]', accessKey: '[redacted]' },
+      command: 'provider --access-key [redacted]'
+    })
+    expect(activity?.rawOutput).toMatchObject({
+      result: 'safe output',
+      authorization: '[redacted]'
+    })
+    expect(activity?.title).toContain('[redacted]')
+    expect(JSON.stringify(activity)).not.toContain('test-persisted-title-secret')
+    expect(JSON.stringify(activity)).not.toContain('test-api-key-secret')
+    expect(JSON.stringify(activity)).not.toContain('test-persisted-structured-access-key-secret')
+    expect(JSON.stringify(activity)).not.toContain('test-persisted-cli-access-key-secret')
+    expect(JSON.stringify(activity)).not.toContain('test-authorization-secret')
+  })
 })
 
 describe('Session Specialist binding persistence', () => {
@@ -913,6 +969,45 @@ describe('message part persistence', () => {
 
     expect(restored?.messages[0].parts).toEqual([
       { type: 'session', sessionId: 'session-2', title: 'Earlier result' }
+    ])
+  })
+
+  it('round-trips managed file and Version identity for an upload mention', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: '@shared.csv',
+          parts: [
+            {
+              type: 'artifact',
+              id: 'upload:shared-csv',
+              sourceFileId: 'shared-csv',
+              versionId: 'shared-csv-v2',
+              name: 'shared.csv',
+              source: 'upload',
+              path: 'upload-version:project-a/source-session/shared-csv-v2'
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.messages[0].parts).toEqual([
+      {
+        type: 'artifact',
+        id: 'upload:shared-csv',
+        sourceFileId: 'shared-csv',
+        versionId: 'shared-csv-v2',
+        name: 'shared.csv',
+        source: 'upload',
+        path: 'upload-version:project-a/source-session/shared-csv-v2'
+      }
     ])
   })
 
@@ -2690,6 +2785,47 @@ describe('normalizeSessionFile with activities', () => {
     expect(normalizePermission({ ...permission, state: 'unknown' })).toBeUndefined()
   })
 
+  it('redacts credentials from persisted permission tool input', () => {
+    const restored = normalizeSessionFile(
+      {
+        ...createSessionWithActivity(undefined),
+        activities: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-secret',
+              sessionId: 'session-1',
+              toolCallId: 'tool-secret',
+              title: 'curl https://example.test/data?token=test-permission-title-secret',
+              options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }],
+              rawInput: {
+                query: 'safe input',
+                connection: { password: 'test-password-secret' }
+              }
+            },
+            originatingPromptMessageId: 'prompt-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      },
+      { preserveRuntimeState: true }
+    )
+    const rawInput = restored?.runtimeContext?.permission?.request.rawInput
+
+    expect(rawInput).toMatchObject({
+      query: 'safe input',
+      connection: { password: '[redacted]' }
+    })
+    expect(JSON.stringify(rawInput)).not.toContain('test-password-secret')
+    expect(restored?.runtimeContext?.permission?.request.title).not.toContain(
+      'test-permission-title-secret'
+    )
+  })
+
   it.each(['pending', 'in_progress'] as const)(
     'rearms a prompt-bound continuing MCP permission without failing its %s tool activity',
     (status) => {
@@ -3056,6 +3192,25 @@ describe('normalizeSessionFile with activities', () => {
     expect(restored?.error).toBeUndefined()
   })
 
+  it.each(['approved', 'rejected'] as const)(
+    'does not restore a %s Plan as still waiting for approval',
+    (approval) => {
+      const restored = normalizeSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 4,
+          plan: { ...createRuntimePlan(), approval }
+        }
+      })
+
+      expect(restored?.status).toBe('idle')
+      expect(restored?.activeRun).toBeUndefined()
+    }
+  )
+
   it('drops unknown or damaged runtime context without losing the conversation', () => {
     const unknown = normalizeSessionFile({
       ...createSessionWithActivity(undefined),
@@ -3380,50 +3535,53 @@ describe('normalizeSessionFile with activities', () => {
     })
   })
 
-  it('discards stale app-restart recovery after the prompt has a successful completed response', () => {
-    const restored = normalizeSessionFile({
-      id: 'session-1',
-      projectId: 'project-a',
-      title: 'Completed session',
-      cwd: '/workspace',
-      status: 'idle',
-      resumeRecovery: {
-        kind: 'resume-required',
-        cause: 'app-restart',
-        promptMessageId: 'prompt-1'
-      },
-      messages: [
-        {
-          id: 'prompt-1',
-          role: 'user',
-          content: 'Complete the task',
-          status: 'complete',
-          interrupted: true,
-          eventIds: [],
-          createdAt: 5,
-          updatedAt: 5
+  it.each(['app-restart', 'cancelled', 'connection-lost'] as const)(
+    'discards stale %s recovery after the prompt has a successful completed response',
+    (cause) => {
+      const restored = normalizeSessionFile({
+        id: 'session-1',
+        projectId: 'project-a',
+        title: 'Completed session',
+        cwd: '/workspace',
+        status: 'idle',
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause,
+          promptMessageId: 'prompt-1'
         },
-        {
-          id: 'response-1',
-          role: 'agent',
-          content: 'Task completed.',
-          status: 'complete',
-          responseToMessageId: 'prompt-1',
-          eventIds: [],
-          createdAt: 6,
-          completedAt: 7,
-          updatedAt: 7
-        }
-      ],
-      createdAt: 1,
-      updatedAt: 7
-    })
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Complete the task',
+            status: 'complete',
+            interrupted: true,
+            eventIds: [],
+            createdAt: 5,
+            updatedAt: 5
+          },
+          {
+            id: 'response-1',
+            role: 'agent',
+            content: 'Task completed.',
+            status: 'complete',
+            responseToMessageId: 'prompt-1',
+            eventIds: [],
+            createdAt: 6,
+            completedAt: 7,
+            updatedAt: 7
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 7
+      })
 
-    expect(restored).toMatchObject({ status: 'idle' })
-    expect(restored?.resumeRecovery).toBeUndefined()
-    expect(restored?.error).toBeUndefined()
-    expect(restored?.messages[0]).toMatchObject({ id: 'prompt-1', interrupted: true })
-  })
+      expect(restored).toMatchObject({ status: 'idle' })
+      expect(restored?.resumeRecovery).toBeUndefined()
+      expect(restored?.error).toBeUndefined()
+      expect(restored?.messages[0]).toMatchObject({ id: 'prompt-1', interrupted: true })
+    }
+  )
 
   it('discards stale recovery when the canonical active Branch has a completed response', () => {
     const messages: PersistedChatMessage[] = [

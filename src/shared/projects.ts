@@ -56,6 +56,16 @@ export const projectDeletionOutcomeSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('cleanup-pending') }).strict()
 ])
 
+export const projectDeletionCleanupSchema = z
+  .object({
+    projectId: z.string(),
+    projectName: z.string().max(PROJECT_NAME_MAX_LENGTH).optional(),
+    phase: z.enum(['running', 'retry-scheduled']),
+    failureCount: z.number().int().nonnegative(),
+    nextRetryAt: z.number().finite().optional()
+  })
+  .strict()
+
 export const updateProjectArchiveRequestSchema = z
   .object({
     id: z.string(),
@@ -71,6 +81,7 @@ export type CreateProjectRequest = z.infer<typeof createProjectRequestSchema>
 export type UpdateProjectRequest = z.infer<typeof updateProjectRequestSchema>
 export type DeleteProjectRequest = z.infer<typeof deleteProjectRequestSchema>
 export type ProjectDeletionOutcome = z.infer<typeof projectDeletionOutcomeSchema>
+export type ProjectDeletionCleanup = z.infer<typeof projectDeletionCleanupSchema>
 export type UpdateProjectArchiveRequest = z.infer<typeof updateProjectArchiveRequestSchema>
 
 export const projectApplicationCommandContracts = Object.freeze({
@@ -97,5 +108,13 @@ export const projectApplicationCommandContracts = Object.freeze({
   delete: defineApplicationCommandContract(
     validationCodec(z.tuple([deleteProjectRequestSchema])),
     validationCodec(projectDeletionOutcomeSchema)
+  ),
+  listDeletionCleanup: defineApplicationCommandContract(
+    validationCodec(z.tuple([])),
+    validationCodec(z.array(projectDeletionCleanupSchema))
+  ),
+  retryDeletionCleanup: defineApplicationCommandContract(
+    validationCodec(z.tuple([])),
+    validationCodec(z.undefined())
   )
 })

@@ -18,6 +18,7 @@ import {
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
+import { fetchProviderRequest } from './provider-fetch'
 
 const ALLOWED_PATHS = new Set(['/v1/messages', '/v1/messages/count_tokens'])
 const HOP_BY_HOP_HEADERS = new Set([
@@ -206,13 +207,16 @@ export class AnthropicProviderBridge {
     if (!baseUrl) throw new Error('The Anthropic provider target has no valid base URL.')
     let upstream: Response
     try {
-      upstream = await this.fetchImpl(`${baseUrl}${requestUrl.pathname}${requestUrl.search}`, {
-        method: 'POST',
-        headers: headersToForward,
-        body,
-        redirect: 'manual',
-        signal: request.signal
-      })
+      upstream = await fetchProviderRequest(
+        this.fetchImpl,
+        `${baseUrl}${requestUrl.pathname}${requestUrl.search}`,
+        {
+          method: 'POST',
+          headers: headersToForward,
+          body,
+          signal: request.signal
+        }
+      )
     } catch (error) {
       const origin = upstreamOrigin(baseUrl)
       this.diagnostics.error('anthropic provider request failed', {

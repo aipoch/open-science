@@ -334,7 +334,8 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       'ArtifactLineage',
       'UploadFile',
       'ArtifactMessageSnapshot',
-      'ArtifactVersionInput'
+      'ArtifactVersionInput',
+      'ManagedFileVersionWriteOperation'
     ],
     prismaModels: [
       {
@@ -388,6 +389,10 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
             onDelete: 'Restrict'
           }
         ]
+      },
+      {
+        name: 'ManagedFileVersionWriteOperation',
+        ownerFields: [requiredOwner('projectId')]
       }
     ],
     policy: {
@@ -455,12 +460,13 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
     id: 'managed-session-workspaces',
     medium: 'filesystem',
-    resources: ['workspaces/<workspaceId>/'],
+    resources: ['workspaces/<workspaceId>/', 'workspaces/.ownership/<workspaceId>.json'],
     policy: {
       kind: 'retained-history',
       effect: 'retain',
       retention: 'Retained until the user removes the workspace files.',
-      reason: 'Session and Project deletion preserve ordinary workspace files for user recovery.'
+      reason:
+        'Session and Project deletion preserve ordinary workspace files and their ownership receipt for user recovery.'
     }
   },
   {
@@ -587,13 +593,13 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
     id: 'notebook-input-cache',
     medium: 'filesystem',
-    resources: ['notebook-inputs/<projectId>/'],
+    resources: ['notebook-inputs/<projectId>/', 'notebooks/<projectId>/<sessionId>/data/inputs/'],
     policy: {
       kind: 'coordinator-cleanup',
       effect: 'hard-delete',
       path: 'notebook-input-cache-tail',
       operation: 'NotebookRuntimeService.deleteProjectInputs',
-      note: 'The durable Project deletion intent removes derived, read-only Notebook input copies after runtime quiescence.'
+      note: 'The durable Project deletion intent removes derived, read-only Notebook input copies, including their relative-path projection inside the otherwise retained workspace, after runtime quiescence.'
     }
   },
   {

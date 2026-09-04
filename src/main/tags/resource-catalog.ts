@@ -1,6 +1,6 @@
 import type { TagResourceRef, TagResourceType } from '../../shared/tags'
 
-type CatalogEntry = Readonly<{ id: string }>
+type CatalogEntry = Readonly<{ id: string; available?: boolean }>
 type ConnectorCatalog = Readonly<{
   connectors: readonly CatalogEntry[]
   customServers: readonly CatalogEntry[]
@@ -24,7 +24,9 @@ class TagResourceCatalog {
       this.dependencies.listSpecialists()
     ])
     return Object.freeze({
-      'catalog.skill': new Set(skills.map(({ id }) => id)),
+      'catalog.skill': new Set(
+        skills.filter(({ available }) => available !== false).map(({ id }) => id)
+      ),
       'catalog.connector': new Set([
         ...connectors.connectors.map(({ id }) => id),
         ...connectors.customServers.map(({ id }) => id)

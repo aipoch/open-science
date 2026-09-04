@@ -12,6 +12,7 @@ import {
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 import {
   createInitialSessionState,
   type ChatSession,
@@ -284,6 +285,7 @@ describe('WorkspacePage preview panel resize sync', () => {
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    previewLeaveGuards.clear()
     useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
     useSessionStore.setState(createInitialSessionState())
     workspacePageHarness.sidebarSize = 16
@@ -991,6 +993,39 @@ describe('WorkspacePage preview panel resize sync', () => {
     })
 
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
+  })
+
+  it('reopens the physical preview panel when a dirty surface refuses a resize collapse', async () => {
+    usePreviewWorkbenchStore.getState().activateProject('project-a')
+    await renderPage()
+    const itemId = 'file:session-1:/workspace/project/report.md'
+    usePreviewWorkbenchStore.getState().activateItem(itemId)
+    usePreviewWorkbenchStore.setState({ panelState: 'open' })
+    workspacePageHarness.previewSize = 35
+    await act(async () => {
+      workspacePageHarness.previewOnResize?.(
+        { asPercentage: 35, inPixels: 350 },
+        { asPercentage: 40, inPixels: 400 }
+      )
+    })
+    previewLeaveGuards.register(`workbench:project-a:${itemId}`, () => false)
+    motionHarness.animate.mockClear()
+    vi.mocked(workspacePageHarness.previewPanelHandle.resize).mockClear()
+    workspacePageHarness.previewSize = 0
+
+    await act(async () => {
+      workspacePageHarness.previewOnResize?.(
+        { asPercentage: 0, inPixels: 0 },
+        { asPercentage: 35, inPixels: 350 }
+      )
+    })
+
+    expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+    expect(motionHarness.animate).toHaveBeenLastCalledWith(
+      0,
+      35,
+      expect.objectContaining({ onUpdate: expect.any(Function) })
+    )
   })
 
   it('keeps an explicit collapse request when animation resize lacks a previous size', async () => {

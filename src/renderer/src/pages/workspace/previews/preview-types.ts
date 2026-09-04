@@ -7,6 +7,9 @@ import type {
 
 export type PreviewFileRendererProps = {
   item: PreviewFileItem
+  annotationVersionId?: string
+  annotationBlockedByHistoricalVersion?: boolean
+  annotationVersionPending?: boolean
   activeAnnotations?: readonly Annotation[]
   onAddAnnotation?: (annotation: Annotation) => AnnotationValidationError | undefined
   onUpdateAnnotationNote?: (id: string, note: string) => AnnotationValidationError | undefined

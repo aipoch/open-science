@@ -132,7 +132,7 @@ jobs:
       # digest list, not a build product. The attestation lives in the repo's Attestations, not as a
       # Release asset, so it doesn't clutter the download list.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             artifacts/*.dmg
@@ -141,6 +141,18 @@ jobs:
             artifacts/*.AppImage
             artifacts/*.deb
 
+      # Set the final body before GitHub emits the release event consumed by Zenodo. Updating the
+      # GitHub Release afterwards is too late because Zenodo archives the event payload it received.
+      - name: Resolve release notes
+        id: release_notes
+        run: |
+          path="release-notes/${GITHUB_REF_NAME#v}/en.md"
+          if [ ! -s "$path" ]; then
+            echo "Missing release notes: $path" >&2
+            exit 1
+          fi
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+
       # Attach user-facing artifacts + checksums: installers (dmg/exe/AppImage/deb) and the mac
       # portable zips, plus the electron-updater feed files so the manually dispatched website mirror
       # can republish them to the CDN feed: win/linux latest.yml + latest-linux.yml, and the mac feeds.
@@ -148,11 +160,11 @@ jobs:
       # arm64/x64-mac.yml intermediates it was built from. Blockmaps are win/linux only (mac does
       # full-zip updates in v1).
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           draft: false
           prerelease: false
-          generate_release_notes: true
+          body_path: ${{ steps.release_notes.outputs.path }}
           files: |
             artifacts/*.dmg
             artifacts/*.zip

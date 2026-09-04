@@ -28,6 +28,7 @@ import { ReviewRepository } from '../reviewer/repository'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { SessionMetadataSnapshot } from './coordinator'
+import type { SessionSaveAuthority } from './state-owner'
 import { MainMessageAttributionAuthority } from './message-attribution-authority'
 import { canReconcileSessionAbsences, withProjectDeletionRecoveryStatus } from './catalog-authority'
 import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
@@ -39,7 +40,8 @@ type SessionPersistenceBackend = {
   loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   saveSession: (
     session: PersistedChatSession,
-    options?: SaveSessionOptions
+    options?: SaveSessionOptions,
+    authority?: SessionSaveAuthority
   ) => Promise<{ created: boolean; session: PersistedChatSession }>
   setDelegationPolicy?: (
     projectId: string,
@@ -58,7 +60,8 @@ type SessionPersistenceHandlers = {
   loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   saveSession: (
     session: PersistedChatSession,
-    options?: SaveSessionOptions
+    options?: SaveSessionOptions,
+    authority?: SessionSaveAuthority
   ) => Promise<{ created: boolean; session: PersistedChatSession }>
   setDelegationPolicy: (
     projectId: string,
@@ -72,6 +75,10 @@ type SessionPersistenceHandlers = {
 
 type ProjectDeletionRecoveryBackend = {
   recoverPendingDeletions: () => Promise<void>
+}
+
+type ProjectDeletionMutationCoordinator = {
+  waitForProjectOperations: (projectIds: readonly string[]) => Promise<void>
 }
 
 type SessionStartupLoader = {
@@ -173,12 +180,13 @@ const createSessionPersistenceHandlersWithAttributionAuthority = (
       return repository.loadUsage()
     },
     loadOne: (request) => repository.loadOne(request),
-    saveSession: async (session, options) => {
+    saveSession: async (session, options, authority) => {
       const durable = await repository.loadOne({
         projectId: session.projectId,
         sessionId: session.id
       })
       const authorized = messageAttributionAuthority.authorizeSessionProjection(session, durable)
+      if (authority) return repository.saveSession(authorized, options, authority)
       return options
         ? repository.saveSession(authorized, options)
         : repository.saveSession(authorized)
@@ -209,6 +217,43 @@ const createSessionPersistenceHandlers = (
     reviewRepository,
     new MainMessageAttributionAuthority()
   )
+
+// Keeps the application-composition boundary injectable without exposing the rest of main-process
+// startup to tests. The coordinator owns admission; the wrapped backend owns the durable mutation.
+const coordinateSessionPersistenceWithProjectDeletions = (
+  repository: SessionPersistenceBackend,
+  projectDeletion: ProjectDeletionMutationCoordinator
+): SessionPersistenceBackend => {
+  const coordinated: SessionPersistenceBackend = {
+    ...repository,
+    saveSession: async (session, options, authority) => {
+      await projectDeletion.waitForProjectOperations([session.projectId])
+      if (authority) return repository.saveSession(session, options, authority)
+      return options ? repository.saveSession(session, options) : repository.saveSession(session)
+    },
+    deleteSession: async (projectId, sessionId) => {
+      await projectDeletion.waitForProjectOperations([projectId])
+      return repository.deleteSession(projectId, sessionId)
+    },
+    saveManifest: async (request) => {
+      await projectDeletion.waitForProjectOperations([])
+      return repository.saveManifest(request)
+    }
+  }
+  if (repository.setDelegationPolicy) {
+    coordinated.setDelegationPolicy = async (projectId, sessionId, policy) => {
+      await projectDeletion.waitForProjectOperations([projectId])
+      return repository.setDelegationPolicy!(projectId, sessionId, policy)
+    }
+  }
+  if (repository.updateArchive) {
+    coordinated.updateArchive = async (request) => {
+      await projectDeletion.waitForProjectOperations([request.projectId])
+      return repository.updateArchive!(request)
+    }
+  }
+  return coordinated
+}
 
 // Creates the production repository rooted at the (dev-aware) storage root.
 const createDefaultSessionRepository = (
@@ -316,6 +361,7 @@ const registerSessionPersistenceIpcHandlers = (
 
 export {
   canReconcileSessionAbsences,
+  coordinateSessionPersistenceWithProjectDeletions,
   createDefaultReviewRepository,
   createDefaultSessionRepository,
   createSessionPersistenceHandlers,
@@ -326,6 +372,7 @@ export {
   registerSessionPersistenceIpcHandlers
 }
 export type {
+  ProjectDeletionMutationCoordinator,
   ProjectDeletionRecoveryForSessionRead,
   ProjectDeletionRecoveryBackend,
   SessionCatalogHydrator,

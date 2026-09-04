@@ -12,12 +12,14 @@ import { PlanJsonPreview } from './PlanJsonPreview'
 
 const item = {
   id: 'file-plan',
+  projectId: 'project-1',
   sessionId: 'session-1',
   title: 'plan-version-1.json',
   type: 'file' as const,
   path: 'artifact://plan-version-1.json',
   name: 'plan-version-1.json',
   format: 'json' as const,
+  managedFileId: 'file-plan',
   selectedVersionId: 'version-1'
 }
 

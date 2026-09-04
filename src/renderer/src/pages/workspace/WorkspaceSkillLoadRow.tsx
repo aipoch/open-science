@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { ToolActivity } from '@/stores/session-store'
 import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
+import { cn } from '@/lib/utils'
 
 import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton'
 import type { ToolExecutionPhase } from './tool-execution-phase'
@@ -17,8 +18,20 @@ type WorkspaceSkillLoadRowProps = {
 
 // The shared SKILL.md sheet: a full-width white surface with a fixed max height (scrolls beyond
 // it), no border, and the subtle ringless sheet shadow. Shared by the load_skill and native rows.
-const SkillDocumentSheet = ({ markdown }: { markdown: string }): React.JSX.Element => (
-  <div className="max-h-[320px] overflow-y-auto rounded-md bg-bg-000 px-4 py-3 shadow-sheet">
+// `maxHeightClassName` lets roomier surfaces (the permission card) raise the 320px transcript cap.
+const SkillDocumentSheet = ({
+  markdown,
+  maxHeightClassName = 'max-h-[320px]'
+}: {
+  markdown: string
+  maxHeightClassName?: string
+}): React.JSX.Element => (
+  <div
+    className={cn(
+      maxHeightClassName,
+      'overflow-y-auto rounded-md bg-bg-000 px-4 py-3 shadow-sheet'
+    )}
+  >
     <PresentedAgentMarkdown content={markdown} allowMedia={false} />
   </div>
 )

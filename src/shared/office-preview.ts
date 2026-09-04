@@ -28,14 +28,26 @@ export type OfficePreviewExtension = 'docx' | 'xls' | 'xlsx' | 'pptx'
 export type OfficePreviewRequestedExtension = OfficePreviewExtension | 'spreadsheet'
 export type OfficePreviewSource = 'artifact' | 'upload' | 'notebook-input'
 
-export type OfficePreviewOpenRequest = {
+type OfficePreviewPresentation = {
   requestId: string
-  source: OfficePreviewSource
-  path: string
   name: string
   extension: OfficePreviewRequestedExtension
   attempt: number
 }
+
+export type OfficePreviewOpenRequest = OfficePreviewPresentation &
+  (
+    | {
+        source: 'artifact' | 'upload'
+        projectId: string
+        fileId: string
+        versionId?: string
+      }
+    | {
+        source: 'notebook-input'
+        path: string
+      }
+  )
 
 export type OfficePreviewErrorCode =
   | 'FILE_TOO_LARGE'

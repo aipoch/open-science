@@ -185,7 +185,6 @@ const GeneralPanel = (): React.JSX.Element => {
           'Choose how the app looks and reads. System follows your device; the other choices stay fixed. Your selection is remembered on this device.'
         )}
         aria-label={t('Appearance')}
-        separated
       >
         <SettingsRow
           label={t('Theme')}
@@ -218,7 +217,6 @@ const GeneralPanel = (): React.JSX.Element => {
           title={t('Window behavior')}
           description={t('Choose what the titlebar close button does.')}
           aria-label={t('Window behavior')}
-          separated
         >
           <SettingsRow
             label={t('When closing the window')}
@@ -263,7 +261,6 @@ const GeneralPanel = (): React.JSX.Element => {
           "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app."
         )}
         aria-label={t('Notifications')}
-        separated
       >
         <SettingsRow
           label={t('Task notifications')}
@@ -349,7 +346,6 @@ const GeneralPanel = (): React.JSX.Element => {
           "View this device's runtime log — it records what the app is doing so problems can be diagnosed."
         )}
         aria-label={t('Diagnostics')}
-        separated
       >
         <SettingsRow
           label={t('Log file')}
@@ -423,7 +419,6 @@ const GeneralPanel = (): React.JSX.Element => {
           />
         }
         aria-label={t('Command line tool')}
-        separated
       >
         <SettingsRow
           label={t('open-science')}
@@ -493,7 +488,6 @@ const GeneralPanel = (): React.JSX.Element => {
           "It's free and open source. Star it on GitHub to help others find it, and come build in public with us on Discord and X. Thanks for being here."
         )}
         aria-label={t('Community')}
-        separated
       >
         <div className="flex flex-wrap items-center gap-2">
           <GitHubStarBadge className="border border-border" />

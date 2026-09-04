@@ -175,14 +175,17 @@ export const createApplicationLifecycleShutdown = ({
   disposeIpcHandlers,
   log
 }: ApplicationLifecycleShutdownDependencies): (() => Promise<ShutdownStepOutcome>) => {
-  return () =>
-    shutdownApplicationSurfaces({
+  let shutdownPromise: Promise<ShutdownStepOutcome> | undefined
+  return () => {
+    shutdownPromise ??= shutdownApplicationSurfaces({
       disposeApplicationRuntime,
       shutdownRemoteAccess: () => remoteAccess.shutdown(),
       disposeWebController: () => webController.dispose(),
       disposeIpcHandlers,
       log
     })
+    return shutdownPromise
+  }
 }
 
 export const withApplicationRuntimeShutdown = <Options extends object>(

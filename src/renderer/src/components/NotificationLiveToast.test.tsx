@@ -226,11 +226,36 @@ describe('NotificationLiveToast', () => {
     expect(markRead).not.toHaveBeenCalled()
   })
 
-  it('keeps the toast unread when opening its target fails', async () => {
+  it('keeps the toast unread when opening its target is rejected', async () => {
     const markRead = vi.fn(async () => undefined)
-    const openSessionById = vi.fn(() => {
-      throw new Error('navigation failed')
+    const openSessionById = vi.fn(() => false)
+    useNotificationInboxStore.setState({ markRead })
+    useNavigationStore.setState({ openSessionById })
+    await act(async () => root.render(<NotificationLiveToast />))
+    await act(async () => {
+      useNotificationInboxStore.setState({ latestSequence: 2, items: [item(2), item(1)] })
     })
+
+    const open = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent === 'Open'
+    )
+    expect(open).toBeDefined()
+    await act(async () => open?.click())
+
+    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification', expect.any(Function))
+    expect(markRead).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).not.toBeNull()
+  })
+
+  it('dismisses and marks read after deferred preview confirmation', async () => {
+    let resumeNavigation: (() => void) | undefined
+    const markRead = vi.fn(async () => undefined)
+    const openSessionById = vi.fn(
+      (_sessionId: string, _origin: string, afterNavigate?: () => void) => {
+        resumeNavigation = afterNavigate
+        return false
+      }
+    )
     useNotificationInboxStore.setState({ markRead })
     useNavigationStore.setState({ openSessionById })
     await act(async () => root.render(<NotificationLiveToast />))
@@ -243,8 +268,48 @@ describe('NotificationLiveToast', () => {
     )
     await act(async () => open?.click())
 
-    expect(openSessionById).toHaveBeenCalledWith('session-1', 'notification')
     expect(markRead).not.toHaveBeenCalled()
     expect(container.querySelector('[data-testid="notification-live-toast"]')).not.toBeNull()
+
+    await act(async () => resumeNavigation?.())
+
+    expect(markRead).toHaveBeenCalledWith(['notification-2'])
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
+  })
+
+  it('preserves a newer live notice after deferred preview confirmation', async () => {
+    let resumeNavigation: (() => void) | undefined
+    const markRead = vi.fn(async () => undefined)
+    const openSessionById = vi.fn(
+      (_sessionId: string, _origin: string, afterNavigate?: () => void) => {
+        resumeNavigation = afterNavigate
+        return false
+      }
+    )
+    useNotificationInboxStore.setState({ markRead })
+    useNavigationStore.setState({ openSessionById })
+    await act(async () => root.render(<NotificationLiveToast />))
+    await act(async () => {
+      useNotificationInboxStore.setState({ latestSequence: 2, items: [item(2), item(1)] })
+    })
+
+    const open = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent === 'Open'
+    )
+    await act(async () => open?.click())
+    await act(async () => {
+      useNotificationInboxStore.setState({
+        latestSequence: 3,
+        unreadCount: 3,
+        items: [item(3, { title: 'New task completed', sessionId: 'session-2' }), item(2), item(1)]
+      })
+    })
+
+    await act(async () => resumeNavigation?.())
+
+    expect(markRead).toHaveBeenCalledWith(['notification-2'])
+    expect(
+      container.querySelector('[data-testid="notification-live-toast"]')?.textContent
+    ).toContain('New task completed')
   })
 })

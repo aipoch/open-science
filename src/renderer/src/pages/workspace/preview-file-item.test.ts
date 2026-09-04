@@ -9,6 +9,9 @@ import {
   createPreviewFileItemFromMention,
   createPreviewFileItemFromPdfContext,
   createPreviewFileItemFromUpload,
+  createPreviewFileItemForArtifactVersion,
+  createProjectFileResolveRequest,
+  refreshPreviewFileItemFromProjectFile,
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 
@@ -51,6 +54,110 @@ const createMentionPart = (overrides: Partial<ArtifactMentionPart> = {}): Artifa
 })
 
 describe('preview file item helpers', () => {
+  it.each([
+    [
+      'artifact',
+      createPreviewFileItem({
+        id: 'legacy-artifact-id',
+        sessionId: 'session-1',
+        path: '/legacy/report.md',
+        name: 'report.md'
+      }),
+      'legacy-artifact-id',
+      'legacy'
+    ],
+    [
+      'upload',
+      createPreviewFileItem({
+        id: 'upload:upload-1',
+        sessionId: 'session-1',
+        source: 'upload',
+        path: '/legacy/upload.md',
+        name: 'upload.md'
+      }),
+      'upload-1',
+      'logical'
+    ],
+    [
+      'upload without a namespaced tab id',
+      createPreviewFileItem({
+        id: 'legacy-upload-1',
+        sessionId: 'session-1',
+        source: 'upload',
+        path: '/legacy/upload.md',
+        name: 'upload.md'
+      }),
+      'legacy-upload-1',
+      'legacy'
+    ]
+  ] as const)(
+    'builds a logical Project Files lookup for a legacy %s retry',
+    (_, item, fileIdHint, identityHint) => {
+      expect(createProjectFileResolveRequest(item, 'project-1')).toEqual({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        source: item.source ?? 'artifact',
+        fileIdHint,
+        identityHint,
+        name: item.name
+      })
+    }
+  )
+
+  it('reduces a restored legacy Artifact path to a filename for retry lookup', () => {
+    const item = createPreviewFileItem({
+      id: 'legacy-artifact-id',
+      sessionId: 'session-1',
+      path: String.raw`C:\legacy\nested\report.md`,
+      name: String.raw`C:\legacy\nested\report.md`
+    })
+
+    expect(createProjectFileResolveRequest(item, 'project-1')).toEqual({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      source: 'artifact',
+      fileIdHint: 'legacy-artifact-id',
+      identityHint: 'legacy',
+      name: 'report.md'
+    })
+  })
+
+  it('refreshes a legacy preview with canonical identity without changing its selected Version', () => {
+    const legacyItem = createPreviewFileItem({
+      id: 'legacy-preview-id',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      path: '/legacy/report.md',
+      name: 'report.md',
+      selectedVersionId: 'artifact-version-1',
+      versionNumber: 1
+    })
+
+    expect(
+      refreshPreviewFileItemFromProjectFile(legacyItem, {
+        id: 'artifact-lineage-1',
+        source: 'artifact',
+        sourceFileId: 'artifact-lineage-1',
+        sourceVersionId: 'artifact-version-2',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        name: 'report.md',
+        path: 'artifact-version:project-1/session-1/artifact-lineage-1/artifact-version-2',
+        mimeType: 'text/markdown',
+        size: 24,
+        mtimeMs: 2,
+        sortAtMs: 2
+      })
+    ).toMatchObject({
+      id: 'legacy-preview-id',
+      artifactId: 'artifact-lineage-1',
+      managedFileId: 'artifact-lineage-1',
+      selectedVersionId: 'artifact-version-1',
+      versionNumber: 1,
+      path: 'artifact-version:project-1/session-1/artifact-lineage-1/artifact-version-1'
+    })
+  })
+
   it('does not replace an explicitly missing Artifact Version with the latest Version', () => {
     const latest = {
       id: 'artifact-version-2',
@@ -119,23 +226,57 @@ describe('preview file item helpers', () => {
     })
   })
 
-  it('uses a relocatable Version locator instead of an absolute path for native Artifacts', () => {
-    expect(
-      createPreviewFileItemFromArtifact(
-        createManagedArtifact({
-          artifactId: 'artifact-lineage-1',
-          versionId: 'artifact-version-2',
-          versionNumber: 2
-        }),
-        'session-1',
-        'project-1'
-      )
-    ).toMatchObject({
+  it('does not pin a default Artifact preview to the Version stored in an old message', () => {
+    const item = createPreviewFileItemFromArtifact(
+      createManagedArtifact({
+        artifactId: 'artifact-lineage-1',
+        versionId: 'artifact-version-2',
+        versionNumber: 2
+      }),
+      'session-1',
+      'project-1'
+    )
+
+    expect(item).toMatchObject({
       id: 'artifact-lineage-1',
       artifactId: 'artifact-lineage-1',
-      selectedVersionId: 'artifact-version-2',
       path: 'artifact-version:project-1/session-1/artifact-lineage-1/artifact-version-2'
     })
+    expect(item).not.toHaveProperty('selectedVersionId')
+  })
+
+  it('keeps an explicit Artifact history selection pinned', () => {
+    const item = createPreviewFileItem({
+      id: 'artifact-lineage-1',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      path: '/legacy/result.png',
+      name: 'result.png',
+      artifactId: 'artifact-lineage-1',
+      managedFileId: 'artifact-lineage-1'
+    })
+
+    expect(
+      createPreviewFileItemForArtifactVersion({
+        item,
+        projectId: 'project-1',
+        version: {
+          id: 'artifact-version-2',
+          artifactId: 'artifact-lineage-1',
+          versionId: 'artifact-version-2',
+          versionNumber: 2,
+          checksum: 'checksum-2',
+          createdAt: '2026-07-27T20:00:00.000Z',
+          state: 'finalized',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          runId: 'artifact-run-2',
+          name: 'result.png',
+          size: 20,
+          mtimeMs: 2
+        }
+      })
+    ).toMatchObject({ selectedVersionId: 'artifact-version-2', versionNumber: 2 })
   })
 
   it('uses artifact mime type when the file name has no previewable extension', () => {
@@ -168,6 +309,7 @@ describe('preview file item helpers', () => {
   it('creates namespaced upload preview items that use the original upload name', () => {
     expect(createPreviewFileItemFromUpload(createUploadAttachment(), 'session-1')).toEqual({
       id: 'upload:upload-1',
+      managedFileId: 'upload-1',
       sessionId: 'session-1',
       title: 'raw microscope image.png',
       type: 'file',
@@ -178,6 +320,23 @@ describe('preview file item helpers', () => {
       mimeType: 'image/png',
       size: 2048
     })
+  })
+
+  it('does not pin a default Upload preview to the Version stored in an old attachment', () => {
+    const item = createPreviewFileItemFromUpload(
+      createUploadAttachment({ versionId: 'upload-version-2', versionNumber: 2 }),
+      'session-1',
+      'project-1'
+    )
+
+    expect(item).toMatchObject({
+      id: 'upload:upload-1',
+      managedFileId: 'upload-1',
+      versionNumber: 2,
+      projectId: 'project-1',
+      path: 'upload-version:project-1/session-1/upload-1/upload-version-2'
+    })
+    expect(item).not.toHaveProperty('selectedVersionId')
   })
 
   it('reopens the exact Artifact Version captured by a PDF context binding', () => {
@@ -232,6 +391,8 @@ describe('preview file item helpers', () => {
       projectId: 'project-1',
       sessionId: 'source-session',
       source: 'upload',
+      managedFileId: 'upload-1',
+      selectedVersionId: 'upload-version-2',
       path: 'upload-version:project-1/source-session/upload-version-2',
       format: 'pdf'
     })
@@ -291,24 +452,24 @@ describe('preview file item helpers', () => {
     })
   })
 
-  it('preserves native Artifact Version identity from a cross-session mention locator', () => {
-    expect(
-      createPreviewFileItemFromMention(
-        createMentionPart({
-          id: 'artifact-lineage-2',
-          versionId: 'artifact-version-4',
-          path: 'artifact-version:project-1/source-session/artifact-lineage-2/artifact-version-4'
-        }),
-        'current-session',
-        'project-1'
-      )
-    ).toMatchObject({
+  it('does not pin a default Artifact mention preview to its persisted Version', () => {
+    const item = createPreviewFileItemFromMention(
+      createMentionPart({
+        id: 'artifact-lineage-2',
+        versionId: 'artifact-version-4',
+        path: 'artifact-version:project-1/source-session/artifact-lineage-2/artifact-version-4'
+      }),
+      'current-session',
+      'project-1'
+    )
+
+    expect(item).toMatchObject({
       id: 'artifact-lineage-2',
       projectId: 'project-1',
       sessionId: 'source-session',
-      artifactId: 'artifact-lineage-2',
-      selectedVersionId: 'artifact-version-4'
+      artifactId: 'artifact-lineage-2'
     })
+    expect(item).not.toHaveProperty('selectedVersionId')
   })
 
   it('preserves the mention id and marks upload-sourced mentions as uploads', () => {
@@ -328,6 +489,30 @@ describe('preview file item helpers', () => {
       name: 'scan.png',
       format: 'image'
     })
+  })
+
+  it('recovers Upload identity without pinning a default mention preview to its Version', () => {
+    const item = createPreviewFileItemFromMention(
+      createMentionPart({
+        id: 'upload:upload-file-3',
+        sourceFileId: 'upload-file-3',
+        name: 'shared.csv',
+        path: 'upload-version:project-1/source-session/upload-file-3/upload-version-4',
+        source: 'upload',
+        versionId: 'upload-version-4'
+      }),
+      'current-session',
+      'current-project'
+    )
+
+    expect(item).toMatchObject({
+      id: 'upload:upload-file-3',
+      managedFileId: 'upload-file-3',
+      projectId: 'project-1',
+      sessionId: 'source-session',
+      source: 'upload'
+    })
+    expect(item).not.toHaveProperty('selectedVersionId')
   })
 
   it('uses mention mime type when the file name has no previewable extension', () => {

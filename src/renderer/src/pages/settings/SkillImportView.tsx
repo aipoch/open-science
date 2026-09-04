@@ -261,10 +261,7 @@ const SkillImportView = ({
         ) : null}
 
         {repositories ? (
-          <section
-            aria-label={t('Repository results')}
-            className="mt-5 border-b border-border pb-5"
-          >
+          <section aria-label={t('Repository results')} className="mt-5">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-sm font-semibold text-foreground">
                 {t('Repositories ({{count}})', { count: repositories.length })}
@@ -293,7 +290,7 @@ const SkillImportView = ({
             {repositories.length > 0 ? (
               <div id="github-repository-results">
                 {repositoriesExpanded ? (
-                  <ul className="mt-2 flex flex-col divide-y divide-border border-y border-border">
+                  <ul className="mt-2 flex flex-col">
                     {repositories.map((repository) => (
                       <li
                         key={repository.fullName}
@@ -437,7 +434,7 @@ const SkillImportView = ({
               </Button>
             </div>
 
-            <ul className="flex flex-col divide-y divide-border">
+            <ul className="flex flex-col">
               {scanned.map((skill) => (
                 <li key={skill.url} className="flex items-center gap-3 py-2.5">
                   <span className="flex size-4 shrink-0 items-center justify-center [@media(pointer:coarse)]:size-11">
@@ -477,14 +474,11 @@ const SkillImportView = ({
       </div>
 
       <section aria-labelledby="imported-skills-heading">
-        <h3
-          id="imported-skills-heading"
-          className="mt-8 border-t border-border pt-5 text-sm font-semibold text-foreground"
-        >
+        <h3 id="imported-skills-heading" className="mt-8 text-sm font-semibold text-foreground">
           {t('Imported skills')}
         </h3>
         {imported.length > 0 ? (
-          <ul className="mt-2 flex flex-col divide-y divide-border">
+          <ul className="mt-2 flex flex-col">
             {imported.map((skill) => (
               <li key={skill.id} className="flex items-center gap-2 py-2.5">
                 <span className="min-w-0 flex-1 truncate text-sm text-foreground">

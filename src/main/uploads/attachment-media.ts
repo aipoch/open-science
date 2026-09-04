@@ -5,6 +5,12 @@ import { pathToFileURL } from 'node:url'
 
 import type { Sharp } from 'sharp'
 import { ResourceBudgetExceededError } from '../resource-budget'
+import {
+  exceedsDecodedImagePixelLimit,
+  MAX_DECODED_IMAGE_PIXELS,
+  readRasterImageDimensions,
+  type RasterImageDimensions
+} from '../raster-image-safety'
 
 import { joinPdfTextItems } from '../../shared/pdf-text'
 
@@ -33,7 +39,7 @@ export const MAX_IMAGE_LONG_EDGE = 1568
 // Keep the cheap PNG/JPEG header preflight in front of sharp's decoder-side pixel limit so
 // malformed or oversized inputs fail before native decoding and allocation. 16 MP is at most
 // ~64 MiB at four bytes per pixel, which bounds processing independently of compressed size.
-export const MAX_DECODED_IMAGE_PIXELS = 16_000_000
+export { MAX_DECODED_IMAGE_PIXELS }
 
 // A conversation replays its full history every turn, so inlined image payloads accumulate across
 // turns even though each image is individually capped. Once the running base64 total nears the
@@ -145,6 +151,11 @@ export type PdfTextResult = {
   truncated: boolean
 }
 
+type AttachmentByteSource = {
+  size: number
+  readBytes: () => Promise<Uint8Array>
+}
+
 export const inspectPdfPageCount = async (filePath: string): Promise<number> => {
   const fileInfo = await stat(filePath)
   if (fileInfo.size > MAX_AUTO_EXTRACT_PDF_BYTES) {
@@ -216,69 +227,11 @@ const detectedImageMimeType = (bytes: Buffer): 'image/png' | 'image/jpeg' | unde
     : undefined
 }
 
-type ImageDimensions = { width: number; height: number }
-
-const JPEG_START_OF_FRAME_MARKERS = new Set([
-  0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf
-])
-
-const declaredPngDimensions = (bytes: Buffer): ImageDimensions | undefined => {
-  if (
-    bytes.length < 33 ||
-    bytes.readUInt32BE(8) !== 13 ||
-    bytes.toString('ascii', 12, 16) !== 'IHDR'
-  ) {
-    return undefined
-  }
-  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
-}
-
-const declaredJpegDimensions = (bytes: Buffer): ImageDimensions | undefined => {
-  let offset = 2
-  while (offset < bytes.length) {
-    if (bytes[offset] !== 0xff) return undefined
-    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1
-    if (offset >= bytes.length) return undefined
-
-    const marker = bytes[offset]
-    offset += 1
-    if (
-      marker === 0x00 ||
-      marker === 0x01 ||
-      marker === 0xd8 ||
-      marker === 0xd9 ||
-      marker === 0xda ||
-      (marker >= 0xd0 && marker <= 0xd7)
-    ) {
-      return undefined
-    }
-    if (offset + 2 > bytes.length) return undefined
-
-    const segmentLength = bytes.readUInt16BE(offset)
-    if (segmentLength < 2 || offset + segmentLength > bytes.length) return undefined
-    if (JPEG_START_OF_FRAME_MARKERS.has(marker)) {
-      if (segmentLength < 11) return undefined
-      const samplePrecision = bytes[offset + 2]
-      const componentCount = bytes[offset + 7]
-      if (samplePrecision === 0 || componentCount < 1 || segmentLength !== 8 + 3 * componentCount) {
-        return undefined
-      }
-      return {
-        width: bytes.readUInt16BE(offset + 5),
-        height: bytes.readUInt16BE(offset + 3)
-      }
-    }
-    offset += segmentLength
-  }
-  return undefined
-}
-
 const declaredImageDimensions = (
   bytes: Buffer,
   mimeType: 'image/png' | 'image/jpeg'
-): ImageDimensions => {
-  const dimensions =
-    mimeType === 'image/png' ? declaredPngDimensions(bytes) : declaredJpegDimensions(bytes)
+): RasterImageDimensions => {
+  const dimensions = readRasterImageDimensions(bytes, mimeType)
   if (!dimensions) {
     throw new ImageContentError(
       'IMAGE_DECODE_FAILED',
@@ -288,12 +241,8 @@ const declaredImageDimensions = (
   return dimensions
 }
 
-const assertImagePixelLimit = (size: ImageDimensions): void => {
-  if (
-    size.width < 1 ||
-    size.height < 1 ||
-    size.width > Math.floor(MAX_DECODED_IMAGE_PIXELS / size.height)
-  ) {
+const assertImagePixelLimit = (size: RasterImageDimensions): void => {
+  if (exceedsDecodedImagePixelLimit(size)) {
     throw new ImageContentError(
       'IMAGE_PROCESSING_FAILED',
       `Decoded image exceeds the ${MAX_DECODED_IMAGE_PIXELS}-pixel processing limit.`
@@ -387,7 +336,7 @@ const processImageBytes = async (
     width: Math.max(1, Math.round(croppedSize.width * scale)),
     height: Math.max(1, Math.round(croppedSize.height * scale))
   }
-  const prepare = (size: ImageDimensions = outputSize): Sharp => {
+  const prepare = (size: RasterImageDimensions = outputSize): Sharp => {
     let pipeline = source.clone().autoOrient()
     if (crop) {
       pipeline = pipeline.extract({
@@ -545,7 +494,8 @@ export const prepareImageContentData = async (
 export const buildImageContentData = async (
   filePath: string,
   mimeType: string | undefined,
-  size: number
+  size: number,
+  readBytes?: () => Promise<Uint8Array>
 ): Promise<ImageContentData> => {
   const fallbackMimeType = mimeType ?? 'application/octet-stream'
 
@@ -558,11 +508,13 @@ export const buildImageContentData = async (
   }
 
   if (size <= MAX_INLINE_IMAGE_BYTES) {
-    return { data: (await readFile(filePath)).toString('base64'), mimeType: fallbackMimeType }
+    const source = readBytes ? Buffer.from(await readBytes()) : await readFile(filePath)
+    return { data: source.toString('base64'), mimeType: fallbackMimeType }
   }
 
   try {
-    const bytes = await readFile(filePath)
+    // Managed versions supply integrity-checked bytes; legacy callers still read the resolved path.
+    const bytes = readBytes ? Buffer.from(await readBytes()) : await readFile(filePath)
     if (bytes.byteLength > MAX_AUTO_PROCESS_IMAGE_BYTES) {
       throw new ImageContentError(
         'IMAGE_SOURCE_TOO_LARGE',
@@ -607,19 +559,19 @@ const resolvePdfjsAssetUrls = (): { cMapUrl: string; standardFontDataUrl: string
 // (base64) file, which would otherwise overflow the request size limit.
 export const extractPdfText = async (
   filePath: string,
-  targetPageNumber?: number,
+  targetPageOrSource?: number | AttachmentByteSource,
   options: Readonly<{ maxChars?: number }> = {}
 ): Promise<PdfTextResult> => {
-  const fileInfo = await stat(filePath)
-  if (fileInfo.size > MAX_AUTO_EXTRACT_PDF_BYTES) {
-    throw new Error(
-      `PDF source is ${fileInfo.size} bytes, exceeding the automatic extraction limit.`
-    )
+  const source = typeof targetPageOrSource === 'object' ? targetPageOrSource : undefined
+  const targetPageNumber = typeof targetPageOrSource === 'number' ? targetPageOrSource : undefined
+  const size = source?.size ?? (await stat(filePath)).size
+  if (size > MAX_AUTO_EXTRACT_PDF_BYTES) {
+    throw new Error(`PDF source is ${size} bytes, exceeding the automatic extraction limit.`)
   }
   return withPdfTextExtractionSlot(async () => {
     const pdfjs = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as typeof import('pdfjs-dist')
     const { cMapUrl, standardFontDataUrl } = resolvePdfjsAssetUrls()
-    const fileData = await readFile(filePath)
+    const fileData = source ? Buffer.from(await source.readBytes()) : await readFile(filePath)
     const maxChars = options.maxChars ?? MAX_PDF_TEXT_CHARS
 
     const loadingTask = pdfjs.getDocument({

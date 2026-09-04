@@ -144,6 +144,75 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     }
   )
 
+  it('settles a requested cancellation after owned remote cleanup succeeds', async () => {
+    const { jobs, operations, createJob } = await setup()
+    await createJob('running')
+    const owner = new ComputeJobCancellationOwner(operations, jobs)
+    await expect(owner.request('job-1', scope)).resolves.toMatchObject({
+      cancellation_status: 'cancelling'
+    })
+
+    await expect(
+      operations.fulfillCancellationAfterRemoteCleanup(
+        'job-1',
+        scope,
+        new Date('2026-01-01T00:00:00.000Z')
+      )
+    ).resolves.toBe(true)
+    await expect(owner.status('job-1', scope)).resolves.toMatchObject({
+      status: 'failed',
+      cancellation_status: 'cancelled'
+    })
+    await expect(
+      operations.fulfillCancellationAfterRemoteCleanup(
+        'job-1',
+        scope,
+        new Date('2026-01-01T00:00:01.000Z')
+      )
+    ).resolves.toBe(false)
+  })
+
+  it('does not terminalize an active Job without a cancellation request', async () => {
+    const { jobs, operations, createJob } = await setup()
+    await createJob('running')
+
+    await expect(
+      operations.fulfillCancellationAfterRemoteCleanup(
+        'job-1',
+        scope,
+        new Date('2026-01-01T00:00:00.000Z')
+      )
+    ).rejects.toThrow('Compute Job cancellation is not active.')
+    await expect(jobs.get('job-1')).resolves.toMatchObject({ status: 'running' })
+  })
+
+  it('does not settle remote cleanup across a cancellation reaper lease', async () => {
+    const { jobs, operations, createJob } = await setup()
+    await createJob('running')
+    const owner = new ComputeJobCancellationOwner(operations, jobs)
+    await owner.request('job-1', scope)
+    const claim = await operations.claimNext(
+      'cancel',
+      new Date('2026-01-01T00:00:00.000Z'),
+      30_000,
+      'reaper-lease'
+    )
+    expect(claim).not.toBeNull()
+
+    await expect(
+      operations.fulfillCancellationAfterRemoteCleanup(
+        'job-1',
+        scope,
+        new Date('2026-01-01T00:00:01.000Z')
+      )
+    ).rejects.toThrow('Cancellation fulfillment lost its ownership claim')
+    await expect(jobs.get('job-1')).resolves.toMatchObject({ status: 'running' })
+    await expect(operations.get('job-1', 'cancel')).resolves.toMatchObject({
+      phase: 'active',
+      claimToken: 'reaper-lease'
+    })
+  })
+
   it('retries unknown, timeout, truncated, and nonzero evidence and never confirms it', async () => {
     const { jobs, operations, createJob } = await setup()
     await createJob('running')

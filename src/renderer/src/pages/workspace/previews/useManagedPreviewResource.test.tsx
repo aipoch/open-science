@@ -13,6 +13,8 @@ const firstItem: PreviewFileItem = {
   type: 'file',
   source: 'artifact',
   path: '/managed/first.pdf',
+  projectId: 'project-1',
+  managedFileId: 'artifact-1',
   name: 'first.pdf',
   format: 'pdf'
 }
@@ -24,6 +26,7 @@ const secondItem: PreviewFileItem = {
   sessionId: 'active-session',
   source: 'upload',
   path: 'upload-version:project-1/source-session/upload-version-2',
+  managedFileId: 'upload-2',
   name: 'second.pdf',
   title: 'second.pdf'
 }
@@ -95,8 +98,8 @@ describe('useManagedPreviewResource', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/managed/first.pdf',
-      sessionId: 'session-1'
+      projectId: 'project-1',
+      fileId: 'artifact-1'
     })
     expect(container.textContent).toBe('resource-1')
 
@@ -105,9 +108,8 @@ describe('useManagedPreviewResource', () => {
     expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
     expect(window.api.previewResources.acquire).toHaveBeenLastCalledWith({
       source: 'upload',
-      path: 'upload-version:project-1/source-session/upload-version-2',
       projectId: 'project-1',
-      sessionId: 'source-session'
+      fileId: 'upload-2'
     })
     expect(container.textContent).toBe('resource-2')
 
@@ -187,8 +189,8 @@ describe('useManagedPreviewResource', () => {
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/managed/first.pdf',
-      sessionId: 'session-1',
+      projectId: 'project-1',
+      fileId: 'artifact-1',
       maxBytes: 4096
     })
   })

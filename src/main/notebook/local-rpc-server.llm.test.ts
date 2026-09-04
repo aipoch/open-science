@@ -111,7 +111,7 @@ describe('llmCall RPC', () => {
       transport: 'tcp',
       hostModel: hostLlm,
       inputRegistry: {
-        registerTurn: vi.fn(async () => undefined),
+        registerTurn: vi.fn(async () => []),
         getTurnInputs: vi.fn(() => []),
         clearSession: vi.fn()
       }

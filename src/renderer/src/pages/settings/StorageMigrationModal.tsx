@@ -22,6 +22,7 @@ type StorageMigrationModalProps = {
   active?: boolean
   targetPath: string
   recoveryStatus?: DataRootRecoveryStatus
+  targetAvailableBytes?: number
   onClose: () => void
 }
 
@@ -51,6 +52,21 @@ const formatElapsed = (ms: number): string => {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
+// Uses the same 1000-based display as the Storage panel. The byte total shown here comes from the
+// migration scan, which is the authoritative hard-link-aware copy preflight.
+const formatBytes = (bytes: number): string => {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unitIndex = 0
+
+  while (value >= 1000 && unitIndex < units.length - 1) {
+    value /= 1000
+    unitIndex += 1
+  }
+
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
+
 // Drives the data-root move end to end: detects running sessions, confirms the interrupt+restart
 // with the user when any are found, runs the migration with live progress, and routes the outcome
 // (moved / cancelled / switchover failed / failed) to matching UI. Mounted only while a move is in
@@ -59,6 +75,7 @@ const StorageMigrationModal = ({
   active: isPresentationActive = true,
   targetPath,
   recoveryStatus,
+  targetAvailableBytes,
   onClose
 }: StorageMigrationModalProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -66,6 +83,7 @@ const StorageMigrationModal = ({
   const [stage, setStage] = useState<Stage>(recoveryStatus === 'copying' ? 'done' : 'detecting')
   const [active, setActive] = useState<ActiveSessionInfo[]>([])
   const [progress, setProgress] = useState<MigrationProgress | null>(null)
+  const [copyRequiredBytes, setCopyRequiredBytes] = useState<number | undefined>()
   const [outcome, setOutcome] = useState<MigrationOutcome | null>(null)
   // Discarding the copied-but-uncommitted new root can be slow (it deletes the whole copy), so the
   // done stage shows a loading state and awaits it instead of firing-and-forgetting.
@@ -132,7 +150,10 @@ const StorageMigrationModal = ({
     if (stage !== 'migrating') return undefined
 
     const unsubscribe = window.api.storage.onProgress((update) => {
-      if (mountedRef.current) setProgress(update)
+      if (mountedRef.current) {
+        setProgress(update)
+        if (update.phase === 'scan') setCopyRequiredBytes(update.totalBytes)
+      }
     })
 
     void window.api.storage
@@ -339,6 +360,27 @@ const StorageMigrationModal = ({
                 >
                   {progress.currentPath}
                 </p>
+              ) : null}
+              {copyRequiredBytes !== undefined ? (
+                <div className="mt-2 space-y-0.5 text-xs tabular-nums text-muted-foreground">
+                  <p>
+                    {t('Copy phase requires {{size}}', { size: formatBytes(copyRequiredBytes) })}
+                  </p>
+                  {targetAvailableBytes !== undefined ? (
+                    <>
+                      <p>
+                        {t('Available on target disk: {{size}}', {
+                          size: formatBytes(targetAvailableBytes)
+                        })}
+                      </p>
+                      {copyRequiredBytes > targetAvailableBytes ? (
+                        <p className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                          {t('The target may not have enough space for the copy.')}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
               ) : null}
               <p
                 className="mt-2 text-xs tabular-nums text-muted-foreground"

@@ -1,88 +1,22 @@
 import type { NotebookLanguage } from './notebook'
 
 // Renderer-safe wire shapes for the notebook Runtime Registry (managed + external environments).
-// Shared by Settings, Onboarding, the main runtime-registry, and (later) the executor/manage_packages
-// so there is ONE source of truth for how a language's interpreter is chosen and whether Open Science
-// may mutate its packages. The coarse pythonReady/rReady booleans (shared/notebook-env.ts) don't
-// capture BYO — this model does.
+// RuntimeEnablement owns global admission while NotebookRuntimeBindings own each Session's selected
+// targets. The coarse pythonReady/rReady booleans (shared/notebook-env.ts) do not capture BYO.
 
 // Where a language's interpreter comes from: an app-owned micromamba env, or the user's own install.
 export type RuntimeSource = 'managed' | 'external'
 
-// The user's persisted choice for a language (StoredSettings). Absent = not yet chosen (onboarding
-// hasn't resolved it) — the language is then gated with a "use / choose / download / skip" prompt.
-//
-// `external` is the foundation's REGISTERED-VENV tier (`manage_environments(mode="register")`):
-// - `appOwnedOverlay: true`  → an app-created overlay venv (register + create,
-//   `python -m venv --system-site-packages`). Open Science owns it, so writes are safe by design.
-// - `appOwnedOverlay: false` → the user's own pre-existing interpreter/venv. Writing here is higher
-//   risk, so it stays read-only until `packageInstallAuthorized` is explicitly turned on (default OFF;
-//   uninstall stays disabled regardless).
-export type RuntimeSelection =
-  | { source: 'managed' }
-  | {
-      source: 'external'
-      interpreterPath: string
-      // Leading args that select the interpreter (e.g. the Windows `py` launcher needs `-3`). Kept so
-      // a launcher survives to overlay creation / execution instead of being dropped. Usually empty.
-      interpreterArgs?: string[]
-      appOwnedOverlay: boolean
-      packageInstallAuthorized: boolean
-    }
-
-// How (and whether) Open Science may install packages into a runtime. `via` names the writer so a
-// caller never has to re-derive it: managed uses micromamba; an authorized external Python uses the
-// selected interpreter's pip; an authorized external R writes the user's R library. Read-only envs
-// carry a human `reason` the agent surfaces instead of silently mutating anything.
-export type PackageMutability =
-  { mutable: true; via: 'micromamba' | 'pip' | 'r-library' } | { mutable: false; reason: string }
-
 // The ONE mapping from who owns an env to which tool reads/writes its packages (the `via` in
-// PackageMutability): app-owned conda envs (managed OR agent-created, both under the app runtime
-// root) go through the bundled micromamba; the user's own envs are handled by their own interpreter's
-// pip (Python) or their own R library (R) — never the bundled micromamba against a foreign env.
-// Shared by the mutability policy (runtime-registry, writes) and the Settings package listing
-// (package-listing, read-only inventory) so the two call sites can never drift.
+// package-operation policy): app-owned conda envs (managed OR agent-created, both under the app
+// runtime root) go through the bundled micromamba; the user's own envs are handled by their own
+// interpreter's pip (Python) or their own R library (R) — never the bundled micromamba against a
+// foreign env. Shared by package writes and the Settings package listing so they cannot drift.
 export const packageToolFor = (
   language: NotebookLanguage,
   appOwned: boolean
 ): 'micromamba' | 'pip' | 'r-library' =>
   appOwned ? 'micromamba' : language === 'r' ? 'r-library' : 'pip'
-
-// One language's full runtime picture for the Settings/Onboarding UI: the persisted choice plus a
-// survey of BOTH sources so the UI can offer "use your detected Python at <path>" vs "managed env".
-// `selection` undefined => nothing chosen yet (resolves to the managed default at run time).
-export type RuntimeSurvey = {
-  language: NotebookLanguage
-  selection: RuntimeSelection | undefined
-  managed: RuntimeReadiness
-  external: RuntimeReadiness
-}
-
-// Full readiness snapshot for one language's runtime, surfaced to Settings + Onboarding. Distinguishes
-// the states a single boolean cannot: found-but-not-selected, selected-but-not-runnable (e.g. external
-// R with no jsonlite), and runnable-but-read-only.
-export type RuntimeReadiness = {
-  language: NotebookLanguage
-  source: RuntimeSource
-  // An interpreter was found (managed: the env prefix exists; external: the interpreter is on disk).
-  detected: boolean
-  // The user has chosen this source as the active runtime for the language.
-  selected: boolean
-  // Version is acceptable AND the kernel-protocol dependencies are present (R needs jsonlite + a
-  // protocol probe). NEVER true on a bare "interpreter found".
-  runnable: boolean
-  // Open Science may install packages here (managed: yes; external: only when authorized).
-  packageMutable: boolean
-  // Resolved interpreter path (external path, or the managed env's bin) when known.
-  interpreterPath?: string
-  // Leading interpreter-selection args (e.g. `["-3"]` for the Windows `py` launcher); usually empty.
-  interpreterArgs?: string[]
-  // e.g. "3.12.4" / "R 4.4.1".
-  version?: string
-  // Human-readable status/gap, e.g. "jsonlite is not installed" or "not selected".
-  detail?: string
-}
 
 // v4 environment discovery (Settings cards). Where an interpreter came from — also gates the agent
 // remove-guard: only 'agent-created' envs may be removed by the agent.

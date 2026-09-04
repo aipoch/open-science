@@ -18,8 +18,10 @@ export const registerNotebookEnvIpcHandlers = (lifecycle: NotebookEnvironmentLif
     (_event, language: NotebookLanguage, operationId?: string) =>
       lifecycle.provision(language, operationId)
   )
-  ipcMainHandle('notebook-env:repair', (_event, language: NotebookLanguage, operationId?: string) =>
-    lifecycle.repair(language, operationId)
+  ipcMainHandle(
+    'notebook-env:repair',
+    (_event, language: NotebookLanguage, runtimeIdentity: string, operationId?: string) =>
+      lifecycle.repair(language, runtimeIdentity, operationId)
   )
   ipcMainHandle('notebook-env:cancel', (_event, language?: NotebookLanguage) =>
     lifecycle.cancel(language)

@@ -181,6 +181,58 @@ describe('SessionEnabledComputeHostsOwner', () => {
     expect(commit).toHaveBeenCalledTimes(1)
   })
 
+  it('projects a persisted concurrency limit before first Session creation completes', async () => {
+    const projectSessionConcurrencyLimit = vi.fn(async () => undefined)
+    const options = {
+      registry: new EnabledComputeHostsRegistry(),
+      hostExists: async () => true,
+      listHostIds: async () => [],
+      sessionAuthority: {
+        sessionProjectId: async () => undefined,
+        setSessionEnabledComputeHosts: async () => {
+          throw new Error('not expected')
+        },
+        pruneSessionEnabledComputeHosts: async () => createPruneResult()
+      },
+      withDataRootWrite: passthroughDataRootWrite,
+      projectSessionConcurrencyLimit
+    }
+    const owner = new SessionEnabledComputeHostsOwner(options)
+    const session = createSession({ computeConcurrencyLimit: 2 })
+
+    await owner.createSession(session, async (candidate) => candidate)
+
+    expect(projectSessionConcurrencyLimit).toHaveBeenCalledWith('session-1', 2)
+  })
+
+  it('rejects an invalid concurrency limit before committing a new Session', async () => {
+    const projectSessionConcurrencyLimit = vi.fn(async () => {
+      throw new Error('Session concurrency limit must be an integer in the range 1..500 (got 0).')
+    })
+    const owner = new SessionEnabledComputeHostsOwner({
+      registry: new EnabledComputeHostsRegistry(),
+      hostExists: async () => true,
+      listHostIds: async () => [],
+      sessionAuthority: {
+        sessionProjectId: async () => undefined,
+        setSessionEnabledComputeHosts: async () => {
+          throw new Error('not expected')
+        },
+        pruneSessionEnabledComputeHosts: async () => createPruneResult()
+      },
+      withDataRootWrite: passthroughDataRootWrite,
+      projectSessionConcurrencyLimit
+    })
+    const commit = vi.fn(async (candidate: PersistedChatSession) => candidate)
+
+    await expect(
+      owner.createSession(createSession({ computeConcurrencyLimit: 0 }), commit)
+    ).rejects.toThrow(/integer in the range 1\.\.500/)
+
+    expect(commit).not.toHaveBeenCalled()
+    expect(projectSessionConcurrencyLimit).not.toHaveBeenCalled()
+  })
+
   it('replaces the derived cache from a complete Session catalog', async () => {
     const registry = new EnabledComputeHostsRegistry()
     registry.set('stale-session', ['ssh:old'])
@@ -347,7 +399,8 @@ describe('SessionEnabledComputeHostsOwner', () => {
   it('clears deleted Sessions from the cache', async () => {
     const registry = new EnabledComputeHostsRegistry()
     registry.set('session-1', ['ssh:cluster'])
-    const owner = new SessionEnabledComputeHostsOwner({
+    const clearSessionConcurrencyLimits = vi.fn(async () => undefined)
+    const options = {
       registry,
       hostExists: async () => true,
       listHostIds: async () => ['ssh:cluster'],
@@ -358,12 +411,15 @@ describe('SessionEnabledComputeHostsOwner', () => {
         },
         pruneSessionEnabledComputeHosts: async () => createPruneResult()
       },
+      clearSessionConcurrencyLimits,
       withDataRootWrite: passthroughDataRootWrite
-    })
+    }
+    const owner = new SessionEnabledComputeHostsOwner(options)
 
     await owner.clear(['session-1'])
 
     expect(owner.get('session-1')).toEqual([])
+    expect(clearSessionConcurrencyLimits).toHaveBeenCalledWith(['session-1'])
   })
 
   it('serializes Session deletion cache clears after in-flight reconciliation', async () => {

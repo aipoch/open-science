@@ -138,14 +138,35 @@ describe('requestRendererSessionPersistenceFlush', () => {
 
     await expect(harness.request()).resolves.toBe('send-failed')
   })
+
+  it('classifies a send failure as renderer-gone when the renderer disappears during dispatch', async () => {
+    let available = true
+
+    await expect(
+      requestRendererSessionPersistenceFlush({
+        isRendererAvailable: () => available,
+        sendRequest: () => {
+          available = false
+          throw new Error('renderer disappeared')
+        },
+        onResponse: () => () => undefined,
+        onRendererGone: () => () => undefined,
+        createRequestId: () => 'flush-race',
+        timeoutMs: 1_000
+      })
+    ).resolves.toBe('renderer-gone')
+  })
 })
 
 describe('rendererSessionPersistenceFlushBlocksShutdown', () => {
-  it.each(['conflict', 'renderer-failed'] as const)('blocks shutdown for %s', (outcome) => {
-    expect(rendererSessionPersistenceFlushBlocksShutdown(outcome)).toBe(true)
-  })
+  it.each(['conflict', 'renderer-failed', 'send-failed', 'timeout'] as const)(
+    'blocks shutdown for %s',
+    (outcome) => {
+      expect(rendererSessionPersistenceFlushBlocksShutdown(outcome)).toBe(true)
+    }
+  )
 
-  it.each(['completed', 'unavailable', 'renderer-gone', 'send-failed', 'timeout'] as const)(
+  it.each(['completed', 'unavailable', 'renderer-gone'] as const)(
     'allows shutdown for %s',
     (outcome) => {
       expect(rendererSessionPersistenceFlushBlocksShutdown(outcome)).toBe(false)

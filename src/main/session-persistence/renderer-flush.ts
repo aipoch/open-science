@@ -45,7 +45,7 @@ export const rendererSessionPersistenceFlushBlocksShutdown = (
   if (policy === 'data-root-handoff') {
     return outcome !== 'completed'
   }
-  return outcome === 'conflict' || outcome === 'renderer-failed'
+  return outcome !== 'completed' && outcome !== 'unavailable' && outcome !== 'renderer-gone'
 }
 
 export const createWebSessionPersistenceFlush = (
@@ -125,7 +125,7 @@ export const requestRendererSessionPersistenceFlush = async (
     try {
       deps.sendRequest(requestId)
     } catch {
-      finish('send-failed')
+      finish(deps.isRendererAvailable() ? 'send-failed' : 'renderer-gone')
     }
   })
 }

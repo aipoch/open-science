@@ -210,7 +210,8 @@ export class SpecialistPackageService {
       options.storageDir,
       options.repository,
       randomUUID,
-      options.skillPort
+      options.skillPort,
+      (specialistId, skillIds) => this.cleanupDeletedRelationships(specialistId, skillIds)
     )
     this.token = options.token ?? randomUUID
     this.now = options.now ?? (() => new Date())
@@ -218,6 +219,10 @@ export class SpecialistPackageService {
 
   async recover(): Promise<void> {
     await this.transaction.recover()
+  }
+
+  withRecoveryBarrier<T>(operation: () => Promise<T>): Promise<T> {
+    return this.transaction.withRecoveryBarrier(operation)
   }
 
   private async validationCatalog(): Promise<SpecialistPackageCatalogSnapshot> {
@@ -328,6 +333,49 @@ export class SpecialistPackageService {
     }
   }
 
+  private async cleanupDeletedRelationships(
+    specialistId: string,
+    skillIds: readonly string[]
+  ): Promise<void> {
+    let failure: unknown
+    for (const cleanup of [
+      {
+        run: () => this.options.onSpecialistDeleted?.(specialistId),
+        message: 'post-delete Marketplace provenance cleanup failed',
+        code: 'package-delete-marketplace-provenance-cleanup-failed'
+      },
+      {
+        run: () => this.options.onSkillsDeleted?.(skillIds),
+        message: 'post-delete Skill settings cleanup failed',
+        code: 'package-delete-skill-settings-cleanup-failed'
+      },
+      {
+        run: () => this.options.onResourcesDeleted?.(specialistId, skillIds),
+        message: 'post-delete Tag cleanup failed',
+        code: 'package-delete-tag-cleanup-failed'
+      }
+    ]) {
+      try {
+        await cleanup.run()
+      } catch (error) {
+        failure ??= error
+        log.warn(cleanup.message, { code: cleanup.code, specialistId, error })
+      }
+    }
+    if (failure) throw failure
+  }
+
+  private notifyDeleteCommitted(specialistId: string): void {
+    try {
+      this.options.onCommitted?.()
+    } catch {
+      log.warn('post-delete Specialist catalog refresh failed', {
+        code: 'package-delete-refresh-failed',
+        specialistId
+      })
+    }
+  }
+
   async deleteSpecialist(request: SpecialistDeleteRequest): Promise<SpecialistDeleteResult> {
     const operation = (): Promise<SpecialistDeleteResult> => this.deleteSpecialistExclusive(request)
     return this.options.marketplaceOperationCoordinator
@@ -395,6 +443,9 @@ export class SpecialistPackageService {
         }
       )
     } catch (error) {
+      if (error instanceof SpecialistPackageRecoveryError) {
+        this.notifyDeleteCommitted(request.id)
+      }
       return {
         status: 'failed',
         code:
@@ -411,41 +462,7 @@ export class SpecialistPackageService {
     } finally {
       this.deletePreviews.delete(request.id)
     }
-    try {
-      await this.options.onSpecialistDeleted?.(request.id)
-    } catch (error) {
-      log.warn('post-delete Marketplace provenance cleanup failed', {
-        code: 'package-delete-marketplace-provenance-cleanup-failed',
-        specialistId: request.id,
-        error
-      })
-    }
-    try {
-      await this.options.onSkillsDeleted?.(selected)
-    } catch (error) {
-      log.warn('post-delete Skill settings cleanup failed', {
-        code: 'package-delete-skill-settings-cleanup-failed',
-        specialistId: request.id,
-        error
-      })
-    }
-    try {
-      await this.options.onResourcesDeleted?.(request.id, selected)
-    } catch (error) {
-      log.warn('post-delete Tag cleanup failed', {
-        code: 'package-delete-tag-cleanup-failed',
-        specialistId: request.id,
-        error
-      })
-    }
-    try {
-      this.options.onCommitted?.()
-    } catch {
-      log.warn('post-delete Specialist catalog refresh failed', {
-        code: 'package-delete-refresh-failed',
-        specialistId: request.id
-      })
-    }
+    this.notifyDeleteCommitted(request.id)
     return { status: 'deleted' }
   }
 

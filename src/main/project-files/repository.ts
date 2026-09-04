@@ -5,9 +5,11 @@ import type {
   HostArtifactCatalogItem,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
+  ProjectFileItem,
   ProjectFilesOverview,
   ProjectFilesPage,
   ProjectFileSource,
+  ResolveProjectFileRequest,
   SearchArtifactsRequest,
   SearchArtifactsResult
 } from '../../shared/project-files'
@@ -19,7 +21,9 @@ import {
 import type {
   ProjectFilesClient,
   ProjectFilesClientFactory,
-  ProjectFilesClientProvider
+  ProjectFilesClientProvider,
+  LegacyArtifactVersionAdopter,
+  LegacyUploadVersionUpgrader
 } from './mutation-projection'
 import { ProjectFilesQueryOwner } from './query-owner'
 
@@ -29,9 +33,19 @@ class ManagedFileIndexRepository {
   private readonly mutationOwner: ProjectFilesMutationOwner
   private readonly queryOwner: ProjectFilesQueryOwner
 
-  constructor(getClient: ProjectFilesClientProvider, dataRoot: string) {
-    this.mutationOwner = new ProjectFilesMutationOwner(getClient, dataRoot)
-    this.queryOwner = new ProjectFilesQueryOwner(getClient, dataRoot, (projectId) =>
+  constructor(
+    getClient: ProjectFilesClientProvider,
+    dataRoot: string,
+    legacyArtifactVersionAdopter: LegacyArtifactVersionAdopter,
+    legacyUploadVersionUpgrader: LegacyUploadVersionUpgrader
+  ) {
+    this.mutationOwner = new ProjectFilesMutationOwner(
+      getClient,
+      dataRoot,
+      legacyArtifactVersionAdopter,
+      legacyUploadVersionUpgrader
+    )
+    this.queryOwner = new ProjectFilesQueryOwner(getClient, (projectId) =>
       this.mutationOwner.isIndexComplete(projectId)
     )
   }
@@ -85,6 +99,10 @@ class ManagedFileIndexRepository {
     return this.queryOwner.listFiles(request)
   }
 
+  async resolveFile(request: ResolveProjectFileRequest): Promise<ProjectFileItem | undefined> {
+    return this.queryOwner.resolveFile(request)
+  }
+
   async readHostArtifactCatalog(request: {
     projectId: string
     versionId?: string
@@ -105,14 +123,23 @@ class ManagedFileIndexRepository {
 const createManagedFileIndexRepository = (
   getClientForRoot: ProjectFilesClientFactory,
   configRoot: string,
-  dataRoot: string
+  dataRoot: string,
+  legacyArtifactVersionAdopter: LegacyArtifactVersionAdopter,
+  legacyUploadVersionUpgrader: LegacyUploadVersionUpgrader
 ): ManagedFileIndexRepository =>
-  new ManagedFileIndexRepository(() => getClientForRoot(configRoot), dataRoot)
+  new ManagedFileIndexRepository(
+    () => getClientForRoot(configRoot),
+    dataRoot,
+    legacyArtifactVersionAdopter,
+    legacyUploadVersionUpgrader
+  )
 
 export { createManagedFileIndexRepository, ManagedFileIndexRepository }
 export type {
   ManagedFileSoftDeleteToken,
   ProjectFilesClient,
   ProjectFilesClientFactory,
-  ProjectFilesClientProvider
+  ProjectFilesClientProvider,
+  LegacyArtifactVersionAdopter,
+  LegacyUploadVersionUpgrader
 }

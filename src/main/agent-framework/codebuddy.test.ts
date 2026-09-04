@@ -48,6 +48,8 @@ describe('codebuddy framework', () => {
       CODEBUDDY_MODEL: 'test-model',
       OPEN_SCIENCE_CODEBUDDY_CHAT_COMPLETIONS_URL:
         'https://gateway.example.test/v1/chat/completions',
+      CODEBUDDY_DISABLE_AUTO_MEMORY: '1',
+      CODEBUDDY_CODE_DISABLE_AUTO_MEMORY: '1',
       CODEBUDDY_DISABLE_FORK_SUBAGENT: '1',
       CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS: '1',
       DISABLE_AUTOUPDATER: '1',
@@ -159,6 +161,27 @@ describe('codebuddy framework', () => {
     expect(spawnedEnv?.NO_PROXY).toBe('inherited-bypass.example.test')
     expect(spawnedEnv?.DISABLE_TELEMETRY).toBe('1')
     expect(spawnedEnv?.DISABLE_ERROR_REPORTING).toBe('1')
+  })
+
+  it('preserves an empty restricted tool set through the Windows command wrapper', () => {
+    const spawnProcess = vi.fn(() => ({}) as ChildProcessWithoutNullStreams)
+    const framework = createCodeBuddyFramework({
+      platform: 'win32',
+      sourceEnv: {},
+      spawnProcess
+    })
+
+    framework.spawn({
+      executablePath: 'C:\\runtime\\codebuddy.cmd',
+      env: {},
+      args: ['--tools', '']
+    })
+
+    expect(spawnProcess).toHaveBeenCalledWith(
+      '"C:\\runtime\\codebuddy.cmd"',
+      ['--acp', '--tools', '""'],
+      expect.objectContaining({ shell: true })
+    )
   })
 
   it('keeps native Bash absent on Windows too', () => {

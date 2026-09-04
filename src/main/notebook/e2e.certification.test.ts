@@ -121,11 +121,11 @@ const makeHarness = async (opts: { idleTimeoutMs?: number } = {}): Promise<Harne
       })
     },
     // The real kernel executor with the shipped loop scripts. No micromamba provisioning exists on this
-    // machine, so the two runtimes reach the system interpreters by different (both production) routes:
-    // Python via the Runtime Registry's EXTERNAL (BYO) seam (setRuntimeSelectionResolver below), R via
-    // the MANAGED path with its prefix symlinked to the system R (see makeHarness). This certifies both
-    // the external-interpreter seam and the managed launch path end-to-end. (The pythonBin/rEnvPrefix
-    // constructor options are legacy no-ops kept for signature parity with the default createExecutor.)
+    // machine, so the two runtimes reach the system interpreters by different production routes:
+    // Python through discovered-runtime enablement and session binding, R through the managed path
+    // with its prefix symlinked to the system R (see makeHarness). This certifies both launch paths
+    // end-to-end. (The pythonBin/rEnvPrefix constructor options are legacy no-ops kept for signature
+    // parity with the default createExecutor.)
     executorFactory: (_sessionId, lifecycle) =>
       new NotebookKernelExecutor({
         pythonBin: pyBin,

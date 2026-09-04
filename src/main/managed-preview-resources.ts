@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { BigIntStats } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
-import type { FileHandle } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 
 import { FileObservationMismatchError, type FileObservation } from './bounded-file-io'
@@ -10,12 +9,20 @@ import type {
   AcquireManagedPreviewRequest,
   ManagedPreviewRangeResult,
   ManagedPreviewResource,
-  ManagedPreviewSource,
   ReadManagedPreviewRangeRequest,
   ReleaseManagedPreviewRequest
 } from '../shared/preview-resources'
+import type { ManagedFileReadLease } from './managed-file-versions/service'
+import {
+  exceedsDecodedImagePixelLimit,
+  isPixelLimitedRasterMimeType,
+  MAX_DECODED_IMAGE_PIXELS,
+  readRasterImageDimensions,
+  type RasterImageDimensions
+} from './raster-image-safety'
 
 const MAX_PREVIEW_RANGE_BYTES = 1024 * 1024
+const MAX_IMAGE_HEADER_BYTES = 1024 * 1024
 const MAX_RELEASED_RESOURCE_TOMBSTONES = 1024
 const PREVIEW_SCHEME = 'open-science-preview'
 const MANAGED_PREVIEW_SCHEME = {
@@ -60,11 +67,27 @@ const inferMimeType = (filePath: string, fallback?: string): string =>
 
 type ManagedPreviewResourcesOptions = {
   resolvePath: (
-    source: ManagedPreviewSource,
-    request: AcquireManagedPreviewRequest
+    source: 'local',
+    request: Extract<AcquireManagedPreviewRequest, { source: 'local' }>
   ) => Promise<string>
+  openLatestManagedFile?: (
+    source: 'artifact' | 'upload',
+    request: { projectId: string; fileId: string }
+  ) => Promise<ManagedFileReadLease>
+  openManagedFileVersion?: (
+    source: 'artifact' | 'upload',
+    request: { projectId: string; fileId: string; versionId: string }
+  ) => Promise<ManagedFileReadLease>
+  openNotebookInput?: (
+    request: Extract<AcquireManagedPreviewRequest, { source: 'notebook-input' }>
+  ) => Promise<ManagedPreviewTrustedLease>
   createId?: () => string
 }
+
+type ManagedPreviewTrustedLease = Pick<
+  ManagedFileReadLease,
+  'path' | 'size' | 'versionToken' | 'snapshot' | 'read' | 'readRange' | 'verifyUnchanged' | 'close'
+>
 
 type ManagedPreviewResourceSnapshot = {
   size: number
@@ -82,6 +105,7 @@ type AcquireManagedPreviewOptions = {
 type ResourceEntry = ManagedPreviewResource & {
   ownerId: number
   filePath: string
+  trustedLease?: ManagedPreviewTrustedLease
   strictSnapshot?: {
     dev: bigint
     ino: bigint
@@ -91,10 +115,12 @@ type ResourceEntry = ManagedPreviewResource & {
   strictObservation?: FileObservation & { maxBytes: number }
 }
 
+type PreviewProtocolFileHandle = RangeReader & { close: () => Promise<void> }
+
 type PreviewProtocolResource =
   | Pick<ResourceEntry, 'filePath' | 'mimeType'>
   | {
-      fileHandle: FileHandle
+      fileHandle: PreviewProtocolFileHandle
       mimeType: string
       size: number
       verifyUnchanged: () => Promise<void>
@@ -154,8 +180,26 @@ class ManagedPreviewResources {
   }
 
   async inspect(request: AcquireManagedPreviewRequest): Promise<ManagedPreviewResourceSnapshot> {
-    // Resolve through the managed repository so metadata checks never accept an arbitrary path.
-    const filePath = await this.options.resolvePath(request.source, request)
+    const trustedLease = await this.openTrustedLease(request)
+    if (trustedLease) {
+      try {
+        return {
+          size: trustedLease.size,
+          version: trustedLease.versionToken,
+          dev: trustedLease.snapshot.dev,
+          ino: trustedLease.snapshot.ino,
+          mtimeNs: trustedLease.snapshot.mtimeNs
+        }
+      } finally {
+        await trustedLease.close()
+      }
+    }
+    if (request.source === 'artifact' || request.source === 'upload') {
+      throw new Error('Managed preview Version lease is unavailable.')
+    }
+    if (request.source !== 'local') throw new Error('Managed preview lease is unavailable.')
+    // Path-backed sources still resolve through their source-specific trust boundary.
+    const filePath = await this.options.resolvePath('local', request)
     const fileStat = await stat(filePath, { bigint: true })
     if (!fileStat.isFile()) throw new Error('Managed preview path is not a file.')
 
@@ -167,13 +211,140 @@ class ManagedPreviewResources {
     request: AcquireManagedPreviewRequest,
     options?: AcquireManagedPreviewOptions
   ): Promise<ManagedPreviewResource> {
-    // Resolve through the managed repository before minting an owner-scoped capability URL.
-    const filePath = await this.options.resolvePath(request.source, request)
-    return this.acquireFilePath(ownerId, filePath, request.mimeType, options)
+    const trustedLease = await this.openTrustedLease(request)
+    let admitted = false
+    try {
+      // Resolve through the managed repository before minting an owner-scoped capability URL.
+      const filePath = trustedLease
+        ? trustedLease.path
+        : request.source === 'artifact' || request.source === 'upload'
+          ? (() => {
+              throw new Error('Managed preview Version lease is unavailable.')
+            })()
+          : request.source === 'local'
+            ? await this.options.resolvePath('local', request)
+            : (() => {
+                throw new Error('Managed preview lease is unavailable.')
+              })()
+      const fileSnapshot = trustedLease
+        ? {
+            size: trustedLease.size,
+            version: trustedLease.versionToken,
+            dev: trustedLease.snapshot.dev,
+            ino: trustedLease.snapshot.ino,
+            mtimeNs: trustedLease.snapshot.mtimeNs
+          }
+        : await stat(filePath, { bigint: true }).then((fileStat) => {
+            if (!fileStat.isFile()) throw new Error('Managed preview path is not a file.')
+            return snapshotFileStat(fileStat)
+          })
+      if (options && fileSnapshot.size > options.maxBytes) {
+        const error: OfficePreviewAdmissionError = Object.assign(
+          new Error('Managed preview file is too large.'),
+          {
+            code: 'FILE_TOO_LARGE' as const,
+            size: fileSnapshot.size,
+            limit: options.maxBytes
+          }
+        )
+        throw error
+      }
+      if (
+        options &&
+        (fileSnapshot.size !== options.snapshot.size ||
+          fileSnapshot.mtimeNs !== options.snapshot.mtimeNs ||
+          fileSnapshot.dev !== options.snapshot.dev ||
+          fileSnapshot.ino !== options.snapshot.ino)
+      ) {
+        throw new Error('Managed preview file changed after admission.')
+      }
+
+      const mimeType = inferMimeType(filePath, request.mimeType)
+      // Reused below as the resource's width/height, so consumers learn the exact geometry from
+      // the same header read that enforces the decoded-pixel limit.
+      let imageDimensions: RasterImageDimensions | undefined
+      if (isPixelLimitedRasterMimeType(mimeType)) {
+        const headerLength = Math.min(fileSnapshot.size, MAX_IMAGE_HEADER_BYTES)
+        let header: Buffer
+        if (trustedLease) {
+          const bytes = await trustedLease.readRange(0, headerLength)
+          if (bytes.byteLength !== headerLength) {
+            throw new Error('Image preview changed while reading its dimensions.')
+          }
+          header = Buffer.from(bytes)
+          await trustedLease.verifyUnchanged()
+        } else {
+          const fileHandle = await open(filePath, 'r')
+          try {
+            const before = snapshotFileStat(await fileHandle.stat({ bigint: true }))
+            if (
+              before.size !== fileSnapshot.size ||
+              before.mtimeNs !== fileSnapshot.mtimeNs ||
+              before.dev !== fileSnapshot.dev ||
+              before.ino !== fileSnapshot.ino
+            ) {
+              throw new Error('Image preview changed before reading its dimensions.')
+            }
+            header = Buffer.allocUnsafe(headerLength)
+            if (headerLength > 0) await readExactRange(fileHandle, header, 0)
+            const after = snapshotFileStat(await fileHandle.stat({ bigint: true }))
+            if (
+              after.size !== fileSnapshot.size ||
+              after.mtimeNs !== fileSnapshot.mtimeNs ||
+              after.dev !== fileSnapshot.dev ||
+              after.ino !== fileSnapshot.ino
+            ) {
+              throw new Error('Image preview changed while reading its dimensions.')
+            }
+          } finally {
+            await fileHandle.close()
+          }
+        }
+        const dimensions = readRasterImageDimensions(header, mimeType)
+        if (!dimensions) throw new Error('Could not read image preview dimensions safely.')
+        if (exceedsDecodedImagePixelLimit(dimensions)) {
+          throw new Error(
+            `Image preview exceeds the ${MAX_DECODED_IMAGE_PIXELS.toLocaleString('en-US')}-pixel limit.`
+          )
+        }
+        imageDimensions = dimensions
+      }
+
+      const id = this.createId()
+      const resource: ManagedPreviewResource = {
+        id,
+        url: `${PREVIEW_SCHEME}://${id}/${encodeURIComponent(basename(filePath))}`,
+        size: fileSnapshot.size,
+        mimeType,
+        version: fileSnapshot.version,
+        ...(imageDimensions ? { width: imageDimensions.width, height: imageDimensions.height } : {})
+      }
+
+      this.releasedOwners.delete(id)
+      this.resources.set(id, {
+        ...resource,
+        ownerId,
+        filePath,
+        ...(trustedLease ? { trustedLease } : {}),
+        ...(options
+          ? {
+              strictSnapshot: {
+                dev: options.snapshot.dev,
+                ino: options.snapshot.ino,
+                mtimeNs: options.snapshot.mtimeNs,
+                maxBytes: options.maxBytes
+              }
+            }
+          : {})
+      })
+      admitted = true
+      return resource
+    } finally {
+      if (trustedLease && !admitted) await trustedLease.close()
+    }
   }
 
-  // This narrow main-process-only seam accepts a path that was already resolved and scope-checked
-  // by ReviewerHostServer. It must never be exposed to renderer or model-controlled input.
+  // This main-process-only seam accepts a path already resolved and scope-checked by Reviewer.
   async acquireResolvedFile(
     ownerId: number,
     request: {
@@ -205,6 +376,7 @@ class ManagedPreviewResources {
       )
       throw error
     }
+
     const id = this.createId()
     const resource: ManagedPreviewResource = {
       id,
@@ -219,67 +391,6 @@ class ManagedPreviewResources {
       ownerId,
       filePath: request.path,
       strictObservation: { ...expected, maxBytes }
-    })
-    return resource
-  }
-
-  private async acquireFilePath(
-    ownerId: number,
-    filePath: string,
-    mimeType: string | undefined,
-    options?: AcquireManagedPreviewOptions
-  ): Promise<ManagedPreviewResource> {
-    const fileStat = await stat(filePath, { bigint: true })
-
-    if (!fileStat.isFile()) {
-      throw new Error('Managed preview path is not a file.')
-    }
-    const fileSnapshot = snapshotFileStat(fileStat)
-    if (options && fileSnapshot.size > options.maxBytes) {
-      const error: OfficePreviewAdmissionError = Object.assign(
-        new Error('Managed preview file is too large.'),
-        {
-          code: 'FILE_TOO_LARGE' as const,
-          size: fileSnapshot.size,
-          limit: options.maxBytes
-        }
-      )
-      throw error
-    }
-    if (
-      options &&
-      (fileSnapshot.size !== options.snapshot.size ||
-        fileSnapshot.mtimeNs !== options.snapshot.mtimeNs ||
-        fileSnapshot.dev !== options.snapshot.dev ||
-        fileSnapshot.ino !== options.snapshot.ino)
-    ) {
-      throw new Error('Managed preview file changed after admission.')
-    }
-
-    const id = this.createId()
-    const resource: ManagedPreviewResource = {
-      id,
-      url: `${PREVIEW_SCHEME}://${id}/${encodeURIComponent(basename(filePath))}`,
-      size: fileSnapshot.size,
-      mimeType: inferMimeType(filePath, mimeType),
-      version: fileSnapshot.version
-    }
-
-    this.releasedOwners.delete(id)
-    this.resources.set(id, {
-      ...resource,
-      ownerId,
-      filePath,
-      ...(options
-        ? {
-            strictSnapshot: {
-              dev: options.snapshot.dev,
-              ino: options.snapshot.ino,
-              mtimeNs: options.snapshot.mtimeNs,
-              maxBytes: options.maxBytes
-            }
-          }
-        : {})
     })
     return resource
   }
@@ -302,9 +413,13 @@ class ManagedPreviewResources {
       throw new Error('Managed preview range exceeds the maximum size.')
     }
 
+    if (resource.trustedLease) {
+      const data = await resource.trustedLease.readRange(begin, end)
+      return { begin, end, total: resource.size, data: new Uint8Array(data) }
+    }
+
     const buffer = Buffer.allocUnsafe(end - begin)
     const fileHandle = await open(resource.filePath, 'r')
-
     try {
       await readExactRange(fileHandle, buffer, begin)
 
@@ -349,6 +464,21 @@ class ManagedPreviewResources {
       throw new Error('Managed preview resource is not available.')
     }
 
+    if (resource.trustedLease) {
+      return {
+        fileHandle: {
+          read: (buffer, offset, length, position) =>
+            resource.trustedLease!.read(buffer, offset, length, position),
+          // One capability may serve several concurrent HTTP range requests. The resource owner,
+          // not an individual response, closes the pinned handle.
+          close: async () => undefined
+        },
+        mimeType: resource.mimeType,
+        size: resource.size,
+        verifyUnchanged: () => resource.trustedLease!.verifyUnchanged()
+      }
+    }
+
     if (!resource.strictSnapshot && !resource.strictObservation) {
       return { filePath: resource.filePath, mimeType: resource.mimeType }
     }
@@ -387,7 +517,7 @@ class ManagedPreviewResources {
           ) {
             this.revokeResource(resourceId, resource.ownerId)
             throw new FileObservationMismatchError(
-              'Verified Reviewer artifact changed during preview streaming.'
+              'Verified Reviewer artifact changed during protocol streaming.'
             )
           }
         }
@@ -399,16 +529,15 @@ class ManagedPreviewResources {
         }
       }
 
-      const snapshot = resource.strictSnapshot
-      if (!snapshot) throw new Error('Managed preview strict snapshot is unavailable.')
+      const strictSnapshot = resource.strictSnapshot!
       const fileStat = await fileHandle.stat({ bigint: true })
       if (
         !fileStat.isFile() ||
         fileStat.size !== BigInt(resource.size) ||
-        fileStat.size > BigInt(snapshot.maxBytes) ||
-        fileStat.mtimeNs !== snapshot.mtimeNs ||
-        fileStat.dev !== snapshot.dev ||
-        fileStat.ino !== snapshot.ino
+        fileStat.size > BigInt(strictSnapshot.maxBytes) ||
+        fileStat.mtimeNs !== strictSnapshot.mtimeNs ||
+        fileStat.dev !== strictSnapshot.dev ||
+        fileStat.ino !== strictSnapshot.ino
       ) {
         this.revokeResource(resourceId, resource.ownerId)
         throw new Error('Managed preview file changed after capability creation.')
@@ -419,10 +548,10 @@ class ManagedPreviewResources {
         if (
           !finalStat.isFile() ||
           finalStat.size !== BigInt(resource.size) ||
-          finalStat.size > BigInt(snapshot.maxBytes) ||
-          finalStat.mtimeNs !== snapshot.mtimeNs ||
-          finalStat.dev !== snapshot.dev ||
-          finalStat.ino !== snapshot.ino
+          finalStat.size > BigInt(strictSnapshot.maxBytes) ||
+          finalStat.mtimeNs !== strictSnapshot.mtimeNs ||
+          finalStat.dev !== strictSnapshot.dev ||
+          finalStat.ino !== strictSnapshot.ino
         ) {
           this.revokeResource(resourceId, resource.ownerId)
           throw new Error('Managed preview file changed during protocol streaming.')
@@ -442,7 +571,9 @@ class ManagedPreviewResources {
   }
 
   private revokeResource(resourceId: string, ownerId: number): void {
+    const resource = this.resources.get(resourceId)
     this.resources.delete(resourceId)
+    if (resource?.trustedLease) void resource.trustedLease.close().catch(() => undefined)
     this.releasedOwners.set(resourceId, ownerId)
     while (this.releasedOwners.size > MAX_RELEASED_RESOURCE_TOMBSTONES) {
       const oldestResourceId = this.releasedOwners.keys().next().value
@@ -459,6 +590,40 @@ class ManagedPreviewResources {
     }
 
     return resource
+  }
+
+  private openTrustedLease(
+    request: AcquireManagedPreviewRequest
+  ): Promise<ManagedPreviewTrustedLease | undefined> {
+    if (request.source === 'notebook-input') {
+      if (!this.options.openNotebookInput) {
+        return Promise.reject(new Error('Notebook input preview lease is not configured.'))
+      }
+      return this.options.openNotebookInput(request)
+    }
+    if (request.source !== 'artifact' && request.source !== 'upload') {
+      return Promise.resolve(undefined)
+    }
+    if (!request.projectId?.trim() || !request.fileId?.trim()) {
+      return Promise.reject(new Error('Managed preview requires a logical identity.'))
+    }
+    if (request.versionId) {
+      if (!this.options.openManagedFileVersion) {
+        return Promise.reject(new Error('Managed preview Version lease is not configured.'))
+      }
+      return this.options.openManagedFileVersion(request.source, {
+        projectId: request.projectId,
+        fileId: request.fileId,
+        versionId: request.versionId
+      })
+    }
+    if (!this.options.openLatestManagedFile) {
+      return Promise.reject(new Error('Managed preview Version lease is not configured.'))
+    }
+    return this.options.openLatestManagedFile(request.source, {
+      projectId: request.projectId,
+      fileId: request.fileId
+    })
   }
 }
 

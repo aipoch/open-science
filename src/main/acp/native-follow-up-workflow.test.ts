@@ -293,6 +293,7 @@ describe('AcpNativeFollowUpWorkflow', () => {
   })
 
   it('injects prepared attachment and skill blocks on advertised steering', async () => {
+    const close = vi.fn()
     const prepareFollowUp = vi.fn(async () => ({
       prompt: [
         {
@@ -319,7 +320,8 @@ describe('AcpNativeFollowUpWorkflow', () => {
           versionNumber: 1,
           checksum: 'abc'
         }
-      ]
+      ],
+      close
     }))
     const { request, workflow } = createWorkflow({ prepareFollowUp })
     await expect(
@@ -378,6 +380,43 @@ describe('AcpNativeFollowUpWorkflow', () => {
       parts: [{ type: 'text', text: 'see file' }]
     })
     expect(published[0]?.uploads?.[0]).not.toHaveProperty('path')
+    expect(close).not.toHaveBeenCalled()
+    workflow.releaseTurn('app-1', 'turn-1')
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('closes retained prepared resources during workflow teardown', async () => {
+    const close = vi.fn()
+    const { workflow } = createWorkflow({
+      prepareFollowUp: async () => ({
+        prompt: [{ type: 'text' as const, text: 'see file' }],
+        close
+      })
+    })
+
+    await workflow.steerFollowUp({ sessionId: 'app-1', text: 'see file' })
+    expect(close).not.toHaveBeenCalled()
+
+    workflow.clear()
+    workflow.clear()
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('closes retained prepared resources when their session is superseded', async () => {
+    const close = vi.fn()
+    const { workflow } = createWorkflow({
+      prepareFollowUp: async () => ({
+        prompt: [{ type: 'text' as const, text: 'see file' }],
+        close
+      })
+    })
+
+    await workflow.steerFollowUp({ sessionId: 'app-1', text: 'see file' })
+    expect(close).not.toHaveBeenCalled()
+
+    workflow.releaseSession('app-1')
+    workflow.releaseSession('app-1')
+    expect(close).toHaveBeenCalledOnce()
   })
 
   it('does not persist unfinalized attachments that session save cannot recover', async () => {
@@ -414,12 +453,13 @@ describe('AcpNativeFollowUpWorkflow', () => {
     'refuses %s ACP steering when permission becomes pending during preparation',
     async (frameworkId) => {
       let pendingPermission = false
+      const close = vi.fn()
       const { request, workflow } = createWorkflow({
         frameworkId,
         pendingPermission: () => pendingPermission,
         prepareFollowUp: async () => {
           pendingPermission = true
-          return { prompt: [{ type: 'text' as const, text: 'late follow-up' }] }
+          return { prompt: [{ type: 'text' as const, text: 'late follow-up' }], close }
         }
       })
 
@@ -428,6 +468,7 @@ describe('AcpNativeFollowUpWorkflow', () => {
       ).resolves.toEqual({ injected: false, reason: 'prompt-required' })
       expect(request).not.toHaveBeenCalled()
       expect(published).toEqual([])
+      expect(close).toHaveBeenCalledOnce()
     }
   )
 
@@ -562,11 +603,20 @@ describe('AcpNativeFollowUpWorkflow', () => {
 
   it('refuses ACP steering that never replies and does not persist a user message', async () => {
     const request = vi.fn(() => new Promise(() => undefined))
-    const { workflow } = createWorkflow({ request, followUpTimeoutMs: 20 })
+    const close = vi.fn()
+    const { workflow } = createWorkflow({
+      request,
+      followUpTimeoutMs: 20,
+      prepareFollowUp: async () => ({
+        prompt: [{ type: 'text' as const, text: 'focus on tests' }],
+        close
+      })
+    })
     await expect(
       workflow.steerFollowUp({ sessionId: 'app-1', text: 'focus on tests' })
     ).resolves.toEqual({ injected: false, reason: 'dispatch-failed' })
     expect(published).toEqual([])
+    expect(close).toHaveBeenCalledOnce()
   })
 
   it('refuses idle promptRequired without persisting a user message', async () => {
@@ -601,10 +651,25 @@ describe('AcpNativeFollowUpWorkflow', () => {
     expect(published).toEqual([])
   })
 
-  it('registers notebook inputs only after steering injects', async () => {
-    const registerTurnInputs = vi.fn(async () => undefined)
-    const request = vi.fn(async () => {
-      expect(registerTurnInputs).not.toHaveBeenCalled()
+  it('materializes and advertises notebook inputs before steering, then commits after injection', async () => {
+    const registerTurnInputs = vi.fn(async (input: { materializeOnly?: boolean }) =>
+      input.materializeOnly
+        ? [
+            {
+              sourceKind: 'upload-version' as const,
+              inputFileVersionId: 'upload-version-1',
+              filename: 'samples.csv',
+              notebookPath: 'inputs/samples-123456789abc.csv'
+            }
+          ]
+        : undefined
+    )
+    const request = vi.fn(async (_method: string, params: unknown) => {
+      expect(registerTurnInputs).toHaveBeenCalledWith(
+        expect.objectContaining({ materializeOnly: true })
+      )
+      expect(JSON.stringify(params)).toContain('inputs/samples-123456789abc.csv')
+      expect(JSON.stringify(params)).toContain('use only the exact notebookPath')
       return { outcome: 'injected' }
     })
     const { workflow } = createWorkflow({
@@ -628,7 +693,15 @@ describe('AcpNativeFollowUpWorkflow', () => {
         messageId: 'message-steer-1'
       }
     )
-    expect(registerTurnInputs).toHaveBeenCalledWith({
+    expect(registerTurnInputs).toHaveBeenNthCalledWith(1, {
+      projectId: 'project-1',
+      appSessionId: 'app-1',
+      promptMessageId: 'prompt-live',
+      uploads: [],
+      references: [],
+      materializeOnly: true
+    })
+    expect(registerTurnInputs).toHaveBeenNthCalledWith(2, {
       projectId: 'project-1',
       appSessionId: 'app-1',
       promptMessageId: 'prompt-live',
@@ -666,7 +739,10 @@ describe('AcpNativeFollowUpWorkflow', () => {
       transport: 'acp-steering',
       messageId: 'message-steer-1'
     })
-    expect(registerTurnInputs).not.toHaveBeenCalled()
+    expect(registerTurnInputs).toHaveBeenCalledOnce()
+    expect(registerTurnInputs).toHaveBeenCalledWith(
+      expect.objectContaining({ materializeOnly: true })
+    )
     expect(published).toEqual([{ sessionId: 'app-1', messageId: 'message-steer-1', text: 'late' }])
   })
 
@@ -698,7 +774,7 @@ describe('AcpNativeFollowUpWorkflow', () => {
     ])
   })
 
-  it('does not register notebook inputs when steering is refused', async () => {
+  it('does not commit notebook inputs when steering is refused', async () => {
     const registerTurnInputs = vi.fn(async () => undefined)
     const { workflow } = createWorkflow({
       request: vi.fn(async () => ({})),
@@ -717,12 +793,33 @@ describe('AcpNativeFollowUpWorkflow', () => {
     await expect(workflow.steerFollowUp({ sessionId: 'app-1', text: 'see file' })).resolves.toEqual(
       { injected: false, reason: 'unrecognized-success' }
     )
-    expect(registerTurnInputs).not.toHaveBeenCalled()
+    expect(registerTurnInputs).toHaveBeenCalledOnce()
+    expect(registerTurnInputs).toHaveBeenCalledWith(
+      expect.objectContaining({ materializeOnly: true })
+    )
     expect(published).toEqual([])
   })
 })
 
 describe('finalizeNativeFollowUpPreparedContent', () => {
+  it('closes prepared resources when image compatibility fails', async () => {
+    const close = vi.fn()
+    await expect(
+      finalizeNativeFollowUpPreparedContent({
+        content: [{ type: 'image', data: 'abc', mimeType: 'image/png' }],
+        projectId: 'project-1',
+        sessionId: 'app-1',
+        supportsImageInput: false,
+        historyImageCount: 0,
+        imageCompatibility: {
+          prepare: vi.fn(async () => Promise.reject(new Error('relay failed')))
+        },
+        close
+      })
+    ).rejects.toThrow('relay failed')
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it('relays content through image compatibility without changing the live prompt id', async () => {
     const prepare = vi.fn(async () => [{ type: 'text' as const, text: 'relayed image' }])
     await expect(

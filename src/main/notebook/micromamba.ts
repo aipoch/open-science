@@ -1,7 +1,7 @@
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
+import { PROD_SESSION_DIR_NAME } from '../session-persistence/paths'
 import {
   DEFAULT_MAX_CACHE_RELATIVE_PATH,
   selectMicromambaCache,

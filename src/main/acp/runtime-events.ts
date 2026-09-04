@@ -6,6 +6,7 @@ import {
   sanitizeAcpMessageImage,
   type AcpRuntimeEvent
 } from '../../shared/acp'
+import { sanitizeRawToolPayload } from '../../shared/tool-detail-sanitizer'
 import { isRecord } from '../value-guards'
 
 // Bounds how much of a failed tool's result text reaches the log, so large or sensitive tool output
@@ -33,24 +34,6 @@ const containsControlCharacter = (value: string): boolean =>
 
     return codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)
   })
-
-// Keeps small JSON payloads for activity details while dropping values that would make runtime
-// snapshots expensive or impossible to structured-clone across IPC.
-const sanitizeRawToolPayload = (value: unknown): unknown | undefined => {
-  if (value === undefined || value === null) return undefined
-
-  try {
-    const serialized = JSON.stringify(value)
-
-    if (serialized === undefined || serialized.length > MAX_RUNTIME_RAW_PAYLOAD_CHARS) {
-      return undefined
-    }
-
-    return JSON.parse(serialized) as unknown
-  } catch {
-    return undefined
-  }
-}
 
 const RAW_IMAGE_CONTENT_TYPES = new Set(['image', 'image_url', 'input_image', 'output_image'])
 
@@ -515,13 +498,15 @@ const projectToolDetailPayload = (update: ToolCallUpdate): ToolDetailProjection 
         ) ?? [])
       ]
     : projectedContent
-  const rawOutput = containsStructuredImage ? undefined : sanitizeRawToolPayload(update.rawOutput)
+  const rawOutput = containsStructuredImage
+    ? undefined
+    : sanitizeRawToolPayload(update.rawOutput, MAX_RUNTIME_RAW_PAYLOAD_CHARS)
   const containsImage = containsStructuredImage || hasRawImagePayload(rawOutput)
 
   return {
     toolContent,
     toolLocations: update.locations ?? undefined,
-    rawInput: sanitizeRawToolPayload(update.rawInput),
+    rawInput: sanitizeRawToolPayload(update.rawInput, MAX_RUNTIME_RAW_PAYLOAD_CHARS),
     // ACP adapters may expose an image only in rawOutput or echo the complete structured result.
     // Omit either form so transient bytes never enter runtime IPC or Session JSON.
     rawOutput: containsImage ? undefined : rawOutput,

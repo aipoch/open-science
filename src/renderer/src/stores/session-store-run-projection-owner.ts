@@ -68,7 +68,7 @@ export type SessionRunProjectionActions = {
   replaceMessageArtifacts: (input: ReplaceMessageArtifactsInput) => void
   replaceMessageUploads: (input: ReplaceMessageUploadsInput) => void
   replaceMessagePdfContext: (input: ReplaceMessagePdfContextInput) => void
-  recordArtifactError: (sessionId: string, error: string) => void
+  recordArtifactError: (sessionId: string, error: string, retryable?: boolean) => void
   clearArtifactError: (sessionId: string) => void
   finishRun: (
     sessionId: string,
@@ -275,12 +275,12 @@ export const createSessionRunProjectionOwner = <
       }))
     },
 
-    recordArtifactError: (sessionId, error) => {
+    recordArtifactError: (sessionId, error, retryable = true) => {
       const message = error.trim()
       if (!sessionId || !message) return
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
-          projectArtifactError(session, message)
+          projectArtifactError(session, message, retryable)
         )
       }))
     },

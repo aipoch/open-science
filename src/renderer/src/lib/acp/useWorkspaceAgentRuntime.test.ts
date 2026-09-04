@@ -5,6 +5,7 @@ import type {
 } from '../../../../shared/acp'
 import type { HistoryReplayTarget } from '../../../../shared/history-preamble'
 import type {
+  DelegationPolicy,
   PersistedChatSession,
   SessionPdfContext
 } from '../../../../shared/session-persistence'
@@ -14,7 +15,7 @@ import {
   type FinalizeUploadSessionRequest,
   type UploadedAttachment
 } from '../../../../shared/uploads'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 
 import {
   createInitialSessionState,
@@ -27,6 +28,7 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '../../stores/preview-workbench-store'
+import { resetSessionPersistenceWriteFailuresForTests } from '../session-persistence/session-persistence'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
 import {
   clearLinkedPendingPdfContext,
@@ -94,6 +96,32 @@ const createDeferred = <Value>(): {
   return { promise, resolve }
 }
 
+const createSessionPolicyApi = (): {
+  saveSession: Mock<(session: PersistedChatSession) => Promise<PersistedChatSession>>
+  setDelegationPolicy: Mock<
+    (
+      projectId: string,
+      sessionId: string,
+      policy: DelegationPolicy
+    ) => Promise<PersistedChatSession>
+  >
+} => ({
+  saveSession: vi.fn(async (session: PersistedChatSession) => session),
+  setDelegationPolicy: vi.fn(
+    async (_projectId: string, sessionId: string, policy: DelegationPolicy) => {
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      if (!session) throw new Error(`Session not found: ${sessionId}`)
+      return {
+        ...toPersistedSession(session),
+        revision: (session.revision ?? 0) + 1,
+        delegationPolicy: policy
+      }
+    }
+  )
+})
+
 const createAttachment = (overrides: Partial<UploadedAttachment> = {}): UploadedAttachment => ({
   id: 'upload-1',
   sessionId: '.pending',
@@ -110,6 +138,10 @@ const flushRuntimeTasks = async (): Promise<void> => {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+beforeEach(() => {
+  resetSessionPersistenceWriteFailuresForTests()
+})
 
 describe('workspace permission wait recovery', () => {
   it('projects a restored main-owned request and prefers a matching live request', () => {
@@ -2031,6 +2063,7 @@ describe('workspace agent message sending', () => {
     const replacementSelection = {
       kind: 'version' as const,
       sourceKind: 'artifact-version' as const,
+      sourceFileId: 'artifact-2',
       sourceVersionId: 'version-2',
       previewItemId: 'artifact:version-2'
     }
@@ -2098,6 +2131,7 @@ describe('workspace agent message sending', () => {
     const selection = {
       kind: 'version' as const,
       sourceKind: 'artifact-version' as const,
+      sourceFileId: 'artifact-1',
       sourceVersionId: 'version-1',
       previewItemId: 'artifact:version-1'
     }
@@ -2166,6 +2200,11 @@ describe('workspace agent message sending', () => {
   beforeEach(() => {
     useSessionStore.setState(createInitialSessionState())
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    vi.stubGlobal('window', {
+      api: {
+        sessions: createSessionPolicyApi()
+      }
+    })
   })
 
   afterEach(() => {
@@ -2773,7 +2812,10 @@ describe('workspace agent message sending', () => {
 
     expect(acquire).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: 'artifact-version:project-1/transport-session-1/artifact-1/deleted-version'
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: 'artifact-1',
+        versionId: 'deleted-version'
       })
     )
     expect(sendPrompt).not.toHaveBeenCalled()
@@ -2957,7 +2999,13 @@ describe('workspace agent message sending', () => {
         readingPosition: { pageNumber: 7, pageCount: 14 }
       },
       pdfReadingPosition: { pageNumber: 7, pageCount: 14 },
-      pendingPdfContextVersions: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-2' }]
+      pendingPdfContextVersions: [
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-2',
+          sourceVersionId: 'version-2'
+        }
+      ]
     })
 
     await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
@@ -3032,7 +3080,13 @@ describe('workspace agent message sending', () => {
           linkPdfContext,
           saveSession: vi.fn(async (session: PersistedChatSession) => session),
           filterPdfContextCandidates: vi.fn().mockResolvedValue({
-            sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }],
+            sources: [
+              {
+                sourceKind: 'artifact-version',
+                sourceFileId: 'artifact-2',
+                sourceVersionId: 'artifact-version-2'
+              }
+            ],
             pendingAttachmentIds: [stagedPdf.id]
           })
         }
@@ -3053,7 +3107,11 @@ describe('workspace agent message sending', () => {
       attachments: [stagedPdf],
       pendingPdfContextAttachmentIds: [stagedPdf.id],
       pendingPdfContextVersions: [
-        { sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-2',
+          sourceVersionId: 'artifact-version-2'
+        }
       ],
       pdfReadingPosition: readingPosition,
       cwd: '/workspace/project',
@@ -3067,8 +3125,16 @@ describe('workspace agent message sending', () => {
       sessionId: 'transport-session-1',
       expectedRevision: 0,
       sources: [
-        { sourceKind: 'upload-version', sourceVersionId: 'pdf-version-1' },
-        { sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }
+        {
+          sourceKind: 'upload-version',
+          sourceFileId: 'pdf-upload-1',
+          sourceVersionId: 'pdf-version-1'
+        },
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-2',
+          sourceVersionId: 'artifact-version-2'
+        }
       ],
       excludeSinglePage: true
     })
@@ -3077,6 +3143,212 @@ describe('workspace agent message sending', () => {
       activeBindingId: stagedBinding.bindingId,
       readingPosition
     })
+    expect(runtime.sendPrompt.mock.calls[0]?.[4]).toEqual([
+      expect.objectContaining({
+        source: 'upload',
+        sourceFileId: 'pdf-upload-1',
+        versionId: 'pdf-version-1'
+      }),
+      expect.objectContaining({
+        source: 'artifact',
+        sourceFileId: 'artifact-2',
+        versionId: 'artifact-version-2'
+      })
+    ])
+  })
+
+  it('limits eligible follow-up PDFs to the remaining Reading capacity', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Existing prompt',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    const binding = (index: number): SessionPdfContext['bindings'][number] => ({
+      version: 1,
+      bindingId: `binding-${index}`,
+      sourceKind: 'upload-version',
+      sourceFileId: `pdf-upload-${index}`,
+      sourceVersionId: `pdf-version-${index}`,
+      sourceSessionId: 'transport-session-1',
+      name: `paper-${index}.pdf`,
+      mimeType: 'application/pdf',
+      sizeBytes: 42,
+      checksum: String(index).repeat(64),
+      linkedAt: index
+    })
+    const existingContext: SessionPdfContext = {
+      version: 1,
+      bindings: [binding(1), binding(2)]
+    }
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        runtimeContext: { version: 1, revision: 2, pdfContext: existingContext }
+      }))
+    }))
+    const stagedPdf = createAttachment({
+      id: 'pdf-upload-3',
+      name: 'staged-paper.pdf',
+      originalName: 'staged-paper.pdf',
+      path: '/uploads/.pending/staged-paper.pdf',
+      mimeType: 'application/pdf'
+    })
+    const finalizedPdf = createAttachment({
+      ...stagedPdf,
+      sessionId: 'transport-session-1',
+      path: 'upload-version:project-1/transport-session-1/pdf-version-3',
+      versionId: 'pdf-version-3',
+      versionNumber: 1,
+      checksum: '3'.repeat(64)
+    })
+    const linkedContext: SessionPdfContext = {
+      version: 1,
+      bindings: [...existingContext.bindings, binding(3)]
+    }
+    const linkPdfContext = vi.fn().mockResolvedValue({
+      version: 1,
+      revision: 3,
+      pdfContext: linkedContext
+    })
+    vi.stubGlobal('window', {
+      api: {
+        uploads: { finalizeSession: vi.fn().mockResolvedValue([finalizedPdf]) },
+        sessions: {
+          linkPdfContext,
+          saveSession: vi.fn(async (session: PersistedChatSession) => session),
+          filterPdfContextCandidates: vi.fn().mockResolvedValue({
+            sources: [
+              {
+                sourceKind: 'artifact-version',
+                sourceFileId: 'artifact-4',
+                sourceVersionId: 'artifact-version-4'
+              }
+            ],
+            pendingAttachmentIds: [stagedPdf.id]
+          })
+        }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Compare these papers',
+      attachments: [stagedPdf],
+      pendingPdfContextAttachmentIds: [stagedPdf.id],
+      pendingPdfContextVersions: [
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-4',
+          sourceVersionId: 'artifact-version-4'
+        }
+      ],
+      pdfContext: existingContext,
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+    expect(linkPdfContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sources: [
+          {
+            sourceKind: 'upload-version',
+            sourceFileId: stagedPdf.id,
+            sourceVersionId: finalizedPdf.versionId
+          }
+        ]
+      })
+    )
+  })
+
+  it('keeps an ineligible follow-up PDF as an ordinary attachment', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Existing prompt',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    const stagedPdf = createAttachment({
+      id: 'oversized-pdf',
+      name: 'oversized.pdf',
+      originalName: 'oversized.pdf',
+      path: '/uploads/.pending/oversized.pdf',
+      mimeType: 'application/pdf',
+      size: 50 * 1024 * 1024 + 1
+    })
+    const finalizedPdf = createAttachment({
+      ...stagedPdf,
+      sessionId: 'transport-session-1',
+      path: 'upload-version:project-1/transport-session-1/oversized-version',
+      versionId: 'oversized-version',
+      versionNumber: 1,
+      checksum: 'a'.repeat(64)
+    })
+    const filterPdfContextCandidates = vi.fn().mockResolvedValue({
+      sources: [],
+      pendingAttachmentIds: []
+    })
+    const linkPdfContext = vi
+      .fn()
+      .mockRejectedValue(new Error('PDF context files must be 50 MB or smaller.'))
+    vi.stubGlobal('window', {
+      api: {
+        uploads: { finalizeSession: vi.fn().mockResolvedValue([finalizedPdf]) },
+        sessions: {
+          filterPdfContextCandidates,
+          linkPdfContext,
+          saveSession: vi.fn(async (session: PersistedChatSession) => session)
+        }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    const sent = await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Keep this available as an attachment',
+      attachments: [stagedPdf],
+      pendingPdfContextAttachmentIds: [stagedPdf.id],
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+
+    expect(sent).toBeDefined()
+    expect(filterPdfContextCandidates).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sources: [],
+      pendingAttachments: [
+        {
+          attachmentId: stagedPdf.id,
+          path: stagedPdf.path,
+          name: stagedPdf.name,
+          mimeType: stagedPdf.mimeType
+        }
+      ]
+    })
+    expect(linkPdfContext).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+    expect(runtime.sendPrompt.mock.calls[0]?.[2]).toEqual([
+      expect.objectContaining({
+        id: stagedPdf.id,
+        versionId: finalizedPdf.versionId
+      })
+    ])
   })
 
   it('does not append a prompt when attachment finalization fails', async () => {
@@ -3988,7 +4260,13 @@ describe('workspace agent message sending', () => {
           saveSession,
           linkPdfContext,
           filterPdfContextCandidates: vi.fn().mockResolvedValue({
-            sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }],
+            sources: [
+              {
+                sourceKind: 'artifact-version',
+                sourceFileId: 'artifact-2',
+                sourceVersionId: 'artifact-version-2'
+              }
+            ],
             pendingAttachmentIds: [stagedPdf.id]
           })
         }
@@ -4013,7 +4291,11 @@ describe('workspace agent message sending', () => {
         attachments: [stagedPdf],
         pendingPdfContextAttachmentIds: [stagedPdf.id],
         pendingPdfContextVersions: [
-          { sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'artifact-2',
+            sourceVersionId: 'artifact-version-2'
+          }
         ],
         pdfReadingPosition: readingPosition,
         cwd: '/workspace/project',
@@ -4037,8 +4319,16 @@ describe('workspace agent message sending', () => {
       sessionId: 'transport-session-1',
       expectedRevision: 3,
       sources: [
-        { sourceKind: 'upload-version', sourceVersionId: 'pdf-version-1' },
-        { sourceKind: 'artifact-version', sourceVersionId: 'artifact-version-2' }
+        {
+          sourceKind: 'upload-version',
+          sourceFileId: 'pdf-upload-1',
+          sourceVersionId: 'pdf-version-1'
+        },
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-2',
+          sourceVersionId: 'artifact-version-2'
+        }
       ],
       excludeSinglePage: true
     })
@@ -4201,6 +4491,365 @@ describe('workspace agent message sending', () => {
     await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
   })
 
+  it('materializes a denied new Session and confirms policy authority before dispatch', async () => {
+    const materialized = createDeferred<PersistedChatSession>()
+    const authorized = createDeferred<PersistedChatSession>()
+    const saveSession = vi.fn((session: PersistedChatSession) => {
+      void session
+      return materialized.promise
+    })
+    const setDelegationPolicy = vi.fn(() => authorized.promise)
+    vi.stubGlobal('window', {
+      api: { sessions: { saveSession, setDelegationPolicy } }
+    })
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'transport-session-denied',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-denied']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: 'Work without creating Subagents',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      delegationPolicy: 'deny'
+    })
+
+    await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+    expect(saveSession.mock.calls[0]?.[0]).toMatchObject({
+      id: 'transport-session-denied',
+      delegationPolicy: 'allow'
+    })
+    expect(setDelegationPolicy).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+
+    materialized.resolve(saveSession.mock.calls[0]![0])
+    await vi.waitFor(() => expect(setDelegationPolicy).toHaveBeenCalledOnce())
+    expect(setDelegationPolicy).toHaveBeenCalledWith(
+      'project-1',
+      'transport-session-denied',
+      'deny'
+    )
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+
+    authorized.resolve({
+      ...saveSession.mock.calls[0]![0],
+      revision: 2,
+      delegationPolicy: 'deny'
+    })
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      id: 'transport-session-denied',
+      revision: 2,
+      delegationPolicy: 'deny'
+    })
+  })
+
+  it('materializes an explicit allow projection before a new Session prompt', async () => {
+    const persisted = createDeferred<PersistedChatSession>()
+    const saveSession = vi.fn((session: PersistedChatSession) => {
+      void session
+      return persisted.promise
+    })
+    const setDelegationPolicy = vi.fn(async () => ({
+      ...saveSession.mock.calls[0]![0],
+      revision: 2,
+      delegationPolicy: 'allow' as const
+    }))
+    vi.stubGlobal('window', { api: { sessions: { saveSession, setDelegationPolicy } } })
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'transport-session-allowed',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-allowed']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: 'Work with optional delegation',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      delegationPolicy: 'allow'
+    })
+
+    await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+    expect(saveSession.mock.calls[0]?.[0]).toMatchObject({ delegationPolicy: 'allow' })
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    persisted.resolve(saveSession.mock.calls[0]![0])
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+    expect(setDelegationPolicy).toHaveBeenCalledWith(
+      'project-1',
+      'transport-session-allowed',
+      'allow'
+    )
+  })
+
+  it('confirms an inherited denied Message Branch before dispatch without a caller override', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Inspect the original data',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDelegationPolicyAuthority({
+      ...toPersistedSession(source),
+      revision: 2,
+      delegationPolicy: 'deny',
+      updatedAt: source.updatedAt + 1
+    })
+    let materialized!: PersistedChatSession
+    const saveSession = vi.fn(async (session: PersistedChatSession) => {
+      materialized = session
+      return session
+    })
+    const setDelegationPolicy = vi.fn(async () => ({
+      ...materialized,
+      revision: (materialized.revision ?? 0) + 1,
+      delegationPolicy: 'deny' as const
+    }))
+    vi.stubGlobal('window', {
+      api: { sessions: { saveSession, setDelegationPolicy } }
+    })
+    const runtime = {
+      state: createSnapshot(['source-session']),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'branched-runtime-session',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['branched-runtime-session']))
+    }
+
+    const sent = await sendWorkspaceMessage(
+      runtime,
+      {
+        branchSourceSessionId: 'source-session',
+        text: 'Try a different interpretation'
+      },
+      { awaitPendingPreparation: true }
+    )
+
+    expect(sent).toBeDefined()
+    expect(saveSession).toHaveBeenCalledOnce()
+    expect(saveSession.mock.calls[0]?.[0]).toMatchObject({ delegationPolicy: 'allow' })
+    expect(setDelegationPolicy).toHaveBeenCalledWith(
+      'project-1',
+      'branched-runtime-session',
+      'deny'
+    )
+    expect(setDelegationPolicy.mock.invocationCallOrder[0]).toBeLessThan(
+      runtime.sendPrompt.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('persists an explicit denied Message Branch override from an allowed source', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Inspect the original data',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      delegationPolicy: 'allow'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    const policyApi = createSessionPolicyApi()
+    vi.stubGlobal('window', { api: { sessions: policyApi } })
+    const runtime = {
+      state: createSnapshot(['source-session']),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'branched-runtime-session',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['branched-runtime-session']))
+    }
+
+    const sent = await sendWorkspaceMessage(
+      runtime,
+      {
+        branchSourceSessionId: 'source-session',
+        text: 'Try a different interpretation',
+        delegationPolicy: 'deny'
+      },
+      { awaitPendingPreparation: true }
+    )
+
+    expect(sent).toBeDefined()
+    expect(policyApi.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ delegationPolicy: 'allow' })
+    )
+    expect(policyApi.setDelegationPolicy).toHaveBeenCalledWith(
+      'project-1',
+      'branched-runtime-session',
+      'deny'
+    )
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      delegationPolicy: 'deny',
+      delegationPolicyAuthorityPending: undefined
+    })
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('reports a denied new Session preparation failure without dispatching its prompt', async () => {
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const setDelegationPolicy = vi.fn().mockRejectedValue(new Error('Policy authority unavailable'))
+    vi.stubGlobal('window', {
+      api: { sessions: { saveSession, setDelegationPolicy } }
+    })
+    const deleteSession = vi.fn().mockResolvedValue(createSnapshot())
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'transport-session-denied',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      deleteSession,
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-denied']))
+    }
+
+    const sent = await sendWorkspaceMessage(
+      runtime,
+      {
+        text: 'Work without creating Subagents',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        delegationPolicy: 'deny'
+      },
+      { awaitPendingPreparation: true }
+    )
+
+    expect(sent).toBeUndefined()
+    expect(deleteSession).toHaveBeenCalledWith('transport-session-denied')
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: 'Policy authority unavailable',
+      delegationPolicy: 'deny',
+      delegationPolicyAuthorityPending: true
+    })
+
+    const failed = useSessionStore.getState().sessions[0]
+    setDelegationPolicy.mockResolvedValueOnce({
+      ...toPersistedSession(failed),
+      revision: (failed.revision ?? 0) + 1,
+      delegationPolicy: 'deny'
+    })
+    runtime.state = createSnapshot(['transport-session-denied'])
+
+    const retried = await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-denied',
+      text: 'Retry without creating Subagents',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+
+    expect(retried).toBeDefined()
+    expect(setDelegationPolicy).toHaveBeenLastCalledWith(
+      'project-1',
+      'transport-session-denied',
+      'deny'
+    )
+    expect(setDelegationPolicy.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      runtime.sendPrompt.mock.invocationCallOrder[0]
+    )
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('confirms denied authority before PDF linking and keeps retry fail-closed after link failure', async () => {
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const setDelegationPolicy = vi.fn(async () => {
+      const session = useSessionStore.getState().sessions[0]
+      return {
+        ...toPersistedSession(session),
+        revision: (session.revision ?? 0) + 1,
+        delegationPolicy: 'deny' as const
+      }
+    })
+    const linkPdfContext = vi.fn().mockRejectedValue(new Error('PDF context unavailable'))
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          saveSession,
+          setDelegationPolicy,
+          linkPdfContext,
+          filterPdfContextCandidates: vi.fn().mockResolvedValue({
+            sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }],
+            pendingAttachmentIds: []
+          })
+        }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'transport-session-pdf-denied',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-pdf-denied']))
+    }
+
+    const sent = await sendWorkspaceMessage(
+      runtime,
+      {
+        text: 'Read without creating Subagents',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        delegationPolicy: 'deny',
+        pendingPdfContextVersions: [
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'artifact-1',
+            sourceVersionId: 'version-1'
+          }
+        ]
+      },
+      { awaitPendingPreparation: true }
+    )
+
+    expect(sent).toBeUndefined()
+    expect(setDelegationPolicy).toHaveBeenCalledWith(
+      'project-1',
+      'transport-session-pdf-denied',
+      'deny'
+    )
+    expect(setDelegationPolicy.mock.invocationCallOrder[0]).toBeLessThan(
+      linkPdfContext.mock.invocationCallOrder[0]
+    )
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      delegationPolicy: 'deny',
+      delegationPolicyAuthorityPending: undefined,
+      status: 'error'
+    })
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+
+    runtime.state = createSnapshot(['transport-session-pdf-denied'])
+    const retried = await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-pdf-denied',
+      text: 'Retry the reading',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+
+    expect(retried).toBeDefined()
+    expect(setDelegationPolicy).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it('deletes a new runtime Session when enabled Compute Host persistence fails', async () => {
     vi.stubGlobal('window', {
       api: {
@@ -4321,6 +4970,7 @@ describe('workspace agent message sending', () => {
     created.resolve({ sessionId: 'branched-runtime-session', cwd: '/workspace/project' })
     await flushRuntimeTasks()
 
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
     expect(useSessionStore.getState().selectedSessionId).toBe('branched-runtime-session')
     expect(runtime.sendPrompt).toHaveBeenCalledWith(
       'branched-runtime-session',
@@ -4345,7 +4995,8 @@ describe('workspace agent message sending', () => {
       sessionId: 'source-session',
       content: 'Inspect the paper',
       cwd: '/workspace/project',
-      projectId: 'project-1'
+      projectId: 'project-1',
+      delegationPolicy: 'deny'
     })
     useSessionStore.getState().finishRun('source-session')
     const pdfContext: SessionPdfContext = {
@@ -4370,9 +5021,18 @@ describe('workspace agent message sending', () => {
       ...pdfContext,
       bindings: [{ ...pdfContext.bindings[0], bindingId: 'branched-binding' }]
     }
-    const saveSession = vi.fn(async (session: PersistedChatSession) => ({
-      ...session,
-      runtimeContext: { version: 1 as const, revision: 3 }
+    let materialized!: PersistedChatSession
+    const saveSession = vi.fn(async (session: PersistedChatSession) => {
+      materialized = {
+        ...session,
+        runtimeContext: { version: 1 as const, revision: 3 }
+      }
+      return materialized
+    })
+    const setDelegationPolicy = vi.fn(async (_projectId, _sessionId, policy: DelegationPolicy) => ({
+      ...materialized,
+      revision: (materialized.revision ?? 0) + 1,
+      delegationPolicy: policy
     }))
     const linkPdfContext = vi.fn().mockResolvedValue({
       version: 1,
@@ -4383,6 +5043,7 @@ describe('workspace agent message sending', () => {
       api: {
         sessions: {
           saveSession,
+          setDelegationPolicy,
           linkPdfContext,
           filterPdfContextCandidates: vi.fn().mockResolvedValue({
             sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }],
@@ -4416,6 +5077,8 @@ describe('workspace agent message sending', () => {
       sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }],
       excludeSinglePage: true
     })
+    expect(saveSession.mock.calls.length).toBeGreaterThan(0)
+    expect(saveSession.mock.calls[0]?.[0]).toMatchObject({ delegationPolicy: 'allow' })
     expect(runtime.sendPrompt.mock.calls[0]?.[4]).toEqual([
       expect.objectContaining({
         id: 'artifact-1',
@@ -4431,7 +5094,8 @@ describe('workspace agent message sending', () => {
       sessionId: 'source-session',
       content: 'Inspect the original data',
       cwd: '/workspace/project',
-      projectId: 'project-1'
+      projectId: 'project-1',
+      delegationPolicy: 'allow'
     })
     const firstAnswer = useSessionStore.getState().appendAgentMessageChunk({
       sessionId: 'source-session',
@@ -4451,8 +5115,17 @@ describe('workspace agent message sending', () => {
       content: 'Later answer'
     })
     useSessionStore.getState().finishRun('source-session')
-    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
-    vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+    const saveSession = vi.fn(async (session: PersistedChatSession) => ({
+      ...session,
+      revision: 4,
+      delegationPolicy: 'allow' as const
+    }))
+    const setDelegationPolicy = vi.fn(async () => ({
+      ...saveSession.mock.calls[0]![0],
+      revision: 5,
+      delegationPolicy: 'deny' as const
+    }))
+    vi.stubGlobal('window', { api: { sessions: { saveSession, setDelegationPolicy } } })
     const runtime = {
       state: createSnapshot(['source-session']),
       createSession: vi.fn().mockResolvedValue({
@@ -4472,6 +5145,7 @@ describe('workspace agent message sending', () => {
       agentFrameworkId: 'codex',
       agentBackendId: 'codex:shared',
       agentModel: 'gpt-5.4',
+      delegationPolicy: 'deny',
       specialistId: 'specialist-b'
     })
 
@@ -4496,6 +5170,7 @@ describe('workspace agent message sending', () => {
         agentBackendId: 'codex:shared',
         agentModel: 'gpt-5.4',
         specialistId: 'specialist-b',
+        delegationPolicy: 'allow',
         pendingHistoryReplay: { kind: 'all' },
         messages: [
           expect.objectContaining({ content: 'Inspect the original data' }),
@@ -4503,7 +5178,14 @@ describe('workspace agent message sending', () => {
         ]
       })
     )
+    expect(setDelegationPolicy).toHaveBeenCalledWith('project-1', 'branched-session', 'deny')
     expect(useSessionStore.getState().selectedSessionId).toBe('branched-session')
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      id: 'branched-session',
+      revision: 5,
+      delegationPolicy: 'deny',
+      delegationPolicyAuthorityPending: undefined
+    })
   })
 
   it('rejects a prompt while an idle branched Session is still binding', async () => {
@@ -4522,7 +5204,11 @@ describe('workspace agent message sending', () => {
     useSessionStore.getState().finishRun('source-session')
     const created = createDeferred<{ sessionId: string; cwd?: string }>()
     const saveSession = vi.fn(async (session: PersistedChatSession) => session)
-    vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+    vi.stubGlobal('window', {
+      api: {
+        sessions: { saveSession, setDelegationPolicy: createSessionPolicyApi().setDelegationPolicy }
+      }
+    })
     const runtime = {
       state: createSnapshot(['source-session']),
       createSession: vi.fn(() => created.promise),
@@ -4604,7 +5290,7 @@ describe('workspace agent message sending', () => {
       await flushRuntimeTasks()
 
       expect(runtime.createSession).toHaveBeenCalledOnce()
-      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+      await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
       expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('Inspect this chart')
       expect(runtime.sendPrompt.mock.calls[0]?.[6]).toEqual([])
       expect(runtime.sendPrompt.mock.calls[0]?.[7]).toEqual(
@@ -4623,13 +5309,15 @@ describe('workspace agent message sending', () => {
     const finalizedHistory = createAttachment({
       id: 'legacy-upload-1',
       sessionId: 'source-session',
-      path: 'upload-version:project-1/source-session/legacy-version-1',
+      path: 'upload-version:project-1/source-session/legacy-upload-1/legacy-version-1',
       mimeType: 'image/png',
       versionId: 'legacy-version-1',
       versionNumber: 1
     })
     const finalizeSession = vi.fn().mockResolvedValue([finalizedHistory])
-    vi.stubGlobal('window', { api: { uploads: { finalizeSession } } })
+    vi.stubGlobal('window', {
+      api: { uploads: { finalizeSession }, sessions: createSessionPolicyApi() }
+    })
     useSessionStore.getState().appendUserMessage({
       sessionId: 'source-session',
       content: 'Inspect this legacy chart',
@@ -4699,6 +5387,7 @@ describe('workspace agent message sending', () => {
       expect.objectContaining({ versionId: 'legacy-version-1' })
     ])
     expect(child?.messages[0].uploads).toEqual(source?.messages[0].uploads)
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
     expect(runtime.sendPrompt).toHaveBeenCalledWith(
       'branched-runtime-session',
       'Try another chart explanation',
@@ -4722,14 +5411,16 @@ describe('workspace agent message sending', () => {
     const finalizedHistory = createAttachment({
       id: stagedHistory.id,
       sessionId: 'source-session',
-      path: 'upload-version:project-1/source-session/history-version-1',
+      path: 'upload-version:project-1/source-session/history-upload-1/history-version-1',
       mimeType: 'image/png',
       versionId: 'history-version-1',
       versionNumber: 1
     })
     const finalization = createDeferred<UploadedAttachment[]>()
     const finalizeSession = vi.fn(() => finalization.promise)
-    vi.stubGlobal('window', { api: { uploads: { finalizeSession } } })
+    vi.stubGlobal('window', {
+      api: { uploads: { finalizeSession }, sessions: createSessionPolicyApi() }
+    })
     useSessionStore.getState().appendUserMessage({
       sessionId: 'source-session',
       content: 'Inspect the staged data',
@@ -4783,13 +5474,15 @@ describe('workspace agent message sending', () => {
     const finalizedHistory = createAttachment({
       id: stagedHistory.id,
       sessionId: 'source-session',
-      path: 'upload-version:project-1/source-session/history-version-1',
+      path: 'upload-version:project-1/source-session/history-upload-1/history-version-1',
       mimeType: 'image/png',
       versionId: 'history-version-1',
       versionNumber: 1
     })
     const finalizeSession = vi.fn().mockResolvedValue([finalizedHistory])
-    vi.stubGlobal('window', { api: { uploads: { finalizeSession } } })
+    vi.stubGlobal('window', {
+      api: { uploads: { finalizeSession }, sessions: createSessionPolicyApi() }
+    })
     useSessionStore.getState().appendUserMessage({
       sessionId: 'source-session',
       content: 'Inspect the staged data',
@@ -4831,6 +5524,7 @@ describe('workspace agent message sending', () => {
       expect.objectContaining({ sessionId: 'source-session', versionId: 'history-version-1' })
     ])
     expect(child?.messages[0].uploads).toEqual(source?.messages[0].uploads)
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
     expect(runtime.sendPrompt).toHaveBeenCalledWith(
       'branched-runtime-session',
       'Continue with the staged data',
@@ -4853,12 +5547,14 @@ describe('workspace agent message sending', () => {
     const attachment = createAttachment()
     const finalizedAttachment = createAttachment({
       sessionId: 'branched-runtime-session',
-      path: 'upload-version:project-1/branched-runtime-session/upload-version-1',
+      path: 'upload-version:project-1/branched-runtime-session/upload-1/upload-version-1',
       versionId: 'upload-version-1',
       versionNumber: 1
     })
     const finalizeSession = vi.fn().mockResolvedValue([finalizedAttachment])
-    vi.stubGlobal('window', { api: { uploads: { finalizeSession } } })
+    vi.stubGlobal('window', {
+      api: { uploads: { finalizeSession }, sessions: createSessionPolicyApi() }
+    })
     useSessionStore.getState().appendUserMessage({
       sessionId: 'source-session',
       content: 'Inspect the original data',
@@ -4920,7 +5616,7 @@ describe('workspace agent message sending', () => {
       id: retried?.messageId,
       content: 'Try a different interpretation'
     })
-    expect(runtime.sendPrompt).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledTimes(1))
     const promptCall = runtime.sendPrompt.mock.calls[0]
     expect(promptCall[1]).toBe('Try a different interpretation')
     expect(promptCall[2]).toEqual([finalizedAttachment])
@@ -4941,7 +5637,7 @@ describe('workspace agent message sending', () => {
     const attachment = createAttachment()
     const finalizedAttachment = createAttachment({
       sessionId: 'branched-runtime-session',
-      path: 'upload-version:project-1/branched-runtime-session/upload-version-1',
+      path: 'upload-version:project-1/branched-runtime-session/upload-1/upload-version-1',
       versionId: 'upload-version-1',
       versionNumber: 1
     })
@@ -4949,6 +5645,7 @@ describe('workspace agent message sending', () => {
     vi.stubGlobal('window', {
       api: {
         uploads: { finalizeSession },
+        sessions: createSessionPolicyApi(),
         acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['branched-runtime-session'])) }
       }
     })
@@ -4993,12 +5690,14 @@ describe('workspace agent message sending', () => {
     await flushRuntimeTasks()
     await flushRuntimeTasks()
 
-    expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      id: 'branched-runtime-session',
-      isPending: false,
-      status: 'error',
-      pendingContextReplayMessageId: branched?.messageId
-    })
+    await vi.waitFor(() =>
+      expect(useSessionStore.getState().sessions[0]).toMatchObject({
+        id: 'branched-runtime-session',
+        isPending: false,
+        status: 'error',
+        pendingContextReplayMessageId: branched?.messageId
+      })
+    )
 
     const retried = await sendWorkspaceMessage(runtime, {
       sessionId: 'branched-runtime-session',
@@ -6192,6 +6891,47 @@ describe('resuming an interrupted session on demand', () => {
 
     expect(runtime.resumeSession).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
+  })
+
+  it('confirms pending denied authority before resuming the provider Session', async () => {
+    seedDetachedSession()
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        delegationPolicy: 'deny' as const,
+        delegationPolicyAuthorityPending: true
+      }))
+    }))
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    const setDelegationPolicy = vi.fn(async () => {
+      const session = useSessionStore.getState().sessions[0]
+      return {
+        ...toPersistedSession(session),
+        revision: (session.revision ?? 0) + 1,
+        delegationPolicy: 'deny' as const
+      }
+    })
+    vi.stubGlobal('window', { api: { sessions: { saveSession, setDelegationPolicy } } })
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi
+        .fn()
+        .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+
+    expect(setDelegationPolicy).toHaveBeenCalledWith('default-project', 'session-1', 'deny')
+    expect(setDelegationPolicy.mock.invocationCallOrder[0]).toBeLessThan(
+      runtime.resumeSession.mock.invocationCallOrder[0]
+    )
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      delegationPolicy: 'deny',
+      delegationPolicyAuthorityPending: undefined
+    })
   })
 
   it('surfaces an actionable message when the session has no workspace to resume into', async () => {
@@ -9174,7 +9914,7 @@ describe('resendEditedWorkspaceMessage', () => {
       expect.objectContaining({
         id: 'upload-source',
         versionId: 'upload-version-source',
-        path: 'upload-version:default-project/source-session/upload-version-source'
+        path: 'upload-version:default-project/source-session/upload-source/upload-version-source'
       })
     ])
     expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
@@ -9763,7 +10503,7 @@ describe('resendEditedWorkspaceMessage', () => {
     expect(runtime.sendPrompt.mock.calls[0]?.[6]).toEqual([
       expect.objectContaining({
         id: 'upload-1',
-        path: 'upload-version:project-1/source-session/upload-version-1'
+        path: 'upload-version:project-1/source-session/upload-1/upload-version-1'
       })
     ])
   })
@@ -10008,7 +10748,14 @@ describe('edit resend reply streaming', () => {
       })
     ).rejects.toThrow('An annotated image is no longer available')
 
-    expect(acquire).toHaveBeenCalledWith(expect.objectContaining({ path: annotation.source.path }))
+    expect(acquire).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'artifact',
+        projectId: 'default-project',
+        fileId: 'artifact-1',
+        versionId: 'deleted-version'
+      })
+    )
     expect(runtime.resetSessionContext).not.toHaveBeenCalled()
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]?.messages).toEqual(messagesBefore)

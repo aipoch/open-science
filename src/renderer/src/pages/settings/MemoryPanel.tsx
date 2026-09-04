@@ -335,7 +335,7 @@ const NoteEditor = ({
   }
 
   return (
-    <div className="border-b border-border p-3">
+    <div className="p-3">
       <Textarea
         autoFocus
         value={value}

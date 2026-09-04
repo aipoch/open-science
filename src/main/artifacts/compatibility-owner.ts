@@ -3,12 +3,9 @@ import { basename, dirname, join, resolve } from 'node:path'
 
 import type {
   ArtifactFile,
-  ArtifactPreviewResult,
   ListProjectMessageArtifactsRequest,
-  OpenArtifactFileRequest,
-  ReadArtifactPreviewRequest
+  OpenArtifactFileRequest
 } from '../../shared/artifacts'
-import { readBoundedManagedFilePreview } from '../managed-file-preview'
 import { createLogger } from '../logger'
 import type { ArtifactRunMarkerReadResult } from './publication-types'
 import {
@@ -49,60 +46,6 @@ class ArtifactCompatibilityOwner {
         })
       )
     )
-  }
-
-  async listProjectArtifacts(
-    projectId: string,
-    activeRunIds: ReadonlySet<string> = new Set()
-  ): Promise<ArtifactFile[]> {
-    const project = assertSafePathSegment(projectId)
-    const projectDir = this.options.storage.getProjectArtifactDir(project)
-    const files: ArtifactFile[] = []
-
-    for (const sessionId of await this.options.storage.readSubdirectoryNames(projectDir)) {
-      if (!SAFE_SEGMENT_PATTERN.test(sessionId)) continue
-      const sessionDir = join(projectDir, sessionId)
-
-      for (const messageId of await this.options.storage.readSubdirectoryNames(sessionDir)) {
-        if (!SAFE_SEGMENT_PATTERN.test(messageId)) continue
-        const messageDir = join(sessionDir, messageId)
-        for (const entry of await this.options.storage.readFileEntries(messageDir)) {
-          const metadata = await this.options.storage.readArtifactMetadata(messageDir, entry.name)
-          files.push(
-            await this.options.storage.createArtifactFile({
-              projectId: project,
-              sessionId,
-              messageId,
-              filename: entry.name,
-              filePath: join(messageDir, entry.name),
-              metadata
-            })
-          )
-        }
-      }
-
-      const pendingDir = join(sessionDir, PENDING_DIR)
-      for (const runId of await this.options.storage.readSubdirectoryNames(pendingDir)) {
-        if (!this.options.storage.isPendingArtifactRunDirectory(runId) || activeRunIds.has(runId)) {
-          continue
-        }
-        const runDir = join(pendingDir, runId)
-        for (const entry of await this.options.storage.readFileEntries(runDir)) {
-          const metadata = await this.options.storage.readArtifactMetadata(runDir, entry.name)
-          files.push(
-            await this.options.storage.createArtifactFile({
-              projectId: project,
-              sessionId,
-              runId,
-              filename: entry.name,
-              filePath: join(runDir, entry.name),
-              metadata
-            })
-          )
-        }
-      }
-    }
-    return files
   }
 
   async resolveManagedFilePath(request: OpenArtifactFileRequest): Promise<string> {
@@ -179,13 +122,6 @@ class ArtifactCompatibilityOwner {
       throw new Error('Artifact file is outside the declaring session.')
     }
     return resolvedFilePath
-  }
-
-  async readManagedFilePreview(
-    request: ReadArtifactPreviewRequest
-  ): Promise<ArtifactPreviewResult> {
-    const filePath = await this.resolveManagedFilePath(request)
-    return readBoundedManagedFilePreview(filePath, request, 'Invalid artifact preview encoding.')
   }
 }
 

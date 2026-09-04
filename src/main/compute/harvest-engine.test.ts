@@ -100,24 +100,33 @@ const sampleHost = (): import('../../shared/compute').ComputeHost => ({
   updatedAt: Date.now()
 })
 
-/** Builds a fake SSH runner that returns the given stdout for the find command. */
+/** Builds a fake SSH runner that returns the listing and stable per-file stat snapshots. */
 const makeSshRunner = (findOutput: string, sshError?: string): SshRunner => ({
-  run: vi.fn(() =>
-    Promise.resolve({
+  run: vi.fn((_target, command) => {
+    const statLine = findOutput.split('\n').find((line) => {
+      const fields = line.split('\t')
+      return fields.length >= 4 && command.includes(fields.slice(0, -3).join('\t'))
+    })
+    const fields = statLine?.split('\t') ?? []
+    return Promise.resolve({
       exitCode: sshError ? 1 : 0,
-      stdout: findOutput,
+      stdout:
+        command.startsWith('find ') || !statLine
+          ? findOutput
+          : `f ${fields.at(-3)} ${fields.at(-2)} ${fields.at(-1)}`,
       stderr: sshError ?? '',
       truncated: false,
       timedOut: false
     })
-  )
+  })
 })
 
 /** Builds a fake bounded copy runner. Optionally fails on the nth call (1-indexed). */
+const simulatedSuccessfulScpRunners = new WeakSet<ScpRunner>()
 const makeScpRunner = (failOnCall?: number): ScpRunner & { calls: string[][] } => {
   let callCount = 0
   const calls: string[][] = []
-  return {
+  const runner = {
     calls,
     copy: vi.fn((): Promise<ScpResult> =>
       Promise.resolve({ exitCode: 0, stderr: '', timedOut: false })
@@ -147,6 +156,8 @@ const makeScpRunner = (failOnCall?: number): ScpRunner & { calls: string[][] } =
       }
     )
   }
+  simulatedSuccessfulScpRunners.add(runner)
+  return runner
 }
 
 const makeWritingScpRunner = (): ScpRunner => ({
@@ -170,20 +181,55 @@ const makeWritingScpRunner = (): ScpRunner => ({
 const brokerFromRunners = (
   sshRunner: SshRunner,
   scpRunner: ScpRunner
-): ComputeConnectionBrokerAcquirer => ({
-  acquire: vi.fn(
-    async () =>
-      ({
-        run: (command, options) => sshRunner.run({} as never, command, options),
-        upload: vi.fn(async () => undefined),
-        download: async (remotePath, localPath, maxBytes) => {
-          if (!scpRunner.copyFromRemoteBounded)
-            throw new Error('bounded remote copy is unavailable')
-          return scpRunner.copyFromRemoteBounded({} as never, remotePath, localPath, maxBytes)
-        }
-      }) satisfies ComputeConnectionLease
-  )
-})
+): ComputeConnectionBrokerAcquirer => {
+  const expectedSizes = new Map<string, number>()
+  return {
+    acquire: vi.fn(
+      async () =>
+        ({
+          run: async (command, options) => {
+            const result = await sshRunner.run({} as never, command, options)
+            if (command.startsWith('find ')) {
+              for (const line of result.stdout.split('\n')) {
+                const fields = line.split('\t')
+                const size = Number.parseInt(fields.at(-3) ?? '', 10)
+                if (fields.length >= 4 && Number.isSafeInteger(size)) {
+                  expectedSizes.set(fields.slice(0, -3).join('\t'), size)
+                }
+              }
+            }
+            return result
+          },
+          upload: vi.fn(async () => undefined),
+          download: async (remotePath, localPath, maxBytes) => {
+            if (!scpRunner.copyFromRemoteBounded)
+              throw new Error('bounded remote copy is unavailable')
+            const result = await scpRunner.copyFromRemoteBounded(
+              {} as never,
+              remotePath,
+              localPath,
+              maxBytes
+            )
+            if (
+              simulatedSuccessfulScpRunners.has(scpRunner) &&
+              result.exitCode === 0 &&
+              !result.exceeded &&
+              !result.timedOut
+            ) {
+              const expected = [...expectedSizes].find(([path]) =>
+                remotePath.endsWith('/' + path)
+              )?.[1]
+              if (expected !== undefined) {
+                await writeFile(localPath, Buffer.alloc(expected))
+                return { ...result, bytesWritten: expected }
+              }
+            }
+            return result
+          }
+        }) satisfies ComputeConnectionLease
+    )
+  }
+}
 
 const makeHostRepo = (host: ReturnType<typeof sampleHost> | null): ComputeHostRepository =>
   ({
@@ -209,9 +255,17 @@ const makeJobRepo = (
   return { repo, updates }
 }
 
-// Build a find-printf output string from an array of {path, size_bytes} entries.
-const findOutput = (entries: { path: string; size_bytes: number }[]): string =>
-  entries.map((e) => `${e.path}\t${e.size_bytes}`).join('\n')
+// Build a find-printf output string with a stable default inode and mtime snapshot.
+const findOutput = (
+  entries: { path: string; size_bytes: number; inode?: string; mtimeToken?: string }[]
+): string =>
+  entries
+    .map((entry) =>
+      [entry.path, entry.size_bytes, entry.inode ?? '1', entry.mtimeToken ?? '0.0000000000'].join(
+        '\t'
+      )
+    )
+    .join('\n')
 
 // ---------------------------------------------------------------------------
 // Path helper: getJobHarvestDir
@@ -237,6 +291,74 @@ describe('getJobHarvestDir', () => {
 // ---------------------------------------------------------------------------
 
 describe('harvestJob — clean harvest', () => {
+  it('accepts an unchanged GNU fractional mtime snapshot', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    const ssh: SshRunner = {
+      run: vi.fn(async (_target, command) => ({
+        exitCode: 0,
+        stdout: command.startsWith('find ')
+          ? findOutput([
+              {
+                path: 'run.result',
+                size_bytes: 10,
+                inode: '41',
+                mtimeToken: '1700000000.1234567890'
+              }
+            ])
+          : 'f 10 41 1700000000.123456789',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      }))
+    }
+    const { repo: jobRepo, updates } = makeJobRepo(job)
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(ssh, makeWritingScpRunner()),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: jobRepo,
+      storageRoot
+    })
+
+    expect(updates.at(-1)).toMatchObject({ data: { harvestError: null } })
+  })
+
+  it('rejects a same-size harvest file changed on the same inode within one second', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    const ssh: SshRunner = {
+      run: vi.fn(async (_target, command) => ({
+        exitCode: 0,
+        stdout: command.startsWith('find ')
+          ? findOutput([
+              {
+                path: 'run.result',
+                size_bytes: 10,
+                inode: '41',
+                mtimeToken: '1700000000.1000000000'
+              }
+            ])
+          : 'f 10 41 1700000000.900000000',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      }))
+    }
+    const { repo: jobRepo, updates } = makeJobRepo(job)
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(ssh, makeWritingScpRunner()),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: jobRepo,
+      storageRoot
+    })
+
+    expect(updates[0]?.data).toMatchObject({
+      harvestError: expect.stringMatching(/changed during transfer/i)
+    })
+  })
+
   it('excludes staged inputs from both current and legacy input manifests', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob({
@@ -468,6 +590,82 @@ describe('harvestJob — clean harvest', () => {
     const finalUpdate = updates[0]!.data as Record<string, unknown>
     expect(finalUpdate.harvestedAt).toBeInstanceOf(Date)
     expect(finalUpdate.harvestError).toBeNull()
+  })
+
+  it('rejects a harvest file whose downloaded byte count differs from enumeration', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    const ssh = makeSshRunner(findOutput([{ path: 'run.result', size_bytes: 10 }]))
+    const scp: ScpRunner = {
+      copy: vi.fn(() => Promise.resolve({ exitCode: 0, stderr: '', timedOut: false })),
+      copyFromRemoteBounded: vi.fn(async (_target, _remotePath, localPath) => {
+        await mkdir(dirname(localPath), { recursive: true })
+        await writeFile(localPath, 'short')
+        return {
+          exitCode: 0,
+          stderr: '',
+          timedOut: false,
+          bytesWritten: 5,
+          exceeded: false
+        }
+      })
+    }
+    const { repo: jobRepo, updates } = makeJobRepo(job)
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(ssh, scp),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: jobRepo,
+      storageRoot
+    })
+
+    expect(updates[0]?.data).toMatchObject({
+      harvestError: expect.stringMatching(/changed during transfer/i)
+    })
+    await expect(
+      readFile(
+        join(
+          getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id),
+          'featured',
+          'run.result'
+        )
+      )
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects a same-size harvest file when its remote identity changes during transfer', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    const ssh: SshRunner = {
+      run: vi.fn(async (_target, command) => ({
+        exitCode: 0,
+        stdout: command.startsWith('find ')
+          ? findOutput([
+              {
+                path: 'run.result',
+                size_bytes: 10,
+                inode: '41',
+                mtimeToken: '1700000000.0000000000'
+              }
+            ])
+          : 'f 10 42 1700000001.000000000',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      }))
+    }
+    const { repo: jobRepo, updates } = makeJobRepo(job)
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(ssh, makeWritingScpRunner()),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: jobRepo,
+      storageRoot
+    })
+
+    expect(updates[0]?.data).toMatchObject({
+      harvestError: expect.stringMatching(/changed during transfer/i)
+    })
   })
 
   it('sets leftOnRemote to null (empty array JSON) when nothing is left on remote', async () => {

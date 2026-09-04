@@ -765,6 +765,57 @@ describe('session store', () => {
     expect(toPersistedSession(projection)).not.toHaveProperty('runtimeContext')
   })
 
+  it('applies only newer Delegation policy authority without replacing live Session state', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-delegation',
+        projectId: 'project-1',
+        revision: 4,
+        title: 'Live delegation',
+        cwd: '/workspace',
+        status: 'idle',
+        delegationPolicy: 'allow',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 4
+      }
+    ])
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-delegation',
+      content: 'Keep this live prompt'
+    })
+    const source = useSessionStore.getState().sessions[0]
+    const liveMessages = source.messages
+    const liveStatus = source.status
+
+    useSessionStore.getState().applyDelegationPolicyAuthority({
+      ...toPersistedSession(source),
+      revision: 6,
+      delegationPolicy: 'deny',
+      messages: [],
+      status: 'idle',
+      updatedAt: source.updatedAt + 10
+    })
+
+    const denied = useSessionStore.getState().sessions[0]
+    expect(denied).toMatchObject({
+      revision: 6,
+      delegationPolicy: 'deny',
+      updatedAt: source.updatedAt + 10
+    })
+    expect(denied.messages).toBe(liveMessages)
+    expect(denied.status).toBe(liveStatus)
+
+    useSessionStore.getState().applyDelegationPolicyAuthority({
+      ...toPersistedSession(denied),
+      revision: 5,
+      delegationPolicy: 'allow',
+      updatedAt: denied.updatedAt + 10
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toBe(denied)
+  })
+
   it('converges a newer durable Plan authority when message content is unchanged', () => {
     useSessionStore.getState().hydrateSessions([
       {
@@ -2689,6 +2740,7 @@ describe('session store', () => {
     const result = useSessionStore.getState().appendPendingUserMessage({
       content: 'Help me inspect this notebook',
       cwd: '/workspace/project',
+      delegationPolicy: 'deny',
       enabledComputeHosts: ['ssh:lab', 'ssh:available'],
       selectedComputeHosts: ['ssh:lab']
     })
@@ -2700,6 +2752,7 @@ describe('session store', () => {
         id: result?.sessionId,
         isPending: true,
         cwd: '/workspace/project',
+        delegationPolicy: 'deny',
         enabledComputeHosts: ['ssh:lab', 'ssh:available'],
         selectedComputeHosts: ['ssh:lab'],
         title: 'Help me inspect this notebook',
@@ -2843,7 +2896,8 @@ describe('session store', () => {
   it('binds a pending session to the runtime session id without rewriting the prompt', () => {
     const pending = useSessionStore.getState().appendPendingUserMessage({
       content: 'Help me inspect this notebook',
-      cwd: '/workspace/project'
+      cwd: '/workspace/project',
+      delegationPolicy: 'deny'
     })
 
     const bound = useSessionStore.getState().bindPendingSession({
@@ -2866,6 +2920,7 @@ describe('session store', () => {
         cwd: '/workspace/project',
         agentFrameworkId: 'codex',
         agentBackendId: 'codex:codex-shared',
+        delegationPolicy: 'deny',
         status: 'running',
         activeRun: {
           promptMessageId: pending?.messageId,
@@ -4946,7 +5001,8 @@ describe('session store', () => {
     const pending = useSessionStore.getState().appendPendingUserMessage({
       content: 'Save after ACP creates the session',
       cwd: '/workspace/project',
-      projectId: 'project-abc'
+      projectId: 'project-abc',
+      delegationPolicy: 'allow'
     })
 
     useSessionStore.getState().bindPendingSession({
@@ -4958,6 +5014,7 @@ describe('session store', () => {
     const boundSession = useSessionStore.getState().sessions[0]
 
     expect(boundSession.isPending).toBe(false)
+    expect(boundSession.delegationPolicyAuthorityPending).toBe(true)
 
     const persisted = toPersistedSession(boundSession)
 
@@ -4973,6 +5030,7 @@ describe('session store', () => {
       ]
     })
     expect(persisted).not.toHaveProperty('isPending')
+    expect(persisted).not.toHaveProperty('delegationPolicyAuthorityPending')
   })
 
   it('keeps a staged upload path until the main process publishes its immutable Version', () => {
@@ -5545,6 +5603,7 @@ describe('session store public contract', () => {
         'appendPendingUserMessage',
         'appendRoutedUserMessage',
         'appendUserMessage',
+        'applyDelegationPolicyAuthority',
         'applyDurableSessionProjection',
         'attachRunArtifacts',
         'beginActivityGroup',
@@ -5680,7 +5739,6 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/previews/PreviewToolContent.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
-      'src/renderer/src/pages/workspace/project-files-library.ts',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
       'src/renderer/src/pages/workspace/session-message-artifact-reference.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
@@ -5690,7 +5748,6 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/session-wait-reason.ts',
       'src/renderer/src/pages/workspace/tool-execution-phase.ts',
       'src/renderer/src/pages/workspace/use-pdf-context-action.ts',
-      'src/renderer/src/pages/workspace/use-project-artifact-files.ts',
       'src/renderer/src/pages/workspace/use-side-chat-controller.ts',
       'src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts',
       'src/renderer/src/pages/workspace/visible-project-sessions.ts',
@@ -5705,6 +5762,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-run-marks.ts',
       'src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.ts',
       'src/renderer/src/pages/workspace/workspace-session-controller.ts',
+      'src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts',
       'src/renderer/src/pages/workspace/workspace-session-details-controller.ts',
       'src/renderer/src/pages/workspace/workspace-skill-load.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-details.ts',
@@ -5715,6 +5773,15 @@ describe('session store public contract', () => {
       'src/renderer/src/stores/navigation-store.ts',
       'src/renderer/src/stores/preview-workbench-store.ts'
     ])
+  })
+
+  it('does not rebuild Project Files from Session-store consumers', () => {
+    expect(directConsumerPaths()).not.toEqual(
+      expect.arrayContaining([
+        'src/renderer/src/pages/workspace/project-files-library.ts',
+        'src/renderer/src/pages/workspace/use-project-artifact-files.ts'
+      ])
+    )
   })
 
   it('hydrates newest-first while preserving manifest and explicit selection semantics', () => {
@@ -5973,9 +6040,11 @@ describe('branchInNewSession', () => {
               specialistSwitchResetRequired: true,
               contextUsage: { used: 500, size: 1_000 },
               pinned: true,
+              delegationPolicy: 'deny' as const,
               autoReviewEnabled: true,
               memoryEnabled: false,
               enabledComputeHosts: ['ssh:build'],
+              computeConcurrencyLimit: 2,
               filesRevision: 7,
               artifacts: [
                 {
@@ -6038,8 +6107,10 @@ describe('branchInNewSession', () => {
       agentBackendId: 'codex:shared',
       agentModel: 'gpt-5.4',
       autoReviewEnabled: true,
+      delegationPolicy: 'deny',
       memoryEnabled: false,
       enabledComputeHosts: ['ssh:build'],
+      computeConcurrencyLimit: 2,
       branchSource: {
         sessionId: 'source-session',
         agentFrameId: sourceFrame?.id,
@@ -7138,6 +7209,7 @@ describe('truncateSessionFromMessage', () => {
         ...toPersistedSession(source),
         enabledComputeHosts: ['ssh:lab', 'ssh:available'],
         selectedComputeHosts: ['ssh:lab'],
+        computeConcurrencyLimit: 2,
         updatedAt: source.updatedAt + 1
       },
       mode: 'compute-host-access-authority'
@@ -7146,7 +7218,8 @@ describe('truncateSessionFromMessage', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       title: 'Newer local title',
       enabledComputeHosts: ['ssh:lab', 'ssh:available'],
-      selectedComputeHosts: ['ssh:lab']
+      selectedComputeHosts: ['ssh:lab'],
+      computeConcurrencyLimit: 2
     })
   })
 })

@@ -5,11 +5,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useUnavailablePreviewProbe } from './useUnavailablePreviewProbe'
 
-const Probe = ({ size, mtimeMs }: { size: number; mtimeMs: number }): React.JSX.Element => {
+const Probe = ({
+  size,
+  mtimeMs,
+  selectedVersionId = 'upload-version-1'
+}: {
+  size: number
+  mtimeMs: number
+  selectedVersionId?: string
+}): React.JSX.Element => {
   const missing = useUnavailablePreviewProbe({
     enabled: true,
     projectId: 'project-1',
     sessionId: 'session-1',
+    managedFileId: 'upload-file-1',
+    selectedVersionId,
     source: 'upload',
     path: '/managed/upload.csv',
     size,
@@ -52,6 +62,26 @@ describe('useUnavailablePreviewProbe', () => {
     await act(async () => root.render(<Probe size={12} mtimeMs={200} />))
 
     expect(readPreview).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('div')?.dataset.missing).toBe('false')
+  })
+
+  it('re-probes when the selected immutable version changes without metadata drift', async () => {
+    await act(async () =>
+      root.render(<Probe size={10} mtimeMs={100} selectedVersionId="upload-version-1" />)
+    )
+    expect(container.querySelector('div')?.dataset.missing).toBe('true')
+
+    await act(async () =>
+      root.render(<Probe size={10} mtimeMs={100} selectedVersionId="upload-version-2" />)
+    )
+
+    expect(readPreview).toHaveBeenCalledTimes(2)
+    expect(readPreview).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        fileId: 'upload-file-1',
+        versionId: 'upload-version-2'
+      })
+    )
     expect(container.querySelector('div')?.dataset.missing).toBe('false')
   })
 })

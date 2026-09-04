@@ -106,6 +106,11 @@ describe('TIFF artifact thumbnail', () => {
     await act(async () => {
       root.render(
         <ArtifactPreview
+          source="upload"
+          projectId="project-1"
+          sessionId="session-1"
+          managedFileId="upload-1"
+          selectedVersionId="upload-v3"
           artifact={{
             id: 'artifact-1',
             kind: 'managed-file',
@@ -128,7 +133,13 @@ describe('TIFF artifact thumbnail', () => {
       expect.objectContaining({ cache: 'no-store', signal: expect.any(AbortSignal) })
     )
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith(
-      expect.objectContaining({ maxBytes: 20 * 1024 * 1024 })
+      expect.objectContaining({
+        projectId: 'project-1',
+        source: 'upload',
+        fileId: 'upload-1',
+        versionId: 'upload-v3',
+        maxBytes: 20 * 1024 * 1024
+      })
     )
     expect(workerRequests[0]).toEqual(
       expect.objectContaining({
@@ -148,6 +159,41 @@ describe('TIFF artifact thumbnail', () => {
     )
   })
 
+  it('opens an explicitly selected image version through its managed identity', async () => {
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <ArtifactPreview
+          source="artifact"
+          projectId="project-1"
+          sessionId="session-1"
+          managedFileId="artifact-1"
+          selectedVersionId="artifact-v2"
+          artifact={{
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: '/workspace/chart.png',
+            fileUrl: 'file:///workspace/chart.png',
+            name: 'chart.png',
+            mimeType: 'image/png',
+            size: 152,
+            mtimeMs: 1710000000000
+          }}
+        />
+      )
+    })
+
+    await vi.waitFor(() => expect(container.querySelector('img')).not.toBeNull())
+    expect(window.api.previewResources.acquire).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        source: 'artifact',
+        fileId: 'artifact-1',
+        versionId: 'artifact-v2'
+      })
+    )
+  })
+
   it('discards a completed thumbnail when it leaves the viewport', async () => {
     const artifact = {
       id: 'artifact-1',
@@ -160,10 +206,28 @@ describe('TIFF artifact thumbnail', () => {
       mtimeMs: 1710000000000
     }
     root = createRoot(container)
-    await act(async () => root.render(<ArtifactPreview artifact={artifact} isVisible />))
+    await act(async () =>
+      root.render(
+        <ArtifactPreview
+          artifact={artifact}
+          projectId="project-1"
+          managedFileId="artifact-1"
+          isVisible
+        />
+      )
+    )
     await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
 
-    await act(async () => root.render(<ArtifactPreview artifact={artifact} isVisible={false} />))
+    await act(async () =>
+      root.render(
+        <ArtifactPreview
+          artifact={artifact}
+          projectId="project-1"
+          managedFileId="artifact-1"
+          isVisible={false}
+        />
+      )
+    )
 
     await vi.waitFor(() => expect(container.querySelector('canvas')).toBeNull())
     expect(container.textContent).toContain('TIFF')
@@ -175,6 +239,8 @@ describe('TIFF artifact thumbnail', () => {
     await act(async () => {
       root.render(
         <ArtifactPreview
+          projectId="project-1"
+          managedFileId="artifact-1"
           artifact={{
             id: 'artifact-1',
             kind: 'managed-file',

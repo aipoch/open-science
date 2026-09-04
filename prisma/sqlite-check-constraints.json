@@ -201,6 +201,16 @@
       "expression": "\"state\" IN ('staging', 'ready')"
     },
     {
+      "tableName": "UploadVersion",
+      "name": "UploadVersion_originKind_check",
+      "expression": "\"originKind\" IN ('user_upload', 'user_edit', 'legacy')"
+    },
+    {
+      "tableName": "UploadVersion",
+      "name": "UploadVersion_userEdit_check",
+      "expression": "(\"originKind\" <> 'user_edit' OR (\"state\" = 'ready' AND \"basedOnVersionId\" IS NOT NULL AND \"storageTag\" IS NOT NULL AND \"storedFilename\" IS NOT NULL))"
+    },
+    {
       "tableName": "ArtifactMessageSnapshot",
       "name": "ArtifactMessageSnapshot_state_check",
       "expression": "\"state\" IN ('staging', 'ready')"
@@ -217,8 +227,28 @@
     },
     {
       "tableName": "ArtifactVersion",
+      "name": "ArtifactVersion_originKind_check",
+      "expression": "\"originKind\" IN ('agent_generated', 'user_edit', 'legacy')"
+    },
+    {
+      "tableName": "ArtifactVersion",
+      "name": "ArtifactVersion_provenance_check",
+      "expression": "((\"originKind\" = 'agent_generated' AND \"artifactRunId\" IS NOT NULL AND \"rootFrameId\" IS NOT NULL AND \"agentFrameId\" IS NOT NULL AND \"messageBranchId\" IS NOT NULL AND \"runtimeSegmentId\" IS NOT NULL AND \"promptMessageId\" IS NOT NULL AND \"evidenceStorageKey\" IS NOT NULL AND \"evidenceJson\" IS NOT NULL AND \"evidenceChecksum\" IS NOT NULL AND \"evidenceSchemaVersion\" IS NOT NULL) OR (\"originKind\" = 'user_edit' AND \"state\" = 'finalized' AND \"basedOnVersionId\" IS NOT NULL AND \"storageTag\" IS NOT NULL AND \"storedFilename\" IS NOT NULL AND \"artifactRunId\" IS NULL AND \"writeRequestChecksum\" IS NULL AND \"rootFrameId\" IS NULL AND \"agentFrameId\" IS NULL AND \"messageBranchId\" IS NULL AND \"runtimeSegmentId\" IS NULL AND \"promptMessageId\" IS NULL AND \"notebookSessionId\" IS NULL AND \"producerRunId\" IS NULL AND \"producerRunIndex\" IS NULL AND \"messageId\" IS NULL AND \"messageSnapshotId\" IS NULL AND \"evidenceStorageKey\" IS NULL AND \"evidenceJson\" IS NULL AND \"evidenceChecksum\" IS NULL AND \"evidenceSchemaVersion\" IS NULL AND \"executionSnapshotJson\" IS NULL AND \"executionSnapshotChecksum\" IS NULL AND \"executionSnapshotStorageKey\" IS NULL AND \"executionSnapshotSchemaVersion\" IS NULL) OR \"originKind\" = 'legacy')"
+    },
+    {
+      "tableName": "ManagedFileVersionWriteOperation",
+      "name": "ManagedFileVersionWriteOperation_source_check",
+      "expression": "\"source\" IN ('artifact', 'upload')"
+    },
+    {
+      "tableName": "ManagedFileVersionWriteOperation",
+      "name": "ManagedFileVersionWriteOperation_state_check",
+      "expression": "\"state\" IN ('staging', 'file_ready', 'published', 'conflict', 'failed')"
+    },
+    {
+      "tableName": "ArtifactVersion",
       "name": "ArtifactVersion_evidenceJson_check",
-      "expression": "json_valid(\"evidenceJson\") AND json_type(\"evidenceJson\") = 'object'"
+      "expression": "\"evidenceJson\" IS NULL OR (json_valid(\"evidenceJson\") AND json_type(\"evidenceJson\") = 'object')"
     },
     {
       "tableName": "ArtifactVersion",
@@ -354,6 +384,11 @@
       "tableName": "ComputeJob",
       "name": "ComputeJob_status_check",
       "expression": "\"status\" IN ('queued', 'submitted', 'running', 'success', 'failed', 'timeout', 'error')"
+    },
+    {
+      "tableName": "ComputeJob",
+      "name": "ComputeJob_remoteCleanupDisposition_check",
+      "expression": "\"remoteCleanupDisposition\" IN ('pending', 'cleaned', 'abandoned')"
     },
     {
       "tableName": "ComputeJob",

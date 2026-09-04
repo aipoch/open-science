@@ -257,6 +257,81 @@ describe('orchestrateAppStartup', () => {
     expect(diagnostics.fail).toHaveBeenCalledWith(failure)
     expect(diagnostics.complete).not.toHaveBeenCalled()
   })
+
+  it('cleans the prepared runtime before rejecting a post-composition startup failure', async () => {
+    const failure = new Error('mark ready failed')
+    const cleanup = deferred<void>()
+    const events: string[] = []
+    const deps = makeDeps({
+      markReady: vi.fn(() => {
+        throw failure
+      }),
+      cleanupAfterStartupFailure: vi.fn(async () => {
+        events.push('cleanup:start')
+        await cleanup.promise
+        events.push('cleanup:end')
+      })
+    })
+
+    const startupOutcome = orchestrateAppStartup(deps).then(
+      () => undefined,
+      (error: unknown) => {
+        events.push('startup:rejected')
+        return error
+      }
+    )
+
+    await vi.waitFor(() => expect(events).toEqual(['cleanup:start']))
+    cleanup.resolve()
+
+    await expect(startupOutcome).resolves.toBe(failure)
+    expect(events).toEqual(['cleanup:start', 'cleanup:end', 'startup:rejected'])
+    expect(deps.cleanupAfterStartupFailure).toHaveBeenCalledWith({ tag: 'ctx' }, failure)
+  })
+
+  it('cancels the startup system-shutdown fallback before failure cleanup', async () => {
+    vi.useFakeTimers()
+    try {
+      const failure = new Error('mark ready failed')
+      const cleanup = deferred<void>()
+      const cleanupStarted = deferred<void>()
+      const forceExit = vi.fn()
+      let requestSystemShutdown = (): void => {}
+      const deps = {
+        ...makeDeps({
+          prepare: vi.fn(async () => {
+            requestSystemShutdown()
+            return { tag: 'ctx' }
+          }),
+          markReady: vi.fn(() => {
+            throw failure
+          }),
+          cleanupAfterStartupFailure: vi.fn(() => {
+            cleanupStarted.resolve()
+            return cleanup.promise
+          })
+        }),
+        installSystemShutdownListeners: (request: () => void) => {
+          requestSystemShutdown = request
+        },
+        forceExit,
+        startupSystemShutdownTimeoutMs: 25
+      } as Parameters<typeof orchestrateAppStartup<{ tag: string }>>[0]
+
+      const startupOutcome = orchestrateAppStartup(deps).then(
+        () => undefined,
+        (error: unknown) => error
+      )
+      await cleanupStarted.promise
+      await vi.advanceTimersByTimeAsync(25)
+
+      expect(forceExit).not.toHaveBeenCalled()
+      cleanup.resolve()
+      await expect(startupOutcome).resolves.toBe(failure)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('prepareVisibleStartupRuntime', () => {

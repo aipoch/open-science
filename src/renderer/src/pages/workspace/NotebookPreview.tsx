@@ -8,11 +8,13 @@ import {
   type RefObject
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { RefreshCw, Variable, X } from 'lucide-react'
+import { RefreshCw, TriangleAlert, Variable, X } from 'lucide-react'
 
 import { usePreviewWorkbenchStore, type PreviewToolItem } from '@/stores/preview-workbench-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import { useSessionStore } from '@/stores/session-store'
+import { ErrorNotice } from '@/components/error-notice'
 import { cn } from '@/lib/utils'
 import {
   Select,
@@ -39,7 +41,7 @@ import { isCurrentInFlight } from '../../../../shared/in-flight-promise'
 import { resolveProjectId } from '../../../../shared/project-scope'
 import { EnvProvisionOverlay } from './EnvProvisionOverlay'
 import { shouldProvisionR } from './lazy-r'
-import { notebookGated } from './provisioning-view'
+import { hasActiveRuntimeTarget, notebookGated } from './provisioning-view'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
@@ -529,7 +531,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const provisionUi = useNotebookEnvStore((s) => s.ui)
   const retryProvision = useNotebookEnvStore((s) => s.retry)
   const provision = useNotebookEnvStore((s) => s.provision)
-  const gated = notebookGated(envStatus, provisionUi, item.notebook.sessionId)
+  const openSettingsToPanel = useSettingsStore((s) => s.openSettingsToPanel)
   const isPreparingR =
     provisionUi.kind === 'preparing' &&
     provisionUi.scope === 'r' &&
@@ -539,7 +541,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   // usable throughout (D6 — see lazy-r.ts). R-kernel execution routing is wired later in E5.
   const onSelectLanguage = (lang: NotebookLanguage): void => {
     setShowVariables(false)
-    if (shouldProvisionR(envStatus, lang)) void provision('r')
+    const binding = notebookState?.runtimeBindings?.[lang]
+    if (binding === undefined && shouldProvisionR(envStatus, lang)) void provision('r')
   }
 
   // Keeps state assignment isolated so load paths and event paths share the same update hook.
@@ -639,8 +642,30 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     effectiveActiveKind === 'python' || effectiveActiveKind === 'r'
       ? notebookState?.runtimeBindings?.[effectiveActiveKind]
       : undefined
+  const activeRuntimeTargetReady = hasActiveRuntimeTarget(activeRuntimeBinding)
+  const gated = notebookGated(envStatus, provisionUi, item.notebook.sessionId, activeRuntimeBinding)
+  const activeRuntimeUnavailable = activeRuntimeBinding?.status === 'unavailable'
+  const activeRuntimeUnavailableReason =
+    activeRuntimeBinding?.reason === 'disabled'
+      ? t('Disabled')
+      : activeRuntimeBinding?.reason === 'missing'
+        ? t('Missing')
+        : activeRuntimeBinding?.reason === 'repair-required'
+          ? t('Needs repair')
+          : undefined
+  const activeRuntimeSettingsLabel =
+    activeRuntimeUnavailable && activeRuntimeBinding
+      ? t('Open settings for {{name}}', { name: activeRuntimeBinding.label })
+      : undefined
   const activeRuntimeDetails = activeRuntimeBinding
-    ? [activeRuntimeBinding.label, activeRuntimeBinding.version].filter(Boolean).join(' · ')
+    ? [
+        activeRuntimeBinding.label,
+        activeRuntimeBinding.version,
+        activeRuntimeUnavailable ? t('Unavailable') : undefined,
+        activeRuntimeUnavailableReason
+      ]
+        .filter(Boolean)
+        .join(' · ')
     : undefined
 
   // Per-environment selector (design D6): only python/r are env-scoped. Distinct env names among
@@ -753,6 +778,10 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     activeKernelStatus === 'starting' ||
     activeKernelStatus === 'running' ||
     activeKernelStatus === 'restarting'
+  const explicitRuntimeTargetUnavailable =
+    activeDataLanguage !== undefined &&
+    activeRuntimeBinding !== undefined &&
+    !activeRuntimeTargetReady
   // The Session Aggregate owns one active write and run, so input stays globally locked even when a
   // different persistent data kernel is selected.
   const isTerminalLocked =
@@ -761,8 +790,11 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     Boolean(notebookState?.activeWrite) ||
     Boolean(notebookState?.activeRunId) ||
     gated ||
+    explicitRuntimeTargetUnavailable ||
     isSelectedKernelRunning ||
-    (activeDataLanguage === 'r' && (!envStatus.rReady || isPreparingR))
+    (activeDataLanguage === 'r' &&
+      activeRuntimeBinding === undefined &&
+      (!envStatus.rReady || isPreparingR))
   const cellCount = notebookState?.runCount ?? runs.length
 
   const loadNamespace = async (): Promise<void> => {
@@ -952,8 +984,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     }
   }
 
-  // Restarts the shared interpreter, replacing state with the fresh snapshot so the banner clears.
+  // Restarts only the selected R environment, then replaces state so its banner clears.
   const handleRestart = async (): Promise<void> => {
+    if (!activeEnvName) return
     setIsRestarting(true)
     setActionError(null)
     namespaceRequestId.current += 1
@@ -962,7 +995,11 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     setNamespaceSnapshot(undefined)
     setNamespaceStatus('unavailable')
     try {
-      const next = await window.api.notebook.restart(createNotebookRequest(item.notebook))
+      const next = await window.api.notebook.restart({
+        ...createNotebookRequest(item.notebook),
+        language: 'r',
+        environment: activeEnvName
+      })
       namespaceRefreshQueued.current = showVariables
       applyNotebookState(next)
     } catch (error) {
@@ -1204,6 +1241,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </ResizablePanel>
       </ResizablePanelGroup>
     )
+  const initialStateError = !notebookState && actionError
 
   return (
     <section
@@ -1336,15 +1374,35 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  aria-label={activeRuntimeDetails}
-                  className="ml-2 flex min-w-0 max-w-40 shrink-0 rounded-md bg-bg-300 px-2 py-1 text-[11px] text-text-200"
+                  aria-label={
+                    activeRuntimeSettingsLabel
+                      ? `${activeRuntimeDetails}. ${activeRuntimeSettingsLabel}`
+                      : activeRuntimeDetails
+                  }
+                  onClick={() => {
+                    if (activeRuntimeUnavailable) openSettingsToPanel('runtimes')
+                  }}
+                  className={cn(
+                    'ml-2 flex min-w-0 max-w-56 shrink-0 items-center gap-1.5 rounded-md bg-bg-300 px-2 py-1 text-[11px] text-text-200',
+                    activeRuntimeUnavailable &&
+                      'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground'
+                  )}
                   data-testid="notebook-runtime-binding"
                 >
                   <span className="min-w-0 truncate">{activeRuntimeBinding.label}</span>
+                  {activeRuntimeUnavailable ? (
+                    <span
+                      className="shrink-0 font-medium"
+                      data-testid="notebook-runtime-binding-status"
+                    >
+                      {t('Unavailable')}
+                    </span>
+                  ) : null}
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="max-w-[320px] break-words">
-                {activeRuntimeDetails}
+                <div>{activeRuntimeDetails}</div>
+                {activeRuntimeSettingsLabel ? <div>{activeRuntimeSettingsLabel}</div> : null}
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -1401,25 +1459,44 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </div>
       ) : null}
 
-      <div
-        className="flex min-h-0 flex-1"
-        data-testid={
-          showVariables && activeDataLanguage ? 'notebook-responsive-variables-layout' : undefined
-        }
-      >
+      {initialStateError ? (
         <div
-          className={cn(
-            'min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
-            showVariables && activeDataLanguage ? 'hidden @min-[55rem]/notebook:flex' : 'flex'
-          )}
-          data-testid="notebook-primary-view"
+          role="alert"
+          className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6"
+          data-testid="notebook-state-load-error"
         >
-          {notebookView}
+          <ErrorNotice
+            icon={TriangleAlert}
+            tone="amber"
+            description={initialStateError}
+            primaryButton={{
+              label: t('Retry'),
+              onClick: () => void loadNotebookState(),
+              loading: isLoading
+            }}
+          />
         </div>
-        {showVariables && activeDataLanguage ? namespaceView : null}
-      </div>
+      ) : (
+        <div
+          className="flex min-h-0 flex-1"
+          data-testid={
+            showVariables && activeDataLanguage ? 'notebook-responsive-variables-layout' : undefined
+          }
+        >
+          <div
+            className={cn(
+              'min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
+              showVariables && activeDataLanguage ? 'hidden @min-[55rem]/notebook:flex' : 'flex'
+            )}
+            data-testid="notebook-primary-view"
+          >
+            {notebookView}
+          </div>
+          {showVariables && activeDataLanguage ? namespaceView : null}
+        </div>
+      )}
 
-      {!showVariables && (isNamespaceLost || isHistoricalEnvironmentView) ? (
+      {!initialStateError && !showVariables && (isNamespaceLost || isHistoricalEnvironmentView) ? (
         <footer
           className="flex h-7 shrink-0 items-center justify-between gap-3 border-t border-border-200 bg-bg-000 px-2 text-[11px] text-text-300"
           data-testid="notebook-read-only-status"

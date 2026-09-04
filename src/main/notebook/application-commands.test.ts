@@ -283,12 +283,12 @@ describe('Notebook application commands', () => {
     )
     await router.dispatcher.invoke(
       notebookEnvironmentRepairCommand,
-      invocation(['python', 'repair-operation'] as const)
+      invocation(['python', 'default-python', 'repair-operation'] as const)
     )
     await router.dispatcher.invoke(notebookEnvironmentCancelCommand, invocation([] as const))
 
     expect(provision).toHaveBeenCalledWith('r', 'provision-operation')
-    expect(repair).toHaveBeenCalledWith('python', 'repair-operation')
+    expect(repair).toHaveBeenCalledWith('python', 'default-python', 'repair-operation')
     expect(cancel).toHaveBeenCalledWith(undefined)
     expect(lifecycle.startup).not.toHaveBeenCalled()
     expect(router.dispatcher.commandNames()).toEqual(
@@ -330,7 +330,7 @@ describe('Notebook application commands', () => {
     await expect(
       router.dispatcher.invoke(
         notebookEnvironmentRepairCommand,
-        invocation(['r'] as const, remoteCaller)
+        invocation(['r', 'default-r'] as const, remoteCaller)
       )
     ).rejects.toThrow('Channel only available from the local app: notebook-env:repair')
     await expect(
@@ -394,11 +394,11 @@ describe('Notebook application commands', () => {
     )
     await router.dispatcher.invoke(
       notebookEnvironmentRepairCommand,
-      invocation(['r', null] as never)
+      invocation(['r', 'default-r', null] as never)
     )
 
     expect(cancel).toHaveBeenCalledWith(undefined)
     expect(provision).toHaveBeenCalledWith('python', undefined)
-    expect(repair).toHaveBeenCalledWith('r', undefined)
+    expect(repair).toHaveBeenCalledWith('r', 'default-r', undefined)
   })
 })

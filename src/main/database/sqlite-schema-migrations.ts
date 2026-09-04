@@ -383,10 +383,14 @@ const findPendingSqliteCheckConstraints = async (
 
 const applySqliteCheckConstraints = async (
   client: SqliteExecutor,
-  pending: readonly SqliteCheckConstraintMigration[]
+  pending: readonly SqliteCheckConstraintMigration[],
+  postRebuildStatements: readonly string[] = []
 ): Promise<void> => {
   for (const migration of pending) await validateExistingValues(client, migration)
   for (const migration of pending) await rebuildTable(client, migration)
+  for (const statement of postRebuildStatements) {
+    await migrationSqlExecutor.execute(client, statement)
+  }
 
   const violations = await migrationSqlExecutor.query<SqliteForeignKeyViolationRow[]>(
     client,

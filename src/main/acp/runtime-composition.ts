@@ -99,8 +99,7 @@ type AcpRuntimeArtifacts = {
   provenanceRepository?: Pick<
     ArtifactProvenanceRepository,
     'listRunVersions' | 'writeAppGeneratedVersion'
-  > &
-    Partial<Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>>
+  >
 }
 
 type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
@@ -125,6 +124,10 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   notificationInbox?: Pick<
     NotificationInboxController,
     'record' | 'settleAction' | 'settleAuthorization'
+  >
+  managedFileVersions: Pick<
+    import('../managed-file-versions/service').ManagedFileVersionService,
+    'openLatest' | 'openVersion' | 'openUnpublishedVersion'
   >
   onSessionTurnStarted?: (sessionId: string, turnToken: string) => void
   onSessionTurnEnded?: (sessionId: string, turnToken: string) => void
@@ -171,6 +174,7 @@ const createAcpRuntime = ({
   repository,
   runRegistry,
   provenanceRepository,
+  managedFileVersions,
   uploadRepository,
   notebookRpcServer,
   peekNotebookHandoffContext,
@@ -356,6 +360,7 @@ const createAcpRuntime = ({
                 repository,
                 runRegistry,
                 provenance: provenanceRepository,
+                managedFileVersions,
                 getRpcConnection: () => notebookRpcServer.ensureStarted(),
                 issueRpcCapability: (binding) =>
                   notebookRpcServer.issueArtifactRunCapability(binding),

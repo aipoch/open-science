@@ -21,6 +21,8 @@ type TiffThumbnailProps = {
   source?: PreviewFileSource
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
   mimeType?: string
   size?: number
   mtimeMs?: number
@@ -39,6 +41,8 @@ const EnabledTiffThumbnail = ({
   source = 'artifact',
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   mimeType,
   size,
   mtimeMs,
@@ -49,6 +53,8 @@ const EnabledTiffThumbnail = ({
     {
       projectId,
       sessionId,
+      managedFileId,
+      selectedVersionId,
       source,
       path,
       mimeType,
@@ -129,6 +135,8 @@ const TiffThumbnail = ({
   source = 'artifact',
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   mimeType,
   size,
   mtimeMs,
@@ -142,7 +150,9 @@ const TiffThumbnail = ({
     path,
     mimeType,
     size,
-    mtimeMs
+    mtimeMs,
+    managedFileId,
+    selectedVersionId
   })
 
   if (!enabled) return <>{fallback}</>
@@ -156,6 +166,8 @@ const TiffThumbnail = ({
       source={source}
       projectId={projectId}
       sessionId={sessionId}
+      managedFileId={managedFileId}
+      selectedVersionId={selectedVersionId}
       mimeType={mimeType}
       size={size}
       mtimeMs={mtimeMs}

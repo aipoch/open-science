@@ -201,6 +201,19 @@ describe('createCloseConfirm', () => {
     expect(h.nativeFallback).toHaveBeenCalledWith('close-to-tray', [session])
   })
 
+  it('falls back safely when sending the persistence-failure confirmation throws', async () => {
+    const nativeFallback = vi.fn(async () => ({ choice: 'cancel' as const }))
+    const h = makeHarness({
+      send: () => {
+        throw new Error('renderer IPC send failed')
+      },
+      nativeFallback
+    })
+
+    await expect(h.confirm('persistence-failed', [])).resolves.toBe('cancel')
+    expect(nativeFallback).toHaveBeenCalledWith('persistence-failed', [])
+  })
+
   it('persists a remembered choice from the native fallback', async () => {
     const h = makeHarness({
       isRendererAvailable: () => false,
@@ -232,6 +245,17 @@ describe('createCloseConfirm', () => {
 
     const trayHarness = makeHarness({ isRendererAvailable: () => false, nativeFallback: rejecting })
     await expect(trayHarness.confirm('close-to-tray', [session])).resolves.toBe('minimize')
+  })
+
+  it('keeps the app open when the persistence-failure native fallback rejects', async () => {
+    const h = makeHarness({
+      isRendererAvailable: () => false,
+      nativeFallback: async () => {
+        throw new Error('dialog failed')
+      }
+    })
+
+    await expect(h.confirm('persistence-failed', [])).resolves.toBe('cancel')
   })
 
   it('cannot force quit delegated work through a renderer or native fallback choice', async () => {
@@ -659,6 +683,24 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
 
     await expect(confirm('quit', [session])).resolves.toBe('cancel')
     expect(electronMocks.showMessageBox).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers stay, retry, and force quit in the persistence-failure native fallback', async () => {
+    getWindow.mockReturnValue(undefined)
+    electronMocks.showMessageBox.mockResolvedValue({ response: 1, checkboxChecked: false })
+    const confirm = createElectronCloseConfirm(
+      getWindow as () => BrowserWindow | undefined,
+      emptyPreferences
+    )
+
+    await expect(confirm('persistence-failed', [])).resolves.toBe('retry')
+
+    const [options] = electronMocks.showMessageBox.mock.calls[0] as [Record<string, unknown>]
+    expect(options.buttons).toEqual(['Stay', 'Retry saving', 'Force quit'])
+    expect(options.defaultId).toBe(0)
+    expect(options.cancelId).toBe(0)
+    expect(options.message).toBe('Saving is not finished')
+    expect(options.detail).toMatch(/risk losing recent changes/i)
   })
 
   it('offers no force-quit action in the native fallback for delegated work', async () => {

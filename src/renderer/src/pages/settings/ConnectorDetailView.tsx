@@ -224,7 +224,7 @@ const ConnectorDetailView = ({
       </div>
 
       {/* Tools: per-tool permission controls. */}
-      <section className="mt-6 border-t border-border pt-4">
+      <section className="mt-6">
         <h2 className="text-sm font-semibold text-foreground">{t('Tools')}</h2>
         <p className="text-xs text-muted-foreground">
           {t('What the agent can do with this connector')}
@@ -321,7 +321,7 @@ const ConnectorDetailView = ({
 
       {/* Details: third-party source(s) and terms. */}
       {detail.sources.length > 0 ? (
-        <section className="mt-6 border-t border-border pt-4">
+        <section className="mt-6">
           <h2 className="mb-1 text-sm font-semibold text-foreground">{t('Details')}</h2>
           <DetailRow label={t('Third-party software, content, terms, and information')}>
             {/* Intl supplies the locale's own list separator; a literal ", " would leak a Western

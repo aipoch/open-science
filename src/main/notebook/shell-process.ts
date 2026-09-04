@@ -3,7 +3,7 @@ import { dirname } from 'node:path'
 
 import { protectManagedRuntimeWrites } from './managed-runtime-guard'
 import type { NotebookProcessSandbox } from './process-sandbox'
-import { terminateProcessTree } from '../process-tree'
+import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 import {
@@ -18,8 +18,6 @@ import {
 } from './content-limits'
 import { buildNotebookShellEnvironment, environmentPathRoots } from './process-environment'
 
-// Grace between the POSIX process group's polite termination and an uncatchable group kill.
-const SHELL_KILL_GRACE_MS = 2_000
 const SHELL_TIMEOUT_MESSAGE_RESERVE_BYTES = 256
 
 // Result of one stateless bash_execute run. No status/traceback classification: the shell is
@@ -176,46 +174,17 @@ const resolveShellInvocation = (
       }
     : { executable: '/bin/sh', args: ['-c', command] }
 
-// Signals only the independently spawned POSIX shell group. A validated positive child pid is also its
-// process-group id because POSIX spawn uses detached:true below. If group signaling is unavailable, fall
-// back to the direct handle without allowing timeout cleanup to reject.
-const signalPosixShellGroup = (child: ChildProcess, signal: NodeJS.Signals): void => {
-  const groupId = child.pid
-  if (groupId !== undefined && Number.isSafeInteger(groupId) && groupId > 0) {
-    try {
-      process.kill(-groupId, signal)
-      return
-    } catch {
-      // The group may already be gone or the platform may reject group signaling; try the leader.
-    }
-  }
-
-  try {
-    child.kill(signal)
-  } catch {
-    // It exited between the timeout and this best-effort signal.
-  }
-}
-
-// POSIX returns immediately after arming bounded group teardown. Windows continues to await taskkill so
-// callers can safely inspect or remove cwd after PowerShell and every descendant release their handles.
+// Cancellation and timeout settle only after the bounded process-tree terminator finishes, so callers
+// may safely tear down or remove the Session workspace after this promise resolves.
 const terminateShellOnTimeout = async (
   child: ChildProcess,
-  platform: NodeJS.Platform = process.platform,
   terminateTree: (process: ChildProcess) => Promise<unknown> = terminateProcessTree
-): Promise<boolean> => {
-  if (platform !== 'win32') {
-    signalPosixShellGroup(child, 'SIGTERM')
-    setTimeout(() => signalPosixShellGroup(child, 'SIGKILL'), SHELL_KILL_GRACE_MS)
-    return false
-  }
-
+): Promise<void> => {
   try {
     await terminateTree(child)
   } catch {
     // Preserve runShellCommand's never-reject contract even when the best-effort terminator fails.
   }
-  return true
 }
 
 // Runs one fresh platform-native process with the Session cwd and handoff channel. Spawn failure,
@@ -304,6 +273,7 @@ const runShellCommand = (
           detached: platform !== 'win32'
         }
       )
+      if (platform !== 'win32') registerOwnedPosixProcessGroup(child)
 
       let stdout = ''
       let stderr = ''
@@ -328,18 +298,7 @@ const runShellCommand = (
       }
 
       const terminateAndFinish = (result: NotebookShellResult): void => {
-        void terminateShellOnTimeout(child, platform).then((usedWindowsTerminator) => {
-          if (usedWindowsTerminator) {
-            // child.kill() only reaches the PowerShell parent on Windows; taskkill /T /F reaps the
-            // full tree. Settle only after it completes so callers can safely inspect or remove cwd.
-            finish(result)
-            return
-          }
-
-          // POSIX group teardown continues in the background so a wedged command tree cannot delay the
-          // result. Its SIGKILL timer intentionally survives the shell leader's exit.
-          finish(result)
-        })
+        void terminateShellOnTimeout(child).then(() => finish(result))
       }
 
       const abort = (): void => {

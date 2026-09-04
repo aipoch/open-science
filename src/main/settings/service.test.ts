@@ -3908,6 +3908,74 @@ describe('SettingsService: skills', () => {
     expect(detail.body).toContain('demo body')
   })
 
+  it('resolves a managed-catalog skill document by canonical name', async () => {
+    const service = await createSkillService()
+
+    await expect(service.resolveSkillDocument({ name: 'demo' })).resolves.toEqual({
+      name: 'demo',
+      displayName: 'Demo',
+      description: 'A demo skill.',
+      body: 'demo body'
+    })
+  })
+
+  it('resolves an enabled bundled connector skill from its generated document', async () => {
+    const service = await createSkillService()
+
+    // Bundled connectors are default-on, so mcp-molecule resolves without any settings change.
+    const resolved = await service.resolveSkillDocument({ name: 'mcp-molecule' })
+    expect(resolved).toMatchObject({ name: 'mcp-molecule', displayName: 'Molecule Viewer' })
+    expect(resolved?.description).toContain('chemical structure')
+    expect(resolved?.body).toContain('## Tools')
+    expect(resolved?.body).not.toContain('name: mcp-molecule')
+  })
+
+  it('does not resolve a disabled bundled connector skill', async () => {
+    const service = await createSkillService()
+    await service.setConnectorEnabled({ id: 'molecule', enabled: false })
+
+    await expect(service.resolveSkillDocument({ name: 'mcp-molecule' })).resolves.toBeNull()
+  })
+
+  it('resolves a materialized custom connector skill from the provisioned source dir', async () => {
+    const service = await createSkillService()
+    service.setCustomServerRuntimeProjectionProvider({
+      materializedSkillNames: () => ['mcp-custom'],
+      availability: () => undefined,
+      isRefreshing: () => false
+    })
+    const dir = join(storageRoot, 'runtime-support', 'connector-skills', 'mcp-custom')
+    await mkdir(dir, { recursive: true })
+    await writeFile(
+      join(dir, 'SKILL.md'),
+      [
+        '---',
+        'name: mcp-custom',
+        'description: Custom server tools.',
+        '---',
+        '',
+        'custom body'
+      ].join('\n'),
+      'utf8'
+    )
+
+    await expect(service.resolveSkillDocument({ name: 'mcp-custom' })).resolves.toEqual({
+      name: 'mcp-custom',
+      description: 'Custom server tools.',
+      body: 'custom body'
+    })
+  })
+
+  it('returns null for unknown, unprovisioned, and unsafe skill names', async () => {
+    const service = await createSkillService()
+
+    await expect(service.resolveSkillDocument({ name: 'unknown-skill' })).resolves.toBeNull()
+    // A custom-skill-shaped name that was never provisioned must not read the filesystem.
+    await expect(service.resolveSkillDocument({ name: 'mcp-not-real' })).resolves.toBeNull()
+    await expect(service.resolveSkillDocument({ name: '../outside' })).resolves.toBeNull()
+    await expect(service.resolveSkillDocument({ name: 'Bad Name' })).resolves.toBeNull()
+  })
+
   it('keeps a Main-disabled installed Skill in the Specialist catalog', async () => {
     const service = await createSkillService()
     await service.setSkillEnabled({ id: 'demo', enabled: false })
@@ -3994,6 +4062,34 @@ describe('SettingsService: skills', () => {
 
     await expect(deletion).rejects.toMatchObject({ code: 'protected-skill' })
     await expect(service.getSkillDetail('personal-my-skill')).resolves.toBeDefined()
+  })
+
+  it('does not deadlock deletion on an observer read queued behind the mutation owner', async () => {
+    const service = await createSkillService()
+    await service.createSkill({ name: 'my-skill', description: 'Mine.', body: '# Mine' })
+
+    let startObserver!: () => void
+    let markObserverStarted!: () => void
+    // Register the observer continuation outside the deletion's mutation-owner context.
+    const observerTrigger = new Promise<void>((resolve) => (startObserver = resolve))
+    const observerStarted = new Promise<void>((resolve) => (markObserverStarted = resolve))
+    const observerRead = observerTrigger.then(() => {
+      const read = service.listUserSkills()
+      markObserverStarted()
+      return read
+    })
+
+    service.setSkillDeletionGuard(async () => {
+      startObserver()
+      await observerStarted
+      await service.listSpecialistSkillCatalog()
+    })
+
+    await expect(service.deleteSkill({ id: 'personal-my-skill' })).resolves.toEqual([
+      expect.objectContaining({ id: 'demo' })
+    ])
+    await expect(observerRead).resolves.toEqual([])
+    await expect(service.listSkills()).resolves.toEqual([expect.objectContaining({ id: 'demo' })])
   })
 
   it('uses the immutable name and reconciles references reported by the detail view', async () => {
@@ -5993,6 +6089,44 @@ describe('SettingsService: default permission profile', () => {
 
     expect(snapshot.defaultPermissionProfile).toBe('full')
     expect((await repository.getSettings()).defaultPermissionProfile).toBe('full')
+  })
+})
+
+describe('SettingsService: compatibility projections', () => {
+  it('round-trips provider-scoped Compute bookmarks through the facade', async () => {
+    const service = createService()
+
+    await expect(service.getComputeBookmarks('ssh:cluster')).resolves.toEqual([])
+    await service.setComputeBookmarks('ssh:cluster', ['/scratch/project', '/data/results'])
+
+    await expect(service.getComputeBookmarks('ssh:cluster')).resolves.toEqual([
+      '/scratch/project',
+      '/data/results'
+    ])
+  })
+
+  it('returns and clears the valid legacy granted roots', async () => {
+    await writeFile(
+      join(storageRoot, 'settings.json'),
+      JSON.stringify({
+        version: 1,
+        providers: [],
+        grantedLocalRoots: [
+          { id: 'root-1', path: '/data/project', name: 'Project data', access: 'rw' },
+          { id: 'invalid-root', path: '/data/private', name: 'Private data', access: 'owner' }
+        ]
+      })
+    )
+    const service = createService()
+
+    await expect(service.getGrantedLocalRoots()).resolves.toEqual([
+      { id: 'root-1', path: '/data/project', name: 'Project data', access: 'rw' }
+    ])
+    await service.clearGrantedLocalRoots()
+
+    expect(
+      JSON.parse(await readFile(join(storageRoot, 'settings.json'), 'utf8'))
+    ).not.toHaveProperty('grantedLocalRoots')
   })
 })
 

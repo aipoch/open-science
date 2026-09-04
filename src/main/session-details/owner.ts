@@ -12,6 +12,7 @@ import {
   type EditSessionDetailsRequest,
   type PersistedChatSession,
   type PersistedSessionDetailsGeneration,
+  SessionDetailsConflictError,
   type SessionDetailsAdmission
 } from '../../shared/session-persistence'
 import type { AgentFrameworkId, ReasoningEffort } from '../../shared/settings'
@@ -730,6 +731,20 @@ export const createSessionDetailsOwner = (
     async edit(request: EditSessionDetailsRequest): Promise<PersistedChatSession> {
       const key = keyOf(request.projectId, request.sessionId)
       const currentAttempt = active.get(key)
+      const details = validateManualDetails(request.title, request.description)
+      const expectedDetails =
+        request.expectedTitle === undefined || request.expectedDescription === undefined
+          ? undefined
+          : {
+              title: trimDisplayValue(request.expectedTitle),
+              description: trimDisplayValue(request.expectedDescription)
+            }
+      // Web RPC v1 clients predate edit baselines and retain their original last-write-wins
+      // behavior. Current clients identify changed fields and fence only those fields.
+      const titleChanged = expectedDetails ? details.title !== expectedDetails.title : true
+      const descriptionChanged = expectedDetails
+        ? details.description !== expectedDetails.description
+        : true
       // Manual edits change only authority-owned display fields on the freshly loaded Session, so
       // unrelated concurrent writes (conversation turns, runtime context) never fence them. The
       // details' single other writer — generation — is superseded below instead.
@@ -737,7 +752,14 @@ export const createSessionDetailsOwner = (
         request.projectId,
         request.sessionId,
         (session) => {
-          const details = validateManualDetails(request.title, request.description)
+          if (
+            expectedDetails &&
+            ((titleChanged && trimDisplayValue(session.title) !== expectedDetails.title) ||
+              (descriptionChanged &&
+                trimDisplayValue(session.description ?? '') !== expectedDetails.description))
+          ) {
+            throw new SessionDetailsConflictError()
+          }
           const generation = session.sessionDetailsGeneration
           const superseded =
             generation?.status === 'queued' || generation?.status === 'running'
@@ -747,8 +769,8 @@ export const createSessionDetailsOwner = (
             kind: 'write',
             session: {
               ...session,
-              title: details.title,
-              description: details.description,
+              ...(titleChanged ? { title: details.title } : {}),
+              ...(descriptionChanged ? { description: details.description } : {}),
               sessionDetailsSource: 'manual',
               ...(superseded ? { sessionDetailsGeneration: superseded } : {})
             }

@@ -84,7 +84,13 @@ describe('ReadingContextPicker', () => {
       totalCount: 3
     })
     const filterPdfContextCandidates = vi.fn().mockResolvedValue({
-      sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-multi' }],
+      sources: [
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-multi'
+        }
+      ],
       pendingAttachmentIds: []
     })
     vi.stubGlobal('api', {
@@ -112,8 +118,16 @@ describe('ReadingContextPicker', () => {
     expect(filterPdfContextCandidates).toHaveBeenCalledWith({
       projectId: 'project-1',
       sources: [
-        { sourceKind: 'artifact-version', sourceVersionId: 'version-multi' },
-        { sourceKind: 'upload-version', sourceVersionId: 'version-single' }
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          sourceVersionId: 'version-multi'
+        },
+        {
+          sourceKind: 'upload-version',
+          sourceFileId: 'upload-1',
+          sourceVersionId: 'version-single'
+        }
       ]
     })
 
@@ -121,6 +135,7 @@ describe('ReadingContextPicker', () => {
     await waitFor(() =>
       expect(onSelect).toHaveBeenCalledWith({
         sourceKind: 'artifact-version',
+        sourceFileId: 'artifact-1',
         sourceVersionId: 'version-multi'
       })
     )

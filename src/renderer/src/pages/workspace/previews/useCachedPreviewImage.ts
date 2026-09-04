@@ -2,11 +2,14 @@ import { useEffect, useState } from 'react'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
-import { createPreviewRequestScope } from './preview-file-reader'
+import { createManagedPreviewRequest } from './preview-file-reader'
+import { isManagedFilePublicationPendingError } from './preview-errors'
 import { createPreviewResourceKey } from './preview-resource-key'
 
 const MAX_CACHED_IMAGE_BYTES = 64 * 1024 * 1024
 const MAX_CACHED_IMAGE_COUNT = 32
+const PUBLICATION_RETRY_DELAY_MS = 200
+const PUBLICATION_RETRY_LIMIT = 4
 
 type CachedImage = { url: string; size: number; managedResourceId?: string }
 type CachedImageEntry = {
@@ -25,7 +28,7 @@ type CachedPreviewImageState =
   | { status: 'error'; url?: undefined; error: Error }
 
 type PreviewImageItem = Pick<PreviewFileItem, 'path' | 'source' | 'mimeType' | 'size' | 'mtimeMs'> &
-  Partial<Pick<PreviewFileItem, 'projectId' | 'sessionId'>>
+  Partial<Pick<PreviewFileItem, 'projectId' | 'sessionId' | 'managedFileId' | 'selectedVersionId'>>
 
 const entries = new Map<string, CachedImageEntry>()
 let cachedImageBytes = 0
@@ -57,15 +60,21 @@ const prune = (): void => {
   }
 }
 
+const acquirePreviewResource = async (
+  item: PreviewImageItem,
+  retriesRemaining = PUBLICATION_RETRY_LIMIT
+): ReturnType<Window['api']['previewResources']['acquire']> => {
+  try {
+    return await window.api.previewResources.acquire(createManagedPreviewRequest(item))
+  } catch (error) {
+    if (retriesRemaining === 0 || !isManagedFilePublicationPendingError(error)) throw error
+    await new Promise<void>((resolve) => setTimeout(resolve, PUBLICATION_RETRY_DELAY_MS))
+    return acquirePreviewResource(item, retriesRemaining - 1)
+  }
+}
+
 const loadImage = async (item: PreviewImageItem): Promise<CachedImage> => {
-  const requestScope = createPreviewRequestScope(item)
-  const resource = await window.api.previewResources.acquire({
-    source: item.source ?? 'artifact',
-    path: item.path,
-    ...(requestScope.projectId ? { projectId: requestScope.projectId } : {}),
-    ...(requestScope.sessionId ? { sessionId: requestScope.sessionId } : {}),
-    ...(item.mimeType ? { mimeType: item.mimeType } : {})
-  })
+  const resource = await acquirePreviewResource(item)
 
   const imageSize = Math.max(item.size ?? 0, resource.size)
   if (imageSize > MAX_CACHED_IMAGE_BYTES) {
@@ -166,7 +175,9 @@ const useCachedPreviewImage = (
         size: item.size,
         mtimeMs: item.mtimeMs,
         projectId: item.projectId,
-        sessionId: item.sessionId
+        sessionId: item.sessionId,
+        managedFileId: item.managedFileId,
+        selectedVersionId: item.selectedVersionId
       },
       requestKey
     )
@@ -196,10 +207,12 @@ const useCachedPreviewImage = (
     enabled,
     invalidateWhenDisabled,
     item.mimeType,
+    item.managedFileId,
     item.mtimeMs,
     item.path,
     item.projectId,
     item.sessionId,
+    item.selectedVersionId,
     item.size,
     item.source,
     requestKey

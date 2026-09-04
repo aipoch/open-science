@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { PROJECT_NAME_MAX_LENGTH } from '../../shared/projects'
 import { ProjectRepository, type ProjectClient } from './repository'
 
 const createRow = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -279,6 +280,27 @@ describe('project repository', () => {
     })
     expect(projectDeletionIntent.deleteMany).toHaveBeenCalledWith({
       where: { projectId: 'project-1' }
+    })
+  })
+
+  it('projects retained names for pending cleanup without dropping historical orphans', async () => {
+    const { client, project, projectDeletionIntent } = createMockClient({})
+    projectDeletionIntent.findMany.mockResolvedValue([
+      { projectId: 'project-1' },
+      { projectId: 'project-orphan' }
+    ])
+    project.findMany.mockResolvedValue([
+      { id: 'project-1', name: 'R'.repeat(PROJECT_NAME_MAX_LENGTH + 1) }
+    ])
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(repository.listDeletionCleanupProjects()).resolves.toEqual([
+      { projectId: 'project-1', projectName: 'R'.repeat(PROJECT_NAME_MAX_LENGTH) },
+      { projectId: 'project-orphan' }
+    ])
+    expect(project.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['project-1', 'project-orphan'] } },
+      select: { id: true, name: true }
     })
   })
 

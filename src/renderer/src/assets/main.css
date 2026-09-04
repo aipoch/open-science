@@ -225,6 +225,12 @@
   --color-status-warning-dark-surface: var(--color-amber-950);
   --color-status-warning-dark-foreground: var(--color-amber-400);
   --color-success-000: var(--success-000);
+  --color-diff-added-surface: var(--diff-added-surface);
+  --color-diff-added-highlight: var(--diff-added-highlight);
+  --color-diff-added-foreground: var(--diff-added-foreground);
+  --color-diff-removed-surface: var(--diff-removed-surface);
+  --color-diff-removed-highlight: var(--diff-removed-highlight);
+  --color-diff-removed-foreground: var(--diff-removed-foreground);
   --color-syntax-keyword: var(--syntax-keyword);
   --color-syntax-string: var(--syntax-string);
   --color-syntax-number: var(--syntax-number);
@@ -280,6 +286,14 @@
   --warning-100: hsl(45 80% 90%);
   --warning-900: hsl(32 65% 28%);
   --success-000: hsl(145 45% 38%);
+  /* Version diffs keep semantic markers and body text above WCAG AA contrast on both row and
+     inline-highlight surfaces. */
+  --diff-added-surface: hsl(145 45% 92%);
+  --diff-added-highlight: hsl(145 45% 84%);
+  --diff-added-foreground: hsl(145 60% 24%);
+  --diff-removed-surface: hsl(0 55% 95%);
+  --diff-removed-highlight: hsl(0 50% 88%);
+  --diff-removed-foreground: hsl(0 55% 32%);
   /* Notebook code highlighting: distinct blue/green/purple hues so keywords, strings, and numbers
      read apart from plain text on the warm paper surface. */
   --syntax-keyword: hsl(222 60% 46%);
@@ -355,6 +369,12 @@
   --warning-100: hsl(45 45% 18%);
   --warning-900: hsl(45 90% 62%);
   --success-000: hsl(145 70% 72%);
+  --diff-added-surface: hsl(145 30% 19%);
+  --diff-added-highlight: hsl(145 28% 26%);
+  --diff-added-foreground: hsl(145 65% 78%);
+  --diff-removed-surface: hsl(0 30% 20%);
+  --diff-removed-highlight: hsl(0 28% 27%);
+  --diff-removed-foreground: hsl(0 65% 80%);
   /* Brighter code-highlight hues so keywords/strings/numbers keep enough contrast on the dark surface. */
   --syntax-keyword: hsl(215 75% 72%);
   --syntax-string: hsl(140 45% 62%);
@@ -447,6 +467,19 @@
 }
 
 @layer components {
+  .managed-version-diff-markdown :is(li, td, th):has(> [data-managed-diff-marker='added']),
+  .managed-version-diff-markdown :is(li, td, th):has(> p > [data-managed-diff-marker='added']) {
+    color: var(--diff-added-foreground);
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  .managed-version-diff-markdown :is(li, td, th):has(> [data-managed-diff-marker='removed']),
+  .managed-version-diff-markdown :is(li, td, th):has(> p > [data-managed-diff-marker='removed']) {
+    color: var(--diff-removed-foreground);
+    text-decoration: line-through;
+  }
+
   @keyframes composer-specialist-color-in {
     from {
       opacity: 0;

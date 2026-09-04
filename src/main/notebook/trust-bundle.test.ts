@@ -1,6 +1,6 @@
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 import { rootCertificates } from 'node:tls'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -44,10 +44,7 @@ describe('Notebook trust bundle', () => {
   })
 
   it('rejects missing, malformed, and private-key-bearing bundles', async () => {
-    const relativePath = await bundlePath(rootCertificates[0]!)
-    await expect(resolveNotebookTrustBundle(relative(process.cwd(), relativePath))).rejects.toThrow(
-      'must be absolute'
-    )
+    await expect(resolveNotebookTrustBundle('relative-ca.pem')).rejects.toThrow('must be absolute')
     await expect(resolveNotebookTrustBundle('/missing/ca.pem')).rejects.toThrow(
       'does not exist or cannot be read'
     )

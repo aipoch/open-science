@@ -1,6 +1,8 @@
 import { ANTHROPIC_VERSION } from './validate'
 import { readBoundedResponseText } from './bounded-response'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
+import type { OfficialVendorId } from '../../shared/provider-registry'
+import { fetchProviderRequest } from './provider-fetch'
 
 // Fetches a provider's live model list from its dedicated model-list URL (from the registry). Both the
 // Anthropic and OpenAI model-list shapes are `{ data: [{ id }] }`, so one parser covers the compatible
@@ -19,7 +21,7 @@ export type ListModelsResult = {
 export type ListModelsTarget = {
   // Full model-list endpoint URL (e.g. https://api.deepseek.com/v1/models).
   url: string
-  // Plaintext key; sent as both bearer and x-api-key so either auth scheme is satisfied.
+  vendorId?: OfficialVendorId
   key?: string
 }
 
@@ -43,9 +45,8 @@ export const parseModelIds = (body: unknown): string[] => {
     .filter((id): id is string => typeof id === 'string' && id !== '')
 }
 
-// Requests the model catalog from a vendor's model-list URL. Sends both bearer and x-api-key auth so
-// it works against gateways that expect either. Returns ok=false (never throws) so the caller can fall
-// back to the bundled catalog and surface a message.
+// Requests the model catalog from a vendor's model-list URL. Returns ok=false (never throws) so the
+// caller can fall back to the bundled catalog and surface a message.
 export const listProviderModels = async (
   target: ListModelsTarget,
   { fetchImpl = fetch, timeoutMs = DEFAULT_LIST_TIMEOUT_MS }: ListModelsDeps = {}
@@ -61,15 +62,19 @@ export const listProviderModels = async (
   const headers: Record<string, string> = { 'anthropic-version': ANTHROPIC_VERSION }
 
   if (target.key) {
-    headers.authorization = `Bearer ${target.key}`
-    headers['x-api-key'] = target.key
+    if (target.vendorId === 'anthropic') headers['x-api-key'] = target.key
+    else headers.authorization = `Bearer ${target.key}`
   }
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const response = await fetchImpl(url, { method: 'GET', headers, signal: controller.signal })
+    const response = await fetchProviderRequest(fetchImpl, url, {
+      method: 'GET',
+      headers,
+      signal: controller.signal
+    })
 
     if (response.status < 200 || response.status >= 300) {
       return {

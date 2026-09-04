@@ -401,7 +401,11 @@ describe('workspace message queue controller', () => {
     const queued = admission('queued with new Reading PDFs')
     queued.snapshot.pendingPdfContextAttachmentIds = ['upload-1']
     queued.snapshot.pendingPdfContextVersions = [
-      { sourceKind: 'artifact-version', sourceVersionId: 'version-1' }
+      {
+        sourceKind: 'artifact-version',
+        sourceFileId: 'artifact-1',
+        sourceVersionId: 'version-1'
+      }
     ]
 
     act(() => hook.result.current.lifecycle.enqueue(queued))
@@ -413,7 +417,11 @@ describe('workspace message queue controller', () => {
       expect.objectContaining({
         pendingPdfContextAttachmentIds: ['upload-1'],
         pendingPdfContextVersions: [
-          { sourceKind: 'artifact-version', sourceVersionId: 'version-1' }
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'artifact-1',
+            sourceVersionId: 'version-1'
+          }
         ]
       })
     )
@@ -1588,7 +1596,11 @@ describe('workspace message queue controller', () => {
     const queued = admission('read these papers')
     queued.snapshot.pendingPdfContextAttachmentIds = ['upload-1']
     queued.snapshot.pendingPdfContextVersions = [
-      { sourceKind: 'artifact-version', sourceVersionId: 'version-1' }
+      {
+        sourceKind: 'artifact-version',
+        sourceFileId: 'artifact-1',
+        sourceVersionId: 'version-1'
+      }
     ]
     act(() => hook.result.current.lifecycle.enqueue(queued))
 
@@ -1614,7 +1626,11 @@ describe('workspace message queue controller', () => {
       expect.objectContaining({
         pendingPdfContextAttachmentIds: ['upload-1'],
         pendingPdfContextVersions: [
-          { sourceKind: 'artifact-version', sourceVersionId: 'version-1' }
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'artifact-1',
+            sourceVersionId: 'version-1'
+          }
         ]
       })
     )

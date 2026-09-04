@@ -257,15 +257,9 @@ model NotificationInboxItem {
   @@index([projectId])
 }
 
-// One reviewer pass over a single completed turn. See src/main/reviewer/repository.ts. Checks live in
-// a child table (Finding); the review carries the turn scope (JSON), the task lifecycle, and the outcome.
-// Created through the application-owned migration manifest; canonical runtime SQL is generated from
-// this schema plus prisma/sqlite-check-constraints.json without shipping Prisma Migrate.
-//
-// v2 (issue 12): removed `summary` and `checks` JSON columns; all checks (pass/warn/fail) now live
-// as rows in the Finding table.
-// v3 (issue 13): replaced `reasoning` (self-authored prose) with `reviewerLog` (captured action stream
-// as JSON array of ReviewerLogEntry). submit_findings no longer accepts `reasoning`.
+// One reviewer pass over a single completed turn. Checks live in Finding rows; the review carries
+// the turn scope, task lifecycle, outcome, and captured reviewer action stream. Canonical runtime
+// SQL is generated from this schema plus prisma/sqlite-check-constraints.json.
 model Review {
   id                 String                     @id @default(cuid())
   projectId          String
@@ -290,7 +284,7 @@ model Review {
 // A unified check row — replaces both the old warn/fail-only Finding and the pass-only ReviewCheck
 // JSON blob on Review. status is 'pass'|'warn'|'fail'. locator is optional (pass checks may omit it).
 // resolution is meaningful only for warn/fail checks. Cascade-deleted with its Review.
-// reflagCount (issue 15): number of times this claim was re-flagged in a Phase 3 fix loop; defaults to 0.
+// reflagCount records how many times the claim was re-flagged after a fix attempt.
 model Finding {
   id                   String                     @id @default(cuid())
   reviewId             String
@@ -385,12 +379,15 @@ model ArtifactLineage {
   sessionId          String
   normalizedFilename String
   filename           String
+  currentVersionId   String?           @unique
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
-  versions           ArtifactVersion[]
+  versions           ArtifactVersion[] @relation("ArtifactLineageVersions")
+  currentVersion     ArtifactVersion?  @relation("ArtifactLineageCurrentVersion", fields: [id, currentVersionId], references: [artifactId, id], onDelete: Restrict)
   originSession      FileOriginSession @relation(fields: [projectId, sessionId], references: [projectId, sessionId], onDelete: Restrict)
 
   @@unique([projectId, sessionId, normalizedFilename])
+  @@unique([id, currentVersionId])
   @@index([projectId, sessionId])
 }
 
@@ -400,11 +397,14 @@ model UploadFile {
   sessionId        String
   filename         String
   originalFilename String
+  currentVersionId String?           @unique
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
-  versions         UploadVersion[]
+  versions         UploadVersion[]   @relation("UploadFileVersions")
+  currentVersion   UploadVersion?    @relation("UploadFileCurrentVersion", fields: [id, currentVersionId], references: [uploadFileId, id], onDelete: Restrict)
   originSession    FileOriginSession @relation(fields: [projectId, sessionId], references: [projectId, sessionId], onDelete: Restrict)
 
+  @@unique([id, currentVersionId])
   @@index([projectId, sessionId])
 }
 
@@ -413,7 +413,12 @@ model UploadVersion {
   uploadFileId      String
   versionNumber     Int
   state             String                 @default("staging")
-  contentStorageKey String
+  originKind        String                 @default("user_upload")
+  basedOnVersionId  String?
+  storageTag        String?
+  storedFilename    String?
+  writeOperationId  String?                @unique
+  contentStorageKey String                 @unique
   filename          String
   originalFilename  String
   contentType       String?
@@ -422,11 +427,15 @@ model UploadVersion {
   createdAt         DateTime?
   registeredAt      DateTime               @default(now())
   updatedAt         DateTime               @updatedAt
-  uploadFile        UploadFile             @relation(fields: [uploadFileId], references: [id], onDelete: Cascade)
+  uploadFile        UploadFile             @relation("UploadFileVersions", fields: [uploadFileId], references: [id], onDelete: Cascade)
+  currentForFile    UploadFile?            @relation("UploadFileCurrentVersion")
+  basedOnVersion    UploadVersion?         @relation("UploadVersionDerivations", fields: [uploadFileId, basedOnVersionId], references: [uploadFileId, id], onDelete: Restrict)
+  derivedVersions   UploadVersion[]        @relation("UploadVersionDerivations")
   sourceInputs      ArtifactVersionInput[] @relation("UploadVersionSourceInputs")
   visionEvidence    VisionEvidence[]
 
   @@unique([uploadFileId, versionNumber])
+  @@unique([uploadFileId, id])
   @@index([uploadFileId, state, registeredAt])
 }
 
@@ -484,45 +493,79 @@ model ArtifactVersion {
   artifactId                     String
   versionNumber                  Int
   filename                       String
-  artifactRunId                  String
+  originKind                     String                   @default("agent_generated")
+  basedOnVersionId               String?
+  storageTag                     String?
+  storedFilename                 String?
+  artifactRunId                  String?
   writeOperationId               String?                  @unique
   writeRequestChecksum           String?
-  rootFrameId                    String
-  agentFrameId                   String
-  messageBranchId                String
-  runtimeSegmentId               String
-  promptMessageId                String
+  rootFrameId                    String?
+  agentFrameId                   String?
+  messageBranchId                String?
+  runtimeSegmentId               String?
+  promptMessageId                String?
   notebookSessionId              String?
   producerRunId                  String?
   producerRunIndex               Int?
   messageId                      String?
   messageSnapshotId              String?
   state                          String                   @default("staging")
-  contentStorageKey              String
-  evidenceStorageKey             String
+  managedVisibleAt               DateTime?
+  contentStorageKey              String                   @unique
+  evidenceStorageKey             String?
   contentType                    String?
   sizeBytes                      BigInt
   checksum                       String
-  evidenceJson                   String
-  evidenceChecksum               String
-  evidenceSchemaVersion          Int                      @default(1)
+  evidenceJson                   String?
+  evidenceChecksum               String?
+  evidenceSchemaVersion          Int?
   executionSnapshotJson          String?
   executionSnapshotChecksum      String?
   executionSnapshotStorageKey    String?
   executionSnapshotSchemaVersion Int?
   createdAt                      DateTime                 @default(now())
   updatedAt                      DateTime                 @updatedAt
-  artifact                       ArtifactLineage          @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  artifact                       ArtifactLineage          @relation("ArtifactLineageVersions", fields: [artifactId], references: [id], onDelete: Cascade)
+  currentForLineage              ArtifactLineage?         @relation("ArtifactLineageCurrentVersion")
+  basedOnVersion                 ArtifactVersion?         @relation("ArtifactVersionDerivations", fields: [artifactId, basedOnVersionId], references: [artifactId, id], onDelete: Restrict)
+  derivedVersions                ArtifactVersion[]        @relation("ArtifactVersionDerivations")
   messageSnapshot                ArtifactMessageSnapshot? @relation(fields: [messageSnapshotId], references: [id], onDelete: SetNull)
   inputs                         ArtifactVersionInput[]   @relation("ProducedArtifactInputs")
   sourceInputs                   ArtifactVersionInput[]   @relation("ArtifactVersionSourceInputs")
 
   @@unique([artifactId, versionNumber])
+  @@unique([artifactId, id])
   @@index([artifactId, createdAt])
   @@index([artifactRunId, state])
   @@index([rootFrameId, agentFrameId, messageBranchId, promptMessageId])
   @@index([messageId])
   @@index([messageSnapshotId])
+}
+
+// Recovery journal for cross-resource text edit publication. Staging operations do not allocate a
+// content version number and are invisible to normal version readers.
+model ManagedFileVersionWriteOperation {
+  operationId           String   @id
+  source                String
+  projectId             String
+  sourceFileId          String
+  basedOnVersionId      String
+  expectedHeadVersionId String
+  state                 String   @default("staging")
+  storageTag            String
+  storedFilename        String
+  contentStorageKey     String   @unique
+  checksum              String
+  sizeBytes             BigInt
+  textFormatJson        String
+  resultVersionId       String?  @unique
+  errorCode             String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([source, sourceFileId, state])
+  @@index([projectId, state, createdAt])
 }
 
 model ArtifactVersionInput {
@@ -594,66 +637,62 @@ model ReviewScopeSnapshot {
   @@index([projectId, sessionId, state])
 }
 
-// A remote compute job submitted via host.compute.create(id).submit_job(). Phase 3a (issue 01 of
-// compute-jobs) adds this table as a pure-additive migration — it references nothing, and nothing
-// references it, so adding it is safe against any pre-existing DB. The table tracks the full
-// lifecycle: submitted → running → success/failed/timeout/error.
-// Columns for harvest (harvestedAt, outputManifest) and concurrency (queued) are included now per
-// design.md §1 to avoid a schema change in 3b/3c — they are null until those phases fill them.
+// A remote compute job submitted via host.compute.create(id).submit_job(). Tracks the full
+// lifecycle from submission and dispatch through execution, harvest, notification, and analysis.
 // Security: free-form execution data is encrypted when OS secure storage is available; commandHash
 // remains plaintext for deduplication. Credentials use the separate ComputeCredential store.
 model ComputeJob {
-  id                     String    @id @default(cuid())
-  providerId             String
-  shape                  String
-  sessionId              String
-  projectId              String
-  status                 String    @default("submitted")
-  intent                 String
-  command                String
-  commandHash            String
+  id                       String                @id @default(cuid())
+  providerId               String
+  shape                    String
+  sessionId                String
+  projectId                String
+  status                   String                @default("submitted")
+  intent                   String
+  command                  String
+  commandHash              String
   // NULL marks historical plaintext rows; false marks disclosed plaintext fallback; true marks
   // rows whose free-form execution data must be decrypted through OS secure storage.
-  sensitiveDataEncrypted Boolean?
-  environment            String?
-  resourceRequest        String?
-  inputManifest          String?
+  sensitiveDataEncrypted   Boolean?
+  environment              String?
+  resourceRequest          String?
+  inputManifest            String?
   // Trusted Notebook Run that submitted this Job. NULL for historical/non-Notebook Jobs.
-  producerRunId          String?
+  producerRunId            String?
   // Validated execution-file-evidence summary JSON. Full relations remain in the sidecar.
-  fileEvidence           String?
-  outputManifest         String?
-  harvestConfig          String?
-  timeoutSeconds         Int?
-  remoteWorkdir          String?
-  remoteHandle           String?
-  exitCode               Int?
-  stdoutTail             String?
-  stderrTail             String?
-  errorCode              String?
+  fileEvidence             String?
+  outputManifest           String?
+  harvestConfig            String?
+  timeoutSeconds           Int?
+  remoteWorkdir            String?
+  remoteHandle             String?
+  remoteCleanupDisposition String                @default("pending")
+  exitCode                 Int?
+  stdoutTail               String?
+  stderrTail               String?
+  errorCode                String?
   // lastPollError: set when SSH connectivity fails during a poll tick (design.md §8 boundary 2).
   // The job status is NOT changed — this field surfaces the transient error to the UI.
   // Cleared on the next successful poll. retry_after_user_action is always true for this field.
-  lastPollError          String?
-  // 3b harvest columns (compute-harvest issue 01): pure-additive, null until Phase 3b fills them.
+  lastPollError            String?
   // harvestError: summary of a harvest_failed outcome; non-null means harvest completed with errors.
-  harvestError           String?
+  harvestError             String?
   // leftOnRemote: JSON [{uri, size_mb, reason}] — files left on the remote side after harvest.
-  leftOnRemote           String?
+  leftOnRemote             String?
   // notifiedAt: set when the compute_done notification has been enqueued to the inbox.
-  notifiedAt             DateTime?
+  notifiedAt               DateTime?
   // notificationConsumedAt: set by wait_for_notification when the notification is consumed.
-  notificationConsumedAt DateTime?
+  notificationConsumedAt   DateTime?
   // Durable automatic-analysis delivery state. NULL preserves historical pending/consumed rows.
-  analysisState          String?
-  analysisMessageId      String?
-  analysisUpdatedAt      DateTime?
-  createdAt              DateTime  @default(now())
-  submittedAt            DateTime?
-  startedAt              DateTime?
-  finishedAt             DateTime?
-  harvestedAt            DateTime?
-  operations             ComputeJobOperation[]
+  analysisState            String?
+  analysisMessageId        String?
+  analysisUpdatedAt        DateTime?
+  createdAt                DateTime              @default(now())
+  submittedAt              DateTime?
+  startedAt                DateTime?
+  finishedAt               DateTime?
+  harvestedAt              DateTime?
+  operations               ComputeJobOperation[]
 
   @@index([providerId])
   @@index([sessionId])
@@ -684,11 +723,8 @@ model ComputeJobOperation {
   @@index([kind, phase, claimExpiresAt])
 }
 
-// A registered remote SSH compute host (Compute settings tab). Phase 1 (issue 01) manages the record
-// only — no SSH connection is made. Pure-additive table: it references nothing and nothing references
-// it, so its versioned migration is byte-compatible with any pre-existing DB. Security: only an ssh
-// alias + optional non-secret overrides are stored;
-// no credentials or private keys ever land here (design.md §1/§3).
+// A registered remote SSH compute host. Stores an SSH alias and optional non-secret overrides;
+// password ciphertext is isolated in ComputeCredential and private keys are never stored here.
 model ComputeHost {
   id                     String             @id @default(cuid())
   providerId             String             @unique // "ssh:<alias>"
@@ -701,8 +737,8 @@ model ComputeHost {
   lastVerifiedAt         DateTime?
   scratchRoot            String?
   scratchPinned          Boolean            @default(false)
-  concurrencyLimit       Int? // stored but not enforced in Phase 1
-  probeResult            String? // JSON probe snapshot, written by a later issue
+  concurrencyLimit       Int? // Per-host running-job ceiling; null uses the default ceiling of 10
+  probeResult            String? // JSON snapshot from the latest connection probe
   detailsDoc             String             @default("") // markdown notes, <= 32768 chars
   detailsUpdatedAt       DateTime?
   detailsUpdatedBy       String? // user | agent
@@ -732,11 +768,9 @@ model ComputeAuthOperation {
   @@index([providerId])
 }
 
-// A local folder the user explicitly granted the app access to ("Grant folder access"). Pure-additive
-// table: it references nothing and nothing references it, so adding it is safe against any
-// pre-existing DB (see prisma-client.ts runtime DDL). `path` is the realpath'd absolute folder and
-// is unique — re-granting a folder updates its access in place. `access` is 'ro' | 'rw'. Legacy
-// installs import settings.json's grantedLocalRoots on first use (see
+// A local folder the user explicitly granted the app access to ("Grant folder access"). `path` is
+// the realpath'd absolute folder and is unique, so re-granting a folder updates its access in place.
+// `access` is 'ro' | 'rw'. Legacy installs import settings.json's grantedLocalRoots on first use (see
 // src/main/local-fs/granted-roots-repository.ts); production never writes the settings field again.
 model GrantedLocalRoot {
   id        String   @id

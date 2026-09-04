@@ -10,6 +10,13 @@ import { join, relative } from 'node:path'
 // can call hasPendingMigrationMarker without pulling in electron or migration-service (import cycle).
 export const MIGRATION_MARKER_FILENAME = '.open-science-migration.json'
 
+export type MigrationInventory = {
+  dirs: string[]
+  fileCount: number
+  totalBytes: number
+  digest: string
+}
+
 export type MigrationMarker = {
   version: 1
   token: string
@@ -18,7 +25,10 @@ export type MigrationMarker = {
   createdAt: number
   status: 'copying' | 'verified'
   migratedDirs?: string[]
-  inventory?: { dirs: string[]; fileCount: number; totalBytes: number; digest: string }
+  inventory?: MigrationInventory
+  // Target-only receipt for the offline runtime reconstruction bundle. Optional so markers created
+  // by older versions remain readable; their old runtime is retained during commit.
+  runtimeLockInventory?: MigrationInventory
 }
 
 const isInventory = (value: unknown): value is NonNullable<MigrationMarker['inventory']> => {
@@ -66,7 +76,8 @@ export const readMigrationMarker = async (root: string): Promise<MigrationMarker
         (!Array.isArray(parsed.migratedDirs) ||
           parsed.migratedDirs.some((dir) => !isSafeMigrationPath(dir)) ||
           new Set(parsed.migratedDirs).size !== parsed.migratedDirs.length)) ||
-      (parsed.inventory !== undefined && !isInventory(parsed.inventory))
+      (parsed.inventory !== undefined && !isInventory(parsed.inventory)) ||
+      (parsed.runtimeLockInventory !== undefined && !isInventory(parsed.runtimeLockInventory))
     ) {
       return null
     }

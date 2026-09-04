@@ -1,6 +1,9 @@
+import { createHash } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, posix } from 'node:path'
+import { Readable } from 'node:stream'
+import { gzipSync } from 'node:zlib'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -41,7 +44,7 @@ const { AgentRuntimeManager } = await import('./agent-runtime-manager')
 const { SettingsRepository } = await import('./repository')
 const { getAppClaudeConfigDir } = await import('./provider-env')
 const { connectorSkillSourceDir } = await import('../connectors/provision')
-const { managedClaudeDir } = await import('./managed-claude')
+const { installManagedClaude, managedClaudeDir } = await import('./managed-claude')
 const { managedOpencodeDir } = await import('./managed-opencode')
 const { managedCodeBuddyDir, verifyCodeBuddyVersion } = await import('./managed-codebuddy')
 
@@ -61,6 +64,27 @@ const createInventory = (): RuntimeInventory => ({
   codexAdapter: new Map(),
   codexNative: new Map()
 })
+
+const buildManagedClaudeTgz = (content: Buffer): Buffer => {
+  const header = Buffer.alloc(512)
+  header.write('package/claude', 0, 'utf8')
+  header.write('0000755\0', 100, 'ascii')
+  header.write('0000000\0', 108, 'ascii')
+  header.write('0000000\0', 116, 'ascii')
+  header.write(`${content.length.toString(8).padStart(11, '0')}\0`, 124, 'ascii')
+  header.write('00000000000\0', 136, 'ascii')
+  header.write('0', 156, 'ascii')
+  header.write('ustar\0', 257, 'ascii')
+  header.write('00', 263, 'ascii')
+  header.fill(0x20, 148, 156)
+  const checksum = header.reduce((sum, byte) => sum + byte, 0)
+  header.write(`${checksum.toString(8).padStart(6, '0')}\0 `, 148, 'ascii')
+  const padding = Buffer.alloc((512 - (content.length % 512)) % 512)
+  return gzipSync(Buffer.concat([header, content, padding, Buffer.alloc(1024)]))
+}
+
+const sha512 = (data: Buffer): string =>
+  `sha512-${createHash('sha512').update(data).digest('base64')}`
 
 const createClaudeDeps = (inventory: RuntimeInventory): ClaudeDetectDeps => ({
   env: {},
@@ -767,34 +791,52 @@ describe('AgentRuntimeManager', () => {
     })
   })
 
-  it('fails a managed Claude install whose installed executable cannot report a version', async () => {
-    vi.spyOn(Date, 'now').mockReturnValue(321)
-    const installedPath = join(storageRoot, 'installed', 'claude')
-    const onEvent = vi.fn<(event: ClaudeInstallEvent) => void>()
+  it('preserves a managed Claude runtime when the replacement cannot report a version', async () => {
+    const existingPath = join(managedClaudeDir(storageRoot), 'claude')
+    await mkdir(dirname(existingPath), { recursive: true })
+    await writeFile(existingPath, 'WORKING-CLAUDE')
+    await repository.setClaudeInfo({ resolvedPath: existingPath, version: '2.1.208' })
+    const replacement = Buffer.from('BROKEN-CLAUDE')
+    const tgz = buildManagedClaudeTgz(replacement)
+    const detectDeps = createClaudeDeps(inventory)
+    detectDeps.getVersion = async (path) =>
+      (await readFile(path, 'utf8')) === 'WORKING-CLAUDE' ? '2.1.208' : undefined
     manager = createManager({
-      installManagedClaudeImpl: async ({ installId }) => ({
-        result: { installId, ok: true },
-        resolvedPath: installedPath,
-        version: 'claimed-version'
-      })
+      detectDeps,
+      installManagedClaudeImpl: (options) =>
+        installManagedClaude({
+          ...options,
+          registries: ['https://reg'],
+          platform: {
+            key: 'linux-x64',
+            pkg: '@anthropic-ai/claude-code-linux-x64',
+            binName: 'claude'
+          },
+          fetchJson: async (url) =>
+            url.endsWith('claude-code-linux-x64/2.1.209')
+              ? { dist: { tarball: 'https://reg/x.tgz', integrity: sha512(tgz) } }
+              : { 'dist-tags': { latest: '2.1.209' } },
+          fetchTarball: async () => ({ stream: Readable.from([tgz]), totalBytes: tgz.length })
+        })
     })
 
-    const result = await manager.installClaude({ source: 'managed' }, onEvent)
-
-    expect(result).toEqual({
-      installId: 'install-321-1',
+    const onEvent = vi.fn<(event: ClaudeInstallEvent) => void>()
+    await expect(manager.installClaude({ source: 'managed' }, onEvent)).resolves.toMatchObject({
       ok: false,
-      error:
-        'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
+      error: expect.stringContaining('could not report its version')
     })
-    expect((await repository.getSettings()).claude).toBeUndefined()
-    expect(onEvent).toHaveBeenCalledWith({
-      kind: 'log',
-      installId: 'install-321-1',
-      stream: 'system',
-      chunk:
-        'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.\n'
+    expect(await readFile(existingPath, 'utf8')).toBe('WORKING-CLAUDE')
+    expect((await repository.getSettings()).claude).toEqual({
+      resolvedPath: existingPath,
+      version: '2.1.208'
     })
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'log',
+        stream: 'system',
+        chunk: expect.stringContaining('could not report its version')
+      })
+    )
   })
 
   it('guards unmanaged uninstall and selects the first actually runnable fallback', async () => {

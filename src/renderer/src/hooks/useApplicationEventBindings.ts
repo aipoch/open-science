@@ -222,8 +222,14 @@ const useApplicationEventBindings = ({
         .getState()
         .sessions.some((session) => session.id === sessionId)
       if (!sessionExists) return
-      useNavigationStore.getState().openSessionById(sessionId, 'user')
-      closeSettings()
+      let completed = false
+      const completeOpen = (): void => {
+        if (completed) return
+        completed = true
+        closeSettings()
+      }
+      const opened = useNavigationStore.getState().openSessionById(sessionId, 'user', completeOpen)
+      if (opened) completeOpen()
     },
     [closeSettings]
   )

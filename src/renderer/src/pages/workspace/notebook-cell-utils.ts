@@ -5,6 +5,8 @@ const isProblemRunStatus = (status: NotebookRunRecord['status']): boolean => sta
 
 const notebookRunStatusLabel = (status: NotebookRunRecord['status']): string | undefined => {
   switch (status) {
+    case 'queued':
+      return 'queued'
     case 'failed':
       return 'error'
     case 'timeout':

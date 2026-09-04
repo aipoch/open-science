@@ -23,6 +23,7 @@ import type {
   CreatePasswordComputeHostResult,
   ResetPasswordComputeHostRequest,
   ResetPasswordComputeHostResult,
+  SetComputeJobRemoteCleanupRequest,
   DetailsAuthor,
   ProbeResult
 } from '../../shared/compute'
@@ -37,7 +38,7 @@ import type { TaskNotificationService } from '../notifications/task-notification
 import { buildComputeApprovalBroadcast } from '../notifications/electron-wiring'
 import { ComputeApprovalBroker, type ComputeApprovalContext } from './compute-approval-broker'
 import { ComputeService, type ArtifactResolver } from './compute-service'
-import { ConcurrencyManager } from './concurrency-manager'
+import { ConcurrencyManager, type SessionConcurrencyLimitPersistence } from './concurrency-manager'
 import { ComputeHostRepository } from './repository'
 import { ComputeJobRepository } from './job-repository'
 import { ComputeJobOperationRepository } from './compute-job-operation-repository'
@@ -47,9 +48,8 @@ import { ComputeConnectionError, type ComputeConnectionBroker } from './connecti
 import { dispatchJob } from './job-dispatcher'
 import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
 import { deleteComputeHost, type DeleteComputeHostOptions } from './compute-host-deletion-owner'
-import { getJobHarvestDir } from './harvest-engine'
 import { SessionCacheOwner } from './session-cache-owner'
-import { workspaceRelativePath } from './workspace-path'
+import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import {
   createComputePermissionGrantAdapter,
@@ -201,6 +201,7 @@ type ComputeHandlers = {
   computeService: ComputeService
   connectionBroker: ComputeConnectionBroker
   concurrencyManager?: ConcurrencyManager
+  jobDeletionOwner?: ComputeJobDeletionOwner
   // Responds to a pending approval request from the renderer with a canonical app-owned scope.
   approvalRespond: (id: string, decision: ComputeApprovalDecision) => void
   approvalReplay: (id: string) => ComputeApprovalRequest | null
@@ -218,6 +219,7 @@ type ComputeHandlers = {
   jobsCancel: (
     request: CancelComputeJobRequest
   ) => Promise<import('../../shared/compute').JobStatusResult>
+  jobsSetRemoteCleanup: (request: SetComputeJobRemoteCleanupRequest) => Promise<void>
   // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
   jobsPendingNotification: (filter: ComputeJobsPendingNotificationFilter) => Promise<JobSummary[]>
   // Marks the given job ids as notification-consumed. Idempotent (issue 05).
@@ -243,7 +245,8 @@ const createComputeHandlers = (
   hostLifecycle?: ComputeHostLifecycle,
   authenticationDependencies?: ComputeAuthenticationDependencies,
   sessionCacheOwner?: SessionCacheOwner,
-  operationRepository?: ComputeJobOperationRepository
+  operationRepository?: ComputeJobOperationRepository,
+  sessionLimitPersistence?: SessionConcurrencyLimitPersistence
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
     ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
@@ -347,7 +350,10 @@ const createComputeHandlers = (
               onJobUpdated: handleJobUpdated,
               storageRoot
             }),
-          onJobUpdated
+          onJobUpdated,
+          undefined,
+          undefined,
+          sessionLimitPersistence
         )
       : undefined
   const service =
@@ -366,6 +372,38 @@ const createComputeHandlers = (
       connectionBroker,
       credentialVault
     })
+  const jobDeletionOwner = jobRepository
+    ? createComputeJobDeletionOwner({
+        jobRepository,
+        hostRepository: repository,
+        connectionBroker,
+        queueManager: concurrencyManager,
+        requestCancellation: async (job) => {
+          await service.cancelJob(job.job_id, {
+            projectId: job.project_id,
+            sessionId: job.session_id,
+            providerId: job.provider_id
+          })
+        },
+        confirmCancellation: async (job) => {
+          if (!operationRepository) {
+            throw new Error('Compute Job operation repository is unavailable.')
+          }
+          const confirmed = await operationRepository.fulfillCancellationAfterRemoteCleanup(
+            job.job_id,
+            {
+              projectId: job.project_id,
+              sessionId: job.session_id,
+              providerId: job.provider_id
+            },
+            new Date()
+          )
+          if (!confirmed) return
+          const current = await jobRepository.get(job.job_id)
+          if (current) await service.handleJobCancellationConfirmed(current)
+        }
+      })
+    : undefined
   const listHostNames = async (): Promise<Map<string, string>> => {
     try {
       const hosts = await repository.list()
@@ -432,9 +470,22 @@ const createComputeHandlers = (
       }
     },
     passwordCapability: async () => credentialVault.capability(),
-    deletionStatus: async (providerId) => ({
-      blockedByJobs: (await jobRepository?.hasDeletionBlockingJobsForProvider(providerId)) ?? false
-    }),
+    deletionStatus: async (providerId) => {
+      const jobs = (await jobRepository?.findDeletionBlockingJobsForProvider(providerId)) ?? []
+      return {
+        blockedByJobs: jobs.length > 0,
+        blockingJobs: jobs.map((job) => ({
+          jobId: job.job_id,
+          projectId: job.project_id,
+          sessionId: job.session_id,
+          status: job.status,
+          cancellationStatus: job.cancellation_status,
+          harvested: job.harvested_at !== undefined,
+          intent: job.intent,
+          createdAt: job.created_at
+        }))
+      }
+    },
     delete: (providerId, options = { allowPasswordCredentialDeletion: true }) =>
       runHostLifecycleMutation(() =>
         deleteComputeHost(
@@ -504,6 +555,14 @@ const createComputeHandlers = (
         sessionId: request.sessionId,
         providerId: request.providerId
       }),
+    jobsSetRemoteCleanup: async (request) => {
+      if (!jobDeletionOwner) throw new Error('Compute Job cleanup owner is unavailable.')
+      if (request.disposition === 'cleaned') {
+        await jobDeletionOwner.cleanupJobRemote(request)
+      } else {
+        await jobDeletionOwner.abandonJobRemoteCleanup(request)
+      }
+    },
     jobsPendingNotification: async (filter) => {
       if (!jobRepository || !storageRoot) return []
       const hostNameMap = await listHostNames()
@@ -540,7 +599,8 @@ const createComputeHandlers = (
           toJobSummary(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)
         )
       )
-    }
+    },
+    jobDeletionOwner
   }
 }
 
@@ -628,7 +688,8 @@ const createComputeIpcModule = (
   >,
   permissionGrantRegistry?: PermissionGrantRegistry,
   legacyComputeGrants?: LegacyComputeGrantPort,
-  hostLifecycle?: ComputeHostLifecycle
+  hostLifecycle?: ComputeHostLifecycle,
+  sessionLimitPersistence?: SessionConcurrencyLimitPersistence
 ): ComputeIpcModule => {
   const operationRepository = createDefaultComputeJobOperationRepository()
   const storageRoot = resolveStorageRoot()
@@ -657,14 +718,11 @@ const createComputeIpcModule = (
     hostLifecycle,
     undefined,
     sessionCacheOwner,
-    operationRepository
+    operationRepository,
+    sessionLimitPersistence
   )
-  const jobDeletionOwner = createComputeJobDeletionOwner({
-    jobRepository,
-    hostRepository: repository,
-    connectionBroker: handlers.connectionBroker,
-    queueManager: handlers.concurrencyManager
-  })
+  const jobDeletionOwner = handlers.jobDeletionOwner
+  if (!jobDeletionOwner) throw new Error('Compute Job deletion owner is unavailable.')
 
   return {
     handlers,

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ChatSession } from '@/stores/session-store'
+import { createInitialNotebookEnvState, useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { AgentLoadingIndicator } from './WorkspaceAgentLoadingRow'
 
@@ -43,6 +44,7 @@ const seedRunningSession = (startedAgoMs: number, agentStatus?: string): void =>
 beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date('2026-07-18T00:00:00.000Z'))
+  useNotebookEnvStore.setState(createInitialNotebookEnvState())
   useSessionStore.setState(createInitialSessionState())
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -56,6 +58,51 @@ afterEach(() => {
 })
 
 describe('WorkspaceAgentLoadingRow', () => {
+  it('shows session environment preparation after the approval request is settled', () => {
+    useNotebookEnvStore.setState({
+      progress: {
+        phase: 'create-r',
+        message: 'Creating default-r environment…',
+        progress: 0.45,
+        scope: 'r',
+        sessionId: 's1',
+        language: 'r'
+      }
+    })
+
+    act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="waiting-for-approval" />))
+
+    expect(container.textContent).toContain('Creating default-r environment…')
+    expect(container.textContent).toContain('45%')
+    expect(container.textContent).not.toContain('Waiting for your approval')
+  })
+
+  it('keeps a visible approval request ahead of environment preparation', () => {
+    useNotebookEnvStore.setState({
+      progress: {
+        phase: 'create-r',
+        message: 'Creating default-r environment…',
+        progress: 0.45,
+        scope: 'r',
+        sessionId: 's1',
+        language: 'r'
+      }
+    })
+
+    act(() =>
+      root.render(
+        <AgentLoadingIndicator
+          sessionId="s1"
+          phase="waiting-for-approval"
+          visiblePermissionPending
+        />
+      )
+    )
+
+    expect(container.textContent).toContain('Waiting for your approval')
+    expect(container.textContent).not.toContain('Creating default-r environment…')
+  })
+
   it('starts elapsed time from the Session timeline', () => {
     seedRunningSession(5000)
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />))

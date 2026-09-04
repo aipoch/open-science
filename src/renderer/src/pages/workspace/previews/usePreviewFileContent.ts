@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import type { ArtifactPreviewResult } from '../../../../../shared/artifacts'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
-import { createPreviewRequestScope } from './preview-file-reader'
+import { createManagedPreviewRequest } from './preview-file-reader'
 import { isUnavailableFileError } from './preview-errors'
 
 export const PREVIEW_TEXT_MAX_BYTES = 1024 * 1024
@@ -30,6 +30,8 @@ type PreviewFileContentInternalState =
 type UsePreviewFileContentRequest = {
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
   path: string
   source?: PreviewFileSource
   maxBytes?: number
@@ -62,12 +64,7 @@ const readManagedPreviewPage = async (
     signal: AbortSignal
   }
 ): Promise<ArtifactPreviewResult> => {
-  const requestScope = createPreviewRequestScope(request)
-  const resource = await window.api.previewResources.acquire({
-    source: request.source,
-    path: request.path,
-    ...requestScope
-  })
+  const resource = await window.api.previewResources.acquire(createManagedPreviewRequest(request))
 
   try {
     if (request.signal.aborted) throw request.signal.reason
@@ -135,6 +132,8 @@ const readManagedPreviewPage = async (
 export const usePreviewFileContent = ({
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   path,
   source = 'artifact',
   maxBytes = PREVIEW_TEXT_MAX_BYTES,
@@ -144,6 +143,8 @@ export const usePreviewFileContent = ({
     projectId ?? null,
     sessionId ?? null,
     source,
+    managedFileId ?? null,
+    selectedVersionId ?? null,
     encoding,
     maxBytes,
     path
@@ -174,6 +175,8 @@ export const usePreviewFileContent = ({
       sessionId,
       source,
       path,
+      ...(managedFileId ? { managedFileId } : {}),
+      ...(selectedVersionId ? { selectedVersionId } : {}),
       maxBytes,
       encoding,
       offset,
@@ -194,7 +197,18 @@ export const usePreviewFileContent = ({
       canceled = true
       abortController.abort()
     }
-  }, [encoding, maxBytes, offset, path, projectId, requestKey, sessionId, source])
+  }, [
+    encoding,
+    managedFileId,
+    maxBytes,
+    offset,
+    path,
+    projectId,
+    requestKey,
+    selectedVersionId,
+    sessionId,
+    source
+  ])
 
   if (state.requestKey !== requestKey) return { status: 'loading' }
 

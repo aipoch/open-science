@@ -10,6 +10,7 @@ import type {
   AcpPermissionGrant,
   AcpPermissionRequest,
   AcpContextUsage,
+  DelegatedWorkUnavailableReason,
   ElicitationAnswer,
   ElicitationProjection,
   ElicitationResponse,
@@ -77,6 +78,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
 import {
+  isRetryableArtifactFinalizationError,
   projectSessionActionability,
   useSessionStore,
   type ChatSession
@@ -332,11 +334,17 @@ type ConversationPanelAgentControls = {
   changeModelConfiguration?: (configuration: SessionAgentConfiguration) => void
   autoReviewEnabled: boolean
   memoryEnabled?: boolean
+  delegationEnabled?: boolean
+  delegationPending?: boolean
+  delegationHasLiveAttempts?: boolean
+  canChangeDelegation?: boolean
+  delegationDisabledReason?: string
   memoryDisabledReason?: string
   enabledComputeHosts: string[]
   selectedComputeHosts?: string[]
   toggleAutoReview: (enabled: boolean) => void
   toggleMemory?: (enabled: boolean) => void
+  toggleDelegation?: (enabled: boolean) => void | Promise<void>
   setComputeHostEnabled?: (providerId: string, enabled: boolean) => void
   setComputeHostSelected?: (providerId: string, selected: boolean) => void
 }
@@ -362,6 +370,10 @@ type ConversationPanelSaveAsSkill = {
 }
 
 type ConversationPanelWorkflows = {
+  artifactFinalization: {
+    running: boolean
+    request: () => void
+  }
   review: ConversationPanelReview
   saveAsSkill: ConversationPanelSaveAsSkill
 }
@@ -373,7 +385,7 @@ type ConversationPanelSessionTools = {
 }
 
 type ConversationPanelSubagents = {
-  unavailableReason?: string
+  unavailable?: DelegatedWorkUnavailableReason
   stop: () => void | Promise<void>
 }
 
@@ -538,11 +550,17 @@ const ConversationPanel = ({
     changeModelConfiguration = () => undefined,
     autoReviewEnabled,
     memoryEnabled = true,
+    delegationEnabled = true,
+    delegationPending = false,
+    delegationHasLiveAttempts = false,
+    canChangeDelegation = false,
+    delegationDisabledReason,
     memoryDisabledReason,
     enabledComputeHosts,
     selectedComputeHosts = [],
     toggleAutoReview: onAutoReviewToggle,
     toggleMemory: onMemoryToggle = () => undefined,
+    toggleDelegation: onDelegationToggle = () => undefined,
     setComputeHostEnabled: onComputeHostEnabledChange = () => undefined,
     setComputeHostSelected: onComputeHostSelectedChange = () => undefined
   } = agentControls
@@ -565,7 +583,7 @@ const ConversationPanel = ({
     request: onSaveAsSkill
   } = saveAsSkill
   const { notebookReference, openNotebook: onOpenNotebook, openJobs: onOpenJobList } = sessionTools
-  const { unavailableReason: subagentUnavailableReason, stop: onStopSubagents } = subagents
+  const { unavailable: subagentUnavailable, stop: onStopSubagents } = subagents
   const specialistId = activeSession
     ? specialist.view.specialist.barrierInFlight
       ? (specialist.view.specialist.historyId ?? activeSession.specialistId)
@@ -590,8 +608,6 @@ const ConversationPanel = ({
 
   const specialistItems = useSpecialistStore((state) => state.items)
   const catalogSkills = useSettingsStore((state) => state.skills)
-  const selectedFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
-  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const settingsLoaded = useSettingsStore((state) => state.isLoaded)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const openSettingsToComputeHost = useSettingsStore((state) => state.openSettingsToComputeHost)
@@ -722,6 +738,7 @@ const ConversationPanel = ({
   const isRunErrorReportable =
     !hasUnsupportedCodexAcpRunError &&
     (activeSession?.errorReportable ?? isReportableRunFailure(activeSession?.error))
+  const canRetryArtifactFinalization = isRetryableArtifactFinalizationError(activeSession?.error)
 
   const activeSpecialist = specialistId
     ? specialistItems.find((item) => item.kind === 'custom' && item.id === specialistId)
@@ -735,11 +752,13 @@ const ConversationPanel = ({
       : undefined
   const effectiveSpecialistSkills = resolveEffectiveSpecialistSkills(
     activeSpecialist?.kind === 'custom' ? activeSpecialist : undefined,
-    catalogSkills.map((skill) => ({
-      id: skill.id,
-      frameworkName: skill.source === 'featured' ? skill.id : skill.name,
-      displayName: skill.name
-    }))
+    catalogSkills
+      .filter((skill) => skill.available !== false)
+      .map((skill) => ({
+        id: skill.id,
+        frameworkName: skill.source === 'featured' ? skill.id : skill.name,
+        displayName: skill.name
+      }))
   )
   const allowedSkillIds =
     effectiveSpecialistSkills.kind === 'specialist'
@@ -1049,6 +1068,7 @@ const ConversationPanel = ({
             <WorkspaceMessageScroller
               activeSession={activeSession}
               credentialPending={pendingCredentialRequest !== undefined}
+              visiblePermissionPending={pendingPermissions.length > 0}
               optimisticMessage={optimisticMessage}
               isResumingSession={isResuming}
               notebookReference={notebookReference}
@@ -1119,16 +1139,38 @@ const ConversationPanel = ({
                             text and the reported text are always the same error. Shown only for an
                             unknown failure — a recognized one (app guidance or a known provider error)
                             keeps its message but is not a bug worth a GitHub issue. */}
-                        {isRunErrorReportable ? (
-                          <button
-                            type="button"
-                            onClick={openReportDialog}
-                            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-                            aria-label={t('Report this error')}
-                          >
-                            <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
-                            {t('Report error')}
-                          </button>
+                        {canRetryArtifactFinalization || isRunErrorReportable ? (
+                          <div className="flex shrink-0 items-center gap-1">
+                            {canRetryArtifactFinalization ? (
+                              <button
+                                type="button"
+                                onClick={workflows.artifactFinalization.request}
+                                disabled={workflows.artifactFinalization.running}
+                                className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
+                                aria-label={t('Retry Artifact publication')}
+                              >
+                                {workflows.artifactFinalization.running ? (
+                                  <Loader2
+                                    className="size-3 animate-spin"
+                                    strokeWidth={2.2}
+                                    aria-hidden="true"
+                                  />
+                                ) : null}
+                                {t('Retry Artifact publication')}
+                              </button>
+                            ) : null}
+                            {isRunErrorReportable ? (
+                              <button
+                                type="button"
+                                onClick={openReportDialog}
+                                className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
+                                aria-label={t('Report this error')}
+                              >
+                                <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
+                                {t('Report error')}
+                              </button>
+                            ) : null}
+                          </div>
                         ) : null}
                       </div>
                     ) : null}
@@ -1150,9 +1192,8 @@ const ConversationPanel = ({
 
                 {settingsLoaded ? (
                   <SubagentAvailabilityNotice
-                    frameworkId={activeSession?.agentFrameworkId ?? selectedFrameworkId}
-                    frameworks={agentFrameworks}
-                    unavailableReason={subagentUnavailableReason}
+                    unavailable={subagentUnavailable}
+                    onTurnOnDelegation={() => setAgentControlsOpenRequest((request) => request + 1)}
                     onOpenSettings={openSettings}
                   />
                 ) : null}
@@ -1384,6 +1425,11 @@ const ConversationPanel = ({
                               grants={permissionGrants}
                               autoReviewEnabled={autoReviewEnabled}
                               memoryEnabled={memoryEnabled}
+                              delegationEnabled={delegationEnabled}
+                              delegationPending={delegationPending}
+                              delegationHasLiveAttempts={delegationHasLiveAttempts}
+                              delegationReadOnly={!canChangeDelegation}
+                              delegationDisabledReason={delegationDisabledReason}
                               memoryDisabledReason={memoryDisabledReason}
                               readOnly
                               permissionProfileReadOnly
@@ -1396,6 +1442,7 @@ const ConversationPanel = ({
                               onProfileChange={onPermissionProfileChange}
                               onAutoReviewChange={onAutoReviewToggle}
                               onMemoryChange={onMemoryToggle}
+                              onDelegationChange={onDelegationToggle}
                               onRevokeGrant={onRevokePermissionGrant}
                               onClearGrants={onClearPermissionGrants}
                               showSpecialist={activeSession !== undefined}
@@ -1505,6 +1552,7 @@ const ConversationPanel = ({
                                 ? [
                                     {
                                       sourceKind: binding.sourceKind,
+                                      sourceFileId: binding.sourceFileId,
                                       sourceVersionId: binding.sourceVersionId
                                     }
                                   ]
@@ -1617,10 +1665,14 @@ const ConversationPanel = ({
                           </TooltipProvider>
                         </div>
                       </div>
-                    ) : pdfContext.automaticAttachmentCount > 0 ? (
+                    ) : null}
+                    {pdfContext.automaticAttachmentCount > 0 ? (
                       <div
                         data-testid="automatic-reading-suggestion"
-                        className="-mx-3 -mt-2 flex min-h-9 items-center gap-2 rounded-t-2xl border-b border-border-200 bg-primary/[0.05] px-2 py-1"
+                        className={cn(
+                          '-mx-3 flex min-h-9 items-center gap-2 border-b border-border-200 bg-primary/[0.05] px-2 py-1',
+                          pdfContext.bindings.length === 0 && '-mt-2 rounded-t-2xl'
+                        )}
                       >
                         <Link2
                           className="size-4 shrink-0 text-primary"
@@ -2114,10 +2166,15 @@ const ConversationPanel = ({
                           grants={permissionGrants}
                           autoReviewEnabled={autoReviewEnabled}
                           memoryEnabled={memoryEnabled}
+                          delegationEnabled={delegationEnabled}
+                          delegationPending={delegationPending}
+                          delegationHasLiveAttempts={delegationHasLiveAttempts}
+                          delegationDisabledReason={delegationDisabledReason}
                           memoryDisabledReason={memoryDisabledReason}
                           readOnly={!canChangeAgentControls}
                           autoReviewReadOnly={!canChangeAutoReview}
                           memoryReadOnly={!canChangeMemory}
+                          delegationReadOnly={!canChangeDelegation}
                           permissionProfileReadOnly={!canChangePermissionProfile}
                           grantActionsReadOnly={false}
                           autoReviewDisabled={!canEditDraft}
@@ -2128,6 +2185,7 @@ const ConversationPanel = ({
                           onProfileChange={onPermissionProfileChange}
                           onAutoReviewChange={onAutoReviewToggle}
                           onMemoryChange={onMemoryToggle}
+                          onDelegationChange={onDelegationToggle}
                           onRevokeGrant={onRevokePermissionGrant}
                           onClearGrants={onClearPermissionGrants}
                           showSpecialist={

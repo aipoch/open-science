@@ -9,9 +9,14 @@ import {
   MAX_ACP_RUNTIME_EVENTS,
   MAX_ACP_SESSION_IMAGE_BYTES
 } from '../../shared/acp'
-import { capToolDetailText, sanitizeToolContent } from '../../shared/tool-detail-sanitizer'
+import {
+  sanitizeRawToolPayload,
+  sanitizeToolContent,
+  sanitizeToolDetailText
+} from '../../shared/tool-detail-sanitizer'
 
 const ACP_RUNTIME_EVENT_RETENTION_LIMIT = MAX_ACP_RUNTIME_EVENTS
+const MAX_RUNTIME_RAW_PAYLOAD_CHARS = 8_000
 // Amortized eviction: trim only after a full cap of slack accumulates, so steady-state appends are
 // a plain push instead of an O(n) array rebuild per event. Reads always go through the last
 // ACP_RUNTIME_EVENT_RETENTION_LIMIT window, keeping the observable retention bound exact.
@@ -70,10 +75,13 @@ class AcpRuntimeSnapshotOwner {
     let image = event.image
     let raw = event.raw
     let text = event.text
+    const title = typeof event.title === 'string' ? sanitizeToolDetailText(event.title) : undefined
+    const rawInput = sanitizeRawToolPayload(event.rawInput, MAX_RUNTIME_RAW_PAYLOAD_CHARS)
+    const rawOutput = sanitizeRawToolPayload(event.rawOutput, MAX_RUNTIME_RAW_PAYLOAD_CHARS)
     const toolContent = sanitizeToolContent(event.toolContent) as
       AcpRuntimeEvent['toolContent'] | undefined
     const terminalOutput = event.terminalOutput
-      ? capToolDetailText(event.terminalOutput)
+      ? sanitizeToolDetailText(event.terminalOutput)
       : undefined
     if (image && event.sessionId) {
       const retainedBytes = this.retainedWindow()
@@ -97,8 +105,11 @@ class AcpRuntimeSnapshotOwner {
       id: event.id ?? this.nextEventId(),
       timestamp: event.timestamp ?? Date.now(),
       level: event.level ?? 'info',
+      title,
       text,
       image,
+      rawInput,
+      rawOutput,
       toolContent,
       terminalOutput,
       promptMessageId: event.promptMessageId,

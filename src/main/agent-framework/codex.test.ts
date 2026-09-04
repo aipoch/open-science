@@ -1,5 +1,8 @@
 import { execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { once } from 'node:events'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
@@ -14,6 +17,7 @@ import {
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
 import { terminateProcessTree } from '../process-tree'
 import { CODEX_VERSION } from '../settings/managed-codex'
+import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 
 const fakeChild = {} as ChildProcessWithoutNullStreams
 
@@ -135,12 +139,156 @@ describe('codexFramework', () => {
     }
   )
 
+  it('projects subscription authentication into a Windows delegated runtime home', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-delegated-subscription-'))
+    const sourceHome = join(root, 'subscription')
+    const runtimeHome = join(root, 'runtime')
+    await mkdir(sourceHome, { recursive: true })
+    await writeFile(join(sourceHome, 'auth.json'), '{"tokens":{"access_token":"secret"}}\n')
+    await writeFile(
+      join(sourceHome, 'config.toml'),
+      [
+        'model_provider = "subscription-route"',
+        '',
+        '[model_providers."subscription-route"]',
+        'name = "Subscription route"',
+        'base_url = "http://127.0.0.1:43123/v1"',
+        'wire_api = "responses"',
+        'requires_openai_auth = true',
+        '',
+        '[mcp_servers.persisted-tool]',
+        'command = "unsafe-tool"',
+        ''
+      ].join('\n')
+    )
+
+    try {
+      const framework = createCodexFramework({ platform: 'win32' })
+      const prepared = await framework.prepareDelegatedSpawn!(
+        {
+          framework,
+          providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+          executablePath: '/runtime/codex-acp.exe',
+          env: { CODEX_HOME: sourceHome }
+        },
+        runtimeHome
+      )
+
+      expect(prepared.env).toMatchObject({
+        HOME: runtimeHome,
+        USERPROFILE: runtimeHome,
+        CODEX_HOME: runtimeHome
+      })
+      expect(await readFile(join(runtimeHome, 'auth.json'), 'utf8')).toContain('secret')
+      const configToml = await readFile(join(runtimeHome, 'config.toml'), 'utf8')
+      expect(configToml).toContain('cli_auth_credentials_store = "file"')
+      expect(configToml).toContain('model_provider = "subscription-route"')
+      expect(configToml).not.toContain('mcp_servers')
+      expect(configToml).not.toContain('unsafe-tool')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['https', 'open-science-chatgpt-https', false],
+    ['websocket', 'open-science-chatgpt-websocket', true]
+  ] as const)(
+    'projects the resolved %s subscription transport into a delegated runtime home',
+    async (codexSubscriptionTransport, providerId, supportsWebsockets) => {
+      const root = await mkdtemp(join(tmpdir(), 'codex-delegated-transport-'))
+      const sourceHome = join(root, 'subscription')
+      const runtimeHome = join(root, 'runtime')
+      await mkdir(sourceHome, { recursive: true })
+      await writeFile(join(sourceHome, 'auth.json'), '{"tokens":{"access_token":"secret"}}\n')
+      // This is the app-owned non-loopback route used by subscription sessions. It is deliberately
+      // not imported as an arbitrary provider route; the trusted resolved transport below owns it.
+      await writeFile(
+        join(sourceHome, 'config.toml'),
+        [
+          'model_provider = "open-science-chatgpt-https"',
+          '',
+          '[model_providers."open-science-chatgpt-https"]',
+          'name = "OpenAI HTTPS"',
+          'base_url = "https://chatgpt.com/backend-api/codex"',
+          'wire_api = "responses"',
+          'requires_openai_auth = true',
+          'supports_websockets = false',
+          ''
+        ].join('\n')
+      )
+
+      try {
+        const framework = createCodexFramework({ platform: 'darwin' })
+        await framework.prepareDelegatedSpawn!(
+          {
+            framework,
+            providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+            codexSubscriptionTransport,
+            executablePath: '/runtime/codex-acp',
+            env: { CODEX_HOME: sourceHome }
+          },
+          runtimeHome
+        )
+
+        const configToml = await readFile(join(runtimeHome, 'config.toml'), 'utf8')
+        expect(configToml).toContain(`model_provider = "${providerId}"`)
+        expect(configToml).toContain('base_url = "https://chatgpt.com/backend-api/codex"')
+        expect(configToml).toContain(`supports_websockets = ${String(supportsWebsockets)}`)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('does not copy stale subscription authentication for an API-key delegated backend', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-delegated-api-key-'))
+    const sourceHome = join(root, 'shared-codex-home')
+    const runtimeHome = join(root, 'runtime')
+    await mkdir(sourceHome, { recursive: true })
+    await writeFile(join(sourceHome, 'auth.json'), '{"tokens":{"access_token":"stale"}}\n')
+    await writeFile(
+      join(sourceHome, 'config.toml'),
+      [
+        'model_provider = "stale-subscription-route"',
+        '',
+        '[model_providers."stale-subscription-route"]',
+        'name = "Stale route"',
+        'base_url = "http://127.0.0.1:43123/v1"',
+        'wire_api = "responses"',
+        'requires_openai_auth = true',
+        ''
+      ].join('\n')
+    )
+
+    try {
+      const framework = createCodexFramework({ platform: 'darwin' })
+      const prepared = await framework.prepareDelegatedSpawn!(
+        {
+          framework,
+          providerId: 'api-key-provider',
+          executablePath: '/runtime/codex-acp',
+          env: { CODEX_HOME: sourceHome, CODEX_CONFIG: '{"model":"gpt-5.4"}' }
+        },
+        runtimeHome
+      )
+
+      expect(prepared.env.CODEX_HOME).toBe(runtimeHome)
+      expect(existsSync(join(runtimeHome, 'auth.json'))).toBe(false)
+      expect(await readFile(join(runtimeHome, 'config.toml'), 'utf8')).toBe(
+        'cli_auth_credentials_store = "ephemeral"\n'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('describes the base role as a general agent instead of narrowing every task to coding', () => {
     expect(codexNativeModelInstructions).toContain('You are an agent')
     expect(codexNativeModelInstructions).not.toContain('coding agent')
   })
 
-  it('disables native multi-agent and Shell features across every backend route', () => {
+  it('disables native multi-agent, Shell, and memory across every backend route', () => {
     const framework = createCodexFramework()
     const configurations = [
       framework.prepareModelConfig(
@@ -206,8 +354,18 @@ describe('codexFramework', () => {
       )
     ]
 
-    expect(configurations.map(({ env }) => JSON.parse(env?.CODEX_CONFIG ?? '{}').features)).toEqual(
-      configurations.map(() => ({ multi_agent: false, multi_agent_v2: false, shell_tool: false }))
+    const codexConfigs = configurations.map(({ env }) => JSON.parse(env?.CODEX_CONFIG ?? '{}'))
+
+    expect(codexConfigs.map(({ features }) => features)).toEqual(
+      configurations.map(() => ({
+        memories: false,
+        multi_agent: false,
+        multi_agent_v2: false,
+        shell_tool: false
+      }))
+    )
+    expect(codexConfigs.map(({ memories }) => memories)).toEqual(
+      configurations.map(() => ({ generate_memories: false, use_memories: false }))
     )
   })
 
@@ -674,7 +832,13 @@ describe('codexFramework', () => {
         HOME: join('/data', 'codex-subscription'),
         CODEX_HOME: join('/data', 'codex-subscription'),
         CODEX_CONFIG: JSON.stringify({
-          features: { multi_agent: false, multi_agent_v2: false, shell_tool: false }
+          features: {
+            memories: false,
+            multi_agent: false,
+            multi_agent_v2: false,
+            shell_tool: false
+          },
+          memories: { generate_memories: false, use_memories: false }
         })
       }
     })
@@ -692,7 +856,13 @@ describe('codexFramework', () => {
         HOME: join('/data', 'codex-subscription'),
         CODEX_HOME: join('/data', 'codex-subscription'),
         CODEX_CONFIG: JSON.stringify({
-          features: { multi_agent: false, multi_agent_v2: false, shell_tool: false }
+          features: {
+            memories: false,
+            multi_agent: false,
+            multi_agent_v2: false,
+            shell_tool: false
+          },
+          memories: { generate_memories: false, use_memories: false }
         })
       }
     })

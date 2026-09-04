@@ -201,7 +201,7 @@ describe('image annotation Agent payload projection', () => {
         sessionId: 'session-1',
         versionId: 'upload-version-1',
         name: 'uploaded.png',
-        path: 'upload-version:project-1/session-1/upload-version-1',
+        path: 'upload-version:project-1/session-1/upload-1/upload-version-1',
         mimeType: 'image/png'
       },
       point: { x: 0.25, y: 0.75 },

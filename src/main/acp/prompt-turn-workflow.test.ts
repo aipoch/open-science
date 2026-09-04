@@ -1,4 +1,9 @@
 import type { ActiveSession, PromptResponse } from '@agentclientprotocol/sdk'
+import { rmSync } from 'node:fs'
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { AcpPromptRequest } from '../../shared/acp'
@@ -7,7 +12,7 @@ import { opencodeFramework } from '../agent-framework'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
-import type { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
+import { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
 import type { ReadyPreparedPromptHandle } from './prompt-preparation-owner'
 import { AcpPromptTurnWorkflow, type AcpPromptTurnWorkflowOptions } from './prompt-turn-workflow'
 import { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
@@ -49,6 +54,7 @@ type Harness = {
     cancellationCheckpoint: Mock<AcpSessionInteractionOwner['cancellationCheckpoint']>
     captureTerminal: Mock<AcpSessionInteractionOwner['captureTerminal']>
     settle: Mock<AcpSessionInteractionOwner['settle']>
+    updatePromptProvenance: Mock<AcpSessionInteractionOwner['updatePromptProvenance']>
     release: Mock<AcpSessionInteractionOwner['release']>
     supersede: Mock<AcpSessionInteractionOwner['supersede']>
   }
@@ -196,6 +202,9 @@ const createHarness = (
       owner.captureTerminal(...args)
     ),
     settle: vi.fn((...args: Parameters<typeof owner.settle>) => owner.settle(...args)),
+    updatePromptProvenance: vi.fn((...args: Parameters<typeof owner.updatePromptProvenance>) =>
+      owner.updatePromptProvenance(...args)
+    ),
     release: vi.fn((scope: Parameters<typeof owner.release>[0]) => owner.release(scope)),
     supersede: vi.fn((scope: Parameters<typeof owner.supersede>[0]) => owner.supersede(scope))
   }
@@ -382,6 +391,62 @@ const request = (sessionId = 's1'): AcpPromptRequest => ({
 })
 
 describe('AcpPromptTurnWorkflow', () => {
+  it('keeps a prepared resource snapshot through provider dispatch and removes it at terminal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acp-workflow-snapshot-'))
+    const snapshotPath = join(root, 'snapshot.txt')
+    await writeFile(snapshotPath, 'verified bytes')
+    const providerPrompt = vi.fn(async (content) => {
+      await expect(access(snapshotPath)).resolves.toBeUndefined()
+      expect(content).toEqual([
+        expect.objectContaining({ type: 'resource_link', uri: pathToFileURL(snapshotPath).href })
+      ])
+    })
+    const harness = createHarness({
+      execute: async (input) => {
+        expect(await input.beforeDispatch()).toBe('active')
+        await input.session.prompt(input.content)
+        await input.onAccepted()
+        input.captureStop()
+        return {
+          kind: 'stopped',
+          response: { stopReason: 'end_turn' },
+          facts: {}
+        }
+      },
+      finalize: (handles, outcome) => new AcpPromptOutcomeFinalizer().finalize(handles, outcome)
+    })
+    harness.setSession({
+      sessionId: 'provider-2',
+      prompt: providerPrompt,
+      nextUpdate: vi.fn()
+    } as unknown as ActiveSession)
+    Object.assign(harness.prepared, {
+      content: [
+        {
+          type: 'resource_link',
+          uri: pathToFileURL(snapshotPath).href,
+          name: 'notes.txt',
+          mimeType: 'text/plain'
+        }
+      ]
+    })
+    vi.mocked(harness.prepared.close).mockImplementation(() =>
+      rmSync(root, { recursive: true, force: true })
+    )
+    Object.assign(harness.context, { captureTerminal: vi.fn(() => undefined) })
+
+    try {
+      await expect(harness.workflow.run(request(), { kind: 'user' })).resolves.toEqual({
+        stopReason: 'end_turn'
+      })
+      expect(providerPrompt).toHaveBeenCalledOnce()
+      await expect(readFile(snapshotPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(harness.prepared.close).toHaveBeenCalledOnce()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('binds referenced Session ids to the prompt reservation', async () => {
     const harness = createHarness()
 
@@ -490,6 +555,84 @@ describe('AcpPromptTurnWorkflow', () => {
       'in_progress',
       'completed'
     ])
+  })
+
+  it('awaits the admitted callback after interaction activation and before prompt start', async () => {
+    const harness = createHarness()
+    const callbackEntered = deferred<void>()
+    const releaseCallback = deferred<void>()
+    const onPromptAdmitted = vi.fn(async (): Promise<AcpPromptRequest['provenanceContext']> => {
+      harness.journal.push('persist')
+      expect(harness.owner.current('s1')).toMatchObject({ kind: 'prompt' })
+      callbackEntered.resolve()
+      await releaseCallback.promise
+      return undefined
+    })
+
+    const turn = harness.workflow.run(request(), { kind: 'user' }, onPromptAdmitted)
+    await callbackEntered.promise
+
+    expect(harness.journal).toEqual([
+      'reserve',
+      'compaction:preempt',
+      'preflight',
+      'authorize',
+      'activate',
+      'admit',
+      'persist'
+    ])
+    expect(harness.executor).not.toHaveBeenCalled()
+
+    releaseCallback.resolve()
+    await expect(turn).resolves.toEqual({ stopReason: 'end_turn' })
+    expect(harness.journal.indexOf('persist')).toBeLessThan(harness.journal.indexOf('start'))
+    expect(harness.journal.indexOf('persist')).toBeLessThan(harness.journal.indexOf('execute'))
+  })
+
+  it('uses provenance returned by prompt admission for the provider turn', async () => {
+    let activeInteractionProvenance: AcpPromptRequest['provenanceContext']
+    const harness = createHarness({
+      onPromptStarted: () => {
+        const current = harness.owner.current('s1')
+        activeInteractionProvenance =
+          current?.kind === 'prompt' ? current.provenanceContext : undefined
+      }
+    })
+    const admittedProvenance = {
+      promptMessageId: 'message-1',
+      rootFrameId: 'root-frame-2',
+      agentFrameId: 'agent-frame-2',
+      messageBranchId: 'branch-2',
+      runtimeSegmentId: 'runtime-segment-2'
+    }
+    const onPromptAdmitted = async (): Promise<AcpPromptRequest['provenanceContext']> =>
+      admittedProvenance
+
+    await expect(
+      harness.workflow.run(request(), { kind: 'user' }, onPromptAdmitted)
+    ).resolves.toEqual({ stopReason: 'end_turn' })
+
+    expect(harness.artifacts.open).toHaveBeenCalledWith(
+      's1',
+      expect.any(String),
+      admittedProvenance
+    )
+    expect(activeInteractionProvenance).toEqual(admittedProvenance)
+  })
+
+  it('releases prompt ownership when the admitted callback rejects', async () => {
+    const harness = createHarness()
+    const failure = new Error('Session persistence failed')
+
+    await expect(
+      harness.workflow.run(request(), { kind: 'user' }, async () => {
+        throw failure
+      })
+    ).rejects.toBe(failure)
+
+    expect(harness.owner.current('s1')).toBeUndefined()
+    expect(harness.executor).not.toHaveBeenCalled()
+    expect(harness.journal).not.toContain('start')
   })
 
   it('activates a framework-owned current Session before provider dispatch', async () => {
@@ -669,7 +812,8 @@ describe('AcpPromptTurnWorkflow', () => {
     const authorization = deferred<TurnSkillHandle>()
     const staleSkill = skillHandle()
     const harness = createHarness({ authorize: () => authorization.promise })
-    const stale = harness.workflow.run(request(), { kind: 'user' })
+    const onPromptAdmitted = vi.fn(async () => undefined)
+    const stale = harness.workflow.run(request(), { kind: 'user' }, onPromptAdmitted)
     await vi.waitFor(() => expect(harness.authorize).toHaveBeenCalledOnce())
     const staleReservation = harness.interactions.reservePrompt.mock.results[0].value
     const replacement = harness.owner.activatePrompt(
@@ -682,6 +826,7 @@ describe('AcpPromptTurnWorkflow', () => {
     expect(staleSkill.close).toHaveBeenCalledWith('failed')
     expect(harness.interactions.release).toHaveBeenCalledWith(staleReservation)
     expect(harness.owner.current('s1')).toBe(replacement)
+    expect(onPromptAdmitted).not.toHaveBeenCalled()
     expect(harness.preparation).not.toHaveBeenCalled()
     expect(harness.finalizer).not.toHaveBeenCalled()
   })

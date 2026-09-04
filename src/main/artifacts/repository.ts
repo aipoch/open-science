@@ -1,12 +1,10 @@
 import type {
   ArtifactFile,
-  ArtifactPreviewResult,
   ArtifactSourceFileObservation,
   ListPendingRunArtifactsRequest,
   ListProjectMessageArtifactsRequest,
   MovePendingRunArtifactsRequest,
   OpenArtifactFileRequest,
-  ReadArtifactPreviewRequest,
   WritePendingArtifactFileRequest
 } from '../../shared/artifacts'
 import { ArtifactCompatibilityOwner } from './compatibility-owner'
@@ -131,13 +129,6 @@ class ArtifactRepository {
     return this.publicationOwner.reconcilePendingArtifactPaths(request)
   }
 
-  async listProjectArtifacts(
-    projectId: string,
-    activeRunIds: ReadonlySet<string> = new Set()
-  ): Promise<ArtifactFile[]> {
-    return this.compatibilityOwner.listProjectArtifacts(projectId, activeRunIds)
-  }
-
   async listPendingRunPublications(projectId: string): Promise<PendingArtifactRunPublication[]> {
     return this.publicationOwner.listPendingRunPublications(projectId)
   }
@@ -152,12 +143,6 @@ class ArtifactRepository {
     path: string
   ): Promise<string> {
     return this.compatibilityOwner.resolveSessionArtifactFilePath(projectId, sessionId, path)
-  }
-
-  async readManagedFilePreview(
-    request: ReadArtifactPreviewRequest
-  ): Promise<ArtifactPreviewResult> {
-    return this.compatibilityOwner.readManagedFilePreview(request)
   }
 
   async findRunFinalizationMarker(

@@ -9,6 +9,8 @@ export const TASK_EVENT_STREAM_PROTOCOL_VERSION = 1 as const
 
 export type TaskRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 
+export type TaskRunFailureCode = 'process_restarted'
+
 export type TaskRunProgressPhase =
   | 'accepted'
   | 'session-ready'
@@ -80,6 +82,7 @@ export type TaskRun = {
   completedAt?: number
   output?: string
   error?: string
+  failureCode?: TaskRunFailureCode
   artifacts: ArtifactFile[]
   attention?: TaskRunAttention
   review?: TaskRunReview
@@ -96,6 +99,8 @@ export type TaskSessionSummary = {
   autoReviewEnabled: boolean
   specialistId?: string
   delegationPolicy: DelegationPolicy
+  pinned: boolean
+  archivedAt?: number
   createdAt: number
   updatedAt: number
   output?: string
@@ -131,6 +136,8 @@ export type TaskApiErrorCode =
   | 'project_conflict'
   | 'session_not_found'
   | 'session_busy'
+  | 'session_archived'
+  | 'project_archived'
   | 'run_not_found'
   | 'artifact_not_found'
   | 'specialist_not_found'

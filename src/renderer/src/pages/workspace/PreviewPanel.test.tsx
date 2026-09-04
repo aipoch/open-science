@@ -54,11 +54,14 @@ const { PreviewPanel } = await import('./PreviewPanel')
 const createFileItem = (overrides: Partial<PreviewFileItem>): PreviewFileItem => ({
   id: 'item-1',
   sessionId: 'session-1',
+  projectId: 'default',
+  managedFileId: 'item-1',
   title: 'file-1.png',
   type: 'file',
   path: '/workspace/file-1.png',
   name: 'file-1.png',
   format: 'image',
+  source: 'artifact',
   ...overrides
 })
 
@@ -91,6 +94,7 @@ describe('PreviewPanel', () => {
     releaseSourcePreview = vi.fn()
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
+      managedFileVersions: {},
       sourcePreview: {
         release: releaseSourcePreview,
         onLoadState: (listener: (state: Record<string, unknown>) => void) => {
@@ -880,7 +884,8 @@ describe('PreviewPanel', () => {
         title: 'upload.png',
         name: 'upload.png',
         path: '/Users/example/.open-science/uploads/default-project/session-1/upload.png',
-        source: 'upload'
+        source: 'upload',
+        managedFileId: 'upload-1'
       })
     )
 
@@ -899,7 +904,8 @@ describe('PreviewPanel', () => {
     })
     expect(window.api.saveManagedFile).toHaveBeenCalledWith({
       source: 'upload',
-      path: '/Users/example/.open-science/uploads/default-project/session-1/upload.png',
+      projectId: 'default',
+      fileId: 'upload-1',
       suggestedName: 'upload.png'
     })
   })
@@ -1111,6 +1117,7 @@ describe('PreviewPanel', () => {
         name,
         path: `/workspace/${name}`,
         artifactId: 'artifact-1',
+        projectId: 'project-1',
         sessionId: 'session-1'
       })
     )
@@ -1146,6 +1153,7 @@ describe('PreviewPanel', () => {
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-1' })
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
+      managedFileVersions: {},
       artifacts: {
         getLineage: vi.fn().mockResolvedValue({
           artifactId: 'artifact-1',
@@ -1260,7 +1268,13 @@ describe('PreviewPanel', () => {
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
     expect(linkPdfContext).toHaveBeenCalledWith(
       expect.objectContaining({
-        sources: [{ sourceKind: 'artifact-version', sourceVersionId: 'version-1' }]
+        sources: [
+          {
+            sourceKind: 'artifact-version',
+            sourceFileId: 'item-1',
+            sourceVersionId: 'version-1'
+          }
+        ]
       })
     )
     expect(focusListener).toHaveBeenCalled()
@@ -1318,6 +1332,7 @@ describe('PreviewPanel', () => {
     await vi.waitFor(() =>
       expect(onLinkReadingContext).toHaveBeenCalledWith({
         sourceKind: 'artifact-version',
+        sourceFileId: 'item-1',
         sourceVersionId: 'version-1'
       })
     )
@@ -1471,7 +1486,8 @@ describe('PreviewPanel', () => {
     })
     expect(window.api.saveManagedFile).toHaveBeenCalledWith({
       source: 'artifact',
-      path: '/workspace/file-1.png',
+      projectId: 'default',
+      fileId: 'item-1',
       suggestedName: 'file-1.png'
     })
   })
@@ -1482,6 +1498,7 @@ describe('PreviewPanel', () => {
     Object.assign(navigator, { clipboard: { writeText } })
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
+      managedFileVersions: {},
       uploads: { stageLocalPath }
     } as unknown as Window['api']
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(

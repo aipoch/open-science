@@ -3,8 +3,8 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/p
 import { basename, dirname, join } from 'node:path'
 
 import { defaultFileDurability } from './file-durability'
+import { retryFileReplacement } from './file-replacement'
 
-const FILE_REPLACEMENT_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const
 const fileOperations = new Map<string, Promise<void>>()
 
 type DurableJsonDirectoryEntry = {
@@ -14,6 +14,11 @@ type DurableJsonDirectoryEntry = {
 
 type DurableJsonFileStat = {
   mtimeMs: number
+  size: number
+}
+
+type DurableJsonReadOptions = {
+  maxBytes?: number
 }
 
 type DurableJsonWriteOptions = {
@@ -54,12 +59,6 @@ const DEFAULT_DEPENDENCIES: DurableJsonFileDependencies = {
   writeFile: (path, contents, options) => writeFile(path, contents, options)
 }
 
-const isRetryableFileReplacementError = (error: unknown): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  'code' in error &&
-  ['EPERM', 'EACCES', 'EBUSY'].includes(String(error.code))
-
 const isMissingFileError = (error: unknown): boolean =>
   typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT'
 
@@ -83,23 +82,6 @@ const runFileOperation = async <Result>(
   } finally {
     release()
     if (fileOperations.get(filePath) === tail) fileOperations.delete(filePath)
-  }
-}
-
-const renameWithRetry = async (
-  source: string,
-  destination: string,
-  dependencies: DurableJsonFileDependencies
-): Promise<void> => {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      await dependencies.rename(source, destination)
-      return
-    } catch (error) {
-      const delayMs = FILE_REPLACEMENT_RETRY_DELAYS_MS[attempt]
-      if (delayMs === undefined || !isRetryableFileReplacementError(error)) throw error
-      await dependencies.wait(delayMs)
-    }
   }
 }
 
@@ -127,7 +109,10 @@ export const writeDurableJsonFile = async (
         throw error
       }
       await dependencies.syncFile(temporaryPath)
-      await renameWithRetry(temporaryPath, filePath, dependencies)
+      await retryFileReplacement(
+        () => dependencies.rename(temporaryPath, filePath),
+        dependencies.wait
+      )
       await dependencies.syncDirectory(directory)
     } catch (error) {
       if (ownsTemporaryPath) {
@@ -231,11 +216,12 @@ const cleanupTemporaryCandidates = async (
 const assertNoRecoveryBarrier = async <Value>(
   candidates: readonly TemporaryCandidate[],
   decode: (contents: string) => Value,
-  dependencies: DurableJsonFileDependencies
+  dependencies: DurableJsonFileDependencies,
+  readContents: (path: string) => Promise<string> = dependencies.readFile
 ): Promise<void> => {
   for (const candidate of candidates) {
     try {
-      decode(await dependencies.readFile(candidate.path))
+      decode(await readContents(candidate.path))
     } catch (error) {
       if (error instanceof DurableJsonRecoveryBarrierError) throw error
     }
@@ -245,21 +231,35 @@ const assertNoRecoveryBarrier = async <Value>(
 export const readDurableJsonFile = async <Value>(
   filePath: string,
   decode: (contents: string) => Value,
-  dependencyOverrides: Partial<DurableJsonFileDependencies> = {}
+  dependencyOverrides: Partial<DurableJsonFileDependencies> = {},
+  options: DurableJsonReadOptions = {}
 ): Promise<DurableJsonReadResult<Value>> => {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
+  const readContents = async (path: string, recoveryCandidate = false): Promise<string> => {
+    if (options.maxBytes !== undefined) {
+      const { size } = await dependencies.stat(path)
+      if (size > options.maxBytes) {
+        const message = `${basename(path)} exceeds the ${options.maxBytes} byte read limit.`
+        if (recoveryCandidate) throw new DurableJsonRecoveryBarrierError(message)
+        throw new Error(message)
+      }
+    }
+    return dependencies.readFile(path)
+  }
   return runFileOperation(filePath, async () => {
     let primaryContents: string
     try {
-      primaryContents = await dependencies.readFile(filePath)
+      primaryContents = await readContents(filePath)
     } catch (error) {
       if (!isMissingFileError(error)) throw error
       const candidates = await listTemporaryCandidates(filePath, dependencies)
-      await assertNoRecoveryBarrier(candidates, decode, dependencies)
+      await assertNoRecoveryBarrier(candidates, decode, dependencies, (path) =>
+        readContents(path, true)
+      )
       for (const candidate of candidates) {
         let candidateContents: string
         try {
-          candidateContents = await dependencies.readFile(candidate.path)
+          candidateContents = await readContents(candidate.path, true)
         } catch (candidateReadError) {
           if (isMissingFileError(candidateReadError)) continue
           throw candidateReadError
@@ -274,7 +274,10 @@ export const readDurableJsonFile = async <Value>(
         }
 
         await dependencies.syncFile(candidate.path)
-        await renameWithRetry(candidate.path, filePath, dependencies)
+        await retryFileReplacement(
+          () => dependencies.rename(candidate.path, filePath),
+          dependencies.wait
+        )
         await dependencies.syncDirectory(dirname(filePath))
         await cleanupTemporaryCandidates(candidates, dependencies)
         return { status: 'found', value }
@@ -284,7 +287,9 @@ export const readDurableJsonFile = async <Value>(
 
     const value = decode(primaryContents)
     const candidates = await listTemporaryCandidates(filePath, dependencies)
-    await assertNoRecoveryBarrier(candidates, decode, dependencies)
+    await assertNoRecoveryBarrier(candidates, decode, dependencies, (path) =>
+      readContents(path, true)
+    )
     await cleanupTemporaryCandidates(candidates, dependencies)
     return { status: 'found', value }
   })

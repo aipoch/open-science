@@ -284,6 +284,9 @@ describe('Compute service architecture', () => {
       projectBarriers
     )
     const runtimeStart = source.indexOf('const jobPoller = createComputeJobRuntime', jobBarriers)
+    const projectRuntimeReady = source.indexOf(
+      'projectRuntimeQuiescenceRef.current = new ProjectRuntimeQuiescenceOwner'
+    )
     const backgroundRecovery = source.indexOf(
       'const projectDeletionRecovery = new ProjectDeletionRecoveryLoop',
       runtimeStart
@@ -311,7 +314,8 @@ describe('Compute service architecture', () => {
 
     expect(projectBarriers).toBeGreaterThan(-1)
     expect(jobBarriers).toBeGreaterThan(projectBarriers)
-    expect(runtimeStart).toBeGreaterThan(jobBarriers)
+    expect(projectRuntimeReady).toBeGreaterThan(jobBarriers)
+    expect(runtimeStart).toBeGreaterThan(projectRuntimeReady)
     expect(backgroundRecovery).toBeGreaterThan(runtimeStart)
     expect(projectOrphanRecovery).toBeGreaterThan(-1)
     expect(backgroundOrphanRecovery).toBeGreaterThan(backgroundRecovery)
@@ -324,12 +328,34 @@ describe('Compute service architecture', () => {
   it('gives Compute Job shutdown the transport cancellation budget', () => {
     const source = readSource(computePaths.mainIpc)
     const runtimeStart = source.indexOf('const jobPoller = createComputeJobRuntime')
-    const runtimeEnd = source.indexOf('const agentComputeService', runtimeStart)
+    const runtimeEnd = source.indexOf(
+      'const projectDeletionRecovery = new ProjectDeletionRecoveryLoop',
+      runtimeStart
+    )
     const runtimeRegistration = source.slice(runtimeStart, runtimeEnd)
 
     expect(runtimeStart).toBeGreaterThan(-1)
     expect(runtimeEnd).toBeGreaterThan(runtimeStart)
     expect(runtimeRegistration).toContain('disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS')
+  })
+
+  it('persists Session concurrency limits inside the data-root write boundary', () => {
+    const source = readSource(computePaths.mainIpc)
+    const persistenceStart = source.indexOf('const sessionLimitPersistence = {')
+    const persistenceEnd = source.indexOf(
+      'const computeIpcModule = createComputeIpcModule',
+      persistenceStart
+    )
+    const persistence = source.slice(persistenceStart, persistenceEnd)
+    const writeBoundary = persistence.indexOf('withDataRootWrite(')
+    const sessionMutation = persistence.indexOf(
+      'sessionPersistenceCoordinator.setSessionComputeConcurrencyLimit'
+    )
+
+    expect(persistenceStart).toBeGreaterThan(-1)
+    expect(persistenceEnd).toBeGreaterThan(persistenceStart)
+    expect(writeBoundary).toBeGreaterThan(-1)
+    expect(sessionMutation).toBeGreaterThan(writeBoundary)
   })
 
   it('awaits Compute Job barrier rollback when a new Project deletion aborts', () => {
@@ -487,7 +513,7 @@ describe('Compute service architecture', () => {
     const computeContracts = RENDERER_CONTRACT_CATALOG.filter(
       ({ channel }) => channel?.startsWith('compute:') === true
     )
-    expect(computeContracts).toHaveLength(36)
+    expect(computeContracts).toHaveLength(37)
     const remoteRestricted = computeContracts.filter(
       ({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub'
     )
@@ -495,6 +521,7 @@ describe('Compute service architecture', () => {
       'compute:change-authentication',
       'compute:create-password',
       'compute:download',
+      'compute:jobs:set-remote-cleanup',
       'compute:password-capability',
       'compute:reset-password',
       'compute:reveal-in-folder'

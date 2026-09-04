@@ -7,11 +7,15 @@ import {
 } from './application-command-router'
 import type { ApplicationEventMap, ApplicationEventPublisher } from './application-events'
 import type { ArtifactHandlers } from './artifacts/ipc'
-import { ArtifactOwnershipPersistenceRaceError } from './artifacts/provenance-repository'
+import {
+  ArtifactFinalizationProofError,
+  ArtifactOwnershipPersistenceRaceError
+} from './artifacts/provenance-repository'
 import type { ProjectFilesHandlers } from './project-files/ipc'
 import type { ProjectHandlers } from './projects/ipc'
 import type { SessionPersistenceHandlers } from './session-persistence/ipc'
 import type { ManagedPreviewOwnerRegistry } from './managed-preview-ipc'
+import { canMutateSessionDelegationPolicy } from './caller-context'
 
 import {
   ApplicationCommandError,
@@ -19,7 +23,10 @@ import {
 } from '../shared/application-command-contract'
 import * as Artifacts from '../shared/artifacts'
 import type * as ConversationExport from '../shared/conversation-export'
-import { LIFECYCLE_CHANNELS } from '../shared/lifecycle-events'
+import {
+  LIFECYCLE_CHANNELS,
+  MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
+} from '../shared/lifecycle-events'
 import type * as PreviewResources from '../shared/preview-resources'
 import type * as PreviewState from '../shared/preview-state'
 import * as Projects from '../shared/projects'
@@ -194,7 +201,6 @@ const dataContentApplicationCommands = Object.freeze({
     'getVersionProvenance'
   ),
   artifactGetVersionReview: artifactCommand('artifacts:get-version-review', 'getVersionReview'),
-  artifactListProjectFiles: artifactCommand('artifacts:list-project-files', 'listProjectFiles'),
   artifactOpenFile: artifactCommand('artifacts:open-file', 'openFile'),
   artifactReadPreview: artifactCommand('artifacts:read-preview', 'readPreview'),
   artifactReconcilePending: artifactCommand(
@@ -233,6 +239,7 @@ const dataContentApplicationCommands = Object.freeze({
   ),
   projectFilesListFiles: projectFilesCommand('project-files:list-files', 'listFiles'),
   projectFilesRepairIndex: projectFilesCommand('project-files:repair-index', 'repairIndex'),
+  projectFilesResolveFile: projectFilesCommand('project-files:resolve-file', 'resolveFile'),
   projectFilesSearchArtifacts: projectFilesCommand(
     'project-files:search-artifacts',
     'searchArtifacts'
@@ -261,6 +268,16 @@ const dataContentApplicationCommands = Object.freeze({
     'projects:list',
     'list',
     Projects.projectApplicationCommandContracts.list
+  ),
+  projectListDeletionCleanup: projectCommand(
+    'projects:list-deletion-cleanup',
+    'listDeletionCleanup',
+    Projects.projectApplicationCommandContracts.listDeletionCleanup
+  ),
+  projectRetryDeletionCleanup: projectCommand(
+    'projects:retry-deletion-cleanup',
+    'retryDeletionCleanup',
+    Projects.projectApplicationCommandContracts.retryDeletionCleanup
   ),
   projectUpdate: projectCommand(
     'projects:update',
@@ -295,8 +312,16 @@ const dataContentApplicationCommands = Object.freeze({
   sessionLoadAll: sessionCommand('sessions:load-all', 'loadAll'),
   sessionLoadOne: sessionCommand('sessions:load-one', 'loadOne'),
   sessionLoadUsage: sessionCommand('sessions:load-usage', 'loadUsage'),
-  sessionSaveManifest: sessionCommand('sessions:save-manifest', 'saveManifest'),
-  sessionUpdateArchive: sessionCommand('sessions:update-archive', 'updateArchive'),
+  sessionSaveManifest: sessionCommand(
+    'sessions:save-manifest',
+    'saveManifest',
+    SessionPersistence.sessionApplicationCommandContracts.saveManifest
+  ),
+  sessionUpdateArchive: sessionCommand(
+    'sessions:update-archive',
+    'updateArchive',
+    SessionPersistence.sessionApplicationCommandContracts.updateArchive
+  ),
   sessionUnlinkPdfContext: sessionCommand(
     'sessions:unlink-pdf-context',
     'unlinkPdfContext',
@@ -309,12 +334,15 @@ const dataContentApplicationCommands = Object.freeze({
       options?: SessionPersistence.SaveSessionOptions
     ],
     SessionPersistence.PersistedChatSession
-  >('sessions:save-session'),
+  >('sessions:save-session', SessionPersistence.sessionApplicationCommandContracts.save),
   sessionSetDelegationPolicy: defineApplicationCommand<
     'sessions:set-delegation-policy',
     readonly [projectId: string, sessionId: string, policy: SessionPersistence.DelegationPolicy],
     SessionPersistence.PersistedChatSession
-  >('sessions:set-delegation-policy'),
+  >(
+    'sessions:set-delegation-policy',
+    SessionPersistence.sessionApplicationCommandContracts.setDelegationPolicy
+  ),
   uploadAbortTransfer: uploadCommand('uploads:abort-transfer', 'abortTransfer'),
   uploadAppendTransfer: uploadCommand('uploads:append-transfer', 'appendTransfer'),
   uploadBeginTransfer: uploadCommand('uploads:begin-transfer', 'beginTransfer'),
@@ -342,7 +370,6 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.artifactGetVersionMessages,
     dataContentApplicationCommands.artifactGetVersionProvenance,
     dataContentApplicationCommands.artifactGetVersionReview,
-    dataContentApplicationCommands.artifactListProjectFiles,
     dataContentApplicationCommands.artifactOpenFile,
     dataContentApplicationCommands.artifactReadPreview,
     dataContentApplicationCommands.artifactReconcilePending,
@@ -366,6 +393,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.projectFilesListArtifactGroups,
     dataContentApplicationCommands.projectFilesListFiles,
     dataContentApplicationCommands.projectFilesRepairIndex,
+    dataContentApplicationCommands.projectFilesResolveFile,
     dataContentApplicationCommands.projectFilesSearchArtifacts
   ] as const),
   defineApplicationCommandGroup('projects', [
@@ -374,6 +402,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.projectDelete,
     dataContentApplicationCommands.projectGet,
     dataContentApplicationCommands.projectList,
+    dataContentApplicationCommands.projectListDeletionCleanup,
+    dataContentApplicationCommands.projectRetryDeletionCleanup,
     dataContentApplicationCommands.projectUpdate
   ] as const),
   defineApplicationCommandGroup('sessions', [
@@ -425,18 +455,13 @@ const assertElectronCaller = (
   }
 }
 
-const assertTaskAutomationCaller = (
+const assertSessionDelegationPolicyCaller = (
   invocation: ApplicationInvocation<readonly unknown[]>,
   name: string
 ): void => {
   const { callerContext } = invocation
-  if (
-    !callerContext.isAuthorizationCurrent() ||
-    callerContext.surface !== 'task' ||
-    callerContext.principalKind !== 'automation' ||
-    callerContext.actionOrigin !== 'automation'
-  ) {
-    throw new Error(`Channel only available from current Task automation: ${name}`)
+  if (!canMutateSessionDelegationPolicy(callerContext)) {
+    throw new Error(`Channel only available from current human or Task automation: ${name}`)
   }
 }
 
@@ -471,12 +496,20 @@ const registerDataContentApplicationCommands = (
             artifacts: await dependencies.artifacts.finalizeRunArtifacts(args[0])
           }
         } catch (error) {
-          if (!(error instanceof ArtifactOwnershipPersistenceRaceError)) throw error
-          return {
-            ok: false as const,
-            code: Artifacts.ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
-            message: error.message
+          if (error instanceof ArtifactOwnershipPersistenceRaceError) {
+            return {
+              ok: false as const,
+              code: Artifacts.ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
+              message: error.message
+            }
           }
+          if (error instanceof ArtifactFinalizationProofError) {
+            throw new ApplicationCommandError(
+              'command-failed',
+              'Artifact finalization was rejected because its ownership no longer matches the saved Session.'
+            )
+          }
+          throw error
         }
       },
       'artifacts:generate-code-reconstruction': ({ args }) =>
@@ -492,8 +525,6 @@ const registerDataContentApplicationCommands = (
         dependencies.artifacts.getVersionProvenance(args[0]),
       'artifacts:get-version-review': ({ args }) =>
         dependencies.artifacts.getVersionReview(args[0]),
-      'artifacts:list-project-files': ({ args }) =>
-        dependencies.artifacts.listProjectFiles(args[0]),
       'artifacts:open-file': (invocation) => {
         assertLocalCaller(invocation, dataContentApplicationCommands.artifactOpenFile.name)
         return dependencies.artifacts.openFile(invocation.args[0])
@@ -526,6 +557,7 @@ const registerDataContentApplicationCommands = (
         dependencies.projectFiles.listArtifactGroups(args[0]),
       'project-files:list-files': ({ args }) => dependencies.projectFiles.listFiles(args[0]),
       'project-files:repair-index': ({ args }) => dependencies.projectFiles.repairIndex(args[0]),
+      'project-files:resolve-file': ({ args }) => dependencies.projectFiles.resolveFile(args[0]),
       'project-files:search-artifacts': ({ args }) =>
         dependencies.projectFiles.searchArtifacts(args[0])
     })
@@ -540,6 +572,9 @@ const registerDataContentApplicationCommands = (
       'projects:get': ({ args }) =>
         dependencies.withDataRootWrite(() => dependencies.projects.get(args[0])),
       'projects:list': () => dependencies.withDataRootWrite(() => dependencies.projects.list()),
+      'projects:list-deletion-cleanup': () =>
+        dependencies.withDataRootWrite(() => dependencies.projects.listDeletionCleanup()),
+      'projects:retry-deletion-cleanup': () => dependencies.projects.retryDeletionCleanup(),
       'projects:update-archive': ({ args }) =>
         dependencies.withDataRootWrite(async () => {
           const project = await dependencies.projects.updateArchive(args[0])
@@ -566,6 +601,12 @@ const registerDataContentApplicationCommands = (
           try {
             return await dependencies.sessions.editDetails(invocation.args[0])
           } catch (error) {
+            if (SessionPersistence.isSessionDetailsConflictError(error)) {
+              throw new ApplicationCommandError(
+                SessionPersistence.SESSION_DETAILS_CONFLICT_ERROR_CODE,
+                error instanceof Error ? error.message : 'Session details changed elsewhere.'
+              )
+            }
             if (SessionPersistence.isSessionRevisionConflictError(error)) {
               throw new ApplicationCommandError(
                 SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
@@ -640,7 +681,12 @@ const registerDataContentApplicationCommands = (
         return dependencies.withDataRootWrite(async () => {
           let result: Awaited<ReturnType<SessionPersistenceHandlers['saveSession']>>
           try {
-            result = await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1])
+            result =
+              invocation.callerContext.surface === 'task'
+                ? await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1], {
+                    taskRunCommit: true
+                  })
+                : await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1])
           } catch (error) {
             if (SessionPersistence.isSessionRevisionConflictError(error)) {
               throw new ApplicationCommandError(
@@ -659,11 +705,10 @@ const registerDataContentApplicationCommands = (
         })
       },
       'sessions:set-delegation-policy': (invocation) => {
-        assertTaskAutomationCaller(
+        assertSessionDelegationPolicyCaller(
           invocation,
           dataContentApplicationCommands.sessionSetDelegationPolicy.name
         )
-        const originClientId = invocation.callerContext.lifecycleClientId
         return dependencies.withDataRootWrite(async () => {
           const session = await dependencies.sessions.setDelegationPolicy(
             invocation.args[0],
@@ -672,7 +717,7 @@ const registerDataContentApplicationCommands = (
           )
           publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
             session,
-            originClientId
+            originClientId: MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
           })
           return session
         })

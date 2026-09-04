@@ -298,6 +298,61 @@ class ComputeJobOperationRepository {
     })
   }
 
+  async fulfillCancellationAfterRemoteCleanup(
+    jobId: string,
+    scope: ComputeJobOperationScope,
+    now: Date
+  ): Promise<boolean> {
+    const client = await this.getClient()
+    return client.$transaction(async (transaction) => {
+      const job = await transaction.computeJob.findFirst({
+        where: {
+          id: jobId,
+          projectId: scope.projectId,
+          sessionId: scope.sessionId,
+          providerId: scope.providerId
+        },
+        select: { status: true }
+      })
+      if (!job) throw new Error('Compute Job cleanup scope does not match.')
+      const operation = await transaction.computeJobOperation.findUnique({
+        where: { jobId_kind: { jobId, kind: 'cancel' } }
+      })
+      if (!operation || operation.phase !== 'active') {
+        if ((ACTIVE_STATUSES as readonly string[]).includes(job.status)) {
+          throw new Error('Compute Job cancellation is not active.')
+        }
+        return false
+      }
+      if ((ACTIVE_STATUSES as readonly string[]).includes(job.status)) {
+        await transaction.computeJob.update({
+          where: { id: jobId },
+          data: { status: 'failed', finishedAt: now }
+        })
+      }
+      const settled = await transaction.computeJobOperation.updateMany({
+        where: {
+          id: operation.id,
+          revision: operation.revision,
+          phase: 'active',
+          claimToken: null
+        },
+        data: {
+          phase: 'settled',
+          outcome: 'fulfilled',
+          revision: { increment: 1 },
+          eligibleAt: null,
+          claimToken: null,
+          claimExpiresAt: null,
+          settledAt: now,
+          updatedAt: now
+        }
+      })
+      if (settled.count !== 1) throw new Error('Cancellation fulfillment lost its ownership claim')
+      return true
+    })
+  }
+
   async retry(claim: ClaimedComputeJobOperation, now: Date, eligibleAt: Date): Promise<boolean> {
     const client = await this.getClient()
     const data: Prisma.ComputeJobOperationUpdateManyMutationInput = {

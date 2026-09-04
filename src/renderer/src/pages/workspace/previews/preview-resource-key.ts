@@ -5,6 +5,8 @@ type PreviewResourceIdentity = {
   sessionId?: string
   source?: ManagedPreviewSource
   path: string
+  managedFileId?: string
+  selectedVersionId?: string
   mimeType?: string
   size?: number
   mtimeMs?: number
@@ -17,6 +19,8 @@ const createPreviewResourceKey = (identity: PreviewResourceIdentity): string =>
     identity.sessionId ?? null,
     identity.source ?? 'artifact',
     identity.path,
+    identity.managedFileId ?? null,
+    identity.selectedVersionId ?? null,
     identity.mimeType ?? null,
     identity.size ?? null,
     identity.mtimeMs ?? null
