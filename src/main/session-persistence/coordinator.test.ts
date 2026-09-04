@@ -56,6 +56,16 @@ const createSession = (overrides: Partial<PersistedChatSession> = {}): Persisted
   ...overrides
 })
 
+const createUserMessage = (id: string, createdAt: number): PersistedChatMessage => ({
+  id,
+  role: 'user',
+  content: id,
+  status: 'complete',
+  eventIds: [],
+  createdAt,
+  updatedAt: createdAt
+})
+
 const createIdleSessionWithRunningChild = (originMessageId = 'root-prompt'): PersistedChatSession =>
   createSession({
     conversationGraph: {
@@ -784,6 +794,7 @@ describe('SessionPersistenceCoordinator', () => {
   it('persists blocked Plan feedback as a standard user Message without changing Plan authority', async () => {
     let durable = createSession({
       status: 'waiting-plan-approval',
+      messages: [createUserMessage('interaction-1', 1)],
       runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
     })
     const repository = createSessionRepository({
@@ -807,7 +818,10 @@ describe('SessionPersistenceCoordinator', () => {
     })
 
     expect(beforePersist).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'session-1', messages: [] })
+      expect.objectContaining({
+        id: 'session-1',
+        messages: [expect.objectContaining({ id: 'interaction-1' })]
+      })
     )
     expect(durable.messages).toContainEqual(
       expect.objectContaining({
@@ -828,6 +842,7 @@ describe('SessionPersistenceCoordinator', () => {
   it('atomically persists Plan feedback and its neutral review marker in one Session save', async () => {
     let durable = createSession({
       status: 'waiting-plan-approval',
+      messages: [createUserMessage('interaction-1', 1)],
       runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
     })
     const repository = createSessionRepository({
@@ -883,7 +898,9 @@ describe('SessionPersistenceCoordinator', () => {
     expect(publishRuntimeContextSession).toHaveBeenCalledOnce()
     expect(publishRuntimeContextSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        messages: [expect.objectContaining({ content: 'Split the analysis by cohort.' })],
+        messages: expect.arrayContaining([
+          expect.objectContaining({ content: 'Split the analysis by cohort.' })
+        ]),
         runtimeContext: expect.objectContaining({ revision: 3 })
       }),
       'runtime-context'
@@ -944,7 +961,7 @@ describe('SessionPersistenceCoordinator', () => {
   })
 
   it('publishes the parent Session after every Side chat mutation', async () => {
-    let durable = createSession()
+    let durable = createSession({ messages: [createUserMessage('main-prompt-1', 1)] })
     const repository = createSessionRepository({
       loadSessionWithDiagnostics: vi.fn(async () => ({
         status: 'found' as const,
@@ -1004,6 +1021,7 @@ describe('SessionPersistenceCoordinator', () => {
 
   it('keeps durable relays deliverable after clearing their producer Side chat', async () => {
     let durable = createSession({
+      messages: [createUserMessage('main-prompt-1', 1), createUserMessage('main-prompt-2', 2)],
       runtimeContext: {
         version: 1,
         revision: 5,

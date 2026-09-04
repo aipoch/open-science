@@ -21571,7 +21571,7 @@ describe('ACP runtime session management', () => {
         {
           id: 'agent-frame-1',
           parentFrameId: 'root-frame-1',
-          originMessageId: 'message-parent',
+          originMessageId: 'root-origin',
           originBindingState: 'validated' as const,
           kind: 'compatibility' as const,
           status: 'completed' as const,
@@ -21584,6 +21584,7 @@ describe('ACP runtime session management', () => {
         {
           id: 'root-branch',
           agentFrameId: 'root-frame-1',
+          headMessageId: 'root-origin',
           createdAt,
           updatedAt: createdAt
         },
@@ -21605,6 +21606,17 @@ describe('ACP runtime session management', () => {
         }
       ],
       messages: [
+        {
+          id: 'root-origin',
+          role: 'user' as const,
+          content: 'Delegate the restored task',
+          status: 'complete' as const,
+          eventIds: [],
+          createdAt: createdAt - 1,
+          updatedAt: createdAt - 1,
+          agentFrameId: 'root-frame-1',
+          introducedOnBranchId: 'root-branch'
+        },
         {
           id: 'message-parent',
           role: 'user' as const,
@@ -21663,7 +21675,9 @@ describe('ACP runtime session management', () => {
       title: 'Restored session',
       cwd: '/workspace',
       status: 'idle',
-      messages: conversationGraph.messages.map(projectConversationMessage),
+      messages: conversationGraph.messages
+        .filter((message) => message.agentFrameId === conversationGraph.activeFrameId)
+        .map(projectConversationMessage),
       conversationGraph,
       createdAt,
       updatedAt: createdAt + 2
