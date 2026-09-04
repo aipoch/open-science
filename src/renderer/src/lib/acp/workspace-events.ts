@@ -314,28 +314,39 @@ const finalizeArtifactEvent = async (
   )
   const artifactProjectId = session?.projectId ?? event.artifacts[0]?.projectId
   if (appliedMessage && artifactProjectId && artifactVersionIds.length > 0) {
-    const reconcile =
-      dependencies.reconcilePendingArtifacts ?? window.api.artifacts.reconcilePendingArtifacts
-    const result = await reconcile({
-      projectId: artifactProjectId,
-      sessionId: event.sessionId,
-      messageId: appliedMessage.id,
-      pendingPaths: event.artifacts
-        .map((artifact) => artifact.path)
-        .filter((path) => path.split(/[\\/]/).includes('.pending')),
-      artifactVersionIds
-    })
-    if (!Array.isArray(result)) {
-      const error = new Error(result.message) as Error & { code: typeof result.code }
-      error.code = result.code
+    try {
+      const reconcile =
+        dependencies.reconcilePendingArtifacts ?? window.api.artifacts.reconcilePendingArtifacts
+      const result = await reconcile({
+        projectId: artifactProjectId,
+        sessionId: event.sessionId,
+        messageId: appliedMessage.id,
+        pendingPaths: event.artifacts
+          .map((artifact) => artifact.path)
+          .filter((path) => path.split(/[\\/]/).includes('.pending')),
+        artifactVersionIds
+      })
+      if (!Array.isArray(result)) {
+        const error = new Error(result.message) as Error & { code: typeof result.code }
+        error.code = result.code
+        throw error
+      }
+      const reconciledVersionIds = new Set(
+        result.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
+      )
+      if (artifactVersionIds.every((versionId) => reconciledVersionIds.has(versionId))) {
+        useSessionStore.getState().clearArtifactError(event.sessionId)
+        return true
+      }
+    } catch (error) {
+      useSessionStore
+        .getState()
+        .recordArtifactError(
+          event.sessionId,
+          getErrorText(error),
+          !isArtifactFinalizationProofError(error)
+        )
       throw error
-    }
-    const reconciledVersionIds = new Set(
-      result.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
-    )
-    if (artifactVersionIds.every((versionId) => reconciledVersionIds.has(versionId))) {
-      useSessionStore.getState().clearArtifactError(event.sessionId)
-      return true
     }
   }
   const eventArtifactsAreFinalized = event.artifacts.every((pendingArtifact) =>

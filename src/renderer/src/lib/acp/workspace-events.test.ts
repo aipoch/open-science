@@ -3677,6 +3677,46 @@ describe('workspace runtime events', () => {
     expect(reconcilePendingArtifacts).toHaveBeenCalledOnce()
     expect(finalizeRunArtifacts).not.toHaveBeenCalled()
   })
+
+  it('records native artifact reconciliation failures for retry', async () => {
+    const nativePendingArtifact = createArtifactFile({
+      id: 'native-version-reconcile-failure',
+      artifactId: 'native-artifact-reconcile-failure',
+      versionId: 'native-version-reconcile-failure',
+      versionNumber: 1,
+      path: '/Users/example/.open-science/managed/native-version-reconcile-failure/result.txt'
+    })
+    useSessionStore.getState().attachRunArtifacts({
+      sessionId: 'transport-session-1',
+      runId: 'run-native-reconcile-failure',
+      eventId: 'native-reconcile-failure-event',
+      artifacts: [nativePendingArtifact]
+    })
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'stop-before-native-reconcile-failure', kind: 'stop' })
+    )
+
+    await expect(
+      applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'native-reconcile-failure-event',
+          kind: 'artifact',
+          runId: 'run-native-reconcile-failure',
+          artifactClaimId: 'native-reconcile-failure-claim',
+          artifacts: [nativePendingArtifact]
+        }),
+        {
+          reconcilePendingArtifacts: vi.fn().mockRejectedValue(new Error('reconcile failed')),
+          saveSession: vi.fn().mockResolvedValue(undefined)
+        }
+      )
+    ).rejects.toThrow('reconcile failed')
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: expect.stringContaining('Generated file finalization failed')
+    })
+  })
 })
 
 describe('loop guard: suppressNextAutoReview', () => {
