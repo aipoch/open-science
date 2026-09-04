@@ -210,6 +210,45 @@ describe('artifact finalization startup recovery', () => {
     })
   })
 
+  it('repairs a missing ready Message snapshot after restoring its Session artifact attachment', async () => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const prepared = await prepareRecovery(compatibility)
+    const originalSession = (await sessions.loadSession(PROJECT_ID, SESSION_ID))!
+    const snapshots = new ProvenanceMessageSnapshotRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      snapshots,
+      undefined,
+      prepared.provenance
+    )
+
+    await coordinator.loadAll()
+    const snapshot = await client.artifactMessageSnapshot.findFirstOrThrow({
+      where: { projectId: PROJECT_ID, sessionId: SESSION_ID, state: 'ready' }
+    })
+    await rm(join(storageRoot, ...snapshot.storageKey.split('/')))
+    // Model a crash after the snapshot and Artifact Version commit but before recovered artifact
+    // metadata reached Session JSON.
+    await sessions.saveSession(originalSession)
+
+    const recovered = await coordinator.loadAll()
+
+    expect(recovered.sessions[0].messages[1].artifactIds).toEqual([prepared.version.versionId])
+    await expect(
+      prepared.provenance.getVersionMessages({
+        projectId: PROJECT_ID,
+        appSessionId: SESSION_ID,
+        artifactId: prepared.version.artifactId,
+        versionId: prepared.version.versionId
+      })
+    ).resolves.toMatchObject({ messages: { state: 'available' } })
+  })
+
   it('moves pending compatibility bytes when a bound marker survived without its file move', async () => {
     const compatibility = new ArtifactRepository(storageRoot)
     const { provenance, context, version } = await prepareRecovery(compatibility)
