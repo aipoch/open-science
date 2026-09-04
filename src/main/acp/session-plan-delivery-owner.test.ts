@@ -102,7 +102,7 @@ describe('Session Plan delivery owner', () => {
     expect(fixture.context().plan?.delivery?.state).toBe('delivering')
   })
 
-  it('rearms a claimed delivery only when dispatch is known not to have started', async () => {
+  it('rearms a claimed delivery before provider acceptance is durably observed', async () => {
     const fixture = createSessions({
       commandId: 'delivery-1',
       kind: 'approved-plan',
@@ -112,9 +112,7 @@ describe('Session Plan delivery owner', () => {
     })
     const owner = new SessionPlanDeliveryOwner(fixture.sessions)
 
-    await expect(owner.rearmUndispatched('project-1', 'session-1', 'delivery-1')).resolves.toBe(
-      true
-    )
+    await expect(owner.rearmUnaccepted('project-1', 'session-1', 'delivery-1')).resolves.toBe(true)
 
     expect(fixture.context().plan?.delivery).toMatchObject({
       commandId: 'delivery-1',
@@ -127,7 +125,7 @@ describe('Session Plan delivery owner', () => {
     const fixture = createSessions({
       commandId: 'delivery-1',
       kind: 'approved-plan',
-      state: 'delivering',
+      state: 'accepted',
       originatingPromptMessageId: 'prompt-1',
       createdAt: 42
     })
@@ -138,6 +136,24 @@ describe('Session Plan delivery owner', () => {
     expect(fixture.context().plan).not.toHaveProperty('delivery')
     expect(fixture.patch.mock.calls[0]?.[0].patch.plan).not.toHaveProperty('delivery')
     expect(fixture.patch.mock.calls[0]?.[0]).not.toHaveProperty('sessionStatus')
+  })
+
+  it('records provider acceptance before clearing a delivery receipt', async () => {
+    const fixture = createSessions({
+      commandId: 'delivery-1',
+      kind: 'approved-plan',
+      state: 'delivering',
+      originatingPromptMessageId: 'prompt-1',
+      createdAt: 42
+    })
+    const owner = new SessionPlanDeliveryOwner(fixture.sessions)
+
+    await expect(owner.accept('project-1', 'session-1', 'delivery-1')).resolves.toBe(true)
+
+    expect(fixture.context().plan?.delivery).toMatchObject({
+      commandId: 'delivery-1',
+      state: 'accepted'
+    })
   })
 
   it('marks a claimed command interrupted after its dispatched prompt is explicitly cancelled', async () => {

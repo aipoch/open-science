@@ -4159,7 +4159,7 @@ describe('ACP runtime session management', () => {
     await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
     expect(fakeAgent.prompts[0]?.text).toContain('approved the pending Session Plan')
     expect(fakeAgent.prompts[0]?.text).toContain('approval=approved lifecycle=approved')
-    expect(promptAttempts).toEqual([undefined])
+    expect(promptAttempts).toEqual(['plan-delivery-1'])
     await vi.waitFor(() => expect(runtimeContext.plan?.delivery).toBeUndefined())
   })
 
@@ -4441,7 +4441,7 @@ describe('ACP runtime session management', () => {
   })
 
   const createDurablePlanDeliveryResumeHarness = (
-    state: 'queued' | 'delivering',
+    state: 'queued' | 'delivering' | 'accepted',
     options: Readonly<{
       stopReason?: PromptResponse['stopReason']
       kind?: 'approved-plan' | 'rejected-plan' | 'review-feedback'
@@ -4629,7 +4629,7 @@ describe('ACP runtime session management', () => {
 
     await vi.waitFor(() => expect(fixture.fakeAgent.prompts).toHaveLength(1))
     expect(fixture.fakeAgent.prompts[0]?.text).toContain('approved the pending Session Plan')
-    expect(fixture.promptAttempts).toEqual([undefined])
+    expect(fixture.promptAttempts).toEqual(['plan-delivery-resume-1'])
     await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
   })
 
@@ -4688,7 +4688,7 @@ describe('ACP runtime session management', () => {
     await vi.waitFor(() => expect(fixture.fakeAgent.prompts).toHaveLength(1))
     await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
 
-    expect(fixture.promptAttempts).toEqual([undefined])
+    expect(fixture.promptAttempts).toEqual(['plan-delivery-resume-1'])
     expect(fixture.patchSessionRuntimeContext).toHaveBeenCalledTimes(4)
     expect(
       fixture.events.filter((event) => event.title === 'Could not claim the Plan delivery')
@@ -4733,7 +4733,7 @@ describe('ACP runtime session management', () => {
     await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
   })
 
-  it('keeps an ambiguously delivering Plan fail-closed after Session resume', async () => {
+  it('recovers a claimed Plan delivery without durable provider acceptance', async () => {
     const fixture = createDurablePlanDeliveryResumeHarness('delivering')
 
     await fixture.runtime.resumeSession({
@@ -4743,15 +4743,12 @@ describe('ACP runtime session management', () => {
       projectId: 'project-1',
       previousFrameworkId: opencodeFramework.id
     })
-    await vi.waitFor(() => expect(fixture.readSessionRuntimeContext).toHaveBeenCalled())
-    await new Promise<void>((resolve) => queueMicrotask(resolve))
-    expect(fixture.fakeAgent.prompts).toHaveLength(0)
-    expect(fixture.promptAttempts).toEqual([])
-    expect(fixture.patchSessionRuntimeContext).not.toHaveBeenCalled()
-    expect(fixture.runtimeContext().plan?.delivery?.state).toBe('delivering')
+    await vi.waitFor(() => expect(fixture.fakeAgent.prompts).toHaveLength(1))
+    await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
+    expect(fixture.promptAttempts).toEqual(['plan-delivery-resume-1'])
   })
 
-  it('keeps ambiguously delivering review feedback fail-closed after resume', async () => {
+  it('recovers claimed review feedback without durable provider acceptance', async () => {
     const fixture = createDurablePlanDeliveryResumeHarness('delivering', {
       kind: 'review-feedback'
     })
@@ -4764,10 +4761,24 @@ describe('ACP runtime session management', () => {
       previousFrameworkId: opencodeFramework.id
     })
 
-    await vi.waitFor(() => expect(fixture.readSessionRuntimeContext).toHaveBeenCalled())
-    await new Promise<void>((resolve) => queueMicrotask(resolve))
+    await vi.waitFor(() => expect(fixture.fakeAgent.prompts).toHaveLength(1))
+    await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
+  })
+
+  it('clears an accepted Plan delivery after restart without replaying it', async () => {
+    const fixture = createDurablePlanDeliveryResumeHarness('accepted')
+
+    await fixture.runtime.resumeSession({
+      sessionId: 'restored-plan-session',
+      providerSessionId: 'restored-plan-session',
+      cwd: '/workspace',
+      projectId: 'project-1',
+      previousFrameworkId: opencodeFramework.id
+    })
+
+    await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
     expect(fixture.fakeAgent.prompts).toHaveLength(0)
-    expect(fixture.patchSessionRuntimeContext).not.toHaveBeenCalled()
+    expect(fixture.promptAttempts).toEqual([])
   })
 
   it('settles a cancelled hidden approved-Plan delivery as interrupted without replaying it', async () => {

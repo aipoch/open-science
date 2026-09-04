@@ -153,9 +153,10 @@ const createRuntimeHarness = (options: {
     } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2],
     {
       deliveries: {
+        accept: vi.fn(async () => true),
         begin: vi.fn(async () => true),
         clear: vi.fn(async () => true),
-        rearmUndispatched: vi.fn(async () => true)
+        rearmUnaccepted: vi.fn(async () => true)
       }
     }
   )

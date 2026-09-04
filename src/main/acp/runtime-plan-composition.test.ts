@@ -91,11 +91,12 @@ const createHarness = (
   getProjection: ReturnType<typeof vi.fn>
   getDeliveryContext: ReturnType<typeof vi.fn>
   containsMessageOnActiveBranch: ReturnType<typeof vi.fn>
-  deliveryState: () => 'queued' | 'delivering' | undefined
+  deliveryState: () => 'queued' | 'delivering' | 'accepted' | undefined
   deliveries: Readonly<{
+    accept: ReturnType<typeof vi.fn>
     begin: ReturnType<typeof vi.fn>
     clear: ReturnType<typeof vi.fn>
-    rearmUndispatched: ReturnType<typeof vi.fn>
+    rearmUnaccepted: ReturnType<typeof vi.fn>
   }>
 } => {
   const interactions = new SessionPlanInteractionOwner()
@@ -106,7 +107,7 @@ const createHarness = (
     promptMessageId: 'prompt-1'
   })
   let current = options.initialProjection ?? pendingProjection()
-  let deliveryState: 'queued' | 'delivering' | undefined
+  let deliveryState: 'queued' | 'delivering' | 'accepted' | undefined
   const generate = vi.fn(async () => {
     interactions.register({
       sessionId: 'session-1',
@@ -190,6 +191,12 @@ const createHarness = (
     getDeliveryContext
   }
   const deliveries = {
+    accept: vi.fn(async () => {
+      if (deliveryState !== 'delivering') return false
+      deliveryState = 'accepted'
+      current = { ...current, revision: current.revision + 1 }
+      return true
+    }),
     begin: vi.fn(async () => {
       if (deliveryState !== 'queued') return false
       deliveryState = 'delivering'
@@ -197,12 +204,12 @@ const createHarness = (
       return true
     }),
     clear: vi.fn(async () => {
-      if (deliveryState !== 'delivering') return false
+      if (deliveryState !== 'accepted' && deliveryState !== 'delivering') return false
       deliveryState = undefined
       current = { ...current, revision: current.revision + 1 }
       return true
     }),
-    rearmUndispatched: vi.fn(async () => {
+    rearmUnaccepted: vi.fn(async () => {
       if (deliveryState !== 'delivering') return false
       deliveryState = 'queued'
       current = { ...current, revision: current.revision + 1 }
@@ -383,7 +390,7 @@ describe('ACP Session Plan approval causality', () => {
     )
     expect(harness.deliveries.begin).toHaveBeenCalledOnce()
     expect(harness.deliveries.clear).toHaveBeenCalledOnce()
-    expect(harness.deliveries.rearmUndispatched).not.toHaveBeenCalled()
+    expect(harness.deliveries.rearmUnaccepted).not.toHaveBeenCalled()
     expect('projection' in result && result.projection).not.toHaveProperty('delivery')
     harness.sessionInteractions.release(harness.interaction)
   })
@@ -456,7 +463,7 @@ describe('ACP Session Plan approval causality', () => {
       await expect(response).rejects.toThrow('handoff failed')
       expect(harness.deliveryState()).toBe('delivering')
       expect(harness.deliveries.clear).not.toHaveBeenCalled()
-      expect(harness.deliveries.rearmUndispatched).not.toHaveBeenCalled()
+      expect(harness.deliveries.rearmUnaccepted).not.toHaveBeenCalled()
       harness.interactions.rejectApproval('session-1', 'test cleanup')
     }
   )
@@ -492,7 +499,7 @@ describe('ACP Session Plan approval causality', () => {
           }))
 
       expect(harness.deliveries.begin).toHaveBeenCalledOnce()
-      expect(harness.deliveries.rearmUndispatched).toHaveBeenCalledOnce()
+      expect(harness.deliveries.rearmUnaccepted).toHaveBeenCalledOnce()
       expect(harness.deliveries.clear).not.toHaveBeenCalled()
       expect(harness.deliveryState()).toBe('queued')
       harness.interactions.rejectApproval('session-1', 'test cleanup')

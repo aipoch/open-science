@@ -144,6 +144,7 @@ import {
   type AcpTurnSkillOwner
 } from './turn-skill-owner'
 import type { PlanResponseResult, PlanServiceDependencies } from '../session-plan/plan-service'
+import { matchPlanDelivery } from '../session-plan/plan-delivery'
 import { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type {
@@ -2186,13 +2187,13 @@ class AcpRuntime {
 
     const observed = await sessions.readSessionRuntimeContext(projectId, sessionId)
     const plan = observed.plan
-    const command = plan?.delivery
+    const rawCommand = plan?.delivery
     const claimRetry = this.planDeliveryClaimRetries.get(sessionId)
-    if (expectedCommandId && command?.commandId !== expectedCommandId) {
+    if (expectedCommandId && rawCommand?.commandId !== expectedCommandId) {
       this.clearPlanDeliveryClaimRetry(sessionId, expectedCommandId)
       return
     }
-    if (claimRetry && claimRetry.commandId !== command?.commandId) {
+    if (claimRetry && claimRetry.commandId !== rawCommand?.commandId) {
       this.clearPlanDeliveryClaimRetry(sessionId)
     } else if (
       claimRetry?.timer ||
@@ -2200,16 +2201,33 @@ class AcpRuntime {
     ) {
       return
     }
-    if (
-      !plan ||
-      command?.state !== 'queued' ||
-      (command.kind === 'approved-plan' && plan.approval !== 'approved') ||
-      (command.kind === 'rejected-plan' && plan.approval !== 'rejected') ||
-      (command.kind === 'review-feedback' &&
-        (plan.approval !== 'pending' ||
-          plan.reviewFeedbackMessageId !== command.originatingPromptMessageId))
-    ) {
-      if (command) this.clearPlanDeliveryClaimRetry(sessionId, command.commandId)
+    const command = matchPlanDelivery(plan)
+    if (!plan || !command) {
+      if (rawCommand) this.clearPlanDeliveryClaimRetry(sessionId, rawCommand.commandId)
+      return
+    }
+    if (command.state === 'accepted') {
+      if (!(await owner.clear(projectId, sessionId, command.commandId))) {
+        this.retryPlanDeliveryClaim(projectId, sessionId, command.commandId)
+      } else {
+        this.clearPlanDeliveryClaimRetry(sessionId, command.commandId)
+        await this.publishCurrentPlanProjection(projectId, sessionId)
+      }
+      return
+    }
+    if (command.state === 'delivering') {
+      if (await owner.rearmUnaccepted(projectId, sessionId, command.commandId)) {
+        this.clearPlanDeliveryClaimRetry(sessionId, command.commandId)
+        setTimeout(() => {
+          this.scheduleQueuedPlanDelivery(projectId, sessionId, command.commandId)
+        }, 0)
+      } else {
+        this.retryPlanDeliveryClaim(projectId, sessionId, command.commandId)
+      }
+      return
+    }
+    if (command.state !== 'queued') {
+      this.clearPlanDeliveryClaimRetry(sessionId, command.commandId)
       return
     }
 
@@ -2297,16 +2315,13 @@ class AcpRuntime {
           const claimed = await sessions.readSessionRuntimeContext(projectId, sessionId)
           const claimedPlan = claimed.plan
           if (
-            !claimedPlan ||
-            claimedPlan.artifactVersionId !== plan.artifactVersionId ||
-            claimedPlan.delivery?.commandId !== command.commandId ||
-            claimedPlan.delivery.state !== 'delivering' ||
-            claimedPlan.delivery.kind !== command.kind ||
-            (command.kind === 'approved-plan' && claimedPlan.approval !== 'approved') ||
-            (command.kind === 'rejected-plan' && claimedPlan.approval !== 'rejected') ||
-            (command.kind === 'review-feedback' &&
-              (claimedPlan.approval !== 'pending' ||
-                claimedPlan.reviewFeedbackMessageId !== command.originatingPromptMessageId))
+            !matchPlanDelivery(claimedPlan, {
+              artifactVersionId: plan.artifactVersionId,
+              commandId: command.commandId,
+              state: 'delivering',
+              kind: command.kind,
+              originatingPromptMessageId: command.originatingPromptMessageId
+            })
           ) {
             throw new Error('The Plan delivery changed before dispatch.')
           }
@@ -2315,7 +2330,7 @@ class AcpRuntime {
         } finally {
           if (!dispatchReady) {
             durablePlanDeliveries.delete(sessionId)
-            await owner.rearmUndispatched(projectId, sessionId, command.commandId)
+            await owner.rearmUnaccepted(projectId, sessionId, command.commandId)
           }
         }
       }
@@ -2349,7 +2364,11 @@ class AcpRuntime {
         : continuation.request
       if (!request) return
       const planDelivery = this.durablePlanDeliveries?.get(sessionId)
-      const response = await this.sendAppContinuation(request, undefined, planDelivery)
+      const response = await this.sendAppContinuation(
+        request,
+        planDelivery?.commandId,
+        planDelivery
+      )
       cancelled = response.stopReason === 'cancelled'
       completed = !this.durablePlanDeliveries?.has(sessionId) || !cancelled
     } catch (error) {
@@ -2475,7 +2494,10 @@ class AcpRuntime {
       const current = await sessions.readSessionRuntimeContext(durablePlan.projectId, sessionId)
       const delivery = current.plan?.delivery
       if (!delivery) return
-      if (delivery.commandId !== durablePlan.commandId || delivery.state !== 'delivering') {
+      if (
+        delivery.commandId !== durablePlan.commandId ||
+        (delivery.state !== 'accepted' && delivery.state !== 'delivering')
+      ) {
         throw new Error('The Plan delivery changed before settlement.')
       }
     }

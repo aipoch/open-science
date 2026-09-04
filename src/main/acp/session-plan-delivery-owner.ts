@@ -1,5 +1,6 @@
 import type { SessionPlanDelivery } from '../../shared/session-persistence'
 import type { SessionRuntimeContextCommands } from '../session-persistence/coordinator'
+import { matchPlanDelivery } from '../session-plan/plan-delivery'
 
 type SessionPlanDeliverySessions = SessionRuntimeContextCommands
 
@@ -19,22 +20,36 @@ class SessionPlanDeliveryOwner {
     }))
   }
 
-  async rearmUndispatched(
-    projectId: string,
-    sessionId: string,
-    commandId: string
-  ): Promise<boolean> {
+  async rearmUnaccepted(projectId: string, sessionId: string, commandId: string): Promise<boolean> {
     return this.transitionTo(projectId, sessionId, commandId, 'delivering', (delivery) => ({
       ...delivery,
       state: 'queued'
     }))
   }
 
+  async accept(projectId: string, sessionId: string, commandId: string): Promise<boolean> {
+    return this.transitionTo(projectId, sessionId, commandId, 'delivering', (delivery) => ({
+      ...delivery,
+      state: 'accepted'
+    }))
+  }
+
   async clear(projectId: string, sessionId: string, commandId: string): Promise<boolean> {
+    if (await this.transitionTo(projectId, sessionId, commandId, 'accepted', () => undefined)) {
+      return true
+    }
     return this.transitionTo(projectId, sessionId, commandId, 'delivering', () => undefined)
   }
 
   async interrupt(projectId: string, sessionId: string, commandId: string): Promise<boolean> {
+    if (
+      await this.transitionTo(projectId, sessionId, commandId, 'accepted', (delivery) => ({
+        ...delivery,
+        state: 'interrupted'
+      }))
+    ) {
+      return true
+    }
     return this.transitionTo(projectId, sessionId, commandId, 'delivering', (delivery) => ({
       ...delivery,
       state: 'interrupted'
@@ -50,15 +65,8 @@ class SessionPlanDeliveryOwner {
   ): Promise<boolean> {
     const context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
     const plan = context.plan
-    const delivery = plan?.delivery
-    if (
-      !plan ||
-      !delivery ||
-      delivery.commandId !== commandId ||
-      delivery.state !== expectedState
-    ) {
-      return false
-    }
+    const delivery = matchPlanDelivery(plan, { commandId, state: expectedState })
+    if (!plan || !delivery) return false
 
     return this.patch(projectId, sessionId, context.revision, plan, apply(delivery))
   }

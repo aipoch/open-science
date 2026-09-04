@@ -393,8 +393,10 @@ Project Session defaults add one `sessionDefaults` JSON-text column to the Proje
 rows migrate to `{}` and therefore retain prior behavior. Agent routing reuses the existing Settings
 JSON fields.
 
-No persistent enum value is added. Existing waiting-plan-approval remains the durable Session
-status, while a public Run remains running and carries an attention discriminant.
+No persistent Session status enum value is added. Existing waiting-plan-approval remains the
+durable Session status, while a public Run remains running and carries an attention discriminant.
+Plan delivery receipts may persist `accepted` after the provider boundary so restart recovery can
+settle that one-shot wakeup without replaying it.
 
 ## Machine-readable output
 

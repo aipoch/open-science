@@ -8,6 +8,7 @@ import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { SessionPlanStepStatus } from '../../shared/session-persistence'
 import { createLogger, errorLogFields } from '../logger'
 import type { PlanResponseResult } from '../session-plan/plan-service'
+import { matchesPlanDelivery } from '../session-plan/plan-delivery'
 import type { AcpRuntimeOptions } from './runtime'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
@@ -83,7 +84,7 @@ const composeAcpRuntimePlanWorkflow = (
   base: AcpRuntimeBaseOwners,
   session: AcpRuntimeSessionOwners,
   hooks: Readonly<{
-    deliveries?: Pick<SessionPlanDeliveryOwner, 'begin' | 'clear' | 'rearmUndispatched'>
+    deliveries?: Pick<SessionPlanDeliveryOwner, 'accept' | 'begin' | 'clear' | 'rearmUnaccepted'>
   }> = {}
 ) => {
   const service = base.planService
@@ -157,7 +158,7 @@ const composeAcpRuntimePlanWorkflow = (
     sessionId: string,
     commandId: string
   ): Promise<void> => {
-    if (!(await deliveryOwner?.rearmUndispatched(projectId, sessionId, commandId))) {
+    if (!(await deliveryOwner?.rearmUnaccepted(projectId, sessionId, commandId))) {
       throw new Error('The Plan delivery receipt could not be rearmed after handoff loss.')
     }
   }
@@ -623,7 +624,11 @@ const composeAcpRuntimePlanWorkflow = (
         })
         .then(async ({ delivery, projection, reviewFeedbackMessageId }) => {
           if (
-            delivery.state !== 'delivering' ||
+            !matchesPlanDelivery(
+              { ...projection, ...(reviewFeedbackMessageId ? { reviewFeedbackMessageId } : {}) },
+              delivery,
+              { state: 'delivering' }
+            ) ||
             !(await containsDurableBranchMessage(
               projectId,
               request.sessionId,
@@ -636,31 +641,12 @@ const composeAcpRuntimePlanWorkflow = (
             )
           }
           if (delivery.kind === 'review-feedback') {
-            if (
-              projection.approval !== 'pending' ||
-              reviewFeedbackMessageId !== delivery.originatingPromptMessageId
-            ) {
-              throw new PlanCommandError(
-                'interaction-mismatch',
-                'The Plan review delivery no longer matches the pending feedback.'
-              )
-            }
             return Object.freeze({ protectedPending: projection })
           }
           if (delivery.kind === 'rejected-plan') {
-            if (projection.approval !== 'rejected') {
-              throw new PlanCommandError(
-                'approval-already-decided',
-                'The Plan rejection changed before delivery.'
-              )
-            }
             return Object.freeze({ protectedRejected: projection })
           }
-          if (
-            projection.approval !== 'approved' ||
-            projection.lifecycle === 'blocked' ||
-            projection.lifecycle === 'completed'
-          ) {
+          if (projection.lifecycle === 'blocked' || projection.lifecycle === 'completed') {
             return Object.freeze({})
           }
           return Object.freeze({ active: projection })
@@ -719,9 +705,22 @@ const composeAcpRuntimePlanWorkflow = (
       safeLogError('Session Plan terminal projection failed', error)
     }
   }
+  const providerAccepted = async (sessionId: string, mode: AcpPromptTurnMode): Promise<void> => {
+    if (mode.kind !== 'app-continuation' || !mode.planDelivery || !deliveryOwner) return
+    if (
+      !(await deliveryOwner.accept(
+        mode.planDelivery.projectId,
+        sessionId,
+        mode.planDelivery.commandId
+      ))
+    ) {
+      throw new Error('The Plan delivery could not record provider acceptance.')
+    }
+  }
   const prompt: AcpPromptTurnPlanWorkflow = Object.freeze({
     preflight,
     admit,
+    providerAccepted,
     beforeRelease,
     afterRelease
   })

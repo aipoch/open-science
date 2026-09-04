@@ -2937,6 +2937,27 @@ describe('normalizeSessionFile with activities', () => {
     expect(normalizeSessionFile(persisted)?.runtimeContext?.plan?.delivery).toEqual(plan.delivery)
   })
 
+  it('restores a provider-accepted Plan delivery receipt for restart settlement', () => {
+    const plan = {
+      ...createRuntimePlan(),
+      approval: 'approved' as const,
+      delivery: {
+        commandId: 'delivery-1',
+        kind: 'approved-plan' as const,
+        state: 'accepted' as const,
+        originatingPromptMessageId: 'prompt-plan-1',
+        createdAt: 42
+      }
+    }
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      runtimeContext: { version: 1, revision: 6, plan }
+    })
+
+    expect(normalizeSessionFile(persisted)?.runtimeContext?.plan?.delivery).toEqual(plan.delivery)
+  })
+
   it('drops a malformed delivery receipt without losing the approved Plan', () => {
     const restored = normalizeSessionFile(
       createSessionFile({

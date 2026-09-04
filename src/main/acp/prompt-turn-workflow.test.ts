@@ -64,6 +64,7 @@ type Harness = {
   >
   owner: AcpSessionInteractionOwner
   planLifecycle: {
+    providerAccepted: Mock<AcpPromptTurnWorkflowOptions['plan']['providerAccepted']>
     beforeRelease: Mock<AcpPromptTurnWorkflowOptions['plan']['beforeRelease']>
     afterRelease: Mock<AcpPromptTurnWorkflowOptions['plan']['afterRelease']>
   }
@@ -240,6 +241,9 @@ const createHarness = (
     return input.prepare?.(request) ?? prepared
   })
   const planLifecycle: Harness['planLifecycle'] = {
+    providerAccepted: vi.fn(async () => {
+      journal.push('plan:provider-accepted')
+    }),
     beforeRelease: vi.fn(() => {
       journal.push('plan:before-release')
     }),
@@ -501,6 +505,7 @@ describe('AcpPromptTurnWorkflow', () => {
       'event:message',
       'skills:in_progress',
       'execute',
+      'plan:provider-accepted',
       'accepted',
       'skills:completed',
       'finalize'

@@ -21,6 +21,7 @@ import {
   type PlanResponseCommand
 } from '../../shared/session-plan/contract'
 import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
+import { matchPlanDelivery } from './plan-delivery'
 
 type ArtifactWriteResult = Readonly<{
   artifactId?: string
@@ -637,11 +638,12 @@ class PlanService {
     if (!current?.plan.delivery) {
       throw new PlanCommandError('no-active-plan', 'The Session has no pending Plan delivery.')
     }
-    if (current.plan.delivery.commandId !== input.commandId) {
+    const delivery = matchPlanDelivery(current.plan, { commandId: input.commandId })
+    if (!delivery) {
       throw new PlanCommandError('revision-conflict', 'The Plan delivery receipt changed.')
     }
     return {
-      delivery: current.plan.delivery,
+      delivery,
       projection: this.project(current.document, current.plan, current.context.revision),
       ...(current.plan.reviewFeedbackMessageId
         ? { reviewFeedbackMessageId: current.plan.reviewFeedbackMessageId }

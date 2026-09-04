@@ -325,7 +325,9 @@ export type SessionPlanStepStatus = 'in_progress' | 'completed' | 'blocked' | 's
 export type SessionPlanDelivery = Readonly<{
   commandId: string
   kind: 'approved-plan' | 'rejected-plan' | 'review-feedback'
-  state: 'queued' | 'delivering' | 'interrupted'
+  // `delivering` is a durable claim before provider acceptance has been observed. `accepted`
+  // records that boundary so restart recovery can settle instead of replaying the wakeup.
+  state: 'queued' | 'delivering' | 'accepted' | 'interrupted'
   originatingPromptMessageId: string
   createdAt: number
 }>
@@ -1494,6 +1496,7 @@ const sanitizeSessionPlanRuntimeContext = (
     const state: SessionPlanDelivery['state'] | undefined =
       rawDelivery.state === 'queued' ||
       rawDelivery.state === 'delivering' ||
+      rawDelivery.state === 'accepted' ||
       rawDelivery.state === 'interrupted'
         ? rawDelivery.state
         : rawDelivery.state === 'continuing'

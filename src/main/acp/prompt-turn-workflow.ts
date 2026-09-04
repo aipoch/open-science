@@ -134,6 +134,7 @@ type AcpPromptTurnPlanWorkflow = Readonly<{
     interaction: AcpPromptSessionInteractionScope,
     plan: AcpPromptTurnPlanContext
   ) => AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext>
+  providerAccepted: (sessionId: string, mode: AcpPromptTurnMode) => void | Promise<void>
   beforeRelease: (sessionId: string, interaction: AcpPromptSessionInteractionScope) => void
   afterRelease: (sessionId: string) => Promise<void>
 }>
@@ -456,6 +457,7 @@ class AcpPromptTurnWorkflow {
           },
           captureStop: () => interactions.captureTerminal(interaction, 'stop'),
           onAccepted: async () => {
+            await plan.providerAccepted(sessionId, turn.mode)
             if (sideChatRelay && !sideChatRelaySettled) {
               sideChatRelaySettled = true
               try {
