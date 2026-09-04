@@ -663,7 +663,7 @@ const RuntimesPanel = ({
             const settingUp = preparing || finishing
             const langProgress = langState?.progress
             const progress = finishing ? 1 : (langProgress?.progress ?? 0)
-            const progressMessage = provisionProgressText(t, langProgress?.event)
+            const progressMessage = provisionProgressText(t, langProgress?.event) || undefined
             const langError = langState?.error
             const managedRunnable = managedRunnableFor(id)
             const managedEnv = list.find((env) => isDefaultManagedRuntime(id, env))

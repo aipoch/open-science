@@ -760,6 +760,18 @@ describe('RuntimesPanel', () => {
     expect(provision).not.toHaveBeenCalled()
   })
 
+  it('keeps the setup fallback visible before the first progress event', async () => {
+    await render()
+    act(() =>
+      useNotebookEnvStore.setState({
+        byLang: { r: { preparing: true } }
+      })
+    )
+
+    const rSection = container.querySelector('section[aria-label="R runtime"]')
+    expect(rSection?.textContent).toContain('Downloading managed runtime…')
+  })
+
   it('shows a determinate progress bar + Cancel in the app-managed setup card while downloading', async () => {
     await render()
     // R has no provisioned managed env, so its section shows the app-managed SETUP card (which carries
