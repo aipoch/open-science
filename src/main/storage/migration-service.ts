@@ -1117,13 +1117,7 @@ export const commitDataRootSwitch = async (
     cleanupDegraded: cleanupDegraded || cleanupDeferred,
     cleanupFailureCount
   })
-  return cleanupFailureCount > 0
-    ? {
-        ok: true,
-        cleanupWarning:
-          'Your data is using the new location, but some files remain in the old one. Open Science will try to remove them again the next time it starts.'
-      }
-    : { ok: true }
+  return { ok: true, cleanupPending: cleanupDegraded || cleanupDeferred }
 }
 
 // Throws away an uncommitted staged copy at `<parent>/OpenScience` (the user chose "Keep current

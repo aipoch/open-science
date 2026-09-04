@@ -1441,7 +1441,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
       emptyParent
     )
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({ ok: true, cleanupPending: false })
     expect(setDataRoot).toHaveBeenCalledWith(target)
     await expect(cleanupJournal.hasPending()).resolves.toBe(false)
     await expect(readMigrationMarker(target)).resolves.toBeNull()
@@ -1485,7 +1485,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
       emptyParent
     )
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({ ok: true, cleanupPending: false })
     expect(setDataRoot).toHaveBeenCalledWith(target)
     await expect(readFile(join(target, RUNTIME_REPAIR_REGISTRY_FILE), 'utf8')).resolves.toBe(
       contents
@@ -1535,7 +1535,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
       emptyParent
     )
 
-    expect(commitResult).toEqual({ ok: true })
+    expect(commitResult).toEqual({ ok: true, cleanupPending: false })
     const copiedFile = await stat(join(target, 'artifacts', 'observations.csv'))
     expect(Math.trunc(copiedFile.atimeMs / 1000)).toBe(Math.trunc(originalAtime.getTime() / 1000))
     expect(Math.trunc(copiedFile.mtimeMs / 1000)).toBe(Math.trunc(originalMtime.getTime() / 1000))
@@ -1589,7 +1589,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
       emptyParent
     )
 
-    expect(commitResult).toEqual({ ok: true })
+    expect(commitResult).toEqual({ ok: true, cleanupPending: false })
     await expect(
       readFile(join(target, 'artifacts', 'absolute-link', 'result.txt'), 'utf8')
     ).resolves.toBe('preserved content')
@@ -1684,7 +1684,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
       emptyParent
     )
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({ ok: true, cleanupPending: false })
     const terminalRecords = diagnosticRecords(logger).filter(
       (record) => record.outcome === 'completed'
     )
@@ -1742,7 +1742,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
       emptyParent
     )
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({ ok: true, cleanupPending: false })
     // setDataRoot MUST precede delete: once the pointer is committed, an interrupted delete only
     // orphans the old root; the reverse order could strand data.
     expect(order).toEqual(['setDataRoot', 'deleteSources'])
@@ -1946,12 +1946,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
       emptyParent
     )
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        ok: true,
-        cleanupWarning: expect.any(String)
-      })
-    )
+    expect(result).toEqual({ ok: true, cleanupPending: true })
     expect(await readMigrationMarker(target)).toMatchObject({
       status: 'verified',
       source: currentDataRoot,
@@ -1988,9 +1983,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
       emptyParent
     )
 
-    expect(result).toEqual(
-      expect.objectContaining({ ok: true, cleanupWarning: expect.any(String) })
-    )
+    expect(result).toEqual({ ok: true, cleanupPending: true })
     expect(cleanupRuntimeCache).toHaveBeenCalledWith(currentDataRoot)
     await expect(cleanupJournal.hasPending()).resolves.toBe(true)
     await expect(readMigrationMarker(target)).resolves.toMatchObject({ token: 'tok-test' })
@@ -2042,7 +2035,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
       emptyParent
     )
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({ ok: true, cleanupPending: true })
     expect(deleteSources).not.toHaveBeenCalled()
     await expect(cleanupJournal.hasPending()).resolves.toBe(true)
     await expect(readMigrationMarker(target)).resolves.toMatchObject({ token: 'tok-test' })
@@ -2070,7 +2063,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
           emptyParent
         )
 
-        expect(result).toEqual({ ok: true })
+        expect(result).toEqual({ ok: true, cleanupPending: true })
         expect(diagnosticRecords(logger)).toContainEqual(
           expect.objectContaining({
             operation: 'data-root-commit',
@@ -2105,9 +2098,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
       emptyParent
     )
 
-    expect(result).toEqual(
-      expect.objectContaining({ ok: true, cleanupWarning: expect.any(String) })
-    )
+    expect(result).toEqual({ ok: true, cleanupPending: true })
     expect(deps.setDataRoot).toHaveBeenCalledOnce()
     expect(diagnosticRecords(logger)).toContainEqual(
       expect.objectContaining({
