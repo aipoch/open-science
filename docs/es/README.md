@@ -1,13 +1,35 @@
-# Open Science - Entorno abierto de investigación con agentes científicos de IA
+<h1 align="center">Open Science</h1>
 
-[![Descargar](https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=for-the-badge&logo=github)](https://github.com/aipoch/open-science/releases/latest)
-[![Versión](https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=for-the-badge&color=4dabf7)](https://github.com/aipoch/open-science/releases/latest)
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22252246-4dabf7?style=for-the-badge)](https://doi.org/10.5281/zenodo.22252246)
-[![🏆 N.º 1 en BiomniBench-DA Public 50](https://img.shields.io/badge/%F0%9F%8F%86%20%231-BiomniBench--DA%20Public%2050-F9B000?style=for-the-badge)](https://huggingface.co/datasets/phylobio/BiomniBench-DA)
-[![Plataformas macOS Windows Linux](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-4dabf7?style=for-the-badge)](https://github.com/aipoch/open-science/releases/latest)
-[![Licencia](https://img.shields.io/badge/License-Apache--2.0-4dabf7?style=for-the-badge)](../../LICENSE)
-[![Sitio web](https://img.shields.io/badge/Website-aipoch.com-2f9e44?style=for-the-badge)](https://aipoch.com/open-science)
-[![Discord](https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/zxQAYjReRv)
+<p align="center">
+  Entorno de investigación con IA de código abierto, centrado en la ejecución local e independiente del modelo, para una ciencia reproducible.
+</p>
+
+<p align="center">
+  <a href="https://github.com/aipoch/open-science/releases/latest">
+    <img alt="Descargar" src="https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=flat">
+  </a>
+  <a href="https://github.com/aipoch/open-science/releases/latest">
+    <img alt="Versión" src="https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=flat&color=4dabf7">
+  </a>
+  <a href="https://doi.org/10.5281/zenodo.22252246">
+    <img alt="DOI" src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22252246-0b7285?style=flat">
+  </a>
+  <a href="https://huggingface.co/datasets/phylobio/BiomniBench-DA">
+    <img alt="N.º 1 en BiomniBench-DA Public 50" src="https://img.shields.io/badge/%F0%9F%8F%86%20%231-BiomniBench--DA%20Public%2050-f59f00?style=flat">
+  </a>
+  <a href="https://github.com/aipoch/open-science/releases/latest">
+    <img alt="Plataformas macOS Windows Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-4263eb?style=flat">
+  </a>
+  <a href="../../LICENSE">
+    <img alt="Licencia Apache 2.0" src="https://img.shields.io/badge/license-Apache--2.0-7950f2?style=flat">
+  </a>
+  <a href="https://aipoch.com/open-science">
+    <img alt="Sitio web aipoch.com" src="https://img.shields.io/badge/website-aipoch.com-e8590c?style=flat">
+  </a>
+  <a href="https://discord.gg/zxQAYjReRv">
+    <img alt="Discord" src="https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=flat&logo=discord&logoColor=white">
+  </a>
+</p>
 
 <p align="center">
   <a href="../../README.md"><img alt="README en inglés" src="https://img.shields.io/badge/English-d9d9d9"></a>
