@@ -345,7 +345,7 @@ const finalizeArtifactEvent = async (
           ...result.map((artifact) => artifact.id)
         ])
         if (
-          session?.artifactErrorEventId === event.id ||
+          session?.artifactErrorEventIds?.includes(event.id) ||
           sessionReferencesOnly(resolvedArtifactIds)
         ) {
           useSessionStore.getState().clearArtifactError(event.sessionId, event.id)
@@ -380,7 +380,7 @@ const finalizeArtifactEvent = async (
   })
   if (appliedMessage && eventArtifactsAreFinalized) {
     if (
-      session?.artifactErrorEventId === event.id ||
+      session?.artifactErrorEventIds?.includes(event.id) ||
       sessionReferencesOnly(resolvedCompatibilityArtifactIds)
     ) {
       useSessionStore.getState().clearArtifactError(event.sessionId, event.id)

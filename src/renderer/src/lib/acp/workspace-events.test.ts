@@ -3665,14 +3665,14 @@ describe('workspace runtime events', () => {
       ]
     })
     await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-native-replay', kind: 'stop' }))
-    ;(
-      useSessionStore.getState().recordArtifactError as (
-        sessionId: string,
-        error: string,
-        retryable: boolean,
-        eventId: string
-      ) => void
-    )('transport-session-1', 'current claim failed', true, 'native-pending-event')
+    useSessionStore
+      .getState()
+      .recordArtifactError(
+        'transport-session-1',
+        'current claim failed',
+        true,
+        'native-pending-event'
+      )
     const messageId = useSessionStore.getState().sessions[0].messages[1].id
     const finalizedArtifact = {
       ...nativePendingArtifact,
@@ -3724,19 +3724,30 @@ describe('workspace runtime events', () => {
 
     await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-owned-error', kind: 'stop' }))
     await applyWorkspaceRuntimeEvent(artifactEvent, dependencies)
-    ;(
-      useSessionStore.getState().recordArtifactError as (
-        sessionId: string,
-        error: string,
-        retryable: boolean,
-        eventId: string
-      ) => void
-    )('transport-session-1', 'sibling claim failed', true, 'sibling-artifact-event')
+    useSessionStore
+      .getState()
+      .recordArtifactError(
+        'transport-session-1',
+        'current claim failed',
+        true,
+        'replayed-finalized-event'
+      )
+    useSessionStore
+      .getState()
+      .recordArtifactError(
+        'transport-session-1',
+        'sibling claim failed',
+        true,
+        'sibling-artifact-event'
+      )
 
     await applyWorkspaceRuntimeEvent(artifactEvent, dependencies)
 
     expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
     expect(useSessionStore.getState().sessions[0].error).toContain('sibling claim failed')
+    expect(useSessionStore.getState().sessions[0].artifactErrorEventIds).toEqual([
+      'sibling-artifact-event'
+    ])
   })
 
   it('records native artifact reconciliation failures for retry', async () => {

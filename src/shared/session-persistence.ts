@@ -804,7 +804,7 @@ export type PersistedChatSession = {
   errorReportable?: boolean
   // Identifies the artifact runtime event that owns the current finalization error. Historical
   // Sessions omit it and retain the conservative replay-clearing behavior.
-  artifactErrorEventId?: string
+  artifactErrorEventIds?: string[]
   artifacts?: PersistedArtifact[]
   // Incremented only when finalized file metadata changes; text streaming leaves it untouched.
   filesRevision?: number
@@ -4197,9 +4197,9 @@ const sanitizeSession = (
   if (error) sanitized.error = error
   // Only meaningful alongside an error; persisted only when explicitly false (absent = reportable).
   if (error && session.errorReportable === false) sanitized.errorReportable = false
-  const artifactErrorEventId = asString(session.artifactErrorEventId)
-  if (error?.startsWith('Generated file finalization') && artifactErrorEventId) {
-    sanitized.artifactErrorEventId = artifactErrorEventId
+  const artifactErrorEventIds = [...new Set(asStringArray(session.artifactErrorEventIds))]
+  if (error?.startsWith('Generated file finalization') && artifactErrorEventIds.length > 0) {
+    sanitized.artifactErrorEventIds = artifactErrorEventIds
   }
   if (agentFrameworkId && AGENT_FRAMEWORK_IDS.has(agentFrameworkId)) {
     sanitized.agentFrameworkId = agentFrameworkId

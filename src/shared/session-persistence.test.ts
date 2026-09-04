@@ -4308,16 +4308,16 @@ describe('normalizeSessionFile with activities', () => {
     const artifactFailure = normalizeSessionFile({
       ...base,
       error: 'Generated file finalization failed: move failed',
-      artifactErrorEventId: 'artifact-event-1'
+      artifactErrorEventIds: ['artifact-event-1', 'artifact-event-1']
     })
     const unrelatedFailure = normalizeSessionFile({
       ...base,
       error: 'Invalid API key',
-      artifactErrorEventId: 'artifact-event-1'
+      artifactErrorEventIds: ['artifact-event-1']
     })
 
-    expect(artifactFailure?.artifactErrorEventId).toBe('artifact-event-1')
-    expect(unrelatedFailure?.artifactErrorEventId).toBeUndefined()
+    expect(artifactFailure?.artifactErrorEventIds).toEqual(['artifact-event-1'])
+    expect(unrelatedFailure?.artifactErrorEventIds).toBeUndefined()
   })
 
   it('round-trips valid Session details and a bounded generation attempt', () => {
