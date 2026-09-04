@@ -139,6 +139,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         contextWindow: 1_050_000,
         reasoningEffort: 'low-medium-high-xhigh-ultra'
       },
+      { id: 'gpt-6-astra', contextWindow: 1_050_000, reasoningEffort: 'standard-5' },
       {
         id: 'gpt-5.6-terra',
         contextWindow: 1_050_000,
@@ -167,6 +168,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // Models with a 1M-context variant list both the standard id and the `[1m]` one.
     models: [
       { id: 'claude-opus-5', contextWindow: 1_000_000 },
+      { id: 'claude-fable-5-1', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-8', contextWindow: 1_000_000 },
       { id: 'claude-opus-4-8[1m]', contextWindow: 1_000_000 },
       { id: 'claude-sonnet-5', contextWindow: 1_000_000 },

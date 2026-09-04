@@ -726,6 +726,7 @@ describe('SettingsService: providers', () => {
         apiEndpoints: ['responses'],
         models: [
           'gpt-5.6-sol',
+          'gpt-6-astra',
           'gpt-5.6-terra',
           'gpt-5.6-luna',
           'gpt-5.5',
@@ -5262,19 +5263,19 @@ describe('SettingsService: reasoning effort', () => {
   it('uses the OpenAI and Anthropic registries for subscription models', async () => {
     const service = createService()
     const codex = (await service.upsertProvider({ type: 'codex-isolated' })).providers[0]
-    await service.setActiveProvider(codex.id, 'gpt-5.6-sol')
+    await service.setActiveProvider(codex.id, 'gpt-6-astra')
 
-    expect(await service.resolveActiveReasoningEffort('max')).toBe('ultra')
+    expect(await service.resolveActiveReasoningEffort('max')).toBe('max')
 
     const claude = (
       await service.upsertProvider({
         type: 'claude-shared',
-        model: 'claude-haiku-4-5-20251001'
+        model: 'claude-fable-5-1'
       })
     ).providers.find((provider) => provider.type === 'claude-shared')!
-    await service.setActiveProvider(claude.id, 'claude-haiku-4-5-20251001')
+    await service.setActiveProvider(claude.id, 'claude-fable-5-1')
 
-    expect(await service.resolveActiveReasoningEffort('max')).toBe('default')
+    expect(await service.resolveActiveReasoningEffort('max')).toBe('max')
   })
 
   it('does not guess an effort profile for an unpinned Codex subscription model', async () => {
