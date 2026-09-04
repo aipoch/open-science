@@ -333,7 +333,10 @@ const finalizeArtifactEvent = async (
     const reconciledVersionIds = new Set(
       result.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
     )
-    if (artifactVersionIds.every((versionId) => reconciledVersionIds.has(versionId))) return true
+    if (artifactVersionIds.every((versionId) => reconciledVersionIds.has(versionId))) {
+      useSessionStore.getState().clearArtifactError(event.sessionId)
+      return true
+    }
   }
   const eventArtifactsAreFinalized = event.artifacts.every((pendingArtifact) =>
     session?.artifacts?.some(
@@ -347,6 +350,7 @@ const finalizeArtifactEvent = async (
     )
   )
   if (appliedMessage && eventArtifactsAreFinalized) {
+    useSessionStore.getState().clearArtifactError(event.sessionId)
     return true
   }
 

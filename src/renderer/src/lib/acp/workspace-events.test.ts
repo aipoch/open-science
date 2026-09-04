@@ -3546,6 +3546,13 @@ describe('workspace runtime events', () => {
 
     await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-finalize', kind: 'stop' }))
     await applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts, saveSession })
+    useSessionStore
+      .getState()
+      .recordArtifactError(
+        'transport-session-1',
+        'Artifact run claim not found: artifact-claim-expired',
+        true
+      )
     await applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts, saveSession })
 
     expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
