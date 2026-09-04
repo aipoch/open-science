@@ -194,7 +194,19 @@ type VersionFileSystem = {
 const SAFE_SCOPE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const VERSION_FILE_CANDIDATE_LIMIT = 16
 const VERSION_TOKEN_SPACE = 36n ** 8n
+const VERIFIED_IMMUTABLE_FILE_LIMIT = 1024
 const immutableOperationTails = new Map<string, Promise<void>>()
+const verifiedImmutableFiles = new Set<string>()
+
+const immutableVerificationKey = (integrity: Integrity, snapshot: LeaseSnapshot): string =>
+  [integrity.checksum, snapshot.dev, snapshot.ino, snapshot.size, snapshot.mtimeNs].join('\0')
+
+const rememberVerifiedImmutableFile = (key: string): void => {
+  verifiedImmutableFiles.add(key)
+  if (verifiedImmutableFiles.size <= VERIFIED_IMMUTABLE_FILE_LIMIT) return
+  const oldest = verifiedImmutableFiles.values().next().value
+  if (oldest !== undefined) verifiedImmutableFiles.delete(oldest)
+}
 
 const serializeImmutableOperation = async <T>(
   key: string,
@@ -495,19 +507,14 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
         size: before.size,
         mtimeNs: before.mtimeNs
       }
-      const hash = createHash('sha256')
-      let position = 0
-      while (position < expectedIntegrity.sizeBytes) {
-        const buffer = Buffer.allocUnsafe(
-          Math.min(64 * 1024, expectedIntegrity.sizeBytes - position)
-        )
-        await readExact(handle, buffer, position)
-        hash.update(buffer)
-        position += buffer.byteLength
-      }
-      const after = await handle.stat({ bigint: true })
-      if (hash.digest('hex') !== expectedIntegrity.checksum || !snapshotMatches(snapshot, after)) {
-        throw new Error('Immutable version changed during integrity verification.')
+      const verificationKey = immutableVerificationKey(expectedIntegrity, snapshot)
+      if (!verifiedImmutableFiles.has(verificationKey)) {
+        const checksum = await checksumHandle(handle, expectedIntegrity.sizeBytes)
+        const after = await handle.stat({ bigint: true })
+        if (checksum !== expectedIntegrity.checksum || !snapshotMatches(snapshot, after)) {
+          throw new Error('Immutable version changed during integrity verification.')
+        }
+        rememberVerifiedImmutableFile(verificationKey)
       }
 
       const leaseHandle = handle
