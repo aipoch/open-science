@@ -344,6 +344,10 @@ export class AgentRuntimeManager {
   ) => Promise<ManagedCodexInstallOutcome>
   private readonly resolveProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
 
+  hasActiveInstall(): boolean {
+    return this.activeInstallId !== undefined
+  }
+
   constructor(options: AgentRuntimeManagerOptions) {
     this.repository = options.repository
     this.storageRoot = options.storageRoot

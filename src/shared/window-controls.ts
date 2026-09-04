@@ -181,8 +181,8 @@ export type CloseConfirmRequest = {
   requestId: string
   variant: CloseConfirmVariant
   sessions: ActiveSessionInfo[]
-  // Reviewer runtime activity has no session row but still requires the ordinary-quit warning.
-  reviewerActive?: boolean
+  // Some background owners (for example Reviewer and Settings installation) have no Session row.
+  unlistedWorkActive?: boolean
 }
 
 // ack:true when the modal mounts (proves the renderer is alive); choice set when the user decides.

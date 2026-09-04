@@ -4660,6 +4660,24 @@ describe('SettingsService: skills', () => {
 })
 
 describe('installClaude (app-managed source)', () => {
+  it('reports an in-flight install until the installer settles', async () => {
+    let finishInstall!: (outcome: Awaited<ReturnType<ManagedInstallImpl>>) => void
+    const installOutcome = new Promise<Awaited<ReturnType<ManagedInstallImpl>>>((resolve) => {
+      finishInstall = resolve
+    })
+    const service = createService(undefined, {
+      installManagedClaudeImpl: () => installOutcome
+    })
+
+    const install = service.installClaude({ source: 'managed' }, () => undefined)
+    expect(service.hasActiveInstall()).toBe(true)
+
+    finishInstall({ result: { installId: 'completed', ok: false } })
+    await install
+
+    expect(service.hasActiveInstall()).toBe(false)
+  })
+
   it('routes managed installs through the managed installer and persists the resolved path', async () => {
     const service = createService(undefined, {
       installManagedClaudeImpl: async ({ installId }) => ({

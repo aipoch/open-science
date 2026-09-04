@@ -173,10 +173,11 @@ const setup = (
     trayHost?: boolean
     detectActiveSessions?: () => ActiveSessionInfo[]
     hasActiveReviewerWork?: () => boolean
+    hasActiveSettingsWork?: () => boolean
     confirmClose?: (
       variant: CloseConfirmVariant,
       sessions: ActiveSessionInfo[],
-      reviewerActive?: boolean
+      unlistedWorkActive?: boolean
     ) => Promise<CloseConfirmChoice>
   } = {}
 ): Harness => {
@@ -229,6 +230,7 @@ const setup = (
       platform: overrides.platform ?? 'linux',
       detectActiveSessions,
       hasActiveReviewerWork: overrides.hasActiveReviewerWork ?? (() => false),
+      hasActiveSettingsWork: overrides.hasActiveSettingsWork ?? (() => false),
       createConfirmClose: () => confirmClose
     })
   return {
@@ -477,6 +479,7 @@ describe('installAppLifecycle', () => {
       platform: 'linux',
       detectActiveSessions: (): ActiveSessionInfo[] => [],
       hasActiveReviewerWork: () => false,
+      hasActiveSettingsWork: () => false,
       createConfirmClose: () => (): Promise<CloseConfirmChoice> => Promise.resolve('quit')
     })
 
@@ -1061,6 +1064,48 @@ describe('installAppLifecycle', () => {
     expect(confirmClose).toHaveBeenCalledWith('quit', sessions)
   })
 
+  it('rechecks an active Settings install after a pre-confirmed window close', async () => {
+    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'cancel')
+    const { app, closeOpts, shutdownBackends } = setup({
+      hasActiveSettingsWork: () => true,
+      confirmClose
+    })
+
+    closeOpts[0].requestQuit()
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledWith('quit', [], true)
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it('rechecks a Settings install admitted after an empty-work quit fast path', async () => {
+    let settingsWorkActive = false
+    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => {
+      if (confirmClose.mock.calls.length === 1) {
+        settingsWorkActive = true
+        return 'quit'
+      }
+      return 'cancel'
+    })
+    const { app, quit, shutdownBackends } = setup({
+      hasActiveSettingsWork: () => settingsWorkActive,
+      confirmClose
+    })
+
+    app.emit('before-quit')
+    await flush()
+    expect(quit).toHaveBeenCalledOnce()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenLastCalledWith('quit', [], true)
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
   it('before-quit with no active work proceeds to shutdown (confirmClose resolves quit)', async () => {
     const confirmClose = vi.fn(
       (_variant: CloseConfirmVariant, sessions: ActiveSessionInfo[]): Promise<CloseConfirmChoice> =>
@@ -1095,6 +1140,29 @@ describe('installAppLifecycle', () => {
     )
     const { app, quit, shutdownBackends } = setup({
       hasActiveReviewerWork: () => true,
+      confirmClose
+    })
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledWith('quit', [], true)
+    expect(quit).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it('warns before ordinary quit when only a Settings install is active', async () => {
+    const confirmClose = vi.fn(
+      (
+        _variant: CloseConfirmVariant,
+        sessions: ActiveSessionInfo[],
+        unlistedWorkActive = false
+      ): Promise<CloseConfirmChoice> =>
+        Promise.resolve(sessions.length === 0 && !unlistedWorkActive ? 'quit' : 'cancel')
+    )
+    const { app, quit, shutdownBackends } = setup({
+      hasActiveSettingsWork: () => true,
       confirmClose
     })
 

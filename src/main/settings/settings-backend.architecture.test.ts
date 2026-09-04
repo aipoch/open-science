@@ -413,6 +413,7 @@ describe('Settings backend ownership architecture', () => {
       'cancelCodexLogin',
       'cancelXaiOAuthLogin',
       'deleteProvider',
+      'dispose',
       'getClaudeIsolatedStatus',
       'getClaudeSharedStatus',
       'getXaiOAuthAccessToken',
@@ -480,11 +481,11 @@ describe('Settings backend ownership architecture', () => {
         codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
         detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getManualInterpreters getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
-        getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail
+        getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail hasActiveInstall
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
         importSkillZipBatch installClaude installCodeBuddy installCodex installNotebookNetwork installOpencode isEncryptionAvailable
         isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
-        loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
+        dispose loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
         markPathsNormalized migrateAgentHomeSkillIdentities previewAgentHomeSkill previewCustomServerTemplateExport
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
@@ -767,9 +768,17 @@ describe('Settings backend ownership architecture', () => {
     expect(mainIpc.indexOf('specialistPackageRecovery.current =')).toBeLessThan(
       mainIpc.indexOf('await settingsService.migrateAgentHomeSkillIdentities()')
     )
-    expect(mainIpc).toContain(
-      'capability: new SettingsService({\n      repository: settingsRepository,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      openAlexFetch: netFetchStandard,\n      applyNetworkProxy:'
+    const settingsModule = mainIpc.slice(
+      mainIpc.indexOf('const settingsService = await modules.add('),
+      mainIpc.indexOf('settingsServiceRef.current = settingsService')
     )
+    expect(settingsModule).toContain(
+      'const capability = new SettingsService({\n      repository: settingsRepository,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      openAlexFetch: netFetchStandard,\n      applyNetworkProxy:'
+    )
+    expect(settingsModule).toContain("name: 'settings-service'")
+    expect(settingsModule).toContain('rollback: () => capability.dispose()')
+    expect(settingsModule).toContain('dispose: () => capability.dispose()')
+    expect(settingsModule).toContain('disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS')
     expect(mainIpc).toContain('permissionGrantRegistry,\n    settingsRepository')
   })
 

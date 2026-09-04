@@ -114,6 +114,10 @@ class ProviderAccountsModule {
     )
   }
 
+  async dispose(): Promise<void> {
+    await Promise.all([this.auth.dispose(), Promise.resolve().then(() => this.xai.cancelLogin())])
+  }
+
   // Keeps provider-before-Connector ordering in SettingsService's whole-settings migration path.
   async migrateLegacyKeyRefs(providers: readonly StoredProvider[]): Promise<boolean> {
     let changed = false

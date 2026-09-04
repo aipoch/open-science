@@ -247,6 +247,15 @@ class SettingsService {
   private deviceCredentialAuthenticationCanceller?: (credentialId: string) => Promise<void>
   private deviceCredentialDisconnector?: (credentialId: string) => Promise<void>
   private skillDeletionGuard?: (skillId: string) => Promise<void>
+
+  hasActiveInstall(): boolean {
+    return this.runtimeManager.hasActiveInstall()
+  }
+
+  dispose(): Promise<void> {
+    return this.providers.dispose()
+  }
+
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
     this.repository = options.repository ?? new SettingsRepository(this.storageRoot)

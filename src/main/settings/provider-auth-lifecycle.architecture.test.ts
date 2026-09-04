@@ -90,6 +90,7 @@ describe('Provider authentication lifecycle ownership', () => {
       'cancelClaudeLogin',
       'cancelCodexLogin',
       'cleanupProviderBeforeDelete',
+      'dispose',
       'getClaudeIsolatedStatus',
       'getClaudeSharedStatus',
       'isProviderKeyUsable',

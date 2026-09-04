@@ -457,6 +457,7 @@ export type ApplicationRuntimeInterfaces = {
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   hasActiveReviewerWork: () => boolean
+  hasActiveSettingsWork: () => boolean
   prepareForQuit: () => Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
   abortQuitPreparation: () => void
 }
@@ -622,8 +623,8 @@ const createApplicationModules = async (
       dispose: () => capability.dispose()
     }
   })
-  const settingsService = await modules.add(undefined, () => ({
-    capability: new SettingsService({
+  const settingsService = await modules.add(undefined, () => {
+    const capability = new SettingsService({
       repository: settingsRepository,
       skillRuntimeMcpEntryPath: mainEntryPath,
       openAlexFetch: netFetchStandard,
@@ -647,7 +648,14 @@ const createApplicationModules = async (
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
-  }))
+    return {
+      name: 'settings-service',
+      capability,
+      rollback: () => capability.dispose(),
+      dispose: () => capability.dispose(),
+      disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
+    }
+  })
   settingsServiceRef.current = settingsService
   const settingsSnapshotCommits = new SettingsSnapshotCommitOwner(
     settingsService,
@@ -4205,6 +4213,7 @@ const createApplicationModules = async (
         notebook: notebookService
       }),
     hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
+    hasActiveSettingsWork: () => settingsService.hasActiveInstall(),
     prepareForQuit: () => runtime.prepareForQuit(),
     abortQuitPreparation: () => runtime.abortQuitPreparation(),
     electronAdapters: {
