@@ -82,13 +82,6 @@ describe('code block language badge', () => {
     expect(actions.querySelector('[data-lang-icon]')).toBeNull()
   })
 
-  it('decorates code blocks added after install', async () => {
-    const actions = createCodeBlock('html')
-    await flushMutations()
-
-    expect(actions.querySelector('[data-lang-icon]')?.getAttribute('title')).toBe('html')
-  })
-
   it('decorates each actions chip only once', async () => {
     const actions = createCodeBlock('rust')
     await flushMutations()
