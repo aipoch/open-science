@@ -283,6 +283,61 @@ describe('TaskRunner', () => {
     expect(validate).toHaveBeenCalledWith(['ssh:alpha', 'ssh:alpha'])
   })
 
+  it('keeps a committed configuration update when its attached runtime detaches', async () => {
+    let current: PersistedChatSession = { ...session, revision: 4, memoryEnabled: true }
+    const updateConfiguration = vi.fn(async (value: PersistedChatSession) => {
+      current = { ...value, revision: 5 }
+      return current
+    })
+    const listAttachedSessionIds = vi
+      .fn<() => Promise<string[]>>()
+      .mockResolvedValueOnce([session.id])
+      .mockResolvedValueOnce([])
+    const runner = createRunner({
+      sessions: { list: async () => [current], updateConfiguration },
+      agent: {
+        listAttachedSessionIds,
+        setMemoryEnabled: async () => {
+          throw new Error(`ACP session not found: ${session.id}`)
+        }
+      }
+    })
+
+    await expect(
+      runner.updateSessionConfiguration(session.id, {
+        expectedRevision: 4,
+        memoryEnabled: false
+      })
+    ).resolves.toMatchObject({ revision: 5, persisted: { memoryEnabled: false } })
+    expect(updateConfiguration).toHaveBeenCalledOnce()
+    expect(listAttachedSessionIds).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports a runtime synchronization failure while the Session remains attached', async () => {
+    let current: PersistedChatSession = { ...session, revision: 4, memoryEnabled: true }
+    const updateConfiguration = vi.fn(async (value: PersistedChatSession) => {
+      current = { ...value, revision: 5 }
+      return current
+    })
+    const runner = createRunner({
+      sessions: { list: async () => [current], updateConfiguration },
+      agent: {
+        listAttachedSessionIds: async () => [session.id],
+        setMemoryEnabled: async () => {
+          throw new Error('runtime synchronization failed')
+        }
+      }
+    })
+
+    await expect(
+      runner.updateSessionConfiguration(session.id, {
+        expectedRevision: 4,
+        memoryEnabled: false
+      })
+    ).rejects.toThrow('runtime synchronization failed')
+    expect(updateConfiguration).toHaveBeenCalledOnce()
+  })
+
   it('rejects stale or active Session configuration updates without persisting them', async () => {
     const current = { ...session, revision: 3 }
     const save = vi.fn(async (value: PersistedChatSession) => value)

@@ -1082,7 +1082,13 @@ class TaskRunner {
       patch.memoryEnabled !== undefined &&
       (await this.dependencies.agent.listAttachedSessionIds()).includes(session.id)
     ) {
-      await this.dependencies.agent.setMemoryEnabled(session.id, patch.memoryEnabled)
+      try {
+        await this.dependencies.agent.setMemoryEnabled(session.id, patch.memoryEnabled)
+      } catch (error) {
+        if ((await this.dependencies.agent.listAttachedSessionIds()).includes(session.id)) {
+          throw error
+        }
+      }
     }
     return this.getSessionConfiguration(sessionId)
   }
