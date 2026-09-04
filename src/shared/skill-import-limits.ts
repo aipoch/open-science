@@ -9,12 +9,12 @@ export const isSkillPackageBudgetedPath = (relativePath: string): boolean =>
 // GitHub download). Without them a zip bomb or a very large repository could exhaust memory or freeze
 // the app while the user imports a skill from settings. Lives in shared/ so the renderer can enforce
 // the same numbers on the upload picker as the main process enforces on extraction/download. The
-// limits are generous for a real skill (a SKILL.md plus a handful of reference files) and only trip on
-// abuse.
+// limits cover asset-heavy Skills while still rejecting archives whose structure or byte size is
+// pathological.
 export const SKILL_IMPORT_LIMITS = {
-  // Structural cap on the number of files in ONE skill: high enough for a mega-zip carrying several
-  // skills, low enough to reject a pathological archive. Total size is the real limit.
-  maxFiles: 256,
+  // Structural cap on the number of files in ONE skill. Large asset libraries can legitimately
+  // contain thousands of tiny files; byte limits remain the primary memory bound.
+  maxFiles: 16_384,
   // Maximum size of any single file (decompressed, for zip entries). Set high because real skills
   // legitimately bundle large reference assets (datasets, templates, model files) worth keeping.
   maxFileBytes: 50 * 1024 * 1024,
@@ -46,8 +46,7 @@ export const SKILL_IMPORT_LIMITS = {
   // unbounded number of import candidates.
   maxSkillsPerBundle: 256,
   // Structural cap on the number of entries in the OUTER bundle walk (loose files + nested archives),
-  // above the per-skill file cap since one bundle may hold many skills. Decompressed size
-  // (maxBundleBytes) is the real memory guard; this only rejects an archive with a pathological entry
-  // count.
-  maxBundleEntries: 4096
+  // above the per-skill cap so a bundle can carry multiple Skills. Decompressed size (maxBundleBytes)
+  // is the real memory guard; this only rejects an archive with a pathological entry count.
+  maxBundleEntries: 32_768
 } as const

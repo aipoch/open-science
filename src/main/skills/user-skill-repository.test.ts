@@ -789,6 +789,32 @@ describe('UserSkillRepository', () => {
     expect((await repo.previewZip(zip)).previews[0].alreadyImported).toBe(true)
   })
 
+  it('previews a three-level wrapped ppt-master-scale Skill bundle', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    // ppt-master v6.2.0 contains 12,941 files. Keep a small synthetic fixture at the same structural
+    // scale so the real release remains importable without checking a third-party archive into Git.
+    const zip = buildZip([
+      {
+        path: 'ppt-master/skills/ppt-master/SKILL.md',
+        content: Buffer.from('---\nname: ppt-master\ndescription: d\n---\nbody')
+      },
+      ...Array.from({ length: 12_940 }, (_, index) => ({
+        path: `ppt-master/skills/ppt-master/templates/icons/icon-${index}.svg`,
+        content: Buffer.alloc(0)
+      }))
+    ])
+
+    const { previews } = await repo.previewZip(zip)
+
+    expect(previews).toEqual([
+      expect.objectContaining({
+        name: 'ppt-master',
+        subPath: 'ppt-master/skills/ppt-master'
+      })
+    ])
+    expect(previews[0].files).toHaveLength(12_941)
+  })
+
   it('bounds cumulative preview content without making later bundle skills unimportable', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     const largeBody = Buffer.alloc(3 * 1024 * 1024, 0x61)

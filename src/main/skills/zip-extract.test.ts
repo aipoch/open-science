@@ -137,8 +137,7 @@ describe('extractZip', () => {
   })
 
   it('rejects a bundle with more files than the count limit', () => {
-    // 300 tiny STORE entries exceed SKILL_IMPORT_LIMITS.maxFiles (256).
-    const inputs: ZipInput[] = Array.from({ length: 300 }, (_, i) => ({
+    const inputs: ZipInput[] = Array.from({ length: SKILL_IMPORT_LIMITS.maxFiles + 1 }, (_, i) => ({
       path: `f${i}.txt`,
       content: Buffer.from('x', 'utf8'),
       method: 0 as const

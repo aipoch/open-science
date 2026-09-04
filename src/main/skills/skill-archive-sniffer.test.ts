@@ -122,6 +122,17 @@ describe('isImportableSkillArchivePath', () => {
     ).resolves.toBe(true)
   })
 
+  it('classifies a Skill under three wrapper directories', async () => {
+    const archive = buildZip([
+      {
+        path: 'release/skills/ppt-master/SKILL.md',
+        content: Buffer.from('---\nname: ppt-master\ndescription: d\n---\nRun it.')
+      }
+    ])
+
+    await expectMatchesPreview(archive, true)
+  })
+
   it('finds a named Skill manifest without inflating unrelated large entries', async () => {
     const archive = buildZip([
       { path: 'paper-finder/assets/model.bin', content: Buffer.alloc(2 * 1024 * 1024), method: 0 },
@@ -201,7 +212,7 @@ describe('isImportableSkillArchivePath', () => {
     ])
     const deepManifest = buildZip([
       {
-        path: 'a/b/c/SKILL.md',
+        path: 'a/b/c/d/SKILL.md',
         content: Buffer.from('---\nname: Too Deep\ndescription: hidden\n---\nBody')
       }
     ])
