@@ -139,6 +139,7 @@ describe('createProjectHandlers', () => {
       get: vi.fn(async (id: string) =>
         id === deletingProject.id ? deletingProject : unrelatedProject
       ),
+      exists: vi.fn().mockResolvedValue(true),
       create: vi.fn().mockResolvedValue(unrelatedProject),
       update: vi.fn().mockResolvedValue(unrelatedProject),
       delete: vi.fn().mockResolvedValue(undefined),
