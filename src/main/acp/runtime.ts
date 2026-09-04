@@ -146,7 +146,11 @@ import {
 import type { PlanResponseResult, PlanServiceDependencies } from '../session-plan/plan-service'
 import { SessionPlanContinuationOwner } from './session-plan-continuation-owner'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
-import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type {
+  SessionCatalog,
+  SessionMutation,
+  SessionRuntimeContextCommands
+} from '../session-persistence/coordinator'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
@@ -221,16 +225,9 @@ type AcpRuntimeOptions = {
   skills?: AcpTurnSkillHooks
   plan?: AcpRuntimePlanOptions
   permissionWait?: {
-    sessions: Pick<
-      SessionPersistenceCoordinator,
-      | 'readSessionRuntimeContext'
-      | 'patchSessionRuntimeContext'
-      | 'containsMessageOnActiveBranch'
-      | 'loadSessionForContinuation'
-    > &
-      Partial<
-        Pick<SessionPersistenceCoordinator, 'appendUserMessageToInteraction' | 'sessionProjectId'>
-      >
+    sessions: SessionRuntimeContextCommands &
+      Pick<SessionCatalog, 'containsMessageOnActiveBranch' | 'loadSessionForContinuation'> &
+      Partial<Pick<SessionCatalog, 'sessionProjectId'> & SessionMutation>
     onSessionUpdated?: import('./permission-wait-owner').PublishPermissionWaitSession
     onContinuationSessionUpdated?: import('./permission-wait-owner').PublishPermissionWaitSession
   }
@@ -395,14 +392,9 @@ type AcpRuntimePlanOptions = {
     projectId: string
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  sessions: Pick<
-    SessionPersistenceCoordinator,
-    | 'readSessionRuntimeContext'
-    | 'patchSessionRuntimeContext'
-    | 'appendUserMessageToInteraction'
-    | 'containsMessageOnActiveBranch'
-    | 'loadSessionForContinuation'
-  >
+  sessions: SessionRuntimeContextCommands &
+    SessionMutation &
+    Pick<SessionCatalog, 'containsMessageOnActiveBranch' | 'loadSessionForContinuation'>
   onApprovalRequested?: PlanServiceDependencies['onApprovalRequested']
   onApprovalSettled?: PlanServiceDependencies['onApprovalSettled']
 }

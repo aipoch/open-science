@@ -242,7 +242,8 @@ import {
 } from './permission-grants/reconciliation'
 import {
   SessionPersistenceCoordinator,
-  type ComputeJobDeletionParticipant
+  type ComputeJobDeletionParticipant,
+  type SessionDeletion
 } from './session-persistence/coordinator'
 import { withSessionCacheDeletion } from './compute/session-cache-owner'
 import { createMainPromptSideChatRelay } from './side-chat/main-prompt-relay'
@@ -452,7 +453,7 @@ export type ApplicationRuntimeInterfaces = {
   taskAgent: TaskAgentPort
   taskControls: TaskControlPorts
   computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>
-  sessionDeletionCapability: Pick<SessionPersistenceCoordinator, 'setSessionDeletionHandlers'>
+  sessionDeletionCapability: Pick<SessionDeletion, 'setSessionDeletionHandlers'>
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   hasActiveReviewerWork: () => boolean

@@ -1083,15 +1083,43 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
 }
 const sessionKey = (projectId: string, sessionId: string): string => `${projectId}:${sessionId}`
 
+type SessionCatalog = Pick<
+  SessionPersistenceCoordinator,
+  'containsMessageOnActiveBranch' | 'loadSessionForContinuation' | 'sessionProjectId'
+>
+type SessionMutation = Pick<SessionPersistenceCoordinator, 'appendUserMessageToInteraction'>
+type SessionRuntimeContextCommands = Pick<
+  SessionPersistenceCoordinator,
+  'readSessionRuntimeContext' | 'patchSessionRuntimeContext'
+>
+type SessionDeletion = Pick<
+  SessionPersistenceCoordinator,
+  | 'assertProjectArchivable'
+  | 'assertSessionAvailable'
+  | 'completeProjectSessionDeletion'
+  | 'deleteProjectSessions'
+  | 'deleteSession'
+  | 'getProjectSessionDeletionState'
+  | 'listLegacyProjectSessionTombstones'
+  | 'markCommittedProjectSessionsPrepared'
+  | 'setSessionDeletionHandlers'
+  | 'updateArchive'
+>
+
 export { SessionPersistenceCoordinator, SessionRuntimeContextRevisionConflictError }
 export type {
   ComputeJobDeletionParticipant,
+  DelegatedWorkRecordCommands,
   PatchSessionRuntimeContextCommand,
   ProjectSessionDeletionResult,
+  SessionCatalog,
+  SessionDeletion,
   SessionDeletionHandlers,
   SessionFileIndex,
   SessionMetadata,
   SessionMetadataSnapshot,
+  SessionMutation,
   SessionMutationRepository,
-  SessionProvenancePersistence
+  SessionProvenancePersistence,
+  SessionRuntimeContextCommands
 }

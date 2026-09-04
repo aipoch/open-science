@@ -9,7 +9,7 @@ import type {
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
 import { createLogger, errorLogFields } from '../logger'
-import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type { SessionCatalog } from '../session-persistence/coordinator'
 import { extractPdfText } from '../uploads/attachment-media'
 import { LiteratureFullTextIndex, type LiteratureIndexChunk } from './full-text-index'
 import type { LiteratureReadDocumentRequest } from './mcp-server'
@@ -34,7 +34,7 @@ type LiteratureDocumentReaderOptions = Readonly<{
     // Test-only compatibility for fixtures that predate immutable read leases.
     resolveContent?: (input: NotebookRunInputFile) => Promise<string>
   }
-  sessions: Pick<SessionPersistenceCoordinator, 'loadSessionForContinuation'>
+  sessions: Pick<SessionCatalog, 'loadSessionForContinuation'>
 }>
 
 type ReadCurrentLiteratureRequest = Readonly<{

@@ -369,6 +369,36 @@ const constructionSites = (className: string): string[] => {
   return sites.sort()
 }
 
+const concreteCoordinatorConsumerFiles = (): string[] =>
+  findTypeScriptFiles(resolve(projectRoot, 'src/main'))
+    .filter((path) => !path.endsWith('/session-persistence/coordinator.ts'))
+    .filter((path) => path !== resolve(projectRoot, 'src/main/ipc.ts'))
+    .filter((path) => {
+      const sourceFile = createSourceFile(
+        path,
+        readFileSync(path, 'utf8'),
+        ScriptTarget.Latest,
+        true,
+        ScriptKind.TS
+      )
+      return sourceFile.statements.filter(isImportDeclaration).some((statement) => {
+        if (!isStringLiteralLike(statement.moduleSpecifier)) return false
+        const importedPath = resolve(path, '..', statement.moduleSpecifier.text)
+        if (importedPath !== resolve(__dirname, 'coordinator')) return false
+        const bindings = statement.importClause?.namedBindings
+        return (
+          bindings !== undefined &&
+          isNamedImports(bindings) &&
+          bindings.elements.some(
+            (element) =>
+              (element.propertyName ?? element.name).text === 'SessionPersistenceCoordinator'
+          )
+        )
+      })
+    })
+    .map((path) => relative(projectRoot, path).split(sep).join('/'))
+    .sort()
+
 type ModuleImpactManifest = {
   modules: Record<
     string,
@@ -506,16 +536,25 @@ describe('Session persistence coordinator architecture', () => {
     expect(exportedNames(facadeFile, 'type')).toEqual(
       [
         'ComputeJobDeletionParticipant',
+        'DelegatedWorkRecordCommands',
         'PatchSessionRuntimeContextCommand',
         'ProjectSessionDeletionResult',
+        'SessionCatalog',
+        'SessionDeletion',
         'SessionDeletionHandlers',
         'SessionFileIndex',
         'SessionMetadata',
         'SessionMetadataSnapshot',
+        'SessionMutation',
         'SessionMutationRepository',
-        'SessionProvenancePersistence'
+        'SessionProvenancePersistence',
+        'SessionRuntimeContextCommands'
       ].sort()
     )
+  })
+
+  it('keeps production consumers on named capability views', () => {
+    expect(concreteCoordinatorConsumerFiles()).toEqual([])
   })
 
   it('composes each owner once and keeps mutable state with its sole owner', () => {

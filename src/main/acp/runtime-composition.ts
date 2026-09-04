@@ -43,7 +43,11 @@ import {
 import type { SpecialistService } from '../specialist/service'
 import { resolveConfigRoot, resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import type { UploadRepository } from '../uploads/repository'
-import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type {
+  SessionCatalog,
+  SessionMutation,
+  SessionRuntimeContextCommands
+} from '../session-persistence/coordinator'
 import type { LiteratureDocumentReader } from '../literature/document-reader'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import type { ResolvedAgentBackend } from '../agent-framework'
@@ -145,15 +149,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   beforeSessionDelete?: (sessionId: string) => Promise<void>
   afterSessionDelete?: (sessionId: string, retained: boolean) => void
   specialistService?: SpecialistService
-  sessionPersistenceCoordinator?: Pick<
-    SessionPersistenceCoordinator,
-    | 'readSessionRuntimeContext'
-    | 'patchSessionRuntimeContext'
-    | 'appendUserMessageToInteraction'
-    | 'containsMessageOnActiveBranch'
-    | 'loadSessionForContinuation'
-    | 'sessionProjectId'
-  >
+  sessionPersistenceCoordinator?: SessionRuntimeContextCommands & SessionMutation & SessionCatalog
   literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent'>
   delegatedWork?: RootDelegatedWorkControl
   fixedBackend?: ResolvedAgentBackend

@@ -1,10 +1,7 @@
 import type { SessionPlanContinuation } from '../../shared/session-persistence'
-import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type { SessionRuntimeContextCommands } from '../session-persistence/coordinator'
 
-type SessionPlanContinuationSessions = Pick<
-  SessionPersistenceCoordinator,
-  'readSessionRuntimeContext' | 'patchSessionRuntimeContext'
->
+type SessionPlanContinuationSessions = SessionRuntimeContextCommands
 
 const isRevisionConflict = (error: unknown): boolean =>
   typeof error === 'object' &&

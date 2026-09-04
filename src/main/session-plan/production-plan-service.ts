@@ -1,6 +1,9 @@
 import type { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
-import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type {
+  SessionMutation,
+  SessionRuntimeContextCommands
+} from '../session-persistence/coordinator'
 import { SessionRuntimeContextRevisionConflictError } from '../session-persistence/coordinator'
 import { PlanService, type PlanServiceDependencies } from './plan-service'
 import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
@@ -9,10 +12,7 @@ type ProductionPlanServiceDependencies = Readonly<{
   interactions?: SessionPlanInteractionOwner
   artifactTurns: Pick<ArtifactTurnOwner, 'handleForExecution' | 'write'>
   managedFileVersions: Pick<ManagedFileVersionService, 'openUnpublishedVersion'>
-  sessions: Pick<
-    SessionPersistenceCoordinator,
-    'readSessionRuntimeContext' | 'patchSessionRuntimeContext' | 'appendUserMessageToInteraction'
-  >
+  sessions: SessionRuntimeContextCommands & SessionMutation
   onApprovalRequested?: PlanServiceDependencies['onApprovalRequested']
   onApprovalSettled?: PlanServiceDependencies['onApprovalSettled']
 }>

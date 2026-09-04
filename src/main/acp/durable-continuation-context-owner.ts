@@ -18,14 +18,11 @@ import {
   sanitizeSessionReferences,
   type PersistedChatSession
 } from '../../shared/session-persistence'
-import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type { SessionCatalog, SessionMutation } from '../session-persistence/coordinator'
 import { validateElicitationAnswers } from './elicitation-owner'
 
-type DurableContinuationSessions = Pick<
-  SessionPersistenceCoordinator,
-  'loadSessionForContinuation'
-> &
-  Partial<Pick<SessionPersistenceCoordinator, 'appendUserMessageToInteraction'>>
+type DurableContinuationSessions = Pick<SessionCatalog, 'loadSessionForContinuation'> &
+  Partial<SessionMutation>
 
 type DurableContinuationPreparation = Readonly<{
   provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
