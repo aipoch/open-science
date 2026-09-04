@@ -101,6 +101,20 @@ describe('project repository', () => {
     })
   })
 
+  it('hides projects with a committed deletion intent before soft deletion completes', async () => {
+    const deletingProject = createRow({ id: 'project-deleting', name: 'Deleting' })
+    const activeProject = createRow({ id: 'project-active', name: 'Active' })
+    const { client, projectDeletionIntent } = createMockClient({
+      findMany: () => Promise.resolve([deletingProject, activeProject])
+    })
+    projectDeletionIntent.findMany.mockResolvedValue([{ projectId: 'project-deleting' }])
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(repository.list()).resolves.toEqual([
+      expect.objectContaining({ id: 'project-active', name: 'Active' })
+    ])
+  })
+
   it('returns null when a project is not found', async () => {
     const { client } = createMockClient({ findUnique: () => Promise.resolve(null) })
     const repository = new ProjectRepository(() => Promise.resolve(client))

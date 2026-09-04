@@ -412,6 +412,39 @@ describe('ArchiveCoordinator', () => {
     await expect(coordinator.assertProjectAvailable(project.id)).resolves.toBeUndefined()
   })
 
+  it('keeps an unrelated Project available while deletion quiescence is in flight', async () => {
+    const deletionGate = createDeferred<void>()
+    const projects = {
+      get: vi.fn(async (projectId: string) => ({ ...project, id: projectId })),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn(),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn()
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
+    const quiesce = vi.fn(() => deletionGate.promise)
+
+    const deletion = coordinator.withProjectDeletion(project.id, quiesce)
+    await vi.waitFor(() => expect(quiesce).toHaveBeenCalledOnce())
+
+    const unrelatedOperation = vi.fn().mockResolvedValue('available')
+    const unrelated = coordinator.withProjectAvailable('project-2', unrelatedOperation)
+    await flushMicrotasks()
+    const wasAdmittedDuringDeletion = unrelatedOperation.mock.calls.length === 1
+
+    deletionGate.resolve(undefined)
+    await expect(deletion).resolves.toBeUndefined()
+    await expect(unrelated).resolves.toBe('available')
+    expect(wasAdmittedDuringDeletion).toBe(true)
+  })
+
   it('releases admission after prompt dispatch starts without awaiting prompt completion', async () => {
     const prompt = createDeferred<string>()
     const projects = {
@@ -515,4 +548,10 @@ const createDeferred = <Value>(): {
     resolve = promiseResolve
   })
   return { promise, resolve }
+}
+
+const flushMicrotasks = async (): Promise<void> => {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
 }

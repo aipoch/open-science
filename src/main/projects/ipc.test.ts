@@ -15,6 +15,7 @@ vi.mock('electron', () => ({
 }))
 
 import { createProjectHandlers, registerPreviewStateIpcHandlers } from './ipc'
+import { ProjectDeletionCoordinator } from './deletion-coordinator'
 
 beforeEach(() => {
   ipcHandlers.clear()
@@ -74,7 +75,7 @@ describe('createProjectHandlers', () => {
     expect(deletionCoordinator.retryDeletionCleanup).toHaveBeenCalledOnce()
   })
 
-  it('recovers durable deletions before listing projects', async () => {
+  it('lists projects without waiting for deletion recovery', async () => {
     const repository = {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn(),
@@ -91,7 +92,7 @@ describe('createProjectHandlers', () => {
 
     await handlers.list()
 
-    expect(deletionCoordinator.waitForProjectOperations).toHaveBeenCalledWith([])
+    expect(deletionCoordinator.waitForProjectOperations).not.toHaveBeenCalled()
     expect(repository.list).toHaveBeenCalledOnce()
   })
 
@@ -124,12 +125,88 @@ describe('createProjectHandlers', () => {
 
     expect(repository.list).toHaveBeenCalledOnce()
     expect(repository.get).toHaveBeenCalledOnce()
-    expect(deletionCoordinator.waitForProjectOperations).toHaveBeenCalledWith([])
     expect(deletionCoordinator.waitForProjectOperations).toHaveBeenCalledWith(['project-2'])
     expect(deletionCoordinator.waitForProjectOperations).toHaveBeenCalledWith(['project-1'])
   })
 
-  it('recovers durable deletions before every project read or mutation', async () => {
+  it('keeps unrelated Project CRUD available while another deletion is in flight', async () => {
+    const deletionGate = createDeferred<void>()
+    const deletionIntents = new Set<string>()
+    const deletingProject = project
+    const unrelatedProject = { ...project, id: 'project-2', name: 'Other Project' }
+    const repository = {
+      list: vi.fn().mockResolvedValue([unrelatedProject]),
+      get: vi.fn(async (id: string) =>
+        id === deletingProject.id ? deletingProject : unrelatedProject
+      ),
+      create: vi.fn().mockResolvedValue(unrelatedProject),
+      update: vi.fn().mockResolvedValue(unrelatedProject),
+      delete: vi.fn().mockResolvedValue(undefined),
+      createDeletionIntent: vi.fn(async (projectId: string) => {
+        deletionIntents.add(projectId)
+      }),
+      deleteDeletionIntent: vi.fn(async (projectId: string) => {
+        deletionIntents.delete(projectId)
+      }),
+      listDeletionIntents: vi.fn(async () => [...deletionIntents]),
+      listDeletionCleanupProjects: vi.fn().mockResolvedValue([])
+    }
+    const sessions = {
+      deleteProjectSessions: vi.fn(async (projectId: string) => {
+        if (projectId === deletingProject.id) await deletionGate.promise
+        return { status: 'completed' as const }
+      }),
+      getProjectSessionDeletionState: vi.fn().mockResolvedValue('absent' as const),
+      completeProjectSessionDeletion: vi.fn().mockResolvedValue(undefined),
+      listLegacyProjectSessionTombstones: vi.fn().mockResolvedValue([])
+    }
+    const deletionCoordinator = new ProjectDeletionCoordinator(repository, sessions)
+    const updateArchive = vi.fn().mockResolvedValue(unrelatedProject)
+    const handlers = createProjectHandlers(repository, deletionCoordinator, { updateArchive })
+    await deletionCoordinator.recoverPendingDeletions()
+
+    const deletion = handlers.delete(deletingProject.id)
+    await vi.waitFor(() =>
+      expect(sessions.deleteProjectSessions).toHaveBeenCalledWith(deletingProject.id)
+    )
+
+    const operations = [
+      handlers.list(),
+      handlers.get(unrelatedProject.id),
+      handlers.create({ name: 'New Project' }),
+      handlers.update({
+        id: unrelatedProject.id,
+        name: 'Renamed Project',
+        expectedUpdatedAt: unrelatedProject.updatedAt
+      }),
+      handlers.updateArchive({
+        id: unrelatedProject.id,
+        archived: true,
+        expectedArchivedAt: null
+      })
+    ]
+    await flushMicrotasks()
+    const reachedBeforeDeletionFinished = {
+      list: repository.list.mock.calls.length > 0,
+      get: repository.get.mock.calls.some(([id]) => id === unrelatedProject.id),
+      create: repository.create.mock.calls.length > 0,
+      update: repository.update.mock.calls.length > 0,
+      archive: updateArchive.mock.calls.length > 0
+    }
+
+    deletionGate.resolve(undefined)
+    await Promise.all([deletion, ...operations])
+
+    expect(reachedBeforeDeletionFinished).toEqual({
+      list: true,
+      get: true,
+      create: true,
+      update: true,
+      archive: true
+    })
+  })
+
+  it('checks deletion recovery only for operations on existing Projects', async () => {
     const order: string[] = []
     const repository = {
       list: vi.fn(),
@@ -160,7 +237,7 @@ describe('createProjectHandlers', () => {
     await handlers.create({ name: 'Project' })
     await handlers.update({ id: 'project-1', name: 'Renamed', expectedUpdatedAt: 2 })
 
-    expect(order).toEqual(['recover', 'get', 'recover', 'create', 'recover', 'update'])
+    expect(order).toEqual(['recover', 'get', 'create', 'recover', 'update'])
   })
 
   it('forwards the Agent Context field through create and update unchanged', async () => {
@@ -267,4 +344,19 @@ const project = {
   isExample: false,
   createdAt: 1,
   updatedAt: 2
+}
+
+const createDeferred = <Value>(): {
+  promise: Promise<Value>
+  resolve: (value: Value) => void
+} => {
+  let resolve!: (value: Value) => void
+  const promise = new Promise<Value>((promiseResolve) => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
+}
+
+const flushMicrotasks = async (): Promise<void> => {
+  for (let index = 0; index < 10; index += 1) await Promise.resolve()
 }

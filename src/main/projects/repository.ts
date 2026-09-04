@@ -55,12 +55,16 @@ class ProjectRepository {
   // Lists projects most-recently-updated first for the home screen.
   async list(): Promise<Project[]> {
     const client = await this.getClient()
+    const deletionIntents = await client.projectDeletionIntent.findMany({
+      select: { projectId: true }
+    })
     const rows = await client.project.findMany({
       where: { deletedAt: null },
       orderBy: { updatedAt: 'desc' }
     })
+    const deletingProjectIds = new Set(deletionIntents.map(({ projectId }) => projectId))
 
-    return rows.map(toProject)
+    return rows.filter(({ id }) => !deletingProjectIds.has(id)).map(toProject)
   }
 
   // Returns a single project or null when it no longer exists.

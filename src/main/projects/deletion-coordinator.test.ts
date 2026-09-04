@@ -837,7 +837,7 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.createDeletionIntent).toHaveBeenCalledWith('project-2')
     expect(projects.delete).toHaveBeenCalledWith('project-2')
     expect(sessions.deleteProjectSessions).toHaveBeenCalledWith('project-1')
-    expect(sessions.deleteProjectSessions).toHaveBeenCalledTimes(3)
+    expect(sessions.deleteProjectSessions).toHaveBeenCalledTimes(2)
   })
 
   it('keeps a committed recovery intent when the Project row still exists and replay fails', async () => {
@@ -1096,8 +1096,10 @@ describe('ProjectDeletionCoordinator', () => {
 
     const firstDeletion = coordinator.deleteProject('project-1')
     const secondDeletion = coordinator.deleteProject('project-2')
-    await flushMicrotasks()
-    await flushMicrotasks()
+    await vi.waitFor(() => {
+      expect(sessions.deleteProjectSessions).toHaveBeenCalledWith('project-1')
+      expect(sessions.deleteProjectSessions).toHaveBeenCalledWith('project-2')
+    })
 
     let recoveryFinished = false
     const recovery = coordinator.recoverPendingDeletions().then(() => {

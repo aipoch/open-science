@@ -63,7 +63,6 @@ const createProjectHandlers = (
   }
 ): ProjectHandlers => ({
   list: async () => {
-    await deletionCoordinator.waitForProjectOperations([])
     return repository.list()
   },
   get: async (id) => {
@@ -71,7 +70,6 @@ const createProjectHandlers = (
     return repository.get(id)
   },
   create: async (request) => {
-    await deletionCoordinator.waitForProjectOperations([])
     return repository.create(request)
   },
   update: async (request) => {
