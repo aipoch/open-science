@@ -34,7 +34,7 @@ jobs:
           cache: npm
 
       - name: Install trusted parsing toolchain
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit
 
       - name: Resolve inspected revisions
         id: revisions

@@ -8,7 +8,7 @@ import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
 type ProductionPlanServiceDependencies = Readonly<{
   interactions?: SessionPlanInteractionOwner
   artifactTurns: Pick<ArtifactTurnOwner, 'handleForExecution' | 'write'>
-  managedFileVersions: Pick<ManagedFileVersionService, 'openVersion'>
+  managedFileVersions: Pick<ManagedFileVersionService, 'openUnpublishedVersion'>
   sessions: Pick<
     SessionPersistenceCoordinator,
     'readSessionRuntimeContext' | 'patchSessionRuntimeContext' | 'appendUserMessageToInteraction'
@@ -24,11 +24,14 @@ type PlanArtifactVersionRequest = {
   artifactVersionId: string
 }
 
+// The Plan document is read back while its Artifact Version is still pending message finalization
+// (write-then-verify after generate, and again during approval feedback), so this uses the
+// producer read instead of the published-version read.
 const readManagedArtifactVersion = async (
-  managedFileVersions: Pick<ManagedFileVersionService, 'openVersion'>,
+  managedFileVersions: Pick<ManagedFileVersionService, 'openUnpublishedVersion'>,
   request: PlanArtifactVersionRequest
 ): Promise<{ content: string; checksum: string }> => {
-  const lease = await managedFileVersions.openVersion(
+  const lease = await managedFileVersions.openUnpublishedVersion(
     { source: 'artifact', projectId: request.projectId, fileId: request.artifactId },
     request.artifactVersionId
   )

@@ -1,4 +1,12 @@
-import { mkdtemp, readFile, readdir, rename as renameFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  rename as renameFile,
+  rm,
+  stat as statFile,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -6,7 +14,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const faults = vi.hoisted(() => ({
   failReadOnceWith: undefined as Error | undefined,
-  renameFailuresRemaining: 0
+  renameFailuresRemaining: 0,
+  reportedSize: undefined as number | undefined
 }))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -28,6 +37,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
         })
       }
       await actual.rename(source, destination)
+    }),
+    stat: vi.fn(async (...args: Parameters<typeof actual.stat>) => {
+      const result = await actual.stat(...args)
+      return faults.reportedSize === undefined ? result : { ...result, size: faults.reportedSize }
     })
   }
 })
@@ -39,6 +52,7 @@ let storageRoot: string | undefined
 afterEach(async () => {
   faults.failReadOnceWith = undefined
   faults.renameFailuresRemaining = 0
+  faults.reportedSize = undefined
   vi.clearAllMocks()
   if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
   storageRoot = undefined
@@ -57,6 +71,20 @@ describe('settings document store', () => {
     await expect(
       store.mutate((settings) => ({ ...settings, notificationsEnabled: false }))
     ).resolves.toMatchObject({ providers: [], notificationsEnabled: false })
+  })
+
+  it('rejects an oversized settings document before reading its contents', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-settings-store-'))
+    const settingsPath = join(storageRoot, 'settings.json')
+    await writeFile(settingsPath, '{"version":2,"providers":[]}\n', 'utf8')
+    faults.reportedSize = 128 * 1024 * 1024 + 1
+    vi.mocked(readFile).mockClear()
+
+    await expect(new SettingsDocumentStore(storageRoot).read()).rejects.toThrow(
+      'settings.json exceeds the 134217728 byte read limit.'
+    )
+    expect(readFile).not.toHaveBeenCalled()
+    expect(statFile).toHaveBeenCalledWith(settingsPath)
   })
 
   it('migrates a version 1 settings document through the registered pipeline', async () => {

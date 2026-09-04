@@ -35,6 +35,7 @@ type ProvidersPanelProps = {
 type ProviderActionError = {
   action:
     | 'test'
+    | 'delete'
     | 'codex-sign-in'
     | 'codex-sign-out'
     | 'codex-reimport'
@@ -55,6 +56,8 @@ const providerErrorCopy = (error: ProviderPanelError, t: TFunction): string => {
   switch (error.action) {
     case 'test':
       return t('Could not test the provider connection.')
+    case 'delete':
+      return t('Could not delete the provider.')
     case 'codex-sign-in':
       return t('Could not sign in to Codex.')
     case 'codex-sign-out':
@@ -395,6 +398,15 @@ const ProvidersPanel = ({
     }
   }
 
+  const handleDelete = async (providerId: string): Promise<void> => {
+    setProviderTestError(undefined)
+    try {
+      await deleteProvider(providerId)
+    } catch (error) {
+      setProviderTestError({ action: 'delete', detail: errorDetail(error) })
+    }
+  }
+
   return (
     <div className="space-y-5 p-5">
       {/* Main model selection and reasoning effort share one section and one row, mirroring the
@@ -437,7 +449,7 @@ const ProvidersPanel = ({
           claudeSubscriptionProviderId={claudeSubscriptionProviderId}
           busyProviderId={busyProviderId}
           onEdit={onEditProvider}
-          onDelete={(provider) => void deleteProvider(provider.id)}
+          onDelete={(provider) => void handleDelete(provider.id)}
           onTest={(provider) => void handleTest(provider)}
           isCodexLoginPending={isCodexLoginPending}
           onCancelCodexLogin={() => void cancelCodexLogin()}

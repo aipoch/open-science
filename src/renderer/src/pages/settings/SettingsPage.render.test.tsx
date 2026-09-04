@@ -1574,6 +1574,41 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
   })
 
+  it('shows an error when refreshing a provider model catalog rejects', async () => {
+    const provider: ProviderView = {
+      id: 'anthropic-provider',
+      type: 'official',
+      vendorId: 'anthropic',
+      name: 'Anthropic',
+      models: ['claude-sonnet-4-5'],
+      model: 'claude-sonnet-4-5',
+      maskedKey: 'sk-…test',
+      hasKey: true,
+      needsKey: false,
+      supportsImageInput: true
+    }
+    useSettingsStore.setState({ providers: [provider], activeProviderId: provider.id })
+    const refreshProviderModels = vi.fn().mockRejectedValue(new Error('transport failed'))
+    useSettingsStore.setState({ refreshProviderModels: refreshProviderModels as never })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => {
+      useSettingsStore.setState({ providers: [provider], activeProviderId: provider.id })
+    })
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    const refresh = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Refresh from vendor'
+    )
+    await act(async () => refresh?.click())
+
+    expect(refreshProviderModels).toHaveBeenCalledWith(provider.id)
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not refresh models from the vendor.'
+    )
+  })
+
   it('opens Usage as a standalone history-driven settings panel', async () => {
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)

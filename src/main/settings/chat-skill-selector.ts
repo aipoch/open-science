@@ -2,7 +2,9 @@ import type { SkillSelectorUsageObservation } from '../agent-framework'
 import { createLogger } from '../logger'
 import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { CustomReasoningEffortTransport } from '../../shared/reasoning-effort'
+import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from './bounded-response'
 import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
+import { fetchProviderRequest } from './provider-fetch'
 import { resolveChatReasoningTransport } from './reasoning-transport'
 import {
   boundedSkillSelectorCatalog,
@@ -52,6 +54,7 @@ export async function selectChatSkills(input: {
   target: ChatSkillSelectorTarget
   fetchImpl: typeof fetch
   timeoutMs: number
+  maxResponseBytes?: number
   signal?: AbortSignal
   observeUsage?: (observation: SkillSelectorUsageObservation) => void
 }): Promise<ChatSkillSelectorInput[]> {
@@ -79,7 +82,7 @@ export async function selectChatSkills(input: {
       target.reasoningEffortTransport
     )
     const request = (withTool: boolean): Promise<Response> =>
-      fetchImpl(target.url, {
+      fetchProviderRequest(fetchImpl, target.url, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -141,7 +144,13 @@ export async function selectChatSkills(input: {
       response: Response
     ): Promise<{ selected: ChatSkillSelectorInput[]; mode: 'function' | 'json' } | undefined> => {
       if (!response.ok) return undefined
-      const completion = (await response.json()) as JsonObject
+      const completion = JSON.parse(
+        await readBoundedResponseText(
+          response,
+          input.maxResponseBytes ?? DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+          'Chat Skill selector response'
+        )
+      ) as JsonObject
       const usage = normalizeOpenAiChatModelStepUsage(completion.usage)
       if (usage) {
         observeUsage?.({

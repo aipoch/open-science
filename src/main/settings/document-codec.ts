@@ -37,6 +37,7 @@ import {
   sanitizePackageMirror,
   sanitizeProvider
 } from './record-codec'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { isRecord } from '../value-guards'
 
 // Checks for plain JSON objects so untrusted settings payloads can be sanitized safely.
@@ -177,17 +178,34 @@ const sanitizeRuntimeEnablement = (
 const sanitizeSettings = (value: unknown): StoredSettings => {
   if (!isRecord(value)) return createEmptySettings()
 
-  const sanitizedProviders = Array.isArray(value.providers)
-    ? value.providers
-        .map(sanitizeProvider)
-        .filter((provider): provider is StoredProvider => !!provider)
-    : []
   const legacyActiveProviderId = asString(value.activeProviderId)
-  const codexProviders = sanitizedProviders.filter((provider) =>
-    isCodexSubscriptionProvider(provider.type)
-  )
-  const selectedCodexProvider =
-    codexProviders.find((provider) => provider.id === legacyActiveProviderId) ?? codexProviders[0]
+  const sanitizedProviders: StoredProvider[] = []
+  const sanitizedProviderIds = new Set<string>()
+  let selectedCodexProvider: StoredProvider | undefined
+  if (Array.isArray(value.providers)) {
+    for (const candidate of value.providers) {
+      const provider = sanitizeProvider(candidate)
+      if (!provider) continue
+      if (isCodexSubscriptionProvider(provider.type)) {
+        if (
+          !selectedCodexProvider ||
+          (provider.id === legacyActiveProviderId &&
+            selectedCodexProvider.id !== legacyActiveProviderId)
+        ) {
+          selectedCodexProvider = provider
+        }
+        continue
+      }
+      if (
+        sanitizedProviders.length >= PROVIDER_RESOURCE_LIMITS.providers ||
+        sanitizedProviderIds.has(provider.id)
+      ) {
+        continue
+      }
+      sanitizedProviderIds.add(provider.id)
+      sanitizedProviders.push(provider)
+    }
+  }
   const migratedCodexProvider = selectedCodexProvider
     ? {
         ...selectedCodexProvider,
@@ -205,10 +223,21 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     delete migratedCodexProvider.expiresAt
   }
 
-  const providers = [
-    ...sanitizedProviders.filter((provider) => !isCodexSubscriptionProvider(provider.type)),
+  const nonCodexProviderLimit = PROVIDER_RESOURCE_LIMITS.providers - (migratedCodexProvider ? 1 : 0)
+  const migratedProviders = [
+    ...sanitizedProviders
+      .filter((provider) => provider.id !== migratedCodexProvider?.id)
+      .slice(0, nonCodexProviderLimit),
     ...(migratedCodexProvider ? [migratedCodexProvider] : [])
   ]
+  const providerIds = new Set<string>()
+  const providers = migratedProviders.filter((provider) => {
+    if (providerIds.has(provider.id) || providerIds.size >= PROVIDER_RESOURCE_LIMITS.providers) {
+      return false
+    }
+    providerIds.add(provider.id)
+    return true
+  })
   const visionModel = sanitizeVisionModel(value.visionModel)
   const settings: StoredSettings = {
     version: SETTINGS_FILE_VERSION,

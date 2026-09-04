@@ -30,7 +30,17 @@ import {
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
+import { fetchProviderRequest } from './provider-fetch'
 import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
+import {
+  consumeBoundedResponseBody,
+  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+  DEFAULT_MAX_PROVIDER_SSE_EVENT_BYTES,
+  DEFAULT_MAX_PROVIDER_SSE_LINE_BYTES,
+  readBoundedResponseBytes,
+  readBoundedResponseText,
+  ResponseBodyLimitError
+} from './bounded-response'
 
 // Responses payloads are intentionally open-ended across providers. Keep the compatibility boundary
 // permissive, then validate the fields this module rewrites before touching them.
@@ -49,6 +59,9 @@ type NativeResponsesCompatibilityTarget = {
 }
 
 type NativeResponsesCompatibilityOptions = {
+  maxResponseBytes?: number
+  maxSseEventBytes?: number
+  maxSseLineBytes?: number
   responseHeaderTimeoutMs?: number
   skillSelectorTimeoutMs?: number
   streamIdleTimeoutMs?: number
@@ -76,6 +89,8 @@ const log = createLogger('native-responses-compatibility')
 const DEFAULT_RESPONSE_HEADER_TIMEOUT_MS = 2 * 60_000
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 5 * 60_000
 const MAX_REPLAY_ERROR_BODY_BYTES = 256 * 1024
+const responseLimit = (value: number | undefined, fallback: number): number =>
+  Math.max(1, Math.floor(value ?? fallback))
 const SAFE_NETWORK_ERROR_CODES = new Set([
   'EAI_AGAIN',
   'ECONNREFUSED',
@@ -460,35 +475,72 @@ const streamResponse = async (
   upstream: Response,
   response: ServerResponse,
   aliases: NativeResponsesToolAliases,
-  onActivity: () => void
+  onActivity: () => void,
+  limits: Readonly<{ responseBytes: number; eventBytes: number; lineBytes: number }>
 ): Promise<NativeResponsesStreamSummary | undefined> => {
   if (!upstream.body) throw new Error('native Responses upstream returned no body')
-  response.writeHead(upstream.status, copyResponseHeaders(upstream))
   const decoder = new TextDecoder()
   let buffered = ''
+  let bufferedBytes = 0
+  let eventBytes = 0
+  let pendingEvent: string[] = []
+  let headersWritten = false
   const observer = streamSummaryObserver(aliases)
-  for await (const chunk of upstream.body) {
-    onActivity()
-    buffered += decoder.decode(chunk, { stream: true })
-    const lines = buffered.split('\n')
-    buffered = lines.pop() ?? ''
-    for (const line of lines) response.write(`${rewriteSseLine(line, aliases, observer.observe)}\n`)
+
+  const writeHeaders = (): void => {
+    if (headersWritten) return
+    response.writeHead(upstream.status, copyResponseHeaders(upstream))
+    headersWritten = true
   }
+  const flushEvent = (): void => {
+    if (pendingEvent.length === 0) return
+    writeHeaders()
+    response.write(pendingEvent.join(''))
+    pendingEvent = []
+    eventBytes = 0
+  }
+  const consumeLine = (line: string, newline: boolean): void => {
+    const lineBytes = Buffer.byteLength(line, 'utf8')
+    if (lineBytes > limits.lineBytes) {
+      throw new ResponseBodyLimitError('Native Responses upstream SSE line', limits.lineBytes)
+    }
+    const boundary = line === '' || line === '\r'
+    if (!boundary) {
+      eventBytes += lineBytes + (newline ? 1 : 0)
+      if (eventBytes > limits.eventBytes) {
+        throw new ResponseBodyLimitError('Native Responses upstream SSE event', limits.eventBytes)
+      }
+    }
+    pendingEvent.push(rewriteSseLine(line, aliases, observer.observe) + (newline ? '\n' : ''))
+    if (boundary) flushEvent()
+  }
+
+  await consumeBoundedResponseBody(
+    upstream,
+    limits.responseBytes,
+    'Native Responses upstream SSE response',
+    (chunk) => {
+      onActivity()
+      buffered += decoder.decode(chunk, { stream: true })
+      const lines = buffered.split('\n')
+      if (lines.length === 1) {
+        bufferedBytes += chunk.byteLength
+        if (bufferedBytes > limits.lineBytes) {
+          throw new ResponseBodyLimitError('Native Responses upstream SSE line', limits.lineBytes)
+        }
+        return
+      }
+      buffered = lines.pop() ?? ''
+      bufferedBytes = Buffer.byteLength(buffered, 'utf8')
+      for (const line of lines) consumeLine(line, true)
+    }
+  )
   buffered += decoder.decode()
-  if (buffered) response.write(rewriteSseLine(buffered, aliases, observer.observe))
+  if (buffered) consumeLine(buffered, false)
+  flushEvent()
+  writeHeaders()
   response.end()
   return observer.summary()
-}
-
-const readResponseText = async (upstream: Response, onActivity: () => void): Promise<string> => {
-  if (!upstream.body) throw new Error('native Responses upstream returned no body')
-  const decoder = new TextDecoder()
-  let body = ''
-  for await (const chunk of upstream.body) {
-    onActivity()
-    body += decoder.decode(chunk, { stream: true })
-  }
-  return body + decoder.decode()
 }
 
 const namespaceToolDeclarations = (tools: ResponsesBridgeNamespacedTool[]): JsonObject[] => {
@@ -594,7 +646,8 @@ export class NativeResponsesCompatibilityProxy {
     timer.unref?.()
     try {
       const resolvedKey = this.target.resolveKey ? await this.target.resolveKey() : this.target.key
-      const response = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
+      const url = responsesUrl(this.target.baseUrl)
+      const response = await fetchProviderRequest(this.fetchImpl, url, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -639,7 +692,13 @@ export class NativeResponsesCompatibilityProxy {
         })
         return []
       }
-      const payload = (await response.json()) as JsonObject
+      const payload = JSON.parse(
+        await readBoundedResponseText(
+          response,
+          responseLimit(this.options.maxResponseBytes, DEFAULT_MAX_PROVIDER_RESPONSE_BYTES),
+          'Native Responses Skill selection response'
+        )
+      ) as JsonObject
       const usage = normalizeOpenAiChatModelStepUsage(payload.usage)
       if (usage) {
         observeUsage?.({
@@ -890,7 +949,7 @@ export class NativeResponsesCompatibilityProxy {
         this.options.responseHeaderTimeoutMs ?? DEFAULT_RESPONSE_HEADER_TIMEOUT_MS,
         'Native Responses upstream did not return response headers in time.'
       )
-      let upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
+      let upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(this.target.baseUrl), {
         method: 'POST',
         headers: headersToForward,
         body: upstreamRequestBody,
@@ -898,7 +957,7 @@ export class NativeResponsesCompatibilityProxy {
       })
       if (upstream.status === 401 && this.target.resolveKey) {
         const refreshedKey = await this.target.resolveKey(true)
-        upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {
+        upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(this.target.baseUrl), {
           method: 'POST',
           headers: upstreamHeaders(request, refreshedKey),
           body: upstreamRequestBody,
@@ -964,7 +1023,20 @@ export class NativeResponsesCompatibilityProxy {
         response.end(snapshot.body)
       } else if (responseType === 'event-stream') {
         armStreamIdleTimeout()
-        const summary = await streamResponse(upstream, response, aliases, armStreamIdleTimeout)
+        const summary = await streamResponse(upstream, response, aliases, armStreamIdleTimeout, {
+          responseBytes: responseLimit(
+            this.options.maxResponseBytes,
+            DEFAULT_MAX_PROVIDER_RESPONSE_BYTES
+          ),
+          lineBytes: responseLimit(
+            this.options.maxSseLineBytes,
+            DEFAULT_MAX_PROVIDER_SSE_LINE_BYTES
+          ),
+          eventBytes: responseLimit(
+            this.options.maxSseEventBytes,
+            DEFAULT_MAX_PROVIDER_SSE_EVENT_BYTES
+          )
+        })
         log.info('native Responses compatibility stream completed', {
           requestId,
           ...(summary ?? { terminalEventType: 'missing' })
@@ -972,14 +1044,26 @@ export class NativeResponsesCompatibilityProxy {
       } else if (responseType === 'json') {
         armStreamIdleTimeout()
         const payload = restoreNativeResponsesPayload(
-          JSON.parse(await readResponseText(upstream, armStreamIdleTimeout)),
+          JSON.parse(
+            await readBoundedResponseText(
+              upstream,
+              responseLimit(this.options.maxResponseBytes, DEFAULT_MAX_PROVIDER_RESPONSE_BYTES),
+              'Native Responses upstream JSON response',
+              armStreamIdleTimeout
+            )
+          ),
           aliases
         )
         response.writeHead(upstream.status, copyResponseHeaders(upstream))
         response.end(JSON.stringify(payload))
       } else {
+        const body = await readBoundedResponseBytes(
+          upstream,
+          responseLimit(this.options.maxResponseBytes, DEFAULT_MAX_PROVIDER_RESPONSE_BYTES),
+          'Native Responses upstream binary response'
+        )
         response.writeHead(upstream.status, copyResponseHeaders(upstream))
-        response.end(Buffer.from(await upstream.arrayBuffer()))
+        response.end(body)
       }
       log.info('native Responses compatibility request completed', {
         requestId,

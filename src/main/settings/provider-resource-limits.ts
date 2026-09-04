@@ -3,6 +3,7 @@ import { SETTINGS_RESOURCE_LIMITS, assertCharacterLimit } from './settings-resou
 
 const PROVIDER_RESOURCE_LIMITS = Object.freeze({
   providers: 64,
+  idCharacters: 128,
   nameCharacters: 128,
   baseUrlCharacters: 2_048,
   modelIdCharacters: 512,
@@ -12,7 +13,8 @@ const PROVIDER_RESOURCE_LIMITS = Object.freeze({
   validationResponseBytes: 1024 * 1024
 })
 
-const assertProviderDraftLimits = (draft: ProviderDraft): void => {
+const assertProviderDraftLimits = (draft: ProviderDraft & { id?: string }): void => {
+  assertCharacterLimit(draft.id, PROVIDER_RESOURCE_LIMITS.idCharacters, 'Provider ID')
   assertCharacterLimit(draft.name, PROVIDER_RESOURCE_LIMITS.nameCharacters, 'Provider name')
   assertCharacterLimit(draft.baseUrl, PROVIDER_RESOURCE_LIMITS.baseUrlCharacters, 'Base URL')
   assertCharacterLimit(draft.model, PROVIDER_RESOURCE_LIMITS.modelIdCharacters, 'Model ID')

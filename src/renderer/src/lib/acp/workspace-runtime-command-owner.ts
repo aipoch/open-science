@@ -5,6 +5,7 @@ import { withPdfContext as withPdf } from '../../../../shared/session-pdf-contex
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import {
   collectSessionReferences,
+  MAX_SESSION_PDF_CONTEXTS,
   type DelegationPolicy,
   type MessageAttribution,
   type MessagePdfContextSnapshot,
@@ -584,7 +585,7 @@ const startPendingPrompt = (
           attachments
         }),
         ...eligiblePendingPdfContext.versions
-      ]
+      ].slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - (pdfContext?.bindings.length ?? 0)))
       if (pdfContextSources.length > 0) {
         pdfContext = await linkPdfContextForSend({
           sessionId: created.sessionId,
@@ -904,6 +905,12 @@ const sendWorkspaceMessage = async (
     if (!prepared) return undefined
     let promptAttachments
     try {
+      const eligiblePendingPdfContext = await filterPendingPdfContext({
+        attachments: effectiveAttachments,
+        pendingPdfContextAttachmentIds: input.pendingPdfContextAttachmentIds,
+        pendingPdfContextVersions: input.pendingPdfContextVersions,
+        projectId
+      })
       promptAttachments = await finalizeWorkspaceAttachments({
         sessionId,
         attachments: effectiveAttachments,
@@ -912,11 +919,11 @@ const sendWorkspaceMessage = async (
       })
       const pdfContextSources = [
         ...finalizedPdfContextSources({
-          attachmentIds: input.pendingPdfContextAttachmentIds ?? [],
+          attachmentIds: eligiblePendingPdfContext.attachmentIds,
           attachments: promptAttachments
         }),
-        ...(input.pendingPdfContextVersions ?? [])
-      ]
+        ...eligiblePendingPdfContext.versions
+      ].slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - (pdfContext?.bindings.length ?? 0)))
       if (pdfContextSources.length > 0) {
         pdfContext = await linkPdfContextForSend({
           sessionId,
@@ -928,7 +935,8 @@ const sendWorkspaceMessage = async (
       }
       if (
         pdfContext &&
-        (input.pendingPdfContextAttachmentIds?.length || input.pendingPdfContextVersions?.length)
+        (eligiblePendingPdfContext.attachmentIds.length > 0 ||
+          eligiblePendingPdfContext.versions.length > 0)
       ) {
         lifecycle.onPdfContextLinked?.(sessionId, pdfContext)
       }

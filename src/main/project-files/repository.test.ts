@@ -133,6 +133,127 @@ describe('ManagedFileIndexRepository', () => {
     })
   })
 
+  it('resolves a legacy preview id collision to the scoped Artifact logical identity', async () => {
+    // A legacy preview id can already belong to another Session after adoption; the filename is the
+    // scoped compatibility hint, while the authoritative catalog still decides visibility and head.
+    const otherArtifactPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      'other-session',
+      'message-1',
+      'other.md'
+    )
+    await writeManagedFile(otherArtifactPath, 'other artifact\n')
+    await repository.syncSession(
+      createSession({
+        id: 'other-session',
+        artifacts: [
+          {
+            id: 'legacy-artifact-1',
+            kind: 'managed-file',
+            path: otherArtifactPath,
+            name: 'legacy.md',
+            mimeType: 'text/markdown'
+          }
+        ]
+      })
+    )
+    const artifactPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'legacy.md'
+    )
+    await writeManagedFile(artifactPath, 'legacy artifact\n')
+    await repository.syncSession(
+      createSession({
+        artifacts: [
+          {
+            id: 'legacy-artifact-1',
+            kind: 'managed-file',
+            path: artifactPath,
+            name: 'legacy.md',
+            mimeType: 'text/markdown'
+          }
+        ]
+      })
+    )
+    const lineage = await client.artifactLineage.findUniqueOrThrow({
+      where: {
+        projectId_sessionId_normalizedFilename: {
+          projectId: PROJECT_ID,
+          sessionId: SESSION_ID,
+          normalizedFilename: 'legacy.md'
+        }
+      }
+    })
+
+    const resolved = await repository.resolveFile({
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      source: 'artifact',
+      fileIdHint: 'legacy-artifact-1',
+      identityHint: 'legacy',
+      name: 'LEGACY.md'
+    })
+
+    expect(lineage.id).not.toBe('legacy-artifact-1')
+    expect(resolved).toMatchObject({
+      id: lineage.id,
+      source: 'artifact',
+      sourceFileId: lineage.id,
+      sourceVersionId: lineage.currentVersionId,
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      name: 'legacy.md',
+      path: `artifact-version:${PROJECT_ID}/${SESSION_ID}/${lineage.id}/${lineage.currentVersionId}`
+    })
+  })
+
+  it('resolves a stable Artifact id when a legacy mention carries the viewing Session id', async () => {
+    const artifactPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'report.md'
+    )
+    await writeManagedFile(artifactPath, 'source artifact\n')
+    await repository.syncSession(
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: artifactPath,
+            name: 'report.md',
+            mimeType: 'text/markdown'
+          }
+        ]
+      })
+    )
+
+    await expect(
+      repository.resolveFile({
+        projectId: PROJECT_ID,
+        sessionId: 'viewing-session',
+        source: 'artifact',
+        fileIdHint: 'artifact-1',
+        identityHint: 'logical',
+        name: 'report.md'
+      })
+    ).resolves.toMatchObject({
+      sourceFileId: 'artifact-1',
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      name: 'report.md'
+    })
+  })
+
   it('does not publish a legacy Artifact when its persisted checksum disagrees with the source', async () => {
     const artifactPath = join(
       storageRoot,

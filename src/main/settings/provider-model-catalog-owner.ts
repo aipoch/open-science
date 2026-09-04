@@ -49,7 +49,11 @@ export class ProviderModelCatalogOwner {
       }
     }
     const result = await listProviderModels(
-      { url: modelsUrl, key },
+      {
+        url: modelsUrl,
+        key,
+        ...(stored.type === 'official' && stored.vendorId ? { vendorId: stored.vendorId } : {})
+      },
       { fetchImpl: netFetchStandard }
     )
     if (!result.ok || !result.models) {

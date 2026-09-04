@@ -129,6 +129,7 @@ const createDependencies = () => {
     listArtifactGroups: vi.fn(),
     listFiles: vi.fn(),
     repairIndex: vi.fn(),
+    resolveFile: vi.fn(),
     searchArtifacts: vi.fn()
   }
   const project = {
@@ -282,7 +283,7 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
-  it('owns exactly the 55 current data and content invoke channels', () => {
+  it('owns exactly the 58 current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
         'artifacts:finalize-run',
@@ -308,6 +309,7 @@ describe('Data and content application commands', () => {
         'project-files:list-artifact-groups',
         'project-files:list-files',
         'project-files:repair-index',
+        'project-files:resolve-file',
         'project-files:search-artifacts',
         'projects:create',
         'projects:update-archive',
@@ -462,6 +464,11 @@ describe('Data and content application commands', () => {
         key: 'projectFilesRepairIndex',
         args: [request('project-files-repair')],
         owner: deps.projectFiles.repairIndex
+      },
+      {
+        key: 'projectFilesResolveFile',
+        args: [request('project-files-resolve')],
+        owner: deps.projectFiles.resolveFile
       },
       {
         key: 'projectFilesSearchArtifacts',

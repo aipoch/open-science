@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 export const GITHUB_ELECTRON_MIRROR = 'https://github.com/electron/electron/releases/download/'
 export const GITHUB_ELECTRON_BUILDER_BINARIES_MIRROR =
   'https://github.com/electron-userland/electron-builder-binaries/releases/download/'
+export const DEFAULT_NPM_CI_ARGS = ['--no-audit']
 
 export function shouldForceGitHubElectronMirrors(env = process.env) {
   return env.GITHUB_ACTIONS === 'true'
@@ -35,7 +36,7 @@ export function runNpmCi({
   platform = process.platform,
   spawn = spawnSync
 } = {}) {
-  const result = spawn(npmCiCommand(platform), ['ci', ...args], {
+  const result = spawn(npmCiCommand(platform), ['ci', ...DEFAULT_NPM_CI_ARGS, ...args], {
     env: npmCiEnv(env),
     stdio: 'inherit',
     shell: platform === 'win32'

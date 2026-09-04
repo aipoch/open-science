@@ -148,6 +148,7 @@ const FilePreviewDialog = ({
                   tooltipClassName="z-[70]"
                   actionMenuContentClassName="z-[70]"
                   leaveGuardScope={dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)}
+                  retryResolutionEnabled={open}
                   {...annotationPort}
                 />
               ) : null}

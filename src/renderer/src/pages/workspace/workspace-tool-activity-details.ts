@@ -63,7 +63,7 @@ type ToolActivityDetails = {
 
 // Bounds very large tool payloads so a single read/execute row cannot flood the transcript.
 const MAX_CODE_CHARS = 20000
-const SKILL_ACTIVITY_TITLE_PATTERN = /^(?:run|loading|loaded)\s+skill(?:\?|:|\s|$)/iu
+const SKILL_ACTIVITY_TITLE_PATTERN = /^(?:run|load|loading|loaded)\s+skill(?:\?|:|\s|$)/iu
 
 // Human-readable fallbacks for ACP tool kinds when the provider tool name is unavailable.
 const TOOL_KIND_LABELS: Record<ToolKind, string> = {

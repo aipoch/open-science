@@ -1,7 +1,9 @@
+import { createRequire } from 'node:module'
+
 import { describe, expect, it } from 'vitest'
 
 import { ManagedFileVersionError } from './service'
-import { ManagedTextDiffTaskRunner } from './diff-task'
+import { ManagedTextDiffTaskRunner, resolveDiffModulePath } from './diff-task'
 
 describe('ManagedTextDiffTaskRunner', () => {
   it('returns line numbers and intra-line segments for a replacement', async () => {
@@ -953,5 +955,36 @@ describe('ManagedTextDiffTaskRunner', () => {
       maxYoungGenerationSizeMb: 8,
       stackSizeMb: 2
     })
+  })
+
+  it('resolves the diff module through an absolute path the worker can require', async () => {
+    const diffModulePath = resolveDiffModulePath()
+    expect(diffModulePath).toBeDefined()
+    expect(diffModulePath).toMatch(/^\/|^[A-Za-z]:[\\/]/)
+    if (!diffModulePath) throw new Error('Expected resolveDiffModulePath() to return a path.')
+    // The path must be requirable on its own, without help from the process CWD.
+    const resolved = createRequire(diffModulePath)('diff') as typeof import('diff')
+    expect(typeof resolved.diffLines).toBe('function')
+    expect(typeof resolved.diffChars).toBe('function')
+    expect(typeof resolved.diffArrays).toBe('function')
+  })
+
+  it('keeps diffing when the process runs from a CWD without node_modules', async () => {
+    // Regression guard for packaged launches (Finder/Dock sets CWD=/): an eval worker's bare
+    // require('diff') resolves from the CWD and used to fail there with CONTENT_INTEGRITY_FAILED.
+    const previousCwd = process.cwd()
+    try {
+      process.chdir('/')
+      const lines = await new ManagedTextDiffTaskRunner().run({
+        requestId: 'diff-from-root-cwd',
+        before: 'one\ntwo\n',
+        after: 'one\ntwo changed\n'
+      })
+      expect(lines).toEqual(
+        expect.arrayContaining([expect.objectContaining({ kind: 'removed', oldLineNumber: 2 })])
+      )
+    } finally {
+      process.chdir(previousCwd)
+    }
   })
 })

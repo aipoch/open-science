@@ -58,6 +58,15 @@ afterEach(async () => {
 })
 
 describe('artifact MCP server', () => {
+  it('directs small text artifacts to inline publication without a prior disk write', () => {
+    expect(writeArtifactFileToolDefinition.description).toContain(
+      'For small generated text such as Markdown or plain text, pass inline content directly'
+    )
+    expect(writeArtifactFileToolDefinition.description).not.toContain(
+      'The file must ALREADY EXIST on disk before you call this.'
+    )
+  })
+
   it('publishes filename as a required write_artifact_file argument', () => {
     const schema = z.object(writeArtifactFileToolDefinition.inputSchema)
 

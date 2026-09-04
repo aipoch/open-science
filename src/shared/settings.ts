@@ -1091,6 +1091,20 @@ export type ExportSkillRequest = { id: string }
 
 export type ExportSkillResult = { saved: boolean }
 
+// Resolves a renderable SKILL.md document by its canonical invocation name across every source the
+// runtime can load from: the managed Skills catalog, enabled bundled connectors (rendered on the
+// fly), and materialized custom MCP server skills. Electron-only — the document sources live on the
+// main-process filesystem. A null result means no source provides the name.
+export type ResolveSkillDocumentRequest = { name: string }
+
+export type ResolvedSkillDocument = {
+  name: string
+  displayName?: string
+  description?: string
+  // SKILL.md body with the YAML frontmatter stripped, matching SkillDetailView.body.
+  body: string
+}
+
 // A reference file's name and byte size, without its content.
 export type SkillReferenceInfo = {
   path: string

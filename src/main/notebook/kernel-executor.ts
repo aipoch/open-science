@@ -824,7 +824,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
       // Run the control-plane loop as plain Node via the app binary (ELECTRON_RUN_AS_NODE set in env).
       command = process.execPath
       loopPath = this.replLoopPath
-      args = [loopPath]
+      // Node otherwise realpaths the main module before loading it. A Windows AppContainer can read
+      // the explicitly granted script but cannot enumerate its drive root or unrelated ancestors.
+      args = [...(this.platform === 'win32' ? ['--preserve-symlinks-main'] : []), loopPath]
     } else {
       // Data kernel (python/r). The loop SCRIPT is chosen by kind; the INTERPRETER is either resolved
       // by the Runtime Registry (a managed env bin, or an external/overlay interpreter for BYO) or,

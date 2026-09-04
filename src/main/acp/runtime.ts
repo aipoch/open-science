@@ -323,7 +323,7 @@ type AcpRuntimeArtifactOptions = {
   >
   managedFileVersions?: Pick<
     import('../managed-file-versions/service').ManagedFileVersionService,
-    'openLatest' | 'openVersion'
+    'openLatest' | 'openVersion' | 'openUnpublishedVersion'
   >
 }
 

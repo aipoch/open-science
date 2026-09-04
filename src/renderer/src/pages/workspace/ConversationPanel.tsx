@@ -1665,10 +1665,14 @@ const ConversationPanel = ({
                           </TooltipProvider>
                         </div>
                       </div>
-                    ) : pdfContext.automaticAttachmentCount > 0 ? (
+                    ) : null}
+                    {pdfContext.automaticAttachmentCount > 0 ? (
                       <div
                         data-testid="automatic-reading-suggestion"
-                        className="-mx-3 -mt-2 flex min-h-9 items-center gap-2 rounded-t-2xl border-b border-border-200 bg-primary/[0.05] px-2 py-1"
+                        className={cn(
+                          '-mx-3 flex min-h-9 items-center gap-2 border-b border-border-200 bg-primary/[0.05] px-2 py-1',
+                          pdfContext.bindings.length === 0 && '-mt-2 rounded-t-2xl'
+                        )}
                       >
                         <Link2
                           className="size-4 shrink-0 text-primary"

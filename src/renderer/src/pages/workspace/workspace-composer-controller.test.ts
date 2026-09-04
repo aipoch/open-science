@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { TextAnnotation } from '../../../../shared/annotations'
+import type { SessionPdfContext } from '../../../../shared/session-persistence'
 import type { CustomizePrefillIntent } from '@/stores/navigation-store'
 import {
   createInitialPreviewWorkbenchState,
@@ -661,6 +662,123 @@ describe('workspace composer controller', () => {
     expect(
       hook.result.current.lifecycle.captureSend().pendingPdfContextAttachmentIds
     ).toBeUndefined()
+  })
+
+  it('keeps automatic staged Reading when a branch excludes inherited context', async () => {
+    const staged = {
+      id: 'upload-pdf-2',
+      sessionId: '.pending',
+      name: 'follow-up.pdf',
+      originalName: 'follow-up.pdf',
+      path: '/uploads/.pending/follow-up.pdf',
+      mimeType: 'application/pdf',
+      size: 3
+    } satisfies UploadedAttachment
+    const hook = renderController(uploads(vi.fn().mockResolvedValue(staged)), undefined, [], {
+      id: 'session-a',
+      projectId: 'project',
+      runtimeContext: {
+        revision: 1,
+        pdfContext: {
+          version: 1,
+          bindings: [
+            {
+              version: 1,
+              bindingId: 'binding-1',
+              sourceKind: 'upload-version',
+              sourceFileId: 'upload-pdf-1',
+              sourceVersionId: 'version-1',
+              sourceSessionId: 'session-a',
+              name: 'first.pdf',
+              mimeType: 'application/pdf',
+              sizeBytes: 3,
+              checksum: 'a'.repeat(64),
+              linkedAt: 1
+            }
+          ]
+        }
+      }
+    })
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['pdf'], staged.name, { type: staged.mimeType })
+      ])
+    )
+    await flushAsyncWork()
+
+    expect(hook.result.current.view.readingContext.automaticAttachmentCount).toBe(1)
+    const snapshot = hook.result.current.lifecycle.captureSend(false)
+    expect(snapshot).not.toHaveProperty('pdfContext')
+    expect(snapshot.pendingPdfContextAttachmentIds).toEqual([staged.id])
+  })
+
+  it('does not let an unverified automatic PDF displace an immutable Reading candidate', async () => {
+    const staged = {
+      id: 'upload-pdf-3',
+      sessionId: '.pending',
+      name: 'unverified.pdf',
+      originalName: 'unverified.pdf',
+      path: '/uploads/.pending/unverified.pdf',
+      mimeType: 'application/pdf',
+      size: 3
+    } satisfies UploadedAttachment
+    const binding = (index: number): SessionPdfContext['bindings'][number] => ({
+      version: 1 as const,
+      bindingId: `binding-${index}`,
+      sourceKind: 'upload-version' as const,
+      sourceFileId: `upload-pdf-${index}`,
+      sourceVersionId: `version-${index}`,
+      sourceSessionId: 'session-a',
+      name: `paper-${index}.pdf`,
+      mimeType: 'application/pdf' as const,
+      sizeBytes: 3,
+      checksum: String(index).repeat(64),
+      linkedAt: index
+    })
+    const hook = renderController(uploads(vi.fn().mockResolvedValue(staged)), undefined, [], {
+      id: 'session-a',
+      projectId: 'project',
+      runtimeContext: {
+        revision: 1,
+        pdfContext: { version: 1, bindings: [binding(1), binding(2)] }
+      }
+    })
+    mounted.push(hook)
+
+    act(() => {
+      hook.result.current.actions.stageFiles([
+        new File(['pdf'], staged.name, { type: staged.mimeType })
+      ])
+      hook.result.current.actions.changeDoc({
+        nodes: [
+          { type: 'text', text: 'Compare with ' },
+          {
+            type: 'artifact',
+            id: 'paper-3',
+            name: 'paper-3.pdf',
+            path: '/paper-3.pdf',
+            source: 'artifact',
+            sourceFileId: 'paper-3',
+            mimeType: 'application/pdf',
+            versionId: 'version-3'
+          }
+        ]
+      })
+    })
+    await flushAsyncWork()
+
+    expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
+      pendingPdfContextAttachmentIds: [staged.id],
+      pendingPdfContextVersions: [
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'paper-3',
+          sourceVersionId: 'version-3'
+        }
+      ]
+    })
   })
 
   it('adds an immutable PDF mentioned with @ as a send-time Reading candidate', () => {

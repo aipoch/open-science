@@ -79,10 +79,16 @@ const isSensitiveDiagnosticKey = (key: string): boolean => {
   ].some((suffix) => normalized.endsWith(suffix))
 }
 
-const isSensitiveUrlQueryKey = (key: string): boolean =>
-  key.toLowerCase() === 'key' ||
-  isSensitiveDiagnosticKey(key) ||
-  diagnosticKeyWords(key).some((word) => SIGNED_URL_QUERY_WORDS.has(word))
+const isSensitiveUrlQueryKey = (key: string): boolean => {
+  const words = diagnosticKeyWords(key)
+  const normalized = words.join('')
+  return (
+    normalized === 'key' ||
+    normalized === 'username' ||
+    isSensitiveDiagnosticKey(key) ||
+    words.some((word) => SIGNED_URL_QUERY_WORDS.has(word))
+  )
+}
 
 const hasSensitiveUrlFragment = (hash: string): boolean => {
   const fragment = hash.slice(1)
@@ -168,4 +174,10 @@ const redactSensitiveText = (value: string): string =>
       REDACTED_MARKER
     )
 
-export { REDACTED_MARKER, diagnosticKeyWords, isSensitiveDiagnosticKey, redactSensitiveText }
+export {
+  REDACTED_MARKER,
+  diagnosticKeyWords,
+  isSensitiveDiagnosticKey,
+  isSensitiveUrlQueryKey,
+  redactSensitiveText
+}

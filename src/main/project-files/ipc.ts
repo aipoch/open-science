@@ -7,6 +7,8 @@ import type {
   ListProjectFilesRequest,
   ProjectFilesOverview,
   ProjectFilesPage,
+  ProjectFileItem,
+  ResolveProjectFileRequest,
   SearchArtifactsRequest,
   SearchArtifactsResult
 } from '../../shared/project-files'
@@ -14,6 +16,7 @@ import type {
 type ProjectFilesQueryRepository = {
   getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>
   listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
+  resolveFile(request: ResolveProjectFileRequest): Promise<ProjectFileItem | undefined>
   listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage>
   searchArtifacts(request: SearchArtifactsRequest): Promise<SearchArtifactsResult>
 }
@@ -30,6 +33,7 @@ type ProjectFilesRecoveryBackend = {
 type ProjectFilesHandlers = {
   getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>
   listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
+  resolveFile(request: ResolveProjectFileRequest): Promise<ProjectFileItem | undefined>
   listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage>
   searchArtifacts(request: SearchArtifactsRequest): Promise<SearchArtifactsResult>
   repairIndex(request: { projectId: string }): Promise<void>
@@ -49,6 +53,10 @@ const createProjectFilesHandlers = (
   listFiles: async (request) => {
     await recoveryBackend.waitForProjectOperations([request.projectId])
     return repository.listFiles(request)
+  },
+  resolveFile: async (request) => {
+    await recoveryBackend.waitForProjectOperations([request.projectId])
+    return repository.resolveFile(request)
   },
   listArtifactGroups: async (request) => {
     await recoveryBackend.waitForProjectOperations([request.projectId])
@@ -87,6 +95,9 @@ const registerProjectFilesIpcHandlers = (
   )
   ipcMainHandle('project-files:list-files', (_event, request: ListProjectFilesRequest) =>
     handlers.listFiles(request)
+  )
+  ipcMainHandle('project-files:resolve-file', (_event, request: ResolveProjectFileRequest) =>
+    handlers.resolveFile(request)
   )
   ipcMainHandle(
     'project-files:list-artifact-groups',

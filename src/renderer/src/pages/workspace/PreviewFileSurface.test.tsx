@@ -59,12 +59,18 @@ vi.mock('./previews/PreviewFileContent', () => ({
     annotationVersionId?: string
     annotationBlockedByHistoricalVersion?: boolean
     annotationVersionPending?: boolean
+    onRetry?: () => Promise<void>
     onPdfReadingPositionChange?: (position: { pageNumber: number; pageCount: number }) => void
   }) => {
     previewContentSpy(props)
     return (
       <div data-testid="preview-content" data-path={props.item.path}>
         Preview content
+        {props.onRetry ? (
+          <button type="button" onClick={() => void props.onRetry?.()}>
+            Retry managed preview
+          </button>
+        ) : null}
       </div>
     )
   }
@@ -1772,6 +1778,347 @@ afterEach(() => {
 })
 
 describe('PreviewFileSurface Provenance entry', () => {
+  it('refreshes a restored path-only Artifact identity before retrying its preview', async () => {
+    const legacyPath = String.raw`C:\stale\report.md`
+    const legacyItem: PreviewFileItem = {
+      id: 'legacy-artifact-id',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      type: 'file',
+      title: legacyPath,
+      name: legacyPath,
+      path: legacyPath,
+      format: 'markdown',
+      source: 'artifact'
+    }
+    const resolveFile = vi.fn().mockResolvedValue({
+      id: 'canonical-artifact-id',
+      source: 'artifact',
+      sourceFileId: 'canonical-artifact-id',
+      sourceVersionId: 'version-3',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      name: 'report.md',
+      path: 'artifact-version:project-1/session-1/canonical-artifact-id/version-3',
+      mimeType: 'text/markdown',
+      size: 42,
+      mtimeMs: 3,
+      sortAtMs: 3
+    })
+    window.api.projectFiles = { resolveFile } as unknown as typeof window.api.projectFiles
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(legacyItem)
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={legacyItem} onClose={vi.fn()} workbenchConnected />)
+      await Promise.resolve()
+    })
+
+    await click(
+      [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Retry managed preview'
+      ) ?? null
+    )
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(resolveFile).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      source: 'artifact',
+      fileIdHint: 'legacy-artifact-id',
+      identityHint: 'legacy',
+      name: 'report.md'
+    })
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      id: 'legacy-artifact-id',
+      artifactId: 'canonical-artifact-id',
+      managedFileId: 'canonical-artifact-id',
+      path: 'artifact-version:project-1/session-1/canonical-artifact-id/version-3'
+    })
+  })
+
+  it('does not pin a lineage-derived head while refreshing an unpinned Artifact', async () => {
+    const legacyItem: PreviewFileItem = {
+      ...item,
+      id: 'legacy-preview-id',
+      projectId: 'project-1',
+      managedFileId: undefined,
+      selectedVersionId: undefined,
+      versionNumber: undefined
+    }
+    const resolveFile = vi.fn().mockResolvedValue({
+      id: 'artifact-1',
+      source: 'artifact',
+      sourceFileId: 'artifact-1',
+      sourceVersionId: 'version-3',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      name: 'sin.png',
+      path: 'artifact-version:project-1/session-1/artifact-1/version-3',
+      mimeType: 'image/png',
+      size: 24,
+      mtimeMs: 3,
+      sortAtMs: 3
+    })
+    window.api.projectFiles = { resolveFile } as unknown as typeof window.api.projectFiles
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(legacyItem)
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={legacyItem} onClose={vi.fn()} workbenchConnected />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await vi.waitFor(() =>
+      expect(previewContentSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          item: expect.objectContaining({ selectedVersionId: 'version-2' })
+        })
+      )
+    )
+
+    await click(
+      [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Retry managed preview'
+      ) ?? null
+    )
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      id: 'legacy-preview-id',
+      managedFileId: 'artifact-1',
+      path: 'artifact-version:project-1/session-1/artifact-1/version-3'
+    })
+    expect(usePreviewWorkbenchStore.getState().items[0]).not.toHaveProperty('selectedVersionId')
+    expect(usePreviewWorkbenchStore.getState().items[0]).not.toHaveProperty('versionNumber')
+  })
+
+  it('ignores a stale retry lookup after the user selects another Artifact version', async () => {
+    const legacyItem: PreviewFileItem = {
+      id: 'legacy-artifact-id',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'report.md',
+      name: 'report.md',
+      path: '/stale/report.md',
+      format: 'markdown',
+      source: 'artifact'
+    }
+    const resolvedFile = {
+      id: 'canonical-artifact-id',
+      source: 'artifact' as const,
+      sourceFileId: 'canonical-artifact-id',
+      sourceVersionId: 'version-3',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      name: 'report.md',
+      path: 'artifact-version:project-1/session-1/canonical-artifact-id/version-3',
+      mimeType: 'text/markdown',
+      size: 42,
+      mtimeMs: 3,
+      sortAtMs: 3
+    }
+    let finishResolve: ((value: typeof resolvedFile) => void) | undefined
+    const resolveFile = vi.fn(
+      () =>
+        new Promise<typeof resolvedFile>((resolve) => {
+          finishResolve = resolve
+        })
+    )
+    window.api.projectFiles = { resolveFile } as unknown as typeof window.api.projectFiles
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(legacyItem)
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={legacyItem} onClose={vi.fn()} workbenchConnected />)
+      await Promise.resolve()
+    })
+    await click(
+      [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Retry managed preview'
+      ) ?? null
+    )
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertItem(
+        {
+          ...legacyItem,
+          artifactId: 'canonical-artifact-id',
+          managedFileId: 'canonical-artifact-id',
+          selectedVersionId: 'version-2',
+          versionNumber: 2,
+          path: 'artifact-version:project-1/session-1/canonical-artifact-id/version-2'
+        },
+        true
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      finishResolve?.(resolvedFile)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      selectedVersionId: 'version-2',
+      versionNumber: 2,
+      path: 'artifact-version:project-1/session-1/canonical-artifact-id/version-2'
+    })
+  })
+
+  it('ignores a stale retry lookup after the preview identity changes and returns', async () => {
+    const legacyItem: PreviewFileItem = {
+      id: 'legacy-artifact-id',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'report.md',
+      name: 'report.md',
+      path: '/stale/report.md',
+      format: 'markdown',
+      source: 'artifact'
+    }
+    const resolvedFile = {
+      id: 'canonical-artifact-id',
+      source: 'artifact' as const,
+      sourceFileId: 'canonical-artifact-id',
+      sourceVersionId: 'version-3',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      name: 'report.md',
+      path: 'artifact-version:project-1/session-1/canonical-artifact-id/version-3',
+      size: 42,
+      sortAtMs: 3
+    }
+    let finishResolve: ((value: typeof resolvedFile) => void) | undefined
+    const resolveFile = vi.fn(
+      () =>
+        new Promise<typeof resolvedFile>((resolve) => {
+          finishResolve = resolve
+        })
+    )
+    window.api.projectFiles = { resolveFile } as unknown as typeof window.api.projectFiles
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(legacyItem)
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={legacyItem} onClose={vi.fn()} workbenchConnected />)
+      await Promise.resolve()
+    })
+    await click(
+      [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Retry managed preview'
+      ) ?? null
+    )
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertItem(
+        {
+          ...legacyItem,
+          artifactId: 'canonical-artifact-id',
+          managedFileId: 'canonical-artifact-id',
+          selectedVersionId: 'version-2',
+          versionNumber: 2,
+          path: 'artifact-version:project-1/session-1/canonical-artifact-id/version-2'
+        },
+        true
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertItem(legacyItem, true)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      finishResolve?.(resolvedFile)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject(legacyItem)
+    expect(usePreviewWorkbenchStore.getState().items[0]).not.toHaveProperty('artifactId')
+    expect(usePreviewWorkbenchStore.getState().items[0]).not.toHaveProperty('managedFileId')
+  })
+
+  it('ignores a retry lookup started before a retained preview closes and reopens', async () => {
+    const legacyItem: PreviewFileItem = {
+      id: 'legacy-artifact-id',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'report.md',
+      name: 'report.md',
+      path: '/stale/report.md',
+      format: 'markdown',
+      source: 'artifact'
+    }
+    const resolvedFile = {
+      id: 'canonical-artifact-id',
+      source: 'artifact' as const,
+      sourceFileId: 'canonical-artifact-id',
+      sourceVersionId: 'version-3',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      name: 'report.md',
+      path: 'artifact-version:project-1/session-1/canonical-artifact-id/version-3',
+      size: 42,
+      sortAtMs: 3
+    }
+    let finishResolve: ((value: typeof resolvedFile) => void) | undefined
+    const resolveFile = vi.fn(
+      () =>
+        new Promise<typeof resolvedFile>((resolve) => {
+          finishResolve = resolve
+        })
+    )
+    window.api.projectFiles = { resolveFile } as unknown as typeof window.api.projectFiles
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(legacyItem)
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={legacyItem} onClose={vi.fn()} workbenchConnected />)
+      await Promise.resolve()
+    })
+    await click(
+      [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Retry managed preview'
+      ) ?? null
+    )
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().removeItem(legacyItem.id)
+      root.render(
+        <PreviewFileSurface
+          item={legacyItem}
+          onClose={vi.fn()}
+          workbenchConnected
+          retryResolutionEnabled={false}
+        />
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(legacyItem)
+      root.render(
+        <PreviewFileSurface
+          item={legacyItem}
+          onClose={vi.fn()}
+          workbenchConnected
+          retryResolutionEnabled
+        />
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      finishResolve?.(resolvedFile)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject(legacyItem)
+    expect(usePreviewWorkbenchStore.getState().items[0]).not.toHaveProperty('artifactId')
+    expect(usePreviewWorkbenchStore.getState().items[0]).not.toHaveProperty('managedFileId')
+  })
+
   it('keeps a default managed Artifact preview on its logical DB head', async () => {
     const managedArtifact = {
       ...item,

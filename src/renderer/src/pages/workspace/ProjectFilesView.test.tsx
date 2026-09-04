@@ -352,6 +352,7 @@ describe('ProjectFilesView', () => {
 
         return { items, totalCount: items.length }
       }),
+      resolveFile: vi.fn().mockResolvedValue(undefined),
       listArtifactGroups: vi.fn(async (request) => {
         const groups = getLibrary().artifactGroups
         const query = request.search

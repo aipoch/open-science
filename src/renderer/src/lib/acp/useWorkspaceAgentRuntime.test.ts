@@ -3157,6 +3157,200 @@ describe('workspace agent message sending', () => {
     ])
   })
 
+  it('limits eligible follow-up PDFs to the remaining Reading capacity', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Existing prompt',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    const binding = (index: number): SessionPdfContext['bindings'][number] => ({
+      version: 1,
+      bindingId: `binding-${index}`,
+      sourceKind: 'upload-version',
+      sourceFileId: `pdf-upload-${index}`,
+      sourceVersionId: `pdf-version-${index}`,
+      sourceSessionId: 'transport-session-1',
+      name: `paper-${index}.pdf`,
+      mimeType: 'application/pdf',
+      sizeBytes: 42,
+      checksum: String(index).repeat(64),
+      linkedAt: index
+    })
+    const existingContext: SessionPdfContext = {
+      version: 1,
+      bindings: [binding(1), binding(2)]
+    }
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        runtimeContext: { version: 1, revision: 2, pdfContext: existingContext }
+      }))
+    }))
+    const stagedPdf = createAttachment({
+      id: 'pdf-upload-3',
+      name: 'staged-paper.pdf',
+      originalName: 'staged-paper.pdf',
+      path: '/uploads/.pending/staged-paper.pdf',
+      mimeType: 'application/pdf'
+    })
+    const finalizedPdf = createAttachment({
+      ...stagedPdf,
+      sessionId: 'transport-session-1',
+      path: 'upload-version:project-1/transport-session-1/pdf-version-3',
+      versionId: 'pdf-version-3',
+      versionNumber: 1,
+      checksum: '3'.repeat(64)
+    })
+    const linkedContext: SessionPdfContext = {
+      version: 1,
+      bindings: [...existingContext.bindings, binding(3)]
+    }
+    const linkPdfContext = vi.fn().mockResolvedValue({
+      version: 1,
+      revision: 3,
+      pdfContext: linkedContext
+    })
+    vi.stubGlobal('window', {
+      api: {
+        uploads: { finalizeSession: vi.fn().mockResolvedValue([finalizedPdf]) },
+        sessions: {
+          linkPdfContext,
+          saveSession: vi.fn(async (session: PersistedChatSession) => session),
+          filterPdfContextCandidates: vi.fn().mockResolvedValue({
+            sources: [
+              {
+                sourceKind: 'artifact-version',
+                sourceFileId: 'artifact-4',
+                sourceVersionId: 'artifact-version-4'
+              }
+            ],
+            pendingAttachmentIds: [stagedPdf.id]
+          })
+        }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Compare these papers',
+      attachments: [stagedPdf],
+      pendingPdfContextAttachmentIds: [stagedPdf.id],
+      pendingPdfContextVersions: [
+        {
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-4',
+          sourceVersionId: 'artifact-version-4'
+        }
+      ],
+      pdfContext: existingContext,
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+    expect(linkPdfContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sources: [
+          {
+            sourceKind: 'upload-version',
+            sourceFileId: stagedPdf.id,
+            sourceVersionId: finalizedPdf.versionId
+          }
+        ]
+      })
+    )
+  })
+
+  it('keeps an ineligible follow-up PDF as an ordinary attachment', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Existing prompt',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    const stagedPdf = createAttachment({
+      id: 'oversized-pdf',
+      name: 'oversized.pdf',
+      originalName: 'oversized.pdf',
+      path: '/uploads/.pending/oversized.pdf',
+      mimeType: 'application/pdf',
+      size: 50 * 1024 * 1024 + 1
+    })
+    const finalizedPdf = createAttachment({
+      ...stagedPdf,
+      sessionId: 'transport-session-1',
+      path: 'upload-version:project-1/transport-session-1/oversized-version',
+      versionId: 'oversized-version',
+      versionNumber: 1,
+      checksum: 'a'.repeat(64)
+    })
+    const filterPdfContextCandidates = vi.fn().mockResolvedValue({
+      sources: [],
+      pendingAttachmentIds: []
+    })
+    const linkPdfContext = vi
+      .fn()
+      .mockRejectedValue(new Error('PDF context files must be 50 MB or smaller.'))
+    vi.stubGlobal('window', {
+      api: {
+        uploads: { finalizeSession: vi.fn().mockResolvedValue([finalizedPdf]) },
+        sessions: {
+          filterPdfContextCandidates,
+          linkPdfContext,
+          saveSession: vi.fn(async (session: PersistedChatSession) => session)
+        }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    const sent = await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Keep this available as an attachment',
+      attachments: [stagedPdf],
+      pendingPdfContextAttachmentIds: [stagedPdf.id],
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+
+    expect(sent).toBeDefined()
+    expect(filterPdfContextCandidates).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sources: [],
+      pendingAttachments: [
+        {
+          attachmentId: stagedPdf.id,
+          path: stagedPdf.path,
+          name: stagedPdf.name,
+          mimeType: stagedPdf.mimeType
+        }
+      ]
+    })
+    expect(linkPdfContext).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+    expect(runtime.sendPrompt.mock.calls[0]?.[2]).toEqual([
+      expect.objectContaining({
+        id: stagedPdf.id,
+        versionId: finalizedPdf.versionId
+      })
+    ])
+  })
+
   it('does not append a prompt when attachment finalization fails', async () => {
     const attachment = createAttachment()
     useSessionStore.getState().appendUserMessage({

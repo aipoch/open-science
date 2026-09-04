@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
 import { act } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { AcpPermissionRequest } from '../../../../shared/acp'
-import { describe, expect, it } from 'vitest'
+import type { SkillView } from '../../../../shared/settings'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
+import { useSettingsStore } from '@/stores/settings-store'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -169,6 +171,48 @@ const networkApprovalRequest: AcpPermissionRequest = {
   ]
 }
 
+// A skills/load_skill approval: the broker pins the stable skills/load_skill identity and the
+// raw input names the skill being loaded; the SKILL.md body is resolved from the skills catalog.
+const skillLoadPermissionRequest: AcpPermissionRequest = {
+  requestId: 'skill-1',
+  sessionId: 'session-1',
+  toolCallId: 'tool-skill',
+  title: 'mcp__skills__load_skill',
+  providerToolName: 'mcp__skills__load_skill',
+  isMcp: true,
+  mcpIdentity: 'skills/load_skill',
+  rawInput: { skill: 'mcp-pubmed' },
+  options: [
+    { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+    { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
+  ]
+}
+
+const catalogSkill: SkillView = {
+  id: 'imported-mcp-pubmed',
+  name: 'mcp-pubmed',
+  displayName: 'PubMed Search',
+  description: 'Search PubMed',
+  source: 'imported',
+  updatedAt: '2026-08-27T00:00:00Z',
+  enabled: true
+}
+
+const installSkillDetail = (body: string): ReturnType<typeof vi.fn> => {
+  const getSkillDetail = vi
+    .fn()
+    .mockResolvedValue({ ...catalogSkill, body, references: [], packageFiles: [] })
+  window.api = { settings: { getSkillDetail } } as unknown as Window['api']
+  return getSkillDetail
+}
+
+const installSkillDocumentResolver = (
+  resolveSkillDocument: ReturnType<typeof vi.fn>
+): ReturnType<typeof vi.fn> => {
+  window.api = { settings: { resolveSkillDocument } } as unknown as Window['api']
+  return resolveSkillDocument
+}
+
 const renderControls = (): string =>
   renderToStaticMarkup(
     <PermissionApprovalControls requests={[permissionRequest]} onRespond={() => undefined} />
@@ -188,6 +232,32 @@ const secondPermissionRequest: AcpPermissionRequest = {
 }
 
 describe('PermissionApprovalControls', () => {
+  // jsdom-mounted cards to unmount after each test (static-markup tests mount nothing).
+  const mounted: Array<{ root: Root; host: HTMLDivElement }> = []
+
+  afterEach(async () => {
+    for (const { root, host } of mounted.splice(0)) {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
+    }
+    useSettingsStore.setState({ skills: [], skillsLoaded: false })
+    window.api = undefined as unknown as Window['api']
+    vi.restoreAllMocks()
+  })
+
+  const mountControls = async (request: AcpPermissionRequest): Promise<HTMLDivElement> => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    await act(async () => {
+      root.render(<PermissionApprovalControls requests={[request]} onRespond={() => undefined} />)
+    })
+    mounted.push({ root, host })
+    return host
+  }
+
   it('renders Notebook domain requests as a conversation approval without exposing raw payload JSON', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[networkApprovalRequest]} onRespond={() => undefined} />
@@ -935,5 +1005,123 @@ describe('PermissionApprovalControls', () => {
       />
     )
     expect(html).toContain('/repo/config/prod.env')
+  })
+
+  it('renders the SKILL.md document for a catalog skill load instead of the raw JSON input', async () => {
+    useSettingsStore.setState({ skills: [catalogSkill], skillsLoaded: true })
+    const getSkillDetail = installSkillDetail('# mcp-pubmed\n\nSearch **PubMed** articles.')
+
+    const host = await mountControls(skillLoadPermissionRequest)
+
+    expect(getSkillDetail).toHaveBeenCalledWith('imported-mcp-pubmed')
+
+    const toggle = host.querySelector('[data-testid="permission-skill-toggle"]')
+    expect(toggle).not.toBeNull()
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true')
+    expect(toggle?.textContent).toContain('PubMed Search')
+    expect(toggle?.textContent).toContain('Skill')
+    expect(host.querySelector('[data-testid="permission-code-toggle"]')).toBeNull()
+    expect(host.querySelector('.shadow-sheet')).not.toBeNull()
+    expect(host.querySelector('h1')?.textContent).toBe('mcp-pubmed')
+  })
+
+  it('resolves the skill from the Codex arguments envelope and namespaced tool identity', async () => {
+    useSettingsStore.setState({ skills: [catalogSkill], skillsLoaded: true })
+    const getSkillDetail = installSkillDetail('# mcp-pubmed')
+
+    const host = await mountControls({
+      ...skillLoadPermissionRequest,
+      title: 'mcp.skills.load_skill',
+      providerToolName: 'mcp.skills.load_skill',
+      mcpIdentity: undefined,
+      rawInput: { arguments: { skill: 'mcp-pubmed', args: '--depth full' } }
+    })
+
+    expect(getSkillDetail).toHaveBeenCalledWith('imported-mcp-pubmed')
+    expect(host.querySelector('[data-testid="permission-skill-toggle"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="permission-code-toggle"]')).toBeNull()
+  })
+
+  it('resolves the skill document through the main-process resolver on a catalog miss', async () => {
+    useSettingsStore.setState({ skills: [], skillsLoaded: true })
+    const resolveSkillDocument = installSkillDocumentResolver(
+      vi.fn().mockResolvedValue({
+        name: 'mcp-pubmed',
+        displayName: 'PubMed Connector',
+        body: '# mcp-pubmed\n\nConnector-provided document.'
+      })
+    )
+
+    const host = await mountControls(skillLoadPermissionRequest)
+
+    expect(resolveSkillDocument).toHaveBeenCalledWith({ name: 'mcp-pubmed' })
+
+    const toggle = host.querySelector('[data-testid="permission-skill-toggle"]')
+    expect(toggle).not.toBeNull()
+    expect(toggle?.textContent).toContain('PubMed Connector')
+    expect(host.querySelector('h1')?.textContent).toBe('mcp-pubmed')
+    expect(host.textContent).toContain('Connector-provided document.')
+    // The resolved document replaces the raw JSON input.
+    expect(host.querySelector('[data-testid="permission-code-toggle"]')).toBeNull()
+    expect(host.querySelector('[data-testid="tool-code-block"]')).toBeNull()
+  })
+
+  it('keeps the raw JSON input inside the skill section when no source provides the skill', async () => {
+    useSettingsStore.setState({ skills: [], skillsLoaded: true })
+    const resolveSkillDocument = installSkillDocumentResolver(vi.fn().mockResolvedValue(null))
+
+    const host = await mountControls(skillLoadPermissionRequest)
+
+    expect(resolveSkillDocument).toHaveBeenCalledWith({ name: 'mcp-pubmed' })
+
+    const toggle = host.querySelector('[data-testid="permission-skill-toggle"]')
+    expect(toggle).not.toBeNull()
+    expect(toggle?.textContent).toContain('mcp-pubmed')
+    // The unavailable document falls back to the reviewable raw input inside the same section.
+    const codeBlock = host.querySelector('[data-testid="tool-code-block"]')
+    expect(codeBlock).not.toBeNull()
+    expect(codeBlock?.textContent).toContain('"skill"')
+    expect(codeBlock?.textContent).toContain('mcp-pubmed')
+  })
+
+  it('offers a retry when the skill document fetch fails', async () => {
+    useSettingsStore.setState({ skills: [catalogSkill], skillsLoaded: true })
+    const getSkillDetail = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('ipc down'))
+      .mockResolvedValue({ body: '# mcp-pubmed\n\nRecovered.' })
+    window.api = { settings: { getSkillDetail } } as unknown as Window['api']
+
+    const host = await mountControls(skillLoadPermissionRequest)
+
+    const retry = Array.from(host.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Retry'
+    )
+    expect(retry).toBeDefined()
+
+    await act(async () => {
+      retry?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(getSkillDetail).toHaveBeenCalledTimes(2)
+    expect(host.querySelector('h1')?.textContent).toBe('mcp-pubmed')
+    expect(host.textContent).toContain('Recovered.')
+  })
+
+  it('collapses and re-expands the skill document via the toggle', async () => {
+    useSettingsStore.setState({ skills: [catalogSkill], skillsLoaded: true })
+    installSkillDetail('# mcp-pubmed')
+
+    const host = await mountControls(skillLoadPermissionRequest)
+    const toggle = host.querySelector<HTMLButtonElement>('[data-testid="permission-skill-toggle"]')
+    expect(host.querySelector('.shadow-sheet')).not.toBeNull()
+
+    await act(async () => toggle?.click())
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('.shadow-sheet')).toBeNull()
+
+    await act(async () => toggle?.click())
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true')
+    expect(host.querySelector('.shadow-sheet')).not.toBeNull()
   })
 })

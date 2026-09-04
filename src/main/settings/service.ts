@@ -1,4 +1,5 @@
 import { homedir } from 'node:os'
+import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { CloseActionPreference } from '../../shared/window-controls'
@@ -34,6 +35,8 @@ import type {
   Preflight,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
+  ResolveSkillDocumentRequest,
+  ResolvedSkillDocument,
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetNcbiCredentialsRequest,
@@ -120,6 +123,13 @@ import {
 } from './backend-resolver'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
+import { SAFE_SKILL_NAME } from '../skills/skill-name'
+import { parseFrontmatter } from '../skills/frontmatter'
+import { SKILL_IMPORT_LIMITS } from '../skills/import-limits'
+import { CONNECTOR_CATALOG } from '../connectors/catalog'
+import { ALL_CONNECTOR_IDS } from '../connectors/registry'
+import { renderSkillDoc } from '../connectors/skill-doc'
+import { connectorSkillSourceDir } from '../connectors/provision'
 import type { SkillExportArchive } from '../skills/export'
 import type { FetchLike } from '../skills/github-import'
 import type { StoredConnectors, StoredCustomMcpOAuthState, StoredSettings } from './types'
@@ -689,6 +699,69 @@ class SettingsService {
 
   async getSkillDetail(id: string): Promise<SkillDetailView> {
     return this.skills.getSkillDetail(id)
+  }
+
+  // Resolves a renderable SKILL.md document by canonical invocation name across every source the
+  // runtime can load from. The permission card and transcript rows need this because connector
+  // skills (mcp-<id> for enabled bundled connectors, materialized custom MCP server skills) are
+  // invocable through load_skill but are NOT part of the renderer's managed catalog. Sources, in
+  // order: the managed catalog (an enabled entry wins a name collision, mirroring the renderer's
+  // own rule), enabled bundled connectors (document rendered on the fly), then materialized custom
+  // server skills (read from the provisioned source dir, gated by the provisioned-name projection
+  // so arbitrary directories are never served). Returns null when no source provides the name.
+  async resolveSkillDocument(
+    request: ResolveSkillDocumentRequest
+  ): Promise<ResolvedSkillDocument | null> {
+    const name = request.name.trim()
+    // The same lowercase-hyphen shape the runtime accepts; keeps the filesystem read below safe.
+    if (!SAFE_SKILL_NAME.test(name)) return null
+
+    const skills = await this.skills.listSkills()
+    const entry =
+      skills.find((skill) => skill.name === name && skill.enabled) ??
+      skills.find((skill) => skill.name === name)
+    if (entry) {
+      const detail = await this.getSkillDetail(entry.id)
+      return {
+        name: detail.name,
+        displayName: detail.displayName,
+        description: detail.description,
+        body: detail.body
+      }
+    }
+
+    const bundledId = /^mcp-(.+)$/.exec(name)?.[1]
+    if (bundledId && ALL_CONNECTOR_IDS.includes(bundledId)) {
+      const settings = await this.repository.getSettings()
+      if (!this.connectors.enabledConnectorIds(settings.connectors).includes(bundledId)) {
+        return null
+      }
+      const meta = CONNECTOR_CATALOG.find((connector) => connector.id === bundledId)
+      const { fields, body } = parseFrontmatter(renderSkillDoc(bundledId))
+      return {
+        name,
+        ...(meta ? { displayName: meta.displayName } : {}),
+        ...(fields.description ? { description: fields.description } : {}),
+        body
+      }
+    }
+
+    if (!(await this.connectors.provisionedConnectorSkillNames()).includes(name)) return null
+    const filePath = join(connectorSkillSourceDir(this.storageRoot), name, 'SKILL.md')
+    const metadata = await stat(filePath).catch(() => undefined)
+    // The body is renderer-bound preview text; cap it at the shared preview budget before reading.
+    if (!metadata?.isFile() || metadata.size > SKILL_IMPORT_LIMITS.maxPreviewContentBytes) {
+      return null
+    }
+    const raw = await readFile(filePath, 'utf8').catch(() => undefined)
+    if (!raw) return null
+    const { fields, body } = parseFrontmatter(raw)
+    if (fields.name !== name) return null
+    return {
+      name,
+      ...(fields.description ? { description: fields.description } : {}),
+      body
+    }
   }
 
   async setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]> {

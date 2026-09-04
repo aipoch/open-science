@@ -10,6 +10,8 @@ import {
   createPreviewFileItemFromPdfContext,
   createPreviewFileItemFromUpload,
   createPreviewFileItemForArtifactVersion,
+  createProjectFileResolveRequest,
+  refreshPreviewFileItemFromProjectFile,
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 
@@ -52,6 +54,110 @@ const createMentionPart = (overrides: Partial<ArtifactMentionPart> = {}): Artifa
 })
 
 describe('preview file item helpers', () => {
+  it.each([
+    [
+      'artifact',
+      createPreviewFileItem({
+        id: 'legacy-artifact-id',
+        sessionId: 'session-1',
+        path: '/legacy/report.md',
+        name: 'report.md'
+      }),
+      'legacy-artifact-id',
+      'legacy'
+    ],
+    [
+      'upload',
+      createPreviewFileItem({
+        id: 'upload:upload-1',
+        sessionId: 'session-1',
+        source: 'upload',
+        path: '/legacy/upload.md',
+        name: 'upload.md'
+      }),
+      'upload-1',
+      'logical'
+    ],
+    [
+      'upload without a namespaced tab id',
+      createPreviewFileItem({
+        id: 'legacy-upload-1',
+        sessionId: 'session-1',
+        source: 'upload',
+        path: '/legacy/upload.md',
+        name: 'upload.md'
+      }),
+      'legacy-upload-1',
+      'legacy'
+    ]
+  ] as const)(
+    'builds a logical Project Files lookup for a legacy %s retry',
+    (_, item, fileIdHint, identityHint) => {
+      expect(createProjectFileResolveRequest(item, 'project-1')).toEqual({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        source: item.source ?? 'artifact',
+        fileIdHint,
+        identityHint,
+        name: item.name
+      })
+    }
+  )
+
+  it('reduces a restored legacy Artifact path to a filename for retry lookup', () => {
+    const item = createPreviewFileItem({
+      id: 'legacy-artifact-id',
+      sessionId: 'session-1',
+      path: String.raw`C:\legacy\nested\report.md`,
+      name: String.raw`C:\legacy\nested\report.md`
+    })
+
+    expect(createProjectFileResolveRequest(item, 'project-1')).toEqual({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      source: 'artifact',
+      fileIdHint: 'legacy-artifact-id',
+      identityHint: 'legacy',
+      name: 'report.md'
+    })
+  })
+
+  it('refreshes a legacy preview with canonical identity without changing its selected Version', () => {
+    const legacyItem = createPreviewFileItem({
+      id: 'legacy-preview-id',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      path: '/legacy/report.md',
+      name: 'report.md',
+      selectedVersionId: 'artifact-version-1',
+      versionNumber: 1
+    })
+
+    expect(
+      refreshPreviewFileItemFromProjectFile(legacyItem, {
+        id: 'artifact-lineage-1',
+        source: 'artifact',
+        sourceFileId: 'artifact-lineage-1',
+        sourceVersionId: 'artifact-version-2',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        name: 'report.md',
+        path: 'artifact-version:project-1/session-1/artifact-lineage-1/artifact-version-2',
+        mimeType: 'text/markdown',
+        size: 24,
+        mtimeMs: 2,
+        sortAtMs: 2
+      })
+    ).toMatchObject({
+      id: 'legacy-preview-id',
+      artifactId: 'artifact-lineage-1',
+      managedFileId: 'artifact-lineage-1',
+      selectedVersionId: 'artifact-version-1',
+      versionNumber: 1,
+      path: 'artifact-version:project-1/session-1/artifact-lineage-1/artifact-version-1'
+    })
+  })
+
   it('does not replace an explicitly missing Artifact Version with the latest Version', () => {
     const latest = {
       id: 'artifact-version-2',

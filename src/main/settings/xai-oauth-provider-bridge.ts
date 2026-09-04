@@ -2,12 +2,14 @@ import type { ServerResponse } from 'node:http'
 import { createLogger } from '../logger'
 import { netFetchStandard } from '../skills/net-fetch'
 
+import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from './bounded-response'
 import {
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
+import { fetchProviderRequest } from './provider-fetch'
 import {
   anthropicToResponses,
   chatToResponses,
@@ -158,7 +160,13 @@ export class XaiOAuthProviderBridge {
         : chatToResponses(body, this.target.model)
     let upstream = await this.request(upstreamBody, request, false)
     if (upstream.status === 401) upstream = await this.request(upstreamBody, request, true)
-    const payload = (await upstream.json()) as Record<string, unknown>
+    const payload = JSON.parse(
+      await readBoundedResponseText(
+        upstream,
+        DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+        'xAI Responses upstream response'
+      )
+    ) as Record<string, unknown>
     if (!upstream.ok) {
       log.info('loopback upstream error', {
         wire: this.wire,
@@ -221,11 +229,10 @@ export class XaiOAuthProviderBridge {
     forceRefresh: boolean
   ): Promise<Response> {
     const token = await this.getAccessToken(forceRefresh)
-    return this.fetchImpl('https://api.x.ai/v1/responses', {
+    return fetchProviderRequest(this.fetchImpl, 'https://api.x.ai/v1/responses', {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
-      redirect: 'manual',
       signal: request.signal
     })
   }

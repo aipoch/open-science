@@ -1,10 +1,13 @@
+import type { AcpPermissionRequest } from '../../../../shared/acp'
 import type { ToolActivity } from '@/stores/session-store'
 
 // The Skill runtime serves loads through its own MCP server; ACP providers namespace the tool as
 // mcp__skills__load_skill (Claude), mcp.skills.load_skill (Codex), or a flattened underscore form.
 const SKILL_LOAD_TOOL_PATTERN = /^(?:mcp__|mcp\.)?skills(?:__|\.|_)load_skill$/iu
 
-const SKILL_NAME_PATTERN = /^(?:loading|loaded)\s+skill:\s*(.+?)\s*$/iu
+// Providers project either the imperative ("Load skill: …") or the lifecycle ("Loading/Loaded
+// skill: …") title variant; all three carry the canonical invocation name.
+const SKILL_NAME_PATTERN = /^(?:load|loading|loaded)\s+skill:\s*(.+?)\s*$/iu
 
 // load_skill results prepend the runtime-resolved package root before the SKILL.md document. The
 // prefix is server-added transport context (and an absolute local path), never document content.
@@ -39,6 +42,26 @@ const getLoadedSkillName = (activity: ToolActivity): string | undefined => {
   return skillName || undefined
 }
 
+// The permission card's counterpart to getLoadedSkillName: an approval request carries no
+// projected lifecycle title, so detection leans on the broker-resolved mcpIdentity first
+// (skills/load_skill) and falls back to the namespaced tool identity in providerToolName/title.
+// The canonical skill name still comes from the `skill` argument, with the same Codex
+// `arguments` envelope unwrap as the transcript path.
+const getSkillLoadPermissionSkillName = (request: AcpPermissionRequest): string | undefined => {
+  const isSkillLoad =
+    request.mcpIdentity === 'skills/load_skill' ||
+    SKILL_LOAD_TOOL_PATTERN.test(request.providerToolName?.trim() ?? '') ||
+    SKILL_LOAD_TOOL_PATTERN.test(request.title.trim())
+
+  if (!isSkillLoad) return undefined
+
+  const rawInput = isRecord(request.rawInput) ? request.rawInput : undefined
+  const args = rawInput && isRecord(rawInput.arguments) ? rawInput.arguments : rawInput
+  const skillName = typeof args?.skill === 'string' ? args.skill.trim() : ''
+
+  return skillName || undefined
+}
+
 // Extracts the renderable SKILL.md body from a load_skill output text: the base-directory prefix
 // line and the YAML frontmatter block are removed. Returns nothing when the output is not a skill
 // document (e.g. an error payload), so callers can fall back to the generic input/output view.
@@ -53,4 +76,9 @@ const extractSkillLoadDocument = (output: string): string | undefined => {
   return document || undefined
 }
 
-export { extractSkillLoadDocument, getLoadedSkillName, isSkillLoadActivity }
+export {
+  extractSkillLoadDocument,
+  getLoadedSkillName,
+  getSkillLoadPermissionSkillName,
+  isSkillLoadActivity
+}

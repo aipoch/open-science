@@ -241,9 +241,11 @@ import type {
   GetProjectFilesOverviewRequest,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
+  ProjectFileItem,
   ProjectFilesChangedEvent,
   ProjectFilesOverview,
   ProjectFilesPage,
+  ResolveProjectFileRequest,
   SearchArtifactsRequest,
   SearchArtifactsResult
 } from './project-files'
@@ -328,6 +330,8 @@ import type {
   PreviewAgentHomeSkillRequest,
   PreviewGitHubSkillRequest,
   PreviewSkillZipRequest,
+  ResolveSkillDocumentRequest,
+  ResolvedSkillDocument,
   SkillBundlePreviewResult,
   SkillImportPreviewContent,
   ScanRepoRequest,
@@ -1309,6 +1313,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'projectFiles.listFiles': callable<
     (request: ListProjectFilesRequest) => Promise<ProjectFilesPage>
   >()('project-files', ['project-files:list-files']),
+  'projectFiles.resolveFile': callable<
+    (request: ResolveProjectFileRequest) => Promise<ProjectFileItem | undefined>
+  >()('project-files', ['project-files:resolve-file']),
   'projectFiles.onChanged': callable<
     (listener: AcpListener<ProjectFilesChangedEvent>) => RemoveListener
   >()('project-files', ['project-files:changed', EVENT]),
@@ -1674,6 +1681,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.getSkillDetail': callable<(id: string) => Promise<SkillDetailView>>()('settings', [
     'settings:get-skill-detail'
   ]),
+  // Electron-only: the connector-skill document sources live on the main-process filesystem, so
+  // the web adapter does not project this member — renderer callers must guard its presence.
+  'settings.resolveSkillDocument': callable<
+    (request: ResolveSkillDocumentRequest) => Promise<ResolvedSkillDocument | null>
+  >()('settings', ['settings:resolve-skill-document', ELECTRON]),
   'settings.importAgentHomeSkills': callable<
     (request: ImportAgentHomeSkillsRequest) => Promise<ImportAgentHomeSkillsResult>
   >()('settings', ['settings:import-agent-home-skills', MAPPED_ELECTRON]),

@@ -313,11 +313,11 @@ const useWorkspaceComposerController = ({
       : undefined
   const automaticStagedReadingContexts = useMemo(
     () =>
-      !activeSession &&
+      (!activeSession || durableReadingBindings.length > 0) &&
       !pendingPdfContextSelection &&
       transfers.length === 0 &&
       attachments.length >= 1 &&
-      attachments.length <= 3 &&
+      attachments.length <= MAX_SESSION_PDF_CONTEXTS - durableReadingBindings.length &&
       attachments.every(
         (attachment) =>
           getPreviewFormatForFile({ name: attachment.name, mimeType: attachment.mimeType }) ===
@@ -325,7 +325,13 @@ const useWorkspaceComposerController = ({
       )
         ? attachments
         : [],
-    [activeSession, attachments, pendingPdfContextSelection, transfers.length]
+    [
+      activeSession,
+      attachments,
+      durableReadingBindings.length,
+      pendingPdfContextSelection,
+      transfers.length
+    ]
   )
   const versionReadingContextItem = usePreviewWorkbenchStore((state) => {
     if (pendingPdfContextSelection?.kind !== 'version') return undefined
@@ -911,13 +917,11 @@ const useWorkspaceComposerController = ({
     (includeReadingContext = true): ComposerSendSnapshot => {
       clearPastedTextUndo()
       clearUndo()
-      const pendingPdfContextAttachmentIds = includeReadingContext
-        ? stagedReadingContext
-          ? [stagedReadingContext.id]
-          : automaticReadingEnabledRef.current
-            ? automaticStagedReadingContexts.map(({ id }) => id)
-            : []
-        : []
+      const pendingPdfContextAttachmentIds = stagedReadingContext
+        ? [stagedReadingContext.id]
+        : automaticReadingEnabledRef.current
+          ? automaticStagedReadingContexts.map(({ id }) => id)
+          : []
       const includedDurableBindings = includeReadingContext ? durableReadingBindings : []
       const occupied = new Set(
         includedDurableBindings.map(
@@ -943,15 +947,7 @@ const useWorkspaceComposerController = ({
           occupied.add(identity)
           return true
         })
-        .slice(
-          0,
-          Math.max(
-            0,
-            MAX_SESSION_PDF_CONTEXTS -
-              includedDurableBindings.length -
-              pendingPdfContextAttachmentIds.length
-          )
-        )
+        .slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - includedDurableBindings.length))
       return {
         draftKey: activeDraftKeyRef.current,
         version: versionsRef.current[activeDraftKeyRef.current] ?? 0,

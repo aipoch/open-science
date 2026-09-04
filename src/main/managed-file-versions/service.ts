@@ -500,6 +500,21 @@ class ManagedFileVersionService {
     return this.openVersionLease(await this.resolveRecord({ ...request, versionId }))
   }
 
+  /**
+   * Producer read-back of one exact version that may not be published yet: the lineage head may
+   * still be unassigned and an agent-generated version may not be managed-visible until message
+   * finalization. Intended for trusted main-process callers that hold the version id they just
+   * wrote (for example the Session Plan write-then-verify path); never expose over renderer IPC.
+   */
+  async openUnpublishedVersion(
+    request: ManagedFileIdentity,
+    versionId: string
+  ): Promise<ManagedFileReadLease> {
+    return this.openVersionLease(
+      await this.resolveRecord({ ...request, versionId }, { unpublished: true })
+    )
+  }
+
   async diffText(request: ManagedFileVersionDiffRequest): Promise<ManagedFileVersionDiffResult> {
     return this.diffVersion(request, request.versionId, request.requestId)
   }
@@ -550,32 +565,49 @@ class ManagedFileVersionService {
   }
 
   private async resolveRecord(
-    request: ManagedFileIdentity & { versionId?: string }
+    request: ManagedFileIdentity & { versionId?: string },
+    options: { unpublished?: boolean } = {}
   ): Promise<ResolvedManagedFileVersion> {
     this.assertIdentity(request)
     const client = await this.options.getClient()
     const logicalFile = await this.loadLogicalFile(client, request)
     await this.assertReadable(client, logicalFile)
     const headVersionId = logicalFile.currentVersionId
-    if (!headVersionId) {
-      throw new ManagedFileVersionError(
-        'VERSION_NOT_FOUND',
-        'Managed file has no published version.'
-      )
+    if (!options.unpublished) {
+      if (!headVersionId) {
+        throw new ManagedFileVersionError(
+          'VERSION_NOT_FOUND',
+          'Managed file has no published version.'
+        )
+      }
     }
     const versionId = request.versionId ?? headVersionId
+    if (!versionId) {
+      throw new ManagedFileVersionError('VERSION_NOT_FOUND', 'Managed file version was not found.')
+    }
     const version = await this.loadVersion(client, logicalFile, versionId)
     if (!version) {
       throw new ManagedFileVersionError('VERSION_NOT_FOUND', 'Managed file version was not found.')
     }
-    if (request.source === 'artifact' && !isManagedVisibleArtifactVersion(version)) {
-      operationError('VERSION_NOT_FOUND', 'Managed file version is not published.')
-    }
     if (version.fileId !== logicalFile.id) {
       operationError('VERSION_NOT_IN_FILE', 'Managed file version belongs to another file.')
     }
-    if (version.state !== COMPLETE_STATE[request.source]) {
-      operationError('VERSION_NOT_FOUND', 'Managed file version is not published.')
+    if (!options.unpublished) {
+      if (request.source === 'artifact' && !isManagedVisibleArtifactVersion(version)) {
+        operationError('VERSION_NOT_FOUND', 'Managed file version is not published.')
+      }
+      if (version.state !== COMPLETE_STATE[request.source]) {
+        operationError('VERSION_NOT_FOUND', 'Managed file version is not published.')
+      }
+    } else if (request.source === 'artifact') {
+      // Producer read-back still requires a committed write: a staging row's content is not yet
+      // owned by its write operation. 'pending' precedes message finalization; 'finalized' is the
+      // ordinary complete state.
+      if (version.state !== 'pending' && version.state !== 'finalized') {
+        operationError('VERSION_NOT_FOUND', 'Managed file version write has not completed.')
+      }
+    } else if (version.state !== COMPLETE_STATE.upload) {
+      operationError('VERSION_NOT_FOUND', 'Managed file version write has not completed.')
     }
     return { logicalFile, version }
   }

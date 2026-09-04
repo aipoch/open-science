@@ -52,6 +52,7 @@ type CatalogCursor = { sortAtMs: string; seq: number }
 type AuthoritativeCatalogQuery = {
   projectIds: string[]
   source?: ProjectFileSource
+  sourceFileId?: string
   sessionId?: string
   search?: NormalizedSearch
   cursor?: CatalogCursor
@@ -304,6 +305,9 @@ const authoritativeCatalogPredicates = (
   const sourcePredicate = query.source
     ? Prisma.sql`AND file."source" = ${query.source}`
     : Prisma.empty
+  const sourceFilePredicate = query.sourceFileId
+    ? Prisma.sql`AND file."sourceFileId" = ${query.sourceFileId}`
+    : Prisma.empty
   const sessionPredicate = query.sessionId
     ? Prisma.sql`AND file."sessionId" = ${query.sessionId}`
     : Prisma.empty
@@ -321,6 +325,7 @@ const authoritativeCatalogPredicates = (
     : Prisma.empty
   return Prisma.sql`
     ${sourcePredicate}
+    ${sourceFilePredicate}
     ${sessionPredicate}
     ${filenamePredicate}
     ${excludedSessionsPredicate}

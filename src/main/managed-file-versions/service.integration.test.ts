@@ -2852,4 +2852,231 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
     await expect(service.auditActiveVersionIntegrity()).resolves.toEqual([])
   })
+
+  describe('openUnpublishedVersion', () => {
+    const createPendingAgentPlanFixture = async (): Promise<{
+      fileId: string
+      versionId: string
+      bytes: Buffer
+    }> => {
+      const fileId = 'plan-lineage-1'
+      const versionId = 'plan-pending-v1'
+      const bytes = Buffer.from('{"schema_version":1,"task_summary":"Analyze the dataset"}\n')
+      const storageKey = `artifacts/project-1/session-1/${fileId}/versions/${versionId}/content`
+      await mkdir(dirname(join(storageRoot, ...storageKey.split('/'))), { recursive: true })
+      await writeFile(join(storageRoot, ...storageKey.split('/')), bytes)
+      await client.artifactLineage.create({
+        data: {
+          id: fileId,
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          normalizedFilename: 'plan.json',
+          filename: 'plan.json'
+        }
+      })
+      await client.artifactVersion.create({
+        data: {
+          id: versionId,
+          artifactId: fileId,
+          versionNumber: 1,
+          filename: 'plan.json',
+          originKind: 'agent_generated',
+          basedOnVersionId: null,
+          artifactRunId: 'plan-run-1',
+          rootFrameId: 'frame-root',
+          agentFrameId: 'frame-agent',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'segment-1',
+          promptMessageId: 'message-1',
+          state: 'pending',
+          contentStorageKey: storageKey,
+          evidenceStorageKey: `${storageKey}/../evidence`,
+          evidenceJson: '{"schema_version":1}',
+          evidenceChecksum: checksum(Buffer.from('{"schema_version":1}')),
+          evidenceSchemaVersion: 1,
+          contentType: 'application/json',
+          sizeBytes: BigInt(bytes.byteLength),
+          checksum: checksum(bytes)
+        }
+      })
+      return { fileId, versionId, bytes }
+    }
+
+    it('reads a pending agent-generated version by id exactly as written', async () => {
+      const fixture = await createPendingAgentPlanFixture()
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const identity = {
+        source: 'artifact' as const,
+        projectId: 'project-1',
+        fileId: fixture.fileId
+      }
+
+      // The published read path rejects this exact shape: the lineage head is unassigned until
+      // message finalization, and the version is not yet managed-visible.
+      await expect(service.openVersion(identity, fixture.versionId)).rejects.toMatchObject({
+        code: 'VERSION_NOT_FOUND'
+      })
+
+      const lease = await service.openUnpublishedVersion(identity, fixture.versionId)
+      try {
+        await expect(lease.readRange(0, lease.size)).resolves.toEqual(new Uint8Array(fixture.bytes))
+        expect(lease.version.checksum).toBe(checksum(fixture.bytes))
+        expect(lease.logicalFile.sessionId).toBe('session-1')
+        await lease.verifyUnchanged()
+      } finally {
+        await lease.close()
+      }
+    })
+
+    it('rejects an incomplete staging write for artifacts and uploads', async () => {
+      const artifactFixture = await createPendingAgentPlanFixture()
+      await client.artifactVersion.update({
+        where: { id: artifactFixture.versionId },
+        data: { state: 'staging' }
+      })
+      await client.uploadFile.create({
+        data: {
+          id: 'upload-file-1',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          filename: 'notes.md',
+          originalFilename: 'notes.md'
+        }
+      })
+      const uploadBytes = Buffer.from('staging bytes\n')
+      const uploadKey =
+        'uploads/project-1/session-1/upload-file-1/versions/upload-staging-v1/content'
+      await mkdir(dirname(join(storageRoot, ...uploadKey.split('/'))), { recursive: true })
+      await writeFile(join(storageRoot, ...uploadKey.split('/')), uploadBytes)
+      await client.uploadVersion.create({
+        data: {
+          id: 'upload-staging-v1',
+          uploadFileId: 'upload-file-1',
+          versionNumber: 1,
+          state: 'staging',
+          originKind: 'legacy',
+          basedOnVersionId: null,
+          contentStorageKey: uploadKey,
+          filename: 'notes.md',
+          originalFilename: 'notes.md',
+          contentType: 'text/markdown',
+          sizeBytes: BigInt(uploadBytes.byteLength),
+          checksum: checksum(uploadBytes)
+        }
+      })
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+
+      await expect(
+        service.openUnpublishedVersion(
+          { source: 'artifact', projectId: 'project-1', fileId: artifactFixture.fileId },
+          artifactFixture.versionId
+        )
+      ).rejects.toMatchObject({ code: 'VERSION_NOT_FOUND' })
+      await expect(
+        service.openUnpublishedVersion(
+          { source: 'upload', projectId: 'project-1', fileId: 'upload-file-1' },
+          'upload-staging-v1'
+        )
+      ).rejects.toMatchObject({ code: 'VERSION_NOT_FOUND' })
+    })
+
+    it('rejects a version owned by another file', async () => {
+      const other = await createFixture('artifact')
+      const fixture = await createPendingAgentPlanFixture()
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+
+      await expect(
+        service.openUnpublishedVersion(
+          { source: 'artifact', projectId: 'project-1', fileId: fixture.fileId },
+          other.versionIds[0]
+        )
+      ).rejects.toMatchObject({ code: 'VERSION_NOT_IN_FILE' })
+    })
+
+    it('reports version identity before write state on both read paths', async () => {
+      // A legacy-origin staging version owned by another file: identity must win over state so
+      // the published path keeps its historical error precedence.
+      const owned = await createFixture('artifact')
+      await client.artifactLineage.create({
+        data: {
+          id: 'foreign-lineage',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          normalizedFilename: 'foreign.json',
+          filename: 'foreign.json'
+        }
+      })
+      const foreignBytes = Buffer.from('foreign\n')
+      const foreignKey = 'artifacts/project-1/session-1/foreign-lineage/versions/foreign-v1/content'
+      await mkdir(dirname(join(storageRoot, ...foreignKey.split('/'))), { recursive: true })
+      await writeFile(join(storageRoot, ...foreignKey.split('/')), foreignBytes)
+      await client.artifactVersion.create({
+        data: {
+          id: 'foreign-v1',
+          artifactId: 'foreign-lineage',
+          versionNumber: 1,
+          filename: 'foreign.json',
+          originKind: 'legacy',
+          basedOnVersionId: null,
+          state: 'staging',
+          contentStorageKey: foreignKey,
+          contentType: 'application/json',
+          sizeBytes: BigInt(foreignBytes.byteLength),
+          checksum: checksum(foreignBytes)
+        }
+      })
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const identity = {
+        source: 'artifact' as const,
+        projectId: 'project-1',
+        fileId: owned.fileId
+      }
+
+      await expect(service.openVersion(identity, 'foreign-v1')).rejects.toMatchObject({
+        code: 'VERSION_NOT_IN_FILE'
+      })
+      await expect(service.openUnpublishedVersion(identity, 'foreign-v1')).rejects.toMatchObject({
+        code: 'VERSION_NOT_IN_FILE'
+      })
+    })
+
+    it('reads a finalized published version through the same path', async () => {
+      const fixture = await createPendingAgentPlanFixture()
+      const now = new Date('2026-09-01T00:00:00.000Z')
+      await client.artifactVersion.update({
+        where: { id: fixture.versionId },
+        data: { state: 'finalized', managedVisibleAt: now }
+      })
+      await client.artifactLineage.update({
+        where: { id: fixture.fileId },
+        data: { currentVersionId: fixture.versionId }
+      })
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+
+      const lease = await service.openUnpublishedVersion(
+        { source: 'artifact', projectId: 'project-1', fileId: fixture.fileId },
+        fixture.versionId
+      )
+      try {
+        await expect(lease.readRange(0, lease.size)).resolves.toEqual(new Uint8Array(fixture.bytes))
+      } finally {
+        await lease.close()
+      }
+    })
+  })
 })
