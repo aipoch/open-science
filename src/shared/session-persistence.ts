@@ -3810,6 +3810,11 @@ const sanitizeConversationGraph = (
         const agentFrameId = asString(candidate.agentFrameId)
         const introducedOnBranchId = asString(candidate.introducedOnBranchId)
         if (!message || !agentFrameId || !introducedOnBranchId) return []
+        // Older application-routed user Messages could persist their own id as the response target.
+        // The edge carries no information, so canonicalize that known legacy shape before validation.
+        if (message.role === 'user' && message.responseToMessageId === message.id) {
+          delete message.responseToMessageId
+        }
         return [
           {
             ...(options.preserveRuntimeState ? message : normalizeMessageAfterRestore(message)),
