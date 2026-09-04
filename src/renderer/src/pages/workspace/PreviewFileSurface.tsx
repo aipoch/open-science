@@ -580,7 +580,7 @@ const ManagedVersionNavigation = ({
         variant="ghost"
         size="icon-xs"
         aria-label={t('Previous file version')}
-        disabled={selectedIndex <= 0}
+        disabled={selectedIndex <= 0 && !inspect.previousVersion}
         onClick={() => {
           const id = (
             selectedIndex > 0 ? inspect.versions[selectedIndex - 1] : inspect.previousVersion

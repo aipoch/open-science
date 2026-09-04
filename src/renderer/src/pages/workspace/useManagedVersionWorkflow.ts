@@ -87,29 +87,43 @@ const useManagedVersionWorkflow = ({
     storedInspect.value.fileId === identity.fileId
       ? storedInspect.value
       : undefined
-  const initialNavigationInspect =
-    inspect ??
-    (previousInspect &&
-    (!item.selectedVersionId ||
-      previousInspect.versions.some((version) => version.id === item.selectedVersionId))
-      ? item.selectedVersionId
-        ? { ...previousInspect, selectedVersionId: item.selectedVersionId }
-        : previousInspect
-      : undefined)
   const history = useVersionHistoryPages({
     historyKey:
       source + ':' + projectId + ':' + identity?.fileId + ':' + previousInspect?.headVersionId,
-    initial: initialNavigationInspect ?? previousInspect,
+    initial: inspect ?? previousInspect,
     loadPage: async (cursor) => {
       const result = await window.api.managedFileVersions.inspect({
         ...identity!,
-        versionId: initialNavigationInspect?.selectedVersionId,
+        versionId: item.selectedVersionId ?? previousInspect?.selectedVersionId,
         cursor
       })
       if (!result.ok) throw new Error(result.error.message)
       return result.value
     }
   })
+  const pendingSelectedVersion = previousInspect
+    ? [
+        previousInspect.selectedVersion,
+        previousInspect.headVersion,
+        previousInspect.previousVersion,
+        previousInspect.nextVersion,
+        ...history.versions
+      ].find((version) => version?.id === item.selectedVersionId)
+    : undefined
+  const initialNavigationInspect =
+    inspect ??
+    (previousInspect &&
+    (!item.selectedVersionId || item.selectedVersionId === previousInspect.selectedVersionId)
+      ? previousInspect
+      : previousInspect && pendingSelectedVersion
+        ? {
+            ...previousInspect,
+            selectedVersionId: pendingSelectedVersion.id,
+            selectedVersion: pendingSelectedVersion,
+            previousVersion: undefined,
+            nextVersion: undefined
+          }
+        : undefined)
   const navigationInspect = initialNavigationInspect
     ? { ...initialNavigationInspect, versions: history.versions }
     : undefined

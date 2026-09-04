@@ -420,8 +420,7 @@ class ArtifactProvenanceReadModel {
             where: { id: version.messageSnapshot.id, state: 'ready', checksum: '' },
             data: { checksum: snapshotChecksum }
           })
-          if (updated.count !== 1)
-            throw new ProvenanceIntegrityError('Message snapshot checksum backfill raced.')
+          if (updated.count !== 1) throw new Error('Message snapshot checksum backfill raced.')
         }
         const rawActivities = snapshot.schemaVersion === 3 ? snapshot.activities : []
         const rawActivityGroups = snapshot.schemaVersion === 3 ? snapshot.activityGroups : []
@@ -451,12 +450,15 @@ class ArtifactProvenanceReadModel {
         })
         messages = { state: 'available', items, activities, activityGroups }
       } catch (error) {
+        if (!(error instanceof UnsupportedMessageSnapshotVersionError)) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            throw new ProvenanceIntegrityError('Message snapshot file is missing.')
+          }
+          throw error
+        }
         messages = {
           state: 'unavailable',
-          reason:
-            error instanceof UnsupportedMessageSnapshotVersionError
-              ? 'message-snapshot-unsupported'
-              : 'message-snapshot-corrupt'
+          reason: 'message-snapshot-unsupported'
         }
       }
     }

@@ -470,6 +470,39 @@ afterEach(() => {
 })
 
 describe('ArtifactProvenancePanel', () => {
+  it('navigates to the previous Artifact version outside the loaded history page', async () => {
+    act(() => root.unmount())
+    container.replaceChildren()
+    root = createRoot(container)
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active' },
+      versions: [],
+      selectedVersion: secondDescriptor,
+      previousVersion: descriptor,
+      headVersion: secondDescriptor
+    })
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, selectedVersionId: 'version-2' }}
+          projectId="project-1"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await flush()
+    const previous = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Previous Artifact version"]'
+    )
+    expect(previous?.disabled).toBe(false)
+    await act(async () => previous?.click())
+    await flush()
+    expect(getVersionProvenance).toHaveBeenLastCalledWith(
+      expect.objectContaining({ versionId: 'version-1' })
+    )
+  })
   it('retries an earlier history page without reloading core evidence or changing selection', async () => {
     act(() => root.unmount())
     container.replaceChildren()

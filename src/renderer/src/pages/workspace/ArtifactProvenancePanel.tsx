@@ -1104,7 +1104,7 @@ const ArtifactProvenancePanel = ({
           variant="ghost"
           size="icon-xs"
           aria-label={t('Previous Artifact version')}
-          disabled={selectedIndex <= 0}
+          disabled={selectedIndex <= 0 && !lineage?.previousVersion}
           onClick={() => {
             const versionId = (
               selectedIndex > 0 ? lineage?.versions[selectedIndex - 1] : lineage?.previousVersion
