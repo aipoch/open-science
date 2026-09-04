@@ -1516,7 +1516,11 @@ const WorkspaceMessageScrollerImpl = ({
 
                   return presentingMessageIds.has(item.message.id) ? null : (
                     <Fragment key={item.id}>
-                      <MessageScrollerItem messageId={item.id} className="min-w-0">
+                      <MessageScrollerItem
+                        messageId={item.id}
+                        className="min-w-0"
+                        disableContainment
+                      >
                         <div className="px-4 pb-1 md:px-6">
                           <div className="mx-auto w-full max-w-[56rem]">
                             <WorkspaceAssistantTurnCompletion

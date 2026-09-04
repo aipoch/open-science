@@ -9,6 +9,7 @@ const TOOL_LAYOUT_SHIFT_PROMPT = 'Run the tool layout stability journey.'
 const TOOL_STATUS_LAYOUT_SHIFT_PROMPT = 'Run the status-bearing layout stability journey.'
 const BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT =
   'Run the buffered text tool layout stability journey.'
+const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
 const AGENT_STDERR_SUMMARY = 'Agent process stderr: 1 chunk, 22 bytes; raw output omitted.'
 
 // Windows CI stalls the first fake-agent turn when the window is shown from launch. Keep it hidden
@@ -188,6 +189,88 @@ test('keeps a running tool stationary while one line of buffered Markdown finish
       firstTop: tops[0],
       minimumTop: Math.min(...tops),
       maximumTop: Math.max(...tops),
+      finalTop: tops.at(-1)
+    })
+  ).toBeLessThanOrEqual(2)
+})
+
+test('keeps bottom-follow from overshooting when a paced tool turn completes', async ({ app }) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+
+  await page.getByRole('button', { name: 'New project' }).click()
+  const dialog = page.getByRole('dialog', { name: 'New project' })
+  await dialog.getByLabel('Name').fill(PROJECT_NAME)
+  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
+
+  const conversation = page.getByRole('region', { name: 'Conversation' })
+  const textbox = page.getByRole('textbox', { name: 'Ask anything' })
+
+  await textbox.fill(USER_MESSAGE)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  await expect(page.getByTestId('session-persistence-alert')).toHaveCount(0)
+  await revealWindowForLayoutSampling(app, page)
+
+  await textbox.fill(TOOL_ORDER_PROMPT)
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  const toolGroup = conversation.locator('[data-message-id="activity-group-e2e-order-tool"]')
+  await expect(toolGroup).toBeVisible()
+  await expect(conversation.getByText('Interacting with tools', { exact: true })).toBeVisible()
+  const scrollToEndButton = page.getByRole('button', { name: 'Scroll to end' })
+  await expect(scrollToEndButton).toBeVisible()
+  await scrollToEndButton.click()
+  await expect.poll(() => conversation.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
+  await expect
+    .poll(() =>
+      conversation.evaluate(
+        (element) => element.scrollHeight - element.clientHeight - element.scrollTop
+      )
+    )
+    .toBeLessThanOrEqual(2)
+
+  const tops = await toolGroup.evaluate(
+    (element) =>
+      new Promise<number[]>((resolve) => {
+        const observations: number[] = []
+        const startedAt = performance.now()
+        let completedAt: number | undefined
+
+        const sample = (): void => {
+          observations.push(element.getBoundingClientRect().top)
+
+          const now = performance.now()
+          if (!element.querySelector('[data-testid="tool-chip"][role="status"]')) {
+            completedAt ??= now
+          }
+          if (
+            (completedAt !== undefined && now - completedAt >= 1_000) ||
+            now - startedAt >= 5_000
+          ) {
+            resolve(observations)
+            return
+          }
+          requestAnimationFrame(sample)
+        }
+
+        requestAnimationFrame(sample)
+      })
+  )
+
+  await expect(
+    conversation.getByText('The slow tool has finished running.', { exact: true })
+  ).toBeVisible()
+
+  const minimumTop = Math.min(...tops)
+  const endpointTop = Math.min(tops[0], tops.at(-1) ?? tops[0])
+  const upwardOvershoot = endpointTop - minimumTop
+  expect(
+    upwardOvershoot,
+    JSON.stringify({
+      firstTop: tops[0],
+      minimumTop,
       finalTop: tops.at(-1)
     })
   ).toBeLessThanOrEqual(2)

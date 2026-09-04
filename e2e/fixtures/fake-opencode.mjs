@@ -747,7 +747,7 @@ if (process.argv.includes('--version')) {
           // Mirrors a real agent turn: intent text, a slow tool call, then follow-up text.
           const intentMessageId = `e2e-message-${nextMessageId++}`
           // A long intent text, chunked quickly so live pacing trails far behind arrival.
-          for (let chunk = 0; chunk < 20; chunk += 1) {
+          for (let chunk = 0; chunk < 30; chunk += 1) {
             await context.client.notify(acp.methods.client.session.update, {
               sessionId: context.params.sessionId,
               update: {
@@ -755,7 +755,7 @@ if (process.argv.includes('--version')) {
                 messageId: intentMessageId,
                 content: {
                   type: 'text',
-                  text: `Intent paragraph ${chunk}: I will now run the slow tool for you. `
+                  text: `Intent paragraph ${chunk}: I will now run the slow tool for you.\n\n`
                 }
               }
             })
