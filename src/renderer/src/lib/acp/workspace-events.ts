@@ -13,7 +13,9 @@ import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
-  type FinalizeRunArtifactsRequest
+  type FinalizeRunArtifactsRequest,
+  type ReconcilePendingArtifactsRequest,
+  type ReconcilePendingArtifactsResult
 } from '../../../../shared/artifacts'
 import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
 import {
@@ -234,6 +236,9 @@ const isNonActionableCodexDiagnostic = (text: string): boolean => {
 
 type WorkspaceRuntimeEventDependencies = {
   finalizeRunArtifacts?: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
+  reconcilePendingArtifacts?: (
+    request: ReconcilePendingArtifactsRequest
+  ) => Promise<ReconcilePendingArtifactsResult>
   saveSession?: (session: PersistedChatSession) => Promise<PersistedChatSession | void>
 }
 
@@ -304,14 +309,41 @@ const finalizeArtifactEvent = async (
     ...(session?.conversationGraph?.messages ?? [])
   ].find((message) => message.eventIds.includes(event.id) && ownsArtifactPrompt(message))
   const appliedArtifactIds = new Set(appliedMessage?.artifactIds ?? [])
+  const artifactVersionIds = event.artifacts.flatMap((artifact) =>
+    artifact.versionId ? [artifact.versionId] : []
+  )
+  const artifactProjectId = session?.projectId ?? event.artifacts[0]?.projectId
+  if (appliedMessage && artifactProjectId && artifactVersionIds.length > 0) {
+    const reconcile =
+      dependencies.reconcilePendingArtifacts ?? window.api.artifacts.reconcilePendingArtifacts
+    const result = await reconcile({
+      projectId: artifactProjectId,
+      sessionId: event.sessionId,
+      messageId: appliedMessage.id,
+      pendingPaths: event.artifacts
+        .map((artifact) => artifact.path)
+        .filter((path) => path.split(/[\\/]/).includes('.pending')),
+      artifactVersionIds
+    })
+    if (!Array.isArray(result)) {
+      const error = new Error(result.message) as Error & { code: typeof result.code }
+      error.code = result.code
+      throw error
+    }
+    const reconciledVersionIds = new Set(
+      result.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
+    )
+    if (artifactVersionIds.every((versionId) => reconciledVersionIds.has(versionId))) return true
+  }
   const eventArtifactsAreFinalized = event.artifacts.every((pendingArtifact) =>
     session?.artifacts?.some(
       (artifact) =>
         appliedArtifactIds.has(artifact.id) &&
-        !artifact.path.split(/[\\/]/).includes('.pending') &&
         artifact.name === pendingArtifact.name &&
         artifact.size === pendingArtifact.size &&
-        artifact.mtimeMs === pendingArtifact.mtimeMs
+        artifact.mtimeMs === pendingArtifact.mtimeMs &&
+        !pendingArtifact.versionId &&
+        !artifact.path.split(/[\\/]/).includes('.pending')
     )
   )
   if (appliedMessage && eventArtifactsAreFinalized) {

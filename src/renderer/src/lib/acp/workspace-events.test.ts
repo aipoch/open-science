@@ -3628,6 +3628,48 @@ describe('workspace runtime events', () => {
       secondFinalizedArtifact.id
     ])
   })
+
+  it('does not treat an immutable native provenance path as finalized', async () => {
+    const nativePendingArtifact = createArtifactFile({
+      id: 'native-version-1',
+      artifactId: 'native-artifact-1',
+      versionId: 'native-version-1',
+      versionNumber: 1,
+      path: '/Users/example/.open-science/managed/native-version-1/result.txt'
+    })
+    useSessionStore.getState().attachRunArtifacts({
+      sessionId: 'transport-session-1',
+      runId: 'run-native-pending',
+      eventId: 'native-pending-event',
+      artifacts: [nativePendingArtifact]
+    })
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-native-replay', kind: 'stop' }))
+    const messageId = useSessionStore.getState().sessions[0].messages[1].id
+    const finalizedArtifact = {
+      ...nativePendingArtifact,
+      messageId
+    }
+    const finalizeRunArtifacts = vi.fn().mockResolvedValue([finalizedArtifact])
+    const reconcilePendingArtifacts = vi.fn().mockResolvedValue([finalizedArtifact])
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'native-pending-event',
+        kind: 'artifact',
+        runId: 'run-native-pending',
+        artifactClaimId: 'native-pending-claim',
+        artifacts: [nativePendingArtifact]
+      }),
+      {
+        finalizeRunArtifacts,
+        reconcilePendingArtifacts,
+        saveSession: vi.fn().mockResolvedValue(undefined)
+      }
+    )
+
+    expect(reconcilePendingArtifacts).toHaveBeenCalledOnce()
+    expect(finalizeRunArtifacts).not.toHaveBeenCalled()
+  })
 })
 
 describe('loop guard: suppressNextAutoReview', () => {
