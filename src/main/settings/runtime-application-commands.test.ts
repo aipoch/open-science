@@ -124,7 +124,7 @@ describe('Settings runtime application commands', () => {
     )
     await router.dispatcher.invoke(
       settingsRuntimeApplicationCommands.deleteProvider,
-      invocation([{ id: 'provider-1' }] as const, 'remote')
+      invocation([{ id: 'provider-1', scenarioModelHandling: 'inherit' }] as const, 'remote')
     )
     await router.dispatcher.invoke(
       settingsRuntimeApplicationCommands.setActiveProvider,
@@ -143,7 +143,7 @@ describe('Settings runtime application commands', () => {
       type: 'custom',
       name: 'Provider'
     })
-    expect(workflowMethod('deleteProvider')).toHaveBeenCalledWith('provider-1')
+    expect(workflowMethod('deleteProvider')).toHaveBeenCalledWith('provider-1', 'inherit')
     expect(workflowMethod('setActiveProvider')).toHaveBeenCalledWith({
       id: 'provider-2',
       model: 'model-1'

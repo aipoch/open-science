@@ -3,6 +3,7 @@ import {
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   XAI_SUBSCRIPTION_PROVIDER_ID,
+  type ProviderDeletionScenarioModelHandling,
   type SetActiveProviderRequest,
   type SetAgentFrameworkRequest,
   type SetReasoningEffortRequest,
@@ -93,10 +94,11 @@ class RuntimeSettingsWorkflows {
   }
 
   async deleteProvider(
-    id: string
+    id: string,
+    scenarioModelHandling?: ProviderDeletionScenarioModelHandling
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['deleteProvider']>>> {
     const before = await this.settings.getSettingsView()
-    const snapshot = await this.settings.deleteProvider(id)
+    const snapshot = await this.settings.deleteProvider(id, scenarioModelHandling)
     this.effects.requestProviderReconnect(
       affectedProviderIds(id),
       before.activeProviderId !== snapshot.activeProviderId

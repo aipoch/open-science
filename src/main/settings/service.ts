@@ -72,6 +72,7 @@ import type {
   SkillSource,
   ScanRepoRequest,
   ScanRepoResult,
+  ProviderDeletionScenarioModelHandling,
   UpdateSkillRequest,
   UpsertProviderRequest,
   ValidateProviderRequest,
@@ -991,8 +992,11 @@ class SettingsService {
     return this.repository.rememberCodexAutoHttpsFallback()
   }
 
-  async deleteProvider(id: string): Promise<SettingsSnapshot> {
-    await this.providers.deleteProvider(id)
+  async deleteProvider(
+    id: string,
+    scenarioModelHandling?: ProviderDeletionScenarioModelHandling
+  ): Promise<SettingsSnapshot> {
+    await this.providers.deleteProvider(id, scenarioModelHandling)
     return this.getSettingsView()
   }
 

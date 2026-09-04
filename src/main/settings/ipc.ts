@@ -191,7 +191,11 @@ const registerSettingsIpcHandlers = ({
     snapshotCommits.currentSnapshotAfter(workflows.runtime.upsertProvider(request))
   )
   ipcMainHandle('settings:delete-provider', (_event, request: DeleteProviderRequest) =>
-    snapshotCommits.currentSnapshotAfter(workflows.runtime.deleteProvider(request.id))
+    snapshotCommits.currentSnapshotAfter(
+      request.scenarioModelHandling === undefined
+        ? workflows.runtime.deleteProvider(request.id)
+        : workflows.runtime.deleteProvider(request.id, request.scenarioModelHandling)
+    )
   )
   ipcMainHandle('settings:set-active-provider', (_event, request: SetActiveProviderRequest) =>
     snapshotCommits.currentSnapshotAfter(workflows.runtime.setActiveProvider(request))

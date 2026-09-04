@@ -679,8 +679,13 @@ export type UpsertProviderRequest = ProviderDraft & {
   reimportCodexAuthentication?: boolean
 }
 
+export type ProviderDeletionScenarioModelHandling = 'preserve' | 'inherit'
+
 export type DeleteProviderRequest = {
   id: string
+  // Missing preserves the historical, restorable unavailable selections. The settings UI can
+  // instead reset every affected scenario in the same document mutation as the provider deletion.
+  scenarioModelHandling?: ProviderDeletionScenarioModelHandling
 }
 
 export type SetActiveProviderRequest = {

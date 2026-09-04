@@ -226,6 +226,7 @@ const ScenarioModelRow = ({
     <div>
       <button
         type="button"
+        data-scenario-model={scenario.id}
         aria-expanded={expanded}
         aria-controls={panelId}
         aria-label={

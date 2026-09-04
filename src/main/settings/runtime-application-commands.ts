@@ -216,7 +216,9 @@ const registerRuntimeSettingsApplicationCommands = (
         ),
       'settings:delete-provider': ({ args }) =>
         dependencies.snapshotCommits.currentSnapshotAfter(
-          dependencies.workflows.deleteProvider(args[0].id)
+          args[0].scenarioModelHandling === undefined
+            ? dependencies.workflows.deleteProvider(args[0].id)
+            : dependencies.workflows.deleteProvider(args[0].id, args[0].scenarioModelHandling)
         ),
       'settings:set-active-provider': ({ args }) =>
         dependencies.snapshotCommits.currentSnapshotAfter(

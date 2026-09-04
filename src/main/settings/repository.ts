@@ -5,6 +5,7 @@ import type {
   ClaudeSubscriptionProviderId,
   ClaudeInfo,
   ProjectFilesFilterPreference,
+  ProviderDeletionScenarioModelHandling,
   ReasoningEffort
 } from '../../shared/settings'
 import {
@@ -336,17 +337,14 @@ class SettingsRepository {
   // Removes a provider and clears the active pointer (and model) when it referenced the removed one.
   // Claude's two fixed records are one collapsed provider in the UI, so deleting either id removes
   // the whole subscription group atomically, including its persisted display preference.
-  async deleteProvider(id: string): Promise<StoredSettings> {
+  async deleteProvider(
+    id: string,
+    scenarioModelHandling: ProviderDeletionScenarioModelHandling = 'preserve'
+  ): Promise<StoredSettings> {
     return this.mutate((settings) => {
       const deletingClaudeSubscription = isClaudeSubscriptionProviderId(id)
       const removedIds = new Set(
-        settings.providers
-          .filter(
-            (provider) =>
-              provider.id === id ||
-              (deletingClaudeSubscription && isClaudeSubscriptionProvider(provider.type))
-          )
-          .map((provider) => provider.id)
+        deletingClaudeSubscription ? [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID] : [id]
       )
       const providers = settings.providers.filter((provider) => !removedIds.has(provider.id))
       const clearedActive =
@@ -354,13 +352,42 @@ class SettingsRepository {
       const activeProviderId = clearedActive ? undefined : settings.activeProviderId
       const activeModel = clearedActive ? undefined : settings.activeModel
 
-      return {
+      const next: StoredSettings = {
         ...settings,
         providers,
         activeProviderId,
         activeModel,
         ...(deletingClaudeSubscription ? { claudeSubscriptionProviderId: undefined } : {})
       }
+
+      if (scenarioModelHandling === 'inherit') {
+        if (
+          settings.subagentModel?.mode === 'fixed' &&
+          removedIds.has(settings.subagentModel.providerId)
+        ) {
+          next.subagentModel = { mode: 'inherit' }
+        }
+        if (
+          settings.reviewerModel?.mode === 'fixed' &&
+          removedIds.has(settings.reviewerModel.providerId)
+        ) {
+          next.reviewerModel = { mode: 'inherit' }
+        }
+        if (
+          settings.sessionDetailsModel?.mode === 'fixed' &&
+          removedIds.has(settings.sessionDetailsModel.providerId)
+        ) {
+          next.sessionDetailsModel = {
+            mode: 'inherit',
+            reasoningEffort: settings.sessionDetailsModel.reasoningEffort
+          }
+        }
+        if (settings.visionModel && removedIds.has(settings.visionModel.providerId)) {
+          delete next.visionModel
+        }
+      }
+
+      return next
     })
   }
 

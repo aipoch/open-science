@@ -794,6 +794,55 @@ describe('settings repository', () => {
     expect(settings.activeProviderId).toBeUndefined()
   })
 
+  it('atomically resets every affected scenario while deleting a provider', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+    const fixed = {
+      mode: 'fixed' as const,
+      providerId: 'p1',
+      model: 'm',
+      reasoningEffort: 'high' as const
+    }
+
+    await repository.upsertProvider(provider())
+    await repository.setSubagentModel(fixed)
+    await repository.setReviewerModel(fixed)
+    await repository.setSessionDetailsModel(fixed)
+    await repository.setVisionModel(fixed)
+
+    const settings = await repository.deleteProvider('p1', 'inherit')
+
+    expect(settings).toMatchObject({
+      providers: [],
+      subagentModel: { mode: 'inherit' },
+      reviewerModel: { mode: 'inherit' },
+      sessionDetailsModel: { mode: 'inherit', reasoningEffort: 'high' }
+    })
+    expect(settings.visionModel).toBeUndefined()
+    await expect(new SettingsRepository(root).getSettings()).resolves.toMatchObject({
+      providers: [],
+      subagentModel: { mode: 'inherit' },
+      reviewerModel: { mode: 'inherit' },
+      sessionDetailsModel: { mode: 'inherit', reasoningEffort: 'high' }
+    })
+  })
+
+  it('resets references to either Claude subscription record when deleting the collapsed card', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.upsertClaudeIsolatedProvider({ keyRef: 'enc:claude' })
+    await repository.setReviewerModel({
+      mode: 'fixed',
+      providerId: 'builtin-claude-shared',
+      model: 'claude-sonnet-4-5',
+      reasoningEffort: 'high'
+    })
+
+    const settings = await repository.deleteProvider('builtin-claude-isolated', 'inherit')
+
+    expect(settings.providers).toEqual([])
+    expect(settings.reviewerModel).toEqual({ mode: 'inherit' })
+  })
+
   it('ignores an active pointer that references an unknown provider', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
