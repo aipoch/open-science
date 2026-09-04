@@ -280,7 +280,7 @@ export const projectArtifactError = (
           eventId
         ])
       ]
-    : undefined
+    : session.artifactErrorEventIds
   return {
     ...session,
     status: 'error',

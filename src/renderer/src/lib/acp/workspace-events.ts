@@ -302,6 +302,24 @@ const finalizeArtifactEvent = async (
   const session = useSessionStore
     .getState()
     .sessions.find((candidate) => candidate.id === event.sessionId)
+  const persistLatestSession = async (): Promise<void> => {
+    const attachedSession = useSessionStore
+      .getState()
+      .sessions.find((candidate) => candidate.id === event.sessionId)
+    if (!attachedSession) {
+      throw new Error('Artifact finalization Session is no longer available.')
+    }
+    const submittedSession = toPersistedSession(attachedSession)
+    const durableSession = await (dependencies.saveSession ?? saveSessionInRuntimeOrder)(
+      submittedSession
+    )
+    if (durableSession) {
+      useSessionStore.getState().applyDurableSessionProjection({
+        source: attachedSession,
+        session: durableSession
+      })
+    }
+  }
   const ownsArtifactPrompt = (message: { responseToMessageId?: string }): boolean =>
     !event.promptMessageId || message.responseToMessageId === event.promptMessageId
   const appliedMessage = [
@@ -320,6 +338,7 @@ const finalizeArtifactEvent = async (
   const artifactProjectId = session?.projectId ?? event.artifacts[0]?.projectId
   if (appliedMessage && artifactProjectId && artifactVersionIds.length > 0) {
     try {
+      await persistLatestSession()
       const reconcile =
         dependencies.reconcilePendingArtifacts ?? window.api.artifacts.reconcilePendingArtifacts
       const result = await reconcile({
@@ -397,25 +416,6 @@ const finalizeArtifactEvent = async (
   let artifactsFinalized = false
 
   try {
-    const persistLatestSession = async (): Promise<void> => {
-      const attachedSession = useSessionStore
-        .getState()
-        .sessions.find((session) => session.id === event.sessionId)
-      if (!attachedSession) {
-        throw new Error('Artifact finalization Session is no longer available.')
-      }
-      const submittedSession = toPersistedSession(attachedSession)
-      const durableSession = await (dependencies.saveSession ?? saveSessionInRuntimeOrder)(
-        submittedSession
-      )
-      if (durableSession) {
-        useSessionStore.getState().applyDurableSessionProjection({
-          source: attachedSession,
-          session: durableSession
-        })
-      }
-    }
-
     await persistLatestSession()
 
     const finalize = dependencies.finalizeRunArtifacts ?? finalizeRunArtifacts

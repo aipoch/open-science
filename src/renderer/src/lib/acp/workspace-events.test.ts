@@ -3678,8 +3678,15 @@ describe('workspace runtime events', () => {
       ...nativePendingArtifact,
       messageId
     }
+    const operationOrder: string[] = []
     const finalizeRunArtifacts = vi.fn().mockResolvedValue([finalizedArtifact])
-    const reconcilePendingArtifacts = vi.fn().mockResolvedValue([finalizedArtifact])
+    const reconcilePendingArtifacts = vi.fn().mockImplementation(async () => {
+      operationOrder.push('reconcile')
+      return [finalizedArtifact]
+    })
+    const saveSession = vi.fn().mockImplementation(async () => {
+      operationOrder.push('save')
+    })
 
     await applyWorkspaceRuntimeEvent(
       createEvent({
@@ -3692,10 +3699,11 @@ describe('workspace runtime events', () => {
       {
         finalizeRunArtifacts,
         reconcilePendingArtifacts,
-        saveSession: vi.fn().mockResolvedValue(undefined)
+        saveSession
       }
     )
 
+    expect(operationOrder).toEqual(['save', 'reconcile'])
     expect(reconcilePendingArtifacts).toHaveBeenCalledOnce()
     expect(finalizeRunArtifacts).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
@@ -3740,11 +3748,12 @@ describe('workspace runtime events', () => {
         true,
         'sibling-artifact-event'
       )
+    useSessionStore.getState().recordArtifactError('transport-session-1', 'generic retry failed')
 
     await applyWorkspaceRuntimeEvent(artifactEvent, dependencies)
 
     expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
-    expect(useSessionStore.getState().sessions[0].error).toContain('sibling claim failed')
+    expect(useSessionStore.getState().sessions[0].error).toContain('generic retry failed')
     expect(useSessionStore.getState().sessions[0].artifactErrorEventIds).toEqual([
       'sibling-artifact-event'
     ])
