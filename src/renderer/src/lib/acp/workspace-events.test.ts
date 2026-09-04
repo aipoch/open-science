@@ -3519,6 +3519,38 @@ describe('workspace runtime events', () => {
     expect(session.messages[1].artifactIds).toEqual(['transport-session-1:message-1:result.txt'])
     expect(session.error).toBeUndefined()
   })
+
+  it('does not re-finalize an artifact event that the durable Session already applied', async () => {
+    const finalizedArtifact = createArtifactFile({
+      id: 'transport-session-1:message-1:result.txt',
+      sessionId: 'transport-session-1',
+      messageId: 'message-1',
+      runId: undefined,
+      path: '/Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt',
+      fileUrl:
+        'file:///Users/example/.open-science/artifacts/default-project/transport-session-1/message-1/result.txt'
+    })
+    const finalizeRunArtifacts = vi
+      .fn()
+      .mockResolvedValueOnce([finalizedArtifact])
+      .mockRejectedValueOnce(new Error('Artifact run claim not found: artifact-claim-expired'))
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+    const artifactEvent = createEvent({
+      id: 'artifact-event-expired-claim',
+      kind: 'artifact',
+      runId: 'run-expired-claim',
+      artifactSessionId: 'artifact-session-1',
+      artifactClaimId: 'artifact-claim-expired',
+      artifacts: [createArtifactFile({ runId: 'run-expired-claim' })]
+    })
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-finalize', kind: 'stop' }))
+    await applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts, saveSession })
+    await applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts, saveSession })
+
+    expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+  })
 })
 
 describe('loop guard: suppressNextAutoReview', () => {

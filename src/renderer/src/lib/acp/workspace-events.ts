@@ -294,6 +294,28 @@ const finalizeArtifactEvent = async (
 ): Promise<boolean> => {
   if (!isFinalizableArtifactEvent(event)) return false
 
+  const session = useSessionStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === event.sessionId)
+  const ownsArtifactPrompt = (message: { responseToMessageId?: string }): boolean =>
+    !event.promptMessageId || message.responseToMessageId === event.promptMessageId
+  const appliedMessage = [
+    ...(session?.messages ?? []),
+    ...(session?.conversationGraph?.messages ?? [])
+  ].find((message) => message.eventIds.includes(event.id) && ownsArtifactPrompt(message))
+  const finalizedArtifactIds = new Set(
+    session?.artifacts
+      ?.filter((artifact) => !artifact.path.split(/[\\/]/).includes('.pending'))
+      .map((artifact) => artifact.id)
+  )
+  const appliedArtifactIds = appliedMessage?.artifactIds ?? []
+  if (
+    appliedArtifactIds.length > 0 &&
+    appliedArtifactIds.every((artifactId) => finalizedArtifactIds.has(artifactId))
+  ) {
+    return true
+  }
+
   const attached = attachArtifactEvent(event, turnUsage)
 
   if (!attached) return true
