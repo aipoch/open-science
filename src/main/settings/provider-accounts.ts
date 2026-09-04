@@ -503,7 +503,7 @@ class ProviderAccountsModule {
   }
 
   // Produces an ephemeral backend input without mutating selection or entering authentication;
-  // configured fallback rules remain, while an explicit required model must match exactly.
+  // a persisted or explicitly required model must still exist in the current catalog.
   resolveRuntimeTarget(
     storedProvider: StoredProvider,
     selection: RuntimeProviderModelSelection,

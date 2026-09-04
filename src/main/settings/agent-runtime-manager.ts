@@ -411,16 +411,19 @@ export class AgentRuntimeManager {
     const activeModel = activeProvider
       ? providers.resolveActiveModel(activeProvider, settings.activeModel)
       : undefined
+    const configuredModelAvailable =
+      settings.activeModel === undefined || activeModel === settings.activeModel
     const activeEndpoints = activeProvider
       ? providers.resolveProviderApiEndpoints(activeProvider, activeModel)
       : undefined
-    const activeProviderCompatible = activeProvider
-      ? isProviderUsableByFramework(
-          { apiEndpoints: activeEndpoints, type: activeProvider.type },
-          framework
-        ) &&
-        (framework.id !== 'codex' || isModelBridgeSupported(activeProvider, activeModel))
-      : false
+    const activeProviderCompatible =
+      activeProvider && configuredModelAvailable
+        ? isProviderUsableByFramework(
+            { apiEndpoints: activeEndpoints, type: activeProvider.type },
+            framework
+          ) &&
+          (framework.id !== 'codex' || isModelBridgeSupported(activeProvider, activeModel))
+        : false
     const activeProviderKeyUsable =
       activeProvider && activeProvider.lastValidatedAt !== undefined
         ? await providers.isProviderKeyUsable(activeProvider)

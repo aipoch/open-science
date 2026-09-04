@@ -556,7 +556,7 @@ describe('ProviderAccountsModule', () => {
 
     const target = module.resolveRuntimeTarget(
       stored,
-      { kind: 'configured', requestedModel: 'unavailable-model' },
+      { kind: 'configured', requestedModel: 'lab-model' },
       getAgentFramework('codex')
     )
 
@@ -890,6 +890,45 @@ describe('ProviderAccountsModule', () => {
         })
       ]
     })
+  })
+
+  it('refuses to resolve a configured model removed by a catalog refresh', async () => {
+    await module.upsertProvider({
+      type: 'official',
+      name: 'DeepSeek',
+      vendorId: 'deepseek',
+      key: 'key'
+    })
+    const providerId = (await repository.getSettings()).providers[0].id
+    await module.setActiveProvider(providerId, 'deepseek-v4-pro')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ data: [{ id: 'replacement-model' }] }))
+    )
+
+    await expect(module.refreshProviderModels({ providerId })).resolves.toMatchObject({
+      ok: true,
+      models: ['replacement-model']
+    })
+    const settings = await repository.getSettings()
+    const provider = settings.providers[0]
+    expect(settings.activeModel).toBe('deepseek-v4-pro')
+
+    let outcome: string
+    try {
+      const target = module.resolveRuntimeTarget(
+        provider,
+        { kind: 'configured', requestedModel: settings.activeModel },
+        getAgentFramework('codex')
+      )
+      outcome = `resolved ${target.effectiveModel}`
+    } catch (error) {
+      outcome = error instanceof Error ? error.message : String(error)
+    }
+
+    expect(outcome).toBe(
+      'The configured model is no longer available from provider "DeepSeek": "deepseek-v4-pro". Pick another model in Settings → Model.'
+    )
   })
 
   it('does not recreate a provider deleted while its model catalog refresh is pending', async () => {

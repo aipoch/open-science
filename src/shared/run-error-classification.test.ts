@@ -4,6 +4,7 @@ import { describePromptError } from '../main/acp/prompt-error'
 import { buildUnsupportedCodexAcpVersionMessage } from './codex-runtime'
 import {
   buildActiveModelIncompatibleMessage,
+  buildConfiguredModelUnavailableMessage,
   CLAUDE_EXECUTABLE_MISSING_MESSAGE,
   CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
   IMAGE_REPLAY_UNSUPPORTED_MESSAGE,
@@ -162,6 +163,9 @@ describe('isReportableRunFailure (text tier)', () => {
     expect(isReportableRunFailure(NO_ACTIVE_PROVIDER_MESSAGE)).toBe(false)
     expect(isReportableRunFailure(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)).toBe(false)
     expect(isReportableRunFailure(CLAUDE_EXECUTABLE_MISSING_MESSAGE)).toBe(false)
+    expect(
+      isReportableRunFailure(buildConfiguredModelUnavailableMessage('old-model', 'Provider'))
+    ).toBe(false)
   })
 
   it('does not report an unsupported Codex ACP version', () => {

@@ -1966,6 +1966,28 @@ describe('SettingsService: preflight & spawn config', () => {
     })
   })
 
+  it('closes the provider gate when the configured model leaves the catalog', async () => {
+    const service = createService()
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    const created = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'DeepSeek',
+        vendorId: 'deepseek',
+        key: 'k'
+      })
+    ).providers[0]
+    await service.setActiveProvider(created.id, 'deepseek-v4-pro')
+    const stored = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({
+      ...stored,
+      fetchedModels: ['replacement-model'],
+      lastValidatedAt: 1
+    })
+
+    await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: false })
+  })
+
   it('closes the provider gate when the active shared Claude session is signed out', async () => {
     const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
       getStatus: vi.fn().mockResolvedValue({
@@ -5327,7 +5349,7 @@ describe('SettingsService: reasoning effort', () => {
     )
   })
 
-  it('uses one effective catalog model for both the backend and its effort profile', async () => {
+  it('fails closed before resolving effort when the configured model leaves the catalog', async () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
     await repository.setAgentFramework('opencode')
     const service = createService(undefined, {
@@ -5347,13 +5369,9 @@ describe('SettingsService: reasoning effort', () => {
     const stored = (await repository.getSettings()).providers[0]
     await repository.upsertProvider({ ...stored, fetchedModels: ['claude-opus-5'] })
 
-    const backend = await resolveActiveBackend(service)
-    const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
-    const agentProviderId = opencodeTransportProviderId(provider.id, 'claude-opus-5')
-
-    expect(backend.sessionModel).toBe(`${agentProviderId}/claude-opus-5`)
-    expect(backend.sessionEffort).toBe('max')
-    expect(content.model).toBe(`${agentProviderId}/claude-opus-5`)
+    await expect(resolveActiveBackend(service)).rejects.toThrow(
+      'The configured model is no longer available from provider "Anthropic": "claude-haiku-4-5-20251001". Pick another model in Settings → Model.'
+    )
   })
 
   it('surfaces sessionEffort on the Claude backend too (the early-return path)', async () => {
