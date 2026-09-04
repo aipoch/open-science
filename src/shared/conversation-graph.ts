@@ -592,7 +592,13 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
     }
     if (message.revisionRootMessageId) {
       const root = messages.get(message.revisionRootMessageId)
-      if (!root || root.role !== 'user' || root.agentFrameId !== message.agentFrameId) {
+      if (
+        message.role !== 'user' ||
+        !root ||
+        root.role !== 'user' ||
+        root.agentFrameId !== message.agentFrameId ||
+        (!message.supersedesMessageId && root.id !== message.id)
+      ) {
         throw new Error('Message revision root is invalid.')
       }
     }

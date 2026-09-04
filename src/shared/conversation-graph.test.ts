@@ -858,6 +858,23 @@ describe('conversation graph', () => {
     expect(() => validateConversationGraph(graph)).toThrow(/Message revision root is invalid/)
   })
 
+  it('rejects an unrelated same-Frame revision root for an ordinary user Message', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [
+        message('u1', 'user', 'first question', 1),
+        message('a1', 'agent', 'first answer', 2),
+        message('u2', 'user', 'second question', 3)
+      ],
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 3
+    })
+    graph.messages.find(({ id }) => id === 'u2')!.revisionRootMessageId = 'u1'
+
+    expect(() => validateConversationGraph(graph)).toThrow(/Message revision root is invalid/)
+  })
+
   it('rejects Branch and Message revision links from different chains', () => {
     const graph = createLinearConversationGraph({
       sessionId: 'session-1',
