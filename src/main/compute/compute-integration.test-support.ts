@@ -27,7 +27,7 @@ export const createMigratedComputeTestDatabase = async (
     await migrateApplicationDatabase(client)
   } catch (error) {
     await client.$disconnect()
-    await rm(storageRoot, { recursive: true, force: true })
+    await rm(storageRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     throw error
   }
 
@@ -45,7 +45,7 @@ export const createMigratedComputeTestDatabase = async (
       try {
         await client.$disconnect()
       } finally {
-        await rm(storageRoot, { recursive: true, force: true })
+        await rm(storageRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
       }
     }
   }

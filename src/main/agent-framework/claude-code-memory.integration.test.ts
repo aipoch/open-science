@@ -157,7 +157,9 @@ const runMemoryProbe = async (memoryFlag: '0' | '1'): Promise<MemoryProbeResult>
 }
 
 afterEach(() => {
-  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+  for (const root of temporaryRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+  }
 })
 
 describe('Claude Code ACP memory isolation', () => {

@@ -109,7 +109,8 @@ describe('post-merge Windows validation', () => {
     expect(job).toMatchObject({
       needs: 'plan',
       if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}",
-      'runs-on': 'windows-latest'
+      'runs-on': 'windows-latest',
+      'timeout-minutes': 35
     })
     expect(job['continue-on-error']).toBeUndefined()
     expect(job.strategy?.matrix?.shard).toEqual([1, 2, 3])
