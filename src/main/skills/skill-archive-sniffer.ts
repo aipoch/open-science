@@ -681,7 +681,7 @@ const owningRoot = (
   if (roots.has('')) return ''
 
   const segments = path.split('/')
-  const maxSegments = Math.min(2, segments.length - (includeExactRoot ? 0 : 1))
+  const maxSegments = segments.length - (includeExactRoot ? 0 : 1)
   for (let length = 1; length <= maxSegments; length += 1) {
     const candidate = segments.slice(0, length).join('/')
     if (roots.has(candidate)) return candidate

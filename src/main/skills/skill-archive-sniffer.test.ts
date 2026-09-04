@@ -133,6 +133,22 @@ describe('isImportableSkillArchivePath', () => {
     await expectMatchesPreview(archive, true)
   })
 
+  it('rejects an incomplete Skill under three wrapper directories', async () => {
+    const archive = buildZip([
+      {
+        path: 'release/skills/ppt-master/SKILL.md',
+        content: Buffer.from('---\nname: ppt-master\ndescription: d\n---\nRun it.')
+      },
+      {
+        path: 'release/skills/ppt-master/unsupported.bin',
+        content: Buffer.from('unsupported'),
+        method: 99
+      }
+    ])
+
+    await expectMatchesPreview(archive, false)
+  })
+
   it('finds a named Skill manifest without inflating unrelated large entries', async () => {
     const archive = buildZip([
       { path: 'paper-finder/assets/model.bin', content: Buffer.alloc(2 * 1024 * 1024), method: 0 },
