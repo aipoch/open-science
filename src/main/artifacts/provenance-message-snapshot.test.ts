@@ -286,6 +286,47 @@ describe('Provenance Message snapshots', () => {
     > & { schemaVersion: number }
     expect(snapshotPayload.schemaVersion).toBe(3)
 
+    await rm(snapshotPath)
+    await snapshots.reconcileSessionDeletions([session])
+    await expect(readFile(snapshotPath, 'utf8')).resolves.toBe(
+      `${JSON.stringify(snapshotPayload, null, 2)}\n`
+    )
+
+    const startupCorruptPayload = structuredClone(snapshotPayload) as typeof snapshotPayload & {
+      messages: Array<Record<string, unknown>>
+    }
+    startupCorruptPayload.messages[0] = {
+      ...startupCorruptPayload.messages[0],
+      content: 'corrupt before startup recovery'
+    }
+    await writeFile(snapshotPath, `${JSON.stringify(startupCorruptPayload, null, 2)}\n`, 'utf8')
+    await snapshots.reconcileSessionDeletions([session])
+    await expect(readFile(snapshotPath, 'utf8')).resolves.toBe(
+      `${JSON.stringify(snapshotPayload, null, 2)}\n`
+    )
+
+    const changedSession = structuredClone(session)
+    const changedMessage = changedSession.conversationGraph?.messages.find(
+      (message) => message.id === 'message-1'
+    )
+    if (!changedMessage || !changedSession.conversationGraph) {
+      throw new Error('Expected the Artifact-owning Message in the changed Session graph.')
+    }
+    changedMessage.content = 'changed after snapshot publication'
+    changedSession.messages = changedSession.conversationGraph.messages.map(
+      projectConversationMessage
+    )
+    await rm(snapshotPath)
+    await snapshots.reconcileSessionDeletions([changedSession])
+    await expect(readFile(snapshotPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id: row.messageSnapshot!.id } })
+    ).resolves.toMatchObject({ state: 'ready', checksum: row.messageSnapshot!.checksum })
+    await snapshots.reconcileSessionDeletions([session])
+    await expect(readFile(snapshotPath, 'utf8')).resolves.toBe(
+      `${JSON.stringify(snapshotPayload, null, 2)}\n`
+    )
+
     // Previously captured v2 snapshots remain readable; they simply have no process timeline.
     const legacyPayload: Record<string, unknown> = { ...snapshotPayload, schemaVersion: 2 }
     delete legacyPayload.activities
@@ -693,19 +734,33 @@ describe('Provenance Message snapshots', () => {
     }
     await createStagingSnapshot('snapshot-valid-1')
     await createStagingSnapshot('snapshot-corrupt-1', true)
+    let failDurability = true
     const snapshots = new ProvenanceMessageSnapshotRepository({
       storageRoot,
-      getClient: () => Promise.resolve(client)
+      getClient: () => Promise.resolve(client),
+      durability: {
+        syncFile: async () => {
+          if (failDurability) throw Object.assign(new Error('storage unavailable'), { code: 'EIO' })
+        },
+        syncDirectory: async () => undefined
+      }
     })
 
     await snapshots.reconcileSessionDeletions([])
 
     await expect(
       client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id: 'snapshot-valid-1' } })
-    ).resolves.toMatchObject({ state: 'ready' })
+    ).resolves.toMatchObject({ state: 'staging' })
     await expect(
       client.artifactMessageSnapshot.findUnique({ where: { id: 'snapshot-corrupt-1' } })
     ).resolves.toBeNull()
+
+    failDurability = false
+    await snapshots.reconcileSessionDeletions([])
+
+    await expect(
+      client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id: 'snapshot-valid-1' } })
+    ).resolves.toMatchObject({ state: 'ready' })
   })
 
   it('republishes a staging Review scope snapshot before Session deletion reconciliation', async () => {

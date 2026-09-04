@@ -19,6 +19,7 @@ import type {
   ProvenanceMessage,
   ProvenanceMessagePart
 } from '../../shared/artifact-provenance'
+import { defaultArtifactDurability, type ArtifactDurability } from './durability'
 import { requireAgentArtifactVersion } from './provenance-version-kind'
 
 type ProvenanceMessageSnapshotOptions = {
@@ -26,6 +27,7 @@ type ProvenanceMessageSnapshotOptions = {
   getClient: () => Promise<PrismaClient>
   createId?: () => string
   now?: () => Date
+  durability?: ArtifactDurability
 }
 
 type SessionDeletionReceipt =
@@ -161,10 +163,12 @@ const projectMessage = (
 class ProvenanceMessageSnapshotRepository {
   private readonly createId: () => string
   private readonly now: () => Date
+  private readonly durability: ArtifactDurability
 
   constructor(private readonly options: ProvenanceMessageSnapshotOptions) {
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? (() => new Date())
+    this.durability = options.durability ?? defaultArtifactDurability
   }
 
   async validateFinalizedMessageBindings(input: PersistedChatSession): Promise<void> {
@@ -447,6 +451,7 @@ class ProvenanceMessageSnapshotRepository {
   async reconcileSessionDeletions(activeSessions: PersistedChatSession[]): Promise<void> {
     const client = await this.options.getClient()
     await this.recoverStagingMessageSnapshots()
+    await this.repairReadyMessageSnapshots(activeSessions)
     await this.recoverStagingReviewScopeSnapshots()
     const activeKeys = new Set(
       activeSessions.map((session) => `${session.projectId}\0${session.id}`)
@@ -528,6 +533,33 @@ class ProvenanceMessageSnapshotRepository {
             terminalMessageId: snapshot.terminalMessageId
           }
         )
+      } catch {
+        const deleted = await client.artifactMessageSnapshot.deleteMany({
+          where: { id: snapshot.id, state: 'staging' }
+        })
+        if (deleted.count !== 1) continue
+        const stagingPath = join(
+          this.options.storageRoot,
+          'artifacts',
+          snapshot.projectId,
+          snapshot.sessionId,
+          '.provenance',
+          '.staging',
+          'messages',
+          `${snapshot.id}.json`
+        )
+        await Promise.all([
+          rm(resolveStorageKey(this.options.storageRoot, snapshot.storageKey), {
+            force: true
+          }).catch(() => undefined),
+          rm(stagingPath, { force: true }).catch(() => undefined)
+        ])
+        continue
+      }
+      try {
+        const finalPath = resolveStorageKey(this.options.storageRoot, snapshot.storageKey)
+        await this.durability.syncFile(finalPath)
+        await this.durability.syncDirectory(dirname(finalPath))
         await client.$transaction(async (transaction) => {
           const promoted = await transaction.artifactMessageSnapshot.updateMany({
             where: { id: snapshot.id, state: 'staging' },
@@ -551,26 +583,52 @@ class ProvenanceMessageSnapshotRepository {
           })
         })
       } catch {
-        const deleted = await client.artifactMessageSnapshot.deleteMany({
-          where: { id: snapshot.id, state: 'staging' }
+        // A valid staging snapshot remains authoritative until its durability barrier and promotion
+        // can be retried; an I/O or database failure does not prove its bytes are corrupt.
+      }
+    }
+  }
+
+  private async repairReadyMessageSnapshots(activeSessions: PersistedChatSession[]): Promise<void> {
+    if (activeSessions.length === 0) return
+    const sessions = new Map(
+      activeSessions.map((session) => [`${session.projectId}\0${session.id}`, session])
+    )
+    const client = await this.options.getClient()
+    const ready = await client.artifactMessageSnapshot.findMany({
+      where: {
+        state: 'ready',
+        OR: activeSessions.map((session) => ({
+          projectId: session.projectId,
+          sessionId: session.id
+        }))
+      }
+    })
+    for (const snapshot of ready) {
+      try {
+        await this.verifyReadySnapshot(snapshot, {
+          rootFrameId: snapshot.rootFrameId,
+          agentFrameId: snapshot.agentFrameId,
+          messageBranchId: snapshot.messageBranchId,
+          terminalMessageId: snapshot.terminalMessageId
         })
-        if (deleted.count !== 1) continue
-        const stagingPath = join(
-          this.options.storageRoot,
-          'artifacts',
-          snapshot.projectId,
-          snapshot.sessionId,
-          '.provenance',
-          '.staging',
-          'messages',
-          `${snapshot.id}.json`
-        )
-        await Promise.all([
-          rm(resolveStorageKey(this.options.storageRoot, snapshot.storageKey), {
-            force: true
-          }).catch(() => undefined),
-          rm(stagingPath, { force: true }).catch(() => undefined)
-        ])
+      } catch {
+        const session = sessions.get(`${snapshot.projectId}\0${snapshot.sessionId}`)
+        if (!session) continue
+        try {
+          await this.captureScope(
+            session,
+            {
+              rootFrameId: snapshot.rootFrameId,
+              agentFrameId: snapshot.agentFrameId,
+              messageBranchId: snapshot.messageBranchId,
+              messageId: snapshot.terminalMessageId
+            },
+            true
+          )
+        } catch {
+          // Keep the invalid ready row fail-closed and retry while its Session remains recoverable.
+        }
       }
     }
   }
@@ -694,7 +752,8 @@ class ProvenanceMessageSnapshotRepository {
       agentFrameId: string
       messageBranchId: string
       messageId: string | null
-    }
+    },
+    repairReadySnapshot = false
   ): Promise<void> {
     const scope = this.resolveScopePath(session, version)
     if (!scope || !version.messageId || !session.conversationGraph) return
@@ -747,7 +806,7 @@ class ProvenanceMessageSnapshotRepository {
         projectId_sessionId_agentFrameId_messageBranchId_terminalMessageId: unique
       }
     })
-    if (snapshot?.state === 'ready') {
+    if (snapshot?.state === 'ready' && !repairReadySnapshot) {
       await this.verifyReadySnapshot(snapshot, {
         rootFrameId: version.rootFrameId,
         agentFrameId: version.agentFrameId,
@@ -781,6 +840,9 @@ class ProvenanceMessageSnapshotRepository {
     }
     const serialized = `${JSON.stringify(payload, null, 2)}\n`
     const checksum = sha256(serialized)
+    if (repairReadySnapshot && snapshot?.checksum && snapshot.checksum !== checksum) {
+      throw new Error(`Artifact Message snapshot cannot be reconstructed: ${snapshot.id}`)
+    }
     if (!snapshot) {
       await client.artifactMessageSnapshot.create({
         data: {
@@ -810,7 +872,9 @@ class ProvenanceMessageSnapshotRepository {
     await mkdir(dirname(stagingPath), { recursive: true })
     await mkdir(dirname(finalPath), { recursive: true })
     await writeFile(stagingPath, serialized, 'utf8')
+    await this.durability.syncFile(stagingPath)
     await rename(stagingPath, finalPath)
+    await this.durability.syncDirectory(dirname(finalPath))
     await client.$transaction(async (transaction) => {
       await transaction.artifactMessageSnapshot.update({
         where: { id: snapshotId },
