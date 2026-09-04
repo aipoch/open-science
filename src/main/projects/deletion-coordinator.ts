@@ -1,5 +1,5 @@
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
-import type { Project, ProjectDeletionCleanup, ProjectDeletionOutcome } from '../../shared/projects'
+import type { ProjectDeletionCleanup, ProjectDeletionOutcome } from '../../shared/projects'
 import type { ProjectSessionDeletionResult } from '../session-persistence/coordinator'
 import type { ProjectSessionDeletionState } from '../session-persistence/repository'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -7,7 +7,7 @@ import type { ApplicationEventPublisher } from '../application-events'
 import type { ProjectDeletionResult } from './repository'
 
 type ProjectDeletionRepository = {
-  get(id: string): Promise<Project | null>
+  exists(id: string): Promise<boolean>
   delete(id: string): Promise<ProjectDeletionResult | undefined>
   createDeletionIntent(projectId: string): Promise<void>
   deleteDeletionIntent(projectId: string): Promise<void>
@@ -364,8 +364,7 @@ class ProjectDeletionCoordinator {
   // remains fail-closed: the Project may still be visible, but recovery retains the fence and replays
   // quiescence before continuing durable deletion.
   private async runDeletion(projectId: string): Promise<ProjectDeletionOutcome> {
-    const project = await this.projects.get(projectId)
-    if (!project) return { status: 'deleted' }
+    if (!(await this.projects.exists(projectId))) return { status: 'deleted' }
 
     await this.createDeletionIntentWithFence(projectId)
     await this.lifecycle?.beforeProjectDelete(projectId)
@@ -410,7 +409,7 @@ class ProjectDeletionCoordinator {
           // Re-derive its conservative policy from durable state so a crash immediately after intent
           // creation cannot turn the next retry into authority-creating normal deletion.
           const requireExistingUploadAuthority =
-            !(await this.projects.get(projectId)) &&
+            !(await this.projects.exists(projectId)) &&
             (await this.sessions.getProjectSessionDeletionState(projectId)) === 'legacy-committed'
           const result: ProjectSessionDeletionResult = requireExistingUploadAuthority
             ? await this.sessions.deleteProjectSessions(projectId, {
@@ -502,7 +501,7 @@ class ProjectDeletionCoordinator {
     // Prune is transactional and idempotent. Run it before the soft delete so a Registry/database
     // failure retains the visible Project plus its durable intent for an explicit or startup retry.
     await this.permissionGrants?.prune({ kind: 'project', projectId })
-    const projectExists = Boolean(await this.projects.get(projectId))
+    const projectExists = await this.projects.exists(projectId)
     const projectDeletion = projectExists ? await this.projects.delete(projectId) : undefined
     if (projectDeletion) {
       this.events?.publish('memory:changed', { revision: projectDeletion.memoryRevision })

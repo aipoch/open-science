@@ -115,6 +115,22 @@ describe('project repository', () => {
     ])
   })
 
+  it('keeps every project available when one row has malformed Session defaults', async () => {
+    const { client } = createMockClient({
+      findMany: () =>
+        Promise.resolve([
+          createRow({ id: 'corrupt-project', sessionDefaults: '{not-json' }),
+          createRow({ id: 'healthy-project', sessionDefaults: '{}' })
+        ])
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    const projects = await repository.list()
+
+    expect(projects.map(({ id }) => id)).toEqual(['corrupt-project', 'healthy-project'])
+    expect(projects[0]?.sessionDefaults).toEqual({})
+  })
+
   it('returns null when a project is not found', async () => {
     const { client } = createMockClient({ findUnique: () => Promise.resolve(null) })
     const repository = new ProjectRepository(() => Promise.resolve(client))
@@ -129,6 +145,33 @@ describe('project repository', () => {
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
     await expect(repository.get('project-1')).resolves.toBeNull()
+  })
+
+  it('keeps project metadata readable when stored Session defaults fail validation', async () => {
+    const { client } = createMockClient({
+      findUnique: () =>
+        Promise.resolve(createRow({ sessionDefaults: '{"memoryEnabled":"not-a-boolean"}' }))
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(repository.get('project-1')).resolves.toMatchObject({
+      id: 'project-1',
+      name: 'Research',
+      sessionDefaults: {}
+    })
+  })
+
+  it('checks active existence without hydrating optional Project configuration', async () => {
+    const { client, project } = createMockClient({
+      findUnique: () => Promise.resolve({ deletedAt: null })
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(repository.exists('project-1')).resolves.toBe(true)
+    expect(project.findUnique).toHaveBeenCalledWith({
+      where: { id: 'project-1' },
+      select: { deletedAt: true }
+    })
   })
 
   it('trims the name and defaults the description on create', async () => {
@@ -197,6 +240,29 @@ describe('project repository', () => {
     ).rejects.toThrow('Project changed elsewhere.')
 
     expect(project.findUnique).not.toHaveBeenCalled()
+  })
+
+  it('returns an ordinary update after the write commits despite malformed Session defaults', async () => {
+    const updated = createRow({
+      name: 'Renamed',
+      sessionDefaults: '{not-json',
+      updatedAt: new Date(1710000000200)
+    })
+    const { client, project } = createMockClient({
+      findUnique: () => Promise.resolve(updated),
+      updateMany: () => Promise.resolve({ count: 1 })
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(
+      repository.update({
+        id: 'project-1',
+        name: 'Renamed',
+        expectedUpdatedAt: 1710000000100
+      })
+    ).resolves.toMatchObject({ name: 'Renamed', sessionDefaults: {} })
+
+    expect(project.updateMany).toHaveBeenCalledOnce()
   })
 
   it('does not roll back concurrent activity time while changing pin placement', async () => {

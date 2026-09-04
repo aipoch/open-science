@@ -29,6 +29,15 @@ type ProjectClient = Pick<
 
 type ProjectDeletionResult = Readonly<{ memoryRevision: number }>
 
+const decodeProjectSessionDefaults = (value: string | null): Project['sessionDefaults'] => {
+  try {
+    const decoded = projectSessionDefaultsSchema.safeParse(JSON.parse(value ?? '{}'))
+    return decoded.success ? decoded.data : {}
+  } catch {
+    return {}
+  }
+}
+
 // Normalizes Prisma rows into the epoch-ms shape shared with the renderer.
 const toProject = (row: PrismaProject): Project => ({
   id: row.id,
@@ -36,7 +45,7 @@ const toProject = (row: PrismaProject): Project => ({
   description: row.description,
   // An empty Agent Context is omitted on the wire, matching the optional shared schema field.
   ...(row.agentContext ? { agentContext: row.agentContext } : {}),
-  sessionDefaults: projectSessionDefaultsSchema.parse(JSON.parse(row.sessionDefaults ?? '{}')),
+  sessionDefaults: decodeProjectSessionDefaults(row.sessionDefaults),
   isExample: row.isExample,
   ...(row.pinned ? { pinned: true } : {}),
   ...(row.archivedAt ? { archivedAt: row.archivedAt.getTime() } : {}),
@@ -73,6 +82,15 @@ class ProjectRepository {
     const row = await client.project.findUnique({ where: { id } })
 
     return row && row.deletedAt === null ? toProject(row) : null
+  }
+
+  async exists(id: string): Promise<boolean> {
+    const client = await this.getClient()
+    const row = await client.project.findUnique({
+      where: { id },
+      select: { deletedAt: true }
+    })
+    return row?.deletedAt === null
   }
 
   // Creates a project; rejects blank names before touching the database.

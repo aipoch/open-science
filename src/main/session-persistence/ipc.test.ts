@@ -84,7 +84,7 @@ const createMockReviewRepository = (): ReviewRepository =>
 describe('session persistence IPC handlers', () => {
   it('saves a Session for Project B while Project A cleanup remains failed', async () => {
     const projects: ProjectDeletionRepository = {
-      get: vi.fn().mockResolvedValue(null),
+      exists: vi.fn().mockResolvedValue(false),
       delete: vi.fn().mockResolvedValue(undefined),
       createDeletionIntent: vi.fn().mockResolvedValue(undefined),
       deleteDeletionIntent: vi.fn().mockResolvedValue(undefined),

@@ -13,15 +13,6 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-const project = {
-  id: 'project-1',
-  name: 'Project',
-  description: 'Description',
-  isExample: false,
-  createdAt: 1,
-  updatedAt: 2
-}
-
 describe('ProjectDeletionCoordinator', () => {
   it('rejects deletion recovery while a data-root migration is pending', async () => {
     const projects = createProjects()
@@ -219,7 +210,7 @@ describe('ProjectDeletionCoordinator', () => {
     let projectExists = true
     let intentExists = false
     const projects = createProjects()
-    projects.get = vi.fn(async () => (projectExists ? project : null))
+    projects.exists = vi.fn(async () => projectExists)
     projects.delete = vi.fn(async () => {
       projectExists = false
       return undefined
@@ -292,7 +283,7 @@ describe('ProjectDeletionCoordinator', () => {
     let projectExists = true
     let intentExists = false
     const projects = createProjects()
-    projects.get = vi.fn(async () => (projectExists ? project : null))
+    projects.exists = vi.fn(async () => projectExists)
     projects.delete = vi.fn(async () => {
       projectExists = false
       return undefined
@@ -625,7 +616,7 @@ describe('ProjectDeletionCoordinator', () => {
   it('adopts an orphaned legacy tombstone into an intent before preparing its Session authority', async () => {
     const order: string[] = []
     const projects = createProjects()
-    projects.get = vi.fn().mockResolvedValue(null)
+    projects.exists = vi.fn().mockResolvedValue(false)
     projects.createDeletionIntent = vi.fn(async () => {
       order.push('intent-created')
     })
@@ -662,7 +653,7 @@ describe('ProjectDeletionCoordinator', () => {
 
   it('retains an adopted legacy intent when retained index deletion fails', async () => {
     const projects = createProjects()
-    projects.get = vi.fn().mockResolvedValue(null)
+    projects.exists = vi.fn().mockResolvedValue(false)
     const sessions = createSessions({
       listLegacyProjectSessionTombstones: vi.fn().mockResolvedValue(['project-old']),
       deleteProjectSessions: vi.fn().mockRejectedValue(new Error('index temporarily unavailable'))
@@ -680,7 +671,7 @@ describe('ProjectDeletionCoordinator', () => {
 
   it('continues adopting unrelated legacy tombstones after one cleanup fails', async () => {
     const projects = createProjects()
-    projects.get = vi.fn().mockResolvedValue(null)
+    projects.exists = vi.fn().mockResolvedValue(false)
     const sessions = createSessions({
       listLegacyProjectSessionTombstones: vi
         .fn()
@@ -704,7 +695,7 @@ describe('ProjectDeletionCoordinator', () => {
 
   it('drops the temporary intent and continues when an adopted orphan must be retained', async () => {
     const projects = createProjects()
-    projects.get = vi.fn().mockResolvedValue(null)
+    projects.exists = vi.fn().mockResolvedValue(false)
     const sessions = createSessions({
       listLegacyProjectSessionTombstones: vi.fn().mockResolvedValue(['project-old']),
       deleteProjectSessions: vi.fn().mockResolvedValue({
@@ -723,7 +714,7 @@ describe('ProjectDeletionCoordinator', () => {
 
   it('re-derives orphan authority policy when replaying an adopted intent after restart', async () => {
     const projects = createProjects()
-    projects.get = vi.fn().mockResolvedValue(null)
+    projects.exists = vi.fn().mockResolvedValue(false)
     projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-old'])
     const sessions = createSessions({
       getProjectSessionDeletionState: vi.fn().mockResolvedValue('legacy-committed')
@@ -739,7 +730,7 @@ describe('ProjectDeletionCoordinator', () => {
 
   it('releases a replayed orphan-retained intent without adopting it twice in one recovery', async () => {
     const projects = createProjects()
-    projects.get = vi.fn().mockResolvedValue(null)
+    projects.exists = vi.fn().mockResolvedValue(false)
     projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-old'])
     const sessions = createSessions({
       getProjectSessionDeletionState: vi.fn().mockResolvedValue('legacy-committed'),
@@ -902,7 +893,7 @@ describe('ProjectDeletionCoordinator', () => {
     let projectExists = true
     let intentExists = false
     const projects = createProjects()
-    projects.get = vi.fn(async () => (projectExists ? project : null))
+    projects.exists = vi.fn(async () => projectExists)
     projects.delete = vi.fn(async () => {
       projectExists = false
       return undefined
@@ -960,7 +951,7 @@ describe('ProjectDeletionCoordinator', () => {
 
   it('publishes Project deletion when background recovery reaches the terminal state', async () => {
     const projects = createProjects()
-    projects.get = vi.fn().mockResolvedValue(null)
+    projects.exists = vi.fn().mockResolvedValue(false)
     projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-1'])
     const events = { publish: vi.fn() }
     const coordinator = new ProjectDeletionCoordinator(
@@ -1116,7 +1107,7 @@ describe('ProjectDeletionCoordinator', () => {
 })
 
 const createProjects = (): ProjectDeletionRepository => ({
-  get: vi.fn().mockResolvedValue(project),
+  exists: vi.fn().mockResolvedValue(true),
   delete: vi.fn().mockResolvedValue(undefined),
   createDeletionIntent: vi.fn().mockResolvedValue(undefined),
   deleteDeletionIntent: vi.fn().mockResolvedValue(undefined),
