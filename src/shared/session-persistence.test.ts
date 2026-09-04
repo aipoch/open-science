@@ -354,6 +354,47 @@ describe('conversation graph materialization diagnostics', () => {
     })
   })
 
+  it('quarantines a persisted graph with a semantically invalid Message response target', () => {
+    const messages: PersistedChatMessage[] = [
+      {
+        id: 'prompt-message',
+        role: 'user',
+        content: 'Persist me',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'response-message',
+        role: 'agent',
+        content: 'Done',
+        status: 'complete',
+        eventIds: [],
+        responseToMessageId: 'missing-prompt',
+        createdAt: 2,
+        updatedAt: 2
+      }
+    ]
+    const conversationGraph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages,
+      createdAt: 1,
+      updatedAt: 2
+    })
+
+    expect(
+      decodeSessionFile({
+        version: SESSION_FILE_VERSION,
+        session: {
+          ...createSessionWithActivity(undefined),
+          messages,
+          conversationGraph
+        }
+      })
+    ).toEqual({ status: 'invalid' })
+  })
+
   it('writes a canonical graph while retaining flat messages as the active projection', () => {
     const session: PersistedChatSession = {
       id: 'session-1',
@@ -3690,7 +3731,8 @@ describe('normalizeSessionFile with activities', () => {
           {
             ...abandonedResponse,
             agentFrameId: graph.rootFrameId,
-            introducedOnBranchId: abandonedBranchId
+            introducedOnBranchId: abandonedBranchId,
+            parentMessageId: prompt.id
           }
         ]
       },
