@@ -70,7 +70,6 @@ const createFakeRuntime = (options: {
   quitBlockingSessions?: { projectId: string; sessionId: string }[]
   prompt?: (sessionId: string) => Promise<unknown>
   holdAfterPromptEnded?: () => Promise<void>
-  suppressPromptEndCallbacks?: boolean
   stateOnlyEventUpdates?: boolean
 }): {
   runtime: AcpRuntime
@@ -83,7 +82,6 @@ const createFakeRuntime = (options: {
   cancelPrompt: ReturnType<typeof vi.fn>
   deleteSession: ReturnType<typeof vi.fn>
   disconnect: ReturnType<typeof vi.fn>
-  shutdown: ReturnType<typeof vi.fn>
   requestRetirement: ReturnType<typeof vi.fn>
   requestProviderReconnect: ReturnType<typeof vi.fn>
   sendPrompt: ReturnType<typeof vi.fn>
@@ -104,7 +102,6 @@ const createFakeRuntime = (options: {
   emitPermission: (request: AcpPermissionRequest) => void
   emitState: (overrides: Partial<AcpStateSnapshot>) => void
   setStateSilently: (overrides: Partial<AcpStateSnapshot>) => void
-  emitPromptEnded: (sessionId: string, turnToken: string) => void
   emitRetired: () => void
 } => {
   let snapshot = emptySnapshot()
@@ -210,9 +207,7 @@ const createFakeRuntime = (options: {
     const endPrompt = (): void => {
       if (ended) return
       ended = true
-      if (!options.suppressPromptEndCallbacks) {
-        options.callbacks.onPromptEnded?.(sessionId, turnToken)
-      }
+      options.callbacks.onPromptEnded?.(sessionId, turnToken)
       snapshot = {
         ...snapshot,
         promptInFlight: false,
@@ -220,7 +215,7 @@ const createFakeRuntime = (options: {
           (candidate) => candidate !== sessionId
         )
       }
-      if (!options.suppressPromptEndCallbacks) options.callbacks.onStateChanged?.(snapshot)
+      options.callbacks.onStateChanged?.(snapshot)
     }
     try {
       const prompt = options.prompt
@@ -328,7 +323,6 @@ const createFakeRuntime = (options: {
     cancelPrompt,
     deleteSession,
     disconnect,
-    shutdown,
     requestRetirement,
     requestProviderReconnect,
     sendPrompt,
@@ -375,8 +369,6 @@ const createFakeRuntime = (options: {
     setStateSilently: (overrides) => {
       snapshot = { ...snapshot, ...overrides }
     },
-    emitPromptEnded: (sessionId, turnToken) =>
-      options.callbacks.onPromptEnded?.(sessionId, turnToken),
     emitRetired: () => options.callbacks.onRetired?.()
   }
 }
@@ -3943,53 +3935,6 @@ describe('AcpRuntimeCoordinator', () => {
     expect(afterSessionDelete).toHaveBeenCalledWith('session-1', true)
   })
 
-  it.each<readonly [string, AgentFrameworkId]>([
-    ['Claude Code', 'claude-code'],
-    ['OpenCode', 'opencode'],
-    ['Codex', 'codex']
-  ])('aborts a stalled %s deletion and releases its runtime ownership', async (_, frameworkId) => {
-    const created: ReturnType<typeof createFakeRuntime>[] = []
-    const onSessionUnavailable = vi.fn()
-    const afterSessionDelete = vi.fn()
-    const coordinator = new AcpRuntimeCoordinator(
-      (callbacks) => {
-        const fake = createFakeRuntime({
-          frameworkId,
-          sessionIds: ['session-1'],
-          callbacks
-        })
-        created.push(fake)
-        return fake.runtime
-      },
-      {},
-      '',
-      undefined,
-      undefined,
-      onSessionUnavailable,
-      { afterSessionDelete }
-    )
-    const deletion = createDeferred<AcpStateSnapshot>()
-
-    await coordinator.createSession()
-    created[0].deleteSession.mockReturnValueOnce(deletion.promise)
-    const deleting = coordinator.deleteSession({ sessionId: 'session-1' })
-    const deletionFailure = expect(deleting).rejects.toThrow('runtime stopped')
-    await vi.waitFor(() => expect(created[0].deleteSession).toHaveBeenCalledOnce())
-
-    coordinator.abortSessionDeletion('session-1')
-
-    expect(created[0].shutdown).toHaveBeenCalledOnce()
-    expect(onSessionUnavailable).toHaveBeenCalledOnce()
-    expect(onSessionUnavailable).toHaveBeenCalledWith('session-1')
-    expect(afterSessionDelete).toHaveBeenCalledOnce()
-    expect(afterSessionDelete).toHaveBeenCalledWith('session-1', true)
-    expect(coordinator.getState().sessionIds).toEqual([])
-
-    deletion.reject(new Error('runtime stopped'))
-    await deletionFailure
-    expect(afterSessionDelete).toHaveBeenCalledOnce()
-  })
-
   it('invalidates a successfully deleted detached session without a runtime state event', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const onSessionUnavailable = vi.fn()
@@ -4089,114 +4034,6 @@ describe('AcpRuntimeCoordinator', () => {
     )
     expect(onSessionUnavailable).not.toHaveBeenCalled()
     expect(afterSessionDelete).toHaveBeenCalledWith('session-1', true)
-  })
-
-  it('aborts only the deleting generation after a concurrent Session adoption', async () => {
-    const created: ReturnType<typeof createFakeRuntime>[] = []
-    const onSessionUnavailable = vi.fn()
-    const coordinator = new AcpRuntimeCoordinator(
-      (callbacks) => {
-        const fake = createFakeRuntime({
-          frameworkId: created.length === 0 ? 'claude-code' : 'codex',
-          sessionIds: created.length === 0 ? ['session-1'] : [],
-          callbacks
-        })
-        created.push(fake)
-        return fake.runtime
-      },
-      {},
-      '',
-      undefined,
-      undefined,
-      onSessionUnavailable
-    )
-
-    await coordinator.createSession()
-    await coordinator.requestAgentFrameworkSwitch()
-    const deleteDeferred = createDeferred<AcpStateSnapshot>()
-    created[0].deleteSession.mockReturnValueOnce(deleteDeferred.promise)
-    const deleting = coordinator.deleteSession({ sessionId: 'session-1' })
-    const deletionFailure = expect(deleting).rejects.toThrow('runtime stopped')
-    await vi.waitFor(() => expect(created[0].deleteSession).toHaveBeenCalledOnce())
-    await coordinator.resumeSession({ sessionId: 'session-1', cwd: '/workspace' })
-
-    coordinator.abortSessionDeletion('session-1')
-
-    expect(created[0].shutdown).toHaveBeenCalledOnce()
-    expect(created[1].shutdown).not.toHaveBeenCalled()
-    expect(onSessionUnavailable).not.toHaveBeenCalled()
-
-    deleteDeferred.reject(new Error('runtime stopped'))
-    await deletionFailure
-    await coordinator.sendPrompt({ sessionId: 'session-1', text: 'continue on new runtime' })
-    expect(vi.mocked(created[1].runtime.sendPrompt)).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: 'session-1' }),
-      expect.any(String)
-    )
-  })
-
-  it('does not let a late prompt callback from an aborted deletion release a replacement turn', async () => {
-    const oldPrompt = createDeferred<unknown>()
-    const replacementPrompts = [createDeferred<unknown>(), createDeferred<unknown>()]
-    let replacementPromptIndex = 0
-    const created: ReturnType<typeof createFakeRuntime>[] = []
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      const fake = createFakeRuntime({
-        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
-        sessionIds: created.length === 0 ? ['session-1'] : [],
-        callbacks,
-        ...(created.length === 0
-          ? {
-              prompt: () => oldPrompt.promise,
-              suppressPromptEndCallbacks: true
-            }
-          : { prompt: () => replacementPrompts[replacementPromptIndex++].promise })
-      })
-      created.push(fake)
-      return fake.runtime
-    })
-
-    const session = await coordinator.createSession({ cwd: '/workspace' })
-    const oldTurn = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'old turn' })
-    const oldTurnResult = oldTurn.catch((error: unknown) => error)
-    await vi.waitFor(() => expect(created[0].sendPrompt).toHaveBeenCalledOnce())
-    const deletion = createDeferred<AcpStateSnapshot>()
-    created[0].deleteSession.mockReturnValueOnce(deletion.promise)
-    const deleting = coordinator.deleteSession({ sessionId: session.sessionId })
-    const deletionResult = deleting.catch((error: unknown) => error)
-    await vi.waitFor(() => expect(created[0].deleteSession).toHaveBeenCalledOnce())
-
-    coordinator.abortSessionDeletion(session.sessionId)
-    created[0].emitState({ status: 'connected', sessionIds: [session.sessionId] })
-    expect(coordinator.liveSessionProjectId(session.sessionId)).toBeUndefined()
-    await expect(
-      Promise.race([
-        coordinator.waitForSessionInteractionRelease(session.sessionId).then(() => 'released'),
-        new Promise<'still-pending'>((resolve) => setImmediate(() => resolve('still-pending')))
-      ])
-    ).resolves.toBe('released')
-    oldPrompt.reject(new Error('runtime stopped'))
-    await expect(oldTurnResult).resolves.toMatchObject({ message: 'runtime stopped' })
-    await coordinator.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
-
-    const replacementTurn = coordinator.sendPrompt({
-      sessionId: session.sessionId,
-      text: 'replacement turn'
-    })
-    await vi.waitFor(() => expect(created[1].sendPrompt).toHaveBeenCalledOnce())
-    const queuedTurn = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'queued turn' })
-
-    created[0].emitPromptEnded(session.sessionId, 'turn-1')
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    expect(created[1].sendPrompt).toHaveBeenCalledOnce()
-
-    replacementPrompts[0].resolve({ stopReason: 'end_turn' })
-    await replacementTurn
-    await vi.waitFor(() => expect(created[1].sendPrompt).toHaveBeenCalledTimes(2))
-    replacementPrompts[1].resolve({ stopReason: 'end_turn' })
-    await queuedTurn
-    deletion.reject(new Error('runtime stopped'))
-    await expect(deletionResult).resolves.toMatchObject({ message: 'runtime stopped' })
   })
 
   it('attempts every runtime quit teardown and preserves the surviving snapshot primary', async () => {

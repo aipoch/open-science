@@ -4,7 +4,6 @@ import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 
 type SessionDeletionRuntime = {
   deleteSession(request: { sessionId: string }): Promise<AcpRuntimeState>
-  abortSessionDeletion(sessionId: string): void
   liveSessionProjectId(sessionId: string): string | undefined
 }
 
@@ -21,15 +20,6 @@ type SessionDeletionOwnerOptions = {
 type ActiveSessionDeletion = {
   projectId: string
   promise: Promise<SessionDeletionResult>
-}
-
-const DEFAULT_RUNTIME_DELETE_TIMEOUT_MS = 5_000
-
-class SessionRuntimeDeletionTimeoutError extends Error {
-  constructor() {
-    super('Session runtime deletion timed out.')
-    this.name = 'SessionRuntimeDeletionTimeoutError'
-  }
 }
 
 // Owns terminal Session deletion across runtime and durable persistence. Callers submit one intent;
@@ -84,7 +74,7 @@ class SessionDeletionOwner {
 
     let snapshot: AcpRuntimeState
     try {
-      snapshot = await this.deleteRuntimeSession(request.sessionId)
+      snapshot = await this.runtime.deleteSession({ sessionId: request.sessionId })
     } catch (error) {
       this.log.warn('Session runtime deletion failed', {
         operation: 'delete-session',
@@ -117,26 +107,6 @@ class SessionDeletionOwner {
     }
 
     return { status: 'deleted', runtimeDetached: true }
-  }
-
-  private async deleteRuntimeSession(sessionId: string): Promise<AcpRuntimeState> {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new SessionRuntimeDeletionTimeoutError()),
-        DEFAULT_RUNTIME_DELETE_TIMEOUT_MS
-      )
-    })
-    try {
-      return await Promise.race([this.runtime.deleteSession({ sessionId }), timeout])
-    } catch (error) {
-      if (error instanceof SessionRuntimeDeletionTimeoutError) {
-        this.runtime.abortSessionDeletion(sessionId)
-      }
-      throw error
-    } finally {
-      if (timer) clearTimeout(timer)
-    }
   }
 }
 

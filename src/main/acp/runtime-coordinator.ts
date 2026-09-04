@@ -125,13 +125,7 @@ type PendingResumeReconciliation = {
   specialistId: string | undefined
 }
 
-type PendingSessionDeletion = {
-  runtime: AcpRuntime
-  finish: (retained: boolean) => void
-}
-
 type RootAdmissionLease = {
-  runtime?: AcpRuntime
   release: () => void
 }
 
@@ -169,7 +163,6 @@ class AcpRuntimeCoordinator {
   private readonly pendingPromptStarts = new Map<string, PendingPromptStart[]>()
   private readonly activePromptRequests = new Map<string, ActivePromptRequest>()
   private readonly activePromptCounts = new Map<string, number>()
-  private readonly runtimeActivePromptCounts = new Map<AcpRuntime, Map<string, number>>()
   private readonly interactionReleaseWaiters = new Map<string, Set<() => void>>()
   private readonly rootAdmissionTails = new Map<string, Promise<void>>()
   private readonly activeRootAdmissions = new Map<string, RootAdmissionLease>()
@@ -184,7 +177,6 @@ class AcpRuntimeCoordinator {
   private readonly pendingSessionAdoptions = new Map<string, AcpRuntime>()
   private readonly pendingResumeReconciliations = new Map<string, PendingResumeReconciliation>()
   private readonly pendingSessionDrains = new Map<string, PendingSessionDrain>()
-  private readonly pendingSessionDeletions = new Map<string, PendingSessionDeletion>()
   // The latest user-originated prompt is retained only long enough to construct an app-owned
   // continuation for an approved handoff. The continuation keeps its provenance context but never
   // republishes this text as a new user message.
@@ -1074,8 +1066,6 @@ class AcpRuntimeCoordinator {
     }
 
     const runtime = owner ?? this.getActiveRuntime()
-    const rootAdmission = this.activeRootAdmissions.get(request.sessionId)
-    if (rootAdmission) rootAdmission.runtime = runtime
     const attempt: PendingPromptStart = {
       id: `prompt-attempt-${++this.promptAttemptSequence}`,
       runtime,
@@ -1259,60 +1249,30 @@ class AcpRuntimeCoordinator {
     this.pendingResumeReconciliations.delete(request.sessionId)
     const runtime = this.runtimeForSession(request.sessionId)
     const ownedBeforeDelete = this.sessionRuntimes.get(request.sessionId) === runtime
-    let deletionFinished = false
-    const pending: PendingSessionDeletion = {
-      runtime,
-      finish: (retained) => {
-        if (deletionFinished) return
-        deletionFinished = true
-        this.teardownCallbacks.afterSessionDelete?.(request.sessionId, retained)
-      }
-    }
-    this.pendingSessionDeletions.set(request.sessionId, pending)
     try {
-      try {
-        await this.delegatedWork?.deleteSession(request.sessionId)
-        await this.teardownCallbacks.beforeSessionDelete?.(request.sessionId)
-        await runtime.deleteSession(request)
-      } catch (error) {
-        pending.finish(true)
-        throw error
-      }
-      const ownerAfterDelete = this.sessionRuntimes.get(request.sessionId)
-      const retained = ownerAfterDelete !== undefined && ownerAfterDelete !== runtime
-      // Attached deletes emit a runtime state change, whose reconciliation already notifies exactly once.
-      // Detached cleanup deliberately emits no state, so complete its session-scoped teardown here. A
-      // concurrent resume may have transferred the same app session to a new generation while the old
-      // agent delete was in flight; preserve that new owner and its connection status in full.
-      if (ownerAfterDelete === runtime || (!ownerAfterDelete && !ownedBeforeDelete)) {
-        this.sessionRuntimes.delete(request.sessionId)
-        this.sessionConnectionStatuses.delete(request.sessionId)
-        this.latestPromptRequests.delete(request.sessionId)
-        this.clearApplicationSessionEvents(request.sessionId)
-        this.onSessionUnavailable?.(request.sessionId)
-      }
-      pending.finish(retained)
-      await this.retireUnusedTargetedRuntime(runtime)
-      return this.getState()
-    } finally {
-      if (this.pendingSessionDeletions.get(request.sessionId) === pending) {
-        this.pendingSessionDeletions.delete(request.sessionId)
-      }
+      await this.delegatedWork?.deleteSession(request.sessionId)
+      await this.teardownCallbacks.beforeSessionDelete?.(request.sessionId)
+      await runtime.deleteSession(request)
+    } catch (error) {
+      this.teardownCallbacks.afterSessionDelete?.(request.sessionId, true)
+      throw error
     }
-  }
-
-  abortSessionDeletion(sessionId: string): void {
-    const pending = this.pendingSessionDeletions.get(sessionId)
-    if (!pending) return
-
-    this.pendingSessionDeletions.delete(sessionId)
-    try {
-      pending.finish(true)
-      pending.runtime.shutdown()
-    } finally {
-      this.releaseRuntimeOwnership(pending.runtime)
-      this.emitState()
+    const ownerAfterDelete = this.sessionRuntimes.get(request.sessionId)
+    const retained = ownerAfterDelete !== undefined && ownerAfterDelete !== runtime
+    // Attached deletes emit a runtime state change, whose reconciliation already notifies exactly once.
+    // Detached cleanup deliberately emits no state, so complete its session-scoped teardown here. A
+    // concurrent resume may have transferred the same app session to a new generation while the old
+    // agent delete was in flight; preserve that new owner and its connection status in full.
+    if (ownerAfterDelete === runtime || (!ownerAfterDelete && !ownedBeforeDelete)) {
+      this.sessionRuntimes.delete(request.sessionId)
+      this.sessionConnectionStatuses.delete(request.sessionId)
+      this.latestPromptRequests.delete(request.sessionId)
+      this.clearApplicationSessionEvents(request.sessionId)
+      this.onSessionUnavailable?.(request.sessionId)
     }
+    this.teardownCallbacks.afterSessionDelete?.(request.sessionId, retained)
+    await this.retireUnusedTargetedRuntime(runtime)
+    return this.getState()
   }
 
   async respondToPermission(response: AcpPermissionResponse): Promise<AcpRuntimeState> {
@@ -1724,28 +1684,20 @@ class AcpRuntimeCoordinator {
         ...(this.callbacks.onEvent
           ? {
               onEvent: (event: AcpRuntimeEvent) => {
-                if (!this.runtimes.has(runtime)) return
                 if (!this.shouldPublishEvent(runtime, event)) return
                 this.callbacks.onEvent?.({ ...event, id: this.eventId(runtime, event.id) })
               }
             }
           : {}),
         onPermissionRequest: (request) => {
-          if (!this.runtimes.has(runtime)) return
           this.permissionRuntimes.set(request.requestId, runtime)
           this.callbacks.onPermissionRequest?.(projectPermissionRequest(request))
         },
         onPermissionSettled: (requestId, state) => {
-          if (!this.runtimes.has(runtime)) return
           this.callbacks.onPermissionSettled?.(requestId, state)
         },
         onPromptStarted: (sessionId, turnToken, promptAttemptId) => {
-          if (!this.runtimes.has(runtime)) return
           const attempt = this.takePendingPromptStart(sessionId, runtime, promptAttemptId)
-          const runtimeCounts =
-            this.runtimeActivePromptCounts.get(runtime) ?? new Map<string, number>()
-          runtimeCounts.set(sessionId, (runtimeCounts.get(sessionId) ?? 0) + 1)
-          this.runtimeActivePromptCounts.set(runtime, runtimeCounts)
           this.activePromptCounts.set(sessionId, (this.activePromptCounts.get(sessionId) ?? 0) + 1)
           if (
             attempt &&
@@ -1761,7 +1713,6 @@ class AcpRuntimeCoordinator {
           this.callbacks.onPromptStarted?.(sessionId, turnToken)
         },
         onProviderPromptAccepted: (sessionId, promptAttemptId) => {
-          if (!this.runtimes.has(runtime)) return
           const activePrompt = this.activePromptRequests.get(sessionId)
           if (activePrompt && activePrompt.attemptId === promptAttemptId) {
             activePrompt.acceptance?.resolve()
@@ -1769,28 +1720,18 @@ class AcpRuntimeCoordinator {
           this.callbacks.onProviderPromptAccepted?.(sessionId, promptAttemptId)
         },
         onCodexWebSocketFallback: () => {
-          if (!this.runtimes.has(runtime)) return
           this.callbacks.onCodexWebSocketFallback?.()
         },
         onPromptEnded: (sessionId, turnToken) => {
-          if (!this.runtimes.has(runtime)) return
-          const runtimeCounts = this.runtimeActivePromptCounts.get(runtime)
-          const runtimeRemaining = (runtimeCounts?.get(sessionId) ?? 0) - 1
-          if (runtimeRemaining < 0) return
-          if (runtimeRemaining > 0) runtimeCounts?.set(sessionId, runtimeRemaining)
-          else runtimeCounts?.delete(sessionId)
-          if (runtimeCounts?.size === 0) this.runtimeActivePromptCounts.delete(runtime)
           const remaining = (this.activePromptCounts.get(sessionId) ?? 1) - 1
           if (remaining > 0) this.activePromptCounts.set(sessionId, remaining)
           else this.activePromptCounts.delete(sessionId)
-          const rootAdmission = this.activeRootAdmissions.get(sessionId)
-          if (rootAdmission?.runtime === runtime) rootAdmission.release()
+          this.activeRootAdmissions.get(sessionId)?.release()
           this.notifyInteractionRelease(sessionId)
           this.teardownCallbacks.onSessionTurnEnded?.(sessionId, turnToken)
           this.callbacks.onPromptEnded?.(sessionId, turnToken)
         },
         onSkillImportAttachmentEligible: (sessionId, turnToken, attachmentUri) => {
-          if (!this.runtimes.has(runtime)) return
           this.teardownCallbacks.onSkillImportAttachmentEligible?.(
             sessionId,
             turnToken,
@@ -1849,7 +1790,6 @@ class AcpRuntimeCoordinator {
   }
 
   private handleRuntimeState(runtime: AcpRuntime, state: AcpStateUpdate): void {
-    if (!this.runtimes.has(runtime)) return
     if (state.events) {
       const retainedEventIds = new Set(state.events.map((event) => event.id))
       const publishedEventIds = this.publishedRuntimeEventIds.get(runtime)
@@ -1912,7 +1852,6 @@ class AcpRuntimeCoordinator {
       this.targetedRuntimes.delete(targetKey)
     }
     const retiredStatus = runtime.getSnapshot().status
-    this.releaseRuntimePromptOwnership(runtime)
     this.runtimes.delete(runtime)
     this.retiredRuntimes.delete(runtime)
     for (const [sessionId, owner] of this.sessionRuntimes) {
@@ -1937,9 +1876,6 @@ class AcpRuntimeCoordinator {
       this.pendingSessionDrains.delete(sessionId)
       pending.resolve()
     }
-    for (const [sessionId, pending] of this.pendingSessionDeletions) {
-      if (pending.runtime === runtime) this.pendingSessionDeletions.delete(sessionId)
-    }
     for (const [requestId, owner] of this.permissionRuntimes) {
       if (owner === runtime) this.permissionRuntimes.delete(requestId)
     }
@@ -1951,35 +1887,6 @@ class AcpRuntimeCoordinator {
       // active target for new work; getActiveRuntime may create the selected framework generation later.
       this.lastRuntime = this.activeRuntime ?? Array.from(this.runtimes).at(-1)
     }
-  }
-
-  private releaseRuntimePromptOwnership(runtime: AcpRuntime): void {
-    const affectedSessionIds = new Set<string>()
-    for (const [sessionId, pending] of this.pendingPromptStarts) {
-      const retained = pending.filter((attempt) => attempt.runtime !== runtime)
-      if (retained.length === pending.length) continue
-      affectedSessionIds.add(sessionId)
-      if (retained.length > 0) this.pendingPromptStarts.set(sessionId, retained)
-      else this.pendingPromptStarts.delete(sessionId)
-    }
-    for (const [sessionId, prompt] of this.activePromptRequests) {
-      if (prompt.runtime !== runtime) continue
-      affectedSessionIds.add(sessionId)
-      this.activePromptRequests.delete(sessionId)
-    }
-    for (const [sessionId, count] of this.runtimeActivePromptCounts.get(runtime) ?? []) {
-      affectedSessionIds.add(sessionId)
-      const remaining = (this.activePromptCounts.get(sessionId) ?? count) - count
-      if (remaining > 0) this.activePromptCounts.set(sessionId, remaining)
-      else this.activePromptCounts.delete(sessionId)
-    }
-    this.runtimeActivePromptCounts.delete(runtime)
-    for (const [sessionId, admission] of this.activeRootAdmissions) {
-      if (admission.runtime !== runtime) continue
-      affectedSessionIds.add(sessionId)
-      admission.release()
-    }
-    for (const sessionId of affectedSessionIds) this.notifyInteractionRelease(sessionId)
   }
 
   private visibleSessionIds(runtime: AcpRuntime, snapshot: AcpRuntimeState): string[] {
@@ -2109,14 +2016,11 @@ class AcpRuntimeCoordinator {
     this.sessionRuntimes.clear()
     this.pendingSessionAdoptions.clear()
     this.pendingResumeReconciliations.clear()
-    this.pendingSessionDeletions.clear()
     for (const pending of this.pendingSessionDrains.values()) pending.resolve()
     this.pendingSessionDrains.clear()
     this.sessionConnectionStatuses.clear()
     this.permissionRuntimes.clear()
     this.pendingPromptStarts.clear()
-    this.activePromptCounts.clear()
-    this.runtimeActivePromptCounts.clear()
     this.latestPromptRequests.clear()
     this.activePromptRequests.clear()
     this.applicationEvents.length = 0

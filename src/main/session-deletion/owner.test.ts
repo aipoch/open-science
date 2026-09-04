@@ -18,7 +18,6 @@ const createOwner = (
 ): {
   owner: SessionDeletionOwner
   deleteRuntime: (request: { sessionId: string }) => Promise<AcpStateSnapshot>
-  abortSessionDeletion: (sessionId: string) => void
   liveSessionProjectId: (sessionId: string) => string | undefined
   deletePersisted: (request: DeleteSessionRequest) => Promise<void>
   log: { warn: ReturnType<typeof vi.fn> }
@@ -26,18 +25,16 @@ const createOwner = (
   const deleteRuntime = overrides.deleteRuntime ?? vi.fn().mockResolvedValue(snapshot([]))
   const liveSessionProjectId =
     overrides.liveSessionProjectId ?? vi.fn().mockReturnValue('project-1')
-  const abortSessionDeletion = vi.fn()
   const deletePersisted = overrides.deletePersisted ?? vi.fn().mockResolvedValue(undefined)
   const log = { warn: vi.fn() }
   const owner = new SessionDeletionOwner({
-    runtime: { deleteSession: deleteRuntime, abortSessionDeletion, liveSessionProjectId },
+    runtime: { deleteSession: deleteRuntime, liveSessionProjectId },
     persistence: { deleteSession: deletePersisted },
     log
   })
   return {
     owner,
     deleteRuntime,
-    abortSessionDeletion,
     liveSessionProjectId,
     deletePersisted,
     log
@@ -94,11 +91,15 @@ describe('SessionDeletionOwner', () => {
     )
   })
 
-  it('returns a retryable runtime failure when runtime teardown never settles', async () => {
+  it('leaves timeout ownership to runtime so pre-delete cleanup can finish safely', async () => {
     vi.useFakeTimers()
     try {
-      const { owner, abortSessionDeletion, deletePersisted } = createOwner({
-        deleteRuntime: vi.fn(() => new Promise<AcpStateSnapshot>(() => undefined))
+      let finishRuntime: ((value: AcpStateSnapshot) => void) | undefined
+      const runtimeDeletion = new Promise<AcpStateSnapshot>((resolve) => {
+        finishRuntime = resolve
+      })
+      const { owner, deletePersisted } = createOwner({
+        deleteRuntime: vi.fn(() => runtimeDeletion)
       })
 
       const deletion = owner.delete(request)
@@ -106,13 +107,12 @@ describe('SessionDeletionOwner', () => {
 
       await expect(
         Promise.race([deletion, Promise.resolve('still-pending' as const)])
-      ).resolves.toEqual({
-        status: 'failed',
-        reason: 'runtime',
-        runtimeDetached: false
-      })
-      expect(abortSessionDeletion).toHaveBeenCalledWith('session-1')
+      ).resolves.toBe('still-pending')
       expect(deletePersisted).not.toHaveBeenCalled()
+
+      finishRuntime?.(snapshot([]))
+      await expect(deletion).resolves.toEqual({ status: 'deleted', runtimeDetached: true })
+      expect(deletePersisted).toHaveBeenCalledOnce()
     } finally {
       vi.useRealTimers()
     }
