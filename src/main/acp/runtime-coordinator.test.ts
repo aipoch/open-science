@@ -434,6 +434,45 @@ describe('AcpRuntimeCoordinator', () => {
     expect(onCodexWebSocketFallback).toHaveBeenCalledOnce()
   })
 
+  it.each(['providerId', 'model', 'reasoningEffort', 'frameworkId'] as const)(
+    'Q03 refuses native follow-up when the captured %s differs from the bound runtime',
+    async (field) => {
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks, _grants, target) => {
+        const fake = createFakeRuntime({
+          frameworkId: target?.frameworkId ?? 'claude-code',
+          sessionIds: [`session-${created.length}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const target: AcpSessionAgentTarget = {
+        frameworkId: 'claude-code',
+        providerId: 'provider-a',
+        model: 'model-a',
+        reasoningEffort: 'high'
+      }
+      const session = await coordinator.createSession({ agentTarget: target })
+      const different = {
+        ...target,
+        [field]:
+          field === 'frameworkId' ? 'opencode' : field === 'reasoningEffort' ? 'low' : 'different'
+      } as AcpSessionAgentTarget
+      const request = {
+        sessionId: session.sessionId,
+        text: 'queued intent',
+        agentTarget: different
+      }
+      expect(await coordinator.steerFollowUp(request)).toMatchObject({ injected: false })
+      expect(created[1].steerFollowUp).not.toHaveBeenCalled()
+      expect(await coordinator.steerFollowUp({ ...request, agentTarget: target })).toMatchObject({
+        injected: true
+      })
+      expect(created[1].steerFollowUp).toHaveBeenCalledOnce()
+    }
+  )
+
   it('routes Sessions through runtimes keyed by their explicit agent target', async () => {
     const targets: Array<AcpSessionAgentTarget | undefined> = []
     const created: ReturnType<typeof createFakeRuntime>[] = []
@@ -2685,10 +2724,13 @@ describe('AcpRuntimeCoordinator', () => {
       messageId: 'message-steer-1'
     })
     expect(admittedSessionIds).toEqual([session.sessionId])
-    expect(createdRuntime.steerFollowUp).toHaveBeenCalledWith({
-      sessionId: session.sessionId,
-      text: 'focus on tests'
-    })
+    expect(createdRuntime.steerFollowUp).toHaveBeenCalledWith(
+      {
+        sessionId: session.sessionId,
+        text: 'focus on tests'
+      },
+      expect.any(Function)
+    )
   })
 
   it('refuses native follow-up when prompt admission rejects', async () => {

@@ -4220,6 +4220,12 @@
     "{{percent}}% of {{size}}": "{{percent}} % von {{size}}",
     "Could not save project. Please try again.": "Das Projekt konnte nicht gespeichert werden. Bitte versuchen Sie es erneut.",
     "Could not attach the file. Check available storage and try again.": "Die Datei konnte nicht angehängt werden. Prüfen Sie den verfügbaren Speicherplatz und versuchen Sie es erneut.",
-    "Close the file browser and open it again to retry.": "Schließen Sie den Dateibrowser und öffnen Sie ihn erneut, um es noch einmal zu versuchen."
+    "Close the file browser and open it again to retry.": "Schließen Sie den Dateibrowser und öffnen Sie ihn erneut, um es noch einmal zu versuchen.",
+    "Editing a historical revision": "Überarbeitung einer früheren Nachricht bearbeiten",
+    "Editing a queued message": "Nachricht in der Warteschlange bearbeiten",
+    "Exit queued editing": "Warteschlangenbearbeitung beenden",
+    "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "Die Nachricht in der Warteschlange passt nicht mehr zu dieser Sitzung. Beenden Sie die Warteschlangenbearbeitung, um sie als neue Nachricht zu senden.",
+    "Remove attachments before submitting a historical revision.": "Entfernen Sie die Anhänge, bevor Sie die Überarbeitung einer früheren Nachricht senden.",
+    "Exit queued editing before choosing another send mode.": "Beenden Sie die Warteschlangenbearbeitung, bevor Sie einen anderen Sendemodus wählen."
   }
 }

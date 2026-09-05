@@ -582,6 +582,101 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.transfers).toEqual([])
   })
 
+  it.each(['cancel', 'delete', 'unmount'] as const)(
+    'Q02 does not attach a file after %s while its claim response is pending',
+    async (action) => {
+      const claimed = deferred<void>()
+      const attachment: UploadedAttachment = {
+        id: 'upload-notes-1',
+        sessionId: '.pending',
+        name: 'research-notes.md',
+        originalName: 'research-notes.md',
+        path: '/uploads/.pending/research-notes.md',
+        mimeType: 'text/markdown',
+        size: 5
+      }
+      const uploadApi = uploads(vi.fn().mockResolvedValue(attachment))
+      uploadApi.claimLocalFile = vi.fn(() => claimed.promise)
+      const hook = renderController(uploadApi)
+      mounted.push(hook)
+      act(() =>
+        hook.result.current.actions.stageFiles([
+          new File(['notes'], 'research-notes.md', { type: 'text/markdown' })
+        ])
+      )
+      await flushAsyncWork()
+      expect(uploadApi.claimLocalFile).toHaveBeenCalledOnce()
+      const transfer = hook.result.current.view.transfers[0]
+      expect(transfer).toBeDefined()
+      if (action === 'cancel') act(() => hook.result.current.actions.cancelTransfer(transfer))
+      if (action === 'delete') {
+        act(() => {
+          hook.result.current.lifecycle.beginSessionDeletion('session-a')
+          hook.result.current.lifecycle.settleSessionDeletion('session-a', true)
+        })
+      }
+      if (action === 'unmount') {
+        mounted.splice(mounted.indexOf(hook), 1)
+        hook.unmount()
+      }
+      await flushAsyncWork()
+      if (action !== 'unmount') expect(hook.result.current.view.transfers).toEqual([])
+      expect(uploadApi.abortTransfer).toHaveBeenCalledWith({ transferId: transfer.transferId })
+
+      await act(async () => claimed.resolve())
+      await flushAsyncWork()
+
+      expect.soft(hook.result.current.view.attachments).toEqual([])
+      expect.soft(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+      if (action !== 'unmount') expect(hook.result.current.view.transfers).toEqual([])
+    }
+  )
+
+  it.each(['switch', 'deletion-rollback'] as const)(
+    'Q02 retains a claimed attachment in its owning draft after %s',
+    async (action) => {
+      const claimed = deferred<void>()
+      const attachment: UploadedAttachment = {
+        id: 'notes',
+        sessionId: '.pending',
+        name: 'notes.txt',
+        originalName: 'notes.txt',
+        path: '/uploads/.pending/notes.txt',
+        mimeType: 'text/plain',
+        size: 5
+      }
+      const uploadApi = uploads(vi.fn().mockResolvedValue(attachment))
+      uploadApi.claimLocalFile = vi.fn(() => claimed.promise)
+      const hook = renderController(uploadApi)
+      mounted.push(hook)
+      act(() => hook.result.current.actions.stageFiles([new File(['notes'], 'notes.txt')]))
+      await flushAsyncWork()
+      expect(uploadApi.claimLocalFile).toHaveBeenCalledOnce()
+      if (action === 'switch') hook.selectDraft('session-b')
+      else
+        act(() => {
+          hook.result.current.lifecycle.beginSessionDeletion('session-a')
+        })
+      await act(async () => claimed.resolve())
+      await flushAsyncWork()
+      if (action === 'switch') {
+        expect(hook.result.current.view.attachments).toEqual([])
+        hook.selectDraft('session-a')
+      } else act(() => hook.result.current.lifecycle.settleSessionDeletion('session-a', false))
+      expect(hook.result.current.view.attachments).toEqual([attachment])
+      expect(uploadApi.deleteUpload).not.toHaveBeenCalled()
+      // Queue editing must retain the same attachment and annotations, without deleting its bytes.
+      act(() => hook.result.current.actions.addAnnotation(annotation()))
+      const snapshot = hook.result.current.lifecycle.captureSend()
+      expect(hook.result.current.lifecycle.restoreFailedSend(snapshot, true)).toBe(false)
+      act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
+      act(() => expect(hook.result.current.lifecycle.restoreFailedSend(snapshot, true)).toBe(true))
+      expect(hook.result.current.view.attachments).toEqual([attachment])
+      expect(hook.result.current.view.annotations).toEqual([annotation()])
+      expect(uploadApi.deleteUpload).not.toHaveBeenCalled()
+    }
+  )
+
   it('keeps a staged attachment unavailable when claiming its local writer fails', async () => {
     const uploadApi = uploads(
       vi.fn().mockResolvedValue({
@@ -2182,6 +2277,77 @@ describe('workspace composer controller', () => {
     act(() => hook.result.current.lifecycle.restoreFailedSend(superseded))
     expect(hook.result.current.view.doc).toEqual(textDoc('new intent'))
   })
+
+  it.each(['ordinary', 'revision'] as const)(
+    'Q01 preserves %s queue intent through editing, undo and draft switching',
+    (kind) => {
+      const hook = renderController()
+      mounted.push(hook)
+      const queued = hook.result.current.lifecycle.captureRevision(textDoc('Queued'), [
+        annotation()
+      ])
+      queued.queuedEdit = {
+        kind: 'user',
+        sessionId: 'session-a',
+        agentFrameId: 'root',
+        messageBranchId: 'branch-a',
+        permissionProfile: 'full',
+        specialistId: undefined,
+        projectId: 'project',
+        cwd: undefined,
+        agentConfiguration: { providerId: 'provider', model: 'model-b', reasoningEffort: 'high' },
+        ...(kind === 'revision' ? { revisionMessageId: 'historical-message' } : {})
+      }
+      act(() => expect(hook.result.current.lifecycle.restoreFailedSend(queued, true)).toBe(true))
+      act(() => hook.result.current.actions.changeDoc(textDoc('Changed')))
+      act(() => expect(hook.result.current.actions.undo()).toBe(true))
+      expect(hook.result.current.view.doc).toEqual(queued.doc)
+      act(() => expect(hook.result.current.actions.redo()).toBe(true))
+      hook.selectDraft('session-b')
+      expect(hook.result.current.view.queuedEdit).toBeUndefined()
+      hook.selectDraft('session-a')
+      const restored = hook.result.current.lifecycle.captureSend()
+      expect(restored).toMatchObject({
+        doc: textDoc('Changed'),
+        annotations: [annotation()],
+        attachments: [],
+        queuedEdit: queued.queuedEdit
+      })
+      act(() => hook.result.current.actions.cancelQueuedEdit?.())
+      expect(hook.result.current.view.queuedEdit).toBeUndefined()
+      expect(hook.result.current.view.doc).toEqual(textDoc('Changed'))
+      expect(hook.result.current.actions.undo()).toBe(false)
+    }
+  )
+
+  it.each(['text', 'annotation', 'mention'] as const)(
+    'Q01 rejects an occupied %s draft at equal and different versions',
+    (content) => {
+      const hook = renderController()
+      mounted.push(hook)
+      if (content === 'text')
+        act(() => hook.result.current.actions.changeDoc(textDoc('Independent')))
+      if (content === 'annotation')
+        act(() => hook.result.current.actions.addAnnotation(annotation()))
+      if (content === 'mention')
+        act(() =>
+          hook.result.current.actions.changeDoc({
+            nodes: [{ type: 'skill', id: 'skill', name: 'skill' }]
+          })
+        )
+      const before = hook.result.current.lifecycle.captureSend()
+      const revision = hook.result.current.lifecycle.captureRevision(textDoc('Revision'), [])
+      expect(revision.version).toBe(before.version)
+      expect(hook.result.current.lifecycle.restoreFailedSend(revision, true)).toBe(false)
+      expect(
+        hook.result.current.lifecycle.restoreFailedSend(
+          { ...revision, version: revision.version - 1 },
+          true
+        )
+      ).toBe(false)
+      expect(hook.result.current.lifecycle.captureSend()).toEqual(before)
+    }
+  )
 
   it('reports a queued-edit conflict without replacing the newer composer draft', () => {
     const hook = renderController()

@@ -4065,6 +4065,12 @@
     "{{percent}}% of {{size}}": "{{size}} 的 {{percent}}%",
     "Could not save project. Please try again.": "無法儲存專案。請重試。",
     "Could not attach the file. Check available storage and try again.": "無法附加檔案。請檢查可用儲存空間後重試。",
-    "Close the file browser and open it again to retry.": "請關閉檔案瀏覽器後重新開啟以重試。"
+    "Close the file browser and open it again to retry.": "請關閉檔案瀏覽器後重新開啟以重試。",
+    "Editing a historical revision": "正在編輯歷史訊息修訂",
+    "Editing a queued message": "正在編輯排隊訊息",
+    "Exit queued editing": "結束佇列編輯",
+    "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "排隊訊息已不再與此工作階段相符。請結束佇列編輯，將其作為新訊息傳送。",
+    "Remove attachments before submitting a historical revision.": "提交歷史訊息修訂前，請移除附件。",
+    "Exit queued editing before choosing another send mode.": "選擇其他傳送模式前，請結束佇列編輯。"
   }
 }

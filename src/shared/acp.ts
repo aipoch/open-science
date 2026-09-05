@@ -953,6 +953,7 @@ export type AcpPromptRequest = {
 }
 
 export type AcpSteerFollowUpRequest = {
+  agentTarget?: AcpSessionAgentTarget
   sessionId: string
   text: string
   attachments?: UploadedAttachment[]

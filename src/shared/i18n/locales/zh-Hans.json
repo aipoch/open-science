@@ -4065,6 +4065,12 @@
     "{{percent}}% of {{size}}": "{{size}} 的 {{percent}}%",
     "Could not save project. Please try again.": "无法保存项目。请重试。",
     "Could not attach the file. Check available storage and try again.": "无法添加附件。请检查可用存储空间后重试。",
-    "Close the file browser and open it again to retry.": "请关闭文件浏览器后重新打开以重试。"
+    "Close the file browser and open it again to retry.": "请关闭文件浏览器后重新打开以重试。",
+    "Editing a historical revision": "正在编辑历史消息修订",
+    "Editing a queued message": "正在编辑排队消息",
+    "Exit queued editing": "退出队列编辑",
+    "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "排队消息已不再与此会话匹配。请退出队列编辑，将其作为新消息发送。",
+    "Remove attachments before submitting a historical revision.": "提交历史消息修订前，请移除附件。",
+    "Exit queued editing before choosing another send mode.": "选择其他发送模式前，请退出队列编辑。"
   }
 }

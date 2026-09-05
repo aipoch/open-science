@@ -41,6 +41,22 @@ type MessageQueueItem = {
   revisionMessageId?: string
 }
 
+type MessageQueueEditIntent = Pick<
+  MessageQueueItem,
+  | 'kind'
+  | 'sessionId'
+  | 'agentFrameId'
+  | 'messageBranchId'
+  | 'permissionProfile'
+  | 'agentConfiguration'
+  | 'specialistId'
+  | 'agentFrameworkId'
+  | 'agentBackendId'
+  | 'projectId'
+  | 'cwd'
+  | 'revisionMessageId'
+>
+
 type MessageQueueAdmission = {
   session: ChatSession
   snapshot: ComposerSendSnapshot
@@ -252,3 +268,5 @@ export type {
   WorkspaceMessageQueueControllerOptions,
   WorkspaceMessageQueueRuntimeOptions
 }
+
+export type { MessageQueueEditIntent }

@@ -235,15 +235,21 @@ class AcpNativeFollowUpWorkflow {
       : Object.freeze({ injected: false })
   }
 
-  async steerFollowUp(request: AcpSteerFollowUpRequest): Promise<AcpSteerFollowUpResult> {
-    return this.dispatch(request, true)
+  async steerFollowUp(
+    request: AcpSteerFollowUpRequest,
+    isCurrent?: () => boolean
+  ): Promise<AcpSteerFollowUpResult> {
+    return this.dispatch(request, true, undefined, isCurrent)
   }
 
   private async dispatch(
     request: AcpSteerFollowUpRequest,
     publishUserMessage: boolean,
-    expectedTurnToken?: string
+    expectedTurnToken?: string,
+    isCurrent: () => boolean = () => true
   ): Promise<AcpSteerFollowUpResult> {
+    const initialLive = this.options.livePrompt?.(request.sessionId)
+    if (!isCurrent()) return refused('prompt-required')
     const text = typeof request.text === 'string' ? request.text : ''
     const attachments = request.attachments ?? []
     const forcedSkillIds = request.forcedSkillIds ?? []
@@ -326,7 +332,9 @@ class AcpNativeFollowUpWorkflow {
       return refusePrepared('empty-text')
     }
 
-    const live = this.options.livePrompt?.(request.sessionId)
+    const live = initialLive
+    if (!isCurrent() || !this.sameLivePrompt(request.sessionId, live))
+      return refusePrepared('no-live-turn')
     if (!this.options.hasLivePrompt(request.sessionId) || (this.options.livePrompt && !live)) {
       log.info('native follow-up refused', {
         sessionId: request.sessionId,
@@ -388,6 +396,8 @@ class AcpNativeFollowUpWorkflow {
       }
     }
 
+    if (!isCurrent() || !this.sameLivePrompt(request.sessionId, live))
+      return refusePrepared('no-live-turn')
     const transportSignal = this.transportTimeout(route.transport)
     if (route.transport === 'acp-steering') {
       let result: unknown

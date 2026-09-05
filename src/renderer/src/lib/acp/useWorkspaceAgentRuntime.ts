@@ -1,3 +1,4 @@
+import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import {
   createContext,
   createElement,
@@ -18,6 +19,8 @@ import {
   type AcpPermissionRequest,
   type AcpPermissionResponse,
   type AcpSaveAsSkillRequest,
+  type AcpSteerFollowUpRequest,
+  type AcpSteerFollowUpResult,
   type DelegatedWorkUnavailableReason
 } from '../../../../shared/acp'
 import {
@@ -149,7 +152,12 @@ type WorkspaceAgentRuntime = {
     input: ResendEditedMessageInput
   ) => Promise<boolean>
   cancelRun: (sessionId: string) => Promise<void>
-  steerFollowUp: ReturnType<typeof useAcpRuntime>['steerFollowUp']
+  steerFollowUp: (
+    request: AcpSteerFollowUpRequest & {
+      agentConfiguration?: SessionAgentConfiguration
+      expectedFrameworkId?: AgentFrameworkId
+    }
+  ) => Promise<AcpSteerFollowUpResult>
   resumeInterruptedSession: (sessionId: string) => Promise<void>
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
@@ -404,7 +412,11 @@ const useOwnedWorkspaceAgentRuntime = (
 
   const resendEditedMessage = useCallback(
     (sessionId: string, messageId: string, input: ResendEditedMessageInput): Promise<boolean> => {
-      const configuration = admitSendConfiguration({ sessionId })
+      const configuration = admitSendConfiguration({
+        sessionId,
+        agentConfiguration: input.agentConfiguration,
+        expectedFrameworkId: input.expectedFrameworkId
+      })
       if (!configuration) return Promise.resolve(false)
       const selected = resolveRuntimeSelection(configuration)
       return resendEditedWorkspaceMessage(
@@ -433,6 +445,23 @@ const useOwnedWorkspaceAgentRuntime = (
       runtime,
       visionRelayAvailable
     ]
+  )
+
+  const steerFollowUp = useCallback<WorkspaceAgentRuntime['steerFollowUp']>(
+    ({ agentConfiguration, expectedFrameworkId, ...request }) => {
+      if (!agentConfiguration) return runtime.steerFollowUp(request)
+      const configuration = admitSendConfiguration({
+        sessionId: request.sessionId,
+        agentConfiguration,
+        expectedFrameworkId
+      })
+      if (!configuration) return Promise.resolve({ injected: false, reason: 'prompt-required' })
+      const selected = resolveRuntimeSelection(configuration)
+      if (!selected.agentTarget)
+        return Promise.resolve({ injected: false, reason: 'prompt-required' })
+      return runtime.steerFollowUp({ ...request, agentTarget: selected.agentTarget })
+    },
+    [admitSendConfiguration, resolveRuntimeSelection, runtime]
   )
 
   const compactContext = useCallback(
@@ -632,7 +661,7 @@ const useOwnedWorkspaceAgentRuntime = (
     sendMessage,
     resendEditedMessage,
     cancelRun,
-    steerFollowUp: runtime.steerFollowUp,
+    steerFollowUp,
     resumeInterruptedSession,
     respondToPermission,
     setPermissionProfile,

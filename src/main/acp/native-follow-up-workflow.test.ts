@@ -105,6 +105,41 @@ const createWorkflow = (
 }
 
 describe('AcpNativeFollowUpWorkflow', () => {
+  it('Q03 rechecks the bound generation after preparing a follow-up', async () => {
+    let current = true
+    const close = vi.fn()
+    const { workflow, request } = createWorkflow({
+      prepareFollowUp: async () => {
+        current = false
+        return { prompt: [{ type: 'text', text: 'Queued' }], close }
+      }
+    })
+    expect(
+      await workflow.steerFollowUp({ sessionId: 'session-1', text: 'Queued' }, () => current)
+    ).toMatchObject({ injected: false })
+    expect(request).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('Q03 refuses a different live turn after asynchronous follow-up preparation', async () => {
+    let finish!: (value: { prompt: readonly { type: 'text'; text: string }[] }) => void
+    const pending = new Promise<{ prompt: readonly { type: 'text'; text: string }[] }>(
+      (resolve) => {
+        finish = resolve
+      }
+    )
+    let token = 'turn-a'
+    const { workflow, request } = createWorkflow({
+      livePromptTurn: () => ({ turnToken: token, signal: new AbortController().signal }),
+      prepareFollowUp: () => pending
+    })
+    const sending = workflow.steerFollowUp({ sessionId: 'session-1', text: 'queued intent' })
+    token = 'turn-b'
+    finish({ prompt: [{ type: 'text', text: 'queued intent' }] })
+    expect(await sending).toMatchObject({ injected: false })
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('injects advertised ACP steering without opening a second prompt', async () => {
     const { request, workflow } = createWorkflow()
     await expect(
