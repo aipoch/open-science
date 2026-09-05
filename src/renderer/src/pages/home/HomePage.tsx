@@ -4,6 +4,7 @@
  */
 import {
   Archive,
+  BookOpenText,
   Check,
   CircleAlert,
   Clock,
@@ -191,6 +192,7 @@ const HomePage = ({
   const enqueueProjectArchive = useArchiveUndoStore((state) => state.enqueueProject)
   const openProject = useNavigationStore((state) => state.openProject)
   const openSession = useNavigationStore((state) => state.openSession)
+  const openLibrary = useNavigationStore((state) => state.openLibrary)
   const pendingProjectCreation = useNavigationStore((state) => state.pendingProjectCreation)
   const consumeProjectCreation = useNavigationStore((state) => state.consumeProjectCreation)
   const openSettings = useSettingsStore((state) => state.openSettings)
@@ -684,6 +686,16 @@ const HomePage = ({
               title={t('Search (Cmd/Ctrl+K)')}
             >
               <Search className="size-4" strokeWidth={2} aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-9 rounded-lg text-text-300"
+              onClick={() => openLibrary('user')}
+              aria-label={t('Library')}
+              title={t('Library')}
+            >
+              <BookOpenText className="size-4" strokeWidth={2} aria-hidden="true" />
             </Button>
             <LanguagePreferenceMenu />
             <ThemePreferenceMenu />

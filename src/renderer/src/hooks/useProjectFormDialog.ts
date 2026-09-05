@@ -33,10 +33,16 @@ type UseProjectFormDialogResult = {
   dialogProps: ProjectFormDialogProps
 }
 
+type UseProjectFormDialogOptions = {
+  onCreated?: (project: Project) => void
+}
+
 // Owns the create/edit Project form state machine shared by the Home page and the Workspace sidebar
 // project menu. Submissions go through the project store; a successful create navigates into the new
 // project, matching the original HomePage behavior.
-const useProjectFormDialog = (): UseProjectFormDialogResult => {
+const useProjectFormDialog = (
+  options: UseProjectFormDialogOptions = {}
+): UseProjectFormDialogResult => {
   const { t } = useTranslation()
   const createProject = useProjectStore((state) => state.createProject)
   const updateProject = useProjectStore((state) => state.updateProject)
@@ -125,7 +131,10 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
 
         setFormState(null)
 
-        if (isCreate) openProject(project.id, 'user')
+        if (isCreate) {
+          if (options.onCreated) options.onCreated(project)
+          else openProject(project.id, 'user')
+        }
       })
       .catch((error: unknown) => {
         setErrorDetail(error instanceof Error ? error.message : String(error))
@@ -174,4 +183,4 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
 }
 
 export { useProjectFormDialog }
-export type { ProjectFormState, UseProjectFormDialogResult }
+export type { ProjectFormState, UseProjectFormDialogOptions, UseProjectFormDialogResult }

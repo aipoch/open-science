@@ -42,6 +42,11 @@ describe('settings navigation slice', () => {
   it.each([
     ['panel', () => store.getState().openSettingsToPanel('storage'), { panel: 'storage' }],
     [
+      'OpenAlex',
+      () => store.getState().openSettingsToOpenAlex(),
+      { panel: 'credentials', view: { kind: 'service', serviceId: 'openalex' } }
+    ],
+    [
       'Skill',
       () => store.getState().openSettingsToSkill('skill-1'),
       { panel: 'skills', view: { kind: 'detail', id: 'skill-1' } }

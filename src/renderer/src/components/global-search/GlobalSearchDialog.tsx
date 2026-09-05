@@ -6,11 +6,20 @@
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowUpRight, AtSign, LoaderCircle, MessageCircle, Search, Zap } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import {
+  ArrowUpRight,
+  AtSign,
+  BookOpenText,
+  LoaderCircle,
+  MessageCircle,
+  Search,
+  Zap
+} from 'lucide-react'
+import * as Dialog from '@/components/ui/dialog'
 import { useShallow } from 'zustand/react/shallow'
 
 import type { ProjectFileItem } from '../../../../shared/project-files'
+import type { LiteratureItemInput, LiteratureItemView } from '../../../../shared/literature'
 import { Button } from '@/components/ui/button'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { Input } from '@/components/ui/input'
@@ -21,7 +30,14 @@ import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
 import { cn } from '@/lib/utils'
 import { ArtifactPreview } from '@/pages/workspace/artifact-preview'
 import { createPreviewFileItem } from '@/pages/workspace/preview-file-item'
-import type { MessageArtifact } from '@/pages/workspace/preview-file-item'
+import {
+  LITERATURE_PREVIEW_SESSION_ID,
+  type MessageArtifact
+} from '@/pages/workspace/preview-file-item'
+import {
+  literatureItemToPdfOption,
+  type LiteraturePdfOption
+} from '@/pages/workspace/literature-pdf-options'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -50,9 +66,20 @@ type ArtifactState = {
   isIndexComplete: boolean
 }
 
+type LiteratureResult = {
+  item: LiteratureItemView
+  pdf?: LiteraturePdfOption
+}
+
+type LiteratureState = {
+  items: LiteratureResult[]
+  status: 'idle' | 'loading' | 'error'
+}
+
 type SelectableRow =
   | { kind: 'session'; session: SessionSearchResult }
   | { kind: 'artifact'; artifact: ProjectFileItem }
+  | { kind: 'literature'; result: LiteratureResult }
   | { kind: 'more-sessions' }
   | { kind: 'more-artifacts' }
   | { kind: 'retry-artifacts' }
@@ -65,6 +92,25 @@ const emptyArtifactState: ArtifactState = {
   other: [],
   isIndexComplete: true
 }
+
+const emptyLiteratureState: LiteratureState = { items: [], status: 'idle' }
+
+const isLiteratureItem = (entry: unknown): entry is LiteratureItemView =>
+  typeof entry === 'object' && entry !== null && 'item' in entry && 'metadataRevision' in entry
+
+const literatureCreatorLabel = (item: LiteratureItemInput): string =>
+  item.creators
+    .slice(0, 2)
+    .map((creator) =>
+      creator.nameMode === 'organization'
+        ? creator.literalName
+        : [creator.givenName, creator.familyName].filter(Boolean).join(' ')
+    )
+    .filter(Boolean)
+    .join(', ')
+
+const literatureDescription = (item: LiteratureItemInput): string =>
+  [literatureCreatorLabel(item), item.issuedYear, item.containerTitle].filter(Boolean).join(' · ')
 
 // An IPC rejection carries an English message from the main process, so it is only shown when it
 // exists; the fallback is the one the catalog owns.
@@ -136,6 +182,7 @@ export const GlobalSearchDialog = ({
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const requestVersionRef = useRef(0)
+  const literatureRequestVersionRef = useRef(0)
   const keyboardNavigationRef = useRef(false)
   const mentionVersionRef = useRef(0)
   const listboxId = useId()
@@ -145,6 +192,7 @@ export const GlobalSearchDialog = ({
   const [artifactStatus, setArtifactStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [artifactError, setArtifactError] = useState<string | undefined>()
   const [failedArtifactCursor, setFailedArtifactCursor] = useState<string | undefined>()
+  const [literature, setLiterature] = useState<LiteratureState>(emptyLiteratureState)
   const [actionError, setActionError] = useState<string | undefined>()
   const [activeIndex, setActiveIndex] = useState(0)
 
@@ -186,12 +234,14 @@ export const GlobalSearchDialog = ({
   const view = useNavigationStore((state) => state.view)
   const openProject = useNavigationStore((state) => state.openProject)
   const openSession = useNavigationStore((state) => state.openSession)
+  const openLiteratureItem = useNavigationStore((state) => state.openLiteratureItem)
   const requestArtifactMention = useNavigationStore((state) => state.requestArtifactMention)
   const requestProjectCreation = useNavigationStore((state) => state.requestProjectCreation)
   const artifactMentionAvailability = useNavigationStore(
     (state) => state.artifactMentionAvailability
   )
   const openFileDialog = usePreviewWorkbenchStore((state) => state.openFileDialog)
+  const upsertAndActivateItem = usePreviewWorkbenchStore((state) => state.upsertAndActivateItem)
 
   const isProjectScope = view === 'workspace' && activeProjectId !== undefined
   const relativeTime = (timestamp: number): string => {
@@ -351,15 +401,47 @@ export const GlobalSearchDialog = ({
     return () => window.clearTimeout(timer)
   }, [isSearchMode, open, reloadArtifacts, trimmedQuery])
 
+  const reloadLiterature = useCallback(async (): Promise<void> => {
+    if (!trimmedQuery) return
+    const version = ++literatureRequestVersionRef.current
+    setLiterature({ items: [], status: 'loading' })
+    try {
+      const page = await window.api.literature.search({
+        scope: 'library',
+        query: trimmedQuery,
+        limit: GLOBAL_SEARCH_PAGE_SIZE,
+        ...(isProjectScope && activeProjectId ? { projectId: activeProjectId } : {})
+      })
+      if (version !== literatureRequestVersionRef.current) return
+      const items = page.entries.filter(isLiteratureItem).map((item): LiteratureResult => ({
+        item,
+        pdf: literatureItemToPdfOption(item, { multiPageOnly: false })
+      }))
+      setLiterature({ items, status: 'idle' })
+    } catch {
+      if (version !== literatureRequestVersionRef.current) return
+      setLiterature({ items: [], status: 'error' })
+    }
+  }, [activeProjectId, isProjectScope, trimmedQuery])
+
+  useEffect(() => {
+    literatureRequestVersionRef.current += 1
+    if (!open || !isSearchMode) return
+    const timer = window.setTimeout(() => void reloadLiterature(), 150)
+    return () => window.clearTimeout(timer)
+  }, [isSearchMode, open, reloadLiterature, trimmedQuery])
+
   const handleQueryChange = (nextQuery: string): void => {
     // Clear synchronously with the input event, before the next debounced Artifact request starts.
     requestVersionRef.current += 1
+    literatureRequestVersionRef.current += 1
     setQuery(nextQuery)
     setVisibleSessionCount(GLOBAL_SEARCH_PAGE_SIZE)
     setArtifacts(emptyArtifactState)
     setArtifactStatus(nextQuery.trim() ? 'loading' : 'idle')
     setArtifactError(undefined)
     setFailedArtifactCursor(undefined)
+    setLiterature({ items: [], status: nextQuery.trim() ? 'loading' : 'idle' })
     setActionError(undefined)
     setActiveIndex(0)
     keyboardNavigationRef.current = false
@@ -388,8 +470,13 @@ export const GlobalSearchDialog = ({
           ),
     [artifacts.items, artifacts.other, isProjectScope]
   )
-  const isSearchPending =
+  const artifactSearchPending =
     isSearchMode && artifactStatus === 'loading' && displayedArtifacts.length === 0
+  const isSearchPending =
+    isSearchMode &&
+    displayedArtifacts.length === 0 &&
+    literature.items.length === 0 &&
+    (artifactSearchPending || literature.status === 'loading')
   const otherRows = useMemo<SelectableRow[]>(() => {
     if (!isProjectScope || !isSearchMode) return []
     return [
@@ -421,6 +508,7 @@ export const GlobalSearchDialog = ({
       ...displayedArtifacts.map((artifact) => ({ kind: 'artifact' as const, artifact })),
       ...(artifactError ? [{ kind: 'retry-artifacts' as const }] : []),
       ...(canLoadMoreArtifacts ? [{ kind: 'more-artifacts' as const }] : []),
+      ...literature.items.map((result) => ({ kind: 'literature' as const, result })),
       ...(sessionGroups?.primary.map((session) => ({ kind: 'session' as const, session })) ?? []),
       ...(sessionMoreCount > 0 ? [{ kind: 'more-sessions' as const }] : []),
       ...otherRows,
@@ -433,6 +521,7 @@ export const GlobalSearchDialog = ({
     isProjectScope,
     isSearchPending,
     isSearchMode,
+    literature.items,
     otherRows,
     primaryProject,
     recentSessions,
@@ -535,6 +624,29 @@ export const GlobalSearchDialog = ({
     },
     [canMentionArtifact, close, requestArtifactMention, t]
   )
+  const previewLiterature = useCallback(
+    (result: LiteratureResult): void => {
+      if (isProjectScope && activeProjectId && result.pdf) {
+        upsertAndActivateItem({
+          ...createPreviewFileItem({
+            id: `literature:${result.pdf.source.sourceVersionId}`,
+            projectId: activeProjectId,
+            sessionId: LITERATURE_PREVIEW_SESSION_ID,
+            path: result.pdf.path,
+            name: result.pdf.filename,
+            mimeType: result.pdf.mimeType,
+            source: 'literature',
+            size: result.pdf.size
+          }),
+          title: result.item.item.title
+        })
+      } else {
+        openLiteratureItem(result.item.id, 'user')
+      }
+      close()
+    },
+    [activeProjectId, close, isProjectScope, openLiteratureItem, upsertAndActivateItem]
+  )
   const activate = useCallback(
     (row: SelectableRow | undefined, action?: 'mention' | 'preview'): void => {
       if (!row) return
@@ -556,6 +668,10 @@ export const GlobalSearchDialog = ({
         if (action === 'mention' && canMentionArtifact(row.artifact)) {
           void mentionArtifact(row.artifact)
         } else previewArtifact(row.artifact)
+        return
+      }
+      if (row.kind === 'literature') {
+        previewLiterature(row.result)
         return
       }
       if (row.kind === 'more-sessions') {
@@ -592,6 +708,7 @@ export const GlobalSearchDialog = ({
       openProject,
       openSession,
       previewArtifact,
+      previewLiterature,
       primaryProject,
       reloadArtifacts,
       requestProjectCreation,
@@ -648,6 +765,7 @@ export const GlobalSearchDialog = ({
     ? 0
     : isSearchMode
       ? (sessionGroups?.primaryTotalCount ?? 0) +
+        literature.items.length +
         (isProjectScope ? artifacts.totalCount + otherRows.length : displayedArtifacts.length)
       : displayedArtifacts.length + recentSessions.length
   const renderSessionRow = (session: SessionSearchResult, rowIndex: number): React.JSX.Element => {
@@ -691,6 +809,60 @@ export const GlobalSearchDialog = ({
           <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
             #{session.number}
           </span>
+        ) : null}
+      </div>
+    )
+  }
+
+  const renderLiteratureRow = (result: LiteratureResult, rowIndex: number): React.JSX.Element => {
+    const active = rowIndex === activeRowIndex
+    const title = result.item.item.title
+    return (
+      <div
+        id={`global-search-option-${rowIndex}`}
+        key={result.item.id}
+        role="option"
+        tabIndex={-1}
+        aria-selected={active}
+        className={cn(rowClassName, active && 'bg-bg-200 before:opacity-100')}
+        onMouseEnter={() => setActiveIndex(rowIndex)}
+        onClick={() => previewLiterature(result)}
+      >
+        <span
+          data-testid="global-search-literature-icon"
+          className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border-300/50 bg-bg-200 text-primary"
+          aria-hidden="true"
+        >
+          <BookOpenText className="size-5" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-foreground">{title}</span>
+          <span className="block truncate text-xs text-muted-foreground">
+            {literatureDescription(result.item.item)}
+          </span>
+        </span>
+        {active ? (
+          <TooltipProvider delayDuration={800}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  tabIndex={-1}
+                  className="cursor-pointer"
+                  aria-label={t('Open {{name}}', { name: title })}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    previewLiterature(result)
+                  }}
+                >
+                  <ArrowUpRight className="size-4" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('Open {{name}}', { name: title })}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         ) : null}
       </div>
     )
@@ -878,7 +1050,7 @@ export const GlobalSearchDialog = ({
                       {displayedArtifacts.map((artifact) =>
                         renderArtifactRow(artifact, nextIndex())
                       )}
-                      {isSearchPending ? (
+                      {artifactSearchPending ? (
                         <p
                           role="status"
                           className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground"
@@ -926,6 +1098,31 @@ export const GlobalSearchDialog = ({
                       ) : null}
                     </section>
                   ) : null}
+                  {literature.items.length > 0 ||
+                  literature.status === 'loading' ||
+                  literature.status === 'error' ? (
+                    <section role="group" aria-label={t('Library')}>
+                      <h2 className={sectionTitleClassName}>{t('Library')}</h2>
+                      {literature.items.map((result) => renderLiteratureRow(result, nextIndex()))}
+                      {literature.status === 'loading' ? (
+                        <p
+                          role="status"
+                          className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground"
+                        >
+                          <LoaderCircle
+                            className="size-3.5 animate-spin motion-reduce:animate-none"
+                            aria-hidden="true"
+                          />
+                          {t('Searching…')}
+                        </p>
+                      ) : null}
+                      {literature.status === 'error' ? (
+                        <p role="alert" className="px-4 py-3 text-sm text-muted-foreground">
+                          {t('Literature could not be loaded.')}
+                        </p>
+                      ) : null}
+                    </section>
+                  ) : null}
                   {!isSearchPending && sessionGroups?.primary.length ? (
                     <section role="group" aria-label={t('Sessions')}>
                       <h2 className={sectionTitleClassName}>{t('Sessions')}</h2>
@@ -964,12 +1161,15 @@ export const GlobalSearchDialog = ({
                     </section>
                   ) : null}
                   {displayedArtifacts.length === 0 &&
+                  literature.items.length === 0 &&
                   !sessionGroups?.primary.length &&
                   otherRows.length === 0 &&
                   artifactStatus !== 'loading' &&
+                  literature.status !== 'loading' &&
+                  literature.status !== 'error' &&
                   !artifactError ? (
                     <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-                      {t('No sessions or artifacts match “{{query}}”.', { query })}
+                      {t('No results match “{{query}}”.', { query })}
                     </p>
                   ) : null}
                 </>

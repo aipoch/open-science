@@ -114,7 +114,8 @@ const useAcpRuntime = (): {
     turnIntent?: AcpPromptRequest['turnIntent'],
     memoryEnabled?: boolean,
     referencedSessions?: AcpPromptRequest['referencedSessions'],
-    currentImages?: AcpPromptRequest['currentImages']
+    currentImages?: AcpPromptRequest['currentImages'],
+    parts?: AcpPromptRequest['parts']
   ) => Promise<AcpRuntimeState>
   respondToPermission: (
     requestId: string,
@@ -465,7 +466,8 @@ const useAcpRuntime = (): {
       turnIntent?: AcpPromptRequest['turnIntent'],
       memoryEnabled = true,
       referencedSessions?: AcpPromptRequest['referencedSessions'],
-      currentImages?: AcpPromptRequest['currentImages']
+      currentImages?: AcpPromptRequest['currentImages'],
+      parts?: AcpPromptRequest['parts']
     ) =>
       runSendPromptAction(() =>
         window.api.acp.sendPrompt({
@@ -483,6 +485,7 @@ const useAcpRuntime = (): {
           ...(historyAttachments && historyAttachments.length > 0 ? { historyAttachments } : {}),
           ...(historyImages && historyImages.length > 0 ? { historyImages } : {}),
           ...(currentImages && currentImages.length > 0 ? { currentImages } : {}),
+          ...(parts && parts.length > 0 ? { parts } : {}),
           ...(resumeFallback ? { resumeFallback } : {}),
           ...(provenanceContext ? { provenanceContext } : {}),
           ...(contextReset ? { contextReset: true } : {}),

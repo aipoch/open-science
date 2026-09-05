@@ -6,6 +6,7 @@
 import { AlertDialog } from 'radix-ui'
 import {
   ChevronDown,
+  BookOpenText,
   GripVertical,
   LockKeyhole,
   Pencil,
@@ -35,6 +36,8 @@ import {
   type TagResourceType,
   type TagView
 } from '../../../../shared/tags'
+import type { LiteratureItemView } from '../../../../shared/literature'
+import type { ArtifactLiteratureReference } from '../../../../shared/artifact-literature'
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
@@ -55,11 +58,13 @@ import { ConnectorsNavIcon } from './connector-icons'
 import { SettingsIconAction } from './SettingsLayout'
 import { TAG_COLORS, TAG_ICONS, tagPresentation } from './tag-presentation'
 import { TagBadge } from './tag-visuals'
+import { ArtifactLiteratureDetailDialog } from '../workspace/ArtifactLiteratureDetailDialog'
 
 type TagResourceRow = TagResourceRef & {
   title: string
   subtitle?: string
   accessibleTitle?: string
+  literatureReference?: ArtifactLiteratureReference
 }
 
 type TagDraft = { name: string; iconKey: TagIconKey; colorKey: TagColorKey }
@@ -78,6 +83,19 @@ type TagPointerDrag = {
 }
 const EMPTY_DRAFT: TagDraft = { name: '', iconKey: 'tag', colorKey: 'blue' }
 
+const literatureResourceRow = (item: LiteratureItemView): TagResourceRow => ({
+  resourceType: 'literature.item',
+  resourceId: item.id,
+  title: item.item.title,
+  subtitle:
+    [item.item.issuedYear, item.item.containerTitle].filter(Boolean).join(' · ') || undefined,
+  literatureReference: {
+    itemId: item.id,
+    metadataRevision: item.metadataRevision,
+    item: item.item
+  }
+})
+
 const RequiredMark = (): React.JSX.Element => (
   <span aria-hidden="true" className="ml-0.5 text-destructive">
     *
@@ -91,6 +109,7 @@ const resourceTypeLabel = (
   if (value === 'all') return t('All resources')
   if (value === 'catalog.skill') return t('Skills')
   if (value === 'catalog.connector') return t('Connectors')
+  if (value === 'literature.item') return t('References')
   return t('Specialists')
 }
 
@@ -290,12 +309,65 @@ const TagsList = ({
   const [reorderAnnouncement, setReorderAnnouncement] = useState('')
   const [draggedTagId, setDraggedTagId] = useState<string>()
   const [tagDropTarget, setTagDropTarget] = useState<TagDropTarget>()
+  const [selectedLiteratureReference, setSelectedLiteratureReference] =
+    useState<ArtifactLiteratureReference>()
+  const [literatureResourceCache, setLiteratureResourceCache] = useState<{
+    key: string
+    rows: TagResourceRow[]
+  }>({ key: '', rows: [] })
   const tagPointerDragRef = useRef<TagPointerDrag | undefined>(undefined)
+  const currentSelectedId = tags.some((tag) => tag.id === selectedId) ? selectedId : tags[0]?.id
+  const selectedTag = tags.find((tag) => tag.id === currentSelectedId)
+  const selectedAssignments = assignments.filter(
+    (assignment) => assignment.tagId === currentSelectedId
+  )
+  const literatureResourceIdsKey = assignments
+    .filter((assignment) => assignment.resourceType === 'literature.item')
+    .map((assignment) => assignment.resourceId)
+    .filter((resourceId, index, resourceIds) => resourceIds.indexOf(resourceId) === index)
+    .sort()
+    .join('\n')
+  const literatureResources = useMemo(
+    () =>
+      literatureResourceCache.key === literatureResourceIdsKey ? literatureResourceCache.rows : [],
+    [literatureResourceCache, literatureResourceIdsKey]
+  )
 
   useEffect(() => {
     if (status === 'idle') void loadTags()
     void Promise.all([loadSkills(), loadConnectors(), loadSpecialists()])
   }, [loadConnectors, loadSkills, loadSpecialists, loadTags, status])
+
+  useEffect(() => {
+    let active = true
+    if (!literatureResourceIdsKey || !window.api?.literature) {
+      return () => {
+        active = false
+      }
+    }
+    void Promise.all(
+      literatureResourceIdsKey
+        .split('\n')
+        .map((resourceId) => window.api.literature.get(resourceId))
+    ).then(
+      (items) => {
+        if (!active) return
+        setLiteratureResourceCache({
+          key: literatureResourceIdsKey,
+          rows: items.flatMap((item): TagResourceRow[] => {
+            if (!item) return []
+            return [literatureResourceRow(item)]
+          })
+        })
+      },
+      () => {
+        if (active) setLiteratureResourceCache({ key: literatureResourceIdsKey, rows: [] })
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [literatureResourceIdsKey])
 
   useLayoutEffect(() => {
     if (resourceListRef.current) resourceListRef.current.scrollTop = scrollTop
@@ -336,25 +408,20 @@ const TagsList = ({
           resourceId: specialist.id,
           title: specialist.displayName ?? specialist.name,
           subtitle: specialist.description.trim() || undefined
-        }))
+        })),
+      ...literatureResources
     ],
-    [connectors, customServers, skills, specialistItems]
+    [connectors, customServers, literatureResources, skills, specialistItems]
   )
   const resourcesByKey = new Map(
     resources.map((resource) => [`${resource.resourceType}:${resource.resourceId}`, resource])
   )
-  const currentSelectedId = tags.some((tag) => tag.id === selectedId) ? selectedId : tags[0]?.id
-  const selectedTag = tags.find((tag) => tag.id === currentSelectedId)
-
   useEffect(() => {
     if (!currentSelectedId || selectedId === currentSelectedId) return
     setSelectedId(currentSelectedId)
     onSelectedTagChange?.(currentSelectedId)
   }, [currentSelectedId, onSelectedTagChange, selectedId, setSelectedId])
 
-  const selectedAssignments = assignments.filter(
-    (assignment) => assignment.tagId === currentSelectedId
-  )
   const counts = new Map(tags.map((tag) => [tag.id, 0]))
   for (const assignment of assignments) {
     if (resourcesByKey.has(`${assignment.resourceType}:${assignment.resourceId}`)) {
@@ -369,7 +436,8 @@ const TagsList = ({
   const resourceTypes: readonly TagResourceType[] = [
     'catalog.skill',
     'catalog.connector',
-    'catalog.specialist'
+    'catalog.specialist',
+    'literature.item'
   ]
   const typeCounts = new Map(
     resourceTypes.map((resourceType) => [
@@ -704,6 +772,9 @@ const TagsList = ({
                     <SelectItem value="catalog.specialist">
                       {t('Specialists')} ({typeCounts.get('catalog.specialist') ?? 0})
                     </SelectItem>
+                    <SelectItem value="literature.item">
+                      {t('References')} ({typeCounts.get('literature.item') ?? 0})
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 <div className="relative min-w-40 flex-1">
@@ -735,7 +806,9 @@ const TagsList = ({
                         ? ScrollText
                         : resourceType === 'catalog.connector'
                           ? ConnectorsNavIcon
-                          : Users
+                          : resourceType === 'literature.item'
+                            ? BookOpenText
+                            : Users
                     return (
                       <section key={resourceType} className="py-3 first:pt-0 last:pb-0">
                         <button
@@ -775,7 +848,13 @@ const TagsList = ({
                                     type="button"
                                     data-slot="tag-resource-row"
                                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-3 text-left hover:text-primary"
-                                    onClick={() => onOpenResource(resource)}
+                                    onClick={() => {
+                                      if (resource.literatureReference) {
+                                        setSelectedLiteratureReference(resource.literatureReference)
+                                      } else {
+                                        onOpenResource(resource)
+                                      }
+                                    }}
                                   >
                                     <span className="min-w-0 flex-1">
                                       <span className="block truncate text-sm">
@@ -877,6 +956,12 @@ const TagsList = ({
           </AlertDialog.Content>
         </AlertDialog.Portal>
       </AlertDialog.Root>
+      <ArtifactLiteratureDetailDialog
+        reference={selectedLiteratureReference}
+        onOpenChange={(open) => {
+          if (!open) setSelectedLiteratureReference(undefined)
+        }}
+      />
     </div>
   )
 }

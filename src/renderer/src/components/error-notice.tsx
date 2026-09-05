@@ -4,7 +4,7 @@ import { FlaskLogo } from '@/components/flask-logo'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
-// Generic error notice column: the brand mark is fixed, everything else is data-driven. Each
+// Generic error notice column: the brand mark is optional, everything else is data-driven. Each
 // section renders only when its prop is present, so callers compose anything from a bare title to
 // a full troubleshooting card. All copy arrives as final display strings — callers translate.
 
@@ -19,6 +19,7 @@ type ErrorNoticeButton = {
 }
 
 type ErrorNoticeProps = {
+  showBrand?: boolean
   icon?: LucideIcon
   tone?: ErrorNoticeTone
   title?: string
@@ -62,6 +63,7 @@ const NoticeButton = ({
 )
 
 const ErrorNotice = ({
+  showBrand = true,
   icon: Icon,
   tone,
   title,
@@ -74,7 +76,7 @@ const ErrorNotice = ({
 }: ErrorNoticeProps): React.JSX.Element => {
   return (
     <section className="flex w-full min-w-0 max-w-md flex-col gap-4 text-left">
-      <FlaskLogo className="mb-4 size-18 self-center text-text-300" />
+      {showBrand ? <FlaskLogo className="mb-4 size-18 self-center text-text-300" /> : null}
 
       {title !== undefined || description !== undefined ? (
         <div className="flex min-w-0 items-start gap-3">

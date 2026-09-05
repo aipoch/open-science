@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils'
 import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
 import {
   describePermissionRequest,
+  getLiteratureLibraryRequestAction,
   getNotebookNetworkApproval,
   isArtifactWriteRequest,
   isLiteratureReadRequest,
@@ -44,7 +45,10 @@ import { SpecialistSwitchDetail } from './SpecialistSwitchDetail'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 import { SkillDocumentSheet } from './WorkspaceSkillLoadRow'
-import { buildLiteratureToolSummary } from './literature-tool-presentation'
+import {
+  buildLiteratureLibraryToolSummary,
+  buildLiteratureToolSummary
+} from './literature-tool-presentation'
 import { getSkillLoadPermissionSkillName } from './workspace-skill-load'
 import { useSkillDocument } from './use-skill-document'
 
@@ -763,9 +767,12 @@ const PermissionApprovalCard = ({
   // document (managed catalog first, then the connector-aware main resolver) and falls back to the
   // raw JSON input when no source provides the name.
   const skillLoadName = getSkillLoadPermissionSkillName(request)
+  const libraryAction = getLiteratureLibraryRequestAction(request)
   const literatureSummary = isLiteratureReadRequest(request)
     ? buildLiteratureToolSummary(request.rawInput)
-    : undefined
+    : libraryAction
+      ? buildLiteratureLibraryToolSummary(libraryAction, request.rawInput)
+      : undefined
   const notebookSummary = isMcpPermissionRequest(request)
     ? buildNotebookToolSummary(request.mcpIdentity, request.rawInput, undefined, t, true)
     : undefined

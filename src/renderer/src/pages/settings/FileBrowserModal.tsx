@@ -25,7 +25,7 @@ import {
   RefreshCw,
   X
 } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'

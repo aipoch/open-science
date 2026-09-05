@@ -10,10 +10,13 @@ import { useTranslation } from 'react-i18next'
 
 import {
   pendingPdfContextBindingId,
+  pendingPdfContextSelections,
+  createPendingPdfContext,
   usePreviewWorkbenchStore,
   type PreviewFileItem
 } from '@/stores/preview-workbench-store'
 import { useSessionStore } from '@/stores/session-store'
+import { parseLiteratureAttachmentVersionReference } from '../../../../shared/literature'
 import { parseNotebookInputPreviewKey } from '../../../../shared/notebook'
 import {
   MAX_SESSION_PDF_CONTEXTS,
@@ -27,7 +30,15 @@ export type PdfContextTarget = SessionPdfContextSource
 
 // A managed PDF is linkable once it has immutable Version identity; local files never are.
 export const resolvePdfContextTarget = (item: PreviewFileItem): PdfContextTarget | undefined => {
-  if (item.format !== 'pdf' || item.source === 'local') return undefined
+  if (item.format !== 'pdf' || item.source === 'local') {
+    return undefined
+  }
+  if (item.source === 'literature') {
+    const versionId = parseLiteratureAttachmentVersionReference(item.path)
+    return versionId
+      ? { sourceKind: 'literature-attachment-version', sourceVersionId: versionId }
+      : undefined
+  }
   if (item.source === 'notebook-input') {
     try {
       const identity = parseNotebookInputPreviewKey(item.path)
@@ -119,20 +130,24 @@ export const usePdfContextAction = (
       )
     : undefined
   const isCurrentPdfContext = Boolean(currentBinding)
-  const isPendingPdfContext = Boolean(
-    !activeSession &&
-    ((stagedPdfAttachmentId &&
-      pendingPdfContextSelection?.kind === 'staged-upload' &&
-      stagedPdfAttachmentId === pendingPdfContextSelection.attachmentId) ||
-      (pdfContextTarget &&
-        pendingPdfContextSelection?.kind === 'version' &&
-        pdfContextTarget.sourceKind === pendingPdfContextSelection.sourceKind &&
-        pdfContextTarget.sourceVersionId === pendingPdfContextSelection.sourceVersionId))
-  )
+  const pendingSelections = pendingPdfContextSelections(pendingPdfContextSelection)
+  const pendingSelection = !activeSession
+    ? pendingSelections.find(
+        (selection) =>
+          (stagedPdfAttachmentId &&
+            selection.kind === 'staged-upload' &&
+            stagedPdfAttachmentId === selection.attachmentId) ||
+          (pdfContextTarget &&
+            selection.kind === 'version' &&
+            pdfContextTarget.sourceKind === selection.sourceKind &&
+            pdfContextTarget.sourceVersionId === selection.sourceVersionId)
+      )
+    : undefined
+  const isPendingPdfContext = Boolean(pendingSelection)
   const readingContextBindingId = isCurrentPdfContext
     ? currentBinding?.bindingId
-    : isPendingPdfContext && pendingPdfContextSelection
-      ? pendingPdfContextBindingId(pendingPdfContextSelection)
+    : pendingSelection
+      ? pendingPdfContextBindingId(pendingSelection)
       : undefined
 
   const updatePdfContext = async (): Promise<void> => {
@@ -173,16 +188,19 @@ export const usePdfContextAction = (
 
   const updatePendingPdfContext = (): void => {
     if (!projectId || activeSession || (!stagedAttachmentInDraft && !pdfContextTarget)) return
-    if (isPendingPdfContext && pendingPdfContextSelection) {
+    if (pendingSelection) {
       usePreviewWorkbenchStore
         .getState()
-        .clearPdfReadingPosition(pendingPdfContextBindingId(pendingPdfContextSelection))
+        .clearPdfReadingPosition(pendingPdfContextBindingId(pendingSelection))
+      usePreviewWorkbenchStore.getState().clearPendingPdfContext(projectId, pendingSelection)
+      return
     }
+    if (pendingSelections.length >= MAX_SESSION_PDF_CONTEXTS) return
     usePreviewWorkbenchStore.getState().setPendingPdfContext(
       projectId,
-      isPendingPdfContext
-        ? undefined
-        : stagedPdfAttachmentId
+      createPendingPdfContext([
+        ...pendingSelections,
+        stagedPdfAttachmentId
           ? {
               kind: 'staged-upload',
               attachmentId: stagedPdfAttachmentId,
@@ -195,6 +213,7 @@ export const usePdfContextAction = (
               sourceVersionId: pdfContextTarget!.sourceVersionId,
               previewItemId: item!.id
             }
+      ])
     )
   }
 
@@ -225,6 +244,7 @@ export const usePdfContextAction = (
         label: t(isPendingPdfContext ? 'Remove PDF from context' : 'Read with agent'),
         active: isPendingPdfContext,
         pending: false,
+        disabled: !isPendingPdfContext && pendingSelections.length >= MAX_SESSION_PDF_CONTEXTS,
         run: () => {
           updatePendingPdfContext()
           if (!isPendingPdfContext) requestComposerFocus()

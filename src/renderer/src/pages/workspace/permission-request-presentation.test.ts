@@ -199,6 +199,87 @@ describe('describePermissionRequest', () => {
     ).toMatchObject({ actionTitle: 'Read linked PDF?', categoryLabel: 'Reading' })
   })
 
+  it('describes Library search and Inbox save without exposing transport identities', () => {
+    expect(
+      describePermissionRequest(
+        request({
+          isMcp: true,
+          mcpIdentity: 'open-science-library/search_library',
+          rawInput: { query: 'corrective retrieval' }
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Search literature library?',
+      categoryLabel: 'Literature library',
+      hideToolIdentity: true
+    })
+    expect(
+      describePermissionRequest(
+        request({
+          isMcp: true,
+          mcpIdentity: 'open-science-library/read_library_abstract',
+          rawInput: { itemId: 'item-1' }
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Read literature abstract?',
+      categoryLabel: 'Literature library',
+      hideToolIdentity: true
+    })
+    expect(
+      describePermissionRequest(
+        request({
+          isMcp: true,
+          mcpIdentity: 'open-science-library/read_library_pdf',
+          rawInput: { itemId: 'item-1', query: 'primary outcome' }
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Read literature PDF evidence?',
+      categoryLabel: 'Literature library',
+      hideToolIdentity: true
+    })
+    expect(
+      describePermissionRequest(
+        request({
+          isMcp: true,
+          mcpIdentity: 'open-science-library/format_citation_document',
+          rawInput: { sourceFile: 'review.docx' }
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Format citation document?',
+      categoryLabel: 'Literature library',
+      hideToolIdentity: true
+    })
+    expect(
+      describePermissionRequest(
+        request({
+          isMcp: true,
+          mcpIdentity: 'open-science-library/prepare_latex_bundle',
+          rawInput: { sourceFile: 'review.tex' }
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Prepare LaTeX bundle?',
+      categoryLabel: 'Literature library',
+      hideToolIdentity: true
+    })
+    expect(
+      describePermissionRequest(
+        request({
+          isMcp: true,
+          mcpIdentity: 'open-science-library/save_to_inbox',
+          rawInput: { candidates: [{ item: { title: 'Paper A' } }] }
+        })
+      )
+    ).toMatchObject({
+      actionTitle: 'Save to Literature Inbox?',
+      categoryLabel: 'Literature library',
+      hideToolIdentity: true
+    })
+  })
+
   it('distinguishes permission to create and decide Plans from approval of a specific Plan', () => {
     expect(
       describePermissionRequest(

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { fireEvent, screen } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -43,6 +44,33 @@ afterEach(() => {
 })
 
 describe('CredentialsPanel', () => {
+  it('opens Unpaywall from Credentials and edits the same shared contact email', async () => {
+    const onNavigate = vi.fn()
+    const save = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      ncbi: { hasApiKey: true, contactEmail: 'research@lab.org' },
+      setNcbiCredentials: save
+    })
+    const props = { onNavigate, onOpenConnector: vi.fn(), onOpenProvider: vi.fn() }
+    await act(async () => root.render(<CredentialsPanel {...props} view={{ kind: 'list' }} />))
+    const row = screen.getByText('Unpaywall').parentElement?.parentElement
+    const manage = row?.querySelector('button')
+    expect(manage).not.toBeNull()
+    act(() => manage?.click())
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'service', serviceId: 'unpaywall' })
+    await act(async () =>
+      root.render(
+        <CredentialsPanel {...props} view={{ kind: 'service', serviceId: 'unpaywall' }} />
+      )
+    )
+    expect(screen.getByLabelText('Contact email')).toHaveProperty('value', 'research@lab.org')
+    fireEvent.change(screen.getByLabelText('Contact email'), {
+      target: { value: 'updated@lab.org' }
+    })
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save' })))
+    expect(save).toHaveBeenCalledWith({ contactEmail: 'updated@lab.org' })
+    expect(onNavigate).toHaveBeenLastCalledWith({ kind: 'list' })
+  })
   it('lists device credentials and opens their shared credential editor', async () => {
     const onNavigate = vi.fn()
     useSettingsStore.setState({

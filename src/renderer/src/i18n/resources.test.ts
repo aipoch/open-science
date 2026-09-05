@@ -5103,6 +5103,10 @@ const NOT_TRANSLATABLE = new Set([
   'Remote.It',
   'Discord',
   'GitHub',
+  'PubMed',
+  'Crossref',
+  // A literal DOI example; translating its suffix would change the identifier.
+  '10.1000/example',
   'SKILL.md',
   'claude setup-token',
   'argocd',

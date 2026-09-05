@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   createArtifactChip,
+  createLiteratureChip,
+  createLiteratureScopeChip,
   createSessionChip,
   createSkillChip,
   type ComposerNode
@@ -151,9 +153,13 @@ export const useMentionTrigger = ({
           ? createSkillChip(node)
           : node.type === 'artifact'
             ? createArtifactChip(node)
-            : node.type === 'session'
-              ? createSessionChip(node)
-              : document.createTextNode(node.text)
+            : node.type === 'literature'
+              ? createLiteratureChip(node)
+              : node.type === 'literature-scope'
+                ? createLiteratureScopeChip(node)
+                : node.type === 'session'
+                  ? createSessionChip(node)
+                  : document.createTextNode(node.text)
       range.insertNode(inserted)
       const after = document.createRange()
       after.setStartAfter(inserted)

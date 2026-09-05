@@ -26,7 +26,7 @@ import {
   X,
   Zap
 } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import {
   forwardRef,
@@ -864,7 +864,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               ? t('GitHub')
               : credentialsView.serviceId === 'openalex'
                 ? t('OpenAlex')
-                : t('Literature access')
+                : credentialsView.serviceId === 'unpaywall'
+                  ? t('Unpaywall')
+                  : t('Literature access')
       return {
         rootLabelKey: 'Credentials',
         rootTo: { panel: 'credentials', view: { kind: 'list' } },
@@ -1483,6 +1485,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                               ? { kind: 'edit', id: reference.resourceId }
                               : { kind: 'detail', id: reference.resourceId }
                           })
+                          return
+                        }
+                        if (reference.resourceType === 'literature.item') {
+                          useNavigationStore
+                            .getState()
+                            .openLiteratureItem(reference.resourceId, 'user')
+                          onClose()
                           return
                         }
                         const specialist = specialistItems.find(

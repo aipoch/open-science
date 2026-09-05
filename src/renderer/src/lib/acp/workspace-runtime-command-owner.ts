@@ -237,6 +237,7 @@ type PromptDispatch = {
   forcedSkillIds?: string[]
   referencedArtifacts?: FileReference[]
   referencedSessions?: SessionReference[]
+  parts?: MessagePart[]
   replay?: HistoryReplayContext & {
     resumeFallback?: HistoryReplayContext
     contextReset?: boolean
@@ -283,11 +284,12 @@ const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatc
   const referencedSessions = request.referencedSessions?.length
     ? request.referencedSessions
     : undefined
-  const result = currentImages?.length
-    ? runtime.sendPrompt(...args, referencedSessions, currentImages)
-    : referencedSessions
-      ? runtime.sendPrompt(...args, referencedSessions)
-      : runtime.sendPrompt(...args)
+  const result =
+    currentImages?.length || request.parts?.length
+      ? runtime.sendPrompt(...args, referencedSessions, currentImages, request.parts)
+      : referencedSessions
+        ? runtime.sendPrompt(...args, referencedSessions)
+        : runtime.sendPrompt(...args)
   void result
     .then(() => request.accepted?.())
     .catch((error) => {
@@ -632,6 +634,7 @@ const startPendingPrompt = (
       forcedSkillIds: request.forcedSkillIds,
       referencedArtifacts: withPdf(request.projectId, request.referencedArtifacts, pdfContext),
       referencedSessions: collectSessionReferences(request.parts),
+      parts: request.parts,
       replay: { ...request.replay, contextReset: Boolean(request.contextReset) },
       turnIntent: request.turnIntent,
       accepted: () =>
@@ -1049,6 +1052,7 @@ const sendWorkspaceMessage = async (
         forcedSkillIds: input.forcedSkillIds,
         referencedArtifacts: withPdf(projectId, input.referencedArtifacts, pdfContext),
         referencedSessions: collectSessionReferences(input.parts),
+        parts: input.parts,
         replay: promptMedia
           ? { ...replay, historyAttachments: promptMedia.historyAttachments }
           : replay,

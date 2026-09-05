@@ -19,6 +19,8 @@ import {
   type ChatSession
 } from '../../stores/session-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import { useNavigationStore, type PdfReadingDocument } from '../../stores/navigation-store'
+import { useProjectStore } from '../../stores/project-store'
 import {
   flushPreviewPersistence,
   toPersistedPreviewState,
@@ -690,6 +692,69 @@ describe('usePreviewPersistence per-project save/restore', () => {
     container.remove()
     vi.restoreAllMocks()
   })
+
+  it.each([1, 2, 3])(
+    'keeps %i Library Reading PDFs when Workspace hydrates older preview tabs',
+    async (count) => {
+      const projectId = `reading-hydration-${count}`
+      useProjectStore.setState({
+        projects: [
+          {
+            id: projectId,
+            name: 'Reading',
+            description: '',
+            isExample: false,
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+      const documents: PdfReadingDocument[] = Array.from({ length: count }, (_, index) => ({
+        item: {
+          id: `literature:version-${index}`,
+          type: 'file',
+          source: 'literature',
+          sessionId: 'literature-library',
+          path: `literature-attachment-version:version-${index}`,
+          title: `paper-${index}.pdf`,
+          name: `paper-${index}.pdf`,
+          format: 'pdf'
+        },
+        source: { sourceKind: 'literature-attachment-version', sourceVersionId: `version-${index}` }
+      }))
+      const oldState: PersistedPreviewState = {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'collapsed',
+        activeItemId: 'old-report',
+        items: [
+          {
+            id: 'old-report',
+            sessionId: 'old-session',
+            source: 'artifact',
+            title: 'old.docx',
+            name: 'old.docx',
+            path: '/old.docx',
+            format: 'word'
+          }
+        ]
+      }
+      const deferred = createDeferred<PreviewStateSnapshot | null>()
+      load.mockReturnValueOnce(deferred.promise)
+      expect(useNavigationStore.getState().startPdfReadingConversations(projectId, documents)).toBe(
+        true
+      )
+      await act(async () => root.render(<PersistenceHarness projectId={projectId} />))
+      await act(async () => deferred.resolve({ revision: 1, state: oldState }))
+      const preview = usePreviewWorkbenchStore.getState()
+      expect(preview.activeItemId).toBe(documents[0].item.id)
+      expect(preview.panelState).toBe('open')
+      expect(preview.items.map(({ id }) => id)).toEqual(
+        expect.arrayContaining(documents.map(({ item }) => item.id))
+      )
+      expect(preview.items.some(({ id }) => id === 'old-report')).toBe(true)
+      expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    }
+  )
 
   it('loads the incoming project and activates it from restored persistence', async () => {
     const persisted: PersistedPreviewState = {

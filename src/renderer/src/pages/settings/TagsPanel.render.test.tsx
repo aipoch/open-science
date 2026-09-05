@@ -67,9 +67,73 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   Reflect.deleteProperty(document, 'elementFromPoint')
+  Reflect.deleteProperty(window, 'api')
 })
 
 describe('TagsPanel', () => {
+  it('includes tagged Literature references in Settings Tags', async () => {
+    useTagStore.setState({
+      assignments: [
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'literature.item',
+          resourceId: 'literature-1',
+          createdAt: 1
+        }
+      ]
+    })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        literature: {
+          get: vi.fn().mockResolvedValue({
+            id: 'literature-1',
+            item: {
+              itemType: 'journalArticle',
+              title: 'Corrective Retrieval Augmented Generation',
+              abstract: '',
+              issuedText: '2024',
+              issuedYear: 2024,
+              containerTitle: 'arXiv',
+              shortTitle: '',
+              language: 'en',
+              rights: '',
+              url: '',
+              extra: '',
+              typeFields: {},
+              creators: [],
+              identifiers: []
+            },
+            attachments: [],
+            projectIds: [],
+            collectionIds: [],
+            metadataRevision: 1,
+            createdAt: 1,
+            updatedAt: 1
+          })
+        }
+      } as unknown as Window['api']
+    })
+    const onOpenResource = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={onOpenResource} />
+      )
+    })
+
+    expect(container.textContent).toContain('References (1)')
+    expect(container.textContent).toContain('Corrective Retrieval Augmented Generation')
+    const reference = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-slot="tag-resource-row"]')
+    ).find((button) => button.textContent?.includes('Corrective Retrieval'))
+    act(() => reference?.click())
+    expect(onOpenResource).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Corrective Retrieval Augmented Generation')
+    expect(document.body.textContent).toContain('Publication metadata')
+  })
+
   it('aggregates tagged resources and opens their owning Settings detail', async () => {
     const onOpenResource = vi.fn()
     await act(async () => {

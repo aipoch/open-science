@@ -271,7 +271,7 @@ describe('docToPdfContextSources', () => {
   it('collects only immutable PDF mentions, de-duplicated and capped at three', () => {
     const pdf = (
       id: string,
-      source: 'artifact' | 'upload' = 'artifact'
+      source: 'artifact' | 'upload' | 'literature' = 'artifact'
     ): ArtifactReference & { type: 'artifact' } => ({
       type: 'artifact' as const,
       id,
@@ -297,7 +297,7 @@ describe('docToPdfContextSources', () => {
             mimeType: 'text/plain',
             versionId: 'version-notes'
           },
-          pdf('three'),
+          pdf('three', 'literature'),
           pdf('four')
         ]
       })
@@ -313,9 +313,64 @@ describe('docToPdfContextSources', () => {
         sourceVersionId: 'version-two'
       },
       {
-        sourceKind: 'artifact-version',
+        sourceKind: 'literature-attachment-version',
         sourceFileId: 'file-three',
         sourceVersionId: 'version-three'
+      }
+    ])
+  })
+
+  it('uses only PDF-backed Literature references as Reading candidates', () => {
+    expect(
+      docToPdfContextSources({
+        nodes: [
+          {
+            type: 'literature',
+            itemId: 'item-with-pdf',
+            metadataRevision: 2,
+            item: {
+              itemType: 'journalArticle',
+              title: 'PDF backed',
+              abstract: '',
+              issuedText: '',
+              containerTitle: '',
+              shortTitle: '',
+              language: '',
+              rights: '',
+              url: '',
+              extra: '',
+              typeFields: {},
+              creators: [],
+              identifiers: []
+            },
+            attachmentVersionId: 'literature-version-1'
+          },
+          {
+            type: 'literature',
+            itemId: 'metadata-only',
+            metadataRevision: 1,
+            item: {
+              itemType: 'report',
+              title: 'Metadata only',
+              abstract: '',
+              issuedText: '',
+              containerTitle: '',
+              shortTitle: '',
+              language: '',
+              rights: '',
+              url: '',
+              extra: '',
+              typeFields: {},
+              creators: [],
+              identifiers: []
+            }
+          }
+        ]
+      })
+    ).toEqual([
+      {
+        sourceKind: 'literature-attachment-version',
+        sourceVersionId: 'literature-version-1'
       }
     ])
   })
@@ -603,6 +658,63 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     expect(domToDoc(root)).toEqual(doc)
   })
 
+  it('round-trips a Collection retrieval scope as a non-file chip', () => {
+    const doc: ComposerDoc = {
+      nodes: [
+        {
+          type: 'literature-scope',
+          scope: 'collection',
+          collectionId: 'collection-1',
+          name: 'TP53 evidence'
+        }
+      ]
+    }
+    const root = document.createElement('div')
+
+    applyDocToDom(root, doc)
+
+    const chip = root.querySelector('span[data-mention-type="literature-scope"]')
+    expect(chip?.getAttribute('data-mention-path')).toBeNull()
+    expect(chip?.textContent).toBe('@TP53 evidence')
+    expect(chip?.className).toContain('bg-accent')
+    expect(domToDoc(root)).toEqual(doc)
+  })
+
+  it('keeps a long Literature reference chip on one truncated line', () => {
+    const root = document.createElement('div')
+    applyDocToDom(root, {
+      nodes: [
+        {
+          type: 'literature',
+          itemId: 'literature-1',
+          metadataRevision: 1,
+          item: {
+            itemType: 'journalArticle',
+            title: 'A very long Literature reference title that must stay on one composer line',
+            abstract: '',
+            issuedText: '',
+            containerTitle: '',
+            shortTitle: '',
+            language: '',
+            rights: '',
+            url: '',
+            extra: '',
+            typeFields: {},
+            creators: [],
+            identifiers: []
+          }
+        }
+      ]
+    })
+
+    const chip = root.querySelector('[data-mention-type="literature"]')
+    const label = chip?.querySelector(':scope > span')
+    expect(label?.className).toContain('min-w-0')
+    expect(label?.className).toContain('truncate')
+    expect(label?.textContent).toContain('@A very long Literature reference title')
+    expect(chip?.getAttribute('title')).toContain('A very long Literature reference title')
+  })
+
   it('round-trips a future linked-folder chip without an absolute path', () => {
     const doc: ComposerDoc = {
       nodes: [
@@ -770,6 +882,23 @@ describe('docFromMessageParts', () => {
     ])
 
     expect(docToText(doc)).toBe('Run /forecast on @clinical trial03.pdf')
+  })
+
+  it('round-trips Library retrieval scopes without turning them into attachments', () => {
+    const doc = docFromMessageParts([
+      { type: 'literature-scope', scope: 'project' },
+      { type: 'text', text: ' and ' },
+      {
+        type: 'literature-scope',
+        scope: 'collection',
+        collectionId: 'collection-1',
+        name: 'TP53 evidence'
+      }
+    ])
+
+    expect(docToText(doc)).toBe('@Library and @TP53 evidence')
+    expect(docToMessageParts(doc)).toEqual(doc.nodes)
+    expect(docToPdfContextSources(doc)).toEqual([])
   })
 
   it('returns the empty doc for an empty parts list', () => {

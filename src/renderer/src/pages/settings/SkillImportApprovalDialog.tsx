@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { PackagePlus } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { Trans, useTranslation } from 'react-i18next'
 
 import type {

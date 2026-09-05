@@ -1345,4 +1345,36 @@ describe('ComposerEditor', () => {
 
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })
+
+  it('opens a Literature PDF mention without probing Upload or Artifact storage', () => {
+    renderEditor({
+      mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' },
+      doc: {
+        nodes: [
+          {
+            type: 'artifact',
+            id: 'literature-item-1',
+            name: 'Corrective Retrieval Augmented Generation',
+            path: 'literature-attachment-version:literature-version-1',
+            source: 'literature',
+            mimeType: 'application/pdf',
+            versionId: 'literature-version-1'
+          }
+        ]
+      }
+    })
+
+    const chip = editor().querySelector<HTMLElement>('[data-mention-source="literature"]')
+    act(() => chip?.click())
+
+    expect(window.api.uploads.readPreview).not.toHaveBeenCalled()
+    expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('literature-item-1')
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      sessionId: '__literature__',
+      source: 'literature',
+      path: 'literature-attachment-version:literature-version-1',
+      format: 'pdf'
+    })
+  })
 })

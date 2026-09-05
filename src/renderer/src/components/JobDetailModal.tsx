@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ArrowLeft, ExternalLink, ShieldAlert, TriangleAlert, X } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../shared/compute'

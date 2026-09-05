@@ -12,6 +12,9 @@ import {
 import type { CustomizePrefillIntent } from '@/stores/navigation-store'
 import {
   createInitialPreviewWorkbenchState,
+  createPendingPdfContext,
+  pendingPdfContextSelections,
+  type PendingPdfContextSelection,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 
@@ -709,6 +712,102 @@ describe('workspace composer controller', () => {
     ])
     expect(hook.result.current.view.errorDetail).toBe('claim failed')
     expect(uploadApi.abortTransfer).toHaveBeenCalledWith({ transferId: expect.any(String) })
+  })
+
+  it('previews and removes individual PDFs from a three-document draft and sends the remaining sources', () => {
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.activateProject('project')
+    const selections: PendingPdfContextSelection[] = [1, 2, 3].map((id) => ({
+      kind: 'version',
+      sourceKind: 'literature-attachment-version',
+      sourceVersionId: `version-${id}`,
+      previewItemId: `literature:version-${id}`
+    }))
+    for (const id of [1, 2, 3])
+      preview.upsertItem({
+        id: `literature:version-${id}`,
+        projectId: 'project',
+        sessionId: 'literature-library',
+        type: 'file',
+        source: 'literature',
+        title: `paper-${id}.pdf`,
+        name: `paper-${id}.pdf`,
+        format: 'pdf',
+        path: `literature-attachment-version:version-${id}`,
+        mimeType: 'application/pdf',
+        size: 100
+      })
+    preview.setPendingPdfContext('project', createPendingPdfContext(selections))
+    // Workspace hydration must not remove the file identities backing this Reading draft.
+    preview.activateProject('project', { items: [], panelState: 'collapsed' })
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    expect(hook.result.current.view.readingContext.bindings.map(({ name }) => name)).toEqual([
+      'paper-1.pdf',
+      'paper-2.pdf',
+      'paper-3.pdf'
+    ])
+    act(() =>
+      hook.result.current.actions.openReadingContext(
+        'version:literature-attachment-version:version-2'
+      )
+    )
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('literature:version-2')
+    act(() =>
+      hook.result.current.actions.unlinkReadingContext(
+        'version:literature-attachment-version:version-2'
+      )
+    )
+    expect(hook.result.current.view.readingContext.bindings.map(({ name }) => name)).toEqual([
+      'paper-1.pdf',
+      'paper-3.pdf'
+    ])
+    expect(
+      pendingPdfContextSelections(
+        usePreviewWorkbenchStore.getState().pendingPdfContextByProject.project
+      )
+    ).toHaveLength(2)
+    expect(hook.result.current.lifecycle.captureSend().pendingPdfContextVersions).toEqual([
+      { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' },
+      { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-3' }
+    ])
+    expect(
+      hook.result.current.lifecycle.captureSend(false).pendingPdfContextVersions
+    ).toBeUndefined()
+    act(() =>
+      hook.result.current.actions.changeDoc({
+        nodes: [
+          {
+            type: 'artifact',
+            id: 'literature:version-1',
+            name: 'paper-1.pdf',
+            source: 'literature',
+            path: 'literature-attachment-version:version-1',
+            mimeType: 'application/pdf',
+            versionId: 'version-1'
+          }
+        ]
+      })
+    )
+    expect(hook.result.current.lifecycle.captureSend().pendingPdfContextVersions).toHaveLength(2)
+    act(() => {
+      hook.result.current.actions.openReadingContext(
+        'version:literature-attachment-version:version-3'
+      )
+      usePreviewWorkbenchStore
+        .getState()
+        .setPdfReadingPosition('version:literature-attachment-version:version-3', {
+          pageNumber: 9,
+          pageCount: 12
+        })
+    })
+    expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
+      pendingPdfContextVersions: [
+        { sourceVersionId: 'version-3' },
+        { sourceVersionId: 'version-1' }
+      ],
+      pdfReadingPosition: { pageNumber: 9, pageCount: 12 }
+    })
   })
 
   it('captures the pending PDF viewport position on the first send', async () => {

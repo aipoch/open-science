@@ -1,4 +1,4 @@
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { ExternalLink, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'

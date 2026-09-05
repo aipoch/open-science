@@ -1,4 +1,4 @@
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { Check, RefreshCw, TriangleAlert } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'

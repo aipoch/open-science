@@ -35,7 +35,8 @@ import {
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import {
   usePreviewWorkbenchStore,
-  type PendingPdfContextSelection
+  pendingPdfContextSelections,
+  type PendingPdfContext
 } from '../../stores/preview-workbench-store'
 import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
@@ -96,18 +97,18 @@ export const revealLinkedPdfContext = (
 }
 export const clearLinkedPendingPdfContext = (
   projectId: string,
-  selection: PendingPdfContextSelection | undefined,
+  selection: PendingPdfContext | undefined,
   pdfContext: MessagePdfContextSnapshot
 ): void => {
-  if (!selection) return
-  const linked = pdfContext.bindings.some((binding) =>
-    selection.kind === 'staged-upload'
-      ? binding.sourceKind === 'upload-version' && binding.sourceFileId === selection.attachmentId
-      : binding.sourceKind === selection.sourceKind &&
-        binding.sourceVersionId === selection.sourceVersionId
-  )
-  if (!linked) return
-  usePreviewWorkbenchStore.getState().clearPendingPdfContext(projectId, selection)
+  for (const entry of pendingPdfContextSelections(selection)) {
+    const linked = pdfContext.bindings.some((binding) =>
+      entry.kind === 'staged-upload'
+        ? binding.sourceKind === 'upload-version' && binding.sourceFileId === entry.attachmentId
+        : binding.sourceKind === entry.sourceKind &&
+          binding.sourceVersionId === entry.sourceVersionId
+    )
+    if (linked) usePreviewWorkbenchStore.getState().clearPendingPdfContext(projectId, entry)
+  }
 }
 const setWorkspacePermissionProfile = async (
   runtime: WorkspacePermissionProfileRuntime,

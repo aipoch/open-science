@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { useNavigationStore } from '@/stores/navigation-store'
+import { useNavigationStore, type NavigationView } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 
@@ -28,7 +28,7 @@ const readDeepLinkParams = (search = window.location.search): DeepLinkParams => 
 }
 
 const replaceNavigationParams = (
-  view: 'home' | 'workspace',
+  view: NavigationView,
   projectId: string | undefined,
   sessionId: string | undefined
 ): void => {
