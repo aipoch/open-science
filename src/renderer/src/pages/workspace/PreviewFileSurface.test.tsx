@@ -399,7 +399,7 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(container.querySelector('[aria-label="Edit README.md"]')).not.toBeNull()
   })
 
-  it.each(['rejection', 'storage error'])(
+  it.each(['rejection', 'storage error', 'integrity error'])(
     'replays the same save after a committed response is lost via %s',
     async (failure) => {
       type Request = Parameters<typeof window.api.managedFileVersions.saveTextEdit>[0]
@@ -411,7 +411,11 @@ describe('PreviewFileSurface managed text versions', () => {
           if (failure === 'rejection') throw new Error('Response lost after commit')
           return {
             ok: false,
-            error: { code: 'STORAGE_UNAVAILABLE', message: 'Result unavailable' }
+            error: {
+              code:
+                failure === 'integrity error' ? 'CONTENT_INTEGRITY_FAILED' : 'STORAGE_UNAVAILABLE',
+              message: 'Result unavailable'
+            }
           }
         }
         return {
@@ -442,48 +446,58 @@ describe('PreviewFileSurface managed text versions', () => {
     }
   )
 
-  it('starts a fresh save after a terminal storage collision without changing the draft', async () => {
-    type Request = Parameters<typeof window.api.managedFileVersions.saveTextEdit>[0]
-    const version = { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 }
-    let failed: Request | undefined
-    const save = vi.fn<typeof window.api.managedFileVersions.saveTextEdit>(async (request) => {
-      if (!failed) {
-        failed = request
-        return {
-          ok: false,
-          error: { code: 'STORAGE_COLLISION', message: 'All destinations collided' }
+  it.each(['reported', 'response lost'])(
+    'starts a fresh save after a terminal storage collision: %s',
+    async (outcome) => {
+      type Request = Parameters<typeof window.api.managedFileVersions.saveTextEdit>[0]
+      const version = { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 }
+      let failed: Request | undefined
+      const save = vi.fn<typeof window.api.managedFileVersions.saveTextEdit>(async (request) => {
+        if (!failed) {
+          failed = request
+          if (outcome === 'response lost') throw new Error('Terminal collision response lost')
+          return {
+            ok: false,
+            error: { code: 'STORAGE_COLLISION', message: 'All destinations collided' }
+          }
         }
-      }
-      if (request.operationId === failed.operationId) {
-        return {
-          ok: false,
-          error: { code: 'CONTENT_INTEGRITY_FAILED', message: 'Operation failed recovery' }
+        if (request.operationId === failed.operationId) {
+          return {
+            ok: false,
+            error: { code: 'OPERATION_FAILED', message: 'Operation failed recovery' }
+          }
         }
+        return {
+          ok: true,
+          value: { kind: 'created', version, headVersionId: version.id, replayed: false }
+        }
+      })
+      window.api.managedFileVersions.saveTextEdit = save
+      await act(async () =>
+        root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      )
+      await click(container.querySelector('[aria-label="Edit README.md"]'))
+      await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Revised\n')
+      await click(container.querySelector('[aria-label="Save changes"]'))
+      expect(container.querySelector('[role="alert"]')).not.toBeNull()
+      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Revised\n')
+      await click(container.querySelector('[aria-label="Save changes"]'))
+      if (outcome === 'response lost') {
+        expect(save.mock.calls[1][0]).toEqual(save.mock.calls[0][0])
+        expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Revised\n')
+        await click(container.querySelector('[aria-label="Save changes"]'))
       }
-      return {
-        ok: true,
-        value: { kind: 'created', version, headVersionId: version.id, replayed: false }
-      }
-    })
-    window.api.managedFileVersions.saveTextEdit = save
-    await act(async () =>
-      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
-    )
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Revised\n')
-    await click(container.querySelector('[aria-label="Save changes"]'))
-    expect(container.querySelector('[role="alert"]')).not.toBeNull()
-    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Revised\n')
-    await click(container.querySelector('[aria-label="Save changes"]'))
-    expect(save).toHaveBeenCalledTimes(2)
-    expect(save.mock.calls[1][0].operationId).not.toBe(save.mock.calls[0][0].operationId)
-    expect(save.mock.calls[1][0]).toEqual({
-      ...save.mock.calls[0][0],
-      operationId: save.mock.calls[1][0].operationId
-    })
-    expect(container.querySelector('textarea')).toBeNull()
-    expect(container.querySelector('[role="alert"]')).toBeNull()
-  })
+      expect(save).toHaveBeenCalledTimes(outcome === 'response lost' ? 3 : 2)
+      const retry = save.mock.calls.at(-1)![0]
+      expect(retry.operationId).not.toBe(save.mock.calls[0][0].operationId)
+      expect(retry).toEqual({
+        ...save.mock.calls[0][0],
+        operationId: retry.operationId
+      })
+      expect(container.querySelector('textarea')).toBeNull()
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+    }
+  )
 
   it.each(['content', 'baseline', 'edit session'])(
     'starts a new save operation after the %s changes',

@@ -1201,8 +1201,9 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       if (saveGenerationRef.current !== saveGeneration) return
       setSaving(false)
       if (!result.ok) {
-        // Collision exhaustion permanently fails the journal entry, so retry with a new operation.
-        if (result.error.code === 'STORAGE_COLLISION') pendingSaveRef.current = undefined
+        // Only confirmed terminal failures permit a new operation; uncertain results must replay.
+        if (result.error.code === 'STORAGE_COLLISION' || result.error.code === 'OPERATION_FAILED')
+          pendingSaveRef.current = undefined
         setEditError(managedSaveErrorMessage(result.error.code, t))
         return
       }

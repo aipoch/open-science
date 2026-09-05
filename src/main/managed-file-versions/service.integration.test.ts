@@ -1586,10 +1586,48 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
 
     versionFileOperator.publishImmutable = publishImmutable
     await expect(service.saveTextEdit(request)).rejects.toMatchObject({
-      code: 'CONTENT_INTEGRITY_FAILED'
+      code: 'OPERATION_FAILED'
     })
     await expect(
       service.saveTextEdit({ ...request, operationId: 'fresh-operation-after-collision' })
+    ).resolves.toMatchObject({ kind: 'created', replayed: false, version: { versionNumber: 3 } })
+    expect(await client.uploadVersion.count()).toBe(3)
+  })
+
+  it('distinguishes a failed integrity operation from an uncertain save result', async () => {
+    const fixture = await createFixture('upload')
+    const request = {
+      source: 'upload' as const,
+      projectId: 'project-1',
+      fileId: fixture.fileId,
+      basedOnVersionId: fixture.versionIds[1],
+      expectedHeadVersionId: fixture.versionIds[1],
+      content: 'retry intact draft\n',
+      operationId: 'failed-integrity-operation'
+    }
+    const crashing = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      testFaultAt: 'after-file-ready'
+    })
+    await expect(crashing.saveTextEdit(request)).rejects.toThrow('simulated managed version crash')
+    const operation = await client.managedFileVersionWriteOperation.findUniqueOrThrow({
+      where: { operationId: request.operationId }
+    })
+    await writeFile(join(storageRoot, ...operation.contentStorageKey.split('/')), 'corrupt bytes')
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+    await expect(
+      client.managedFileVersionWriteOperation.findUniqueOrThrow({
+        where: { operationId: request.operationId }
+      })
+    ).resolves.toMatchObject({ state: 'failed', errorCode: 'CONTENT_INTEGRITY_FAILED' })
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({ code: 'OPERATION_FAILED' })
+    await expect(
+      service.saveTextEdit({ ...request, operationId: 'fresh-operation-after-integrity-failure' })
     ).resolves.toMatchObject({ kind: 'created', replayed: false, version: { versionNumber: 3 } })
     expect(await client.uploadVersion.count()).toBe(3)
   })
