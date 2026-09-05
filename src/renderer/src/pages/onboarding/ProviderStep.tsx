@@ -2,13 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import {
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle
-} from '@/components/ui/card'
+import { CardContent, CardDescription, CardFooter, CardHeader } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import type {
   UpsertProviderRequest,
@@ -395,7 +389,9 @@ const ProviderStep = ({
   return (
     <>
       <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
-        <CardTitle className="text-[15px] font-semibold">{t('Connect a model')}</CardTitle>
+        <h2 tabIndex={-1} className="text-[15px] font-semibold">
+          {t('Connect a model')}
+        </h2>
         <CardDescription className="text-xs leading-5">
           {t('Choose the provider Open Science should use for new research sessions.')}
         </CardDescription>

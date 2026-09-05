@@ -1,6 +1,6 @@
 // Remote file browser modal (compute-file-preview, issue 02 + issue 03).
 // Opened from the ComputePanel host card folder-icon button (and later from the Files panel Remote
-// dropdown, issue 05). Presents a listbox-style directory listing with navigation, a detail panel for
+// dropdown, issue 05). Presents a directory listing with navigation, a detail panel for
 // selected files, and a Go-to dropdown with Scratch / Home / Pin / bookmarks.
 //
 // Design decisions (from design.md):
@@ -35,6 +35,14 @@ import type { DirListing, RemoteDirEntry } from '../../../../shared/remote-fs'
 import type { ComputeAuthenticationErrorCode } from '../../../../shared/compute'
 import { resolveRemotePath, validateRemotePath } from '../../../../shared/remote-fs'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
@@ -577,7 +585,7 @@ export function FileBrowserModal({
     void navigate(resolved)
   }
 
-  const handleEntryDoubleClick = (entry: RemoteDirEntry): void => {
+  const handleOpenDirectory = (entry: RemoteDirEntry): void => {
     if (!entry.isDirectory) return
     const listing = browserState.kind === 'ok' ? browserState.listing : null
     const next = `${(listing?.resolvedPath ?? cwd).replace(/\/$/, '')}/${entry.name}`
@@ -678,9 +686,10 @@ export function FileBrowserModal({
                 key={h.providerId}
                 type="button"
                 onClick={() => handleHostSelect(h.providerId)}
+                aria-pressed={h.providerId === host?.providerId}
                 className={cn(
                   'flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors',
-                  h.providerId === activeProviderId
+                  h.providerId === host?.providerId
                     ? 'bg-primary text-primary-foreground'
                     : 'bg-muted text-muted-foreground hover:bg-muted/80'
                 )}
@@ -693,6 +702,13 @@ export function FileBrowserModal({
                   aria-hidden="true"
                 />
                 {h.displayName}
+                <span className="sr-only">
+                  {h.probeResult
+                    ? h.probeResult.ok
+                      ? t('Probe succeeded')
+                      : t('Probe failed')
+                    : t('Not probed yet')}
+                </span>
               </button>
             ))}
             <div className="flex-1" />
@@ -734,95 +750,70 @@ export function FileBrowserModal({
             </Button>
 
             {/* Go-to dropdown */}
-            <div className="relative">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="gap-1 text-xs"
-                onClick={() => setGotoOpen(!gotoOpen)}
-                aria-haspopup="listbox"
-                aria-expanded={gotoOpen}
+            <DropdownMenu open={gotoOpen} onOpenChange={setGotoOpen} modal={false}>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="ghost" size="sm" className="gap-1 text-xs">
+                  <MapPin className="size-3.5" aria-hidden="true" />
+                  {t('Go to')}
+                  <ChevronDown className="size-3.5 opacity-60" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                className="z-[80] min-w-[200px]"
+                aria-label={t('Go-to locations')}
               >
-                <MapPin className="size-3.5" />
-                {t('Go to')}
-                <ChevronDown className="size-3.5 opacity-60" />
-              </Button>
-              {gotoOpen && (
-                <div
-                  className="absolute left-0 top-full z-10 mt-1 min-w-[200px] rounded-lg border border-border bg-popover p-1 shadow-md"
-                  role="listbox"
-                  aria-label={t('Go-to locations')}
-                >
-                  {goToItems.map((item) => (
-                    <button
-                      key={item.path}
-                      type="button"
-                      role="option"
-                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent"
-                      onClick={() => {
-                        setGotoOpen(false)
-                        void navigate(item.path)
-                      }}
-                    >
-                      {item.icon}
-                      <span className="flex-1">{item.label}</span>
-                      <span className="truncate max-w-[100px] text-muted-foreground font-mono">
-                        {item.path}
-                      </span>
-                    </button>
-                  ))}
-                  {goToItems.length > 0 && <div className="my-1 border-t border-border" />}
-                  {bookmarksState.kind === 'loading' && (
-                    <p className={'px-2 py-1.5 text-xs text-muted-foreground'}>
-                      {t('Loading bookmarks...')}
-                    </p>
-                  )}
-                  {/* Pin current folder */}
-                  <button
-                    disabled={bookmarksState.kind === 'loading'}
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent"
-                    onClick={() => void handlePinCurrent()}
+                {goToItems.map((item) => (
+                  <DropdownMenuItem
+                    key={item.path}
+                    className="gap-2 text-xs"
+                    onSelect={() => void navigate(item.path)}
                   >
-                    <MapPin className="size-3.5 text-muted-foreground" />
-                    <span>{t('Pin current folder')}</span>
-                  </button>
-                  {/* Bookmarks */}
-                  {bookmarks.length > 0 && (
-                    <>
-                      <div className="my-1 border-t border-border" />
-                      <p className="px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                        {t('Bookmarks')}
-                      </p>
-                      {bookmarks.map((bm) => (
-                        <div key={bm} className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            className="flex flex-1 items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent"
-                            onClick={() => {
-                              setGotoOpen(false)
-                              void navigate(bm)
-                            }}
-                          >
-                            <Bookmark className="size-3.5 text-muted-foreground" />
-                            <span className="truncate max-w-[140px] font-mono">{bm}</span>
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={t('Remove bookmark {{path}}', { path: bm })}
-                            className="mr-1 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive"
-                            onClick={() => void handleRemoveBookmark(bm)}
-                          >
-                            <X className="size-3" />
-                          </button>
-                        </div>
-                      ))}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
+                    {item.icon}
+                    <span className="flex-1">{item.label}</span>
+                    <span className="truncate max-w-[100px] text-muted-foreground font-mono">
+                      {item.path}
+                    </span>
+                  </DropdownMenuItem>
+                ))}
+                {goToItems.length > 0 && <DropdownMenuSeparator />}
+                {bookmarksState.kind === 'loading' && (
+                  <DropdownMenuLabel>{t('Loading bookmarks...')}</DropdownMenuLabel>
+                )}
+                <DropdownMenuItem
+                  disabled={bookmarksState.kind === 'loading'}
+                  className="gap-2 text-xs"
+                  onSelect={() => void handlePinCurrent()}
+                >
+                  <MapPin className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                  {t('Pin current folder')}
+                </DropdownMenuItem>
+                {bookmarks.length > 0 && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>{t('Bookmarks')}</DropdownMenuLabel>
+                    {bookmarks.map((bm) => (
+                      <div key={bm} className="flex items-center gap-1">
+                        <DropdownMenuItem
+                          className="min-w-0 flex-1 gap-2 text-xs"
+                          onSelect={() => void navigate(bm)}
+                        >
+                          <Bookmark className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                          <span className="truncate max-w-[140px] font-mono">{bm}</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          aria-label={t('Remove bookmark {{path}}', { path: bm })}
+                          className="shrink-0 text-muted-foreground"
+                          onSelect={() => void handleRemoveBookmark(bm)}
+                        >
+                          <X className="size-3" aria-hidden="true" />
+                        </DropdownMenuItem>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             {/* Address bar */}
             <form onSubmit={handleAddressSubmit} className="flex flex-1 items-center">
@@ -936,7 +927,7 @@ export function FileBrowserModal({
 
               {/* Entry list */}
               {browserState.kind === 'ok' && (
-                <div role="listbox" aria-label={t('Directory contents')}>
+                <div>
                   {/* Header row */}
                   <div className="grid grid-cols-[1fr_80px_80px] border-b border-border bg-muted/30 px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
                     <span>{t('Name')}</span>
@@ -948,45 +939,55 @@ export function FileBrowserModal({
                       {t('Empty directory')}
                     </p>
                   )}
-                  {listing?.entries.map((entry) => (
-                    <button
-                      key={entry.name}
-                      type="button"
-                      role="option"
-                      aria-selected={selected?.entry.name === entry.name}
-                      className={cn(
-                        'grid w-full grid-cols-[1fr_80px_80px] items-center px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent',
-                        selected?.entry.name === entry.name ? 'bg-accent/80' : ''
-                      )}
-                      onClick={() => {
-                        if (browserState.kind !== 'ok') return
-                        setSelected({
-                          entry,
-                          providerId: browserState.providerId,
-                          resolvedDir: browserState.listing.resolvedPath
-                        })
-                      }}
-                      onDoubleClick={() => handleEntryDoubleClick(entry)}
-                    >
-                      <span className="flex items-center gap-1.5 truncate">
-                        {entry.isDirectory ? (
-                          <Folder className="size-3.5 shrink-0 text-sky-500" aria-hidden="true" />
-                        ) : (
-                          <File
-                            className="size-3.5 shrink-0 text-muted-foreground"
-                            aria-hidden="true"
-                          />
-                        )}
-                        <span className="truncate">{entry.name}</span>
-                      </span>
-                      <span className="text-right text-muted-foreground">
-                        {entry.isDirectory ? '—' : formatSize(entry.size)}
-                      </span>
-                      <span className="text-right text-muted-foreground">
-                        {relativeTime(entry.mtimeMs, t)}
-                      </span>
-                    </button>
-                  ))}
+                  <ul aria-label={t('Directory contents')}>
+                    {listing?.entries.map((entry) => (
+                      <li key={entry.name}>
+                        <button
+                          type="button"
+                          aria-pressed={
+                            entry.isDirectory ? undefined : selected?.entry.name === entry.name
+                          }
+                          className={cn(
+                            'grid w-full grid-cols-[1fr_80px_80px] items-center px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent',
+                            selected?.entry.name === entry.name ? 'bg-accent/80' : ''
+                          )}
+                          onClick={() => {
+                            if (browserState.kind !== 'ok') return
+                            if (entry.isDirectory) {
+                              handleOpenDirectory(entry)
+                              return
+                            }
+                            setSelected({
+                              entry,
+                              providerId: browserState.providerId,
+                              resolvedDir: browserState.listing.resolvedPath
+                            })
+                          }}
+                        >
+                          <span className="flex items-center gap-1.5 truncate">
+                            {entry.isDirectory ? (
+                              <Folder
+                                className="size-3.5 shrink-0 text-sky-500"
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <File
+                                className="size-3.5 shrink-0 text-muted-foreground"
+                                aria-hidden="true"
+                              />
+                            )}
+                            <span className="truncate">{entry.name}</span>
+                          </span>
+                          <span className="text-right text-muted-foreground">
+                            {entry.isDirectory ? '—' : formatSize(entry.size)}
+                          </span>
+                          <span className="text-right text-muted-foreground">
+                            {relativeTime(entry.mtimeMs, t)}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                   {listing?.truncated && (
                     <p className="border-t border-border px-3 py-2 text-center text-xs text-muted-foreground">
                       {t('Showing first 5,000 entries. Navigate into a subdirectory to see more.')}

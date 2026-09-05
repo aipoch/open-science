@@ -320,7 +320,9 @@ test('supports the core project journey with keyboard input only', async ({ app 
   if (
     !(await expectKeyboardOutcome(page, 'Send a message with Enter', async () => {
       await expect(
-        page.getByText('Summarize the deterministic fixture.', { exact: true })
+        page
+          .getByLabel('Conversation', { exact: true })
+          .getByText('Summarize the deterministic fixture.', { exact: true })
       ).toBeVisible()
     }))
   )
@@ -376,3 +378,72 @@ test('supports the core project journey with keyboard input only', async ({ app 
   }
   await expect(settingsTrigger).toBeFocused()
 })
+
+for (const width of [375, 767]) {
+  for (const theme of ['Light', 'Dark'] as const) {
+    test(`home has named project actions at ${width}px in ${theme}`, async ({ app }) => {
+      const page = await app.completeOnboarding()
+      await setTheme(page, theme)
+      await setViewport(page, width)
+      await waitForFiniteAnimations(page)
+      await scanAccessibility(page, 'Home')
+      const action = page.getByRole('button', { name: 'New project', exact: true }).first()
+      await expect(action).toBeVisible()
+      await action.click()
+      await expect(page.getByRole('dialog', { name: 'New project' })).toBeVisible()
+    })
+  }
+}
+
+for (const theme of ['Light', 'Dark'] as const) {
+  test(`reported text keeps sufficient contrast in ${theme}`, async ({ app }) => {
+    await app.completeOnboarding()
+    const page = await app.configureFakeAgent()
+    await setTheme(page, theme)
+    await createProject(page, `Contrast regression ${theme}`)
+    await page.evaluate(await readFile(AXE_PATH, 'utf8'))
+
+    const checkContrast = async (target: Locator, label: string): Promise<void> => {
+      await expect(target).toBeVisible()
+      await waitForFiniteAnimations(page)
+      const result = await target.evaluate(async (element) => {
+        const axe = (
+          globalThis as unknown as {
+            axe: { run: (context: Element, options: unknown) => Promise<AxeResults> }
+          }
+        ).axe
+        return axe.run(element, { runOnly: { type: 'rule', values: ['color-contrast'] } })
+      })
+      await test.info().attach(label, {
+        body: JSON.stringify({ violations: result.violations, incomplete: result.incomplete }),
+        contentType: 'application/json'
+      })
+      expect.soft(result.violations, label).toEqual([])
+      expect.soft(result.incomplete, `${label} must be measurable`).toEqual([])
+    }
+
+    for (const width of [1280, 767]) {
+      await setViewport(page, width)
+      await checkContrast(
+        page.getByText('Discover, share, and collaborate on research that matters', {
+          exact: true
+        }),
+        `Empty conversation ${width}px`
+      )
+      await checkContrast(
+        page
+          .getByRole('button', { name: 'Select model', exact: true })
+          .getByText('e2e-model', { exact: true }),
+        `Model ${width}px`
+      )
+    }
+    await page.getByRole('textbox', { name: 'Ask anything' }).fill('Request fixture permission.')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await page.getByRole('button', { name: 'Deny', exact: true }).click()
+    await expect(page.getByText('Fixture permission denied.', { exact: true })).toBeVisible()
+    await checkContrast(
+      page.getByText('Declined by you: tool', { exact: true }),
+      'Declined tool 767px'
+    )
+  })
+}

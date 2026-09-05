@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent } from '@testing-library/react'
+import { fireEvent, getByRole, waitFor } from '@testing-library/react'
+import axe from 'axe-core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost } from '../../../../shared/compute'
@@ -260,7 +261,7 @@ describe('FileBrowserModal', () => {
     })
 
     // Click on readme.txt to select it
-    const fileButton = Array.from(document.querySelectorAll('[role="option"]')).find((el) =>
+    const fileButton = Array.from(document.querySelectorAll('button')).find((el) =>
       el.textContent?.includes('readme.txt')
     ) as HTMLElement | undefined
     await act(async () => {
@@ -299,7 +300,7 @@ describe('FileBrowserModal', () => {
     })
 
     // Select readme.txt
-    const fileButton = Array.from(document.querySelectorAll('[role="option"]')).find((el) =>
+    const fileButton = Array.from(document.querySelectorAll('button')).find((el) =>
       el.textContent?.includes('readme.txt')
     ) as HTMLElement | undefined
     await act(async () => {
@@ -359,8 +360,8 @@ describe('FileBrowserModal', () => {
       await Promise.resolve()
     })
 
-    const hostBButton = Array.from(document.querySelectorAll('button')).find(
-      (element) => element.textContent?.trim() === 'host-b'
+    const hostBButton = Array.from(document.querySelectorAll('button')).find((element) =>
+      element.textContent?.startsWith('host-b')
     ) as HTMLButtonElement | undefined
     expect(hostBButton?.disabled).toBe(false)
 
@@ -419,8 +420,8 @@ describe('FileBrowserModal', () => {
       )
     })
 
-    const hostBButton = Array.from(document.querySelectorAll('button')).find(
-      (element) => element.textContent?.trim() === 'host-b'
+    const hostBButton = Array.from(document.querySelectorAll('button')).find((element) =>
+      element.textContent?.startsWith('host-b')
     ) as HTMLButtonElement | undefined
     await act(async () => {
       hostBButton?.click()
@@ -450,7 +451,7 @@ describe('FileBrowserModal', () => {
     expect(document.body.textContent).toContain('from-host-b.txt')
     expect(document.body.textContent).not.toContain('from-host-a.txt')
 
-    const fileButton = Array.from(document.querySelectorAll('[role=option]')).find((element) =>
+    const fileButton = Array.from(document.querySelectorAll('button')).find((element) =>
       element.textContent?.includes('from-host-b.txt')
     ) as HTMLButtonElement | undefined
     await act(async () => {
@@ -513,8 +514,8 @@ describe('FileBrowserModal', () => {
       )
       await Promise.resolve()
     })
-    const hostBButton = Array.from(document.querySelectorAll('button')).find(
-      (element) => element.textContent?.trim() === 'host-b'
+    const hostBButton = Array.from(document.querySelectorAll('button')).find((element) =>
+      element.textContent?.startsWith('host-b')
     ) as HTMLButtonElement | undefined
     await act(async () => {
       hostBButton?.click()
@@ -530,10 +531,10 @@ describe('FileBrowserModal', () => {
       await hostABookmarks.promise
     })
 
-    const goToButton = document.querySelector('[aria-haspopup=listbox]') as
+    const goToButton = document.querySelector('[aria-haspopup=menu]') as
       HTMLButtonElement | undefined
     await act(async () => {
-      goToButton?.click()
+      fireEvent.keyDown(goToButton!, { key: 'Enter' })
     })
 
     expect(document.body.textContent).toContain('/scratch/b/pinned')
@@ -571,12 +572,12 @@ describe('FileBrowserModal', () => {
       )
       await Promise.resolve()
     })
-    const goToButton = document.querySelector('[aria-haspopup=listbox]') as
+    const goToButton = document.querySelector('[aria-haspopup=menu]') as
       HTMLButtonElement | undefined
     await act(async () => {
-      goToButton?.click()
+      fireEvent.keyDown(goToButton!, { key: 'Enter' })
     })
-    const pinButton = Array.from(document.querySelectorAll('button')).find((element) =>
+    const pinButton = Array.from(document.querySelectorAll('[role=menuitem]')).find((element) =>
       element.textContent?.includes('Pin current folder')
     ) as HTMLButtonElement | undefined
     await act(async () => {
@@ -602,12 +603,12 @@ describe('FileBrowserModal', () => {
       )
       await Promise.resolve()
     })
-    const goToButton = document.querySelector('[aria-haspopup=listbox]') as
+    const goToButton = document.querySelector('[aria-haspopup=menu]') as
       HTMLButtonElement | undefined
     await act(async () => {
-      goToButton?.click()
+      fireEvent.keyDown(goToButton!, { key: 'Enter' })
     })
-    const removeButton = Array.from(document.querySelectorAll('button')).find(
+    const removeButton = Array.from(document.querySelectorAll('[role=menuitem]')).find(
       (element) => element.getAttribute('aria-label') === 'Remove bookmark /scratch/user/pinned'
     ) as HTMLButtonElement | undefined
     await act(async () => {
@@ -638,7 +639,7 @@ describe('FileBrowserModal', () => {
     })
 
     // Select readme.txt
-    const fileButton = Array.from(document.querySelectorAll('[role="option"]')).find((el) =>
+    const fileButton = Array.from(document.querySelectorAll('button')).find((el) =>
       el.textContent?.includes('readme.txt')
     ) as HTMLElement | undefined
     await act(async () => {
@@ -672,7 +673,7 @@ describe('FileBrowserModal', () => {
       await Promise.resolve()
     })
 
-    const fileButton = Array.from(document.querySelectorAll('[role="option"]')).find((element) =>
+    const fileButton = Array.from(document.querySelectorAll('button')).find((element) =>
       element.textContent?.includes('readme.txt')
     ) as HTMLElement | undefined
     expect(fileButton).toBeDefined()
@@ -682,4 +683,117 @@ describe('FileBrowserModal', () => {
 
     expect(document.body.textContent).not.toContain('Add to project')
   })
+})
+
+describe('FileBrowserModal accessibility regressions', () => {
+  const renderBrowser = async (onClose = vi.fn()): Promise<void> => {
+    await act(async () => {
+      root.render(<FileBrowserModal open onClose={onClose} initialProviderId="ssh:biowulf" />)
+    })
+  }
+
+  const openGoTo = async (): Promise<HTMLElement> => {
+    const trigger = getByRole(document.body, 'button', { name: 'Go to' })
+    await act(async () => {
+      trigger.focus()
+      fireEvent.keyDown(trigger, { key: 'Enter' })
+      // Native buttons synthesize click for Enter in a browser; jsdom does not.
+      if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click()
+    })
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    return trigger
+  }
+
+  it('regression: Escape dismisses Go to before the file browser', async () => {
+    const onClose = vi.fn()
+    await renderBrowser(onClose)
+    const trigger = await openGoTo()
+    await act(async () => {
+      fireEvent.keyDown(document.activeElement ?? document, { key: 'Escape' })
+    })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+  })
+
+  it('regression: Go to supports keyboard focus and ArrowDown navigation', async () => {
+    await renderBrowser()
+    await openGoTo()
+    expect(document.activeElement?.textContent).toContain('Scratch')
+    await act(async () => {
+      fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' })
+    })
+    await waitFor(() => expect(document.activeElement?.textContent).toContain('Home'))
+  })
+
+  it('regression: Go to and directory children match their ARIA container roles', async () => {
+    await renderBrowser()
+    await openGoTo()
+    const result = await axe.run(document.body, {
+      runOnly: {
+        type: 'rule',
+        values: ['aria-required-children', 'aria-required-parent', 'nested-interactive']
+      }
+    })
+    expect(
+      result.violations.map(({ id, nodes }) => ({ id, html: nodes.map((node) => node.html) }))
+    ).toEqual([])
+  })
+
+  it('regression: host buttons expose the current selection', async () => {
+    await renderBrowser()
+    expect(
+      getByRole(document.body, 'button', { name: /biowulf/ }).getAttribute('aria-pressed')
+    ).toBe('true')
+  })
+
+  it.each([
+    { probeResult: connectedHost().probeResult, status: 'Probe succeeded' },
+    { probeResult: { ...connectedHost().probeResult!, ok: false }, status: 'Probe failed' },
+    { probeResult: undefined, status: 'Not probed yet' }
+  ])(
+    'regression: host buttons expose probe status as text ($status)',
+    async ({ probeResult, status }) => {
+      useComputeStore.setState({ hosts: [connectedHost({ probeResult })] })
+      await renderBrowser()
+      const host = getByRole(document.body, 'button', { name: new RegExp(`biowulf.*${status}`) })
+      expect(host.getAttribute('aria-pressed')).toBe('true')
+    }
+  )
+})
+
+it('regression: a remote directory can be opened using native button activation', async () => {
+  await act(async () => {
+    root.render(<FileBrowserModal open onClose={vi.fn()} initialProviderId="ssh:biowulf" />)
+  })
+  const entry = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
+    button.textContent?.startsWith('data')
+  )!
+  expect(entry).toBeDefined()
+  await act(async () => {
+    entry.focus()
+    // Enter on a native button produces a click, not a double-click.
+    entry.click()
+  })
+  expect(window.api.compute.listDir).toHaveBeenLastCalledWith('ssh:biowulf', '/scratch/user/data')
+})
+
+it('regression: clicking outside Go to dismisses only its popup', async () => {
+  const onClose = vi.fn()
+  await act(async () => {
+    root.render(<FileBrowserModal open onClose={onClose} initialProviderId="ssh:biowulf" />)
+  })
+  const trigger = getByRole(document.body, 'button', { name: 'Go to' })
+  await act(async () => {
+    fireEvent.pointerDown(trigger, { pointerType: 'mouse', button: 0, ctrlKey: false })
+    fireEvent.click(trigger)
+  })
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  const address = getByRole(document.body, 'textbox', { name: 'Current directory path' })
+  await act(async () => {
+    fireEvent.pointerDown(address, { pointerType: 'mouse', button: 0 })
+    fireEvent.click(address)
+  })
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  expect(onClose).not.toHaveBeenCalled()
 })

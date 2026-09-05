@@ -183,6 +183,19 @@ const OnboardingWizard = ({
   const envInit = useNotebookEnvStore((s) => s.init)
 
   const [step, setStep] = useState<WizardStep>('environment')
+  const stepCard = useRef<HTMLDivElement>(null)
+  const previousStep = useRef(step)
+  useEffect(() => {
+    if (previousStep.current === step) return
+    previousStep.current = step
+    // Settings-backed steps already own an h2. Keep focus scoped to the wizard and only move it
+    // when the step changes, never when async checks or form inputs update.
+    const heading = stepCard.current?.querySelector('h2')
+    if (heading) {
+      heading.tabIndex = -1
+      heading.focus()
+    }
+  }, [step])
   // The provider draft lives here (not in ProviderStep) so going Back and returning keeps it.
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
@@ -353,7 +366,10 @@ const OnboardingWizard = ({
           </section>
 
           {/* One stable work surface keeps the setup steps aligned as their content changes. */}
-          <Card className="min-h-[420px] gap-0 rounded-lg bg-bg-000 py-0 shadow-card ring-1 ring-border-200">
+          <Card
+            ref={stepCard}
+            className="min-h-[420px] gap-0 rounded-lg bg-bg-000 py-0 shadow-card ring-1 ring-border-200"
+          >
             {/* Each step owns its validation gate and advances only through its callback. The shell
                 owns cross-step drafts so Back/Continue never discards provider or location input. */}
             {step === 'environment' ? (

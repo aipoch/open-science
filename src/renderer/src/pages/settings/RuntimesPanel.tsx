@@ -80,6 +80,7 @@ type ManagedOperationView = {
 }
 
 type RuntimesPanelProps = {
+  headingAs?: 'h2' | 'h3'
   title: string
   description: React.ReactNode
   onOpenNetworkProtection?: () => void
@@ -87,6 +88,7 @@ type RuntimesPanelProps = {
 
 const RuntimesPanel = ({
   title,
+  headingAs,
   description,
   onOpenNetworkProtection
 }: RuntimesPanelProps): React.JSX.Element => {
@@ -593,6 +595,7 @@ const RuntimesPanel = ({
     <div className="p-5" data-testid="runtimes-panel">
       <SettingsSection
         title={title}
+        headingAs={headingAs}
         description={description}
         aria-label={title}
         contentClassName="space-y-5"

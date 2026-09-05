@@ -703,6 +703,7 @@ const HomePage = ({
               size="sm"
               className="h-8 gap-1 rounded-md px-3 text-xs"
               onClick={openCreateDialog}
+              aria-label={t('New project')}
             >
               <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
               <span className="hidden sm:inline">{t('New project')}</span>

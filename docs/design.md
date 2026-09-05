@@ -119,7 +119,7 @@ The light theme uses a warm off-white page background, white cards, and a deep-g
   --bg-400: hsl(45 10% 88%);
   --border-ink-channel: 60 2% 12%;
   --text-000: hsl(0 0% 7%);
-  --text-100: hsl(43 3% 47%);
+  --text-100: var(--muted-foreground);
   --text-300: hsl(43 3% 57%);
   --rail-card-bg: 0 0% 100%;
   --danger-000: hsl(0 45% 38%);

@@ -645,6 +645,7 @@ const AgentPanel = ({
           the active runtime can't be uninstalled (switch to the other one first). */}
       <SettingsSection
         title={title}
+        headingAs={isOnboarding ? 'h2' : 'h3'}
         aria-label={title}
         description={description}
         actionClassName="ml-auto"

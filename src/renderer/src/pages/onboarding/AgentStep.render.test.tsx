@@ -99,7 +99,7 @@ describe('AgentStep', () => {
     expect(container.textContent).not.toContain('Automatic detection')
     expect(container.textContent).not.toContain('Manual setup')
     const panel = container.querySelector('section[aria-label="Set up the agent runtime"]')
-    expect(panel?.querySelector('h3')?.textContent).toBe('Set up the agent runtime')
+    expect(panel?.querySelector('h2')?.textContent).toBe('Set up the agent runtime')
     expect(panel?.textContent).toContain(
       'Pick the agent Open Science drives, then install it. Only this agent needs to be installed to continue.'
     )

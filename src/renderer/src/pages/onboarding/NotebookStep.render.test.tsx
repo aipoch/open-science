@@ -86,7 +86,7 @@ describe('NotebookStep', () => {
     await renderStep()
 
     const panel = container.querySelector('section[aria-label="Notebook runtime (optional)"]')
-    expect(panel?.querySelector('h3')?.textContent).toBe('Notebook runtime (optional)')
+    expect(panel?.querySelector('h2')?.textContent).toBe('Notebook runtime (optional)')
     expect(panel?.textContent).toContain(
       'Notebooks run in an app-managed Python environment by default. You can change any of this later in Settings → Runtimes.'
     )

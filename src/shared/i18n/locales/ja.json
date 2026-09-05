@@ -1751,6 +1751,7 @@
     "Previous preview page": "前のプレビューページ",
     "Previous question": "前の質問",
     "Probe": "プローブ",
+    "Probe succeeded": "接続テスト成功",
     "Probe failed": "プローブに失敗しました",
     "Probe failed unexpectedly.": "プローブが予期せず失敗しました。",
     "Probing…": "プローブ中…",

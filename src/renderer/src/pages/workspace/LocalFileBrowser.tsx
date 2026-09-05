@@ -321,7 +321,7 @@ const LocalListing = ({
           {t('Empty folder')}
         </div>
       ) : (
-        <ul role="listbox" aria-label={t('Directory contents')}>
+        <ul aria-label={t('Directory contents')}>
           {state.entries.map((entry) => (
             <li key={entry.name} className="border-b border-border-300/40 last:border-b-0">
               <button

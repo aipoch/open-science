@@ -3,6 +3,7 @@
 // the download success banner must all follow the active language — including text that was
 // produced by an earlier event and is only rendered later (see the language-switch cases).
 import { act } from 'react'
+import { fireEvent } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -83,8 +84,8 @@ const renderModal = async (): Promise<void> => {
 }
 
 const selectFile = async (name: string): Promise<void> => {
-  const entry = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
-    (el) => el.textContent?.includes(name)
+  const entry = Array.from(document.body.querySelectorAll<HTMLElement>('button')).find((el) =>
+    el.textContent?.includes(name)
   )
   await act(async () => {
     entry?.click()
@@ -93,9 +94,9 @@ const selectFile = async (name: string): Promise<void> => {
 
 // Go-to locations, pin-current and the bookmark list only mount while the dropdown is open.
 const openGoTo = async (): Promise<void> => {
-  const trigger = document.body.querySelector<HTMLButtonElement>('[aria-haspopup="listbox"]')
+  const trigger = document.body.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')
   await act(async () => {
-    trigger?.click()
+    fireEvent.keyDown(trigger!, { key: 'Enter' })
   })
 }
 

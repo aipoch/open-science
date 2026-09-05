@@ -1762,6 +1762,7 @@
     "Previous preview page": "이전 미리보기 페이지",
     "Previous question": "이전 질문",
     "Probe": "점검",
+    "Probe succeeded": "연결 테스트 성공",
     "Probe failed": "점검 실패",
     "Probe failed unexpectedly.": "점검이 예기치 않게 실패했습니다.",
     "Probing…": "점검 중…",
