@@ -567,10 +567,13 @@ const projectDelegationPolicyAuthority = (
   current: ChatSession,
   authority: PersistedChatSession
 ): ChatSession | undefined => {
-  if (sessionRevision(authority) < sessionRevision(current)) return undefined
+  const metadata = projectSessionMetadataAuthority(current, authority)
+  if (sessionRevision(authority) < sessionRevision(current)) {
+    return metadata === current ? undefined : metadata
+  }
 
   return {
-    ...projectSessionMetadataAuthority(current, authority),
+    ...metadata,
     revision: sessionRevision(authority),
     delegationPolicy: normalizeDelegationPolicy(authority.delegationPolicy),
     delegationPolicyAuthorityPending: undefined,
@@ -687,7 +690,9 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         const fileIdentityMerge =
           sameTimestamp && (session.filesRevision ?? 0) === (existing.filesRevision ?? 0)
         const archive = projectSessionMetadataAuthority(existing, session)
-        const archiveChanged = existing.archivedAt !== archive.archivedAt
+        const metadataChanged =
+          existing.archivedAt !== archive.archivedAt ||
+          existing.branchContextResetRequired !== archive.branchContextResetRequired
         const flat = sameTimestamp
           ? mergeDurableUploadProjection(existing.messages, existing.messages, session.messages)
           : { messages: existing.messages, changed: false }
@@ -696,7 +701,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           !runtimeIdentityMerge &&
           !filesAdvanced &&
           !fileIdentityMerge &&
-          !archiveChanged &&
+          !metadataChanged &&
           !flat.changed
         ) {
           return state
@@ -793,6 +798,21 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       if (!current) return state
       const archive = projectSessionMetadataAuthority(current, session)
 
+      if (
+        (mode === 'permission-authority' || mode === 'runtime-context-authority') &&
+        current.runtimeContext?.revision !== undefined &&
+        session.runtimeContext?.revision !== undefined &&
+        session.runtimeContext.revision < current.runtimeContext.revision
+      ) {
+        if (archive === current) return state
+        markExternallyHydratedSession(archive, session)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? archive : candidate
+          )
+        } as Partial<State>
+      }
+
       if (mode === 'archive-authority') {
         const projected = archive
         if (projected === current) return state
@@ -831,15 +851,6 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       }
 
       if (mode === 'permission-authority') {
-        const currentRevision = current.runtimeContext?.revision
-        const incomingRevision = session.runtimeContext?.revision
-        if (
-          currentRevision !== undefined &&
-          incomingRevision !== undefined &&
-          incomingRevision < currentRevision
-        )
-          return state
-
         const permissionPending = session.runtimeContext?.permission?.state === 'pending'
         const interactionState = {
           ...inferSessionInteractionState(current),
@@ -867,15 +878,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       }
 
       if (mode === 'runtime-context-authority') {
-        const currentRevision = current.runtimeContext?.revision
         const incomingRevision = session.runtimeContext?.revision
-        if (
-          currentRevision !== undefined &&
-          incomingRevision !== undefined &&
-          incomingRevision < currentRevision
-        ) {
-          return state
-        }
 
         const activePlanProjection = matchesPersistedPlanProjection(
           current.activePlanProjection,
@@ -955,6 +958,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           !flat.changed &&
           !graph?.changed &&
           authorityProjected === current &&
+          archive === current &&
           sessionRevision(session) <= sessionRevision(current)
         )
           return state
@@ -994,7 +998,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           projected === merged &&
           sessionRevision(session) <= sessionRevision(current)
         ) {
-          const acknowledged = sessionDetails.withAcknowledgedUnsavedTitle(current, session)
+          const acknowledged = sessionDetails.withAcknowledgedUnsavedTitle(archive, session)
           if (acknowledged === current) return state
           markExternallyHydratedSession(acknowledged, session)
           return {

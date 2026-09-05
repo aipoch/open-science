@@ -168,6 +168,60 @@ describe('session store', () => {
     expect(toPersistedSession(projected).branchContextResetRequired).toBe(true)
   })
 
+  it.each([
+    'upsert',
+    'permission-authority',
+    'runtime-context-authority',
+    'merge-upload-identities',
+    'changed-source-upload',
+    'delegation-policy'
+  ] as const)('preserves a reset-only stale projection through %s', (mode) => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Keep the current conversation',
+      projectId: 'project-1',
+      cwd: '/workspace'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const base = toPersistedSession(useSessionStore.getState().sessions[0])
+    useSessionStore.getState().hydrateSessions([
+      {
+        ...base,
+        revision: 2,
+        runtimeContext: { version: 1, revision: 2 },
+        updatedAt: base.updatedAt + 2
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+    const incoming = {
+      ...base,
+      revision: 1,
+      runtimeContext: { version: 1 as const, revision: 1 },
+      updatedAt: base.updatedAt + 1,
+      branchContextResetRequired: true
+    }
+    if (mode === 'upsert') {
+      useSessionStore.getState().upsertPersistedSession(incoming)
+    } else if (mode === 'delegation-policy') {
+      useSessionStore.getState().applyDelegationPolicyAuthority(incoming)
+    } else {
+      if (mode === 'changed-source-upload') {
+        vi.setSystemTime(base.updatedAt + 3)
+        useSessionStore.getState().renameSession('session-1', 'Unsaved local title')
+      }
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: incoming,
+        mode: mode === 'changed-source-upload' ? 'merge-upload-identities' : mode
+      })
+    }
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.branchContextResetRequired).toBe(true)
+    expect(projected.revision).toBe(2)
+    expect(projected.runtimeContext?.revision).toBe(2)
+    expect(projected.messages).toEqual(source.messages)
+  })
+
   it('keeps a newer runtime revision authoritative when Reading context was removed', () => {
     const merged = mergePersistedRuntimeIdentityProjection(
       {
