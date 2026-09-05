@@ -124,6 +124,7 @@
     "Protected using Windows sandboxing. New Notebook sessions are protected.": "已透過 Windows 沙箱保護。新的 Notebook 工作階段將受到保護。",
     "Securely route Notebook Python, R, REPL, Bash, and package downloads through your approved domains. Until set up, Notebook continues using standard execution.": "透過您核准的網域安全地路由 Notebook Python、R、REPL、Bash 和套件下載。在完成設定前，Notebook 將繼續使用標準執行模式。",
     "Notebook continues using standard execution. No protected mode is active.": "Notebook 將繼續使用標準執行模式。目前未啟用保護模式。",
+    "Notebook network protection is not set up.": "Notebook 網路保護尚未設定。",
     "Notebook network protection needs setup before notebooks can run.": "執行 Notebook 前必須先設定 Notebook 網路保護。",
     "Notebook network protection is not supported on this platform.": "此平台不支援 Notebook 網路保護。",
     "Setting up…": "正在設定…",

@@ -124,6 +124,7 @@
     "Protected using Windows sandboxing. New Notebook sessions are protected.": "Windows サンドボックスで保護されています。新しい Notebook セッションが保護されます。",
     "Securely route Notebook Python, R, REPL, Bash, and package downloads through your approved domains. Until set up, Notebook continues using standard execution.": "Notebook の Python、R、REPL、Bash、パッケージのダウンロードを、承認したドメイン経由で安全にルーティングします。セットアップするまで、Notebook は標準実行を継続します。",
     "Notebook continues using standard execution. No protected mode is active.": "Notebook は標準実行を継続します。保護モードは有効ではありません。",
+    "Notebook network protection is not set up.": "Notebook のネットワーク保護は設定されていません。",
     "Notebook network protection needs setup before notebooks can run.": "Notebook を実行する前にネットワーク保護のセットアップが必要です。",
     "Notebook network protection is not supported on this platform.": "このプラットフォームでは Notebook のネットワーク保護はサポートされていません。",
     "Setting up…": "セットアップ中…",

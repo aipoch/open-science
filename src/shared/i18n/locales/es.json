@@ -128,6 +128,7 @@
     "Protected using Windows sandboxing. New Notebook sessions are protected.": "Protegido mediante el sandbox de Windows. Las nuevas sesiones de Notebook estarán protegidas.",
     "Securely route Notebook Python, R, REPL, Bash, and package downloads through your approved domains. Until set up, Notebook continues using standard execution.": "Dirija de forma segura Python, R, REPL, Bash y las descargas de paquetes de Notebook a través de los dominios que haya aprobado. Hasta que lo configure, Notebook seguirá utilizando la ejecución estándar.",
     "Notebook continues using standard execution. No protected mode is active.": "Notebook seguirá utilizando la ejecución estándar. No hay ningún modo protegido activo.",
+    "Notebook network protection is not set up.": "La protección de red de Notebook no está configurada.",
     "Notebook network protection needs setup before notebooks can run.": "Debe configurar la protección de red de Notebook antes de ejecutar notebooks.",
     "Notebook network protection is not supported on this platform.": "Esta plataforma no admite la protección de red de Notebook.",
     "Setting up…": "Configurando…",
