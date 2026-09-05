@@ -232,10 +232,10 @@ describe('Permission Grant projection controller', () => {
     })
 
     await expect(controller.restoreDefaults()).resolves.toMatchObject({
-      restoredCount: 14,
-      version: 14,
-      counts: { global: 14 }
+      restoredCount: 16,
+      version: 16,
+      counts: { global: 16 }
     })
-    expect(remember).toHaveBeenCalledTimes(14)
+    expect(remember).toHaveBeenCalledTimes(16)
   })
 })
