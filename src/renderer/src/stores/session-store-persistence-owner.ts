@@ -1002,6 +1002,18 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         }
       }
 
+      // A current save acknowledgement must not replace the dispatch's in-memory run owner.
+      // Source identity prevents an old receipt from reclaiming a rearmed Message, even when
+      // two attempts have the same timestamp. Changed durable run fields still take effect.
+      if (
+        current === source &&
+        current.activeRun &&
+        projected.activeRun?.promptMessageId === current.activeRun.promptMessageId &&
+        projected.activeRun.startedAt === current.activeRun.startedAt
+      ) {
+        projected = { ...projected, activeRun: current.activeRun }
+      }
+
       projected = sessionDetails.withAcknowledgedUnsavedTitle(
         {
           ...projected,

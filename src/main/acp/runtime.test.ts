@@ -25,6 +25,7 @@ import { SessionPlanInteractionOwner } from '../session-plan/session-plan-intera
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { RuntimeEventInput } from './runtime-snapshot-owner'
 import { AcpPermissionContext } from './permission-context'
+import { PermissionProfileUnavailableError } from './permission-profile-controller'
 import { permissionRequestFingerprint } from './permission-broker'
 import { ACP_STEERING_METHOD } from './native-follow-up'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
@@ -11954,6 +11955,55 @@ describe('ACP runtime session management', () => {
     runtime.respondToPermission({ requestId: permission.requestId, cancelled: true })
     await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
   })
+
+  it.each([
+    { framework: claudeCodeFramework, bypass: 'bypassPermissions', profile: 'ask' as const },
+    { framework: claudeCodeFramework, bypass: 'bypassPermissions', profile: 'auto' as const },
+    { framework: codeBuddyFramework, bypass: 'fullAccess', profile: 'ask' as const },
+    { framework: codeBuddyFramework, bypass: 'fullAccess', profile: 'auto' as const }
+  ])(
+    'A03: preserves $framework.id Full state without publishing an unavailable $profile downgrade',
+    async ({ framework, bypass, profile }) => {
+      const process = new FakeAgentProcess()
+      const onSetMode = vi.fn()
+      const onStateChanged = vi.fn()
+      startPermissionProbeAgent(process, {
+        newSessionId: 'native-bypass-session',
+        toolCallId: 'tool-1',
+        toolTitle: 'Run command',
+        modes: createModes([bypass]),
+        onSetMode
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework,
+        callbacks: { onStateChanged }
+      })
+      const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'full' })
+      const previousProfile = structuredClone(
+        runtime.getSnapshot().permissionProfiles[session.sessionId]
+      )
+      expect(previousProfile).toMatchObject({
+        selectedProfile: 'full',
+        effectiveProfile: 'full',
+        currentModeId: bypass
+      })
+      onSetMode.mockClear()
+      onStateChanged.mockClear()
+
+      await expect
+        .soft(runtime.setPermissionProfile({ sessionId: session.sessionId, profile }))
+        .rejects.toThrow(PermissionProfileUnavailableError)
+
+      expect
+        .soft(runtime.getSnapshot().permissionProfiles[session.sessionId])
+        .toEqual(previousProfile)
+      expect.soft(onStateChanged).not.toHaveBeenCalled()
+      expect(onSetMode).not.toHaveBeenCalled()
+    }
+  )
 
   it('restores the committed profile when the provider mode change fails', async () => {
     const process = new FakeAgentProcess()

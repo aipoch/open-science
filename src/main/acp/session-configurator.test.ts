@@ -2,8 +2,14 @@ import * as acp from '@agentclientprotocol/sdk'
 import type { ActiveSession, ClientConnection, SessionConfigOption } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
-import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import {
+  claudeCodeFramework,
+  codeBuddyFramework,
+  codexFramework,
+  opencodeFramework
+} from '../agent-framework'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
+import { PermissionProfileUnavailableError } from './permission-profile-controller'
 import { AcpSessionConfigurator } from './session-configurator'
 
 const backendView = (
@@ -34,6 +40,79 @@ const selectOption = (
   }) as SessionConfigOption
 
 describe('AcpSessionConfigurator', () => {
+  describe('A03: permission enforcement at the RPC boundary', () => {
+    it.each([
+      { framework: claudeCodeFramework, bypass: 'bypassPermissions' },
+      { framework: codeBuddyFramework, bypass: 'fullAccess' },
+      { framework: codexFramework, bypass: 'agent-full-access' }
+    ])(
+      'rejects an unavailable downgrade for $framework.id before reporting success',
+      async ({ framework, bypass }) => {
+        for (const profile of ['ask', 'auto'] as const) {
+          const request = vi.fn(async () => ({}))
+          const input = {
+            backend: backendView({ modelRequired: false }, framework),
+            connection: { agent: { request } } as unknown as ClientConnection,
+            session: {
+              sessionId: 'session-1',
+              modes: { currentModeId: bypass, availableModes: [{ id: bypass, name: bypass }] }
+            } as unknown as ActiveSession,
+            permissionProfile: profile
+          }
+          const configurator = new AcpSessionConfigurator({
+            assertCurrentConnection: vi.fn(),
+            diagnosticContext: () => ({ framework: framework.id })
+          })
+
+          // Both initial attachment and a forced live change use the real framework mapper.
+          // Soft assertions preserve the resolved false-success state and RPC evidence in red logs.
+          await expect
+            .soft(configurator.configure(input))
+            .rejects.toThrow(PermissionProfileUnavailableError)
+          await expect
+            .soft(configurator.configurePermissionProfile(input, true))
+            .rejects.toThrow(PermissionProfileUnavailableError)
+          expect(request).not.toHaveBeenCalled()
+        }
+      }
+    )
+
+    it('keeps OpenCode broker-enforced profiles available without a mode RPC', async () => {
+      const request = vi.fn(async () => ({}))
+      const configurator = new AcpSessionConfigurator({
+        assertCurrentConnection: vi.fn(),
+        diagnosticContext: () => ({ framework: 'opencode' })
+      })
+      for (const profile of ['ask', 'auto', 'full'] as const) {
+        await expect(
+          configurator.configurePermissionProfile(
+            {
+              backend: backendView({ modelRequired: false }, opencodeFramework),
+              connection: { agent: { request } } as unknown as ClientConnection,
+              session: {
+                sessionId: 'session-1',
+                modes: {
+                  currentModeId: 'build',
+                  availableModes: [
+                    { id: 'build', name: 'Build' },
+                    { id: 'plan', name: 'Plan' }
+                  ]
+                }
+              } as unknown as ActiveSession,
+              permissionProfile: profile
+            },
+            true
+          )
+        ).resolves.toMatchObject({
+          selectedProfile: profile,
+          effectiveProfile: profile,
+          currentModeId: 'build'
+        })
+      }
+      expect(request).not.toHaveBeenCalled()
+    })
+  })
+
   it('applies mode, model, and post-model effort in protocol order and returns immutable facts', async () => {
     const initialOptions = [
       selectOption('model', 'model', 'model-a', ['model-a', 'model-b']),
