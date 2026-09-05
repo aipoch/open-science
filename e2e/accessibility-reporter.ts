@@ -26,7 +26,13 @@ const ACCESSIBILITY_SURFACES = [
   'Long conversation (dark)',
   'Artifact provenance',
   'Compute settings (narrow, dark)',
-  'Conversation recovery warning'
+  'Conversation recovery warning',
+  'Home (375px, light)',
+  'Home (375px, dark)',
+  'Home (767px, light)',
+  'Home (767px, dark)',
+  'Reported text (light)',
+  'Reported text (dark)'
 ] as const
 
 type AccessibilitySurface = (typeof ACCESSIBILITY_SURFACES)[number]

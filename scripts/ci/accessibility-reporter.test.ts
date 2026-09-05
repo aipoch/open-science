@@ -31,9 +31,9 @@ describe('accessibility run classification', () => {
     expect(
       classifyAccessibilityRun({
         runStatus: 'passed',
-        plannedTests: 5,
-        completedTests: 5,
-        readyTests: 5,
+        plannedTests: 11,
+        completedTests: 11,
+        readyTests: 11,
         scans: completeScans(),
         uiFindings: []
       })
@@ -43,9 +43,9 @@ describe('accessibility run classification', () => {
   it('keeps a complete scan with blocking findings advisory', () => {
     const result = classifyAccessibilityRun({
       runStatus: 'passed',
-      plannedTests: 5,
-      completedTests: 5,
-      readyTests: 5,
+      plannedTests: 11,
+      completedTests: 11,
+      readyTests: 11,
       scans: completeScans().map((item) =>
         item.surface === 'Settings' ? scan('Settings', 2) : item
       ),
@@ -61,8 +61,8 @@ describe('accessibility run classification', () => {
       name: 'Electron launch failed before axe ran',
       input: {
         runStatus: 'failed' as const,
-        plannedTests: 5,
-        completedTests: 5,
+        plannedTests: 11,
+        completedTests: 11,
         readyTests: 0,
         scans: [],
         uiFindings: []
@@ -72,9 +72,9 @@ describe('accessibility run classification', () => {
       name: 'a test ended without any axe evidence',
       input: {
         runStatus: 'passed' as const,
-        plannedTests: 5,
-        completedTests: 5,
-        readyTests: 5,
+        plannedTests: 11,
+        completedTests: 11,
+        readyTests: 11,
         scans: completeScans().slice(1),
         uiFindings: []
       }
@@ -90,9 +90,9 @@ describe('accessibility run classification', () => {
     expect(
       classifyAccessibilityRun({
         runStatus: 'passed',
-        plannedTests: 5,
-        completedTests: 5,
-        readyTests: 5,
+        plannedTests: 11,
+        completedTests: 11,
+        readyTests: 11,
         scans: completeScans(),
         uiFindings: [{ surface: 'Keyboard-only project journey', message: 'Focus was lost' }]
       })
@@ -103,9 +103,9 @@ describe('accessibility run classification', () => {
     expect(
       classifyAccessibilityRun({
         runStatus: 'failed',
-        plannedTests: 5,
-        completedTests: 5,
-        readyTests: 5,
+        plannedTests: 11,
+        completedTests: 11,
+        readyTests: 11,
         scans: completeScans(),
         uiFindings: []
       })
@@ -190,4 +190,26 @@ describe('accessibility run classification', () => {
       rmSync(root, { force: true, recursive: true })
     }
   })
+})
+
+it('accepts complete evidence from the expanded responsive and contrast matrix', () => {
+  const surfaces = [
+    ...ACCESSIBILITY_SURFACES.slice(0, 12),
+    'Home (375px, light)',
+    'Home (375px, dark)',
+    'Home (767px, light)',
+    'Home (767px, dark)',
+    'Reported text (light)',
+    'Reported text (dark)'
+  ]
+  expect(
+    classifyAccessibilityRun({
+      runStatus: 'passed',
+      plannedTests: 11,
+      completedTests: 11,
+      readyTests: 11,
+      scans: surfaces.map((surface) => ({ surface, violations: [] })) as AccessibilityScan[],
+      uiFindings: []
+    })
+  ).toEqual({ status: 'passed', findings: 0 })
 })

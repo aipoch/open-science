@@ -26,6 +26,16 @@ test.beforeEach(async ({ app }) => {
   void app
 })
 
+const blockingViolations = (results: AxeResults): AccessibilityScan['violations'] =>
+  results.violations
+    .filter((violation) => violation.impact === 'critical' || violation.impact === 'serious')
+    .map<AccessibilityScan['violations'][number]>(({ id, impact, help, nodes }) => ({
+      id,
+      impact: impact ?? null,
+      help,
+      nodes: nodes.map(({ html, target }) => ({ html, target }))
+    }))
+
 const scanAccessibility = async (page: Page, surface: AccessibilitySurface): Promise<void> => {
   const axeSource = await readFile(AXE_PATH, 'utf8')
   await page.evaluate(axeSource)
@@ -38,14 +48,7 @@ const scanAccessibility = async (page: Page, surface: AccessibilitySurface): Pro
 
     return axe.run(document, { runOnly: { type: 'tag', values: tags } })
   }, WCAG_TAGS)) as AxeResults
-  const blocking = results.violations
-    .filter((violation) => violation.impact === 'critical' || violation.impact === 'serious')
-    .map<AccessibilityScan['violations'][number]>(({ id, impact, help, nodes }) => ({
-      id,
-      impact: impact ?? null,
-      help,
-      nodes: nodes.map(({ html, target }) => ({ html, target }))
-    }))
+  const blocking = blockingViolations(results)
 
   await test.info().attach(ACCESSIBILITY_SCAN_ATTACHMENT, {
     body: JSON.stringify({ surface, violations: blocking } satisfies AccessibilityScan),
@@ -379,18 +382,21 @@ test('supports the core project journey with keyboard input only', async ({ app 
   await expect(settingsTrigger).toBeFocused()
 })
 
-for (const width of [375, 767]) {
+for (const width of [375, 767] as const) {
   for (const theme of ['Light', 'Dark'] as const) {
     test(`home has named project actions at ${width}px in ${theme}`, async ({ app }) => {
       const page = await app.completeOnboarding()
       await setTheme(page, theme)
       await setViewport(page, width)
       await waitForFiniteAnimations(page)
-      await scanAccessibility(page, 'Home')
-      const action = page.getByRole('button', { name: 'New project', exact: true }).first()
-      await expect(action).toBeVisible()
-      await action.click()
-      await expect(page.getByRole('dialog', { name: 'New project' })).toBeVisible()
+      const surface = `Home (${width}px, ${theme === 'Light' ? 'light' : 'dark'})` as const
+      await scanAccessibility(page, surface)
+      await expectKeyboardOutcome(page, surface, async () => {
+        const action = page.getByRole('button', { name: 'New project', exact: true }).first()
+        await expect(action).toBeVisible()
+        await action.click()
+        await expect(page.getByRole('dialog', { name: 'New project' })).toBeVisible()
+      })
     })
   }
 }
@@ -402,6 +408,7 @@ for (const theme of ['Light', 'Dark'] as const) {
     await setTheme(page, theme)
     await createProject(page, `Contrast regression ${theme}`)
     await page.evaluate(await readFile(AXE_PATH, 'utf8'))
+    const violations: AccessibilityScan['violations'] = []
 
     const checkContrast = async (target: Locator, label: string): Promise<void> => {
       await expect(target).toBeVisible()
@@ -418,7 +425,8 @@ for (const theme of ['Light', 'Dark'] as const) {
         body: JSON.stringify({ violations: result.violations, incomplete: result.incomplete }),
         contentType: 'application/json'
       })
-      expect.soft(result.violations, label).toEqual([])
+      violations.push(...blockingViolations(result))
+      if (!ACCESSIBILITY_ADVISORY) expect.soft(result.violations, label).toEqual([])
       expect.soft(result.incomplete, `${label} must be measurable`).toEqual([])
     }
 
@@ -445,5 +453,12 @@ for (const theme of ['Light', 'Dark'] as const) {
       page.getByText('Declined by you: tool', { exact: true }),
       'Declined tool 767px'
     )
+    await test.info().attach(ACCESSIBILITY_SCAN_ATTACHMENT, {
+      body: JSON.stringify({
+        surface: theme === 'Light' ? 'Reported text (light)' : 'Reported text (dark)',
+        violations
+      } satisfies AccessibilityScan),
+      contentType: 'application/json'
+    })
   })
 }

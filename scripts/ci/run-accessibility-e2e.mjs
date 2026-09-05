@@ -6,7 +6,7 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const DEFAULT_RESULT_PATH = 'test-results/accessibility/accessibility-summary.json'
-const EXPECTED_TESTS = 5
+const EXPECTED_TESTS = 11
 export const EXPECTED_ACCESSIBILITY_SURFACES = [
   'Onboarding',
   'Home',
@@ -19,7 +19,13 @@ export const EXPECTED_ACCESSIBILITY_SURFACES = [
   'Long conversation (dark)',
   'Artifact provenance',
   'Compute settings (narrow, dark)',
-  'Conversation recovery warning'
+  'Conversation recovery warning',
+  'Home (375px, light)',
+  'Home (375px, dark)',
+  'Home (767px, light)',
+  'Home (767px, dark)',
+  'Reported text (light)',
+  'Reported text (dark)'
 ]
 
 export function readAccessibilityResult(path) {

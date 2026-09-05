@@ -22,9 +22,9 @@ type CompleteResult = {
 const completeResult = (status: 'passed' | 'advisory'): CompleteResult => ({
   schemaVersion: 1,
   status,
-  plannedTests: 5,
-  completedTests: 5,
-  readyTests: 5,
+  plannedTests: 11,
+  completedTests: 11,
+  readyTests: 11,
   axeRunCount: EXPECTED_ACCESSIBILITY_SURFACES.length,
   scans: EXPECTED_ACCESSIBILITY_SURFACES.map((surface) => ({ surface }))
 })
@@ -36,7 +36,7 @@ describe('accessibility E2E result contract', () => {
 
     try {
       writeFileSync(path, JSON.stringify(completeResult(status)))
-      expect(readAccessibilityResult(path)).toMatchObject({ status, axeRunCount: 12 })
+      expect(readAccessibilityResult(path)).toMatchObject({ status, axeRunCount: 18 })
     } finally {
       rmSync(root, { force: true, recursive: true })
     }
@@ -57,7 +57,7 @@ describe('accessibility E2E result contract', () => {
         )
       }
     },
-    { name: 'incomplete ready evidence', result: { ...completeResult('passed'), readyTests: 4 } }
+    { name: 'incomplete ready evidence', result: { ...completeResult('passed'), readyTests: 10 } }
   ])('rejects $name', ({ result }) => {
     const root = mkdtempSync(join(tmpdir(), 'accessibility-result-'))
     const path = join(root, 'nested', 'summary.json')
@@ -85,4 +85,38 @@ describe('accessibility E2E result contract', () => {
       rmSync(root, { force: true, recursive: true })
     }
   })
+})
+
+it('accepts complete evidence from the expanded responsive and contrast matrix', () => {
+  const root = mkdtempSync(join(tmpdir(), 'accessibility-expanded-'))
+  const path = join(root, 'summary.json')
+  const surfaces = [
+    ...EXPECTED_ACCESSIBILITY_SURFACES.slice(0, 12),
+    'Home (375px, light)',
+    'Home (375px, dark)',
+    'Home (767px, light)',
+    'Home (767px, dark)',
+    'Reported text (light)',
+    'Reported text (dark)'
+  ]
+  try {
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...completeResult('passed'),
+        plannedTests: 11,
+        completedTests: 11,
+        readyTests: 11,
+        axeRunCount: surfaces.length,
+        scans: surfaces.map((surface) => ({ surface }))
+      })
+    )
+    expect(readAccessibilityResult(path)).toMatchObject({
+      status: 'passed',
+      plannedTests: 11,
+      axeRunCount: 18
+    })
+  } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
 })
