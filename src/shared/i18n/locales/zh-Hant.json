@@ -4020,6 +4020,7 @@
     "Provenance integrity error": "來源完整性錯誤",
     "Provenance could not be loaded": "無法載入來源資訊",
     "View diagnostics": "檢視診斷資訊",
+    "Hide diagnostics": "收合診斷資訊",
     "Copy diagnostics": "複製診斷資訊",
     "Could not copy diagnostics. Select and copy the text above.": "無法複製診斷資訊。請選取並複製上方文字。",
     "Loading earlier versions…": "正在載入更早的版本…",

@@ -4330,6 +4330,7 @@
     "Provenance integrity error": "Erreur d’intégrité de la provenance",
     "Provenance could not be loaded": "Impossible de charger la provenance",
     "View diagnostics": "Afficher le diagnostic",
+    "Hide diagnostics": "Masquer le diagnostic",
     "Copy diagnostics": "Copier le diagnostic",
     "Could not copy diagnostics. Select and copy the text above.": "Impossible de copier le diagnostic. Sélectionnez et copiez le texte ci-dessus.",
     "Loading earlier versions…": "Chargement des versions antérieures…",

@@ -4018,6 +4018,7 @@
     "Provenance integrity error": "출처 무결성 오류",
     "Provenance could not be loaded": "출처를 불러오지 못했습니다",
     "View diagnostics": "진단 정보 보기",
+    "Hide diagnostics": "진단 정보 숨기기",
     "Copy diagnostics": "진단 정보 복사",
     "Could not copy diagnostics. Select and copy the text above.": "진단 정보를 복사하지 못했습니다. 위의 텍스트를 선택하여 복사하세요.",
     "Loading earlier versions…": "이전 버전 불러오는 중…",

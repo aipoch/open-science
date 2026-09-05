@@ -79,6 +79,7 @@ describe('ErrorNotice', () => {
     const retry = screen.getByRole('button', { name: /Retrying/ })
     expect(retry).toHaveProperty('disabled', true)
     expect(container.querySelector('.animate-spin')).not.toBeNull()
+    expect(retry.getAttribute('aria-busy')).toBe('true')
     retry.click()
     expect(onRetry).not.toHaveBeenCalled()
   })

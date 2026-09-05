@@ -932,6 +932,21 @@ colors communicate a successful or failed probe/migration result.
 - Creating a custom OAuth Connector saves its configuration first, then immediately starts browser authorization in a cancellable dialog. Cancelling or failing authorization keeps the saved Connector disabled so the user can retry from the same dialog or finish later. Existing Connector rows reuse this dialog for sign-in rather than presenting a separate inline waiting state.
 - When a runtime refresh shows that a previously authenticated OAuth Connector has lost its tokens, the app raises one transient global notice with a shortcut back to Settings. The Connector row remains the persistent source of truth and continues to show that sign-in is required. This notice is session-local UI state: it adds no persisted status field, migration, or shared enum value.
 
+## Error notices
+
+Use the shared `ErrorNotice` for error summaries. Keep the decorative flask mark compact (`size-10`),
+use one bounded column (`max-w-md`, `min-w-0`), and left-align headings, descriptions, codes, and help.
+Pair the status icon with the first text line. Long error text and identifiers must wrap inside the
+column. Group primary and secondary actions at the trailing edge with `flex-wrap` and a consistent
+small gap; wrap whole controls instead of splitting their labels. Preserve semantic status tones,
+disabled/loading behavior, and immediately visible keyboard focus.
+
+Provenance diagnostics share the summary's width below a divider. A disclosure button exposes its
+expanded state and controls the diagnostic region; the copy action belongs in that region's header
+and appears only while expanded. Keep diagnostics selectable, keyboard-scrollable, and bounded in
+height. Report copy success inline and copy failures next to the diagnostic text. The error summary's
+alert region excludes the diagnostic payload so opening it does not announce the entire JSON blob.
+
 ## Clickable Area Guidelines
 
 | Area              | Clickable part                                       | shadcn pattern                                                                           |

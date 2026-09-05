@@ -4460,6 +4460,7 @@
     "Provenance integrity error": "Ошибка целостности данных о происхождении",
     "Provenance could not be loaded": "Не удалось загрузить данные о происхождении",
     "View diagnostics": "Показать диагностику",
+    "Hide diagnostics": "Скрыть диагностику",
     "Copy diagnostics": "Копировать диагностику",
     "Could not copy diagnostics. Select and copy the text above.": "Не удалось скопировать диагностику. Выделите и скопируйте текст выше.",
     "Loading earlier versions…": "Загрузка предыдущих версий…",

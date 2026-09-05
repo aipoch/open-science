@@ -589,7 +589,13 @@ describe('ArtifactProvenancePanel', () => {
         diagnostics,
         'known content integrity failures must offer a diagnostic entry'
       ).toBeDefined()
+      expect(diagnostics!.getAttribute('aria-expanded')).toBe('false')
       await act(async () => diagnostics!.click())
+      expect(diagnostics!.getAttribute('aria-expanded')).toBe('true')
+      const diagnosticsRegion = document.getElementById(
+        diagnostics!.getAttribute('aria-controls')!
+      )!
+      expect(diagnosticsRegion.hidden).toBe(false)
       const diagnosticText = container.querySelector('pre')!.textContent!
       expect(JSON.parse(diagnosticText)).toMatchObject({
         projectId: 'project-1',
@@ -607,6 +613,27 @@ describe('ArtifactProvenancePanel', () => {
         await flush()
         expect(writeText).toHaveBeenCalledWith(diagnosticText)
         expect(container.textContent).toContain('Copied')
+
+        writeText.mockRejectedValueOnce(new Error('clipboard unavailable'))
+        await clickTab('Copied')
+        await flush()
+        expect(container.textContent).not.toContain('Copied')
+        expect(container.textContent).toContain(
+          'Could not copy diagnostics. Select and copy the text above.'
+        )
+        expect(container.querySelector('pre')!.textContent).toBe(diagnosticText)
+
+        await clickTab('Copy diagnostics')
+        await flush()
+        expect(container.textContent).toContain('Copied')
+        expect(container.textContent).not.toContain('Could not copy diagnostics.')
+
+        await clickTab('Hide diagnostics')
+        expect(diagnosticsRegion.hidden).toBe(true)
+        expect(diagnostics!.getAttribute('aria-expanded')).toBe('false')
+        await clickTab('View diagnostics')
+        expect(diagnosticsRegion.hidden).toBe(false)
+        expect(container.querySelector('pre')!.textContent).toBe(diagnosticText)
       } finally {
         if (clipboardDescriptor) Object.defineProperty(navigator, 'clipboard', clipboardDescriptor)
         else Reflect.deleteProperty(navigator, 'clipboard')

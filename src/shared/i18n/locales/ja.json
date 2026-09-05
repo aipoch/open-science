@@ -4020,6 +4020,7 @@
     "Provenance integrity error": "来歴の整合性エラー",
     "Provenance could not be loaded": "来歴を読み込めませんでした",
     "View diagnostics": "診断情報を表示",
+    "Hide diagnostics": "診断情報を非表示",
     "Copy diagnostics": "診断情報をコピー",
     "Could not copy diagnostics. Select and copy the text above.": "診断情報をコピーできませんでした。上のテキストを選択してコピーしてください。",
     "Loading earlier versions…": "以前のバージョンを読み込み中…",

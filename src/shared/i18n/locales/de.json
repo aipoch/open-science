@@ -4175,6 +4175,7 @@
     "Provenance integrity error": "Integritätsfehler der Herkunftsdaten",
     "Provenance could not be loaded": "Herkunftsdaten konnten nicht geladen werden",
     "View diagnostics": "Diagnose anzeigen",
+    "Hide diagnostics": "Diagnosedaten ausblenden",
     "Copy diagnostics": "Diagnose kopieren",
     "Could not copy diagnostics. Select and copy the text above.": "Diagnose konnte nicht kopiert werden. Wählen Sie den Text oben aus und kopieren Sie ihn.",
     "Loading earlier versions…": "Frühere Versionen werden geladen…",
