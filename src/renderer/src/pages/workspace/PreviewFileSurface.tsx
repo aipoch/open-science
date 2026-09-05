@@ -670,6 +670,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     const [editBaseline, setEditBaseline] = useState<{
       text: string
       expectedHeadVersionId: string
+      basedOnVersionId: string
     }>()
     const [saving, setSaving] = useState(false)
     const [editError, setEditError] = useState<string>()
@@ -695,12 +696,14 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         : undefined
     )
     const sourceItem = storedItem?.type === 'file' ? storedItem : item
-    const itemIdentityKey = `${sourceItem.projectId ?? ''}:${sourceItem.source ?? 'artifact'}:${sourceItem.id}:${sourceItem.managedFileId ?? ''}:${sourceItem.artifactId ?? ''}:${sourceItem.selectedVersionId ?? ''}:${sourceItem.path}`
+    // Managed paths advance with the head; only logical file/selection changes discard a draft.
+    const itemIdentityKey = `${sourceItem.projectId ?? ''}:${sourceItem.source ?? 'artifact'}:${sourceItem.id}:${sourceItem.managedFileId ?? ''}:${sourceItem.artifactId ?? ''}:${sourceItem.selectedVersionId ?? ''}:${sourceItem.managedFileId ? '' : sourceItem.path}`
     const previewItem = versionOverride?.key === itemIdentityKey ? versionOverride.item : sourceItem
     const projectId = previewItem.projectId ?? activeProjectId
     const previewIdentityKey = `${previewItem.projectId ?? ''}:${previewItem.source ?? 'artifact'}:${previewItem.id}:${previewItem.managedFileId ?? ''}:${previewItem.artifactId ?? ''}:${previewItem.selectedVersionId ?? ''}:${previewItem.path}`
     const managedWorkflow = useManagedVersionWorkflow({
       item: previewItem,
+      sourceItem,
       projectId,
       mode,
       setMode,
@@ -712,6 +715,13 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       navigationInspect: managedNavigationInspect,
       controlsInspect: managedControlsInspect
     } = managedWorkflow
+    // Remount resource-owning renderers when the confirmed selection advances. Historical
+    // selections keep their lease, and pending inspections retain the last confirmed content.
+    const previewContentKey = JSON.stringify([
+      contentKey,
+      previewItem.selectedVersionId ?? managedNavigationInspect?.selectedVersionId,
+      reloadToken
+    ])
     // Managed files accept annotations only after inspection confirms the logical DB head.
     const annotationVersionPending = managedIdentity !== undefined && managedInspect === undefined
     const annotationBlockedByHistoricalVersion =
@@ -797,8 +807,24 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             projectId
           })
         : previewItem
+    // Bind byte reads and shared renderer caches to the confirmed immutable selection without
+    // pinning the workbench tab, which must keep following future head notifications.
+    const contentVersion =
+      managedNavigationInspect?.selectedVersion ??
+      managedNavigationInspect?.versions.find(
+        (version) => version.id === managedNavigationInspect.selectedVersionId
+      )
+    const contentItem =
+      managedNavigationInspect && contentVersion && !previewItem.selectedVersionId
+        ? createPreviewFileItemForManagedVersion({
+            item: resolvedPreviewItem,
+            version: contentVersion,
+            projectId: managedNavigationInspect.projectId,
+            sessionId: managedNavigationInspect.sessionId
+          })
+        : resolvedPreviewItem
     const { action: pdfContextAction, readingContextBindingId } = usePdfContextAction(
-      resolvedPreviewItem,
+      contentItem,
       onPdfContextError,
       { link: onLinkReadingContext, unlink: onUnlinkReadingContext }
     )
@@ -1011,7 +1037,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
           applyVersionItem(nextItem, true, onApplied)
         })
       }
-      const nextIdentityKey = `${nextItem.projectId ?? ''}:${nextItem.source ?? 'artifact'}:${nextItem.id}:${nextItem.managedFileId ?? ''}:${nextItem.artifactId ?? ''}:${nextItem.selectedVersionId ?? ''}:${nextItem.path}`
+      const nextIdentityKey = `${nextItem.projectId ?? ''}:${nextItem.source ?? 'artifact'}:${nextItem.id}:${nextItem.managedFileId ?? ''}:${nextItem.artifactId ?? ''}:${nextItem.selectedVersionId ?? ''}:${nextItem.managedFileId ? '' : nextItem.path}`
       if (workbenchConnected) {
         acceptedIdentityTransitionRef.current = nextIdentityKey
         if (!usePreviewWorkbenchStore.getState().upsertItem(nextItem, true)) {
@@ -1150,7 +1176,8 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       setDraft(managedInspect.text)
       setEditBaseline({
         text: managedInspect.text,
-        expectedHeadVersionId: managedInspect.headVersionId
+        expectedHeadVersionId: managedInspect.headVersionId,
+        basedOnVersionId: managedInspect.selectedVersionId
       })
       setEditError(undefined)
       setConflictHead(undefined)
@@ -1160,7 +1187,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     const saveEdit = async (): Promise<void> => {
       if (
         !managedIdentity ||
-        !managedInspect ||
+        !managedInspect?.canEdit ||
         !editBaseline ||
         draft === editBaseline.text ||
         saving
@@ -1179,13 +1206,13 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
           previous.source !== managedIdentity.source ||
           previous.projectId !== managedIdentity.projectId ||
           previous.fileId !== managedIdentity.fileId ||
-          previous.basedOnVersionId !== managedInspect.selectedVersionId ||
+          previous.basedOnVersionId !== editBaseline.basedOnVersionId ||
           previous.expectedHeadVersionId !== editBaseline.expectedHeadVersionId ||
           previous.content !== draft
         ) {
           pendingSaveRef.current = {
             ...managedIdentity,
-            basedOnVersionId: managedInspect.selectedVersionId,
+            basedOnVersionId: editBaseline.basedOnVersionId,
             expectedHeadVersionId: editBaseline.expectedHeadVersionId,
             content: draft,
             operationId: crypto.randomUUID()
@@ -1361,96 +1388,92 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                 downloadVersionContext={managedWorkflow.downloadVersionContext}
                 managedControlsOnly={mode === 'edit'}
                 managedControls={
-                  managedWorkflow.showTextTools && managedControlsInspect ? (
-                    mode === 'edit' ? (
-                      <div className="flex h-7 shrink-0 items-center gap-1">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="text-text-000 hover:text-text-000"
-                          onClick={() => {
-                            requestLeave(() => {
-                              invalidateSave()
-                              setMode('view')
-                              setDraft('')
-                              setEditBaseline(undefined)
-                            })
-                          }}
-                        >
-                          {t('Cancel')}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          aria-label={t('Save changes')}
-                          disabled={!isDirty || saving}
-                          onClick={() => void saveEdit()}
-                        >
-                          {t('Save')}
-                        </Button>
-                      </div>
-                    ) : (
-                      <>
-                        {managedInspect?.canEdit ? (
-                          <TooltipProvider delayDuration={200}>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon-xs"
-                                  className={previewHeaderActionClassName}
-                                  aria-label={t('Edit {{name}}', {
-                                    name: resolvedPreviewItem.name
-                                  })}
-                                  onClick={beginEdit}
-                                >
-                                  <Pencil aria-hidden="true" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent className={tooltipClassName}>
-                                {t('Edit content')}
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        ) : null}
+                  mode === 'edit' ? (
+                    <div className="flex h-7 shrink-0 items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-text-000 hover:text-text-000"
+                        onClick={() => {
+                          requestLeave(() => {
+                            invalidateSave()
+                            setMode('view')
+                            setDraft('')
+                            setEditBaseline(undefined)
+                          })
+                        }}
+                      >
+                        {t('Cancel')}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        aria-label={t('Save changes')}
+                        disabled={!isDirty || saving || !managedInspect?.canEdit}
+                        onClick={() => void saveEdit()}
+                      >
+                        {t('Save')}
+                      </Button>
+                    </div>
+                  ) : managedWorkflow.showTextTools && managedControlsInspect ? (
+                    <>
+                      {managedInspect?.canEdit ? (
                         <TooltipProvider delayDuration={200}>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
                                 type="button"
-                                variant={mode === 'diff' ? 'default' : 'ghost'}
+                                variant="ghost"
                                 size="icon-xs"
-                                className={
-                                  mode === 'diff' ? undefined : previewHeaderActionClassName
-                                }
-                                aria-label={
-                                  mode === 'diff'
-                                    ? t('Stop comparing {{name}}', {
-                                        name: resolvedPreviewItem.name
-                                      })
-                                    : t('Compare {{name}} with its source version', {
-                                        name: resolvedPreviewItem.name
-                                      })
-                                }
-                                disabled={mode !== 'diff' && !managedControlsInspect.canDiff}
-                                onClick={toggleDiff}
+                                className={previewHeaderActionClassName}
+                                aria-label={t('Edit {{name}}', {
+                                  name: resolvedPreviewItem.name
+                                })}
+                                onClick={beginEdit}
                               >
-                                <FileDiff aria-hidden="true" />
+                                <Pencil aria-hidden="true" />
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent className={tooltipClassName}>
-                              {mode === 'diff'
-                                ? t('Stop comparing {{name}}', { name: resolvedPreviewItem.name })
-                                : managedControlsInspect.canDiff
-                                  ? t('Compare with source version')
-                                  : t('No source version to compare')}
+                              {t('Edit content')}
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
-                      </>
-                    )
+                      ) : null}
+                      <TooltipProvider delayDuration={200}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant={mode === 'diff' ? 'default' : 'ghost'}
+                              size="icon-xs"
+                              className={mode === 'diff' ? undefined : previewHeaderActionClassName}
+                              aria-label={
+                                mode === 'diff'
+                                  ? t('Stop comparing {{name}}', {
+                                      name: resolvedPreviewItem.name
+                                    })
+                                  : t('Compare {{name}} with its source version', {
+                                      name: resolvedPreviewItem.name
+                                    })
+                              }
+                              disabled={mode !== 'diff' && !managedControlsInspect.canDiff}
+                              onClick={toggleDiff}
+                            >
+                              <FileDiff aria-hidden="true" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent className={tooltipClassName}>
+                            {mode === 'diff'
+                              ? t('Stop comparing {{name}}', { name: resolvedPreviewItem.name })
+                              : managedControlsInspect.canDiff
+                                ? t('Compare with source version')
+                                : t('No source version to compare')}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </>
                   ) : undefined
                 }
               />
@@ -1575,8 +1598,8 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                     managedWorkflow.isSelectedSourceText ? (
                       renderContent ? (
                         <PreviewFileContent
-                          key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
-                          item={resolvedPreviewItem}
+                          key={previewContentKey}
+                          item={contentItem}
                           downloadVersionContext={managedWorkflow.downloadVersionContext}
                           annotationVersionId={annotationVersionId}
                           annotationBlockedByHistoricalVersion={
@@ -1609,8 +1632,8 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                     )
                   ) : renderContent ? (
                     <PreviewFileContent
-                      key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
-                      item={resolvedPreviewItem}
+                      key={previewContentKey}
+                      item={contentItem}
                       downloadVersionContext={managedWorkflow.downloadVersionContext}
                       annotationVersionId={annotationVersionId}
                       annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}

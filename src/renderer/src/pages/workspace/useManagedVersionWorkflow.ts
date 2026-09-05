@@ -11,6 +11,8 @@ import {
 } from 'react'
 
 import { errorDetail } from '@/lib/error-detail'
+import { useProjectStore } from '@/stores/project-store'
+import { useSessionStore } from '@/stores/session-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type {
   ManagedFileIdentity,
@@ -48,12 +50,14 @@ const isSourceTextVersion = (inspect: ManagedFileVersionInspectResult): boolean 
 
 const useManagedVersionWorkflow = ({
   item,
+  sourceItem = item,
   projectId,
   mode,
   setMode,
   t
 }: {
   item: PreviewFileItem
+  sourceItem?: PreviewFileItem
   projectId: string | undefined
   mode: ManagedVersionMode
   setMode: Dispatch<SetStateAction<ManagedVersionMode>>
@@ -67,7 +71,14 @@ const useManagedVersionWorkflow = ({
     error: { code?: string; message?: string }
   }>()
   const [refresh, setRefresh] = useState(0)
+  const refreshGeneration = useRef(0)
+  const refreshInspect = useCallback(() => {
+    // Notifications invalidate responses synchronously, before React commits the next effect.
+    refreshGeneration.current += 1
+    setRefresh(refreshGeneration.current)
+  }, [])
   const [diff, setDiff] = useState<{
+    key?: string
     result?: ManagedFileVersionDiffResult
     error?: string
   }>({})
@@ -80,8 +91,38 @@ const useManagedVersionWorkflow = ({
         : undefined,
     [item.managedFileId, projectId, source]
   )
+  // Select primitive snapshots so unrelated messages/project edits do not invalidate inspection.
+  const sessionRevision = useSessionStore((state) => {
+    const session = state.sessions.find((candidate) => candidate.id === item.sessionId)
+    return JSON.stringify([session?.id, session?.filesRevision, session?.archivedAt])
+  })
+  const projectLifecycle = useProjectStore((state) => {
+    const project = state.projects.find((candidate) => candidate.id === projectId)
+    return JSON.stringify([
+      project?.id,
+      project?.archivedAt,
+      projectId ? state.projectDeletionRequests.has(projectId) : false
+    ])
+  })
+  // A local historical selection must still observe its parent file metadata advancing.
   const requestKey = identity
-    ? `${source}:${projectId}:${identity.fileId}:${item.selectedVersionId ?? ''}:${refresh}`
+    ? JSON.stringify([
+        source,
+        projectId,
+        identity.fileId,
+        item.selectedVersionId,
+        item.sessionId,
+        sourceItem.path,
+        sourceItem.name,
+        sourceItem.size,
+        sourceItem.mtimeMs,
+        sourceItem.versionNumber,
+        sourceItem.originSession?.state,
+        sourceItem.originSession?.deletedAt,
+        sessionRevision,
+        projectLifecycle,
+        refresh
+      ])
     : undefined
   const inspect =
     storedInspect && storedInspect.key === requestKey ? storedInspect.value : undefined
@@ -141,7 +182,10 @@ const useManagedVersionWorkflow = ({
   const navigationInspect = initialNavigationInspect
     ? { ...initialNavigationInspect, versions: history.versions }
     : undefined
-  const controlsInspect = inspect ?? (mode === 'diff' ? navigationInspect : undefined)
+  // Keep Cancel/Stop comparing available during refresh, without granting stale write authority.
+  const controlsInspect =
+    inspect ??
+    (mode !== 'view' && navigationInspect ? { ...navigationInspect, canEdit: false } : undefined)
   const selectedDownloadVersion =
     navigationInspect?.selectedVersion ??
     navigationInspect?.versions.find(
@@ -163,6 +207,20 @@ const useManagedVersionWorkflow = ({
   )
 
   useEffect(() => {
+    if (!identity) return
+    return window.api.projectFiles?.onChanged?.((event) => {
+      if (event.projectId !== identity.projectId) return
+      if (
+        event.kind !== 'reset' &&
+        (!event.sources.includes(identity.source) ||
+          (event.sessionId !== undefined && event.sessionId !== item.sessionId))
+      )
+        return
+      refreshInspect()
+    })
+  }, [identity, item.sessionId, refreshInspect])
+
+  useEffect(() => {
     let active = true
     if (!identity || !requestKey || typeof window.api.managedFileVersions?.inspect !== 'function')
       return
@@ -174,7 +232,7 @@ const useManagedVersionWorkflow = ({
         ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {})
       })
       .then((result) => {
-        if (!active) return
+        if (!active || refresh !== refreshGeneration.current) return
         if (!result.ok) {
           setInspectFailure({ key: requestKey, error: result.error })
           return leaveDiffMode()
@@ -185,7 +243,7 @@ const useManagedVersionWorkflow = ({
         else if (!result.value.canDiff) setDiff({})
       })
       .catch((error: unknown) => {
-        if (!active) return
+        if (!active || refresh !== refreshGeneration.current) return
         setInspectFailure({
           key: requestKey,
           error: {
@@ -203,31 +261,32 @@ const useManagedVersionWorkflow = ({
     return () => {
       active = false
     }
-  }, [identity, item.selectedVersionId, requestKey, resetDiff])
+  }, [identity, item.selectedVersionId, requestKey, refresh, resetDiff])
 
   useEffect(() => {
-    if (mode !== 'diff' || !identity || !inspect?.canDiff) return
+    if (mode !== 'diff' || !identity || !requestKey || !inspect?.canDiff) return
     const requestId = crypto.randomUUID()
     activeDiffRequestId.current = requestId
     void window.api.managedFileVersions
       .diffText({ ...identity, versionId: inspect.selectedVersionId, requestId })
       .then((result) => {
-        if (activeDiffRequestId.current !== requestId) return
+        if (activeDiffRequestId.current !== requestId || refresh !== refreshGeneration.current)
+          return
         activeDiffRequestId.current = undefined
-        if (result.ok) setDiff({ result: result.value })
+        if (result.ok) setDiff({ key: requestKey, result: result.value })
         else if (result.error.code !== 'DIFF_CANCELLED')
-          setDiff({ error: t('Diff could not be loaded.') })
+          setDiff({ key: requestKey, error: t('Diff could not be loaded.') })
       })
       .catch(() => {
-        if (activeDiffRequestId.current === requestId)
-          setDiff({ error: t('Diff could not be loaded.') })
+        if (activeDiffRequestId.current === requestId && refresh === refreshGeneration.current)
+          setDiff({ key: requestKey, error: t('Diff could not be loaded.') })
       })
     return () => {
       if (activeDiffRequestId.current !== requestId) return
       activeDiffRequestId.current = undefined
       void window.api.managedFileVersions.cancelDiff({ requestId })
     }
-  }, [identity, inspect?.canDiff, inspect?.selectedVersionId, mode, t])
+  }, [identity, inspect?.canDiff, inspect?.selectedVersionId, mode, requestKey, refresh, t])
 
   return {
     identity,
@@ -236,8 +295,9 @@ const useManagedVersionWorkflow = ({
     inspectError,
     navigationInspect,
     controlsInspect,
-    diffResult: diff.result,
-    diffError: diff.error,
+    // Navigation may survive a refresh; comparison content belongs to one confirmed inspection.
+    diffResult: inspect && diff.key === requestKey ? diff.result : undefined,
+    diffError: inspect && diff.key === requestKey ? diff.error : undefined,
     showTextTools: controlsInspect?.text !== undefined,
     isSelectedSourceText: inspect !== undefined && isSourceTextVersion(inspect),
     downloadVersionContext:
@@ -256,7 +316,7 @@ const useManagedVersionWorkflow = ({
       resetDiff(preserveDiffMode && mode === 'diff' ? 'diff' : 'view')
     },
     history,
-    refreshInspect: () => setRefresh((value) => value + 1)
+    refreshInspect
   }
 }
 
