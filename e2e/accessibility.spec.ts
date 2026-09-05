@@ -296,6 +296,18 @@ test('reports accessibility violations across representative state combinations'
   await expect(locations).toBeVisible()
   await waitForFiniteAnimations(page)
   await scanAccessibility(page, 'Go-to locations (open)')
+  const fileBrowser = page.getByRole('dialog', { name: 'Remote file browser' })
+  const removeBookmark = locations.getByRole('menuitem', {
+    name: 'Remove bookmark /scratch/fixture/pinned',
+    exact: true
+  })
+  await removeBookmark.click({ timeout: 5_000 })
+  await expect(fileBrowser).toBeVisible()
+  await goTo.press('Enter')
+  await expect(removeBookmark).toHaveCount(0)
+  await locations.getByRole('menuitem', { name: 'Home /home/fixture', exact: true }).click()
+  await expect(fileBrowser).toBeVisible()
+  await goTo.press('Enter')
   await page.keyboard.press('Escape')
   await expectKeyboardOutcome(page, 'Go-to Escape focus return', async () => {
     await expect(locations).toBeHidden()
