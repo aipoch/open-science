@@ -342,6 +342,146 @@ describe('PreviewFileSurface managed text versions', () => {
       .mockResolvedValue({ ok: true, value: managedInspect })
   })
 
+  it.each([
+    ['initial', 'result'],
+    ['initial', 'rejection'],
+    ['version change', 'result'],
+    ['version change', 'rejection']
+  ])('reports and retries inspect failure on %s via %s', async (stage, failure) => {
+    type Result = Awaited<ReturnType<typeof window.api.managedFileVersions.inspect>>
+    const inspect = vi.mocked(window.api.managedFileVersions.inspect)
+    if (stage === 'version change') {
+      await act(async () =>
+        root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      )
+    }
+    const error = { code: 'STORAGE_UNAVAILABLE' as const, message: 'Version storage is offline.' }
+    if (failure === 'result') inspect.mockResolvedValueOnce({ ok: false, error })
+    else inspect.mockRejectedValueOnce(new Error('Version transport disconnected.'))
+    if (stage === 'initial') {
+      await act(async () =>
+        root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      )
+    } else {
+      await click(container.querySelector('[aria-label="Previous file version"]'))
+    }
+
+    const alert = container.querySelector('[role="alert"]')
+    expect(alert).not.toBeNull()
+    expect(alert?.textContent).toContain('Version check failed.')
+    expect(alert?.textContent).toContain(
+      failure === 'result' ? error.message : 'Version transport disconnected.'
+    )
+    if (failure === 'result') expect(alert?.textContent).toContain(error.code)
+    expect(container.querySelector('[aria-label="Edit README.md"]')).toBeNull()
+    const failedRequest = inspect.mock.calls.at(-1)![0]
+    let finish!: (result: Result) => void
+    inspect.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await click(alert!.querySelector('button'))
+    expect(inspect).toHaveBeenLastCalledWith(failedRequest)
+    expect(
+      [...container.querySelectorAll('[role="status"]')].some((status) =>
+        status.textContent?.includes('Checking version…')
+      )
+    ).toBe(true)
+    await act(async () =>
+      finish({
+        ok: true,
+        value: { ...managedInspect, selectedVersionId: failedRequest.versionId! }
+      })
+    )
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Edit README.md"]')).not.toBeNull()
+  })
+
+  it.each(['rejection', 'storage error'])(
+    'replays the same save after a committed response is lost via %s',
+    async (failure) => {
+      type Request = Parameters<typeof window.api.managedFileVersions.saveTextEdit>[0]
+      const version = { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 }
+      let committed: Request | undefined
+      const save = vi.fn<typeof window.api.managedFileVersions.saveTextEdit>(async (request) => {
+        if (!committed) {
+          committed = request
+          if (failure === 'rejection') throw new Error('Response lost after commit')
+          return {
+            ok: false,
+            error: { code: 'STORAGE_UNAVAILABLE', message: 'Result unavailable' }
+          }
+        }
+        return {
+          ok: true,
+          value:
+            request.operationId === committed.operationId
+              ? { kind: 'created', version, headVersionId: version.id, replayed: true }
+              : {
+                  kind: 'conflict',
+                  expectedHeadVersionId: request.expectedHeadVersionId,
+                  actualHead: version
+                }
+        }
+      })
+      window.api.managedFileVersions.saveTextEdit = save
+      await act(async () =>
+        root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      )
+      await click(container.querySelector('[aria-label="Edit README.md"]'))
+      await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Revised\n')
+      await click(container.querySelector('[aria-label="Save changes"]'))
+      expect(container.querySelector('[role="alert"]')).not.toBeNull()
+      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Revised\n')
+      await click(container.querySelector('[aria-label="Save changes"]'))
+      expect(save.mock.calls[1][0]).toEqual(save.mock.calls[0][0])
+      expect(container.querySelector('textarea')).toBeNull()
+      expect(container.textContent).not.toContain('This file has a newer version.')
+    }
+  )
+
+  it.each(['content', 'baseline', 'edit session'])(
+    'starts a new save operation after the %s changes',
+    async (change) => {
+      const save = vi.fn().mockRejectedValue(new Error('Save result unavailable'))
+      window.api.managedFileVersions.saveTextEdit = save
+      await act(async () =>
+        root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      )
+      await click(container.querySelector('[aria-label="Edit README.md"]'))
+      await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+      await click(container.querySelector('[aria-label="Save changes"]'))
+      if (change === 'content') {
+        await changeTextarea(
+          container.querySelector<HTMLTextAreaElement>('textarea')!,
+          '# Changed\n'
+        )
+      } else {
+        await click(
+          [...container.querySelectorAll('button')].find(
+            (button) => button.textContent === 'Cancel'
+          )!
+        )
+        await confirmDiscard()
+        if (change === 'baseline') {
+          vi.mocked(window.api.managedFileVersions.inspect).mockResolvedValue({
+            ok: true,
+            value: { ...managedInspect, selectedVersionId: 'upload-v1' }
+          })
+          await click(container.querySelector('[aria-label="Previous file version"]'))
+        }
+        await click(container.querySelector('[aria-label="Edit README.md"]'))
+        await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+      }
+      await click(container.querySelector('[aria-label="Save changes"]'))
+      expect(save).toHaveBeenCalledTimes(2)
+      expect(save.mock.calls[1][0].operationId).not.toBe(save.mock.calls[0][0].operationId)
+      if (change === 'baseline') expect(save.mock.calls[1][0].basedOnVersionId).toBe('upload-v1')
+    }
+  )
+
   it.each(['plot.png', 'report.pdf', 'README.md'])(
     'offers older history for %s only alongside a version navigator',
     async (name) => {
@@ -354,7 +494,8 @@ describe('PreviewFileSurface managed text versions', () => {
           nextCursor: '1',
           text: isText ? managedInspect.text : undefined,
           canEdit: isText,
-          canDiff: isText
+          canDiff: isText,
+          ...(isText ? {} : { unavailableReason: 'NOT_EDITABLE_EXTENSION' as const })
         }
       })
       await act(async () =>
@@ -363,6 +504,8 @@ describe('PreviewFileSurface managed text versions', () => {
       expect(
         container.querySelector('[data-testid="managed-preview-version-navigation"]') !== null
       ).toBe(isText)
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+      expect(container.textContent).not.toContain('Checking version…')
       const loader = [...container.querySelectorAll('button')].find(
         (button) => button.textContent === 'Load earlier versions'
       )

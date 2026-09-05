@@ -31,6 +31,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { ActionMenuItems, ActionMenuProvider, ActionMenuTarget } from '@/components/action-menu'
+import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -45,7 +46,8 @@ import {
   MANAGED_TEXT_EDIT_EXTENSIONS,
   type ManagedFileVersionDescriptor,
   type ManagedFileVersionErrorCode,
-  type ManagedFileVersionInspectResult
+  type ManagedFileVersionInspectResult,
+  type ManagedFileVersionSaveTextEditRequest
 } from '../../../../shared/managed-file-versions'
 import {
   DropdownMenu,
@@ -674,6 +676,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     const [conflictHead, setConflictHead] = useState<ManagedFileVersionDescriptor>()
     const [pendingLeaveAction, setPendingLeaveAction] = useState<() => boolean | void>()
     const saveGenerationRef = useRef(0)
+    const pendingSaveRef = useRef<ManagedFileVersionSaveTextEditRequest | undefined>(undefined)
     const acceptedIdentityTransitionRef = useRef<string | undefined>(undefined)
     const mountedRef = useRef(false)
     const retryGenerationRef = useRef(0)
@@ -896,6 +899,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     const isDirty = mode === 'edit' && editBaseline !== undefined && draft !== editBaseline.text
     const discardEdit = useCallback((): void => {
       saveGenerationRef.current += 1
+      pendingSaveRef.current = undefined
       setSaving(false)
       setMode('view')
       setDraft('')
@@ -905,6 +909,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     }, [])
     const invalidateSave = (): void => {
       saveGenerationRef.current += 1
+      pendingSaveRef.current = undefined
       setSaving(false)
     }
     const finishVersionSelection = (preserveDiffMode: boolean): void => {
@@ -947,6 +952,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         return
       }
       const generation = ++saveGenerationRef.current
+      pendingSaveRef.current = undefined
       setMode('view')
       setDraft('')
       setEditBaseline(undefined)
@@ -1140,6 +1146,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
 
     const beginEdit = (): void => {
       if (!managedInspect?.canEdit || managedInspect.text === undefined) return
+      pendingSaveRef.current = undefined
       setDraft(managedInspect.text)
       setEditBaseline({
         text: managedInspect.text,
@@ -1164,13 +1171,27 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       const saveGeneration = saveGenerationRef.current
       let result
       try {
-        result = await window.api.managedFileVersions.saveTextEdit({
-          ...managedIdentity,
-          basedOnVersionId: managedInspect.selectedVersionId,
-          expectedHeadVersionId: editBaseline.expectedHeadVersionId,
-          content: draft,
-          operationId: crypto.randomUUID()
-        })
+        const previous = pendingSaveRef.current
+        // An uncertain result can already be committed. Retry exactly that operation, but never
+        // reuse its identity for a different file, baseline, or payload.
+        if (
+          !previous ||
+          previous.source !== managedIdentity.source ||
+          previous.projectId !== managedIdentity.projectId ||
+          previous.fileId !== managedIdentity.fileId ||
+          previous.basedOnVersionId !== managedInspect.selectedVersionId ||
+          previous.expectedHeadVersionId !== editBaseline.expectedHeadVersionId ||
+          previous.content !== draft
+        ) {
+          pendingSaveRef.current = {
+            ...managedIdentity,
+            basedOnVersionId: managedInspect.selectedVersionId,
+            expectedHeadVersionId: editBaseline.expectedHeadVersionId,
+            content: draft,
+            operationId: crypto.randomUUID()
+          }
+        }
+        result = await window.api.managedFileVersions.saveTextEdit(pendingSaveRef.current!)
       } catch {
         if (saveGenerationRef.current !== saveGeneration) return
         setSaving(false)
@@ -1188,6 +1209,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         setEditError(t('This file has a newer version.'))
         return
       }
+      pendingSaveRef.current = undefined
       setMode('view')
       setEditBaseline(undefined)
       setDraft('')
@@ -1429,6 +1451,26 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   ) : undefined
                 }
               />
+              {!showProvenance && managedWorkflow.inspectLoading ? (
+                <div
+                  role="status"
+                  className="shrink-0 border-b border-border-300/50 px-3 py-2 text-xs text-text-200"
+                >
+                  {t('Checking version…')}
+                </div>
+              ) : !showProvenance && managedWorkflow.inspectError ? (
+                <div
+                  role="alert"
+                  className="max-h-64 shrink-0 overflow-y-auto border-b border-border-300/50 p-3"
+                >
+                  <ErrorNotice
+                    title={t('Version check failed.')}
+                    description={managedWorkflow.inspectError.message}
+                    errorCode={managedWorkflow.inspectError.code}
+                    primaryButton={{ label: t('Retry'), onClick: managedWorkflow.refreshInspect }}
+                  />
+                </div>
+              ) : null}
               {!showProvenance && lineageFailed ? (
                 <div
                   role="alert"

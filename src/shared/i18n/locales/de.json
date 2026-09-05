@@ -102,6 +102,8 @@
   "renderer": {
     "Receiving code. Cancelling discards the unfinished code.": "Code wird empfangen. Beim Abbrechen wird der unvollständige Code verworfen.",
     "Cancel code reception": "Codeempfang abbrechen",
+    "Checking version…": "Version wird geprüft…",
+    "Version check failed.": "Versionsprüfung fehlgeschlagen.",
     "First row is used as column headers": "Die erste Zeile wird als Spaltenüberschrift verwendet",
     "Notebook network access": "Notebook-Netzwerkzugriff",
     "Control which internet domains Notebook Python, R, REPL, and Bash can reach.": "Legen Sie fest, auf welche Internetdomains Python, R, REPL und Bash in Notebooks zugreifen können.",

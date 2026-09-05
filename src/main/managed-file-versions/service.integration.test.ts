@@ -1713,6 +1713,17 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       headVersionId: 'upload-v3',
       replayed: false
     })
+    // A lost response leaves the caller on its old baseline: only the original ID can replay it.
+    await expect(
+      service.saveTextEdit({ ...firstRequest, operationId: 'new-id-after-response-loss' })
+    ).resolves.toMatchObject({ kind: 'conflict', actualHead: { id: 'upload-v3' } })
+    await expect(service.saveTextEdit(firstRequest)).resolves.toMatchObject({
+      kind: 'created',
+      headVersionId: 'upload-v3',
+      replayed: true
+    })
+    expect(await client.uploadVersion.count()).toBe(3)
+
     await service.saveTextEdit({
       ...firstRequest,
       basedOnVersionId: 'upload-v3',
