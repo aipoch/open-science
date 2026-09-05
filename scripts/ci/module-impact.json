@@ -838,7 +838,7 @@
         "src/main/session-persistence/state-owner.ts"
       ],
       "interfacePaths": ["src/main/session-persistence/coordinator.ts"],
-      "consumerModules": [],
+      "consumerModules": ["project_lifecycle"],
       "testFiles": {
         "owner": [
           "src/main/session-persistence/coordinator.architecture.test.ts",
@@ -847,7 +847,8 @@
         ],
         "contract": [
           "src/shared/session-persistence.test.ts",
-          "src/main/session-persistence/coordinator-contract.test.ts"
+          "src/main/session-persistence/coordinator-contract.test.ts",
+          "src/main/session-persistence/ipc.test.ts"
         ],
         "consumer": [
           "src/main/delegation/durable-delegated-work.test.ts",
@@ -916,6 +917,63 @@
       },
       "capabilityOverlays": ["i18n_catalog"],
       "fallbackCapability": "renderer_view"
+    },
+    "project_lifecycle": {
+      "ownerPaths": [
+        "src/main/projects/deletion-coordinator.ts",
+        "src/main/projects/ipc.ts",
+        "src/main/projects/preview-repository.ts",
+        "src/main/projects/project-owned-data.catalog.ts",
+        "src/main/projects/project-runtime-quiescence-owner.ts",
+        "src/main/projects/repository.ts"
+      ],
+      "interfacePaths": [
+        "src/main/projects/deletion-coordinator.ts",
+        "src/main/projects/ipc.ts",
+        "src/main/projects/preview-repository.ts",
+        "src/main/projects/project-runtime-quiescence-owner.ts",
+        "src/main/projects/repository.ts"
+      ],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": [
+          "src/main/projects/deletion-coordinator.test.ts",
+          "src/main/projects/preview-repository.test.ts",
+          "src/main/projects/project-owned-data.catalog.architecture.test.ts",
+          "src/main/projects/project-runtime-quiescence-owner.test.ts",
+          "src/main/projects/repository.test.ts"
+        ],
+        "contract": [
+          "src/main/projects/ipc.test.ts",
+          "src/main/data-content-application-commands.test.ts",
+          "src/main/application-command-composition.test.ts",
+          "src/main/application-command-wiring.test.ts",
+          "src/shared/renderer-contract-catalog.test.ts",
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/preload/index.test.ts",
+          "src/renderer/web/api-installer.test.ts"
+        ],
+        "consumer": [
+          "src/main/acp/runtime-coordinator.test.ts",
+          "src/main/archive/coordinator.test.ts",
+          "src/main/compute/job-deletion-owner.test.ts",
+          "src/main/compute/job-deletion-runtime-drain.test.ts",
+          "src/main/compute/job-deletion-runtime-isolation.test.ts",
+          "src/main/database/application-database.integration.test.ts",
+          "src/main/local-fs/granted-roots-repository.test.ts",
+          "src/main/permission-grants/registry.test.ts",
+          "src/main/session-persistence/deletion-integration.test.ts",
+          "src/main/session-persistence/ipc.test.ts",
+          "src/main/session-persistence/projection.test.ts",
+          "src/main/side-chat/runtime-owner.test.ts",
+          "src/main/storage/normalize-legacy-paths.test.ts",
+          "src/renderer/src/stores/project-store.test.ts",
+          "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
+          "src/renderer/src/pages/home/HomePage.render.test.tsx"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
     }
   }
 }

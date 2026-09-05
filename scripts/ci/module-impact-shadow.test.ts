@@ -33,6 +33,105 @@ function reportFor(
 }
 
 describe('module impact shadow', () => {
+  it.each([
+    [
+      'project defaults recovery',
+      [
+        'src/main/projects/deletion-coordinator.test.ts',
+        'src/main/projects/deletion-coordinator.ts',
+        'src/main/projects/ipc.test.ts',
+        'src/main/projects/project-owned-data.catalog.architecture.test.ts',
+        'src/main/projects/repository.test.ts',
+        'src/main/projects/repository.ts',
+        'src/main/session-persistence/ipc.test.ts'
+      ]
+    ],
+    [
+      'deletion compensation',
+      [
+        'src/main/projects/deletion-coordinator.test.ts',
+        'src/main/projects/deletion-coordinator.ts',
+        'src/main/session-persistence/coordinator.test.ts',
+        'src/main/session-persistence/deletion-owner.ts'
+      ]
+    ]
+  ])('keeps the complete %s diff selective with lifecycle consumers', (_name, paths) => {
+    const report = reportFor(paths.map((path) => ({ path, status: 'modified' })))
+
+    expect(report.resolved.mode).toBe('selective')
+    expect(report.shadow.modules).toContain('project_lifecycle')
+    expect(report.shadow.testFiles).toEqual(
+      expect.arrayContaining([
+        ...paths.filter((path) => path.endsWith('.test.ts')),
+        'src/main/projects/project-runtime-quiescence-owner.test.ts',
+        'src/main/session-persistence/deletion-integration.test.ts',
+        'src/main/data-content-application-commands.test.ts',
+        'src/main/application-command-wiring.test.ts',
+        'src/main/compute/job-deletion-runtime-isolation.test.ts',
+        'src/main/permission-grants/registry.test.ts',
+        'src/renderer/src/stores/project-store.test.ts',
+        'src/renderer/src/pages/home/HomePage.persistence.test.tsx'
+      ])
+    )
+    expect(report.resolved.lanes).toEqual(
+      expect.arrayContaining([
+        'unit_macos',
+        'interface_contracts',
+        'typecheck_node',
+        'typecheck_web',
+        'build',
+        'windows_runtime',
+        'windows_path',
+        'e2e_functional_macos',
+        'e2e_workspace_macos',
+        'e2e_functional_windows',
+        'e2e_workspace_windows'
+      ])
+    )
+    expect(report.resolved.lanes).not.toContain('linux_runtime')
+    expect(report.resolved.lanes).not.toContain('e2e_visual_macos')
+    expect(report.resolved.lanes).not.toContain('e2e_accessibility_macos')
+  })
+
+  it('expands the session deletion interface to its injected project lifecycle caller', () => {
+    const report = reportFor([
+      { path: 'src/main/session-persistence/coordinator.ts', status: 'modified' }
+    ])
+
+    expect(report.resolved.reasonChains).toContain('session_persistence -> project_lifecycle')
+    expect(report.shadow.testFiles).toContain('src/main/projects/deletion-coordinator.test.ts')
+    expect(report.shadow.testFiles).toContain('src/main/session-persistence/ipc.test.ts')
+  })
+
+  it('keeps documentation in its own lane when accompanying an owned code change', () => {
+    const source = { path: 'src/main/projects/deletion-coordinator.ts', status: 'modified' }
+    const codeOnly = reportFor([source])
+    const report = reportFor([source, { path: 'docs/PRD.md', status: 'modified' }])
+
+    expect(report.resolved.mode).toBe('selective')
+    expect(report.shadow.modules).toEqual(codeOnly.shadow.modules)
+    expect(report.shadow.testFiles).toEqual(codeOnly.shadow.testFiles)
+    expect(report.resolved.lanes).toEqual(
+      expect.arrayContaining([...codeOnly.resolved.lanes, 'docs'])
+    )
+    expect(report.resolved.reasonChains).toContain(
+      'docs/PRD.md -> documentation lane -> no module tests'
+    )
+
+    const unknown = reportFor([
+      source,
+      { path: 'README.md', status: 'modified' },
+      { path: 'src/main/projects/new-owner.ts', status: 'added' }
+    ])
+    expect(unknown.resolved.mode).toBe('full')
+    expect(unknown.resolved.reasonChains).toContain(
+      'src/main/projects/new-owner.ts -> unknown module owner -> full'
+    )
+    expect(reportFor([source, { path: 'package.json', status: 'modified' }]).resolved.mode).toBe(
+      'full'
+    )
+  })
+
   it('promotes deterministic module evidence into the resolved plan', () => {
     const report = reportFor([
       { path: 'src/renderer/src/stores/session-store.ts', status: 'modified' }

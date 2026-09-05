@@ -1,4 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { load } from 'js-yaml'
@@ -116,7 +118,7 @@ describe('PR Gate workflow', () => {
           required: false,
           default: 'classified',
           type: 'choice',
-          options: ['classified', 'unit-coverage', 'i18n']
+          options: ['classified', 'unit-coverage', 'i18n', 'windows-e2e']
         }
       }
     })
@@ -547,8 +549,8 @@ describe('PR Gate workflow', () => {
     expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
     expect(windowsRuns).toEqual(
       expect.arrayContaining([
-        'npm run test:e2e:journey -- --workers=2 --fully-parallel --fail-on-flaky-tests',
-        'npm run test:e2e:workspace -- --workers=2 --fully-parallel --fail-on-flaky-tests',
+        'npm run test:e2e:journey -- --workers=2 --fully-parallel --shard=${{ matrix.shard }}/2 --fail-on-flaky-tests',
+        'npm run test:e2e:workspace -- --workers=2 --fully-parallel --shard=${{ matrix.shard }}/2 --fail-on-flaky-tests',
         'npm run test:e2e:accessibility -- --fail-on-flaky-tests'
       ])
     )
@@ -557,6 +559,107 @@ describe('PR Gate workflow', () => {
   it('budgets the complete Windows E2E path beyond dependency and build setup', () => {
     expect(workflow.jobs.windows_e2e['timeout-minutes']).toBe(25)
   })
+
+  it('shards every selected Windows journey without cancelling siblings or colliding artifacts', () => {
+    const job = workflow.jobs.windows_e2e
+    expect(job.strategy).toEqual({ 'fail-fast': false, matrix: { shard: [1, 2] } })
+    expect(job.name).toBe('Windows E2E (shard ${{ matrix.shard }}/2)')
+    for (const lane of ['e2e_functional_windows', 'e2e_workspace_windows']) {
+      const step = job.steps?.find(({ id }) => id === lane)
+      expect(step?.if).toContain(
+        `contains(fromJSON(needs.preflight.outputs.plan).lanes, '${lane}')`
+      )
+      expect(step?.run).toContain('--workers=2 --fully-parallel --shard=${{ matrix.shard }}/2')
+      expect(step?.run).toContain('--fail-on-flaky-tests')
+    }
+    const uploads = job.steps?.filter(({ name }) =>
+      /Upload (functional|workspace)/.test(name ?? '')
+    )
+    expect(uploads).toHaveLength(2)
+    for (const upload of uploads ?? []) {
+      expect(upload.with?.name).toContain('${{ matrix.shard }}')
+    }
+    expect(job.steps?.find(({ id }) => id === 'e2e_accessibility_windows')?.if).toContain(
+      'matrix.shard == 1'
+    )
+    expect(workflow.jobs.gate.needs).toContain('windows_e2e')
+    expect(
+      workflow.jobs.gate.steps?.find(({ name }) => name?.startsWith('Evaluate deterministic gate'))
+        ?.env?.PR_GATE_NEEDS
+    ).toContain('"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}')
+  })
+
+  it.skipIf(process.platform === 'win32').each(['true', 'false'])(
+    'retains unique static checks when dedicated tests are %s',
+    (runDedicatedTests) => {
+      const directory = mkdtempSync(join(tmpdir(), 'pr-gate-static-'))
+      try {
+        for (const command of ['npm', 'npx']) {
+          writeFileSync(
+            join(directory, command),
+            `#!/bin/sh\nprintf '%s\\n' '${command}'" $*" >> "$COMMAND_LOG"\n`,
+            { mode: 0o755 }
+          )
+        }
+        for (const id of ['interface_contracts', 'cli_sdk']) {
+          const step = workflow.jobs.static.steps?.find((step) => step.id === id)
+          expect(step?.env?.RUN_DEDICATED_TESTS).toBe(
+            "${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}"
+          )
+          const log = join(directory, id)
+          const run = spawnSync('bash', ['-e', '-c', step!.run!], {
+            env: {
+              ...process.env,
+              PATH: `${directory}:${process.env.PATH}`,
+              COMMAND_LOG: log,
+              RUN_DEDICATED_TESTS: runDedicatedTests
+            },
+            encoding: 'utf8'
+          })
+          expect(run.status, run.stderr).toBe(0)
+          const commands = readFileSync(log, 'utf8')
+          expect(commands).toContain(
+            id === 'interface_contracts' ? 'npm run check:web-api-map' : 'npm run check:cli-package'
+          )
+          expect(commands.includes('npx vitest run')).toBe(runDedicatedTests === 'true')
+        }
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'executes the focused Windows plan through the real preflight script',
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), 'pr-gate-windows-'))
+      try {
+        const output = join(directory, 'output')
+        const classify = workflow.jobs.preflight.steps?.find(({ id }) => id === 'classify')
+        const run = spawnSync('bash', ['-e', '-c', classify!.run!], {
+          env: {
+            ...process.env,
+            EVENT_NAME: 'workflow_dispatch',
+            DRY_RUN_MODE: 'windows-e2e',
+            GITHUB_OUTPUT: output,
+            GITHUB_STEP_SUMMARY: join(directory, 'summary')
+          },
+          encoding: 'utf8'
+        })
+        expect(run.status, run.stderr).toBe(0)
+        const planLine = readFileSync(output, 'utf8')
+          .split('\n')
+          .find((line) => line.startsWith('plan='))!
+        expect(JSON.parse(planLine.slice(5))).toMatchObject({
+          mode: 'selective',
+          bundles: ['policy', 'windows_e2e'],
+          lanes: ['policy', 'e2e_functional_windows', 'e2e_workspace_windows']
+        })
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('rebuilds the Windows sandbox host before the native lifecycle smoke', () => {
     const steps = workflow.jobs.windows_core.steps ?? []

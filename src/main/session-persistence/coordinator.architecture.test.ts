@@ -1096,7 +1096,7 @@ describe('Session persistence coordinator architecture', () => {
     expect(sessionPersistence.interfacePaths).toEqual([
       'src/main/session-persistence/coordinator.ts'
     ])
-    expect(sessionPersistence.consumerModules).toEqual([])
+    expect(sessionPersistence.consumerModules).toEqual(['project_lifecycle'])
     expect(sessionPersistence.testFiles.owner).toEqual([
       'src/main/session-persistence/coordinator.architecture.test.ts',
       'src/main/session-persistence/coordinator.test.ts',
@@ -1104,7 +1104,8 @@ describe('Session persistence coordinator architecture', () => {
     ])
     expect(sessionPersistence.testFiles.contract).toEqual([
       'src/shared/session-persistence.test.ts',
-      'src/main/session-persistence/coordinator-contract.test.ts'
+      'src/main/session-persistence/coordinator-contract.test.ts',
+      'src/main/session-persistence/ipc.test.ts'
     ])
     expect(sessionPersistence.testFiles.consumer).toEqual([
       'src/main/delegation/durable-delegated-work.test.ts',
