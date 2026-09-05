@@ -142,18 +142,22 @@ const executeClaudeProbe: ExecuteClaudeProbe = async (executablePath, env, runti
 
 const runCodexAdapterVersion = async (
   adapterPath: string,
-  fallback: (path: string) => Promise<string | undefined>
+  fallback: (path: string, signal?: AbortSignal) => Promise<string | undefined>,
+  signal?: AbortSignal
 ): Promise<string | undefined> => {
-  if (!/\.[cm]?js$/i.test(adapterPath)) return fallback(adapterPath)
+  signal?.throwIfAborted()
+  if (!/\.[cm]?js$/i.test(adapterPath)) return fallback(adapterPath, signal)
 
   try {
     const { stdout } = await execFileAsync(process.execPath, [adapterPath, '--version'], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NO_BROWSER: '1' },
       timeout: 5_000,
-      windowsHide: true
+      windowsHide: true,
+      signal
     })
     return stdout
   } catch {
+    signal?.throwIfAborted()
     return undefined
   }
 }
@@ -331,6 +335,8 @@ export class AgentRuntimeManager {
   private activeInstallAbort: AbortController | undefined
   private activeInstallCompletion: Promise<void> | undefined
   private installAdmissionHolders = 0
+  private readonly shutdownAbort = new AbortController()
+  private readonly activeDetections = new Set<Promise<unknown>>()
   private environmentCheckRuntimeProbe: ReusableRuntimeProbe | undefined
   private preflightRuntimeProbe: ReusableRuntimeProbe | undefined
   private readonly installManagedClaudeImpl: (
@@ -366,9 +372,10 @@ export class AgentRuntimeManager {
   }
 
   async dispose(): Promise<void> {
+    this.shutdownAbort.abort()
     const completion = this.activeInstallCompletion
     this.activeInstallAbort?.abort()
-    await completion
+    await Promise.allSettled([...(completion ? [completion] : []), ...this.activeDetections])
   }
 
   constructor(options: AgentRuntimeManagerOptions) {
@@ -406,7 +413,8 @@ export class AgentRuntimeManager {
       homePath: baseOpencodeDetectDeps.homePath,
       platform: baseOpencodeDetectDeps.platform,
       isRunnable: baseOpencodeDetectDeps.isExecutable,
-      getAdapterVersion: (path) => runCodexAdapterVersion(path, baseOpencodeDetectDeps.getVersion),
+      getAdapterVersion: (path, signal) =>
+        runCodexAdapterVersion(path, baseOpencodeDetectDeps.getVersion, signal),
       getCodexVersion: baseOpencodeDetectDeps.getVersion,
       smokeInitialize: runAcpInitializeSmoke(baseOpencodeDetectDeps.platform),
       resolveNpmBinDirs: baseOpencodeDetectDeps.resolveNpmBinDirs,
@@ -537,59 +545,86 @@ export class AgentRuntimeManager {
     })
   }
 
+  private trackDetection<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T> {
+    this.shutdownAbort.signal.throwIfAborted()
+    const operationSignal = signal
+      ? AbortSignal.any([signal, this.shutdownAbort.signal])
+      : this.shutdownAbort.signal
+    operationSignal.throwIfAborted()
+    const pending = operation(operationSignal)
+    this.activeDetections.add(pending)
+    void pending.then(
+      () => this.activeDetections.delete(pending),
+      () => this.activeDetections.delete(pending)
+    )
+    return pending
+  }
+
   async detectClaude(signal?: AbortSignal): Promise<ClaudeDetectResult> {
-    const result = await detectClaude(this.detectDeps, signal)
-    signal?.throwIfAborted()
+    return this.trackDetection(async (operationSignal) => {
+      const result = await detectClaude(this.detectDeps, operationSignal)
+      operationSignal.throwIfAborted()
 
-    if (result.found && result.path) {
-      await this.repository.setClaudeInfo({ resolvedPath: result.path, version: result.version })
-    } else {
-      const cached = (await this.repository.getSettings()).claude
-      if (cached?.resolvedPath && !(await this.pathExists(cached.resolvedPath))) {
-        await this.repository.setClaudeInfo({})
+      if (result.found && result.path) {
+        await this.repository.setClaudeInfo({ resolvedPath: result.path, version: result.version })
+      } else {
+        const cached = (await this.repository.getSettings()).claude
+        if (cached?.resolvedPath && !(await this.pathExists(cached.resolvedPath))) {
+          await this.repository.setClaudeInfo({})
+        }
       }
-    }
 
-    return result
+      return result
+    }, signal)
   }
 
   async detectOpencode(signal?: AbortSignal): Promise<void> {
-    const detected = await detectOpencode(this.opencodeDetectDeps, signal)
-    signal?.throwIfAborted()
+    return this.trackDetection(async (operationSignal) => {
+      const detected = await detectOpencode(this.opencodeDetectDeps, operationSignal)
+      operationSignal.throwIfAborted()
 
-    if (detected) {
-      await this.repository.setOpencodeInfo(detected.resolvedPath, detected.version)
-    } else {
-      const cached = (await this.repository.getSettings()).opencodePath
-      if (cached && !(await this.pathExists(cached))) await this.repository.clearOpencodeInfo()
-    }
+      if (detected) {
+        await this.repository.setOpencodeInfo(detected.resolvedPath, detected.version)
+      } else {
+        const cached = (await this.repository.getSettings()).opencodePath
+        if (cached && !(await this.pathExists(cached))) await this.repository.clearOpencodeInfo()
+      }
+    }, signal)
   }
 
-  async detectCodeBuddy(): Promise<void> {
-    const detected = await detectCodeBuddy(this.codebuddyDetectDeps)
-    if (detected) {
-      await this.repository.setCodeBuddyInfo(detected.resolvedPath, detected.version)
-    } else {
-      const cached = (await this.repository.getSettings()).codebuddyPath
-      if (cached) await this.repository.clearCodeBuddyInfo()
-    }
+  async detectCodeBuddy(signal?: AbortSignal): Promise<void> {
+    return this.trackDetection(async (operationSignal) => {
+      const detected = await detectCodeBuddy(this.codebuddyDetectDeps, operationSignal)
+      operationSignal.throwIfAborted()
+      if (detected) {
+        await this.repository.setCodeBuddyInfo(detected.resolvedPath, detected.version)
+      } else {
+        const cached = (await this.repository.getSettings()).codebuddyPath
+        if (cached) await this.repository.clearCodeBuddyInfo()
+      }
+    }, signal)
   }
 
   async detectCodex(signal?: AbortSignal): Promise<void> {
-    const detected = await detectCodex(this.codexDetectDeps, signal)
-    signal?.throwIfAborted()
+    return this.trackDetection(async (operationSignal) => {
+      const detected = await detectCodex(this.codexDetectDeps, operationSignal)
+      operationSignal.throwIfAborted()
 
-    if (detected) {
-      await this.repository.setCodexInfo({
-        resolvedPath: detected.adapterPath,
-        version: detected.adapterVersion,
-        nativePath: detected.nativeCodexPath,
-        nativeVersion: detected.nativeCodexVersion
-      })
-    } else {
-      const cached = (await this.repository.getSettings()).codex?.resolvedPath
-      if (cached && !(await this.pathExists(cached))) await this.repository.clearCodexInfo()
-    }
+      if (detected) {
+        await this.repository.setCodexInfo({
+          resolvedPath: detected.adapterPath,
+          version: detected.adapterVersion,
+          nativePath: detected.nativeCodexPath,
+          nativeVersion: detected.nativeCodexVersion
+        })
+      } else {
+        const cached = (await this.repository.getSettings()).codex?.resolvedPath
+        if (cached && !(await this.pathExists(cached))) await this.repository.clearCodexInfo()
+      }
+    }, signal)
   }
 
   async installClaude(
@@ -756,6 +791,9 @@ export class AgentRuntimeManager {
     installId: string,
     install: (signal: AbortSignal) => Promise<ClaudeInstallResult>
   ): Promise<ClaudeInstallResult> {
+    if (this.shutdownAbort.signal.aborted) {
+      return { installId, ok: false, error: 'Settings service is shutting down.' }
+    }
     if (this.activeInstallId !== undefined || this.installAdmissionHolders > 0) {
       return { installId, ok: false, error: 'Another install is already in progress.' }
     }

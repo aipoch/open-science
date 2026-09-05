@@ -267,12 +267,72 @@ describe('AgentRuntimeManager', () => {
     await manager.installOpencode({ source: 'npm' }, vi.fn())
     await manager.installCodex({ source: 'npm' }, vi.fn())
 
-    const signals = runInstallWithFallbackSpy.mock.calls.map(
-      ([options]) => (options as { signal: AbortSignal }).signal
+    expect(claudeGetVersion).toHaveBeenCalledWith(claudePath, expect.any(AbortSignal))
+    expect(opencodeGetVersion).toHaveBeenCalledWith(opencodePath, expect.any(AbortSignal))
+    expect(codexGetAdapterVersion).toHaveBeenCalledWith(managedAdapterPath, expect.any(AbortSignal))
+  })
+
+  it('aborts and drains standalone detection before disposal completes', async () => {
+    const claudePath = '/usr/local/bin/claude'
+    inventory.claude.set(claudePath, '2.1.0')
+    const entered = Promise.withResolvers<AbortSignal | undefined>()
+    const releaseCleanup = Promise.withResolvers<void>()
+    const detectDeps = createClaudeDeps(inventory)
+    detectDeps.getVersion = async (_path, signal) => {
+      entered.resolve(signal)
+      await releaseCleanup.promise
+      signal?.throwIfAborted()
+      return '2.1.0'
+    }
+    manager = createManager({ detectDeps })
+
+    const callerAbort = new AbortController()
+    const detection = manager.detectClaude(callerAbort.signal)
+    const observedSignal = await entered.promise
+    let disposeSettled = false
+    const disposal = manager.dispose().then(() => {
+      disposeSettled = true
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const waitedForCleanup = !disposeSettled
+    releaseCleanup.resolve()
+    const detectionOutcome = await detection.then(
+      () => 'resolved',
+      (error: unknown) => (error as Error).name
     )
-    expect(claudeGetVersion).toHaveBeenCalledWith(claudePath, signals[0])
-    expect(opencodeGetVersion).toHaveBeenCalledWith(opencodePath, signals[1])
-    expect(codexGetAdapterVersion).toHaveBeenCalledWith(managedAdapterPath, signals[2])
+    await disposal
+
+    expect(observedSignal?.aborted).toBe(true)
+    expect(callerAbort.signal.aborted).toBe(false)
+    expect(waitedForCleanup).toBe(true)
+    expect(detectionOutcome).toBe('AbortError')
+  })
+
+  it('rejects new detection and install work after disposal starts', async () => {
+    await manager.dispose()
+
+    await expect(manager.detectClaude(new AbortController().signal)).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+    await expect(manager.installClaude({ source: 'managed' }, vi.fn())).resolves.toMatchObject({
+      ok: false,
+      error: 'Settings service is shutting down.'
+    })
+  })
+
+  it('cancels the default Codex JavaScript adapter version probe promptly', async () => {
+    await mkdir(dirname(managedAdapterPath), { recursive: true })
+    await writeFile(managedAdapterPath, 'setTimeout(() => {}, 1000)\n')
+    inventory.opencode.set(managedAdapterPath, 'unused')
+    manager = createManager({ codexDetectDeps: undefined })
+    const controller = new AbortController()
+    const startedAt = Date.now()
+    setTimeout(() => controller.abort(), 25)
+
+    await expect(manager.detectCodex(controller.signal)).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+    expect(Date.now() - startedAt).toBeLessThan(750)
   })
 
   it('rejects and clears a cached CodeBuddy runtime outside the pinned version', async () => {
