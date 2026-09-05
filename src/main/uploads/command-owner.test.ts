@@ -448,6 +448,7 @@ describe('upload command owner', () => {
     const client = createProjectDbClient(root)
     try {
       await migrateApplicationDatabase(client)
+      await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
       const repository = new UploadRepository(root, { getClient: async () => client })
       const owner = createUploadCommandOwner(repository)
       const caller = createCaller(new ApplicationCallerLeaseRegistry(), 16)
