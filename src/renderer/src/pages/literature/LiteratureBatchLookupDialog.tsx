@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoaderCircle, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
+import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 import { Button } from '@/components/ui/button'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import {
@@ -19,33 +20,21 @@ import {
   dialogDescriptionClassName,
   dialogFooterClassName
 } from '@/components/ui/dialog-chrome'
-import type {
-  LiteratureFullTextCandidate,
-  LiteratureFullTextProgress,
-  LiteratureItemView,
-  LiteratureMetadataCompletionResult,
-  LiteratureMetadataField
-} from '../../../../shared/literature'
+import type { LiteratureItemView, LiteratureMetadataField } from '../../../../shared/literature'
 import { formatBytes } from '../../../../shared/update'
+import { literatureJobProgress } from '../../../../shared/literature-jobs'
 
 type BatchLookupMode = 'metadata' | 'full-text'
 const progressClassName =
   'h-1.5 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary'
-type Row = {
-  id: string
-  item?: LiteratureItemView
-  status: 'pending' | 'searching' | 'ready' | 'skipped' | 'error' | 'saving' | 'done'
-  message?: string
-  checked: boolean
-  metadata?: LiteratureMetadataCompletionResult
-  candidates?: LiteratureFullTextCandidate[]
-  candidateId?: string
-}
+type Row = import('../../../../shared/literature-jobs').LiteratureJobRow
+type Job = import('../../../../shared/literature-jobs').LiteratureJob
 
 export const LiteratureBatchLookupDialog = ({
   itemIds,
   initialItems,
   mode,
+  jobId: existingJobId,
   fieldLabel,
   onClose,
   onChanged
@@ -53,232 +42,204 @@ export const LiteratureBatchLookupDialog = ({
   itemIds: string[]
   initialItems: LiteratureItemView[]
   mode: BatchLookupMode
+  jobId?: string
   fieldLabel: (field: LiteratureMetadataField) => string
   onClose: () => void
-  onChanged: () => void
+  onChanged: (itemIds: string[]) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const [requestId] = useState(() => crypto.randomUUID())
+  const [job, setJob] = useState<Job>()
   const [rows, setRows] = useState<Row[]>(() =>
-    [...new Set(itemIds)].map((id) => ({
+    itemIds.map((id) => ({
       id,
       item: initialItems.find((item) => item.id === id),
       status: 'pending',
       checked: true
     }))
   )
-  const [busy, setBusy] = useState(false)
-  const [stopping, setStopping] = useState(false)
-  const running = useRef(false)
-  const stopped = useRef(false)
-  const mounted = useRef(true)
-  const cooldowns = useRef(new Map<string, number>())
-  const [download, setDownload] = useState<{ itemId: string; candidateId: string }>()
-  const [progress, setProgress] = useState<LiteratureFullTextProgress>()
+  const [error, setError] = useState(false)
+  const [sending, setSending] = useState(false)
+  const jobRef = useRef<Job | undefined>(undefined)
+  const draftWrites = useRef(Promise.resolve())
+  const pendingDrafts = useRef(
+    new Map<string, { itemId: string; checked: boolean; candidateId?: string }>()
+  )
+  const receive = (value: Job): void => {
+    const prior = jobRef.current
+    if (prior && value.updatedAt < prior.updatedAt) return
+    const changedRows = prior
+      ? value.rows
+          .filter((row, index) => row.status === 'done' && prior.rows[index]?.status !== 'done')
+          .map((row) => row.id)
+      : []
+    jobRef.current = value
+    if (!prior || prior.state !== value.state)
+      window.dispatchEvent(new Event('literature-jobs-changed'))
+    setJob(value)
+    setRows((current) => {
+      const byId = new Map(current.map((row) => [row.id, row]))
+      return value.rows.map((row) => {
+        const local = byId.get(row.id)
+        return local && local.status === 'ready' && row.status === 'ready'
+          ? {
+              ...row,
+              checked: local.checked,
+              candidateId: row.candidates?.some(({ id }) => id === local.candidateId)
+                ? local.candidateId
+                : row.candidateId
+            }
+          : row
+      })
+    })
+    if (changedRows.length) onChanged(changedRows)
+  }
+  const receiveFromPoll = useEffectEvent(receive)
   useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-      stopped.current = true
-    }
-  }, [])
-  useEffect(() => {
-    if (!download) return
     let active = true
     let timer: ReturnType<typeof setTimeout>
+    let id = existingJobId
+    let inFlight = false
     const poll = async (): Promise<void> => {
+      if (inFlight) return
+      inFlight = true
       try {
-        const result = await window.api.literature.fullText({ mode: 'progress', ...download })
-        if (active && result.mode === 'progress') setProgress(result.progress)
+        const result = await window.api.literature.jobs(
+          id
+            ? { action: 'get', jobId: id, ifUpdatedAt: jobRef.current?.updatedAt }
+            : { action: 'create', mode, itemIds, requestId }
+        )
+        if (!active) return
+        const value = result.jobs[0]
+        if (value) {
+          id = value.id
+          receiveFromPoll(value)
+        } else if (!jobRef.current) throw new Error('Task unavailable')
+        else if (result.progress || jobRef.current.progress)
+          setJob((current) => (current ? { ...current, progress: result.progress } : current))
+        if (pendingDrafts.current.size === 0) setError(false)
       } catch {
-        /* Download telemetry must not interrupt attachment saving. */
+        if (active) setError(true)
       } finally {
-        if (active) timer = setTimeout(() => void poll(), 500)
+        inFlight = false
+        const running =
+          jobRef.current && ['queued', 'running', 'pausing'].includes(jobRef.current.state)
+        if (active)
+          timer = setTimeout(() => void poll(), !document.hidden && running ? 1000 : 30_000)
       }
     }
-    void poll()
+    timer = setTimeout(() => void poll(), 0)
+    const wake = (): void => {
+      if (!document.hidden) {
+        clearTimeout(timer)
+        void poll()
+      }
+    }
+    document.addEventListener('visibilitychange', wake)
+    window.addEventListener('focus', wake)
+    window.addEventListener('literature-job-refresh', wake)
     return () => {
       active = false
       clearTimeout(timer)
+      document.removeEventListener('visibilitychange', wake)
+      window.removeEventListener('focus', wake)
+      window.removeEventListener('literature-job-refresh', wake)
     }
-  }, [download])
-
+  }, [existingJobId, requestId, mode, itemIds])
+  const busy = !job || ['queued', 'running', 'pausing'].includes(job.state) || sending
+  const stopping = job?.state === 'pausing'
+  const progress = job?.progress?.value
+  const download = job?.progress
+  const saveDrafts = (): Promise<void> => {
+    const write = async (): Promise<void> => {
+      const currentJob = jobRef.current
+      const selections = [...pendingDrafts.current.values()]
+      if (!currentJob || selections.length === 0) return
+      await window.api.literature.jobs({
+        action: 'review',
+        jobId: currentJob.id,
+        selections
+      })
+      for (const selection of selections) {
+        if (pendingDrafts.current.get(selection.itemId) === selection)
+          pendingDrafts.current.delete(selection.itemId)
+      }
+    }
+    // Retain failed selections so Retry and later commands can persist them again.
+    draftWrites.current = draftWrites.current.then(write, write)
+    return draftWrites.current
+  }
   const update = (id: string, patch: Partial<Row>): void => {
-    if (mounted.current)
-      setRows((current) => current.map((row) => (row.id === id ? { ...row, ...patch } : row)))
+    const row = rows.find((row) => row.id === id)
+    if (!job || !row) return
+    const selected = { ...row, ...patch }
+    setRows((current) => current.map((row) => (row.id === id ? { ...row, ...patch } : row)))
+    pendingDrafts.current.set(id, {
+      itemId: id,
+      checked: selected.checked,
+      candidateId: selected.candidateId
+    })
+    void saveDrafts().then(
+      () => setError(false),
+      () => setError(true)
+    )
   }
-  const run = async (apply: boolean): Promise<void> => {
-    if (running.current) return
-    running.current = true
-    stopped.current = false
-    setStopping(false)
-    setBusy(true)
-    let changed = false
+  const command = async (action: 'apply' | 'retry' | 'resume' | 'pause'): Promise<void> => {
+    if (!job || sending) return
+    setSending(true)
     try {
-      for (const row of rows) {
-        if (stopped.current || !mounted.current) break
-        if (row.status === 'done' || (apply && (row.status !== 'ready' || !row.checked))) continue
-        update(row.id, { status: apply ? 'saving' : 'searching', message: undefined })
-        try {
-          if (!apply) {
-            const item = await window.api.literature.get(row.id)
-            if (!item || item.deletedAt) throw new Error('Reference unavailable')
-            update(row.id, { item })
-            if (mode === 'metadata') {
-              if (
-                !item.item.identifiers.some(
-                  ({ scheme, value }) => ['doi', 'pmid'].includes(scheme) && value.trim()
-                )
-              ) {
-                update(row.id, { status: 'skipped', message: t('Needs identifiers') })
-                continue
-              }
-              const result = await window.api.literature.completeMetadata({
-                mode: 'preview',
-                itemId: row.id
-              })
-              update(row.id, {
-                metadata: result,
-                status: result.filled.length ? 'ready' : 'skipped',
-                message: result.filled.length ? undefined : t('No missing metadata was found.')
-              })
-            } else {
-              if (
-                item.attachments.some((attachment) =>
-                  attachment.versions.some((version) => version.contentType === 'application/pdf')
-                )
-              ) {
-                update(row.id, { status: 'skipped', message: t('PDF already attached') })
-                continue
-              }
-              const result = await window.api.literature.fullText({
-                mode: 'search',
-                itemId: row.id
-              })
-              if (result.mode !== 'search') throw new Error('Unexpected full-text response')
-              const partial = result.notices.some((notice) => notice.endsWith('-unavailable'))
-              const configuration = [
-                result.notices.includes('openalex-not-configured')
-                  ? `${t('OpenAlex')}: ${t('API key required')}`
-                  : '',
-                result.notices.includes('unpaywall-not-configured')
-                  ? `${t('Unpaywall')}: ${t('Contact email required')}`
-                  : ''
-              ]
-                .filter(Boolean)
-                .join(' · ')
-              update(row.id, {
-                candidates: result.candidates,
-                candidateId: result.candidates[0]?.id,
-                status: result.candidates.length ? 'ready' : partial ? 'error' : 'skipped',
-                message:
-                  [
-                    result.notices.includes('missing-identifiers')
-                      ? t('Needs identifiers')
-                      : partial
-                        ? t('Some sources were unavailable. Results may be incomplete.')
-                        : !result.candidates.length
-                          ? t('No freely accessible full-text PDF was found.')
-                          : '',
-                    configuration
-                  ]
-                    .filter(Boolean)
-                    .join(' · ') || undefined
-              })
+      await saveDrafts()
+      const result = await window.api.literature.jobs(
+        action === 'apply'
+          ? {
+              action,
+              jobId: job.id,
+              selections: rows
+                .filter((row) => row.status === 'ready' && row.checked)
+                .map((row) => ({ itemId: row.id, candidateId: row.candidateId }))
             }
-          } else if (mode === 'metadata' && row.item) {
-            await window.api.literature.completeMetadata({
-              mode: 'commit',
-              itemId: row.id,
-              expectedMetadataRevision: row.item.metadataRevision,
-              overwriteFields: []
-            })
-            changed = true
-            update(row.id, { status: 'done' })
-          } else {
-            const candidate = row.candidates?.find(({ id }) => id === row.candidateId)
-            if (!candidate) throw new Error('No candidate selected')
-            const origin = new URL(candidate.url).origin
-            const until = cooldowns.current.get(origin) ?? 0
-            if (until > Date.now()) {
-              update(row.id, {
-                status: 'error',
-                message: t('Source rate limit reached. Search again later.')
-              })
-              continue
-            }
-            // Search candidates are bounded and expire; a large batch can evict its first rows.
-            // Refresh the token, but only attach the exact source the user reviewed.
-            const current = await window.api.literature.get(row.id)
-            if (!current || current.metadataRevision !== row.item?.metadataRevision)
-              throw new Error('Reference changed')
-            const refreshed = await window.api.literature.fullText({
-              mode: 'search',
-              itemId: row.id
-            })
-            if (refreshed.mode !== 'search') throw new Error('Unexpected full-text response')
-            const confirmed = refreshed.candidates.find(
-              (entry) => entry.url === candidate.url && entry.provider === candidate.provider
-            )
-            if (!confirmed) {
-              update(row.id, {
-                status: 'error',
-                message: t('The selected source changed. Search again and review the results.')
-              })
-              continue
-            }
-            setProgress(undefined)
-            setDownload({ itemId: row.id, candidateId: confirmed.id })
-            const result = await window.api.literature.fullText({
-              mode: 'attach',
-              itemId: row.id,
-              candidateId: confirmed.id
-            })
-            if (result.mode === 'attach-error') {
-              cooldowns.current.set(origin, result.retryAt)
-              update(row.id, {
-                status: 'error',
-                message: t('Source rate limit reached. Search again later.')
-              })
-            } else if (result.mode === 'attach') {
-              changed = true
-              update(row.id, { status: 'done' })
-            } else throw new Error('Unexpected attachment response')
-          }
-        } catch {
-          update(row.id, {
-            status: 'error',
-            message:
-              mode === 'metadata'
-                ? t('Metadata could not be completed.')
-                : apply
-                  ? t('PDF could not be added')
-                  : t('Full-text search failed. Try again.')
-          })
-        } finally {
-          if (mounted.current) setDownload(undefined)
-        }
-        // Space provider requests as well as limiting concurrency to one reference.
-        if (!stopped.current) await new Promise((resolve) => setTimeout(resolve, 350))
-      }
+          : { action, jobId: job.id }
+      )
+      if (result.jobs[0]) receive(result.jobs[0])
+      setError(false)
+    } catch {
+      setError(true)
     } finally {
-      running.current = false
-      if (mounted.current) {
-        setBusy(false)
-        setStopping(false)
-      }
-      if (changed) onChanged()
+      setSending(false)
     }
   }
+  const messageLabels: Record<string, string> = {
+    'Needs identifiers': t('Needs identifiers'),
+    'No missing metadata was found.': t('No missing metadata was found.'),
+    'PDF already attached': t('PDF already attached'),
+    'Some sources were unavailable. Results may be incomplete.': t(
+      'Some sources were unavailable. Results may be incomplete.'
+    ),
+    'No freely accessible full-text PDF was found.': t(
+      'No freely accessible full-text PDF was found.'
+    ),
+    'Source rate limit reached. Search again later.': t(
+      'Source rate limit reached. Search again later.'
+    ),
+    'The selected source changed. Search again and review the results.': t(
+      'The selected source changed. Search again and review the results.'
+    ),
+    'Metadata could not be completed.': t('Metadata could not be completed.'),
+    'PDF could not be added': t('PDF could not be added'),
+    'Full-text search failed. Try again.': t('Full-text search failed. Try again.')
+  }
+
   const ready = rows.filter((row) => row.status === 'ready' && row.checked).length
   const checked = rows.filter((row) => !['pending', 'searching'].includes(row.status)).length
   const done = rows.filter((row) => row.status === 'done').length
   const failed = rows.filter((row) => row.status === 'error').length
   const skipped = rows.filter((row) => row.status === 'skipped').length
   const title = mode === 'metadata' ? t('Complete metadata') : t('Find full-text PDF')
+  const phaseProgress = job ? literatureJobProgress(job) : { processed: 0, phaseTotal: rows.length }
   const labels = {
     pending: t('Pending'),
     searching: t('Searching…'),
-    ready: t('Ready'),
+    ready: t('Awaiting review'),
     skipped: t('Skipped'),
     error: t('Failed'),
     saving: t('Saving…'),
@@ -288,7 +249,7 @@ export const LiteratureBatchLookupDialog = ({
     <Dialog.Root
       open
       onOpenChange={(open) => {
-        if (!open && !running.current) onClose()
+        if (!open) onClose()
       }}
     >
       <Dialog.Portal>
@@ -309,13 +270,7 @@ export const LiteratureBatchLookupDialog = ({
                     )}
               </Dialog.Description>
             </div>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              disabled={busy}
-              onClick={onClose}
-              aria-label={t('Close')}
-            >
+            <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label={t('Close')}>
               <X aria-hidden="true" />
             </Button>
           </header>
@@ -323,8 +278,36 @@ export const LiteratureBatchLookupDialog = ({
             className="space-y-2 border-b border-border-300/60 px-5 py-3 text-xs text-muted-foreground"
             role="status"
           >
+            {job ? (
+              <p>{t('You can close this window. Tasks continue in the background.')}</p>
+            ) : null}
+            {error ? (
+              <LiteratureErrorNotice
+                title={t('Background task could not be updated. Try again.')}
+                primaryButton={{
+                  label: t('Retry'),
+                  onClick: () => {
+                    void saveDrafts().then(
+                      () => window.dispatchEvent(new Event('literature-job-refresh')),
+                      () => setError(true)
+                    )
+                  }
+                }}
+              />
+            ) : null}
             <div className="flex flex-wrap justify-between gap-2 tabular-nums">
-              <span>{t('Checked {{checked}} of {{total}}', { checked, total: rows.length })}</span>
+              <span>
+                {job?.state === 'queued'
+                  ? t('Queued')
+                  : job?.phase === 'apply'
+                    ? mode === 'full-text'
+                      ? t('Downloading…')
+                      : t('Saving…')
+                    : t('Checked {{checked}} of {{total}}', { checked, total: rows.length })}
+                {job?.phase === 'apply'
+                  ? ` ${phaseProgress.processed}/${phaseProgress.phaseTotal}`
+                  : ''}
+              </span>
               <span>
                 {t('Completed {{done}} · Skipped {{skipped}} · Failed {{failed}}', {
                   done,
@@ -335,9 +318,15 @@ export const LiteratureBatchLookupDialog = ({
             </div>
             <progress
               className={progressClassName}
-              max={rows.length || 1}
-              value={checked}
-              aria-label={t('Search progress')}
+              max={phaseProgress.phaseTotal || 1}
+              value={phaseProgress.processed}
+              aria-label={
+                job?.phase === 'apply'
+                  ? mode === 'full-text'
+                    ? t('Downloading…')
+                    : t('Saving…')
+                  : t('Search progress')
+              }
             />
           </div>
           <ol className="min-h-0 flex-1 divide-y divide-border-300/60 overflow-y-auto px-5">
@@ -369,7 +358,19 @@ export const LiteratureBatchLookupDialog = ({
                       </span>
                     </div>
                     {row.message ? (
-                      <p className="text-xs text-muted-foreground">{row.message}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {messageLabels[row.message] ?? row.message}
+                      </p>
+                    ) : null}
+                    {row.notices?.includes('openalex-not-configured') ? (
+                      <p className="text-xs text-muted-foreground">
+                        {t('OpenAlex')}: {t('API key required')}
+                      </p>
+                    ) : null}
+                    {row.notices?.includes('unpaywall-not-configured') ? (
+                      <p className="text-xs text-muted-foreground">
+                        {t('Unpaywall')}: {t('Contact email required')}
+                      </p>
                     ) : null}
                     {row.metadata ? (
                       <details className="text-xs">
@@ -426,6 +427,7 @@ export const LiteratureBatchLookupDialog = ({
                         </Select>
                         <ExternalTextLink
                           href={candidate.sourceUrl ?? new URL(candidate.url).origin}
+                          className="shrink-0 text-xs"
                         >
                           {t('Open source')}
                         </ExternalTextLink>
@@ -452,37 +454,50 @@ export const LiteratureBatchLookupDialog = ({
               )
             })}
           </ol>
-          <footer className={`${dialogFooterClassName} flex-wrap items-center`}>
-            {busy ? (
+          <footer
+            className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+          >
+            {error && !job ? (
+              <Button variant="ghost" onClick={onClose}>
+                {t('Close')}
+              </Button>
+            ) : busy ? (
               <>
-                <LoaderCircle
-                  className="size-4 animate-spin text-muted-foreground"
-                  aria-hidden="true"
-                />
+                <Button variant="ghost" onClick={onClose}>
+                  {t('Run in background')}
+                </Button>
+                {job?.state !== 'queued' ? (
+                  <LoaderCircle
+                    className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                ) : null}
                 <Button
                   variant="outline"
                   disabled={stopping}
                   onClick={() => {
-                    stopped.current = true
-                    setStopping(true)
+                    void command('pause')
                   }}
                 >
-                  {stopping ? t('Stopping after the current reference…') : t('Stop')}
+                  {stopping ? t('Pausing after the current reference…') : t('Pause')}
                 </Button>
               </>
             ) : (
               <>
+                {job?.state === 'paused' ? (
+                  <Button onClick={() => void command('resume')}>{t('Resume')}</Button>
+                ) : null}
                 <Button variant="ghost" onClick={onClose}>
                   {t('Close')}
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => void run(false)}
+                  onClick={() => void command('retry')}
                   disabled={done === rows.length}
                 >
                   {checked ? t('Search again') : t('Search')}
                 </Button>
-                <Button disabled={!ready} onClick={() => void run(true)}>
+                <Button disabled={!ready} onClick={() => void command('apply')}>
                   {mode === 'metadata' ? t('Apply metadata') : t('Add attachment')} ({ready})
                 </Button>
               </>

@@ -2,10 +2,11 @@ import { createHash, randomUUID } from 'node:crypto'
 
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { findLiteratureDuplicateGroups } from './duplicates'
-import { conflictFreeLiteratureMerge, supplementLiteratureMetadata } from './duplicate-metadata'
+import { planLiteratureMerge, supplementLiteratureMetadata } from './duplicate-metadata'
 
 import {
   LITERATURE_IDENTITY_SCHEMES,
+  LITERATURE_COLLECTION_NAME_CONFLICT,
   literatureCandidateInputSchema,
   literatureItemInputSchema,
   normalizeLiteratureIdentifierValue,
@@ -42,6 +43,10 @@ type LiteratureCatalogClient = Pick<
 >
 
 type LiteratureCatalogClientProvider = () => Promise<LiteratureCatalogClient>
+const duplicateGroups = new WeakMap<
+  LiteratureCatalogClient,
+  Promise<ReturnType<typeof findLiteratureDuplicateGroups>>
+>()
 
 type AttachLiteratureContentInput = Readonly<{
   itemId: string
@@ -231,10 +236,12 @@ const toCandidateView = (row: {
   acceptedItemId: string | null
   createdAt: Date
   updatedAt: Date
+  pdfs?: { id: string; filename: string; sizeBytes: bigint; pageCount: number; sourceUrl: string }[]
 }): LiteratureInboxCandidateView => ({
   id: row.id,
   state: row.state as LiteratureInboxState,
   candidate: literatureCandidateInputSchema.parse(JSON.parse(row.candidateJson)),
+  pdfs: row.pdfs?.map((pdf) => ({ ...pdf, sizeBytes: Number(pdf.sizeBytes) })),
   acceptedItemId: row.acceptedItemId ?? undefined,
   createdAt: row.createdAt.getTime(),
   updatedAt: row.updatedAt.getTime()
@@ -510,6 +517,33 @@ const acceptInboxCandidate = async (
     where: { id: row.id },
     data: { state: 'accepted', acceptedItemId: itemId, settledAt: new Date() }
   })
+  const pdfs = await transaction.literatureInboxPdf.findMany({ where: { candidateId } })
+  for (const pdf of pdfs) {
+    const existing = await transaction.literatureAttachmentVersion.findFirst({
+      where: { checksum: pdf.checksum, attachment: { itemId } }
+    })
+    if (!existing)
+      await transaction.literatureAttachment.create({
+        data: {
+          itemId,
+          kind: 'fullText',
+          title: pdf.filename,
+          sortOrder: await transaction.literatureAttachment.count({ where: { itemId } }),
+          versions: {
+            create: {
+              contentBlobId: pdf.contentBlobId,
+              filename: pdf.filename,
+              sizeBytes: pdf.sizeBytes,
+              checksum: pdf.checksum,
+              pageCount: pdf.pageCount,
+              contentType: 'application/pdf',
+              versionNumber: 1
+            }
+          }
+        }
+      })
+  }
+  await transaction.literatureInboxPdf.deleteMany({ where: { candidateId } })
   return { kind: 'item', id: itemId, state: 'linked' }
 }
 
@@ -522,26 +556,36 @@ class LiteratureCatalog {
     const limit = Math.min(100, Math.max(1, request.limit ?? 50))
     const query = normalizeSpace(request.query ?? '')
     if (request.scope === 'duplicates') {
-      const rows = await client.literatureItem.findMany({
-        where: { deletedAt: null, mergedIntoItemId: null },
-        select: {
-          id: true,
-          itemType: true,
-          title: true,
-          issuedYear: true,
-          creators: {
-            where: { creatorType: 'author' },
+      if (request.refreshDuplicates) duplicateGroups.delete(client)
+      let pending = duplicateGroups.get(client)
+      if (!pending) {
+        pending = client.literatureItem
+          .findMany({
+            where: { deletedAt: null, mergedIntoItemId: null },
             select: {
-              creator: { select: { familyName: true, givenName: true, literalName: true } }
+              id: true,
+              itemType: true,
+              title: true,
+              issuedYear: true,
+              creators: {
+                where: { creatorType: 'author' },
+                select: {
+                  creator: { select: { familyName: true, givenName: true, literalName: true } }
+                },
+                orderBy: { ordinal: 'asc' },
+                take: 1
+              },
+              identifiers: { select: { scheme: true, normalizedValue: true } }
             },
-            orderBy: { ordinal: 'asc' },
-            take: 1
-          },
-          identifiers: { select: { scheme: true, normalizedValue: true } }
-        },
-        orderBy: { id: 'asc' }
-      })
-      const groups = findLiteratureDuplicateGroups(rows)
+            orderBy: { id: 'asc' }
+          })
+          .then(findLiteratureDuplicateGroups)
+        duplicateGroups.set(client, pending)
+        void pending.catch(() => {
+          if (duplicateGroups.get(client) === pending) duplicateGroups.delete(client)
+        })
+      }
+      const groups = await pending
       return {
         entries: groups.slice(offset, offset + limit),
         totalCount: groups.length,
@@ -604,6 +648,17 @@ class LiteratureCatalog {
         client.literatureInboxCandidate.count({ where }),
         client.literatureInboxCandidate.findMany({
           where,
+          include: {
+            pdfs: {
+              select: {
+                id: true,
+                filename: true,
+                sizeBytes: true,
+                pageCount: true,
+                sourceUrl: true
+              }
+            }
+          },
           orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
           skip: offset,
           take: limit + 1
@@ -897,7 +952,27 @@ class LiteratureCatalog {
     })
   }
 
-  transact(command: LiteratureCatalogCommand): Promise<LiteratureCatalogReceipt> {
+  async transact(command: LiteratureCatalogCommand): Promise<LiteratureCatalogReceipt> {
+    try {
+      return await this.execute(command)
+    } finally {
+      if (
+        [
+          'create-item',
+          'update-item',
+          'accept-candidate',
+          'settle-candidates',
+          'set-item-lifecycle',
+          'delete-items-permanently',
+          'merge-items',
+          'merge-duplicates'
+        ].includes(command.kind) &&
+        (command.kind !== 'merge-duplicates' || command.mode !== 'preview')
+      )
+        duplicateGroups.delete(await this.getClient())
+    }
+  }
+  private execute(command: LiteratureCatalogCommand): Promise<LiteratureCatalogReceipt> {
     switch (command.kind) {
       case 'stage-candidate':
         return this.stageCandidate(command.candidate)
@@ -945,67 +1020,71 @@ class LiteratureCatalog {
   ): Promise<LiteratureRecordImportReceipt> {
     const items = inputs.map((item) => literatureItemInputSchema.parse(item))
     const client = await this.getClient()
-    return client.$transaction(
-      async (transaction) => {
-        let nextSortOrder = 0
-        if (collectionId) {
-          const collection = await transaction.literatureCollection.findUnique({
-            where: { id: collectionId },
-            select: { id: true }
-          })
-          if (!collection) throw new Error('Literature Collection is unavailable.')
-          const last = await transaction.literatureCollectionItem.findFirst({
-            where: { collectionId },
-            orderBy: { sortOrder: 'desc' },
-            select: { sortOrder: true }
-          })
-          nextSortOrder = (last?.sortOrder ?? -1) + 1
-        }
-
-        const identities = await importIdentityMap(transaction, items)
-        const itemIds: string[] = []
-        let createdCount = 0
-        let reusedCount = 0
-        for (const item of items) {
-          const identifiers = normalizedIdentifiers(item.identifiers)
-          const existingId =
-            duplicatePolicy === 'separate' ? undefined : importIdentity(identities, item)
-          const itemId = existingId ?? (await createItem(transaction, item))
-          if (existingId) {
-            await restoreExistingItem(transaction, existingId)
-            if (duplicatePolicy === 'fill-missing') {
-              const filled = await supplementExistingItem(transaction, existingId, item)
-              for (const { scheme, normalizedValue } of normalizedIdentifiers(filled.identifiers)) {
-                const key = identityKey(scheme, normalizedValue)
-                if (identitySchemes.has(scheme) && !identities.has(key))
-                  identities.set(key, existingId)
-              }
-            }
-            reusedCount += 1
-          } else {
-            createdCount += 1
-            for (const { scheme, normalizedValue } of identifiers) {
-              if (identitySchemes.has(scheme)) {
-                identities.set(identityKey(scheme, normalizedValue), itemId)
-              }
-            }
-          }
-          if (!itemIds.includes(itemId)) itemIds.push(itemId)
+    return client
+      .$transaction(
+        async (transaction) => {
+          let nextSortOrder = 0
           if (collectionId) {
-            await transaction.literatureCollectionItem.upsert({
-              where: { collectionId_itemId: { collectionId, itemId } },
-              create: { collectionId, itemId, sortOrder: nextSortOrder },
-              update: {}
+            const collection = await transaction.literatureCollection.findUnique({
+              where: { id: collectionId },
+              select: { id: true }
             })
-            nextSortOrder += 1
+            if (!collection) throw new Error('Literature Collection is unavailable.')
+            const last = await transaction.literatureCollectionItem.findFirst({
+              where: { collectionId },
+              orderBy: { sortOrder: 'desc' },
+              select: { sortOrder: true }
+            })
+            nextSortOrder = (last?.sortOrder ?? -1) + 1
           }
-        }
-        return { itemIds, createdCount, reusedCount }
-      },
-      // The parser admits up to 1,000 references, including large author lists. Keep this
-      // operation atomic without applying Prisma's five-second single-command deadline.
-      { timeout: 60_000 }
-    )
+
+          const identities = await importIdentityMap(transaction, items)
+          const itemIds: string[] = []
+          let createdCount = 0
+          let reusedCount = 0
+          for (const item of items) {
+            const identifiers = normalizedIdentifiers(item.identifiers)
+            const existingId =
+              duplicatePolicy === 'separate' ? undefined : importIdentity(identities, item)
+            const itemId = existingId ?? (await createItem(transaction, item))
+            if (existingId) {
+              await restoreExistingItem(transaction, existingId)
+              if (duplicatePolicy === 'fill-missing') {
+                const filled = await supplementExistingItem(transaction, existingId, item)
+                for (const { scheme, normalizedValue } of normalizedIdentifiers(
+                  filled.identifiers
+                )) {
+                  const key = identityKey(scheme, normalizedValue)
+                  if (identitySchemes.has(scheme) && !identities.has(key))
+                    identities.set(key, existingId)
+                }
+              }
+              reusedCount += 1
+            } else {
+              createdCount += 1
+              for (const { scheme, normalizedValue } of identifiers) {
+                if (identitySchemes.has(scheme)) {
+                  identities.set(identityKey(scheme, normalizedValue), itemId)
+                }
+              }
+            }
+            if (!itemIds.includes(itemId)) itemIds.push(itemId)
+            if (collectionId) {
+              await transaction.literatureCollectionItem.upsert({
+                where: { collectionId_itemId: { collectionId, itemId } },
+                create: { collectionId, itemId, sortOrder: nextSortOrder },
+                update: {}
+              })
+              nextSortOrder += 1
+            }
+          }
+          return { itemIds, createdCount, reusedCount }
+        },
+        // The parser admits up to 1,000 references, including large author lists. Keep this
+        // operation atomic without applying Prisma's five-second single-command deadline.
+        { timeout: 60_000 }
+      )
+      .finally(() => duplicateGroups.delete(client))
   }
 
   async inspectImportItems(
@@ -1074,20 +1153,25 @@ class LiteratureCatalog {
     const item = literatureItemInputSchema.parse(command.item)
     const client = await this.getClient()
 
-    return client.$transaction(async (transaction) => {
-      await replaceItemMetadata(transaction, itemId, command.expectedMetadataRevision, item)
-      if (source) await this.attachSource(transaction, { source, itemId })
-      return { kind: 'item', id: itemId, state: 'present' }
-    })
+    return client
+      .$transaction(async (transaction): Promise<LiteratureCatalogReceipt> => {
+        await replaceItemMetadata(transaction, itemId, command.expectedMetadataRevision, item)
+        if (source) await this.attachSource(transaction, { source, itemId })
+        return { kind: 'item', id: itemId, state: 'present' }
+      })
+      .finally(() => duplicateGroups.delete(client))
   }
 
-  private async stageCandidate(input: LiteratureCandidateInput): Promise<LiteratureCatalogReceipt> {
+  private async stageCandidate(
+    input: LiteratureCandidateInput,
+    pdf?: Omit<AttachLiteratureContentInput, 'itemId'> & { pageCount: number; sourceUrl: string }
+  ): Promise<LiteratureCatalogReceipt> {
     const candidate = literatureCandidateInputSchema.parse(input)
     const identifiers = normalizedIdentifiers(candidate.item.identifiers)
     const client = await this.getClient()
     return client.$transaction(async (transaction) => {
       const existingItemId = await findIdentityItem(transaction, identifiers)
-      if (existingItemId) {
+      if (existingItemId && !pdf) {
         await restoreExistingItem(transaction, existingItemId)
         await attachProjectIfPresent(
           transaction,
@@ -1098,7 +1182,9 @@ class LiteratureCatalog {
         await this.attachSource(transaction, { source: candidate.source, itemId: existingItemId })
         return { kind: 'item', id: existingItemId, state: 'present' }
       }
-      const dedupeKey = candidateDedupeKey(candidate)
+      const dedupeKey = pdf
+        ? sha256(`pdf:${candidateDedupeKey(candidate)}:${pdf.checksum}`)
+        : candidateDedupeKey(candidate)
       const candidateJson = canonicalJson(candidate)
       const metadataChecksum = sha256(candidateJson)
       const persisted = await transaction.literatureInboxCandidate.upsert({
@@ -1119,6 +1205,32 @@ class LiteratureCatalog {
         select: { id: true, state: true }
       })
       if (persisted.state === 'pending') {
+        if (pdf) {
+          const blob = await transaction.contentBlob.findUnique({
+            where: { id: pdf.contentBlobId }
+          })
+          if (
+            !blob ||
+            blob.state !== 'available' ||
+            blob.checksum !== pdf.checksum ||
+            blob.sizeBytes !== BigInt(pdf.sizeBytes) ||
+            (blob.contentType && blob.contentType !== 'application/pdf')
+          )
+            throw new Error('Inbox PDF content or ownership changed.')
+          await transaction.literatureInboxPdf.upsert({
+            where: { candidateId_checksum: { candidateId: persisted.id, checksum: pdf.checksum } },
+            create: {
+              candidateId: persisted.id,
+              contentBlobId: blob.id,
+              filename: pdf.filename,
+              sizeBytes: blob.sizeBytes,
+              checksum: blob.checksum,
+              pageCount: pdf.pageCount,
+              sourceUrl: pdf.sourceUrl
+            },
+            update: {}
+          })
+        }
         await this.attachSource(transaction, {
           source: candidate.source,
           candidateId: persisted.id
@@ -1135,6 +1247,13 @@ class LiteratureCatalog {
   private async acceptCandidate(candidateId: string): Promise<LiteratureCatalogReceipt> {
     const client = await this.getClient()
     return client.$transaction((transaction) => acceptInboxCandidate(transaction, candidateId))
+  }
+
+  async stageAcquiredPdf(
+    candidate: LiteratureCandidateInput,
+    pdf: Omit<AttachLiteratureContentInput, 'itemId'> & { pageCount: number; sourceUrl: string }
+  ): Promise<LiteratureCatalogReceipt> {
+    return this.stageCandidate(candidate, pdf)
   }
 
   private async dismissCandidate(candidateId: string): Promise<LiteratureCatalogReceipt> {
@@ -1208,16 +1327,23 @@ class LiteratureCatalog {
       orderBy: { sortOrder: 'desc' },
       select: { sortOrder: true }
     })
-    const collection = await client.literatureCollection.create({
-      data: {
-        name,
-        nameKey: name.toLowerCase(),
-        description: descriptionInput?.trim() ?? '',
-        parentId,
-        sortOrder: (last?.sortOrder ?? -1) + 1
-      },
-      select: { id: true }
-    })
+    const collection = await client.literatureCollection
+      .create({
+        data: {
+          name,
+          nameKey: name.toLowerCase(),
+          description: descriptionInput?.trim() ?? '',
+          parentId,
+          sortOrder: (last?.sortOrder ?? -1) + 1
+        },
+        select: { id: true }
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          throw new Error(LITERATURE_COLLECTION_NAME_CONFLICT)
+        }
+        throw error
+      })
     return { kind: 'collection', id: collection.id }
   }
 
@@ -1227,24 +1353,39 @@ class LiteratureCatalog {
     const name = normalizeSpace(command.name)
     if (!name) throw new Error('Literature Collection name is required.')
     const client = await this.getClient()
-    const collection = await client.literatureCollection.update({
-      where: { id: command.collectionId },
-      data: {
-        name,
-        nameKey: name.toLowerCase(),
-        description: command.description.trim()
-      },
-      select: { id: true }
-    })
+    const collection = await client.literatureCollection
+      .update({
+        where: { id: command.collectionId },
+        data: {
+          name,
+          nameKey: name.toLowerCase(),
+          description: command.description.trim()
+        },
+        select: { id: true }
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          throw new Error(LITERATURE_COLLECTION_NAME_CONFLICT)
+        }
+        throw error
+      })
     return { kind: 'collection', id: collection.id }
   }
 
   private async deleteCollection(collectionId: string): Promise<LiteratureCatalogReceipt> {
     const client = await this.getClient()
-    const collection = await client.literatureCollection.delete({
-      where: { id: collectionId },
-      select: { id: true }
-    })
+    const collection = await client.literatureCollection
+      .delete({
+        where: { id: collectionId },
+        select: { id: true }
+      })
+      .catch((error: unknown) => {
+        // SQLite rolls back the entire delete if promoting a child would duplicate a root name.
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          throw new Error(LITERATURE_COLLECTION_NAME_CONFLICT)
+        }
+        throw error
+      })
     return { kind: 'collection', id: collection.id }
   }
 
@@ -1469,11 +1610,27 @@ class LiteratureCatalog {
   private async mergeDuplicates(
     command: Extract<LiteratureCatalogCommand, { kind: 'merge-duplicates' }>
   ): Promise<LiteratureCatalogReceipt> {
-    const batch = { eligible: 0, reduced: 0, review: 0, succeeded: 0, skipped: 0, failed: 0 }
+    const strategy = command.strategy ?? 'conflict-free'
+    if (strategy !== 'conflict-free' && command.mode === 'commit' && !command.expectedItems) {
+      throw new Error('Preview the selected merge strategy before committing.')
+    }
+    const batch: NonNullable<LiteratureCatalogReceipt['batch']> = {
+      eligible: 0,
+      reduced: 0,
+      review: 0,
+      succeeded: 0,
+      skipped: 0,
+      failed: 0,
+      groups: [],
+      details: []
+    }
     const seen = new Set<string>()
     const client = await this.getClient()
-    for (const ids of command.groups) {
+    for (const [groupIndex, ids] of command.groups.entries()) {
+      const detail: NonNullable<typeof batch.details>[number] = { groupIndex, status: 'skipped' }
+      batch.details!.push(detail)
       if (ids.length > 20 || ids.some((id) => seen.has(id)) || new Set(ids).size !== ids.length) {
+        detail.reason = ids.length > 20 ? 'too-large' : 'overlapping'
         batch.skipped += 1
         batch.review += 1
         continue
@@ -1486,21 +1643,62 @@ class LiteratureCatalog {
             include: itemInclude,
             orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
           })
-          if (rows.length !== ids.length) return false
-          const item = conflictFreeLiteratureMerge(rows.map((row) => toItemView(row).item))
-          if (!item) return false
+          if (rows.length !== ids.length) {
+            detail.reason = 'unavailable'
+            return undefined
+          }
+          const views = rows.map(toItemView)
+          detail.title = views[0]?.item.title
+          if (
+            command.mode === 'commit' &&
+            command.expectedItems &&
+            views.some(
+              (view) =>
+                !command.expectedItems!.some(
+                  (expected) =>
+                    expected.id === view.id &&
+                    expected.metadataRevision === view.metadataRevision &&
+                    expected.updatedAt === view.updatedAt
+                )
+            )
+          ) {
+            detail.reason = 'changed'
+            return undefined
+          }
+          const plan = planLiteratureMerge(views, strategy)
+          if (!plan) {
+            detail.reason =
+              strategy === 'conflict-free' && planLiteratureMerge(views, 'oldest')
+                ? 'conflicts'
+                : 'identity'
+            return undefined
+          }
+          const items = views.map(({ id, metadataRevision, updatedAt }) => ({
+            id,
+            metadataRevision,
+            updatedAt
+          }))
           if (command.mode === 'commit') {
             await this.mergeItemsInTransaction(transaction, {
               kind: 'merge-items',
-              survivorId: rows[0].id,
-              duplicateIds: rows.slice(1).map((row) => row.id),
-              expectedMetadataRevision: rows[0].metadataRevision,
-              item
+              survivorId: plan.survivor.id,
+              duplicateIds: rows.filter((row) => row.id !== plan.survivor.id).map((row) => row.id),
+              expectedMetadataRevision: plan.survivor.metadataRevision,
+              expectedItems: items,
+              item: plan.item
             })
           }
-          return true
+          return {
+            survivorId: plan.survivor.id,
+            survivorTitle: plan.survivor.item.title,
+            conflicts: plan.conflicts,
+            items
+          }
         })
         if (merged) {
+          // Publish the result only after the transaction commits successfully.
+          batch.groups!.push(merged)
+          detail.status = command.mode === 'commit' ? 'merged' : 'ready'
           batch.eligible += 1
           batch.reduced += ids.length - 1
           if (command.mode === 'commit') batch.succeeded += 1
@@ -1509,6 +1707,8 @@ class LiteratureCatalog {
           batch.skipped += 1
         }
       } catch {
+        detail.status = 'failed'
+        detail.reason = 'failed'
         batch.failed += 1
       }
     }
@@ -1531,10 +1731,24 @@ class LiteratureCatalog {
         deletedAt: null,
         mergedIntoItemId: null
       },
-      select: { id: true }
+      select: { id: true, metadataRevision: true, updatedAt: true }
     })
     if (rows.length !== duplicateIds.length + 1) {
       throw new Error('One or more Literature Items are unavailable for merging.')
+    }
+    if (
+      command.expectedItems.length !== rows.length ||
+      rows.some(
+        (row) =>
+          !command.expectedItems.some(
+            (expected) =>
+              expected.id === row.id &&
+              expected.metadataRevision === row.metadataRevision &&
+              expected.updatedAt === row.updatedAt.getTime()
+          )
+      )
+    ) {
+      throw new Error('Literature references changed after review.')
     }
     await transaction.literatureIdentifier.deleteMany({
       where: { itemId: { in: duplicateIds } }

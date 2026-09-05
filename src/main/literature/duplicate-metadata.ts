@@ -3,6 +3,8 @@ import {
   LITERATURE_IDENTITY_SCHEMES,
   normalizeLiteratureIdentifierValue,
   literatureItemInputSchema,
+  type LiteratureItemView,
+  type LiteratureMergeStrategy,
   type LiteratureItemInput
 } from '../../shared/literature'
 
@@ -77,4 +79,56 @@ export function conflictFreeLiteratureMerge(
     merged = result.item
   }
   return merged
+}
+
+// Count populated bibliographic fields, not text length, notes, rating or attachment size.
+const completeness = (item: LiteratureItemInput): number =>
+  Object.entries(item).filter(
+    ([key, value]) =>
+      !['personalNote', 'rating', 'typeFields', 'identifiers'].includes(key) && !empty(value)
+  ).length +
+  Object.values(item.typeFields).filter((value) => !empty(value)).length +
+  new Set(item.identifiers.map(({ scheme }) => scheme)).size
+
+export function planLiteratureMerge(
+  views: LiteratureItemView[],
+  strategy: LiteratureMergeStrategy
+):
+  | {
+      survivor: LiteratureItemView
+      item: LiteratureItemInput
+      conflicts: boolean
+    }
+  | undefined {
+  if (views.length < 2 || views.length > 20) return undefined
+  const ordered = [...views].sort(
+    (a, b) =>
+      (strategy === 'most-complete'
+        ? completeness(b.item) - completeness(a.item)
+        : strategy === 'newest'
+          ? b.updatedAt - a.updatedAt
+          : 0) ||
+      a.createdAt - b.createdAt ||
+      a.id.localeCompare(b.id)
+  )
+  const survivor = ordered[0]!
+  // Every member must share a strong identifier. Contradictory identifiers or types
+  // always require individual review, even when the user selects a survivor rule.
+  const identityOnly = ordered.map(({ item }) =>
+    literatureItemInputSchema.parse({
+      itemType: item.itemType,
+      title: 'identity',
+      identifiers: item.identifiers
+    })
+  )
+  if (!conflictFreeLiteratureMerge(identityOnly)) return undefined
+  let item = survivor.item
+  let conflicts = false
+  for (const other of ordered.slice(1)) {
+    const result = supplementLiteratureMetadata(item, other.item)
+    conflicts ||= result.conflict
+    item = result.item
+  }
+  if (strategy === 'conflict-free' && conflicts) return undefined
+  return { survivor, item, conflicts }
 }

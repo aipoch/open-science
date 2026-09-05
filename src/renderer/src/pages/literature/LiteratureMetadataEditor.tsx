@@ -148,7 +148,7 @@ const LiteratureMetadataEditor = ({
             }))
           }
         >
-          <SelectTrigger id="literature-reference-type" className="h-9">
+          <SelectTrigger id="literature-reference-type" className="h-8">
             <span className="truncate">{itemTypeLabels[draft.itemType]}</span>
           </SelectTrigger>
           <SelectContent>
@@ -333,7 +333,7 @@ const LiteratureMetadataEditor = ({
                   })
                 }
               >
-                <SelectTrigger aria-label={t('Type')} className="h-9 w-24 text-xs">
+                <SelectTrigger aria-label={t('Type')} className="h-8 w-24 text-xs">
                   <span className="truncate">{identifier.scheme.toUpperCase()}</span>
                 </SelectTrigger>
                 <SelectContent>
@@ -346,7 +346,7 @@ const LiteratureMetadataEditor = ({
               </Select>
               <Input
                 aria-label={identifier.scheme.toUpperCase()}
-                className="h-9"
+                className="h-8"
                 value={identifier.value}
                 onChange={(event) =>
                   updateIdentifier(index, { ...identifier, value: event.target.value })

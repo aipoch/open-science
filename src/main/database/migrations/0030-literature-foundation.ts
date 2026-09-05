@@ -1,5 +1,17 @@
 const literatureFoundationIndexes = [
   {
+    name: 'LiteratureInboxPdf_candidateId_checksum_key',
+    sql: 'CREATE UNIQUE INDEX "LiteratureInboxPdf_candidateId_checksum_key" ON "LiteratureInboxPdf"("candidateId", "checksum")'
+  },
+  {
+    name: 'LiteratureInboxPdf_contentBlobId_idx',
+    sql: 'CREATE INDEX "LiteratureInboxPdf_contentBlobId_idx" ON "LiteratureInboxPdf"("contentBlobId")'
+  },
+  {
+    name: 'LiteratureCollection_root_nameKey_key',
+    sql: 'CREATE UNIQUE INDEX "LiteratureCollection_root_nameKey_key" ON "LiteratureCollection"("nameKey") WHERE "parentId" IS NULL'
+  },
+  {
     name: 'ContentBlob_storageKey_key',
     sql: 'CREATE UNIQUE INDEX "ContentBlob_storageKey_key" ON "ContentBlob"("storageKey")'
   },
@@ -80,12 +92,6 @@ const literatureFoundationIndexes = [
     sql: 'CREATE INDEX "LiteratureIdentifier_itemId_isPrimary_idx" ON "LiteratureIdentifier"("itemId", "isPrimary")'
   },
   {
-    name: 'LiteratureIdentifier_identity_key',
-    sql: `CREATE UNIQUE INDEX "LiteratureIdentifier_identity_key"
-      ON "LiteratureIdentifier"("scheme", "normalizedValue")
-      WHERE "scheme" IN ('doi', 'pmid', 'pmcid', 'arxiv')`
-  },
-  {
     name: 'LiteratureInboxCandidate_dedupeKey_key',
     sql: 'CREATE UNIQUE INDEX "LiteratureInboxCandidate_dedupeKey_key" ON "LiteratureInboxCandidate"("dedupeKey")'
   },
@@ -139,8 +145,43 @@ const literatureFoundationIndexes = [
   }
 ] as const
 
+// Used by both fresh migration and current-schema adoption. Existing bindings remain authoritative.
+// A conflicting deterministic blob ID fails the transaction instead of replacing stored content.
+const literatureContentBlobBackfillStatements = [
+  `INSERT INTO "ContentBlob" (
+      "id", "checksum", "storageKey", "sizeBytes", "contentType", "state", "createdAt", "verifiedAt"
+    )
+    SELECT
+      'upload-version:' || "id",
+      "checksum",
+      "contentStorageKey",
+      "sizeBytes",
+      "contentType",
+      CASE WHEN "state" = 'ready' THEN 'available' ELSE 'staging' END,
+      COALESCE("createdAt", "registeredAt"),
+      CASE WHEN "state" = 'ready' THEN CURRENT_TIMESTAMP ELSE NULL END
+    FROM "UploadVersion" WHERE "contentBlobId" IS NULL`,
+  `UPDATE "UploadVersion"
+      SET "contentBlobId" = 'upload-version:' || "id" WHERE "contentBlobId" IS NULL`,
+  `INSERT INTO "ContentBlob" (
+      "id", "checksum", "storageKey", "sizeBytes", "contentType", "state", "createdAt", "verifiedAt"
+    )
+    SELECT
+      'artifact-version:' || "id",
+      "checksum",
+      "contentStorageKey",
+      "sizeBytes",
+      "contentType",
+      CASE WHEN "state" = 'staging' THEN 'staging' ELSE 'available' END,
+      "createdAt",
+      CASE WHEN "state" = 'staging' THEN NULL ELSE CURRENT_TIMESTAMP END
+    FROM "ArtifactVersion" WHERE "contentBlobId" IS NULL`,
+  `UPDATE "ArtifactVersion"
+      SET "contentBlobId" = 'artifact-version:' || "id" WHERE "contentBlobId" IS NULL`
+] as const
+
 const literatureFoundationMigration = {
-  id: '0029_literature_foundation',
+  id: '0030_literature_foundation',
   statements: [
     `CREATE TABLE "ContentBlob" (
       "id" TEXT NOT NULL PRIMARY KEY,
@@ -157,36 +198,7 @@ const literatureFoundationMigration = {
     )`,
     `ALTER TABLE "UploadVersion" ADD COLUMN "contentBlobId" TEXT`,
     `ALTER TABLE "ArtifactVersion" ADD COLUMN "contentBlobId" TEXT`,
-    `INSERT INTO "ContentBlob" (
-      "id", "checksum", "storageKey", "sizeBytes", "contentType", "state", "createdAt", "verifiedAt"
-    )
-    SELECT
-      'upload-version:' || "id",
-      "checksum",
-      "contentStorageKey",
-      "sizeBytes",
-      "contentType",
-      CASE WHEN "state" = 'ready' THEN 'available' ELSE 'staging' END,
-      COALESCE("createdAt", "registeredAt"),
-      CASE WHEN "state" = 'ready' THEN CURRENT_TIMESTAMP ELSE NULL END
-    FROM "UploadVersion"`,
-    `UPDATE "UploadVersion"
-      SET "contentBlobId" = 'upload-version:' || "id"`,
-    `INSERT INTO "ContentBlob" (
-      "id", "checksum", "storageKey", "sizeBytes", "contentType", "state", "createdAt", "verifiedAt"
-    )
-    SELECT
-      'artifact-version:' || "id",
-      "checksum",
-      "contentStorageKey",
-      "sizeBytes",
-      "contentType",
-      CASE WHEN "state" = 'staging' THEN 'staging' ELSE 'available' END,
-      "createdAt",
-      CASE WHEN "state" = 'staging' THEN NULL ELSE CURRENT_TIMESTAMP END
-    FROM "ArtifactVersion"`,
-    `UPDATE "ArtifactVersion"
-      SET "contentBlobId" = 'artifact-version:' || "id"`,
+    ...literatureContentBlobBackfillStatements,
     `CREATE TABLE "LiteratureItem" (
       "id" TEXT NOT NULL PRIMARY KEY,
       "itemType" TEXT NOT NULL,
@@ -351,6 +363,19 @@ const literatureFoundationMigration = {
       CONSTRAINT "ArtifactLiteratureManifest_artifactVersionId_fkey" FOREIGN KEY ("artifactVersionId") REFERENCES "ArtifactVersion" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
       CONSTRAINT "ArtifactLiteratureManifest_shape_check" CHECK ("schemaVersion" = 1 AND length(trim("styleId")) > 0 AND length(trim("locale")) > 0 AND json_valid("manifestJson") AND json_type("manifestJson") = 'object' AND length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*')
     )`,
+    `CREATE TABLE "LiteratureInboxPdf" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "candidateId" TEXT NOT NULL,
+      "contentBlobId" TEXT NOT NULL,
+      "filename" TEXT NOT NULL,
+      "sizeBytes" BIGINT NOT NULL,
+      "checksum" TEXT NOT NULL,
+      "pageCount" INTEGER NOT NULL,
+      "sourceUrl" TEXT NOT NULL,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "LiteratureInboxPdf_candidateId_fkey" FOREIGN KEY ("candidateId") REFERENCES "LiteratureInboxCandidate" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+      CONSTRAINT "LiteratureInboxPdf_contentBlobId_fkey" FOREIGN KEY ("contentBlobId") REFERENCES "ContentBlob" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+    )`,
     ...literatureFoundationIndexes.map(({ sql }) => sql)
   ] as const,
   operations: [] as const,
@@ -362,6 +387,8 @@ const literatureFoundationMigration = {
     { kind: 'table-exists', version: 1, table: 'LiteratureAttachment' },
     { kind: 'table-exists', version: 1, table: 'LiteratureAttachmentVersion' },
     { kind: 'table-exists', version: 1, table: 'LiteratureInboxCandidate' },
+    { kind: 'table-exists', version: 1, table: 'LiteratureInboxPdf' },
+    { kind: 'indexes-absent', version: 1, names: ['LiteratureIdentifier_identity_key'] },
     { kind: 'table-exists', version: 1, table: 'LiteratureCollection' },
     { kind: 'column-exists', version: 1, table: 'LiteratureCollection', column: 'description' },
     { kind: 'table-exists', version: 1, table: 'ProjectLiterature' },
@@ -405,4 +432,8 @@ const artifactLiteratureManifestReferenceRepairStatements = [
   `DROP TABLE "_0026_old_ArtifactLiteratureManifest";`
 ] as const
 
-export { artifactLiteratureManifestReferenceRepairStatements, literatureFoundationMigration }
+export {
+  artifactLiteratureManifestReferenceRepairStatements,
+  literatureContentBlobBackfillStatements,
+  literatureFoundationMigration
+}

@@ -14,7 +14,8 @@ type LiteratureEntriesOptions = Readonly<{
   onPage: (
     page: LiteratureCatalogSearchPage,
     request: LiteratureCatalogSearchRequest,
-    fromCache: boolean
+    fromCache: boolean,
+    preservePosition?: boolean
   ) => void
   onEmptyPage: (offset: number) => void
   onError: (failed: boolean) => void
@@ -32,11 +33,13 @@ const useLiteratureEntries = ({
   loading: boolean
   pageTransitionLoading: boolean
   reload: (force?: boolean) => Promise<void>
+  refreshItems: (itemIds: string[]) => Promise<void>
 } => {
   const [loading, setLoading] = useState(true)
   const [loadedKey, setLoadedKey] = useState<string>()
   const generationRef = useRef(0)
   const cacheRef = useRef(new Map<string, LiteratureCatalogSearchPage>())
+  const dirtyKeys = useRef(new Set<string>())
   const [cachedKeys, setCachedKeys] = useState<ReadonlySet<string>>(() => new Set())
   const appliedPageRef = useRef<{ key: string; page: LiteratureCatalogSearchPage } | undefined>(
     undefined
@@ -49,13 +52,15 @@ const useLiteratureEntries = ({
     async (force = false): Promise<void> => {
       if (force) {
         cacheRef.current.clear()
+        dirtyKeys.current.clear()
         setCachedKeys(new Set())
         appliedPageRef.current = undefined
         setLoadedKey(undefined)
       }
       if (!enabled) return
       const generation = ++generationRef.current
-      const cached = force ? undefined : cacheRef.current.get(pageKey)
+      const cached =
+        force || dirtyKeys.current.has(pageKey) ? undefined : cacheRef.current.get(pageKey)
       onError(false)
       if (
         cached &&
@@ -74,6 +79,7 @@ const useLiteratureEntries = ({
           return
         }
         cacheRef.current.delete(pageKey)
+        dirtyKeys.current.delete(pageKey)
         cacheRef.current.set(pageKey, page)
         while (cacheRef.current.size > PAGE_CACHE_SIZE) {
           const oldestKey = cacheRef.current.keys().next().value
@@ -91,6 +97,44 @@ const useLiteratureEntries = ({
       }
     },
     [enabled, onEmptyPage, onError, onPage, pageKey, request]
+  )
+
+  const refreshItems = useCallback(
+    async (itemIds: string[]): Promise<void> => {
+      const displayed = appliedPageRef.current
+      const ids = new Set(itemIds)
+      // Invalidate other scopes, but keep the current page and its order while it is being read.
+      cacheRef.current.clear()
+      dirtyKeys.current.clear()
+      if (displayed) cacheRef.current.set(displayed.key, displayed.page)
+      if (displayed) dirtyKeys.current.add(displayed.key)
+      setCachedKeys(new Set(cacheRef.current.keys()))
+      if (!displayed || displayed.key !== pageKey || request.scope !== 'library') return
+      const generation = generationRef.current
+      const visible = displayed.page.entries.flatMap((entry) =>
+        'metadataRevision' in entry && ids.has(entry.id) ? [entry.id] : []
+      )
+      try {
+        const updated = await Promise.all(visible.map((id) => window.api.literature.get(id)))
+        if (generation !== generationRef.current || appliedPageRef.current?.key !== pageKey) return
+        const replacements = new Map(
+          updated.flatMap((entry) => (entry ? [[entry.id, entry] as const] : []))
+        )
+        const current = appliedPageRef.current.page
+        const page = {
+          ...current,
+          entries: current.entries.map((entry) =>
+            'metadataRevision' in entry ? (replacements.get(entry.id) ?? entry) : entry
+          )
+        }
+        cacheRef.current.set(pageKey, page)
+        appliedPageRef.current = { key: pageKey, page }
+        if (visible.length) onPage(page, request, true, true)
+      } catch {
+        onError(true)
+      }
+    },
+    [onError, onPage, pageKey, request]
   )
 
   // Apply cached data before paint; returning to a cached scope must not tear down
@@ -115,7 +159,8 @@ const useLiteratureEntries = ({
   return {
     loading: pending,
     pageTransitionLoading: pending && loadedKey?.startsWith(`${scopeKey}:`) === true,
-    reload
+    reload,
+    refreshItems
   }
 }
 

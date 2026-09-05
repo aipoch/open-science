@@ -791,6 +791,11 @@
       "tableName": "MemoryEntry",
       "name": "MemoryEntry_global_contentKey_key",
       "sql": "CREATE UNIQUE INDEX \"MemoryEntry_global_contentKey_key\" ON \"MemoryEntry\"(\"contentKey\") WHERE \"projectId\" IS NULL"
+    },
+    {
+      "tableName": "LiteratureCollection",
+      "name": "LiteratureCollection_root_nameKey_key",
+      "sql": "CREATE UNIQUE INDEX \"LiteratureCollection_root_nameKey_key\" ON \"LiteratureCollection\"(\"nameKey\") WHERE \"parentId\" IS NULL"
     }
   ]
 }

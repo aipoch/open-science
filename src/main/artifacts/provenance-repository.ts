@@ -1260,6 +1260,26 @@ class ArtifactProvenanceRepository {
       await tx.artifactMessageSnapshot.deleteMany({ where: { projectId } })
       await tx.fileOriginSession.deleteMany({ where: { projectId } })
     })
+
+    // The registered storage keys remain retry authority after Version rows have been removed.
+    // Scope the sweep to this Project's roots; shared content is retained by the reference checks.
+    const projectRoots = ['artifacts', 'uploads'].map((kind) => `${storageKey(kind, projectId)}/`)
+    const projectBlobs = await client.contentBlob.findMany({
+      where: {
+        OR: projectRoots.map((root) => ({ storageKey: { startsWith: root } }))
+      },
+      select: { id: true, storageKey: true }
+    })
+    const sweep = await this.contentRepository.sweep({
+      createdBefore: new Date(Date.now() + 1),
+      // SQLite LIKE treats case and underscores differently from exact filesystem segments.
+      contentIds: projectBlobs
+        .filter((blob) => projectRoots.some((root) => blob.storageKey.startsWith(root)))
+        .map(({ id }) => id)
+    })
+    if (sweep.failedIds.length > 0) {
+      throw new Error(`Project content cleanup failed for ${sweep.failedIds.length} blob(s).`)
+    }
   }
 
   private async toArtifactVersionFile(

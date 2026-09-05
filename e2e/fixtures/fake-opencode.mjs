@@ -168,7 +168,12 @@ const parseMcpResponse = (body) => {
 }
 
 const submitReviewerPass = async (mcpServers) => {
-  const server = mcpServers.find((candidate) => candidate.type === 'http')
+  const server = mcpServers.find(
+    (candidate) =>
+      candidate.type === 'http' &&
+      (candidate.name === 'open-science-reviewer' ||
+        candidate.name === frameworkServerName('open-science-reviewer'))
+  )
   if (!server?.url) return false
   const token =
     server.headers

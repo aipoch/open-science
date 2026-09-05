@@ -58,6 +58,7 @@ export const findUnpaywallPdfs = async (
   email: string,
   fetcher?: typeof fetch
 ): Promise<Candidate[]> => {
+  doi = normalizeLiteratureIdentifierValue('doi', doi).toLowerCase()
   const url = new URL(`https://api.unpaywall.org/v2/${encodeURIComponent(doi)}`)
   url.searchParams.set('email', z.string().email().parse(email))
   const raw = await readFullTextProvider(url.href, fetcher)
@@ -69,7 +70,7 @@ export const findUnpaywallPdfs = async (
       oa_locations: z.array(unpaywallLocation).optional()
     })
     .parse(JSON.parse(raw))
-  if (normalizeLiteratureIdentifierValue('doi', work.doi) !== doi) return []
+  if (normalizeLiteratureIdentifierValue('doi', work.doi).toLowerCase() !== doi) return []
   return [work.best_oa_location, ...(work.oa_locations ?? [])].flatMap((entry): Candidate[] => {
     if (!entry?.url_for_pdf) return []
     return [
@@ -94,7 +95,10 @@ export const findUnpaywallPdfs = async (
 
 const matches = (expected: Identifiers, actual: Identifiers): boolean => {
   const pairs = [
-    [expected.doi, actual.doi ? normalizeLiteratureIdentifierValue('doi', actual.doi) : undefined],
+    [
+      expected.doi,
+      actual.doi ? normalizeLiteratureIdentifierValue('doi', actual.doi).toLowerCase() : undefined
+    ],
     [expected.pmid, actual.pmid],
     [expected.pmcid?.toUpperCase(), actual.pmcid?.toUpperCase()]
   ]
@@ -114,6 +118,12 @@ export const findPmcPdfs = async (
   identifiers: Identifiers,
   fetcher?: typeof fetch
 ): Promise<{ candidates: Candidate[]; noRecord: boolean }> => {
+  if (identifiers.doi) {
+    identifiers = {
+      ...identifiers,
+      doi: normalizeLiteratureIdentifierValue('doi', identifiers.doi).toLowerCase()
+    }
+  }
   let pmcid = identifiers.pmcid?.toUpperCase()
   if (!pmcid) {
     const identifier = identifiers.doi || identifiers.pmid

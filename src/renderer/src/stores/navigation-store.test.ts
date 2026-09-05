@@ -75,6 +75,35 @@ beforeEach(() => {
 })
 
 describe('navigation store', () => {
+  it.each(['library', 'item'] as const)(
+    'guards %s navigation until dirty preview leave is approved',
+    (target) => {
+      useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+      usePreviewWorkbenchStore.setState({ activeProjectId: 'project-a', activeItemId: 'file-1' })
+      const guard = vi.fn(() => false)
+      previewLeaveGuards.register(workbenchPreviewGuardScope('project-a', 'file-1')!, guard)
+      const navigate = (): void =>
+        target === 'library'
+          ? useNavigationStore.getState().openLibrary('user')
+          : useNavigationStore.getState().openLiteratureItem('reference-1', 'user')
+
+      navigate()
+      expect(useNavigationStore.getState()).toMatchObject({
+        view: 'workspace',
+        pendingLiteratureItemId: undefined,
+        userNavigationRevision: 0
+      })
+      guard.mockReturnValue(true)
+      navigate()
+      expect(useNavigationStore.getState()).toMatchObject({
+        view: 'library',
+        pendingLiteratureItemId: target === 'item' ? 'reference-1' : undefined,
+        userNavigationRevision: 1
+      })
+      expect(guard).toHaveBeenCalledTimes(2)
+    }
+  )
+
   it('does not mutate navigation or Session selection when a dirty preview refuses project leave', () => {
     useSessionStore
       .getState()

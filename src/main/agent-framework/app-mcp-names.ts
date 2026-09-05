@@ -66,7 +66,9 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
       'read_library_pdf',
       'format_references',
       'format_citation_document',
-      'save_to_inbox'
+      'prepare_latex_bundle',
+      'save_to_inbox',
+      'acquire_pdf'
     ]
   },
   {

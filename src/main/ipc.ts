@@ -87,6 +87,10 @@ import { LiteratureCitationDocument } from './literature/citation-document'
 import { LiteratureCitationStyleLibrary } from './literature/citation-style-library'
 import { LiteratureMetadataEnricher } from './literature/metadata-enricher'
 import { LiteratureFullTextFinder } from './literature/full-text-finder'
+import { LiteratureBatchJobs } from './literature/batch-jobs'
+import { AgentPdfAcquisition } from './literature/agent-pdf-acquisition'
+import { downloadFullText } from './literature/full-text-download'
+import { parseSystemProxyRules } from './settings/system-proxy'
 import { SessionPdfSourceResolver } from './literature/session-pdf-source-resolver'
 import { waitForInitialConnectorRefresh } from './connector-reload'
 import { createConnectorApplicationModule } from './connectors/application'
@@ -1539,10 +1543,19 @@ const createApplicationModules = async (
     literatureCatalog,
     literatureCitationFormatter
   )
-  const literatureMetadataEnricher = new LiteratureMetadataEnricher(literatureCatalog)
+  const literatureMetadataEnricher = new LiteratureMetadataEnricher(
+    literatureCatalog,
+    netFetchStandard
+  )
+  const downloadLiteraturePdf: typeof downloadFullText = (url, maxBytes, onProgress) =>
+    downloadFullText(url, maxBytes, onProgress, async (target) => {
+      const environment = parseSystemProxyRules(await session.defaultSession.resolveProxy(target))
+      return environment.HTTPS_PROXY ?? environment.ALL_PROXY
+    })
   const literatureFullTextFinder = new LiteratureFullTextFinder({
     catalog: literatureCatalog,
     content: contentRepository,
+    download: downloadLiteraturePdf,
     openAlexKey: async () =>
       tryDecryptKey((await settingsService.getConnectors())?.openAlexApiKeyRef),
     contactEmail: async () => (await settingsService.getConnectors())?.contactEmail
@@ -1552,6 +1565,25 @@ const createApplicationModules = async (
     content: contentRepository,
     catalog: literatureCatalog
   })
+  const literaturePdfAcquisition = new AgentPdfAcquisition({
+    catalog: literatureCatalog,
+    fullText: literatureFullTextFinder,
+    content: contentRepository,
+    download: downloadLiteraturePdf
+  })
+  const literatureBatchJobs = new LiteratureBatchJobs({
+    path: join(resolveDataRoot(), 'literature', 'batch-jobs.json'),
+    catalog: literatureCatalog,
+    metadata: literatureMetadataEnricher,
+    fullText: literatureFullTextFinder,
+    onError: (error) =>
+      literatureContextLog.error('Literature batch task failed', errorLogFields(error))
+  })
+  await modules.add(undefined, () => ({
+    name: 'literature-batch-jobs',
+    capability: undefined,
+    dispose: () => literatureBatchJobs.close()
+  }))
   const tagCleanupLog = createLogger('tags:cleanup')
   const removeResourceTagsOrThrow = async (
     resources: Parameters<TagService['removeResources']>[0]
@@ -2776,6 +2808,7 @@ const createApplicationModules = async (
       literatureReader: literatureDocumentReader,
       literatureAttachments: literatureAttachmentAuthority,
       literatureCatalog,
+      literaturePdfAcquisition,
       delegatedWork: delegatedWork.root,
       sideChatRelays: mainPromptSideChatRelay,
       imageInputCompatibility,
@@ -4132,6 +4165,7 @@ const createApplicationModules = async (
     permissionGrants: permissionGrantProjection,
     tags: tagService,
     literature: {
+      jobs: (request) => literatureBatchJobs.run(request),
       citationStyles: async (request) => {
         if (request.kind === 'preview') {
           const [styles, preview] = await Promise.all([

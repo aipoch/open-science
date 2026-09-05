@@ -1,4 +1,9 @@
 import {
+  literatureJobsContract,
+  type LiteratureJobRequest,
+  type LiteratureJobsResult
+} from '../../shared/literature-jobs'
+import {
   literatureApplicationCommandContracts,
   type LiteratureFullTextRequest,
   type LiteratureFullTextResult,
@@ -28,6 +33,7 @@ import {
 } from '../application-command-router'
 
 type LiteratureCommandOwner = Readonly<{
+  jobs(request: LiteratureJobRequest): Promise<LiteratureJobsResult>
   fullText(request: LiteratureFullTextRequest): Promise<LiteratureFullTextResult>
   completeMetadata(
     request: LiteratureMetadataCompletionRequest
@@ -45,6 +51,11 @@ type LiteratureCommandOwner = Readonly<{
 }>
 
 const literatureApplicationCommands = Object.freeze({
+  jobs: defineApplicationCommand<
+    'literature:jobs',
+    readonly [LiteratureJobRequest],
+    LiteratureJobsResult
+  >('literature:jobs', literatureJobsContract),
   fullText: defineApplicationCommand<
     'literature:full-text',
     readonly [LiteratureFullTextRequest],
@@ -98,6 +109,7 @@ const literatureApplicationCommands = Object.freeze({
 })
 
 const literatureApplicationCommandGroup = defineApplicationCommandGroup('literature', [
+  literatureApplicationCommands.jobs,
   literatureApplicationCommands.fullText,
   literatureApplicationCommands.completeMetadata,
   literatureApplicationCommands.citationStyles,
@@ -117,6 +129,7 @@ const registerLiteratureApplicationCommands = (
   const scope = registrar.createScope()
   try {
     scope.registerGroup(literatureApplicationCommandGroup, {
+      'literature:jobs': ({ args }) => owner.jobs(args[0]),
       'literature:full-text': ({ args }) => owner.fullText(args[0]),
       'literature:complete-metadata': ({ args }) => owner.completeMetadata(args[0]),
       'literature:citation-styles': ({ args }) => owner.citationStyles(args[0]),

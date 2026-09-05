@@ -865,7 +865,8 @@ describe('ArtifactProvenancePanel', () => {
     await flush()
 
     expect(container.textContent).toContain('Edited in Open Science')
-    expect(container.textContent).toContain('Based on v1')
+    expect(container.textContent).toContain('View source provenance · v1')
+    expect(container.textContent).toContain('This edited version has no new agent execution.')
     expect(container.querySelector('[role="tablist"]')).toBeNull()
     expect(getVersionProvenance).not.toHaveBeenCalled()
     expect(getCodeReconstruction).not.toHaveBeenCalledWith(
@@ -952,7 +953,7 @@ describe('ArtifactProvenancePanel', () => {
       expect.objectContaining({ selectedVersionId: 'version-1', versionNumber: 1 })
     )
     expect(container.textContent).toContain('Edited in Open Science')
-    expect(container.textContent).toContain('Based on v1')
+    expect(container.textContent).toContain('View source provenance · v1')
   })
 
   it('shows a legacy Version without requesting Agent provenance', async () => {

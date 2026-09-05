@@ -178,10 +178,10 @@ describe('LiteratureDocumentReader', () => {
       const reader = new LiteratureDocumentReader({
         storageRoot: root,
         sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
-        inputs: {
+        sources: sessionPdfSources({
           resolveVersion: vi.fn(async () => input),
           resolveContent: vi.fn(async () => join(root, 'paper.pdf'))
-        }
+        })
       })
       const result = (await reader.readCurrent({
         projectId: 'project-1',
@@ -207,14 +207,14 @@ describe('LiteratureDocumentReader', () => {
     const reader = new LiteratureDocumentReader({
       storageRoot: root,
       sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
-      inputs: {
+      sources: sessionPdfSources({
         resolveVersion: vi.fn(async ({ inputFileVersionId }) =>
           inputFileVersionId === 'version-2' ? secondInput : input
         ),
         resolveContent: vi.fn(async (resolved) =>
           join(root, resolved.inputFileVersionId === 'version-2' ? 'second.pdf' : 'paper.pdf')
         )
-      }
+      })
     })
     const server = createLiteratureMcpServer({
       readDocument: (request) =>

@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils'
 import type { LiteratureCollectionView } from '../../../../shared/literature'
 import {
   LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH,
+  LITERATURE_COLLECTION_NAME_CONFLICT,
   LITERATURE_COLLECTION_NAME_MAX_LENGTH
 } from '../../../../shared/literature'
 
@@ -100,11 +101,13 @@ export const CollectionEditorDialog = forwardRef<
         name: trimmedName,
         description: trimmedDescription
       })
-    } catch {
+    } catch (error) {
       setError(
-        mode === 'create'
-          ? t('Collection could not be created.')
-          : t('Collection could not be updated.')
+        error instanceof Error && error.message.includes(LITERATURE_COLLECTION_NAME_CONFLICT)
+          ? t('A collection with this name already exists at this level. Choose another name.')
+          : mode === 'create'
+            ? t('Collection could not be created.')
+            : t('Collection could not be updated.')
       )
     } finally {
       setSaving(false)
@@ -166,7 +169,7 @@ export const CollectionEditorDialog = forwardRef<
                   placeholder={t('Collection name')}
                   autoFocus
                   maxLength={LITERATURE_COLLECTION_NAME_MAX_LENGTH}
-                  className={`${dialogFormInputClassName} h-9 px-3 text-sm`}
+                  className={`${dialogFormInputClassName} h-8 px-3 text-sm`}
                 />
               </div>
               <div>
@@ -214,7 +217,9 @@ export const CollectionEditorDialog = forwardRef<
                 {error}
               </p>
             ) : null}
-            <div className={dialogFooterClassName}>
+            <div
+              className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+            >
               <Button
                 type="button"
                 variant="ghost"
@@ -226,7 +231,10 @@ export const CollectionEditorDialog = forwardRef<
               </Button>
               <Button type="submit" disabled={!name.trim() || saving}>
                 {saving ? (
-                  <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                  <LoaderCircle
+                    className="size-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
                 ) : null}
                 {mode === 'create' ? t('Create collection') : t('Save changes')}
               </Button>

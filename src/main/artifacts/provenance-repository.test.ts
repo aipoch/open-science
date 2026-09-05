@@ -30,6 +30,7 @@ import {
 import { requireAgentArtifactVersion } from './provenance-version-kind'
 import { ArtifactProvenanceVersionWriter } from './provenance-version-writer'
 import { ArtifactRepository } from './repository'
+import { ContentRepository } from '../storage/content-repository'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 import {
   NodeVersionFileOperator,
@@ -4875,63 +4876,121 @@ describe('artifact provenance repository', () => {
     ])
   })
 
-  it('physically removes only the selected Project provenance graph and bytes', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-provenance-delete-'))
-    const client = createProjectDbClient(storageRoot)
-    disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
-    const compatibilityRepository = new ArtifactRepository(storageRoot)
-    const repository = new ArtifactProvenanceRepository({
-      storageRoot,
-      getClient: () => Promise.resolve(client),
-      compatibilityRepository
-    })
+  it.each([false, true])(
+    'physically removes only the selected Project provenance graph and bytes (retry: %s)',
+    async (retrySweep) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-provenance-delete-'))
+      const client = createProjectDbClient(storageRoot)
+      disconnect = () => client.$disconnect()
+      await migrateApplicationDatabase(client)
+      const compatibilityRepository = new ArtifactRepository(storageRoot)
+      const repository = new ArtifactProvenanceRepository({
+        storageRoot,
+        getClient: () => Promise.resolve(client),
+        compatibilityRepository
+      })
 
-    const createProjectVersion = async (
-      projectId: string,
-      operation: string
-    ): Promise<ArtifactVersionFile> => {
-      await compatibilityRepository.writePendingFile({
-        projectId: projectId,
-        sessionId: `${projectId}-artifact-session`,
-        runId: `${projectId}-artifact-run`,
-        filename: 'sin.png',
-        source: createPngInlineSource(`${projectId} bytes`)
+      const createProjectVersion = async (
+        projectId: string,
+        operation: string
+      ): Promise<ArtifactVersionFile> => {
+        await compatibilityRepository.writePendingFile({
+          projectId: projectId,
+          sessionId: `${projectId}-artifact-session`,
+          runId: `${projectId}-artifact-run`,
+          filename: 'sin.png',
+          source: createPngInlineSource(`${projectId} bytes`)
+        })
+        return repository.createVersion({
+          projectId,
+          appSessionId: 'shared-session',
+          artifactStorageSessionId: `${projectId}-artifact-session`,
+          artifactRunId: `${projectId}-artifact-run`,
+          writeOperationId: operation,
+          writeRequestChecksum: operation.repeat(64).slice(0, 64),
+          rootFrameId: 'root-frame-1',
+          agentFrameId: 'agent-frame-1',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'runtime-segment-1',
+          promptMessageId: 'prompt-1',
+          filename: 'sin.png'
+        })
+      }
+      const deletedVersion = await createProjectVersion('project_1', 'a')
+      const survivingVersion = await createProjectVersion('project-2', 'b')
+      const content = new ContentRepository({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
       })
-      return repository.createVersion({
-        projectId,
-        appSessionId: 'shared-session',
-        artifactStorageSessionId: `${projectId}-artifact-session`,
-        artifactRunId: `${projectId}-artifact-run`,
-        writeOperationId: operation,
-        writeRequestChecksum: operation.repeat(64).slice(0, 64),
-        rootFrameId: 'root-frame-1',
-        agentFrameId: 'agent-frame-1',
-        messageBranchId: 'branch-1',
-        runtimeSegmentId: 'runtime-segment-1',
-        promptMessageId: 'prompt-1',
-        filename: 'sin.png'
+      const unrelatedBlob = await content.publish({ sourcePath: survivingVersion.path })
+      // SQLite LIKE treats underscores as wildcards; this orphan belongs to another Project root.
+      const otherStorageKey = 'artifacts/project-1/orphan.txt'
+      await mkdir(dirname(join(storageRoot, otherStorageKey)), { recursive: true })
+      await writeFile(join(storageRoot, otherStorageKey), 'keep')
+      await client.contentBlob.create({
+        data: {
+          id: 'unrelated-project-orphan',
+          storageKey: otherStorageKey,
+          checksum: createHash('sha256').update('keep').digest('hex'),
+          sizeBytes: 4n,
+          state: 'available'
+        }
       })
+
+      if (retrySweep) {
+        const sweep = vi.spyOn(ContentRepository.prototype, 'sweep').mockResolvedValueOnce({
+          removedIds: [],
+          retainedIds: [],
+          failedIds: [`artifact-version:${deletedVersion.versionId}`]
+        })
+        try {
+          await expect(repository.deleteProjectProvenance('project_1')).rejects.toThrow(
+            'Project content cleanup failed'
+          )
+          expect(
+            await client.artifactVersion.count({ where: { id: deletedVersion.versionId } })
+          ).toBe(0)
+          expect(
+            await client.contentBlob.findUnique({
+              where: { id: `artifact-version:${deletedVersion.versionId}` }
+            })
+          ).not.toBeNull()
+        } finally {
+          sweep.mockRestore()
+        }
+      }
+
+      await repository.deleteProjectProvenance('project_1')
+      await expect(content.open(unrelatedBlob.id)).resolves.toMatchObject({ id: unrelatedBlob.id })
+      await expect(content.open('unrelated-project-orphan')).resolves.toMatchObject({
+        id: 'unrelated-project-orphan'
+      })
+
+      await expect(
+        client.artifactLineage.count({ where: { projectId: 'project_1' } })
+      ).resolves.toBe(0)
+      await expect(
+        client.fileOriginSession.count({ where: { projectId: 'project_1' } })
+      ).resolves.toBe(0)
+      await expect(readFile(deletedVersion.path)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(
+        client.contentBlob.findUnique({
+          where: { id: `artifact-version:${deletedVersion.versionId}` }
+        })
+      ).resolves.toBeNull()
+      await expect(
+        client.contentBlob.findUnique({
+          where: { id: `artifact-version:${survivingVersion.versionId}` }
+        })
+      ).resolves.not.toBeNull()
+      await expect(readFile(survivingVersion.path)).resolves.toEqual(
+        createPngBytes('project-2 bytes')
+      )
+      await expect(
+        client.artifactLineage.count({ where: { projectId: 'project-2' } })
+      ).resolves.toBe(1)
     }
-    const deletedVersion = await createProjectVersion('project-1', 'a')
-    const survivingVersion = await createProjectVersion('project-2', 'b')
-
-    await repository.deleteProjectProvenance('project-1')
-
-    await expect(client.artifactLineage.count({ where: { projectId: 'project-1' } })).resolves.toBe(
-      0
-    )
-    await expect(
-      client.fileOriginSession.count({ where: { projectId: 'project-1' } })
-    ).resolves.toBe(0)
-    await expect(readFile(deletedVersion.path)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(readFile(survivingVersion.path)).resolves.toEqual(
-      createPngBytes('project-2 bytes')
-    )
-    await expect(client.artifactLineage.count({ where: { projectId: 'project-2' } })).resolves.toBe(
-      1
-    )
-  })
+  )
 
   it('retains every Project Version and write journal when Version storage deletion fails', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-version-operator-delete-retry-'))

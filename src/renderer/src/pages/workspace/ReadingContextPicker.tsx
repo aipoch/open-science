@@ -113,6 +113,7 @@ export const ReadingContextPicker = ({
   const [pendingKey, setPendingKey] = useState<string>()
   const [loadRevision, setLoadRevision] = useState(0)
   const [result, setResult] = useState<{
+    projectId?: string
     items: EligiblePdf[]
     status: 'idle' | 'loading' | 'loaded' | 'error'
   }>({ items: [], status: 'idle' })
@@ -129,10 +130,10 @@ export const ReadingContextPicker = ({
             : loadLibraryPdfs(projectId, sourceQuery)
         ).then(
           (items) => {
-            if (!cancelled) setResult({ items, status: 'loaded' })
+            if (!cancelled) setResult({ projectId, items, status: 'loaded' })
           },
           () => {
-            if (!cancelled) setResult({ items: [], status: 'error' })
+            if (!cancelled) setResult({ projectId, items: [], status: 'error' })
           }
         )
       },

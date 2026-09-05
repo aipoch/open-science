@@ -6,7 +6,7 @@ import { useState } from 'react'
 import * as Dialog from '@/components/ui/dialog'
 import { Check, Info, LoaderCircle, Upload, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { ErrorNotice } from '@/components/error-notice'
+import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 import { Button } from '@/components/ui/button'
 import {
   dialogCloseButtonClassName,
@@ -105,21 +105,18 @@ export const LiteratureRecordImportDialog = ({
           </div>
           <div className="min-h-0 overflow-y-auto p-5">
             {recordImport.error && !recordImport.preview ? (
-              <div role="alert">
-                <ErrorNotice title={recordImport.error} />
-              </div>
+              <LiteratureErrorNotice title={recordImport.error} />
             ) : !recordImport.preview ? (
               <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-                <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                <LoaderCircle
+                  className="size-4 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
                 {t('Loading…')}
               </p>
             ) : (
               <div className="space-y-4">
-                {recordImport.error ? (
-                  <div role="alert">
-                    <ErrorNotice title={recordImport.error} />
-                  </div>
-                ) : null}
+                {recordImport.error ? <LiteratureErrorNotice title={recordImport.error} /> : null}
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <span className="rounded border border-border-300/80 px-2 py-1 font-medium">
                     {recordImport.preview.format === 'nbib'
@@ -370,7 +367,10 @@ export const LiteratureRecordImportDialog = ({
                   onClick={() => onImport()}
                 >
                   {isImportingRecords ? (
-                    <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
                   ) : (
                     <Upload className="size-4" aria-hidden="true" />
                   )}

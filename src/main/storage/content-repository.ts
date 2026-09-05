@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { copyFile, link, mkdir, rm, stat } from 'node:fs/promises'
+import { copyFile, link, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
@@ -92,6 +92,31 @@ const pathAlreadyExists = (error: unknown): boolean =>
 const fileFingerprint = (file: Awaited<ReturnType<typeof stat>>): string =>
   [file.dev, file.ino, file.size, file.mtimeMs, file.ctimeMs].join(':')
 
+// Different repositories share the same immutable files. Keep a sweep's claim and unlink
+// indivisible with publication so it cannot delete bytes that were just made available again.
+const contentLifecycles = new Map<string, Promise<void>>()
+
+const withContentLifecycle = async <T>(
+  storageRoot: string,
+  contentId: string,
+  operation: () => Promise<T>
+): Promise<T> => {
+  const key = JSON.stringify([resolve(storageRoot), contentId])
+  const previous = contentLifecycles.get(key)
+  let release!: () => void
+  const current = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  contentLifecycles.set(key, current)
+  await previous
+  try {
+    return await operation()
+  } finally {
+    release()
+    if (contentLifecycles.get(key) === current) contentLifecycles.delete(key)
+  }
+}
+
 class ContentRepository {
   private readonly verifiedContent = new Map<string, { fingerprint: string; checksum: string }>()
 
@@ -109,65 +134,73 @@ class ContentRepository {
     const sizeBytes = BigInt(sourceBefore.size)
     const id = `sha256:${checksum}:${sizeBytes}`
     const storageKey = `content/blobs/${checksum.slice(0, 2)}/${checksum}`
-    const client = await this.options.getClient()
-    const existing = await client.contentBlob.findUnique({ where: { id } })
-    if (existing?.state === 'available') {
-      const verification = await this.verify(id)
-      if (verification.state === 'available') return verification.content
-    }
-
-    await client.contentBlob.upsert({
-      where: { id },
-      create: {
-        id,
-        checksum,
-        storageKey,
-        sizeBytes,
-        contentType: request.contentType,
-        state: 'staging'
-      },
-      update: {
-        storageKey,
-        sizeBytes,
-        contentType: request.contentType ?? existing?.contentType,
-        state: 'staging',
-        verifiedAt: null
+    return withContentLifecycle(this.options.storageRoot, id, async () => {
+      const client = await this.options.getClient()
+      const existing = await client.contentBlob.findUnique({ where: { id } })
+      if (existing?.state === 'available') {
+        const verification = await this.verify(id)
+        if (verification.state === 'available') return verification.content
       }
-    })
 
-    const destination = resolveContentStorageKey(this.options.storageRoot, storageKey)
-    await mkdir(dirname(destination), { recursive: true })
-    const temporary = `${destination}.${randomUUID()}.tmp`
-    try {
-      await copyFile(request.sourcePath, temporary)
-      const copied = await stat(temporary)
-      if (BigInt(copied.size) !== sizeBytes || (await sha256File(temporary)) !== checksum) {
-        throw new Error('Published content did not match its source.')
-      }
-      await link(temporary, destination).catch((error: unknown) => {
-        if (!pathAlreadyExists(error)) throw error
+      await client.contentBlob.upsert({
+        where: { id },
+        create: {
+          id,
+          checksum,
+          storageKey,
+          sizeBytes,
+          contentType: request.contentType,
+          state: 'staging'
+        },
+        update: {
+          storageKey,
+          sizeBytes,
+          contentType: request.contentType ?? existing?.contentType,
+          state: 'staging',
+          verifiedAt: null
+        }
       })
-    } finally {
-      await rm(temporary, { force: true })
-    }
 
-    const destinationFile = await stat(destination)
-    if (
-      BigInt(destinationFile.size) !== sizeBytes ||
-      (await sha256File(destination)) !== checksum
-    ) {
-      await this.quarantine(id)
-      throw new Error('Published content failed integrity verification.')
-    }
-    await client.contentBlob.update({
-      where: { id },
-      data: { state: 'available', verifiedAt: new Date() }
+      const destination = resolveContentStorageKey(this.options.storageRoot, storageKey)
+      await mkdir(dirname(destination), { recursive: true })
+      const temporary = `${destination}.${randomUUID()}.tmp`
+      try {
+        await copyFile(request.sourcePath, temporary)
+        const copied = await stat(temporary)
+        if (BigInt(copied.size) !== sizeBytes || (await sha256File(temporary)) !== checksum) {
+          throw new Error('Published content did not match its source.')
+        }
+        await link(temporary, destination).catch(async (error: unknown) => {
+          if (!pathAlreadyExists(error)) throw error
+          const stored = await stat(destination)
+          if (BigInt(stored.size) !== sizeBytes || (await sha256File(destination)) !== checksum) {
+            // The staged copy is verified and publication holds the content lifecycle lock.
+            // Replace corrupt bytes atomically without changing the shared content identity.
+            await rename(temporary, destination)
+          }
+        })
+      } finally {
+        await rm(temporary, { force: true })
+      }
+
+      const destinationFile = await stat(destination)
+      if (
+        BigInt(destinationFile.size) !== sizeBytes ||
+        (await sha256File(destination)) !== checksum
+      ) {
+        await this.quarantine(id)
+        throw new Error('Published content failed integrity verification.')
+      }
+      await client.contentBlob.update({
+        where: { id },
+        data: { state: 'available', verifiedAt: new Date() }
+      })
+      this.verifiedContent.set(id, {
+        fingerprint: fileFingerprint(destinationFile),
+        checksum
+      })
+      return this.open(id)
     })
-    this.verifiedContent.set(id, {
-      fingerprint: fileFingerprint(destinationFile),
-      checksum
-    })
-    return this.open(id)
   }
 
   async open(contentId: string): Promise<OpenedContent> {
@@ -254,28 +287,37 @@ class ContentRepository {
       createdAt: { lt: request.createdBefore },
       ...(request.contentIds ? { id: { in: [...new Set(request.contentIds)] } } : {})
     }
-    const [candidates, uploadReferences, artifactReferences, literatureReferences] =
-      await Promise.all([
-        client.contentBlob.findMany({
-          where: candidateWhere,
-          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
-        }),
-        client.uploadVersion.findMany({
-          where: { contentBlobId: { not: null } },
-          select: { contentBlobId: true }
-        }),
-        client.artifactVersion.findMany({
-          where: { contentBlobId: { not: null } },
-          select: { contentBlobId: true }
-        }),
-        client.literatureAttachmentVersion.findMany({
-          select: { contentBlobId: true }
-        })
-      ])
+    const [
+      candidates,
+      uploadReferences,
+      artifactReferences,
+      literatureReferences,
+      inboxReferences
+    ] = await Promise.all([
+      client.contentBlob.findMany({
+        where: candidateWhere,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
+      }),
+      client.uploadVersion.findMany({
+        where: { contentBlobId: { not: null } },
+        select: { contentBlobId: true }
+      }),
+      client.artifactVersion.findMany({
+        where: { contentBlobId: { not: null } },
+        select: { contentBlobId: true }
+      }),
+      client.literatureAttachmentVersion.findMany({
+        select: { contentBlobId: true }
+      }),
+      client.literatureInboxPdf.findMany({ select: { contentBlobId: true } })
+    ])
     const referencedIds = new Set(
-      [...uploadReferences, ...artifactReferences, ...literatureReferences].flatMap((reference) =>
-        reference.contentBlobId ? [reference.contentBlobId] : []
-      )
+      [
+        ...uploadReferences,
+        ...artifactReferences,
+        ...literatureReferences,
+        ...inboxReferences
+      ].flatMap((reference) => (reference.contentBlobId ? [reference.contentBlobId] : []))
     )
     const receipt: ContentSweepReceipt = { removedIds: [], retainedIds: [], failedIds: [] }
 
@@ -285,32 +327,48 @@ class ContentRepository {
         continue
       }
       try {
-        const claimed = await client.$transaction(async (transaction) => {
-          const [uploadReferences, artifactReferences, literatureReferences] = await Promise.all([
-            transaction.uploadVersion.count({ where: { contentBlobId: candidate.id } }),
-            transaction.artifactVersion.count({ where: { contentBlobId: candidate.id } }),
-            transaction.literatureAttachmentVersion.count({
-              where: { contentBlobId: candidate.id }
+        const removed = await withContentLifecycle(
+          this.options.storageRoot,
+          candidate.id,
+          async () => {
+            const claimed = await client.$transaction(async (transaction) => {
+              const current = await transaction.contentBlob.findUnique({
+                where: { id: candidate.id }
+              })
+              if (!current || current.createdAt >= request.createdBefore) return false
+              const [uploadReferences, artifactReferences, literatureReferences, inboxReferences] =
+                await Promise.all([
+                  transaction.uploadVersion.count({ where: { contentBlobId: candidate.id } }),
+                  transaction.artifactVersion.count({ where: { contentBlobId: candidate.id } }),
+                  transaction.literatureAttachmentVersion.count({
+                    where: { contentBlobId: candidate.id }
+                  }),
+                  transaction.literatureInboxPdf.count({ where: { contentBlobId: candidate.id } })
+                ])
+              if (
+                uploadReferences + artifactReferences + literatureReferences + inboxReferences >
+                0
+              )
+                return false
+              await transaction.contentBlob.update({
+                where: { id: candidate.id },
+                data: { state: 'quarantined' }
+              })
+              return true
             })
-          ])
-          if (uploadReferences + artifactReferences + literatureReferences > 0) return false
-          await transaction.contentBlob.update({
-            where: { id: candidate.id },
-            data: { state: 'quarantined' }
-          })
-          return true
-        })
-        if (!claimed) {
-          receipt.retainedIds.push(candidate.id)
-          continue
-        }
+            if (!claimed) return false
 
-        const path = resolveContentStorageKey(this.options.storageRoot, candidate.storageKey)
-        await rm(path, { force: true })
-        await client.contentBlob.deleteMany({
-          where: { id: candidate.id, state: 'quarantined' }
-        })
-        receipt.removedIds.push(candidate.id)
+            const path = resolveContentStorageKey(this.options.storageRoot, candidate.storageKey)
+            await rm(path, { force: true })
+            await client.contentBlob.deleteMany({
+              where: { id: candidate.id, state: 'quarantined' }
+            })
+            this.verifiedContent.delete(candidate.id)
+            return true
+          }
+        )
+        if (removed) receipt.removedIds.push(candidate.id)
+        else receipt.retainedIds.push(candidate.id)
       } catch {
         receipt.failedIds.push(candidate.id)
       }

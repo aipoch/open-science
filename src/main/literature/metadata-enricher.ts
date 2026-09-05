@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { randomUUID } from 'node:crypto'
 
 import {
   literatureItemInputSchema,
@@ -315,6 +316,7 @@ const mergePubmedMetadata = (
 }
 
 class LiteratureMetadataEnricher {
+  private readonly reviews = new Map<string, LiteratureMetadataCompletionResult>()
   constructor(
     private readonly catalog: MetadataCatalog,
     private readonly fetchFn: FetchFn = fetch
@@ -323,16 +325,20 @@ class LiteratureMetadataEnricher {
   async complete(
     request: LiteratureMetadataCompletionRequest
   ): Promise<LiteratureMetadataCompletionResult> {
+    if (request.mode === 'commit') {
+      const review = request.reviewToken ? this.reviews.get(request.reviewToken) : undefined
+      if (
+        !review ||
+        review.item.id !== request.itemId ||
+        review.item.metadataRevision !== request.expectedMetadataRevision
+      )
+        throw new Error('Search again and review the metadata before applying.')
+      const result = await this.applyReviewed(review, request.overwriteFields)
+      this.reviews.delete(request.reviewToken!)
+      return result
+    }
     const current = await this.catalog.get(request.itemId)
     if (!current) throw new Error('Literature Item is unavailable.')
-    if (
-      request.mode === 'commit' &&
-      current.metadataRevision !== request.expectedMetadataRevision
-    ) {
-      throw new Error(
-        `Literature Item revision conflict: expected ${request.expectedMetadataRevision}, actual ${current.metadataRevision}.`
-      )
-    }
     const identifier =
       request.identifier ??
       current.item.identifiers.find(({ scheme }) => scheme === 'doi' || scheme === 'pmid')
@@ -366,7 +372,7 @@ class LiteratureMetadataEnricher {
     const maxBytes =
       identifier.scheme === 'doi' ? CROSSREF_MAX_RESPONSE_BYTES : PUBMED_MAX_RESPONSE_BYTES
     if (body.length > maxBytes) throw new Error('Metadata response is too large.')
-    const overwriteFields = new Set(request.mode === 'commit' ? request.overwriteFields : [])
+    const overwriteFields = new Set<LiteratureMetadataField>()
     let provider: 'crossref' | 'pubmed'
     let rawMetadata: Record<string, unknown>
     let merged: ReturnType<typeof mergeCrossrefMetadata>
@@ -392,29 +398,59 @@ class LiteratureMetadataEnricher {
       rawMetadata
     }
 
-    if (request.mode === 'preview') {
-      return {
-        mode: 'preview',
-        provider,
-        sourceUrl,
-        item: { ...current, item: merged.item },
-        filled: merged.filled,
-        conflicts: merged.conflicts
-      }
+    const result: LiteratureMetadataCompletionResult = {
+      mode: 'preview',
+      provider,
+      sourceUrl,
+      item: { ...current, item: merged.item },
+      filled: merged.filled,
+      conflicts: merged.conflicts,
+      source,
+      reviewToken: randomUUID()
     }
+    this.reviews.set(result.reviewToken!, structuredClone(result))
+    while (this.reviews.size > 100) this.reviews.delete(this.reviews.keys().next().value!)
+    return result
+  }
 
+  // Only trusted main-process snapshots enter here; renderer commits use an opaque review token.
+  async applyReviewed(
+    review: LiteratureMetadataCompletionResult,
+    overwriteFields: readonly LiteratureMetadataField[] = []
+  ): Promise<LiteratureMetadataCompletionResult> {
+    const current = await this.catalog.get(review.item.id)
+    if (
+      !current ||
+      current.id !== review.item.id ||
+      current.deletedAt ||
+      current.metadataRevision !== review.item.metadataRevision
+    )
+      throw new Error('Reference changed. Search again and review the metadata.')
+    if (!review.source) throw new Error('Search again to refresh this older metadata review.')
+    const merged =
+      review.provider === 'crossref'
+        ? mergeCrossrefMetadata(
+            review.item.item,
+            crossrefMessageSchema.parse(review.source.rawMetadata),
+            new Set(overwriteFields)
+          )
+        : mergePubmedMetadata(
+            review.item.item,
+            pubmedSummarySchema.parse(review.source.rawMetadata),
+            new Set(overwriteFields)
+          )
     const persistedItem = await this.catalog.applyMetadata({
-      itemId: request.itemId,
-      expectedMetadataRevision: request.expectedMetadataRevision,
+      itemId: current.id,
+      expectedMetadataRevision: review.item.metadataRevision,
       item: merged.item,
-      source
+      source: review.source
     })
     return {
       mode: 'commit',
-      provider,
-      sourceUrl,
+      provider: review.provider,
+      sourceUrl: review.sourceUrl,
       item: persistedItem,
-      filled: merged.filled,
+      filled: [...review.filled, ...merged.filled],
       conflicts: merged.conflicts
     }
   }

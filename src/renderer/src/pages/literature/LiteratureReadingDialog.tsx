@@ -4,7 +4,7 @@ import * as Dialog from '@/components/ui/dialog'
 import { BookOpenText, LoaderCircle, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { ErrorNotice } from '@/components/error-notice'
+import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 import {
   dialogBodyClassName,
   dialogFooterClassName,
@@ -72,10 +72,13 @@ export const LiteratureReadingDialog = ({
           </div>
           <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto`}>
             {error ? (
-              <ErrorNotice title={error} />
+              <LiteratureErrorNotice title={error} />
             ) : !entries ? (
               <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-                <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                <LoaderCircle
+                  className="size-4 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
                 {t('Loading…')}
               </p>
             ) : (
@@ -128,7 +131,9 @@ export const LiteratureReadingDialog = ({
               </>
             )}
           </div>
-          <div className={dialogFooterClassName}>
+          <div
+            className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+          >
             <Button variant="outline" onClick={onClose}>
               {t('Cancel')}
             </Button>

@@ -186,8 +186,10 @@ describe('LiteratureMetadataEnricher', () => {
       vi.fn().mockResolvedValue(new Response(JSON.stringify(crossrefResponse), { status: 200 }))
     )
 
+    const review = await enricher.complete({ mode: 'preview', itemId: view.id })
     const result = await enricher.complete({
       mode: 'commit',
+      reviewToken: review.reviewToken,
       itemId: view.id,
       expectedMetadataRevision: 2,
       overwriteFields: []
@@ -223,8 +225,10 @@ describe('LiteratureMetadataEnricher', () => {
       vi.fn().mockResolvedValue(new Response(JSON.stringify(crossrefResponse), { status: 200 }))
     )
 
+    const review = await enricher.complete({ mode: 'preview', itemId: view.id })
     const result = await enricher.complete({
       mode: 'commit',
+      reviewToken: review.reviewToken,
       itemId: view.id,
       expectedMetadataRevision: 2,
       overwriteFields: ['journal']
@@ -233,5 +237,29 @@ describe('LiteratureMetadataEnricher', () => {
     expect(result.item.item.containerTitle).toBe('Journal of Examples')
     expect(result.item.item.typeFields.volume).toBe('9')
     expect(result.conflicts).toContainEqual({ field: 'volume', currentValue: '9', value: '12' })
+  })
+  it('applies the reviewed snapshot without refetching and rejects intervening edits', async () => {
+    const get = vi.fn().mockResolvedValue(view)
+    const applyMetadata = vi
+      .fn()
+      .mockImplementation(async (input) => ({ ...view, item: input.item }))
+    const fetch = vi
+      .fn()
+      .mockImplementation(async () => new Response(JSON.stringify(crossrefResponse)))
+    const enricher = new LiteratureMetadataEnricher({ get, applyMetadata }, fetch)
+    const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+    fetch.mockRejectedValue(new Error('Provider unavailable after review'))
+    await enricher.complete({
+      mode: 'commit',
+      itemId: view.id,
+      expectedMetadataRevision: 2,
+      overwriteFields: [],
+      reviewToken: review.reviewToken
+    })
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(applyMetadata.mock.calls[0]![0].item.containerTitle).toBe('Journal of Examples')
+    get.mockResolvedValue({ ...view, metadataRevision: 3 })
+    await expect(enricher.applyReviewed(review)).rejects.toThrow('Reference changed')
+    expect(applyMetadata).toHaveBeenCalledTimes(1)
   })
 })

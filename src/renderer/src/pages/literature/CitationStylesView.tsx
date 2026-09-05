@@ -181,7 +181,10 @@ const CitationStylesView = ({
             ) : (
               <p role="status" className="flex min-h-26 items-center justify-center gap-2">
                 {previewState?.status === 'loading' ? (
-                  <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                  <LoaderCircle
+                    className="size-3.5 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
                 ) : null}
                 {previewState?.status === 'loading'
                   ? t('Loading preview…')
@@ -201,7 +204,10 @@ const CitationStylesView = ({
             onClick={() => void deleteStyle(style.id)}
           >
             {deletingId === style.id ? (
-              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+              <LoaderCircle
+                className="size-4 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
             ) : (
               <Trash2 className="size-4" aria-hidden="true" />
             )}
@@ -243,7 +249,10 @@ const CitationStylesView = ({
             />
             <Button type="button" disabled={importing} onClick={() => inputRef.current?.click()}>
               {importing ? (
-                <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                <LoaderCircle
+                  className="size-4 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
               ) : (
                 <Upload className="size-4" aria-hidden="true" />
               )}
@@ -263,7 +272,10 @@ const CitationStylesView = ({
 
         {loading ? (
           <div role="status" className="mt-8 flex items-center gap-2 text-sm text-muted-foreground">
-            <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+            <LoaderCircle
+              className="size-4 animate-spin motion-reduce:animate-none"
+              aria-hidden="true"
+            />
             {t('Loading citation styles…')}
           </div>
         ) : (

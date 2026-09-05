@@ -233,19 +233,23 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   },
 
   openLibrary: (origin) =>
-    set((state) => ({
-      ...navigationState(state, origin, { view: 'library' }),
-      pendingLiteratureProjectId: undefined,
-      pendingLiteratureCollectionId: undefined
-    })),
+    requestPreviewLeaveForNavigation({ view: 'library' }, () =>
+      set((state) => ({
+        ...navigationState(state, origin, { view: 'library' }),
+        pendingLiteratureProjectId: undefined,
+        pendingLiteratureCollectionId: undefined
+      }))
+    ),
 
   openLiteratureItem: (itemId, origin) =>
-    set((state) => ({
-      ...navigationState(state, origin, { view: 'library' }),
-      pendingLiteratureItemId: itemId,
-      pendingLiteratureProjectId: undefined,
-      pendingLiteratureCollectionId: undefined
-    })),
+    requestPreviewLeaveForNavigation({ view: 'library' }, () =>
+      set((state) => ({
+        ...navigationState(state, origin, { view: 'library' }),
+        pendingLiteratureItemId: itemId,
+        pendingLiteratureProjectId: undefined,
+        pendingLiteratureCollectionId: undefined
+      }))
+    ),
 
   openProjectLiterature: (projectId, origin) => {
     if (!isActiveProject(projectId)) return false

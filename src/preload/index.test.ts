@@ -353,6 +353,7 @@ describe('preload bridge — public surface inventory', () => {
       'literature.get',
       'literature.importPdf',
       'literature.importRecords',
+      'literature.jobs',
       'literature.search',
       'literature.transact',
       'localFs.getRoots',

@@ -1,4 +1,5 @@
 import type { ProvenanceReadResult } from './provenance-read-result'
+import type { LiteratureJobRequest, LiteratureJobsResult } from './literature-jobs'
 import type { LiteratureFullTextRequest, LiteratureFullTextResult } from './literature'
 import type {
   AcpCancelPromptRequest,
@@ -1115,6 +1116,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'literature.fullText': callable<
     (request: LiteratureFullTextRequest) => Promise<LiteratureFullTextResult>
   >()('literature', ['literature:full-text', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.jobs': callable<(request: LiteratureJobRequest) => Promise<LiteratureJobsResult>>()(
+    'literature',
+    ['literature:jobs', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'literature.importPdf': callable<
     (request: LiteraturePdfImportRequest) => Promise<LiteraturePdfImportReceipt>
   >()('literature', ['literature:import-pdf', WEB, undefined, undefined, RUNTIME_VALIDATED]),

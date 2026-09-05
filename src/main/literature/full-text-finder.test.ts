@@ -43,7 +43,7 @@ const setup = (): {
     },
     openAlexKey: vi.fn(async () => undefined),
     fetch: vi.fn(async (input) =>
-      String(input).includes('pmc.ncbi.nlm.nih.gov')
+      new URL(String(input)).hostname === 'pmc.ncbi.nlm.nih.gov'
         ? Response.json({ records: [] })
         : Response.json({
             resultList: {
@@ -95,54 +95,93 @@ const setup = (): {
 }
 
 describe('Literature full-text discovery and attachment', () => {
-  it('combines new sources, deduplicates their PDFs and attaches only the selected official candidate', async () => {
-    const { finder, options, item } = setup()
-    options.contactEmail = vi.fn(async () => 'research@lab.org')
-    const originalFetch = options.fetch!
-    options.fetch = vi.fn(async (input, init) => {
-      const url = new URL(String(input))
-      if (url.hostname === 'api.unpaywall.org')
-        return Response.json({
-          doi: '10.1000/example',
-          oa_locations: [
-            { url_for_pdf: 'https://journal.example/paper.pdf' },
-            {
-              url_for_pdf: 'https://repository.example/manuscript.pdf',
-              url_for_landing_page: 'https://repository.example/article'
-            }
-          ]
-        })
-      if (url.hostname === 'pmc.ncbi.nlm.nih.gov')
-        return Response.json({ records: [{ doi: '10.1000/example', pmcid: 'PMC12345' }] })
-      if (url.hostname === 'pmc-oa-opendata.s3.amazonaws.com')
-        return url.searchParams.has('list-type')
-          ? new Response(
-              '<ListBucketResult><IsTruncated>false</IsTruncated><CommonPrefixes><Prefix>PMC12345.1/</Prefix></CommonPrefixes></ListBucketResult>'
-            )
-          : Response.json({
-              pmcid: 'PMC12345',
-              version: 1,
-              pdf_url: 's3://pmc-oa-opendata/PMC12345.1/paper.pdf'
-            })
-      return originalFetch(input, init)
-    })
-    const result = await finder.run({ mode: 'search', itemId: item.id })
-    if (result.mode !== 'search') throw new Error('Expected search')
-    expect(result.candidates.map(({ provider }) => provider)).toEqual([
-      'europe-pmc',
-      'unpaywall',
-      'pmc'
-    ])
-    expect(options.download).not.toHaveBeenCalled()
-    expect(JSON.stringify(result)).not.toContain('research@lab.org')
-    await finder.run({ mode: 'attach', itemId: item.id, candidateId: result.candidates[2].id })
-    expect(options.download).toHaveBeenCalledWith(
-      'https://pmc-oa-opendata.s3.amazonaws.com/PMC12345.1/paper.pdf',
-      expect.any(Number),
-      expect.any(Function)
-    )
-    expect(options.catalog.attachContent).toHaveBeenCalledTimes(1)
-  })
+  it.each([
+    ['10.1000/example', '10.1000/example'],
+    ['https://doi.org/10.1000/EXAMPLE', '10.1000/example'],
+    ['10.1000/example', 'https://doi.org/10.1000/EXAMPLE']
+  ])(
+    'matches DOI %s against %s across all providers and attaches only the selected candidate',
+    async (inputDoi, providerDoi) => {
+      const { finder, options, item } = setup()
+      item.item.identifiers = [{ scheme: 'doi', value: inputDoi, isPrimary: false }]
+      options.openAlexKey = vi.fn(async () => 'test-key')
+      options.contactEmail = vi.fn(async () => 'research@lab.org')
+      const originalFetch = options.fetch!
+      options.fetch = vi.fn(async (input, init) => {
+        const url = new URL(String(input))
+        if (url.hostname === 'api.unpaywall.org')
+          return Response.json({
+            doi: providerDoi,
+            oa_locations: [
+              { url_for_pdf: 'https://journal.example/paper.pdf' },
+              {
+                url_for_pdf: 'https://repository.example/manuscript.pdf',
+                url_for_landing_page: 'https://repository.example/article'
+              }
+            ]
+          })
+        if (url.hostname === 'api.openalex.org')
+          return Response.json({
+            results: [
+              {
+                doi: providerDoi,
+                best_oa_location: {
+                  is_oa: true,
+                  pdf_url: 'https://repository.example/openalex.pdf'
+                }
+              }
+            ]
+          })
+        if (url.hostname === 'pmc.ncbi.nlm.nih.gov')
+          return Response.json({ records: [{ doi: providerDoi, pmcid: 'PMC12345' }] })
+        if (url.hostname === 'pmc-oa-opendata.s3.amazonaws.com')
+          return url.searchParams.has('list-type')
+            ? new Response(
+                '<ListBucketResult><IsTruncated>false</IsTruncated><CommonPrefixes><Prefix>PMC12345.1/</Prefix></CommonPrefixes></ListBucketResult>'
+              )
+            : Response.json({
+                pmcid: 'PMC12345',
+                doi: providerDoi,
+                version: 1,
+                pdf_url: 's3://pmc-oa-opendata/PMC12345.1/paper.pdf'
+              })
+        const response = await originalFetch(input, init)
+        const body = await response.json()
+        body.resultList.result[0].doi = providerDoi
+        return Response.json(body)
+      })
+      const result = await finder.run({ mode: 'search', itemId: item.id })
+      if (result.mode !== 'search') throw new Error('Expected search')
+      expect(result.candidates.map(({ provider }) => provider)).toEqual([
+        'europe-pmc',
+        'openalex',
+        'unpaywall',
+        'pmc'
+      ])
+      const requests = vi.mocked(options.fetch!).mock.calls.map(([input]) => new URL(String(input)))
+      expect(requests.find((url) => url.hostname === 'api.unpaywall.org')?.pathname).toBe(
+        '/v2/10.1000%2Fexample'
+      )
+      expect(
+        requests.find((url) => url.hostname === 'pmc.ncbi.nlm.nih.gov')?.searchParams.get('ids')
+      ).toBe('10.1000/example')
+      expect(
+        requests.find((url) => url.hostname === 'api.openalex.org')?.searchParams.get('filter')
+      ).toBe('doi:https://doi.org/10.1000/example')
+      expect(
+        requests.find((url) => url.hostname === 'www.ebi.ac.uk')?.searchParams.get('query')
+      ).toBe('DOI:"10.1000/example"')
+      expect(options.download).not.toHaveBeenCalled()
+      expect(JSON.stringify(result)).not.toContain('research@lab.org')
+      await finder.run({ mode: 'attach', itemId: item.id, candidateId: result.candidates[3].id })
+      expect(options.download).toHaveBeenCalledWith(
+        'https://pmc-oa-opendata.s3.amazonaws.com/PMC12345.1/paper.pdf',
+        expect.any(Number),
+        expect.any(Function)
+      )
+      expect(options.catalog.attachContent).toHaveBeenCalledTimes(1)
+    }
+  )
   it('exposes progress only for the matching active transfer and clears it after completion', async () => {
     const { finder, options, item } = setup()
     const result = await finder.run({ mode: 'search', itemId: item.id })
@@ -222,7 +261,7 @@ describe('Literature full-text discovery and attachment', () => {
       const { finder, options, item } = setup()
       const pdf = 'https://europepmc.org/articles/PMC3077217?pdf=render'
       vi.mocked(options.fetch!).mockImplementation(async (input) =>
-        String(input).includes('pmc.ncbi.nlm.nih.gov')
+        new URL(String(input)).hostname === 'pmc.ncbi.nlm.nih.gov'
           ? Response.json({ records: [] })
           : Response.json({
               resultList: {
@@ -380,7 +419,7 @@ describe('Literature full-text discovery and attachment', () => {
     expect(options.fetch).not.toHaveBeenCalled()
     item.item.identifiers.push({ scheme: 'pmid', value: '12345', isPrimary: false })
     vi.mocked(options.fetch!).mockImplementation(async (input) =>
-      String(input).includes('pmc.ncbi.nlm.nih.gov')
+      new URL(String(input)).hostname === 'pmc.ncbi.nlm.nih.gov'
         ? Response.json({ records: [] })
         : Response.json({
             resultList: {

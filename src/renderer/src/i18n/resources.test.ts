@@ -3638,8 +3638,11 @@ describe('Korean binding terminology', () => {
       const offenders = Object.entries(catalog('ko'))
         .filter(([key]) => {
           const sourceText = englishOf(key)
-            .replace(/<code>.*?<\/code>/g, '')
-            .replace(/\{\{\w+\}\}|<\/?\w+>|https?:\/\/\S+|\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g, '')
+            // Extract prose for glossary matching; this text is never rendered as HTML.
+            .split(
+              /<code>.*?<\/code>|\{\{\w+\}\}|<\/?\w+>|https?:\/\/\S+|\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g
+            )
+            .join(' ')
           return source.test(stripSource ? sourceText.replace(stripSource, '') : sourceText)
         })
         .filter(([, value]) => !value.includes(expected))
@@ -4898,13 +4901,16 @@ const isProse = (text: string): boolean => {
 
 type BareCopy = { text: string; line: number }
 
-const decodeJsxEntities = (text: string): string =>
-  text
-    .replaceAll('&apos;', "'")
-    .replaceAll('&quot;', '"')
-    .replaceAll('&amp;', '&')
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
+const decodeJsxEntities = (text: string): string => {
+  const entities: Record<string, string> = {
+    '&apos;': "'",
+    '&quot;': '"',
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>'
+  }
+  return text.replace(/&(?:apos|quot|amp|lt|gt);/g, (entity) => entities[entity])
+}
 
 const bareJsxAstText = (source: string): BareCopy[] => {
   const sourceFile = ts.createSourceFile(

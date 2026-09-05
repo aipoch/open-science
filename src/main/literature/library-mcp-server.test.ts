@@ -53,6 +53,40 @@ const connect = async (
 }
 
 describe('Literature Library MCP server', () => {
+  it('exposes PDF acquisition with a single bibliographic candidate and Inbox receipt', async () => {
+    const acquirePdf = vi.fn(async () => ({
+      status: 'pending-review' as const,
+      candidateId: 'inbox-1',
+      filename: 'paper.pdf'
+    }))
+    const server = createLiteratureLibraryMcpServer({
+      searchLibrary: vi.fn(),
+      readAbstract: vi.fn(),
+      readPdf: vi.fn(),
+      saveToInbox: vi.fn(),
+      acquirePdf
+    })
+    const client = await connect(server)
+    expect((await client.listTools()).tools.some(({ name }) => name === 'acquire_pdf')).toBe(true)
+    const result = await client.callTool({
+      name: 'acquire_pdf',
+      arguments: { candidate: discovery }
+    })
+    expect(result.structuredContent).toMatchObject({
+      status: 'pending-review',
+      candidateId: 'inbox-1'
+    })
+    expect(acquirePdf).toHaveBeenCalledWith({ candidate: discovery, pdfUrl: undefined })
+    const rejected = await client.callTool({
+      name: 'acquire_pdf',
+      arguments: { ref: '10.1234/example', candidate: discovery }
+    })
+    expect(rejected.isError).toBe(true)
+    expect(acquirePdf).toHaveBeenCalledTimes(1)
+    await client.close()
+    await server.close()
+  })
+
   it('exposes bounded metadata search and Inbox tools', async () => {
     const searchLibrary = vi.fn(async () => ({
       items: [],

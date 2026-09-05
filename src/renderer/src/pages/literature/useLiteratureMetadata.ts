@@ -101,6 +101,7 @@ const useLiteratureMetadata = (
               mode: operation,
               itemId: current.id,
               expectedMetadataRevision: current.metadataRevision,
+              reviewToken: completion?.reviewToken,
               identifier,
               overwriteFields: [...overwriteFields]
             }

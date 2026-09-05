@@ -391,7 +391,8 @@ const artifactNodeFromEl = (el: HTMLElement): ComposerArtifactNode | null => {
   }
 
   const path = el.getAttribute('data-mention-path')
-  if (path === null || (source !== 'upload' && source !== 'artifact')) return null
+  if (path === null || (source !== 'upload' && source !== 'artifact' && source !== 'literature'))
+    return null
   const sourceFileId = el.getAttribute('data-mention-source-file-id') ?? undefined
   const versionId = el.getAttribute('data-mention-version-id') ?? undefined
   return {

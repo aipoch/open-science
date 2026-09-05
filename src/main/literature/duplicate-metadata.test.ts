@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { literatureItemInputSchema } from '../../shared/literature'
-import { conflictFreeLiteratureMerge, supplementLiteratureMetadata } from './duplicate-metadata'
+import {
+  conflictFreeLiteratureMerge,
+  planLiteratureMerge,
+  supplementLiteratureMetadata
+} from './duplicate-metadata'
 
 const item = literatureItemInputSchema.parse({
   itemType: 'journalArticle',
@@ -8,6 +12,70 @@ const item = literatureItemInputSchema.parse({
   identifiers: [{ scheme: 'doi', value: '10.1234/study' }]
 })
 describe('conservative duplicate metadata merging', () => {
+  it('chooses a deterministic survivor, fills gaps and never rule-merges contradictory identifiers', () => {
+    const base = {
+      id: 'old',
+      createdAt: 1,
+      updatedAt: 1,
+      metadataRevision: 1,
+      item: { ...item, personalNote: 'Preserve this note' },
+      attachments: [],
+      collectionIds: [],
+      projectIds: []
+    }
+    const complete = {
+      ...base,
+      id: 'complete',
+      createdAt: 2,
+      updatedAt: 2,
+      item: { ...item, title: 'Preferred title', containerTitle: 'Journal', issuedYear: 2024 }
+    }
+    const newest = {
+      ...base,
+      id: 'newest',
+      createdAt: 3,
+      updatedAt: 4,
+      item: { ...item, title: 'Latest title' }
+    }
+    const views = [newest, complete, base]
+    expect(planLiteratureMerge(views, 'conflict-free')).toBeUndefined()
+    expect(planLiteratureMerge(views, 'most-complete')).toMatchObject({
+      survivor: { id: 'complete' },
+      conflicts: true,
+      item: { title: 'Preferred title', personalNote: 'Preserve this note' }
+    })
+    expect(planLiteratureMerge(views, 'oldest')?.survivor.id).toBe('old')
+    expect(planLiteratureMerge(views, 'newest')?.survivor.id).toBe('newest')
+    for (const strategy of ['most-complete', 'oldest', 'newest'] as const) {
+      expect(
+        planLiteratureMerge([base, { ...complete, item: { ...item, identifiers: [] } }], strategy)
+      ).toBeUndefined()
+      expect(
+        planLiteratureMerge([base, { ...complete, item: { ...item, itemType: 'book' } }], strategy)
+      ).toBeUndefined()
+      expect(
+        planLiteratureMerge(
+          [
+            {
+              ...base,
+              item: {
+                ...item,
+                identifiers: [...item.identifiers, { scheme: 'pmid', value: '1', isPrimary: false }]
+              }
+            },
+            {
+              ...complete,
+              item: {
+                ...item,
+                identifiers: [...item.identifiers, { scheme: 'pmid', value: '2', isPrimary: false }]
+              }
+            }
+          ],
+          strategy
+        )
+      ).toBeUndefined()
+    }
+  })
   it('requires a common identifier for every member and rejects conflicting nonempty fields', () => {
     expect(conflictFreeLiteratureMerge([item, { ...item, identifiers: [] }])).toBeUndefined()
     for (const change of [

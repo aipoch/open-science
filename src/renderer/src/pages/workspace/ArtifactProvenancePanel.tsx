@@ -1164,20 +1164,27 @@ const ArtifactProvenancePanel = ({
     codeReconstructionState?.state === 'cached' ? codeReconstructionState.value : undefined
 
   const editSummary = isUserEdit ? (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-300">
-      <span>{t('Edited in Open Science')}</span>
-      {basedOnVersionId && basedOnVersionNumber !== undefined ? (
-        <button
-          type="button"
-          aria-label={t('Open source version v{{version}}', { version: basedOnVersionNumber })}
-          className="rounded text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => selectVersion(basedOnVersionId)}
-        >
-          {t('Based on v{{version}}', { version: basedOnVersionNumber })}
-        </button>
-      ) : (
-        <span>{t('Based on an earlier immutable version.')}</span>
-      )}
+    <div className="space-y-1.5 text-xs text-text-300">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span>{t('Edited in Open Science')}</span>
+        {basedOnVersionId && basedOnVersionNumber !== undefined ? (
+          <button
+            type="button"
+            aria-label={t('Open source version v{{version}}', { version: basedOnVersionNumber })}
+            className="rounded text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => selectVersion(basedOnVersionId)}
+          >
+            {t('View source provenance · v{{version}}', { version: basedOnVersionNumber })}
+          </button>
+        ) : (
+          <span>{t('Based on an earlier immutable version.')}</span>
+        )}
+      </div>
+      <p>
+        {t(
+          'This edited version has no new agent execution. View the source version for its code, messages and execution evidence.'
+        )}
+      </p>
     </div>
   ) : undefined
 

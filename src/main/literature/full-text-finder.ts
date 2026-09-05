@@ -75,6 +75,19 @@ class LiteratureFullTextFinder {
   >()
   constructor(private readonly options: Options) {}
 
+  async discover(item: LiteratureItemView['item']): Promise<SearchResult> {
+    return this.search({
+      id: randomUUID(),
+      item,
+      metadataRevision: 1,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      attachments: [],
+      collectionIds: [],
+      projectIds: []
+    })
+  }
+
   async run(request: LiteratureFullTextRequest): Promise<LiteratureFullTextResult> {
     if (request.mode === 'progress') {
       const progress = this.progress.get(request.candidateId)
@@ -100,7 +113,7 @@ class LiteratureFullTextFinder {
         normalizeLiteratureIdentifierValue(scheme, value)
       ])
     )
-    const doi = identifiers.get('doi')
+    const doi = identifiers.get('doi')?.toLowerCase()
     const pmid = identifiers.get('pmid')
     const pmcid = identifiers.get('pmcid')
     if (!doi && !pmid && !pmcid)
@@ -167,7 +180,12 @@ class LiteratureFullTextFinder {
           .parse(await this.json(url.href))
         for (const record of result.resultList.result) {
           const pairs = [
-            [doi, record.doi ? normalizeLiteratureIdentifierValue('doi', record.doi) : undefined],
+            [
+              doi,
+              record.doi
+                ? normalizeLiteratureIdentifierValue('doi', record.doi).toLowerCase()
+                : undefined
+            ],
             [pmid, record.source === 'MED' ? record.id : undefined],
             [pmcid?.toUpperCase(), record.pmcid?.toUpperCase()]
           ]
@@ -225,7 +243,11 @@ class LiteratureFullTextFinder {
             .object({ results: z.array(openAlexWork) })
             .parse(await this.json(url.href))
           for (const work of result.results) {
-            if (!work.doi || normalizeLiteratureIdentifierValue('doi', work.doi) !== doi) continue
+            if (
+              !work.doi ||
+              normalizeLiteratureIdentifierValue('doi', work.doi).toLowerCase() !== doi
+            )
+              continue
             for (const entry of [work.best_oa_location, ...(work.locations ?? [])]) {
               if (!entry?.is_oa || !entry.pdf_url) continue
               const version =

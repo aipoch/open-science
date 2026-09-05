@@ -96,7 +96,7 @@ const LiteratureMetadataLookup = ({
           >
             <SelectTrigger
               aria-label={t('Type')}
-              className="h-9 text-xs"
+              className="h-8 text-xs"
               style={{ pointerEvents: 'auto' }}
             >
               <SelectValue />
@@ -111,7 +111,7 @@ const LiteratureMetadataLookup = ({
             aria-label={identifier.scheme === 'doi' ? t('DOI') : t('PMID')}
             aria-invalid={Boolean(error) || undefined}
             aria-describedby={error ? 'literature-metadata-lookup-error' : undefined}
-            className="h-9"
+            className="h-8"
             value={identifier.value}
             placeholder={identifier.scheme === 'doi' ? DOI_EXAMPLE : PMID_EXAMPLE}
             onChange={(event) =>
@@ -125,12 +125,15 @@ const LiteratureMetadataLookup = ({
             type="button"
             variant="outline"
             size="sm"
-            className="h-9"
+            className="h-8"
             disabled={busy || !identifier.value.trim()}
             onClick={search}
           >
             {busy ? (
-              <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+              <LoaderCircle
+                className="size-3.5 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
             ) : (
               <Search className="size-3.5" aria-hidden="true" />
             )}

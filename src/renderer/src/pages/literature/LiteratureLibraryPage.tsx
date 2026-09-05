@@ -1,3 +1,4 @@
+import { LITERATURE_COLLECTION_NAME_CONFLICT } from '../../../../shared/literature'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { AlertDialog } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
@@ -53,7 +54,7 @@ import { useTranslation } from 'react-i18next'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { ActionToast } from '@/components/ActionToast'
-import { ErrorNotice } from '@/components/error-notice'
+import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
@@ -93,6 +94,7 @@ import { useTagStore } from '@/stores/tag-store'
 import { formatBytes } from '../../../../shared/update'
 import { LiteratureMergeReview } from './LiteratureMergeReview'
 import { LiteratureBatchLookupDialog, type BatchLookupMode } from './LiteratureBatchLookupDialog'
+import { LiteratureBackgroundTasks } from './LiteratureBackgroundTasks'
 import { LiteratureTable, LiteratureTextTooltip } from './LiteratureTable'
 import { buildLiteratureMergeItem, mergeScalarFields } from './literature-merge'
 import type {
@@ -1194,7 +1196,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const yearFilter = useLiteratureYearFilter(clearSelection)
   const { from: filterYearFrom, to: filterYearTo } = yearFilter
   const [isBatching, setIsBatching] = useState(false)
-  const [batchLookup, setBatchLookup] = useState<{ mode: BatchLookupMode; itemIds: string[] }>()
+  const [batchLookup, setBatchLookup] = useState<{
+    mode: BatchLookupMode
+    itemIds: string[]
+    jobId?: string
+  }>()
   const [permanentDeleteIds, setPermanentDeleteIds] = useState<string[]>([])
   const [mergeOpen, setMergeOpen] = useState(false)
   const [mergeError, setMergeError] = useState<string>()
@@ -1543,9 +1549,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     (
       page: LiteratureCatalogSearchPage,
       request: LiteratureCatalogSearchRequest,
-      fromCache: boolean
+      _fromCache: boolean,
+      preservePosition = false
     ): void => {
-      if (!fromCache) setDuplicatesRevision((value) => value + 1)
       if (request.scope === 'inbox') setCandidates(page.entries.filter(isCandidate))
       else setItems(page.entries.filter(isItem))
       setNextEntriesOffset(page.nextOffset)
@@ -1565,7 +1571,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       ) {
         setProjectItemCounts((current) => ({ ...current, [request.projectId!]: totalCount }))
       }
-      if (tableScrollRef.current) tableScrollRef.current.scrollTop = 0
+      if (!preservePosition && tableScrollRef.current) tableScrollRef.current.scrollTop = 0
     },
     []
   )
@@ -1577,7 +1583,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const {
     loading: entriesLoading,
     pageTransitionLoading: entriesPageTransitionLoading,
-    reload: loadEntries
+    reload: reloadEntries,
+    refreshItems
   } = useLiteratureEntries({
     enabled: !duplicatesOpen,
     request: entriesRequest,
@@ -1586,6 +1593,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     onEmptyPage: setEntriesOffset,
     onError: receiveEntriesError
   })
+  const loadEntries = useCallback(
+    (force = false): Promise<void> => {
+      if (force) setDuplicatesRevision((value) => value + 1)
+      return reloadEntries(force)
+    },
+    [reloadEntries]
+  )
+  const receiveBackgroundItems = useCallback(
+    (itemIds: string[]): void => {
+      setDuplicatesRevision((value) => value + 1)
+      void refreshItems(itemIds)
+    },
+    [refreshItems]
+  )
 
   useEffect(() => {
     const loadNavigation = async (): Promise<void> => {
@@ -1859,8 +1880,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       )
       if (collectionId === deletingCollection.id) selectLibrary()
       setCollectionPendingDelete(undefined)
-    } catch {
-      setCollectionDeleteError(t('Collection could not be deleted.'))
+    } catch (error) {
+      setCollectionDeleteError(
+        error instanceof Error && error.message.includes(LITERATURE_COLLECTION_NAME_CONFLICT)
+          ? t(
+              'A child collection would duplicate a top-level name. Rename it before deleting this collection.'
+            )
+          : t('Collection could not be deleted.')
+      )
     } finally {
       setIsDeletingCollection(false)
     }
@@ -2564,11 +2591,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       clearSelection()
       await Promise.all([loadEntries(true), loadCollections()])
       return true
-    } catch {
+    } catch (error) {
       setError(
         collectionCreated
           ? t('Collection link could not be updated.')
-          : t('Collection could not be created.')
+          : error instanceof Error && error.message.includes(LITERATURE_COLLECTION_NAME_CONFLICT)
+            ? t('A collection with this name already exists at this level. Choose another name.')
+            : t('Collection could not be created.')
       )
       return false
     } finally {
@@ -2700,6 +2729,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         kind: 'merge-items',
         survivorId: survivor.id,
         duplicateIds: duplicates.map((item) => item.id),
+        expectedItems: selectedItems.map(({ id, metadataRevision, updatedAt }) => ({
+          id,
+          metadataRevision,
+          updatedAt
+        })),
         expectedMetadataRevision: survivor.metadataRevision,
         item: merged
       })
@@ -2708,8 +2742,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       setDuplicatesRevision((value) => value + 1)
       clearSelection()
       await Promise.all([loadEntries(true), loadCollections(), loadProjectCounts()])
-    } catch {
-      setMergeError(t('Literature could not be merged.'))
+    } catch (error) {
+      setMergeError(
+        error instanceof Error && error.message.includes('changed after review')
+          ? t(
+              'References changed after review. Reopen the merge dialog to compare the latest metadata.'
+            )
+          : t('Literature could not be merged.')
+      )
     } finally {
       setIsBatching(false)
     }
@@ -3215,11 +3255,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         : t('Search and organize the references you use across projects.')}
               </p>
             </div>
-            <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto">
+            <div className="flex w-full min-w-0 shrink-0 flex-wrap items-center gap-2 sm:w-auto">
               {showLiteratureReviewAction && reviewProjectId ? (
                 <Button
                   type="button"
-                  className="literature-review-cta h-9 shrink-0 px-1.5 pr-3 shadow-card hover:bg-primary/90 active:translate-y-px active:shadow-none dark:shadow-none [@media(pointer:coarse)]:h-11"
+                  className="literature-review-cta h-8 shrink-0 px-1.5 pr-3 shadow-card hover:bg-primary/90 active:translate-y-px active:shadow-none dark:shadow-none [@media(pointer:coarse)]:h-11"
                   data-attention={shouldCueLiteratureReview ? 'true' : undefined}
                   onClick={() =>
                     startLiteratureReviewConversation(
@@ -3307,329 +3347,340 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             </div>
           </div>
 
-          {section !== 'inbox' ? (
-            <div data-slot="literature-action-rail" className="mt-4 h-12">
-              <LiteratureSelectionBoundary store={selectionStore}>
-                {(selection) => {
-                  const hasSelection =
-                    selection.allMatchingSelected || selection.selectedIds.size > 0
-                  const selectedItemCount = selection.allMatchingSelected
-                    ? Math.max(0, entriesTotalCount - selection.excludedMatchingIds.size)
-                    : selection.selectedIds.size
-                  const allLoadedItemsSelected =
-                    items.length > 0 &&
-                    items.every((item) => isLiteratureItemSelected(selection, item.id))
-                  return !hasSelection ? (
-                    <div className="flex h-full flex-nowrap items-center justify-end gap-2 overflow-x-auto">
-                      <Select
-                        value={sortBy}
-                        onValueChange={(value) => {
-                          setSortBy(value as typeof sortBy)
-                          clearSelection()
-                        }}
-                      >
-                        <SelectTrigger aria-label={t('Sort references')} className="w-52">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="updated">{t('Recently updated')}</SelectItem>
-                          <SelectItem value="created">{t('Recently added')}</SelectItem>
-                          <SelectItem value="created-asc">{t('First added')}</SelectItem>
-                          <SelectItem value="title">{t('Title: A–Z')}</SelectItem>
-                          <SelectItem value="title-desc">{t('Title: Z–A')}</SelectItem>
-                          <SelectItem value="year">{t('Year: newest first')}</SelectItem>
-                          <SelectItem value="year-asc">{t('Year: oldest first')}</SelectItem>
-                          <SelectItem value="rating">{t('Highest rated')}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button type="button" variant="outline" className="relative">
-                            <SlidersHorizontal className="size-4" aria-hidden="true" />
-                            {t('Filters')}
-                            {activeFilterCount > 0 ? (
-                              <span className="rounded-full bg-primary/10 px-1.5 text-[11px] font-medium tabular-nums text-primary">
-                                {activeFilterCount}
-                              </span>
-                            ) : null}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent
-                          align="end"
-                          className="w-72 space-y-4 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-menu"
-                        >
-                          <p className="text-sm font-medium">{t('Filters')}</p>
-                          <div className="space-y-1.5">
-                            <span className="text-xs font-medium text-muted-foreground">
-                              {t('Tags')}
-                            </span>
-                            <TagFilter
-                              resourceType="literature.item"
-                              value={tagId}
-                              onChange={(value) => {
-                                setTagId(value)
-                                clearSelection()
-                              }}
-                              className="w-full"
-                            />
-                          </div>
-                          <>
-                            <div className="space-y-1.5">
-                              <span className="text-xs font-medium text-muted-foreground">
-                                {t('Reference type')}
-                              </span>
-                              <Select
-                                value={filterItemType}
-                                onValueChange={(value) => {
-                                  setFilterItemType(value as LiteratureItemType | 'all')
-                                  clearSelection()
-                                }}
-                              >
-                                <SelectTrigger aria-label={t('Reference type')}>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="all">{t('All')}</SelectItem>
-                                  {Object.entries(itemTypeLabels).map(([value, label]) => (
-                                    <SelectItem key={value} value={value}>
-                                      {label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <LiteratureYearFilter {...yearFilter} />
-                            <div className="space-y-1.5">
-                              <span className="text-xs font-medium text-muted-foreground">
-                                {t('PDF')}
-                              </span>
-                              <Select
-                                value={filterHasPdf}
-                                onValueChange={(value) => {
-                                  setFilterHasPdf(value as typeof filterHasPdf)
-                                  clearSelection()
-                                }}
-                              >
-                                <SelectTrigger aria-label={t('PDF')}>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="all">{t('All')}</SelectItem>
-                                  <SelectItem value="with">{t('With PDF')}</SelectItem>
-                                  <SelectItem value="without">{t('Without PDF')}</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </>
-                          <div className="border-t border-border pt-3">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="w-full"
-                              disabled={activeFilterCount === 0}
-                              onClick={clearFilters}
+          <div
+            data-slot="literature-action-rail"
+            className={section === 'inbox' ? 'hidden' : 'mt-4 min-h-12 shrink-0'}
+          >
+            <LiteratureSelectionBoundary store={selectionStore}>
+              {(selection) => {
+                const hasSelection = selection.allMatchingSelected || selection.selectedIds.size > 0
+                const selectedItemCount = selection.allMatchingSelected
+                  ? Math.max(0, entriesTotalCount - selection.excludedMatchingIds.size)
+                  : selection.selectedIds.size
+                const allLoadedItemsSelected =
+                  items.length > 0 &&
+                  items.every((item) => isLiteratureItemSelected(selection, item.id))
+                return (
+                  <div className="flex min-h-12 flex-wrap items-center justify-end gap-2">
+                    <LiteratureBackgroundTasks
+                      hidden={hasSelection || section === 'inbox'}
+                      onOpen={(job) =>
+                        setBatchLookup({ mode: job.mode, jobId: job.id, itemIds: [] })
+                      }
+                      onChanged={receiveBackgroundItems}
+                    />
+                    {section !== 'inbox' &&
+                      (!hasSelection ? (
+                        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+                          <Select
+                            value={sortBy}
+                            onValueChange={(value) => {
+                              setSortBy(value as typeof sortBy)
+                              clearSelection()
+                            }}
+                          >
+                            <SelectTrigger aria-label={t('Sort references')} className="w-52">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="updated">{t('Recently updated')}</SelectItem>
+                              <SelectItem value="created">{t('Recently added')}</SelectItem>
+                              <SelectItem value="created-asc">{t('First added')}</SelectItem>
+                              <SelectItem value="title">{t('Title: A–Z')}</SelectItem>
+                              <SelectItem value="title-desc">{t('Title: Z–A')}</SelectItem>
+                              <SelectItem value="year">{t('Year: newest first')}</SelectItem>
+                              <SelectItem value="year-asc">{t('Year: oldest first')}</SelectItem>
+                              <SelectItem value="rating">{t('Highest rated')}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button type="button" variant="outline" className="relative">
+                                <SlidersHorizontal className="size-4" aria-hidden="true" />
+                                {t('Filters')}
+                                {activeFilterCount > 0 ? (
+                                  <span className="rounded-full bg-primary/10 px-1.5 text-[11px] font-medium tabular-nums text-primary">
+                                    {activeFilterCount}
+                                  </span>
+                                ) : null}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              align="end"
+                              className="w-72 space-y-4 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-menu"
                             >
-                              {t('Clear filters')}
-                            </Button>
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-                      <LiteratureColumnCustomizer
-                        columns={tableColumnOrder}
-                        labels={tableColumnLabels}
-                        visible={visibleTableColumns}
-                        onMove={moveTableColumn}
-                        onMoveBy={moveTableColumnBy}
-                        onVisibilityChange={(column, nextVisible) =>
-                          setVisibleTableColumns((current) => {
-                            const next = new Set(current)
-                            if (nextVisible) next.add(column)
-                            else next.delete(column)
-                            return next
-                          })
-                        }
-                      />
-                    </div>
-                  ) : (
-                    <div
-                      data-slot="literature-selection-toolbar"
-                      className="flex h-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto rounded-lg border border-primary/20 bg-primary/5 px-2 py-1.5"
-                    >
-                      <span className="shrink-0 whitespace-nowrap px-1 text-sm font-medium tabular-nums">
-                        {t('{{count}} selected', { count: selectedItemCount })}
-                      </span>
-                      {!selection.allMatchingSelected &&
-                      allLoadedItemsSelected &&
-                      (entriesOffset > 0 || nextEntriesOffset !== undefined) ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          aria-label={`${t('Select all matching references')} ${formattedMatchingCount}`}
-                          disabled={isBatching}
-                          onClick={selectionStore.selectAllMatching}
-                          className="shrink-0 whitespace-nowrap"
-                        >
-                          <span>{t('Select all')}</span>
-                          <span className="text-muted-foreground tabular-nums">
-                            {formattedMatchingCount}
-                          </span>
-                        </Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={t('Clear selection')}
-                        title={t('Clear selection')}
-                        disabled={isBatching}
-                        onClick={clearSelection}
-                      >
-                        <X className="size-3.5" aria-hidden="true" />
-                      </Button>
-                      <span
-                        className="ml-auto hidden h-5 w-px shrink-0 bg-border sm:block"
-                        aria-hidden="true"
-                      />
-                      {section === 'library' ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="shrink-0 whitespace-nowrap"
-                          disabled={isBatching || Boolean(startingReadingProjectId)}
-                          onClick={() => void requestReadSelection()}
-                        >
-                          <BookOpenText className="size-3.5" aria-hidden="true" />
-                          {t('Read with agent')}
-                        </Button>
-                      ) : null}
-                      {section === 'library' ? (
-                        <LiteratureBatchDestinationMenus
-                          collections={batchCollections}
-                          disabled={isBatching}
-                          moveBetweenCollections={Boolean(collectionId)}
-                          projects={activeProjects}
-                          projectsLoaded={projectsLoaded}
-                          onCreateCollection={createCollectionForSelection}
-                          onCreateProject={batchProjectFormDialog.openCreateDialog}
-                          onSelectCollection={(id) => void moveSelectedItems(id)}
-                          onSelectProject={(id) => void addSelectedItemsToProject(id)}
-                        />
+                              <p className="text-sm font-medium">{t('Filters')}</p>
+                              <div className="space-y-1.5">
+                                <span className="text-xs font-medium text-muted-foreground">
+                                  {t('Tags')}
+                                </span>
+                                <TagFilter
+                                  resourceType="literature.item"
+                                  value={tagId}
+                                  onChange={(value) => {
+                                    setTagId(value)
+                                    clearSelection()
+                                  }}
+                                  className="w-full"
+                                />
+                              </div>
+                              <>
+                                <div className="space-y-1.5">
+                                  <span className="text-xs font-medium text-muted-foreground">
+                                    {t('Reference type')}
+                                  </span>
+                                  <Select
+                                    value={filterItemType}
+                                    onValueChange={(value) => {
+                                      setFilterItemType(value as LiteratureItemType | 'all')
+                                      clearSelection()
+                                    }}
+                                  >
+                                    <SelectTrigger aria-label={t('Reference type')}>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="all">{t('All')}</SelectItem>
+                                      {Object.entries(itemTypeLabels).map(([value, label]) => (
+                                        <SelectItem key={value} value={value}>
+                                          {label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <LiteratureYearFilter {...yearFilter} />
+                                <div className="space-y-1.5">
+                                  <span className="text-xs font-medium text-muted-foreground">
+                                    {t('PDF')}
+                                  </span>
+                                  <Select
+                                    value={filterHasPdf}
+                                    onValueChange={(value) => {
+                                      setFilterHasPdf(value as typeof filterHasPdf)
+                                      clearSelection()
+                                    }}
+                                  >
+                                    <SelectTrigger aria-label={t('PDF')}>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="all">{t('All')}</SelectItem>
+                                      <SelectItem value="with">{t('With PDF')}</SelectItem>
+                                      <SelectItem value="without">{t('Without PDF')}</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </>
+                              <div className="border-t border-border pt-3">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="w-full"
+                                  disabled={activeFilterCount === 0}
+                                  onClick={clearFilters}
+                                >
+                                  {t('Clear filters')}
+                                </Button>
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                          <LiteratureColumnCustomizer
+                            columns={tableColumnOrder}
+                            labels={tableColumnLabels}
+                            visible={visibleTableColumns}
+                            onMove={moveTableColumn}
+                            onMoveBy={moveTableColumnBy}
+                            onVisibilityChange={(column, nextVisible) =>
+                              setVisibleTableColumns((current) => {
+                                const next = new Set(current)
+                                if (nextVisible) next.add(column)
+                                else next.delete(column)
+                                return next
+                              })
+                            }
+                          />
+                        </div>
                       ) : (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={isBatching}
-                          onClick={() => void runLifecycleAction('active')}
+                        <div
+                          data-slot="literature-selection-toolbar"
+                          className="flex min-h-12 w-full min-w-0 flex-wrap items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-2 py-1.5"
                         >
-                          <RotateCcw className="size-3.5" aria-hidden="true" />
-                          {t('Restore')}
-                        </Button>
-                      )}
-                      <LiteratureExportMenu disabled={isBatching} onExport={exportSelectedItems} />
-                      {section === 'library' ||
-                      (section === 'trash' &&
-                        !selection.allMatchingSelected &&
-                        selection.selectedIds.size <= LITERATURE_BATCH_COMMAND_SIZE) ? (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
+                          <span className="shrink-0 whitespace-nowrap px-1 text-sm font-medium tabular-nums">
+                            {t('{{count}} selected', { count: selectedItemCount })}
+                          </span>
+                          {!selection.allMatchingSelected &&
+                          allLoadedItemsSelected &&
+                          (entriesOffset > 0 || nextEntriesOffset !== undefined) ? (
                             <Button
                               type="button"
                               variant="ghost"
-                              size="icon-sm"
-                              className="shrink-0"
-                              aria-label={t('More actions')}
-                              title={t('More actions')}
+                              size="sm"
+                              aria-label={`${t('Select all matching references')} ${formattedMatchingCount}`}
                               disabled={isBatching}
+                              onClick={selectionStore.selectAllMatching}
+                              className="shrink-0 whitespace-nowrap"
                             >
-                              <MoreHorizontal className="size-3.5" aria-hidden="true" />
+                              <span>{t('Select all')}</span>
+                              <span className="text-muted-foreground tabular-nums">
+                                {formattedMatchingCount}
+                              </span>
                             </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {section === 'library' ? (
-                              <>
-                                <DropdownMenuItem
-                                  onSelect={() => void requestBatchLookup('metadata')}
+                          ) : null}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={t('Clear selection')}
+                            title={t('Clear selection')}
+                            disabled={isBatching}
+                            onClick={clearSelection}
+                          >
+                            <X className="size-3.5" aria-hidden="true" />
+                          </Button>
+                          <span
+                            className="ml-auto hidden h-5 w-px shrink-0 bg-border sm:block"
+                            aria-hidden="true"
+                          />
+                          {section === 'library' ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="shrink-0 whitespace-nowrap"
+                              disabled={isBatching || Boolean(startingReadingProjectId)}
+                              onClick={() => void requestReadSelection()}
+                            >
+                              <BookOpenText className="size-3.5" aria-hidden="true" />
+                              {t('Read with agent')}
+                            </Button>
+                          ) : null}
+                          {section === 'library' ? (
+                            <LiteratureBatchDestinationMenus
+                              collections={batchCollections}
+                              disabled={isBatching}
+                              moveBetweenCollections={Boolean(collectionId)}
+                              projects={activeProjects}
+                              projectsLoaded={projectsLoaded}
+                              onCreateCollection={createCollectionForSelection}
+                              onCreateProject={batchProjectFormDialog.openCreateDialog}
+                              onSelectCollection={(id) => void moveSelectedItems(id)}
+                              onSelectProject={(id) => void addSelectedItemsToProject(id)}
+                            />
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={isBatching}
+                              onClick={() => void runLifecycleAction('active')}
+                            >
+                              <RotateCcw className="size-3.5" aria-hidden="true" />
+                              {t('Restore')}
+                            </Button>
+                          )}
+                          <LiteratureExportMenu
+                            disabled={isBatching}
+                            onExport={exportSelectedItems}
+                          />
+                          {section === 'library' ||
+                          (section === 'trash' &&
+                            !selection.allMatchingSelected &&
+                            selection.selectedIds.size <= LITERATURE_BATCH_COMMAND_SIZE) ? (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  className="shrink-0"
+                                  aria-label={t('More actions')}
+                                  title={t('More actions')}
+                                  disabled={isBatching}
                                 >
-                                  <Sparkles className="mr-2 size-4" aria-hidden="true" />
-                                  {t('Complete metadata')}
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onSelect={() => void requestBatchLookup('full-text')}
-                                >
-                                  <Search className="mr-2 size-4" aria-hidden="true" />
-                                  {t('Find full-text PDF')}
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                {!selection.allMatchingSelected &&
-                                selection.selectedIds.size > 1 &&
-                                selection.selectedIds.size <= 20 ? (
+                                  <MoreHorizontal className="size-3.5" aria-hidden="true" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {section === 'library' ? (
                                   <>
                                     <DropdownMenuItem
-                                      onSelect={() => {
-                                        const firstSelected = items.find((item) =>
-                                          selection.selectedIds.has(item.id)
-                                        )
-                                        setMergeSurvivorId(firstSelected?.id ?? '')
-                                        setMergeFieldSources({})
-                                        setMergeError(undefined)
-                                        setMergeOpen(true)
-                                      }}
+                                      onSelect={() => void requestBatchLookup('metadata')}
                                     >
-                                      <Merge className="mr-2 size-4" aria-hidden="true" />
-                                      {t('Merge')}
+                                      <Search className="mr-2 size-4" aria-hidden="true" />
+                                      {t('Complete metadata')}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onSelect={() => void requestBatchLookup('full-text')}
+                                    >
+                                      <Download className="mr-2 size-4" aria-hidden="true" />
+                                      {t('Find full-text PDF')}
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
+                                    {!selection.allMatchingSelected &&
+                                    selection.selectedIds.size > 1 &&
+                                    selection.selectedIds.size <= 20 ? (
+                                      <>
+                                        <DropdownMenuItem
+                                          onSelect={() => {
+                                            const firstSelected = items.find((item) =>
+                                              selection.selectedIds.has(item.id)
+                                            )
+                                            setMergeSurvivorId(firstSelected?.id ?? '')
+                                            setMergeFieldSources({})
+                                            setMergeError(undefined)
+                                            setMergeOpen(true)
+                                          }}
+                                        >
+                                          <Merge className="mr-2 size-4" aria-hidden="true" />
+                                          {t('Merge')}
+                                        </DropdownMenuItem>
+                                        <DropdownMenuSeparator />
+                                      </>
+                                    ) : null}
+                                    <DropdownMenuItem
+                                      onSelect={() => void runLifecycleAction('deleted')}
+                                    >
+                                      <Trash2 className="mr-2 size-4" aria-hidden="true" />
+                                      {t('Move to Trash')}
+                                    </DropdownMenuItem>
                                   </>
-                                ) : null}
-                                <DropdownMenuItem
-                                  onSelect={() => void runLifecycleAction('deleted')}
-                                >
-                                  <Trash2 className="mr-2 size-4" aria-hidden="true" />
-                                  {t('Move to Trash')}
-                                </DropdownMenuItem>
-                              </>
-                            ) : (
-                              <>
-                                <DropdownMenuItem
-                                  className="text-danger-000 focus:text-danger-000"
-                                  onSelect={() => setPermanentDeleteIds([...selection.selectedIds])}
-                                >
-                                  <Trash2 className="mr-2 size-4" aria-hidden="true" />
-                                  {t('Delete permanently')}
-                                </DropdownMenuItem>
-                              </>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      ) : null}
-                    </div>
-                  )
-                }}
-              </LiteratureSelectionBoundary>
-            </div>
-          ) : null}
-
+                                ) : (
+                                  <>
+                                    <DropdownMenuItem
+                                      className="text-danger-000 focus:text-danger-000"
+                                      onSelect={() =>
+                                        setPermanentDeleteIds([...selection.selectedIds])
+                                      }
+                                    >
+                                      <Trash2 className="mr-2 size-4" aria-hidden="true" />
+                                      {t('Delete permanently')}
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          ) : null}
+                        </div>
+                      ))}
+                  </div>
+                )
+              }}
+            </LiteratureSelectionBoundary>
+          </div>
           {batchLookup ? (
             <LiteratureBatchLookupDialog
+              key={batchLookup.jobId ?? `${batchLookup.mode}:${batchLookup.itemIds.join(',')}`}
               {...batchLookup}
               initialItems={items}
               fieldLabel={metadataFieldLabel}
               onClose={() => setBatchLookup(undefined)}
-              onChanged={() => {
-                setDuplicatesRevision((value) => value + 1)
-                void loadEntries(true)
-              }}
+              onChanged={receiveBackgroundItems}
             />
           ) : null}
           {(linkedItemError || error) && !entriesLoading ? (
-            <div
-              role="alert"
-              className="mt-5 rounded-xl bg-danger-900 px-4 py-3 text-sm text-danger-000"
-            >
-              {linkedItemError || error}
+            <div className="mt-5">
+              <LiteratureErrorNotice title={linkedItemError || error || undefined} />
             </div>
           ) : null}
 
@@ -3639,7 +3690,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 role="status"
                 className="flex min-h-0 flex-1 justify-center py-20 text-muted-foreground"
               >
-                <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
+                <LoaderCircle
+                  className="size-5 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
                 <span className="sr-only">{t('Loading…')}</span>
               </div>
             ) : section === 'inbox' ? (
@@ -3740,6 +3794,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               {authors || itemTypeLabels[item.itemType]}
                             </p>
                             <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs leading-5 text-muted-foreground">
+                              {candidate.pdfs?.length ? (
+                                <span>
+                                  {t('PDF')} · {candidate.pdfs.length}
+                                </span>
+                              ) : null}
                               {publication ? <span>{publication}</span> : null}
                               <span className="whitespace-nowrap">
                                 {t('Found via {{provider}}', {
@@ -4149,7 +4208,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       role="status"
                       className="pointer-events-none absolute inset-x-0 top-10 bottom-0 z-30 flex items-center justify-center bg-bg-000/80 text-muted-foreground backdrop-blur-[1px]"
                     >
-                      <LoaderCircle className="size-5 animate-spin" aria-hidden="true" />
+                      <LoaderCircle
+                        className="size-5 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
                       <span className="sr-only">{t('Loading…')}</span>
                     </div>
                   ) : null}
@@ -4196,7 +4258,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               </Dialog.Close>
             </div>
             <div className="max-h-[60vh] space-y-5 overflow-y-auto p-5">
-              {mergeError ? <ErrorNotice tone="amber" title={mergeError} /> : null}
+              {mergeError ? <LiteratureErrorNotice tone="amber" title={mergeError} /> : null}
               <LiteratureMergeReview
                 entries={selectedItems}
                 survivorId={mergeSurvivorId}
@@ -4290,7 +4352,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 role="status"
               >
                 <span className="inline-flex items-center gap-2">
-                  <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                  <LoaderCircle
+                    className="size-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
                   {t('Reading…')}
                 </span>
               </div>
@@ -4361,6 +4426,24 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                     <p className="mt-2 whitespace-pre-wrap leading-6 text-muted-foreground">
                       {selectedCandidate.candidate.item.abstract}
                     </p>
+                  </section>
+                ) : null}
+                {selectedCandidate.pdfs?.length ? (
+                  <section className="py-4">
+                    <h3 className="font-medium">{t('Attachments')}</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('PDFs will be attached when you accept this reference.')}
+                    </p>
+                    <ul className="mt-2 space-y-2">
+                      {selectedCandidate.pdfs.map((pdf) => (
+                        <li key={pdf.id} className="text-xs">
+                          <p className="break-words">{pdf.filename}</p>
+                          <ExternalTextLink href={pdf.sourceUrl} className="text-xs">
+                            {t('Open source')}
+                          </ExternalTextLink>
+                        </li>
+                      ))}
+                    </ul>
                   </section>
                 ) : null}
                 <section className="py-4">
@@ -4809,7 +4892,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 >
                                   {metadata.completing ? (
                                     <LoaderCircle
-                                      className="size-3.5 animate-spin"
+                                      className="size-3.5 animate-spin motion-reduce:animate-none"
                                       aria-hidden="true"
                                     />
                                   ) : (
@@ -4960,7 +5043,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             className="ml-auto"
                             onClick={() => changeDetailMode('full-text')}
                           >
-                            <Search className="size-3.5" aria-hidden="true" />
+                            <Download className="size-3.5" aria-hidden="true" />
                             {t('Find full-text PDF')}
                           </Button>
                           {selectedItem.attachments.length > 0 ? (
@@ -4973,7 +5056,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             >
                               {isAddingPdf ? (
                                 <LoaderCircle
-                                  className="size-3.5 animate-spin"
+                                  className="size-3.5 animate-spin motion-reduce:animate-none"
                                   aria-hidden="true"
                                 />
                               ) : (
@@ -5054,7 +5137,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             ) : null}
                             <span className="inline-flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
                               {isAddingPdf ? (
-                                <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                                <LoaderCircle
+                                  className="size-4 animate-spin motion-reduce:animate-none"
+                                  aria-hidden="true"
+                                />
                               ) : (
                                 <Upload className="size-4" aria-hidden="true" />
                               )}
@@ -5130,7 +5216,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </p>
               ) : null}
             </div>
-            <div className={dialogFooterClassName}>
+            <div
+              className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+            >
               <AlertDialog.Cancel asChild>
                 <Button
                   type="button"
@@ -5148,7 +5236,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 onClick={() => void deleteCollection()}
               >
                 {isDeletingCollection ? (
-                  <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                  <LoaderCircle
+                    className="size-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
                 ) : null}
                 {t('Delete collection')}
               </Button>
@@ -5190,7 +5281,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 )}
               </AlertDialog.Description>
             </div>
-            <div className={dialogFooterClassName}>
+            <div
+              className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+            >
               <AlertDialog.Cancel asChild>
                 <Button
                   type="button"
@@ -5279,7 +5372,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         onClick={() => void startReadingInProject(project.id)}
                       >
                         {startingReadingProjectId === project.id ? (
-                          <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                          <LoaderCircle
+                            className="size-4 animate-spin motion-reduce:animate-none"
+                            aria-hidden="true"
+                          />
                         ) : (
                           <FolderOpen className="size-4" aria-hidden="true" />
                         )}
@@ -5319,7 +5415,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               )}
             </div>
             {projectsLoaded && activeProjects.length > 0 ? (
-              <div className={dialogFooterClassName}>
+              <div
+                className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+              >
                 <Button
                   type="button"
                   variant="outline"

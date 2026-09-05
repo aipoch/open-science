@@ -1,5 +1,7 @@
 import { lookup } from 'node:dns/promises'
-import { get } from 'node:https'
+import { Agent, get } from 'node:https'
+import { connect as connectTls } from 'node:tls'
+import { tunnelThroughProxy } from '@aipoch/notebook-network-sandbox'
 import { BlockList, isIP } from 'node:net'
 import type { LiteratureFullTextProgress } from '../../shared/literature'
 
@@ -51,12 +53,11 @@ export const fullTextUrl = (value: string): URL => {
 
 // Resolve and pin a public address for every connection, including redirects. Never send
 // application cookies or provider credentials to a PDF host.
-// ponytail: downloads use direct HTTPS; proxy-only networks need a proxy transport that
-// preserves destination validation before this can honor the application's proxy settings.
 export const downloadFullText = async (
   rawUrl: string,
   maxBytes: number,
-  onProgress?: (progress: LiteratureFullTextProgress) => void
+  onProgress?: (progress: LiteratureFullTextProgress) => void,
+  resolveProxy?: (url: string) => Promise<string | undefined>
 ): Promise<Buffer> => {
   const signal = AbortSignal.timeout(60_000)
   let url = fullTextUrl(rawUrl)
@@ -66,11 +67,43 @@ export const downloadFullText = async (
   for (let redirects = 0; redirects <= 5; redirects += 1) {
     const retryAt = retryAfterByOrigin.get(url.origin) ?? retryAfterByOrigin.get(origin)
     if (retryAt && retryAt > Date.now()) throw new FullTextRateLimitError(retryAt)
+    const proxy = await resolveProxy?.(url.href)
+    const agent = proxy ? new Agent({ keepAlive: false }) : undefined
+    if (agent && proxy) {
+      const target = url
+      agent.createConnection = (_options, callback) => {
+        void lookup(target.hostname, { all: true })
+          .then(async (addresses) => {
+            signal.throwIfAborted()
+            if (
+              !addresses.length ||
+              addresses.some(({ address }) => !isPublicFullTextAddress(address))
+            ) {
+              throw new Error('Full-text host did not resolve to a public address.')
+            }
+            const socket = await tunnelThroughProxy(
+              new URL(proxy),
+              addresses[0]!.address,
+              443,
+              undefined,
+              signal
+            )
+            // CONNECT uses the pinned IP. TLS still authenticates the original publisher hostname.
+            return connectTls({ socket, servername: target.hostname })
+          })
+          .then(
+            (socket) => callback?.(null, socket),
+            (error: Error) => callback?.(error, undefined!)
+          )
+        return undefined
+      }
+    }
     const response = await new Promise<import('node:http').IncomingMessage>((resolve, reject) => {
       const request = get(
         url,
         {
           signal,
+          ...(agent ? { agent } : {}),
           headers: { Accept: 'application/pdf', 'User-Agent': 'OpenScience/1.0' },
           lookup: (hostname, options, callback) => {
             void lookup(hostname, { all: true }).then(

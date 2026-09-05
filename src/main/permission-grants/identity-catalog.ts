@@ -44,6 +44,7 @@ const PRE_REGISTERED_PERMISSION_IDENTITIES: Readonly<
     'mcp:open-science-library/format_citation_document',
     'mcp:open-science-library/prepare_latex_bundle',
     'mcp:open-science-library/save_to_inbox',
+    'mcp:open-science-library/acquire_pdf',
     'mcp:open-science-literature/read_document'
   ],
   execution: ['exec:local/python', 'exec:local/bash'],

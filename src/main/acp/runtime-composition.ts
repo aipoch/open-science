@@ -57,6 +57,7 @@ import type { LiteratureDocumentReader } from '../literature/document-reader'
 import type { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
 import type { LiteratureCatalog } from '../literature/catalog'
 import { LiteratureReferenceResolver } from '../literature/reference-resolver'
+import { netFetchStandard } from '../skills/net-fetch'
 import { LiteratureCitationDocument } from '../literature/citation-document'
 import { LiteratureCitationFormatter } from '../literature/citation-formatter'
 import { LiteratureLatexBundle } from '../literature/latex-bundle'
@@ -171,6 +172,10 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent' | 'searchAttachment'>
   literatureAttachments?: Pick<LiteratureAttachmentAuthority, 'resolveVersion'>
   literatureCatalog?: Pick<LiteratureCatalog, 'getMany' | 'search' | 'transact'>
+  literaturePdfAcquisition?: Pick<
+    import('../literature/agent-pdf-acquisition').AgentPdfAcquisition,
+    'acquire'
+  >
   delegatedWork?: RootDelegatedWorkControl
   fixedBackend?: ResolvedAgentBackend
   runtimeCallbacks?: AcpRuntimeCallbacks
@@ -197,7 +202,10 @@ const isLiteratureItemInScope = (
   if (scope === 'collection') {
     return Boolean(request.collectionId && item.collectionIds.includes(request.collectionId))
   }
-  return true
+  // Library scopes are per-call query filters, not grants derived from a previous search.
+  // For `items`, the read's explicit itemId is the selection; no search-selection token exists.
+  // The separate Reading document tool enforces its Session PDF context in readCurrent.
+  return scope === 'library' || scope === 'items'
 }
 
 const isPdfAttachmentVersion = (version: { filename: string; contentType: string }): boolean =>
@@ -238,6 +246,7 @@ const createAcpRuntime = ({
   literatureReader,
   literatureAttachments,
   literatureCatalog,
+  literaturePdfAcquisition,
   delegatedWork,
   fixedBackend,
   runtimeCallbacks,
@@ -250,7 +259,7 @@ const createAcpRuntime = ({
   memory,
   auxiliaryUsage
 }: AcpRuntimeCompositionOptions): AcpRuntimeCoordinator => {
-  const literatureReferenceResolver = new LiteratureReferenceResolver()
+  const literatureReferenceResolver = new LiteratureReferenceResolver(netFetchStandard)
   const literatureCitationDocument = literatureCatalog
     ? new LiteratureCitationDocument(literatureCatalog)
     : undefined
@@ -395,6 +404,20 @@ const createAcpRuntime = ({
         ...(literatureCatalog
           ? {
               literatureLibrary: {
+                ...(literaturePdfAcquisition
+                  ? {
+                      acquirePdf: async (request) =>
+                        literaturePdfAcquisition.acquire({
+                          candidate: request.candidate,
+                          pdfUrl: request.pdfUrl,
+                          origin: {
+                            kind: 'agent',
+                            projectId: request.projectId,
+                            sessionId: request.sessionId
+                          }
+                        })
+                    }
+                  : {}),
                 resolveSaveReferences: (references) =>
                   literatureReferenceResolver.resolve(references),
                 readCandidateFile: async ({ projectId, sessionId, workspaceCwd, filename }) => {

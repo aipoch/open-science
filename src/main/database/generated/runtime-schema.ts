@@ -439,6 +439,19 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "LiteratureInboxCandidate_shape_check" CHECK (length(trim("dedupeKey")) > 0 AND length(trim("itemType")) > 0 AND length(trim("title")) > 0 AND length(trim("metadataChecksum")) > 0 AND length(trim("origin")) > 0 AND ("issuedYear" IS NULL OR "issuedYear" BETWEEN 0 AND 9999) AND json_valid("candidateJson") AND json_type("candidateJson") = 'object'),
     CONSTRAINT "LiteratureInboxCandidate_lifecycle_check" CHECK (("state" = 'pending' AND "acceptedItemId" IS NULL AND "settledAt" IS NULL) OR ("state" = 'accepted' AND "acceptedItemId" IS NOT NULL AND "settledAt" IS NOT NULL) OR ("state" = 'dismissed' AND "acceptedItemId" IS NULL AND "settledAt" IS NOT NULL))
 );`,
+  `CREATE TABLE IF NOT EXISTS "LiteratureInboxPdf" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "candidateId" TEXT NOT NULL,
+    "contentBlobId" TEXT NOT NULL,
+    "filename" TEXT NOT NULL,
+    "sizeBytes" BIGINT NOT NULL,
+    "checksum" TEXT NOT NULL,
+    "pageCount" INTEGER NOT NULL,
+    "sourceUrl" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "LiteratureInboxPdf_candidateId_fkey" FOREIGN KEY ("candidateId") REFERENCES "LiteratureInboxCandidate" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "LiteratureInboxPdf_contentBlobId_fkey" FOREIGN KEY ("contentBlobId") REFERENCES "ContentBlob" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);`,
   `CREATE TABLE IF NOT EXISTS "LiteratureSourceRecord" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "itemId" TEXT,
@@ -981,6 +994,8 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "LiteratureInboxCandidate_state_createdAt_idx" ON "LiteratureInboxCandidate"("state", "createdAt");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureInboxCandidate_sourceProjectId_sourceSessionId_idx" ON "LiteratureInboxCandidate"("sourceProjectId", "sourceSessionId");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureInboxCandidate_acceptedItemId_idx" ON "LiteratureInboxCandidate"("acceptedItemId");`,
+  `CREATE INDEX IF NOT EXISTS "LiteratureInboxPdf_contentBlobId_idx" ON "LiteratureInboxPdf"("contentBlobId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureInboxPdf_candidateId_checksum_key" ON "LiteratureInboxPdf"("candidateId", "checksum");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureSourceRecord_itemId_provider_idx" ON "LiteratureSourceRecord"("itemId", "provider");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureSourceRecord_inboxCandidateId_provider_idx" ON "LiteratureSourceRecord"("inboxCandidateId", "provider");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureSourceRecord_provider_externalId_key" ON "LiteratureSourceRecord"("provider", "externalId");`,
@@ -1044,7 +1059,8 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "MemoryEntry_categoryId_updatedAt_idx" ON "MemoryEntry"("categoryId", "updatedAt");`,
   `CREATE INDEX IF NOT EXISTS "MemoryEntry_projectId_updatedAt_idx" ON "MemoryEntry"("projectId", "updatedAt");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_projectId_contentKey_key" ON "MemoryEntry"("projectId", "contentKey");`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_global_contentKey_key" ON "MemoryEntry"("contentKey") WHERE "projectId" IS NULL`
+  `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_global_contentKey_key" ON "MemoryEntry"("contentKey") WHERE "projectId" IS NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCollection_root_nameKey_key" ON "LiteratureCollection"("nameKey") WHERE "parentId" IS NULL`
 ] as const
 
 const RUNTIME_SCHEMA_TARGET_SQL = [
@@ -1084,6 +1100,7 @@ const RUNTIME_SCHEMA_TABLES = [
   'LiteratureItemCreator',
   'LiteratureIdentifier',
   'LiteratureInboxCandidate',
+  'LiteratureInboxPdf',
   'LiteratureSourceRecord',
   'LiteratureCollection',
   'LiteratureCollectionItem',

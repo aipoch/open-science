@@ -48,9 +48,9 @@ import { computeJobOperationMigration } from './migrations/0023-compute-job-oper
 import { computeJobFileEvidenceMigration } from './migrations/0024-compute-job-file-evidence'
 import {
   artifactLiteratureManifestReferenceRepairStatements,
+  literatureContentBlobBackfillStatements,
   literatureFoundationMigration
-} from './migrations/0029-literature-foundation'
-import { literatureExplicitDuplicatesMigration } from './migrations/0030-literature-explicit-duplicates'
+} from './migrations/0030-literature-foundation'
 import {
   managedFileVersionFoundationCurrentSchemaAdoptionStatements,
   managedFileVersionFoundationMigration
@@ -370,17 +370,17 @@ const NUMERIC_AND_NULL_CONSTRAINTS_CHECKSUM = checksumMigrationPayload(
   numericAndNullConstraintsMigration.verifiers,
   numericAndNullConstraintsMigration.operations
 )
+const COMPUTE_HOST_EXECUTION_MODE_CHECKSUM = checksumMigrationPayload(
+  computeHostExecutionModeMigration.id,
+  computeHostExecutionModeMigration.statements,
+  computeHostExecutionModeMigration.verifiers,
+  computeHostExecutionModeMigration.operations
+)
 const LITERATURE_FOUNDATION_CHECKSUM = checksumMigrationPayload(
   literatureFoundationMigration.id,
   literatureFoundationMigration.statements,
   literatureFoundationMigration.verifiers,
   literatureFoundationMigration.operations
-)
-const LITERATURE_EXPLICIT_DUPLICATES_CHECKSUM = checksumMigrationPayload(
-  literatureExplicitDuplicatesMigration.id,
-  literatureExplicitDuplicatesMigration.statements,
-  literatureExplicitDuplicatesMigration.verifiers,
-  literatureExplicitDuplicatesMigration.operations
 )
 const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
   computeJobSensitiveDataEncryptionMigration.id,
@@ -666,14 +666,14 @@ const MIGRATION_MANIFEST = [
     foreignKeysDuringApply: 'disabled'
   },
   {
-    ...literatureFoundationMigration,
-    checksum: LITERATURE_FOUNDATION_CHECKSUM,
+    ...computeHostExecutionModeMigration,
+    checksum: COMPUTE_HOST_EXECUTION_MODE_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   },
   {
-    ...literatureExplicitDuplicatesMigration,
-    checksum: LITERATURE_EXPLICIT_DUPLICATES_CHECKSUM,
+    ...literatureFoundationMigration,
+    checksum: LITERATURE_FOUNDATION_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -1084,19 +1084,7 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
     NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
   )
   await runMigrationVerifiers(client, computeJobFileEvidenceMigration.verifiers)
-  for (const verifier of literatureFoundationMigration.verifiers) {
-    await runMigrationVerifiers(client, [
-      verifier.kind === 'indexes-exist'
-        ? {
-            ...verifier,
-            indexes: verifier.indexes.filter(
-              ({ name }) => name !== 'LiteratureIdentifier_identity_key'
-            )
-          }
-        : verifier
-    ])
-  }
-  await runMigrationVerifiers(client, literatureExplicitDuplicatesMigration.verifiers)
+  await runMigrationVerifiers(client, literatureFoundationMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
@@ -1679,6 +1667,15 @@ const applyManifestMigration = async (
           await migrationSqlExecutor.execute(transaction, statement)
         }
       }
+      if (
+        contractAlreadySatisfied &&
+        migration.id === literatureFoundationMigration.id &&
+        migration.checksum === LITERATURE_FOUNDATION_CHECKSUM
+      ) {
+        for (const statement of literatureContentBlobBackfillStatements) {
+          await migrationSqlExecutor.execute(transaction, statement)
+        }
+      }
       if (!contractAlreadySatisfied) {
         if (canVerifyAsCurrentSchema && migration.id === projectPreviewStateOwnerFkMigration.id) {
           await migrationSqlExecutor.execute(
@@ -1960,8 +1957,7 @@ const migrateApplicationDatabaseWithManifest = async (
           : {}),
         ...(adoptsComputeJobFileEvidence
           ? { columns: { ComputeJob: ['producerRunId', 'fileEvidence'] } }
-          : {}),
-        ...(adoptsLiteratureFoundation ? { indexNames: ['LiteratureIdentifier_identity_key'] } : {})
+          : {})
       }
     )
     applied.push(baseline.id)

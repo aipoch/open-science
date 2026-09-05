@@ -147,7 +147,10 @@ const LiteratureBatchDestinationMenus = ({
                   aria-label={t('Create collection')}
                 >
                   {disabled ? (
-                    <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
                   ) : (
                     <Plus className="size-4" aria-hidden="true" />
                   )}

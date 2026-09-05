@@ -1,235 +1,261 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { StrictMode, useState } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import {
-  literatureItemInputSchema,
-  type LiteratureItemView,
-  type LiteratureMetadataCompletionResult
-} from '../../../../shared/literature'
+import { literatureItemInputSchema, type LiteratureItemView } from '../../../../shared/literature'
+import type { LiteratureJob, LiteratureJobRequest } from '../../../../shared/literature-jobs'
 import { LiteratureBatchLookupDialog } from './LiteratureBatchLookupDialog'
 
-const first: LiteratureItemView = {
+const item: LiteratureItemView = {
   id: 'first',
-  metadataRevision: 3,
+  metadataRevision: 1,
   createdAt: 1,
   updatedAt: 1,
   attachments: [],
-  collectionIds: [],
   projectIds: [],
-  item: literatureItemInputSchema.parse({
-    itemType: 'journalArticle',
-    title: 'First paper',
-    identifiers: [{ scheme: 'doi', value: '10.1234/example' }]
-  })
+  collectionIds: [],
+  item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'First paper' })
 }
-const second = { ...first, id: 'second', item: { ...first.item, title: 'Second paper' } }
-const third = { ...first, id: 'third', item: { ...first.item, title: 'Third paper' } }
-const candidate = {
-  id: 'old-token',
-  provider: 'pmc',
-  source: 'PubMed Central',
-  sourceUrl: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/',
-  url: 'https://download.test/article.pdf'
-}
-const completeMetadata = vi.fn()
-const fullText = vi.fn()
-const get = vi.fn()
-const onChanged = vi.fn()
+const id = '9323d39a-2ae2-49c8-8826-a589c78f1f5d'
+let job: LiteratureJob
+const jobs = vi.fn<(request: LiteratureJobRequest) => Promise<{ jobs: LiteratureJob[] }>>(
+  async () => ({ jobs: [structuredClone(job)] })
+)
 const onClose = vi.fn()
-const preview = (item: LiteratureItemView): LiteratureMetadataCompletionResult => ({
-  mode: 'preview',
-  item,
-  provider: 'crossref',
-  sourceUrl: 'https://crossref.org',
-  filled: [{ field: 'journal', value: 'Journal of Testing' }],
-  conflicts: [{ field: 'title', currentValue: item.item.title, value: 'Replacement title' }]
-})
+const onChanged = vi.fn()
 const flush = async (): Promise<void> => {
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(1500)
+    await vi.advanceTimersByTimeAsync(1001)
   })
-}
-const open = (mode: 'metadata' | 'full-text', items = [first, second]): void => {
-  render(
-    <LiteratureBatchLookupDialog
-      mode={mode}
-      itemIds={items.map(({ id }) => id)}
-      initialItems={items}
-      fieldLabel={(field) => field}
-      onChanged={onChanged}
-      onClose={onClose}
-    />
-  )
-  fireEvent.click(screen.getByRole('button', { name: 'Search' }))
 }
 beforeEach(() => {
   vi.useFakeTimers()
-  vi.resetAllMocks()
-  get.mockImplementation(async (id: string) =>
-    [first, second, third].find((item) => item.id === id)
-  )
-  completeMetadata.mockImplementation(async ({ itemId }) =>
-    preview(itemId === first.id ? first : second)
-  )
-  fullText.mockImplementation(async ({ mode }) =>
-    mode === 'search'
-      ? { mode, candidates: [candidate], notices: [] }
-      : mode === 'progress'
-        ? { mode }
-        : { mode, item: first }
-  )
-  Object.defineProperty(window, 'api', {
-    configurable: true,
-    value: { literature: { get, fullText, completeMetadata } }
-  })
+  vi.clearAllMocks()
+  jobs.mockImplementation(async () => ({ jobs: [structuredClone(job)] }))
+  job = {
+    id,
+    mode: 'metadata',
+    phase: 'search',
+    state: 'running',
+    createdAt: 1,
+    updatedAt: 1,
+    rows: [{ id: item.id, item, checked: true, status: 'searching' }]
+  }
+  Object.defineProperty(window, 'api', { configurable: true, value: { literature: { jobs } } })
 })
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
 })
-
-it('previews before writing and applies only checked references without overwrites', async () => {
-  open('metadata')
-  await flush()
-  expect(completeMetadata.mock.calls.every(([request]) => request.mode === 'preview')).toBe(true)
-  expect(screen.getAllByText('Journal of Testing')).toHaveLength(2)
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Select reference: Second paper' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Apply metadata (1)' }))
-  await flush()
-  expect(completeMetadata).toHaveBeenLastCalledWith({
-    mode: 'commit',
-    itemId: first.id,
-    expectedMetadataRevision: 3,
-    overwriteFields: []
-  })
-  expect(completeMetadata.mock.calls.filter(([request]) => request.mode === 'commit')).toHaveLength(
-    1
+const open = (jobId?: string, mode: 'metadata' | 'full-text' = 'metadata'): void => {
+  render(
+    <StrictMode>
+      <LiteratureBatchLookupDialog
+        itemIds={[item.id]}
+        initialItems={[item]}
+        mode={mode}
+        jobId={jobId}
+        fieldLabel={(field) => field}
+        onClose={onClose}
+        onChanged={onChanged}
+      />
+    </StrictMode>
   )
-  expect(onChanged).toHaveBeenCalledTimes(1)
+}
+it('creates only one background task in Strict Mode and allows closing while it runs', async () => {
+  open()
+  await flush()
+  expect(jobs.mock.calls.filter(([request]) => request.action === 'create')).toHaveLength(1)
+  expect(
+    screen.getByText('You can close this window. Tasks continue in the background.')
+  ).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Run in background' }))
+  expect(onClose).toHaveBeenCalledTimes(1)
+  expect(jobs.mock.calls.some(([request]) => request.action === 'pause')).toBe(false)
 })
-
-it('finishes the current request after Stop and does not start later references', async () => {
-  let resolve!: (value: ReturnType<typeof preview>) => void
-  completeMetadata.mockReturnValue(
-    new Promise((done) => {
-      resolve = done
-    })
+it.each(
+  (['metadata', 'full-text'] as const).flatMap((mode) =>
+    (['search', 'apply'] as const).flatMap((phase) =>
+      (['Close', 'Escape', 'Run in background'] as const).map((dismiss) => ({
+        mode,
+        phase,
+        dismiss
+      }))
+    )
   )
-  open('metadata')
+)(
+  'keeps $mode $phase running after $dismiss and reopens the same task',
+  async ({ mode, phase, dismiss }) => {
+    job.mode = mode
+    job.phase = phase
+    job.rows[0]!.status = phase === 'search' ? 'searching' : 'saving'
+    function Host(): React.JSX.Element {
+      const [visible, setVisible] = useState(true)
+      return visible ? (
+        <LiteratureBatchLookupDialog
+          itemIds={[item.id]}
+          initialItems={[item]}
+          mode={mode}
+          jobId={id}
+          fieldLabel={(field) => field}
+          onClose={() => setVisible(false)}
+          onChanged={onChanged}
+        />
+      ) : (
+        <button onClick={() => setVisible(true)}>Reopen task</button>
+      )
+    }
+    render(<Host />)
+    await flush()
+    if (dismiss === 'Escape') fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    else fireEvent.click(screen.getByRole('button', { name: dismiss }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    const callsAfterClose = jobs.mock.calls.length
+    await flush()
+    expect(jobs).toHaveBeenCalledTimes(callsAfterClose)
+    // The main process can finish the task while its renderer dialog is unmounted.
+    job.state = 'completed'
+    job.rows[0]!.status = phase === 'search' ? 'skipped' : 'done'
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen task' }))
+    await flush()
+    expect(screen.getByText(phase === 'search' ? 'Skipped' : 'Completed')).toBeTruthy()
+    expect(
+      jobs.mock.calls.every(([request]) => request.action === 'get' && request.jobId === id)
+    ).toBe(true)
+  }
+)
+it('reopens a persisted paused job and resumes it without creating a new one', async () => {
+  job.state = 'paused'
+  job.rows[0]!.status = 'pending'
+  open(id)
+  await flush()
+  expect(jobs.mock.calls.every(([request]) => request.action === 'get')).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: 'Resume' }))
   await act(async () => {})
-  fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
-  expect(screen.getByText('Stopping after the current reference…')).not.toBeNull()
-  await act(async () => resolve(preview(first)))
+  expect(jobs).toHaveBeenLastCalledWith({ action: 'resume', jobId: id })
+})
+it('applies only reviewed selections and preserves deselection across polling', async () => {
+  job.state = 'review'
+  job.rows[0]!.status = 'ready'
+  open(id)
   await flush()
-  expect(get).toHaveBeenCalledTimes(1)
-  expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(2)
-  expect(onChanged).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select reference: First paper' }))
+  await flush()
+  expect(jobs).toHaveBeenCalledWith({
+    action: 'review',
+    jobId: id,
+    selections: [{ itemId: item.id, checked: false, candidateId: undefined }]
+  })
+  expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false)
+  expect(
+    (screen.getByRole('button', { name: 'Apply metadata (0)' }) as HTMLButtonElement).disabled
+  ).toBe(true)
+  fireEvent.click(screen.getByRole('checkbox'))
+  fireEvent.click(screen.getByRole('button', { name: 'Apply metadata (1)' }))
+  await act(async () => {})
+  expect(jobs).toHaveBeenLastCalledWith({
+    action: 'apply',
+    jobId: id,
+    selections: [{ itemId: item.id, candidateId: undefined }]
+  })
 })
 
-it('skips attached PDFs and refreshes candidate tokens before confirmed downloads', async () => {
-  const attached: LiteratureItemView = {
-    ...second,
-    attachments: [
+it('does not continuously poll a completed task', async () => {
+  job.state = 'completed'
+  job.rows[0]!.status = 'done'
+  open(id)
+  await flush()
+  const calls = jobs.mock.calls.length
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000)
+  })
+  expect(jobs).toHaveBeenCalledTimes(calls)
+})
+
+it('labels the resumable action as Pause and sends a pause command', async () => {
+  open(id)
+  await flush()
+  fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
+  await act(async () => {
+    await Promise.resolve()
+  })
+  expect(jobs.mock.calls.some(([request]) => request.action === 'pause')).toBe(true)
+  expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
+})
+
+it('offers an immediate retry when the initial task request fails', async () => {
+  jobs.mockRejectedValueOnce(new Error('offline'))
+  open(id)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1)
+  })
+  expect(screen.getByRole('alert').textContent).toContain('Background task could not be updated')
+  expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Run in background' })).toBeNull()
+  const before = jobs.mock.calls.length
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await act(async () => {
+    await Promise.resolve()
+  })
+  expect(jobs.mock.calls.length).toBe(before + 1)
+  expect(screen.queryByRole('alert')).toBeNull()
+})
+
+it('retries failed review saves without losing the selected source or applying an unsaved draft', async () => {
+  job.mode = 'full-text'
+  job.state = 'review'
+  job.rows[0] = {
+    ...job.rows[0]!,
+    status: 'ready',
+    checked: false,
+    candidateId: 'chosen-source',
+    candidates: [
       {
-        id: 'attachment',
-        kind: 'fullText',
-        title: '',
-        sortOrder: 0,
-        createdAt: 1,
-        updatedAt: 1,
-        versions: [
-          {
-            id: 'version',
-            versionNumber: 1,
-            filename: 'paper.pdf',
-            contentType: 'application/pdf',
-            sizeBytes: 12,
-            checksum: 'a'.repeat(64),
-            createdAt: 1
-          }
-        ]
+        id: 'chosen-source',
+        provider: 'pmc',
+        source: 'PMC',
+        url: 'https://pmc.ncbi.nlm.nih.gov/paper.pdf'
       }
     ]
   }
-  get.mockImplementation(async (id: string) => (id === first.id ? first : attached))
-  fullText.mockResolvedValueOnce({ mode: 'search', candidates: [candidate], notices: [] })
-  open('full-text', [first, attached])
+  let saveAvailable = false
+  jobs.mockImplementation(async (request) => {
+    if (request.action === 'review') {
+      if (!saveAvailable) throw new Error('temporarily unavailable')
+      Object.assign(job.rows[0]!, request.selections[0])
+      job.updatedAt += 1
+    }
+    return { jobs: [structuredClone(job)] }
+  })
+  open(id, 'full-text')
   await flush()
-  expect(screen.getByText('PDF already attached')).not.toBeNull()
-  expect(fullText).toHaveBeenCalledTimes(1)
-  expect(screen.getByRole('link', { name: 'Open source' }).getAttribute('href')).toBe(
-    candidate.sourceUrl
-  )
-  fullText.mockImplementation(async ({ mode }) =>
-    mode === 'search'
-      ? { mode, candidates: [{ ...candidate, id: 'fresh-token' }], notices: [] }
-      : mode === 'progress'
-        ? { mode }
-        : { mode, item: first }
-  )
+  fireEvent.click(screen.getByRole('checkbox'))
+  await act(async () => {})
+  expect(screen.getByRole('alert')).toBeTruthy()
+
+  // A successful read must not conceal the failed write or overwrite the local choice.
+  fireEvent(window, new Event('literature-job-refresh'))
+  await act(async () => {})
+  expect(screen.getByRole('alert')).toBeTruthy()
+  expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(true)
   fireEvent.click(screen.getByRole('button', { name: 'Add attachment (1)' }))
-  await flush()
-  expect(fullText).toHaveBeenCalledWith({
-    mode: 'attach',
-    itemId: first.id,
-    candidateId: 'fresh-token'
-  })
-  expect(onChanged).toHaveBeenCalledTimes(1)
-})
+  await act(async () => {})
+  expect(jobs.mock.calls.some(([request]) => request.action === 'apply')).toBe(false)
 
-it('continues after failure and sends the preview revision so stale metadata cannot be overwritten', async () => {
-  open('metadata')
-  await flush()
-  completeMetadata
-    .mockRejectedValueOnce(new Error('Revision conflict'))
-    .mockResolvedValueOnce({ ...preview(second), mode: 'commit' })
-  fireEvent.click(screen.getByRole('button', { name: 'Apply metadata (2)' }))
-  await flush()
-  expect(screen.getByText('Metadata could not be completed.')).not.toBeNull()
-  expect(completeMetadata).toHaveBeenCalledWith({
-    mode: 'commit',
-    itemId: first.id,
-    expectedMetadataRevision: 3,
-    overwriteFields: []
-  })
-  expect(completeMetadata).toHaveBeenLastCalledWith({
-    mode: 'commit',
-    itemId: second.id,
-    expectedMetadataRevision: 3,
-    overwriteFields: []
-  })
-  expect(screen.getByText('Completed 1 · Skipped 0 · Failed 1')).not.toBeNull()
-})
-
-it('does not silently download a replacement source after the confirmed URL disappears', async () => {
-  open('full-text', [first])
-  await flush()
-  fullText.mockResolvedValue({
-    mode: 'search',
-    candidates: [{ ...candidate, id: 'new', url: 'https://different.test/other.pdf' }],
-    notices: []
-  })
+  saveAvailable = true
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await act(async () => {})
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(job.rows[0]).toMatchObject({ checked: true, candidateId: 'chosen-source' })
   fireEvent.click(screen.getByRole('button', { name: 'Add attachment (1)' }))
-  await flush()
-  expect(fullText.mock.calls.some(([request]) => request.mode === 'attach')).toBe(false)
-  expect(
-    screen.getByText('The selected source changed. Search again and review the results.')
-  ).not.toBeNull()
-})
-
-it('respects a source cooldown across references without retrying its download endpoint', async () => {
-  open('full-text')
-  await flush()
-  fullText.mockImplementation(async ({ mode }) =>
-    mode === 'search'
-      ? { mode, candidates: [candidate], notices: [] }
-      : mode === 'progress'
-        ? { mode }
-        : { mode: 'attach-error', reason: 'rate-limited', retryAt: Date.now() + 60_000 }
-  )
-  fireEvent.click(screen.getByRole('button', { name: 'Add attachment (2)' }))
-  await flush()
-  expect(fullText.mock.calls.filter(([request]) => request.mode === 'attach')).toHaveLength(1)
-  expect(screen.getAllByText('Source rate limit reached. Search again later.')).toHaveLength(2)
-  expect(onChanged).not.toHaveBeenCalled()
+  await act(async () => {})
+  expect(jobs.mock.calls.filter(([request]) => request.action === 'apply')).toEqual([
+    [
+      {
+        action: 'apply',
+        jobId: id,
+        selections: [{ itemId: item.id, candidateId: 'chosen-source' }]
+      }
+    ]
+  ])
 })

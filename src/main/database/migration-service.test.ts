@@ -221,6 +221,10 @@ const removeComputeAnalysisSchema = async (
 }
 
 const removeLiteratureFoundationSchema = async (client: PrismaClient): Promise<void> => {
+  await client.$executeRawUnsafe('DROP TABLE "LiteratureInboxPdf"')
+  await client.$executeRawUnsafe(
+    'DELETE FROM "_open_science_migrations" WHERE id >= \'0030_literature_foundation\''
+  )
   for (const table of [
     'ArtifactLiteratureManifest',
     'ProjectLiterature',
@@ -384,16 +388,10 @@ describe('application database migrations', () => {
     )
   })
 
-  it('upgrades the literature uniqueness policy without losing records and verifies it on restart', async () => {
+  it('creates the final literature uniqueness policy and verifies it on restart', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-explicit-duplicates-'))
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
-    await client.$executeRawUnsafe(
-      'CREATE UNIQUE INDEX "LiteratureIdentifier_identity_key" ON "LiteratureIdentifier"("scheme", "normalizedValue")'
-    )
-    await client.$executeRawUnsafe(
-      'DELETE FROM "_open_science_migrations" WHERE id = \'0030_literature_explicit_duplicates\''
-    )
     const original = await client.literatureItem.create({
       data: {
         itemType: 'journalArticle',
@@ -402,9 +400,6 @@ describe('application database migrations', () => {
           create: { scheme: 'doi', rawValue: '10.1234/study', normalizedValue: '10.1234/study' }
         }
       }
-    })
-    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      applied: ['0030_literature_explicit_duplicates']
     })
     await expect(
       client.literatureItem.findUnique({ where: { id: original.id } })
@@ -478,11 +473,11 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates'
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ],
       from: null,
-      to: '0030_literature_explicit_duplicates'
+      to: '0030_literature_foundation'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -495,8 +490,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0030_literature_explicit_duplicates',
-      to: '0030_literature_explicit_duplicates'
+      from: '0030_literature_foundation',
+      to: '0030_literature_foundation'
     })
   })
 
@@ -565,7 +560,7 @@ describe('application database migrations', () => {
       'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
     )
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_literature_foundation', '0030_literature_explicit_duplicates')`
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation')`
     )
     await removeComputeAnalysisSchema(client, true)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
@@ -595,8 +590,8 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates'
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ]
     })
     await expect(
@@ -679,8 +674,8 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates'
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -725,7 +720,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0030_literature_explicit_duplicates'
+      to: '0030_literature_foundation'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -750,7 +745,7 @@ describe('application database migrations', () => {
     await createDatabaseAtReleasedManifest(client, MIGRATION_MANIFEST.slice(0, notificationIndex))
     await client.$executeRawUnsafe('DROP INDEX "ComputeJob_status_idx"')
     await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
-      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_literature_foundation', '0030_literature_explicit_duplicates')`)
+      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata', '0008_database_json_constraints', '0009_vision_evidence', '0010_compute_password_auth', '0011_cross_resource_tags', '0012_tag_ordering', '0013_session_projection', '0014_review_query_indexes', '0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation')`)
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: [
@@ -777,11 +772,11 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates'
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0030_literature_explicit_duplicates'
+      to: '0030_literature_foundation'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -861,11 +856,11 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates'
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0030_literature_explicit_duplicates'
+      to: '0030_literature_foundation'
     })
     await expect(
       client.$queryRaw<
@@ -988,7 +983,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0030_literature_explicit_duplicates'
+      migrationId: '0030_literature_foundation'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -1005,7 +1000,7 @@ describe('application database migrations', () => {
     ).resolves.toEqual({
       adoptedLegacy: false,
       applied: ['9997_test_suffix'],
-      from: '0030_literature_explicit_duplicates',
+      from: '0030_literature_foundation',
       to: '9997_test_suffix'
     })
     await expect(
@@ -1041,8 +1036,8 @@ describe('application database migrations', () => {
       { id: '0026_compute_job_remote_cleanup' },
       { id: '0027_project_session_defaults' },
       { id: '0028_database_numeric_and_null_constraints' },
-      { id: '0029_literature_foundation' },
-      { id: '0030_literature_explicit_duplicates' },
+      { id: '0029_compute_host_execution_mode' },
+      { id: '0030_literature_foundation' },
       { id: '9997_test_suffix' }
     ])
   })
@@ -1124,11 +1119,11 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates'
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0030_literature_explicit_duplicates'
+      to: '0030_literature_foundation'
     })
     expect(backupEvents).toEqual([
       {
@@ -1211,8 +1206,8 @@ describe('application database migrations', () => {
       { id: '0026_compute_job_remote_cleanup' },
       { id: '0027_project_session_defaults' },
       { id: '0028_database_numeric_and_null_constraints' },
-      { id: '0029_literature_foundation' },
-      { id: '0030_literature_explicit_duplicates' }
+      { id: '0029_compute_host_execution_mode' },
+      { id: '0030_literature_foundation' }
     ])
   })
 
@@ -1334,8 +1329,8 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates',
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation',
         '9997_test_suffix'
       ],
       to: '9997_test_suffix'
@@ -1473,7 +1468,7 @@ describe('application database migrations', () => {
       adoptedLegacy: false,
       applied: MIGRATION_MANIFEST.slice(computePasswordAuthIndex).map(({ id }) => id),
       from: '0009_vision_evidence',
-      to: '0030_literature_explicit_duplicates'
+      to: '0030_literature_foundation'
     })
     await expect(
       client.$queryRaw<Array<{ projectId: string }>>`
@@ -1590,8 +1585,8 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates'
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ]
     })
     await expect(
@@ -1717,8 +1712,8 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates'
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1796,8 +1791,8 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates'
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ]
     })
     await expect(
@@ -1878,8 +1873,8 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates'
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -1994,8 +1989,8 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates'
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ]
     })
     await expect(
@@ -2518,8 +2513,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0029_literature_foundation.backup',
-      'open-science.db.before-0030_literature_explicit_duplicates.backup',
+      'open-science.db.before-0029_compute_host_execution_mode.backup',
+      'open-science.db.before-0030_literature_foundation.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
@@ -2817,11 +2812,11 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates'
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0030_literature_explicit_duplicates'
+      to: '0030_literature_foundation'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ currentVersionId: string | null }>>(
@@ -2880,7 +2875,7 @@ describe('application database migrations', () => {
         MIGRATION_MANIFEST.findIndex(({ id }) => id === '0009_vision_evidence')
       ).map(({ id }) => id),
       from: '0008_database_json_constraints',
-      to: '0030_literature_explicit_duplicates'
+      to: '0030_literature_foundation'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -2941,11 +2936,11 @@ describe('application database migrations', () => {
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
-        '0029_literature_foundation',
-        '0030_literature_explicit_duplicates'
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0030_literature_explicit_duplicates'
+      to: '0030_literature_foundation'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`

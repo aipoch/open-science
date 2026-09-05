@@ -423,6 +423,7 @@ model ContentBlob {
   createdAt                    DateTime                      @default(now())
   verifiedAt                   DateTime?
   literatureAttachmentVersions LiteratureAttachmentVersion[]
+  literatureInboxPdfs           LiteratureInboxPdf[]
 
   @@index([checksum, sizeBytes])
   @@index([state, createdAt])
@@ -566,10 +567,29 @@ model LiteratureInboxCandidate {
   updatedAt        DateTime                 @updatedAt
   acceptedItem     LiteratureItem?          @relation("AcceptedLiteratureItem", fields: [acceptedItemId], references: [id], onDelete: Restrict)
   sourceRecords    LiteratureSourceRecord[]
+  pdfs             LiteratureInboxPdf[]
 
   @@index([state, createdAt])
   @@index([sourceProjectId, sourceSessionId])
   @@index([acceptedItemId])
+}
+
+// Agent-acquired PDFs stay in Inbox until their reference is accepted.
+model LiteratureInboxPdf {
+  id            String @id @default(cuid())
+  candidateId   String
+  contentBlobId String
+  filename      String
+  sizeBytes     BigInt
+  checksum      String
+  pageCount     Int
+  sourceUrl     String
+  createdAt     DateTime @default(now())
+  candidate     LiteratureInboxCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  contentBlob   ContentBlob @relation(fields: [contentBlobId], references: [id], onDelete: Restrict)
+
+  @@unique([candidateId, checksum])
+  @@index([contentBlobId])
 }
 
 model LiteratureSourceRecord {
@@ -603,6 +623,7 @@ model LiteratureCollection {
   children    LiteratureCollection[]     @relation("LiteratureCollectionHierarchy")
   items       LiteratureCollectionItem[]
 
+  // Root-name uniqueness uses a partial index in sqlite-check-constraints.json.
   @@unique([parentId, nameKey])
   @@index([parentId, sortOrder])
 }

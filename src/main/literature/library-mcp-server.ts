@@ -12,6 +12,7 @@ import {
   type LiteratureItemView
 } from '../../shared/literature'
 import { literatureReadPresentation } from './mcp-server'
+import type { AgentPdfAcquisitionResult } from './agent-pdf-acquisition'
 
 const LITERATURE_LIBRARY_MCP_SERVER_NAME = 'open-science-library'
 const LITERATURE_LIBRARY_SEARCH_TOOL_NAME = 'search_library'
@@ -157,6 +158,10 @@ type LiteratureLibraryPrepareLatexResult = Readonly<{
 }>
 
 type LiteratureLibraryMcpHandler = Readonly<{
+  acquirePdf?: (request: {
+    candidate: LiteratureLibraryDiscovery
+    pdfUrl?: string
+  }) => Promise<AgentPdfAcquisitionResult>
   searchLibrary: (request: LiteratureLibrarySearchRequest) => Promise<LiteratureLibrarySearchResult>
   readAbstract: (
     request: LiteratureLibraryReadAbstractRequest
@@ -686,6 +691,40 @@ const createLiteratureLibraryMcpServer = (
     }
   )
 
+  if (handler.acquirePdf)
+    server.registerTool(
+      'acquire_pdf',
+      {
+        title: 'Acquire literature PDF',
+        description:
+          'Find and download one publicly accessible full-text PDF into Literature Inbox for user review. Supply either ref (DOI or PMID) or candidate metadata and its source. Omit pdfUrl to search the configured open full-text providers; supply pdfUrl only for a discovered public HTTPS PDF link. The PDF and metadata are kept in Inbox until the user accepts them. Existing library references are reused on acceptance. Downloads are limited to 50 MB; private network addresses, sign-in sessions and local file paths are not supported. Do not describe pending-review results as already added to the Library.',
+        inputSchema: {
+          ref: z.string().trim().min(1).max(512).optional(),
+          candidate: literatureDiscoverySchema.optional(),
+          pdfUrl: z.string().url().max(4096).optional()
+        }
+      },
+      async ({ ref, candidate, pdfUrl }) => {
+        const candidates = await resolveSaveCandidates(
+          { refs: ref ? [ref] : undefined, candidates: candidate ? [candidate] : undefined },
+          handler
+        )
+        if (candidates.length !== 1) throw new Error('Exactly one reference must be resolved.')
+        const result = await handler.acquirePdf!({ candidate: candidates[0]!, pdfUrl })
+        return {
+          structuredContent: result,
+          content: [
+            presentationContent({
+              libraryAction: 'save',
+              itemTitles: candidateTitles(candidates),
+              candidateCount: 1,
+              savedCount: result.status === 'pending-review' ? 1 : 0
+            }),
+            { type: 'text' as const, text: JSON.stringify(result) }
+          ]
+        }
+      }
+    )
   return server
 }
 

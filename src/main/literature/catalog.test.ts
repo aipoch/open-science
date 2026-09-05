@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   literatureCatalogSearchRequestSchema,
@@ -77,6 +77,24 @@ describe('LiteratureCatalog', () => {
     await client.project.create({ data: { id: 'project-1', name: 'Research' } })
     return new LiteratureCatalog(async () => client!)
   }
+
+  it('shares duplicate scans across count and page requests and invalidates on metadata mutations', async () => {
+    const catalog = await setup()
+    const findMany = vi.spyOn(client!.literatureItem, 'findMany')
+    await Promise.all([
+      catalog.search({ scope: 'duplicates', limit: 1 }),
+      catalog.search({ scope: 'duplicates', limit: 20 })
+    ])
+    expect(findMany).toHaveBeenCalledTimes(1)
+    await catalog.search({ scope: 'duplicates', offset: 20 })
+    expect(findMany).toHaveBeenCalledTimes(1)
+    await catalog.importItems([candidate().item])
+    findMany.mockClear()
+    await catalog.search({ scope: 'duplicates' })
+    expect(findMany).toHaveBeenCalledTimes(1)
+    await catalog.search({ scope: 'duplicates', refreshDuplicates: true })
+    expect(findMany).toHaveBeenCalledTimes(2)
+  })
 
   it('supports explicit duplicates while default Add and Inbox reuse the oldest active reference', async () => {
     const catalog = await setup()
@@ -180,7 +198,19 @@ describe('LiteratureCatalog', () => {
     const groups = [first.itemIds, second.itemIds, metadataOnly.itemIds]
     await expect(
       catalog.transact({ kind: 'merge-duplicates', mode: 'preview', groups })
-    ).resolves.toMatchObject({ batch: { eligible: 2, reduced: 2, review: 1, succeeded: 0 } })
+    ).resolves.toMatchObject({
+      batch: {
+        eligible: 2,
+        reduced: 2,
+        review: 1,
+        succeeded: 0,
+        details: [
+          { groupIndex: 0, status: 'ready' },
+          { groupIndex: 1, status: 'ready' },
+          { groupIndex: 2, status: 'skipped', reason: 'identity' }
+        ]
+      }
+    })
     expect((await catalog.get(first.itemIds[1]))!.id).toBe(first.itemIds[1])
     const changed = (await catalog.get(second.itemIds[1]))!
     await catalog.transact({
@@ -199,6 +229,94 @@ describe('LiteratureCatalog', () => {
     await expect(
       catalog.transact({ kind: 'merge-duplicates', mode: 'commit', groups })
     ).resolves.toMatchObject({ batch: { succeeded: 0, skipped: 3 } })
+  })
+
+  it('rejects a manual merge if any reviewed reference changed without losing the new metadata', async () => {
+    const catalog = await setup()
+    const input = candidate().item
+    const imported = await catalog.importItems([input, input], undefined, 'separate')
+    const reviewed = (await Promise.all(imported.itemIds.map((id) => catalog.get(id)))).map(
+      (view) => view!
+    )
+    const [survivor, duplicate] = reviewed
+    await catalog.transact({
+      kind: 'update-item',
+      itemId: duplicate.id,
+      expectedMetadataRevision: duplicate.metadataRevision,
+      item: { ...duplicate.item, personalNote: 'Added while merge review was open' }
+    })
+    await expect(
+      catalog.transact({
+        kind: 'merge-items',
+        survivorId: survivor.id,
+        duplicateIds: [duplicate.id],
+        expectedMetadataRevision: survivor.metadataRevision,
+        expectedItems: reviewed.map(({ id, metadataRevision, updatedAt }) => ({
+          id,
+          metadataRevision,
+          updatedAt
+        })),
+        item: survivor.item
+      })
+    ).rejects.toThrow('changed after review')
+    await expect(catalog.get(survivor.id)).resolves.toMatchObject({ id: survivor.id })
+    await expect(catalog.get(duplicate.id)).resolves.toMatchObject({
+      id: duplicate.id,
+      item: { personalNote: 'Added while merge review was open' }
+    })
+  })
+
+  it('previews rule-based survivors, requires review and skips records changed since review', async () => {
+    const catalog = await setup()
+    const input = candidate().item
+    const imported = await catalog.importItems(
+      [input, { ...input, title: 'Richer record', containerTitle: 'Journal' }],
+      undefined,
+      'separate'
+    )
+    const command = {
+      kind: 'merge-duplicates' as const,
+      groups: [imported.itemIds],
+      strategy: 'most-complete' as const
+    }
+    await expect(catalog.transact({ ...command, mode: 'commit' })).rejects.toThrow('Preview')
+    const preview = await catalog.transact({ ...command, mode: 'preview' })
+    expect(preview.batch).toMatchObject({
+      eligible: 1,
+      groups: [{ survivorId: imported.itemIds[1], conflicts: true }]
+    })
+    const current = (await catalog.get(imported.itemIds[0]))!
+    await catalog.transact({
+      kind: 'update-item',
+      itemId: current.id,
+      expectedMetadataRevision: current.metadataRevision,
+      item: { ...current.item, personalNote: 'New note' }
+    })
+    await expect(
+      catalog.transact({
+        ...command,
+        mode: 'commit',
+        expectedItems: preview.batch!.groups!.flatMap((group) => group.items)
+      })
+    ).resolves.toMatchObject({
+      batch: {
+        succeeded: 0,
+        skipped: 1,
+        details: [{ groupIndex: 0, status: 'skipped', reason: 'changed' }]
+      }
+    })
+    const refreshed = await catalog.transact({ ...command, mode: 'preview' })
+    await expect(
+      catalog.transact({
+        ...command,
+        mode: 'commit',
+        expectedItems: refreshed.batch!.groups!.flatMap((group) => group.items)
+      })
+    ).resolves.toMatchObject({ batch: { succeeded: 1 } })
+    expect(await catalog.get(imported.itemIds[0])).toMatchObject({
+      id: imported.itemIds[1],
+      item: { title: 'Richer record', personalNote: 'New note' }
+    })
   })
 
   it('retains attachments, sources, tags and destinations during a batch merge and isolates failed groups', async () => {
@@ -319,6 +437,13 @@ describe('LiteratureCatalog', () => {
       kind: 'merge-items',
       survivorId: ids[0],
       duplicateIds: [ids[1]],
+      expectedItems: (await Promise.all([ids[0], ids[1]].map((id) => catalog.get(id)))).map(
+        (view) => ({
+          id: view!.id,
+          metadataRevision: view!.metadataRevision,
+          updatedAt: view!.updatedAt
+        })
+      ),
       expectedMetadataRevision: survivor!.metadataRevision,
       item: survivor!.item
     })
@@ -394,6 +519,60 @@ describe('LiteratureCatalog', () => {
     await expect(catalog.search({ scope: 'library' })).resolves.toMatchObject({
       entries: [expect.objectContaining({ id: item.id })]
     })
+  })
+
+  it('keeps acquired PDFs in Inbox until acceptance and reuses an existing library reference', async () => {
+    const catalog = await setup()
+    const existing = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    await client!.contentBlob.create({
+      data: {
+        id: 'inbox-blob',
+        checksum: 'c'.repeat(64),
+        storageKey: 'content/inbox-blob',
+        sizeBytes: 128n,
+        contentType: 'application/pdf',
+        state: 'available'
+      }
+    })
+    const pdf = {
+      contentBlobId: 'inbox-blob',
+      checksum: 'c'.repeat(64),
+      sizeBytes: 128,
+      contentType: 'application/pdf',
+      filename: 'paper.pdf',
+      pageCount: 8,
+      sourceUrl: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/'
+    }
+    const staged = await catalog.stageAcquiredPdf(candidate(), pdf)
+    expect(staged).toMatchObject({ kind: 'candidate', state: 'pending' })
+    await expect(catalog.stageAcquiredPdf(candidate(), pdf)).resolves.toEqual(staged)
+    expect((await catalog.get(existing.id))!.attachments).toEqual([])
+    expect((await catalog.search({ scope: 'inbox' })).entries[0]).toMatchObject({
+      pdfs: [{ filename: 'paper.pdf', pageCount: 8 }]
+    })
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+    expect(accepted.id).toBe(existing.id)
+    expect((await catalog.get(existing.id))!.attachments).toHaveLength(1)
+    expect((await catalog.get(existing.id))!.projectIds).toEqual(['project-1'])
+    expect(await client!.literatureInboxPdf.count()).toBe(0)
+    await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+    expect((await catalog.get(existing.id))!.attachments).toHaveLength(1)
+  })
+
+  it('rolls back Inbox metadata if its acquired PDF cannot be retained', async () => {
+    const catalog = await setup()
+    await expect(
+      catalog.stageAcquiredPdf(candidate(), {
+        contentBlobId: 'missing',
+        checksum: 'c'.repeat(64),
+        sizeBytes: 128,
+        contentType: 'application/pdf',
+        filename: 'paper.pdf',
+        pageCount: 8,
+        sourceUrl: 'https://example.test/paper'
+      })
+    ).rejects.toThrow('Inbox PDF content')
+    expect((await catalog.search({ scope: 'inbox' })).entries).toEqual([])
   })
 
   it('stages Agent results in Inbox and accepts them into a Project without duplicate identities', async () => {
@@ -1003,6 +1182,90 @@ describe('LiteratureCatalog', () => {
     })
   })
 
+  it('enforces sibling Collection names while allowing the same name under different parents', async () => {
+    const catalog = await setup()
+    const root = await catalog.transact({ kind: 'create-collection', name: ' Review   queue ' })
+    await expect(
+      catalog.transact({ kind: 'create-collection', name: 'review queue' })
+    ).rejects.toThrow('literature_collection_name_conflict')
+    const other = await catalog.transact({ kind: 'create-collection', name: 'Other' })
+    const child = await catalog.transact({
+      kind: 'create-collection',
+      name: 'review queue',
+      parentId: root.id
+    })
+    await expect(
+      catalog.transact({ kind: 'create-collection', name: 'REVIEW QUEUE', parentId: root.id })
+    ).rejects.toThrow('literature_collection_name_conflict')
+    await expect(
+      catalog.transact({ kind: 'create-collection', name: 'review queue', parentId: other.id })
+    ).resolves.toMatchObject({ kind: 'collection' })
+    await expect(
+      catalog.transact({
+        kind: 'update-collection',
+        collectionId: other.id,
+        name: 'Review queue',
+        description: ''
+      })
+    ).rejects.toThrow('literature_collection_name_conflict')
+    await expect(
+      catalog.transact({
+        kind: 'update-collection',
+        collectionId: child.id,
+        name: 'REVIEW QUEUE',
+        description: 'Updated'
+      })
+    ).resolves.toMatchObject({ id: child.id })
+    const results = await Promise.allSettled([
+      catalog.transact({ kind: 'create-collection', name: 'Concurrent' }),
+      catalog.transact({ kind: 'create-collection', name: ' concurrent ' })
+    ])
+    expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter(({ status }) => status === 'rejected')).toHaveLength(1)
+  })
+
+  it('preserves a parent and its associations when child promotion would duplicate a root name', async () => {
+    const catalog = await setup()
+    const parent = await catalog.transact({ kind: 'create-collection', name: 'Parent' })
+    await catalog.transact({ kind: 'create-collection', name: 'Review' })
+    const child = await catalog.transact({
+      kind: 'create-collection',
+      name: 'Review',
+      parentId: parent.id
+    })
+    const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    await catalog.transact({
+      kind: 'set-collection-item',
+      collectionId: parent.id,
+      itemId: item.id,
+      included: true
+    })
+    await expect(
+      catalog.transact({ kind: 'delete-collection', collectionId: parent.id })
+    ).rejects.toThrow('literature_collection_name_conflict')
+    await expect(catalog.search({ scope: 'collections' })).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({ id: parent.id, itemCount: 1 }),
+        expect.objectContaining({ id: child.id, parentId: parent.id })
+      ])
+    })
+    await catalog.transact({
+      kind: 'update-collection',
+      collectionId: child.id,
+      name: 'Child review',
+      description: ''
+    })
+    await expect(
+      catalog.transact({ kind: 'delete-collection', collectionId: parent.id })
+    ).resolves.toMatchObject({ id: parent.id })
+    await expect(catalog.search({ scope: 'collections' })).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({ id: child.id, name: 'Child review', parentId: undefined })
+      ])
+    })
+    await expect(catalog.get(item.id)).resolves.toMatchObject({ id: item.id })
+  })
+
   it('creates, edits, and deletes a Collection without deleting its references', async () => {
     const catalog = await setup()
     const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
@@ -1134,6 +1397,13 @@ describe('LiteratureCatalog', () => {
         kind: 'merge-items',
         survivorId: survivor.id,
         duplicateIds: [duplicate.id],
+        expectedItems: (
+          await Promise.all([survivor.id, duplicate.id].map((id) => catalog.get(id)))
+        ).map((view) => ({
+          id: view!.id,
+          metadataRevision: view!.metadataRevision,
+          updatedAt: view!.updatedAt
+        })),
         expectedMetadataRevision: current!.metadataRevision,
         item: {
           ...current!.item,
@@ -1200,6 +1470,13 @@ describe('LiteratureCatalog', () => {
         kind: 'merge-items',
         survivorId: survivor.id,
         duplicateIds: [duplicate.id],
+        expectedItems: (
+          await Promise.all([survivor.id, duplicate.id].map((id) => catalog.get(id)))
+        ).map((view) => ({
+          id: view!.id,
+          metadataRevision: view!.metadataRevision,
+          updatedAt: view!.updatedAt
+        })),
         expectedMetadataRevision: current.metadataRevision,
         item: current.item
       })

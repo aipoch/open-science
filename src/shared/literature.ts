@@ -42,6 +42,7 @@ const LITERATURE_CSL_MAX_BYTES = 1024 * 1024
 const LITERATURE_RECORD_IMPORT_FORMATS = ['bibtex', 'ris', 'nbib'] as const
 const LITERATURE_RECORD_IMPORT_MAX_BYTES = 32 * 1024 * 1024
 const LITERATURE_RECORD_IMPORT_MAX_RECORDS = 1_000
+const LITERATURE_COLLECTION_NAME_CONFLICT = 'literature_collection_name_conflict'
 const LITERATURE_COLLECTION_NAME_MAX_LENGTH = 200
 const LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH = 1_000
 const LITERATURE_LIFECYCLE_STATES = ['active', 'deleted'] as const
@@ -289,6 +290,19 @@ const literatureInboxCandidateViewSchema = z
     id: nonEmptyTextSchema,
     state: z.enum(LITERATURE_INBOX_STATES),
     candidate: literatureCandidateInputSchema,
+    pdfs: z
+      .array(
+        z
+          .object({
+            id: nonEmptyTextSchema,
+            filename: nonEmptyTextSchema,
+            sizeBytes: z.number().int().nonnegative(),
+            pageCount: z.number().int().positive(),
+            sourceUrl: z.string().url()
+          })
+          .strict()
+      )
+      .optional(),
     acceptedItemId: nonEmptyTextSchema.optional(),
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative()
@@ -328,6 +342,7 @@ export type LiteratureDuplicateGroup = z.infer<typeof literatureDuplicateGroupSc
 const literatureCatalogSearchRequestSchema = z
   .object({
     scope: z.enum(['library', 'inbox', 'collections', 'project-counts', 'duplicates']),
+    refreshDuplicates: z.boolean().optional(),
     query: optionalTextSchema,
     projectId: optionalTextSchema,
     collectionId: optionalTextSchema,
@@ -362,6 +377,29 @@ const literatureCatalogSearchPageSchema = z
 export const literatureDuplicatePolicySchema = z.enum(['reuse', 'separate', 'fill-missing'])
 export type LiteratureDuplicatePolicy = z.infer<typeof literatureDuplicatePolicySchema>
 
+export const literatureMergeStrategySchema = z.enum([
+  'conflict-free',
+  'most-complete',
+  'oldest',
+  'newest'
+])
+export type LiteratureMergeStrategy = z.infer<typeof literatureMergeStrategySchema>
+const mergeItemSnapshotSchema = z
+  .object({
+    id: nonEmptyTextSchema,
+    metadataRevision: z.number().int().positive(),
+    updatedAt: z.number()
+  })
+  .strict()
+const mergeGroupPreviewSchema = z
+  .object({
+    survivorId: nonEmptyTextSchema,
+    survivorTitle: z.string(),
+    conflicts: z.boolean(),
+    items: z.array(mergeItemSnapshotSchema).min(2).max(20)
+  })
+  .strict()
+
 const literatureCatalogCommandSchema = z.discriminatedUnion('kind', [
   z
     .object({ kind: z.literal('stage-candidate'), candidate: literatureCandidateInputSchema })
@@ -377,6 +415,8 @@ const literatureCatalogCommandSchema = z.discriminatedUnion('kind', [
     .object({
       kind: z.literal('merge-duplicates'),
       mode: z.enum(['preview', 'commit']),
+      strategy: literatureMergeStrategySchema.optional(),
+      expectedItems: z.array(mergeItemSnapshotSchema).max(400).optional(),
       groups: z.array(z.array(nonEmptyTextSchema).min(2).max(21)).min(1).max(20)
     })
     .strict(),
@@ -483,6 +523,7 @@ const literatureCatalogCommandSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('merge-items'),
+      expectedItems: z.array(mergeItemSnapshotSchema).min(2).max(20),
       survivorId: nonEmptyTextSchema,
       duplicateIds: z.array(nonEmptyTextSchema).min(1).max(19),
       expectedMetadataRevision: z.number().int().positive(),
@@ -514,7 +555,31 @@ const literatureCatalogReceiptSchema = z
         review: z.number().int().nonnegative(),
         succeeded: z.number().int().nonnegative(),
         skipped: z.number().int().nonnegative(),
-        failed: z.number().int().nonnegative()
+        failed: z.number().int().nonnegative(),
+        groups: z.array(mergeGroupPreviewSchema).max(20).optional(),
+        details: z
+          .array(
+            z
+              .object({
+                groupIndex: z.number().int().nonnegative(),
+                title: z.string().optional(),
+                status: z.enum(['ready', 'merged', 'skipped', 'failed']),
+                reason: z
+                  .enum([
+                    'too-large',
+                    'overlapping',
+                    'unavailable',
+                    'changed',
+                    'identity',
+                    'conflicts',
+                    'failed'
+                  ])
+                  .optional()
+              })
+              .strict()
+          )
+          .max(20)
+          .optional()
       })
       .strict()
       .optional()
@@ -701,6 +766,7 @@ const literatureMetadataCompletionRequestSchema = z.discriminatedUnion('mode', [
     .object({
       mode: z.literal('commit'),
       itemId: nonEmptyTextSchema,
+      reviewToken: z.string().uuid().optional(),
       expectedMetadataRevision: z.number().int().positive(),
       identifier: z
         .object({ scheme: z.enum(['doi', 'pmid']), value: nonEmptyTextSchema })
@@ -728,7 +794,9 @@ const literatureMetadataCompletionResultSchema = z
     sourceUrl: nonEmptyTextSchema,
     item: literatureItemViewSchema,
     filled: z.array(literatureMetadataValueSchema),
-    conflicts: z.array(literatureMetadataConflictSchema)
+    conflicts: z.array(literatureMetadataConflictSchema),
+    reviewToken: z.string().uuid().optional(),
+    source: literatureSourceInputSchema.optional()
   })
   .strict()
 
@@ -911,12 +979,15 @@ const parseLiteratureAttachmentVersionReference = (reference: string): string | 
 }
 
 export {
+  literatureFullTextCandidateSchema,
+  literatureFullTextProgressSchema,
   LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX,
   LITERATURE_CITATION_LOCALES,
   LITERATURE_CITATION_STYLES,
   LITERATURE_CSL_MAX_BYTES,
   LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH,
   LITERATURE_COLLECTION_NAME_MAX_LENGTH,
+  LITERATURE_COLLECTION_NAME_CONFLICT,
   LITERATURE_IDENTITY_SCHEMES,
   LITERATURE_IDENTIFIER_SCHEMES,
   LITERATURE_INBOX_STATES,

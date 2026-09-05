@@ -7,6 +7,7 @@ import type {
   LiteratureCatalogSearchRequest
 } from '../../../../shared/literature'
 import { useLiteratureEntries } from './useLiteratureEntries'
+import { literatureItemInputSchema, type LiteratureItemView } from '../../../../shared/literature'
 
 const page: LiteratureCatalogSearchPage = { entries: [], totalCount: 0 }
 const search =
@@ -145,5 +146,39 @@ describe('useLiteratureEntries', () => {
     expect(states.length).toBeGreaterThan(0)
     expect(states).not.toContain(true)
     expect(search).toHaveBeenCalledTimes(2)
+  })
+
+  it('patches only changed visible references without reloading, reordering or resetting position', async () => {
+    const first: LiteratureItemView = {
+      id: 'a',
+      item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Before' }),
+      attachments: [],
+      collectionIds: [],
+      projectIds: [],
+      metadataRevision: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const second = { ...first, id: 'b' }
+    const updated = { ...first, metadataRevision: 2, item: { ...first.item, title: 'After' } }
+    search.mockResolvedValue({ entries: [first, second], totalCount: 2 })
+    const get = vi.fn().mockResolvedValue(updated)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { literature: { search, get } }
+    })
+    const { result, onPage } = setup()
+    await act(async () => {})
+    await act(() => result.current.refreshItems(['a', 'off-page']))
+    expect(get).toHaveBeenCalledTimes(1)
+    expect(get).toHaveBeenCalledWith('a')
+    expect(search).toHaveBeenCalledTimes(1)
+    expect(result.current.loading).toBe(false)
+    expect(onPage).toHaveBeenLastCalledWith(
+      { entries: [updated, second], totalCount: 2 },
+      request,
+      true,
+      true
+    )
   })
 })

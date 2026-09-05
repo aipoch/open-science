@@ -273,6 +273,12 @@ type AcpRuntimeOptions = {
     }) => Promise<unknown>
   }>
   literatureLibrary?: Readonly<{
+    acquirePdf?: (request: {
+      candidate: LiteratureLibraryDiscovery
+      pdfUrl?: string
+      projectId: string
+      sessionId: string
+    }) => Promise<import('../literature/agent-pdf-acquisition').AgentPdfAcquisitionResult>
     resolveSaveReferences?: (
       references: readonly string[]
     ) => Promise<readonly LiteratureLibraryDiscovery[]>

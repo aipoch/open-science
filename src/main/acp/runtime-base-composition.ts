@@ -339,7 +339,17 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
                 ...request,
                 projectId,
                 sessionId: appSessionId
-              })
+              }),
+            ...(options.literatureLibrary!.acquirePdf
+              ? {
+                  acquirePdf: (request) =>
+                    options.literatureLibrary!.acquirePdf!({
+                      ...request,
+                      projectId,
+                      sessionId: appSessionId
+                    })
+                }
+              : {})
           })
         }
       : undefined,

@@ -80,6 +80,7 @@ const removeLiteratureFoundationSchema = async (client: PrismaClient): Promise<v
     'LiteratureCollectionItem',
     'LiteratureCollection',
     'LiteratureSourceRecord',
+    'LiteratureInboxPdf',
     'LiteratureInboxCandidate',
     'LiteratureIdentifier',
     'LiteratureItemCreator',
@@ -125,12 +126,12 @@ describe('packaged database migration ledger smoke', () => {
         checksum: '7ee2e3ec746080d5e1bedcddaea5ded1b080d8bcbc8ec59ed4139ff8c5e5de4a'
       },
       {
-        id: '0029_literature_foundation',
-        checksum: '49ca0f0b62b0c7b8bbcd0d2de3f2a27154839c9aff82bb8d964bc9e5b6263733'
+        id: '0029_compute_host_execution_mode',
+        checksum: 'cb99c71c85d5632a42a06a9de0659f67874a9e347af5ca0aa41925d27146c49d'
       },
       {
-        id: '0030_literature_explicit_duplicates',
-        checksum: 'e9b55ff9b894eb8a385dddf9988f4846e3fc1ac5731fa98659cefb077d47386f'
+        id: '0030_literature_foundation',
+        checksum: '0f432ea09aec2d7edbd9834a4f2c38dd6bc4870cd4ff01d4ea4899b3e66dc5e2'
       }
     ])
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
@@ -169,7 +170,7 @@ describe('packaged database migration ledger smoke', () => {
       await rebuildComputeJobWithoutAnalysisConstraints(client, true)
       await removeLiteratureFoundationSchema(client)
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_literature_foundation', '0030_literature_explicit_duplicates')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation')`
       )
 
       await migrateApplicationDatabase(client)
@@ -205,7 +206,7 @@ describe('packaged database migration ledger smoke', () => {
       await migrateApplicationDatabase(client)
       await rebuildComputeJobWithoutAnalysisConstraints(client, false)
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_literature_foundation', '0030_literature_explicit_duplicates')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation')`
       )
       await client.$executeRawUnsafe(`INSERT INTO "ComputeJob" (
         "id", "providerId", "shape", "sessionId", "projectId", "status", "intent",
@@ -239,7 +240,7 @@ describe('packaged database migration ledger smoke', () => {
       await migrateApplicationDatabase(client)
       await client.$executeRawUnsafe('DROP INDEX "MemoryEntry_global_contentKey_key"')
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_literature_foundation', '0030_literature_explicit_duplicates')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation')`
       )
       await client.memoryEntry.createMany({
         data: [
@@ -337,7 +338,7 @@ describe('packaged database migration ledger smoke', () => {
         'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
       )
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_literature_foundation', '0030_literature_explicit_duplicates')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation')`
       )
       await rebuildComputeJobWithoutAnalysisConstraints(client, true)
       await removeLiteratureFoundationSchema(client)
@@ -417,8 +418,8 @@ describe('packaged database migration ledger smoke', () => {
            '0026_compute_job_remote_cleanup',
            '0027_project_session_defaults',
            '0028_database_numeric_and_null_constraints',
-           '0029_literature_foundation',
-           '0030_literature_explicit_duplicates'
+           '0029_compute_host_execution_mode',
+           '0030_literature_foundation'
          )`
       )
       await rebuildComputeJobWithoutAnalysisConstraints(client, true)

@@ -804,6 +804,29 @@ describe('applyDocToDom + domToDoc round-trip', () => {
 })
 
 describe('docFromMessageParts', () => {
+  it('preserves a literature PDF through message rehydration and DOM editing', () => {
+    const reference: ArtifactReference = {
+      id: 'literature-pdf-1',
+      sourceFileId: 'literature-file-1',
+      name: 'study.pdf',
+      path: 'literature:attachment-1',
+      source: 'literature',
+      mimeType: 'application/pdf'
+    }
+    const doc = docFromMessageParts([{ type: 'artifact', ...reference }])
+    const root = document.createElement('div')
+    applyDocToDom(root, doc)
+    root.append(document.createTextNode(' compare the findings'))
+
+    const edited = domToDoc(root)
+
+    expect(docToArtifactRefs(edited)).toEqual([reference])
+    expect(docToMessageParts(edited)).toEqual([
+      { type: 'artifact', ...reference },
+      { type: 'text', text: ' compare the findings' }
+    ])
+  })
+
   it('restores text, skill, artifact, and Session chips from sent message parts', () => {
     const doc = docFromMessageParts([
       { type: 'text', text: 'Run ' },

@@ -345,6 +345,7 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
+          jobs: vi.fn(async () => ({ jobs: [], summaries: [] })),
           search,
           transact,
           get,
@@ -451,6 +452,7 @@ describe('LiteratureLibraryPage', () => {
     expect(transact).toHaveBeenCalledWith({
       kind: 'merge-duplicates',
       mode: 'preview',
+      strategy: 'conflict-free',
       groups: [['item-1', 'item-2']]
     })
     fireEvent.click(screen.getByRole('button', { name: 'Merge conflict-free groups' }))
@@ -458,6 +460,8 @@ describe('LiteratureLibraryPage', () => {
     expect(transact).toHaveBeenLastCalledWith({
       kind: 'merge-duplicates',
       mode: 'commit',
+      strategy: 'conflict-free',
+      expectedItems: undefined,
       groups: [['item-1', 'item-2']]
     })
     expect(await screen.findByText('No duplicates found')).not.toBeNull()
@@ -522,6 +526,18 @@ describe('LiteratureLibraryPage', () => {
           kind: 'merge-items',
           survivorId: 'item-1',
           duplicateIds: ['item-2'],
+          expectedItems: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'item-1',
+              metadataRevision: expect.any(Number),
+              updatedAt: expect.any(Number)
+            }),
+            expect.objectContaining({
+              id: 'item-2',
+              metadataRevision: expect.any(Number),
+              updatedAt: expect.any(Number)
+            })
+          ]),
           item: expect.objectContaining({ personalNote: 'Check the methods', rating: 5 })
         })
       )
@@ -914,6 +930,24 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
+  it('keeps the Collection editor open and explains duplicate-name rejection', async () => {
+    transact.mockRejectedValueOnce(
+      new Error('Error invoking remote method: literature_collection_name_conflict')
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'New collection' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Review' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create collection' }))
+    expect(
+      await within(dialog).findByText(
+        'A collection with this name already exists at this level. Choose another name.'
+      )
+    ).not.toBeNull()
+    expect(within(dialog).getByLabelText('Name').getAttribute('value')).toBe('Review')
+    expect(screen.getByRole('dialog')).toBe(dialog)
+  })
+
   it('creates and edits Collections with one shared name and description form', async () => {
     let collection:
       | {
@@ -1034,55 +1068,72 @@ describe('LiteratureLibraryPage', () => {
     expect(filePreviewRenderCount.value).toBe(0)
   })
 
-  it('deletes a Collection while keeping the user in the Library', async () => {
-    const collection = {
-      id: 'collection-1',
-      name: 'Screening',
-      description: 'Papers awaiting review.',
-      itemCount: 1,
-      createdAt: 1,
-      updatedAt: 1
+  it.each([false, true])(
+    'handles Collection deletion while keeping the user in the Library (name conflict: %s)',
+    async (nameConflict) => {
+      const collection = {
+        id: 'collection-1',
+        name: 'Screening',
+        description: 'Papers awaiting review.',
+        itemCount: 1,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      search.mockImplementation((request: { scope: string }) =>
+        Promise.resolve(
+          request.scope === 'collections'
+            ? { entries: [collection], totalCount: 1 }
+            : request.scope === 'inbox'
+              ? inboxPage
+              : { entries: [] }
+        )
+      )
+      useNavigationStore.setState({ pendingLiteratureCollectionId: collection.id })
+
+      render(<LiteratureLibraryPage />)
+      await screen.findByRole('heading', { name: collection.name })
+      await openMenu(screen.getByRole('button', { name: 'Collection actions' }))
+      const editCollection = screen.getByRole('menuitem', { name: 'Edit collection' })
+      const deleteCollection = screen.getByRole('menuitem', { name: 'Delete collection' })
+      expect(editCollection.className).toContain('gap-2')
+      expect(editCollection.firstElementChild?.className).toContain('shrink-0')
+      expect(deleteCollection.className).toContain('gap-2')
+      expect(deleteCollection.firstElementChild?.className).toContain('shrink-0')
+      fireEvent.click(deleteCollection)
+
+      const alert = await screen.findByRole('alertdialog')
+      expect(within(alert).getByText(`Delete “${collection.name}”?`)).not.toBeNull()
+      expect(
+        within(alert).getByText(
+          'References in this collection will remain in All references. This action cannot be undone.'
+        )
+      ).not.toBeNull()
+      if (nameConflict) {
+        transact.mockRejectedValueOnce(new Error('literature_collection_name_conflict'))
+      } else {
+        transact.mockResolvedValueOnce({ kind: 'collection', id: collection.id })
+      }
+      fireEvent.click(within(alert).getByRole('button', { name: 'Delete collection' }))
+
+      await waitFor(() =>
+        expect(transact).toHaveBeenCalledWith({
+          kind: 'delete-collection',
+          collectionId: collection.id
+        })
+      )
+      if (nameConflict) {
+        expect(
+          await within(alert).findByText(
+            'A child collection would duplicate a top-level name. Rename it before deleting this collection.'
+          )
+        ).not.toBeNull()
+        fireEvent.click(within(alert).getByRole('button', { name: 'Cancel' }))
+        expect(await screen.findByRole('heading', { name: collection.name })).not.toBeNull()
+      } else {
+        expect(await screen.findByRole('heading', { name: 'All references' })).not.toBeNull()
+      }
     }
-    search.mockImplementation((request: { scope: string }) =>
-      Promise.resolve(
-        request.scope === 'collections'
-          ? { entries: [collection], totalCount: 1 }
-          : request.scope === 'inbox'
-            ? inboxPage
-            : { entries: [] }
-      )
-    )
-    useNavigationStore.setState({ pendingLiteratureCollectionId: collection.id })
-
-    render(<LiteratureLibraryPage />)
-    await screen.findByRole('heading', { name: collection.name })
-    await openMenu(screen.getByRole('button', { name: 'Collection actions' }))
-    const editCollection = screen.getByRole('menuitem', { name: 'Edit collection' })
-    const deleteCollection = screen.getByRole('menuitem', { name: 'Delete collection' })
-    expect(editCollection.className).toContain('gap-2')
-    expect(editCollection.firstElementChild?.className).toContain('shrink-0')
-    expect(deleteCollection.className).toContain('gap-2')
-    expect(deleteCollection.firstElementChild?.className).toContain('shrink-0')
-    fireEvent.click(deleteCollection)
-
-    const alert = await screen.findByRole('alertdialog')
-    expect(within(alert).getByText(`Delete “${collection.name}”?`)).not.toBeNull()
-    expect(
-      within(alert).getByText(
-        'References in this collection will remain in All references. This action cannot be undone.'
-      )
-    ).not.toBeNull()
-    transact.mockResolvedValueOnce({ kind: 'collection', id: collection.id })
-    fireEvent.click(within(alert).getByRole('button', { name: 'Delete collection' }))
-
-    await waitFor(() =>
-      expect(transact).toHaveBeenCalledWith({
-        kind: 'delete-collection',
-        collectionId: collection.id
-      })
-    )
-    expect(await screen.findByRole('heading', { name: 'All references' })).not.toBeNull()
-  })
+  )
 
   it('truncates a long Collection view name without squeezing the action toolbar', async () => {
     const longCollectionName = `Collection ${'research '.repeat(12)}`.trim()
@@ -1702,7 +1753,7 @@ describe('LiteratureLibraryPage', () => {
       })
     )
     const styleSelect = screen.getByRole('combobox', { name: 'Citation style' })
-    expect(styleSelect.textContent).toContain('APA Style 7th edition')
+    await waitFor(() => expect(styleSelect.textContent).toContain('APA Style 7th edition'))
     expect(screen.getByTestId('citation-preview').className).toContain('min-h-48')
     expect(await screen.findByText('(Yan, 2024)')).not.toBeNull()
     expect(
@@ -2232,8 +2283,8 @@ describe('LiteratureLibraryPage', () => {
     const identifierType = within(identifierValue.parentElement!).getByRole('combobox', {
       name: 'Type'
     })
-    expect(identifierType.className).toContain('h-9')
-    expect(identifierValue.className).toContain('h-9')
+    expect(identifierType.className).toContain('h-8')
+    expect(identifierValue.className).toContain('h-8')
 
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Corrective RAG' } })
     fireEvent.change(screen.getByLabelText('Given name'), { target: { value: 'Shiqi' } })
@@ -3274,10 +3325,10 @@ describe('LiteratureLibraryPage', () => {
     const identifierValue = within(detail).getByRole('textbox', { name: 'DOI' })
     const searchButton = within(detail).getByRole('button', { name: 'Search' })
 
-    expect(identifierType.className).toContain('h-9')
+    expect(identifierType.className).toContain('h-8')
     expect(identifierType.style.pointerEvents).toBe('auto')
-    expect(identifierValue.className).toContain('h-9')
-    expect(searchButton.className).toContain('h-9')
+    expect(identifierValue.className).toContain('h-8')
+    expect(searchButton.className).toContain('h-8')
 
     filePreviewRenderCount.value = 0
     fireEvent.click(identifierType)
@@ -4032,6 +4083,57 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
+  it('keeps scroll and selection when a hidden background indicator observes completion', async () => {
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve({ entries: request.scope === 'library' ? [libraryItem] : [] })
+    )
+    const summary = {
+      id: 'background-job',
+      mode: 'metadata' as const,
+      phase: 'apply' as const,
+      state: 'running' as const,
+      total: 1,
+      checked: 1,
+      ready: 0,
+      done: 0,
+      failed: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      completedItemIds: [] as string[]
+    }
+    vi.mocked(window.api.literature.jobs).mockResolvedValue({ jobs: [], summaries: [summary] })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const select = await screen.findByRole('checkbox', { name: `Select ${libraryItem.item.title}` })
+    await screen.findByRole('button', { name: 'Background tasks' })
+    const scroll = document.querySelector<HTMLDivElement>('[data-slot="literature-table-scroll"]')!
+    scroll.scrollTop = 240
+    fireEvent.click(select)
+    expect(screen.queryByRole('button', { name: 'Background tasks' })).toBeNull()
+    const listRequests = search.mock.calls.filter(([request]) => request.scope === 'library').length
+    get.mockResolvedValue({
+      ...libraryItem,
+      item: { ...libraryItem.item, title: 'Updated while reading' },
+      metadataRevision: 2
+    })
+    vi.mocked(window.api.literature.jobs).mockResolvedValue({
+      jobs: [],
+      summaries: [{ ...summary, state: 'completed', done: 1, completedItemIds: [libraryItem.id] }]
+    })
+    await act(async () => {
+      window.dispatchEvent(new Event('literature-jobs-changed'))
+    })
+    await screen.findByText('Updated while reading')
+    expect(scroll.scrollTop).toBe(240)
+    expect(
+      (screen.getByRole('checkbox', { name: 'Select Updated while reading' }) as HTMLInputElement)
+        .checked
+    ).toBe(true)
+    expect(search.mock.calls.filter(([request]) => request.scope === 'library')).toHaveLength(
+      listRequests
+    )
+  })
+
   it('pages filtered ordered results and selects only the current page', async () => {
     const yearOrderedItems = Array.from({ length: 51 }, (_, index) => createLibraryItem(index))
     const titleOrderedItem = {
@@ -4069,6 +4171,15 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Filters' }))
     fireEvent.change(screen.getByLabelText('From year'), { target: { value: '2020' } })
     expect(screen.getByLabelText('References per page').textContent).toContain('25')
+    await waitFor(() =>
+      expect(search).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: 'library',
+          limit: 25,
+          filter: expect.objectContaining({ yearFrom: 2020 })
+        })
+      )
+    )
     await waitFor(() => expect(screen.getAllByLabelText(/^Select Reference /)).toHaveLength(25))
     fireEvent.click(screen.getByLabelText('References per page'))
     fireEvent.click(screen.getByRole('option', { name: '50' }))

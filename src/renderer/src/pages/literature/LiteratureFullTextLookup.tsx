@@ -465,7 +465,6 @@ export const LiteratureFullTextLookup = ({
           {!failed && !missingIdentifiers ? (
             <Button
               variant="ghost"
-              size="sm"
               disabled={searching || Boolean(adding) || savingCredential}
               onClick={retry}
             >
@@ -474,18 +473,12 @@ export const LiteratureFullTextLookup = ({
             </Button>
           ) : null}
           {error === 'attach' || error === 'rate-limited' ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={Boolean(adding) || savingCredential}
-              onClick={retry}
-            >
+            <Button variant="ghost" disabled={Boolean(adding) || savingCredential} onClick={retry}>
               {t('Search again')}
             </Button>
           ) : null}
           <Button
             variant="outline"
-            size="sm"
             disabled={Boolean(adding) || savingCredential}
             onClick={onUpload}
           >
