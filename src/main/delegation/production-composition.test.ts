@@ -957,15 +957,15 @@ describe('production delegated-work composition', () => {
             createTray: () => undefined,
             shutdownBackends,
             prepareForQuit,
-            holdSettingsInstallAdmission: () => () => undefined,
             abortQuitPreparation,
+            holdSettingsInstallAdmission: () => () => undefined,
+            getActiveSettingsInstallId: () => undefined,
             flushSessionPersistence,
             isMigrationInProgress: () => false,
             quit,
             countWindows: () => 1,
             detectActiveSessions: () => [],
             hasActiveReviewerWork: () => false,
-            getActiveSettingsInstallId: () => undefined,
             createConfirmClose: () => confirmClose
           })
           quit()

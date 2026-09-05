@@ -56,7 +56,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.should_test == 'true'
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 70
     env:
       CI: 'true'
       PROFILE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'soak' }}

@@ -278,7 +278,7 @@ describe('managed workspace ownership', () => {
 
     await expect(
       createDeletionOwner(liveSessions).deleteSession(branch.projectId, branch.id)
-    ).resolves.toBe('ordinary')
+    ).resolves.toEqual({ receiptKind: 'ordinary' })
 
     expect([...liveSessions.keys()]).toEqual([source.id])
     await expect(readManagedWorkspaceOwnership(cwd, dataRoot)).resolves.toMatchObject({
