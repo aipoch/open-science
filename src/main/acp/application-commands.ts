@@ -21,12 +21,17 @@ import type {
 } from '../../shared/acp'
 import { toAcpStateCommandResponse } from '../../shared/acp'
 import {
+  defineApplicationCommandContract,
+  validationCodec
+} from '../../shared/application-command-contract'
+import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
   type ApplicationCommandInstallation,
   type ApplicationCommandRegistrar
 } from '../application-command-router'
 import { canAccessSessionPlan, canSatisfyHumanApproval } from '../caller-context'
+import { z } from 'zod'
 import type { AcpHandlerWorkflows } from './handler-workflows'
 import {
   resolveElicitationResponseSessionId,
@@ -36,6 +41,101 @@ import { bindResumeRequestToProject } from './session-project-binding'
 import type { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { preserveSessionSizeLimitCode } from '../session-persistence/application-command-errors'
+
+const acpStateCommandResponseCodec = validationCodec(
+  z.custom<AcpStateCommandResponse>(
+    (value) =>
+      typeof value === 'object' &&
+      value !== null &&
+      Number.isSafeInteger((value as Partial<AcpStateCommandResponse>).revision) &&
+      (value as Partial<AcpStateCommandResponse>).revision! >= 0 &&
+      typeof (value as Partial<AcpStateCommandResponse>).result === 'object' &&
+      (value as Partial<AcpStateCommandResponse>).result !== null
+  )
+)
+
+const planResponseResultCodec = validationCodec(
+  z.custom<Awaited<ReturnType<AcpRuntimeCoordinator['respondSessionPlan']>>>((value) => {
+    if (typeof value !== 'object' || value === null) return false
+    const result = value as Record<string, unknown>
+    if ('kind' in result) {
+      return (
+        result.kind === 'feedback' &&
+        typeof result.routeToInteractionId === 'string' &&
+        typeof result.artifactVersionId === 'string' &&
+        typeof result.text === 'string' &&
+        typeof result.message === 'object' &&
+        result.message !== null &&
+        Number.isSafeInteger(result.planRevision) &&
+        Number(result.planRevision) >= 0
+      )
+    }
+    return (
+      typeof result.projection === 'object' &&
+      result.projection !== null &&
+      typeof result.changed === 'boolean'
+    )
+  })
+)
+
+const acpResponseCommandContracts = Object.freeze({
+  permission: defineApplicationCommandContract(
+    validationCodec(
+      z.tuple([
+        z
+          .object({
+            requestId: z.string().min(1),
+            optionId: z.string().min(1).optional(),
+            cancelled: z.boolean().optional(),
+            restored: z
+              .object({ sessionId: z.string().min(1), projectId: z.string().min(1) })
+              .strict()
+              .optional()
+          })
+          .strict()
+      ])
+    ),
+    acpStateCommandResponseCodec
+  ),
+  elicitation: defineApplicationCommandContract(
+    validationCodec(
+      z.tuple([
+        z
+          .object({
+            requestId: z.string().min(1),
+            action: z.enum(['accept', 'decline', 'cancel'])
+          })
+          .passthrough()
+      ])
+    ),
+    acpStateCommandResponseCodec
+  ),
+  plan: defineApplicationCommandContract(
+    validationCodec(
+      z.tuple([
+        z.union([
+          z
+            .object({
+              projectId: z.string().min(1),
+              sessionId: z.string().min(1),
+              artifactVersionId: z.string().min(1),
+              expectedRevision: z.number().int().nonnegative(),
+              decision: z.enum(['approved', 'rejected'])
+            })
+            .strict(),
+          z
+            .object({
+              projectId: z.string().min(1),
+              sessionId: z.string().min(1),
+              feedback: z.string().min(1)
+            })
+            .strict()
+        ])
+      ])
+    ),
+    planResponseResultCodec
+  )
+})
 
 const acpCommands = Object.freeze({
   getState: defineApplicationCommand<'acp:get-state', readonly [], AcpStateSnapshot>(
@@ -103,12 +203,12 @@ const acpCommands = Object.freeze({
     'acp:respond-permission',
     readonly [response: AcpPermissionResponse],
     AcpStateCommandResponse
-  >('acp:respond-permission'),
+  >('acp:respond-permission', acpResponseCommandContracts.permission),
   respondElicitation: defineApplicationCommand<
     'acp:respond-elicitation',
     readonly [response: ElicitationResponse],
     AcpStateCommandResponse
-  >('acp:respond-elicitation'),
+  >('acp:respond-elicitation', acpResponseCommandContracts.elicitation),
   setPermissionProfile: defineApplicationCommand<
     'acp:set-permission-profile',
     readonly [request: AcpSetPermissionProfileRequest],
@@ -128,7 +228,7 @@ const acpCommands = Object.freeze({
     'acp:respond-plan',
     readonly [request: Parameters<AcpRuntimeCoordinator['respondSessionPlan']>[0]],
     Awaited<ReturnType<AcpRuntimeCoordinator['respondSessionPlan']>>
-  >('acp:respond-plan')
+  >('acp:respond-plan', acpResponseCommandContracts.plan)
 })
 
 const acpApplicationCommands = defineApplicationCommandGroup('acp', [

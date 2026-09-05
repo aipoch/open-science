@@ -191,6 +191,9 @@ describe('application command composition', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.electron.commandNames()).toEqual([
+      'acp:respond-elicitation',
+      'acp:respond-permission',
+      'acp:respond-plan',
       'memory:clear-all',
       'memory:create-category',
       'memory:create-entry',
