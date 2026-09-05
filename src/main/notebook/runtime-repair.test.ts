@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -15,6 +15,10 @@ import {
 } from './runtime-paths'
 import { NotebookRuntimeRepairOwner } from './runtime-repair'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+import { createNotebookEnvironmentLifecycle } from './environment-lifecycle-workflows'
+import { serializeProvisioner } from './environment-operation-foundation'
+import { DefaultRuntimeProvisioner } from './provisioner'
+import { envPrefix, pythonBin } from './runtime-paths'
 import { NotebookSessionAggregate, type NotebookSessionRuntimeBinding } from './session-aggregate'
 
 type RepairOptions = ConstructorParameters<typeof NotebookRuntimeRepairOwner>[0]
@@ -160,6 +164,75 @@ const harness = (
 }
 
 describe('NotebookRuntimeRepairOwner', () => {
+  it.each([false, true])(
+    'E05 preserves queued repair input when cancelled (previously quarantined: %s)',
+    async (quarantined) => {
+      const current = session('session-1')
+      const { owner, options, runtimeRoot } = harness([current.value])
+      const interpreter = pythonBin(envPrefix(runtimeRoot, 'default-python'))
+      mkdirSync(dirname(interpreter), { recursive: true })
+      writeFileSync(interpreter, 'original interpreter')
+      const originalBinding = binding(
+        'python',
+        interpreter,
+        'managed',
+        'default-python',
+        quarantined
+      )
+      current.value.setRuntimeBinding('python', originalBinding)
+      if (quarantined) addRepairRequired(runtimeRoot, interpreter, 'interrupted-install')
+      const registryBefore = existsSync(repairRegistryPath(runtimeRoot))
+        ? readFileSync(repairRegistryPath(runtimeRoot), 'utf8')
+        : undefined
+      const rebuild = vi.fn().mockResolvedValue(undefined)
+      const raw = new DefaultRuntimeProvisioner({
+        root: runtimeRoot,
+        mm: '/unused-mm',
+        channel: 'conda-forge',
+        fetchBundle: vi.fn().mockRejectedValue(new Error('cancelled repair must not fetch')),
+        runArgv: rebuild,
+        verify: vi.fn().mockResolvedValue(undefined)
+      })
+      let releaseR!: () => void
+      const rGate = new Promise<void>((resolve) => {
+        releaseR = resolve
+      })
+      // Only the unrelated queue occupant is replaced. Python cancellation and repair are real.
+      const rStarted = vi.spyOn(raw, 'provisionR').mockImplementation(() => rGate)
+      const serialized = serializeProvisioner(raw)
+      const repairQueued = vi.spyOn(serialized, 'repair')
+      const lifecycle = createNotebookEnvironmentLifecycle({
+        provisioner: serialized,
+        root: runtimeRoot,
+        projectProgress: () => undefined,
+        onRepairStarting: () => owner.prepareExplicitRepair('python', originalBinding)
+      })
+      const r = lifecycle.provision('r')
+      await vi.waitFor(() => expect(rStarted).toHaveBeenCalledOnce())
+      const repair = lifecycle.repair('python', interpreter).catch((error: unknown) => error)
+      try {
+        await vi.waitFor(() => expect(repairQueued).toHaveBeenCalledOnce())
+        lifecycle.cancel('python')
+      } finally {
+        releaseR()
+      }
+      await r
+      expect(await repair).toMatchObject({ message: 'Runtime setup cancelled.' })
+      expect(rebuild).not.toHaveBeenCalled()
+      expect(readFileSync(interpreter, 'utf8')).toBe('original interpreter')
+      const registryAfter = existsSync(repairRegistryPath(runtimeRoot))
+        ? readFileSync(repairRegistryPath(runtimeRoot), 'utf8')
+        : undefined
+      expect.soft(registryAfter).toBe(registryBefore)
+      expect.soft(current.value.runtimeBinding('python')).toEqual(originalBinding)
+      expect.soft(options.environmentOperations.blockRepair).not.toHaveBeenCalled()
+      expect.soft(current.terminate).not.toHaveBeenCalled()
+      if (quarantined) {
+        expect.soft(readRepairRequiredReason(runtimeRoot, interpreter)).toBe('interrupted-install')
+      }
+    }
+  )
+
   it('quarantines and stops running and idle default-runtime kernels before repair', async () => {
     const managed = binding(
       'python',

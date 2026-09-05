@@ -149,6 +149,128 @@ const harness = (
 }
 
 describe('NotebookPackageOperations', () => {
+  it.each([
+    {
+      label: 'partially verified batch',
+      ok: true,
+      needsRestart: true,
+      changes: true,
+      risk: 'confirmed'
+    },
+    {
+      label: 'verified changes without installer restart flag',
+      ok: true,
+      needsRestart: false,
+      changes: true,
+      risk: 'none'
+    },
+    {
+      label: 'installer failure after partial changes',
+      ok: false,
+      needsRestart: false,
+      changes: true,
+      risk: 'possible'
+    },
+    {
+      label: 'installer failure with mutation risk and no readable delta',
+      ok: false,
+      needsRestart: false,
+      changes: false,
+      risk: 'possible'
+    }
+  ] as const)(
+    'E06 recommends R restart after $label',
+    async ({ ok, needsRestart, changes, risk }) => {
+      const activeSession = session('session-1')
+      const { owner, options } = harness(activeSession)
+      const packageChanges = changes
+        ? [
+            {
+              name: 'dplyr',
+              ecosystem: 'r' as const,
+              relationship: 'requested' as const,
+              change: 'updated' as const,
+              beforeVersion: '1.0',
+              afterVersion: '1.1'
+            }
+          ]
+        : []
+      vi.mocked(options.installPackages).mockResolvedValue({
+        ok,
+        needsRestart,
+        log: 'dplyr changed; missing unavailable',
+        method: 'cran',
+        attempts: [
+          {
+            groupOrdinal: 0,
+            installer: 'r-install-packages',
+            packages: ['dplyr', 'missing'],
+            status: ok ? 'succeeded' : 'failed',
+            mutationRisk: risk
+          }
+        ]
+      })
+      vi.mocked(options.environmentStateTracker.refreshAfterPackageMutation).mockResolvedValue({
+        result: 'failure',
+        unsatisfiedPackages: ['missing'],
+        packageChanges
+      })
+
+      const result = await owner.manage({ language: 'r', packages: ['dplyr', 'missing'] })
+
+      expect(result.ok).toBe(false)
+      expect(result.packageChanges).toEqual(packageChanges)
+      expect.soft(result.needsRestart).toBe(true)
+      expect
+        .soft(options.environmentOperations.recommendRestart)
+        .toHaveBeenCalledWith('r', 'default-r')
+      expect.soft(options.notifyChanged).toHaveBeenCalledWith(activeSession)
+    }
+  )
+
+  it('E06 does not recommend restart when admission prevents the installer from starting', async () => {
+    const { owner, options } = harness(session('session-1'), {
+      isDefaultEnvironmentDisabled: vi.fn().mockResolvedValue(true)
+    })
+    const result = await owner.manage({ language: 'r', packages: ['dplyr'] })
+    expect(result).toMatchObject({ ok: false, needsRestart: false })
+    expect(options.installPackages).not.toHaveBeenCalled()
+    expect(options.environmentOperations.recommendRestart).not.toHaveBeenCalled()
+  })
+
+  it.each(['failed', 'skipped'] as const)(
+    'E06 does not infer mutation from observations or an attempt that is %s without mutation',
+    async (status) => {
+      const { owner, options } = harness(session('session-1'))
+      vi.mocked(options.installPackages).mockResolvedValue({
+        ok: false,
+        needsRestart: false,
+        log: '',
+        attempts: [
+          {
+            groupOrdinal: 0,
+            installer: 'r-install-packages',
+            packages: ['missing'],
+            status,
+            mutationRisk: 'none'
+          }
+        ]
+      })
+      vi.mocked(options.environmentStateTracker.refreshAfterPackageMutation).mockResolvedValue({
+        result: 'failure',
+        packageChanges: [
+          { name: 'dplyr', ecosystem: 'r', relationship: 'dependency', change: 'observed' },
+          { name: 'tibble', ecosystem: 'r', relationship: 'dependency', change: 'unchanged' }
+        ]
+      })
+      await expect(owner.manage({ language: 'r', packages: ['missing'] })).resolves.toMatchObject({
+        ok: false,
+        needsRestart: false
+      })
+      expect(options.environmentOperations.recommendRestart).not.toHaveBeenCalled()
+    }
+  )
+
   it('inspects the Session-bound managed environment through the shared read slot', async () => {
     const managed = binding('python', '/runtime/analysis/python', 'managed', 'analysis')
     const activeSession = session('session-1', managed)

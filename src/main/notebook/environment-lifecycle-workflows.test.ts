@@ -40,6 +40,7 @@ const fakeProvisioner = (over: Partial<RuntimeProvisioner> = {}): RuntimeProvisi
   provisionR: vi.fn().mockResolvedValue(undefined),
   upgradeIfNeeded: vi.fn().mockResolvedValue(undefined),
   repair: vi.fn().mockImplementation(async (_language, _onProgress, options) => {
+    await options?.onStarting?.()
     await options?.onVerified?.()
   }),
   restoreRelocatedEnvs: vi.fn().mockResolvedValue(undefined),
@@ -159,6 +160,7 @@ describe('createNotebookEnvironmentLifecycle', () => {
     // UI repair is the user's Reset: it force-clears the quarantine (force: true).
     expect(provisioner.repair).toHaveBeenCalledWith('r', expect.any(Function), {
       force: true,
+      onStarting: expect.any(Function),
       onVerified: expect.any(Function)
     })
   })
@@ -169,7 +171,8 @@ describe('createNotebookEnvironmentLifecycle', () => {
       order.push('prepare')
     })
     const provisioner = fakeProvisioner({
-      repair: vi.fn(async () => {
+      repair: vi.fn(async (_language, _progress, options) => {
+        await options?.onStarting?.()
         order.push('repair')
       })
     })
@@ -198,14 +201,16 @@ describe('createNotebookEnvironmentLifecycle', () => {
 
   it('does not enter destructive repair when runtime coordination fails', async () => {
     const provisioner = fakeProvisioner()
+    const onRepairCompleted = vi.fn()
     const lifecycle = createLifecycle(provisioner, {
+      onRepairCompleted,
       onRepairStarting: async () => {
         throw new Error('binding persist denied')
       }
     })
 
     await expect(lifecycle.repair('r', 'default-r')).rejects.toThrow('binding persist denied')
-    expect(provisioner.repair).not.toHaveBeenCalled()
+    expect(onRepairCompleted).not.toHaveBeenCalled()
   })
 
   it('publishes a successful verified repair back to the runtime service', async () => {
@@ -417,6 +422,7 @@ describe('createNotebookEnvironmentLifecycle', () => {
     await lifecycle.repair('python', 'default-python')
     expect(provisioner.repair).toHaveBeenCalledWith('python', expect.any(Function), {
       force: true,
+      onStarting: expect.any(Function),
       onVerified: expect.any(Function)
     })
 

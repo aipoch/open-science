@@ -107,8 +107,9 @@ export const RESERVED_ENV_NAMES: ReadonlySet<string> = new Set([
 // Validates a user-supplied environment name for manage_environments create/remove BEFORE it is
 // used to compose runtime/envs/<name> (design D8). Unlike resolveEnvName it never aliases — a
 // managed op must name a real, non-reserved env. Throws on missing/empty, path traversal or an
-// unsafe segment, or a reserved/default name. This is the single choke point that stops a hostile
-// name (e.g. "../../…") from escaping the runtime root into a recursive create/delete.
+// unsafe segment, or a reserved/default name (including versioned-default prefixes). This is the
+// single choke point that stops a hostile name (e.g. "../../…") from escaping the runtime root into
+// a recursive create/delete.
 export const assertSafeEnvName = (name: string | undefined): string => {
   const trimmed = name?.trim()
   if (!trimmed) throw new Error('An environment name is required.')
@@ -118,7 +119,11 @@ export const assertSafeEnvName = (name: string | undefined): string => {
         'starting with a letter or digit.'
     )
   }
-  if (RESERVED_ENV_NAMES.has(trimmed)) {
+  if (
+    RESERVED_ENV_NAMES.has(trimmed) ||
+    trimmed.startsWith(`${DEFAULT_PY_ENV}-`) ||
+    trimmed.startsWith(`${DEFAULT_R_ENV}-`)
+  ) {
     throw new Error(
       `"${trimmed}" is a reserved environment name (managed by the app); choose another name.`
     )

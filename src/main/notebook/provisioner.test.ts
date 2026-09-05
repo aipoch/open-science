@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -37,6 +37,7 @@ import {
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import { envsLockDir } from './runtime-relocation'
 import { serializeProvisioner } from './environment-operation-foundation'
+import { EnvironmentLeaseManager } from './environment-lease-manager'
 import { withExclusiveCacheLock, withSharedCacheLock } from './pkgs-cache-lock'
 import { validateAndSeedPack } from './pack-content'
 import { micromambaCacheLockKey } from './micromamba-cache'
@@ -2343,6 +2344,72 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     expect(order[0]).toBe(`lock:${DEFAULT_PY_ENV}`)
     expect(order.slice(-2)).toEqual(['repair:completed', 'unlock'])
     expect(runArgv).toHaveBeenCalled()
+  })
+
+  it('E05 stops active execution before taking the repair lease and ignores later cancellation', async () => {
+    const root = makeRoot()
+    const leases = new EnvironmentLeaseManager()
+    const execution = await leases.acquire(DEFAULT_PY_ENV, 'shared').granted
+    const onStarting = vi.fn(async () => {
+      execution.release()
+      provisioner.cancel('python')
+    })
+    const onVerified = vi.fn(() => {
+      expect(leases.snapshot().environments[0].holders).toEqual({ shared: 0, exclusive: 1 })
+    })
+    const provisioner = new DefaultRuntimeProvisioner(
+      makeDeps(root, {
+        withPrefixLock: async (environment, operation) => {
+          // Assert before waiting, so an inverted order fails rather than hanging on the live lease.
+          expect(onStarting).toHaveBeenCalledOnce()
+          const lease = await leases.acquire(environment, 'exclusive').granted
+          try {
+            return await operation()
+          } finally {
+            lease.release()
+          }
+        }
+      })
+    )
+    try {
+      await provisioner.repair('python', () => undefined, { onStarting, onVerified })
+      expect(onVerified).toHaveBeenCalledOnce()
+      expect(provisioner.status()).toMatchObject({ pythonReady: true, provisioning: false })
+      expect(leases.snapshot().environments).toEqual([])
+    } finally {
+      leases.dispose()
+    }
+  })
+
+  it('E05 preserves the original prefix and isolation when preparation fails', async () => {
+    const root = makeRoot()
+    const interpreter = pythonBin(envPrefix(root, DEFAULT_PY_ENV))
+    mkdirSync(dirname(interpreter), { recursive: true })
+    writeFileSync(interpreter, 'original')
+    const rebuild = vi.fn()
+    const onVerified = vi.fn()
+    const provisioner = new DefaultRuntimeProvisioner(makeDeps(root, { runArgv: rebuild }))
+
+    await expect(
+      provisioner.repair('python', () => undefined, {
+        force: true,
+        onStarting: () => {
+          addRepairRequired(root, DEFAULT_PY_ENV, 'protected-identity-change')
+          throw new Error('binding persist denied')
+        },
+        onVerified
+      })
+    ).rejects.toThrow('binding persist denied')
+
+    expect(readFileSync(interpreter, 'utf8')).toBe('original')
+    expect(rebuild).not.toHaveBeenCalled()
+    expect(onVerified).not.toHaveBeenCalled()
+    expect(provisioner.status()).toMatchObject({ pythonRecoveryBlocked: true, provisioning: false })
+    // A failed preparation must release the uninterruptible language guard.
+    provisioner.cancel('python')
+    await expect(provisioner.repair('python', () => undefined)).rejects.toThrow(
+      'Runtime setup cancelled.'
+    )
   })
 
   it.each([

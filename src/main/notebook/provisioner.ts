@@ -112,6 +112,9 @@ export type FetchedBundle = {
 
 export type RuntimeRepairOptions = {
   force?: boolean
+  // Runs after queued cancellation is consumed, before acquiring the environment lock so active
+  // kernels can release their execution leases. Per-language cancellation is ignored afterward.
+  onStarting?: () => Promise<void> | void
   // Runs only after the rebuilt interpreter verifies, while the per-environment lock is still held.
   onVerified?: () => Promise<void> | void
 }
@@ -1042,16 +1045,14 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // rebuild), so a package install into this env can't slip in between the rm and the rebuild and
     // write into a half-deleted prefix. The rebuild calls the LOCK-FREE do* variants (not the public
     // provision*), which would otherwise re-acquire this same exclusive lock and deadlock.
-    return this.withEnvPrefixLock(spec.name, async () => {
-      // runLanguage consumes a QUEUED cancel (beginLanguageRun throws) BEFORE the rm below, so
-      // cancelling a queued Reset never leaves a deleted-but-not-rebuilt env.
-      await this.runLanguage(lang, async () => {
-        // Mark this repair UNINTERRUPTIBLE before any destructive step: once we clear the quarantine
-        // and rm the prefix there is no safe stopping point — a per-language Cancel arriving mid-repair
-        // would abort the rebuild and leave a missing/half-built env with the block already cleared.
-        // (Global/quit cancel still works to handle app shutdown.)
-        this.uninterruptible.add(lang)
-        try {
+    // Consume queued cancellation before preparation can invalidate bindings or persist isolation.
+    return this.runLanguage(lang, async () => {
+      // Preparation itself has side effects; per-language cancellation is no longer safe from here.
+      // Global/quit cancellation remains available for app shutdown.
+      this.uninterruptible.add(lang)
+      try {
+        await opts?.onStarting?.()
+        await this.withEnvPrefixLock(spec.name, async () => {
           if (opts?.force) {
             // EXPLICIT user recovery: clear the quarantine (in-memory block + retained journal record +
             // sidecar) so the rebuild below — and its inner materialize — aren't refused by the block
@@ -1089,10 +1090,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
             )
             throw error
           }
-        } finally {
-          this.uninterruptible.delete(lang)
-        }
-      })
+        })
+      } finally {
+        this.uninterruptible.delete(lang)
+      }
     })
   }
 

@@ -221,6 +221,23 @@ class NotebookPackageMutationOwner {
               )
             }
           }
+          if (installResult && request.language === 'r') {
+            // Batch satisfaction and a live R namespace's freshness are independent. A failed
+            // installer may already have changed packages even when inventory cannot prove a delta.
+            installResult = {
+              ...installResult,
+              needsRestart:
+                installResult.needsRestart ||
+                Boolean(
+                  installResult.packageChanges?.some((change) =>
+                    ['installed', 'updated', 'removed'].includes(change.change)
+                  ) ||
+                  installResult.attempts?.some(
+                    (attempt) => attempt.status !== 'skipped' && attempt.mutationRisk !== 'none'
+                  )
+                )
+            }
+          }
           if (installResult?.ok && verification?.result === 'failure') {
             const packages =
               verification.unsatisfiedPackages?.join(', ') || request.packages.join(', ')
@@ -229,7 +246,6 @@ class NotebookPackageMutationOwner {
             installResult = {
               ...installResult,
               ok: false,
-              needsRestart: false,
               error: inventoryFailure
                 ? `Package installation could not be verified in the target runtime: ${packages}. ` +
                   'The installer exited successfully, but the environment inventory refresh failed.'

@@ -7375,7 +7375,7 @@ describe('notebook runtime service', () => {
 
       expect(result).toMatchObject({
         ok: false,
-        needsRestart: false,
+        needsRestart: true,
         method: 'conda'
       })
       expect(result.error).toContain('dplyr')
@@ -7415,7 +7415,7 @@ describe('notebook runtime service', () => {
 
       const result = await service.managePackages({ language: 'python', packages: ['numpy'] })
 
-      expect(result).toMatchObject({ ok: false, needsRestart: false, method: 'conda' })
+      expect(result).toMatchObject({ ok: false, needsRestart: true, method: 'conda' })
       expect(result.error).toMatch(/inventory refresh failed/i)
       expect(info).not.toHaveBeenCalledWith('package installer completed', expect.anything())
       expect(warn).toHaveBeenCalledWith(
@@ -8287,55 +8287,58 @@ describe('notebook runtime service', () => {
       })
     })
 
-    it('flags restartRecommended on the R env after an R install and clears it on restart', async () => {
-      const root = await createStorageRoot()
-      const service = new NotebookRuntimeService({
-        configRoot: root,
-        dataRoot: root,
-        projectId: 'default-project',
-        repository: new NotebookRunRepository(root),
-        environmentStateTracker: {
-          prepareRun: vi.fn(),
-          captureCompletedRun: vi.fn(),
-          inspectPackages: vi.fn(),
-          markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
-          refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
-        },
-        executorFactory: () => ({
-          execute: async (request): Promise<NotebookExecutionResult> => ({
-            status: 'completed',
-            stdout: '',
-            stderr: '',
-            traceback: '',
-            cwdAfter: request.cwd,
-            outputs: []
+    it.each([true, false])(
+      'flags restartRecommended on the R env after an install (ok: %s) and clears it on restart',
+      async (ok) => {
+        const root = await createStorageRoot()
+        const service = new NotebookRuntimeService({
+          configRoot: root,
+          dataRoot: root,
+          projectId: 'default-project',
+          repository: new NotebookRunRepository(root),
+          environmentStateTracker: {
+            prepareRun: vi.fn(),
+            captureCompletedRun: vi.fn(),
+            inspectPackages: vi.fn(),
+            markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+            refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
+          },
+          executorFactory: () => ({
+            execute: async (request): Promise<NotebookExecutionResult> => ({
+              status: 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }),
+            shutdown: async () => ({ reaped: true })
           }),
-          shutdown: async () => ({ reaped: true })
-        }),
-        // An R install reports needsRestart; a Python install would not (asserted below).
-        installPackagesImpl: async (request) => ({
-          ok: true,
-          needsRestart: request.language === 'r',
-          log: 'done'
+          // An R install reports needsRestart; a Python install would not (asserted below).
+          installPackagesImpl: async (request) => ({
+            ok,
+            needsRestart: request.language === 'r',
+            log: 'done'
+          })
         })
-      })
 
-      // Spawn the R kernel status entry so the env view has something to flag.
-      await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'r' })
+        // Spawn the R kernel status entry so the env view has something to flag.
+        await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'r' })
 
-      const rEntry = (
-        s: Awaited<ReturnType<typeof service.state>>
-      ): NotebookEnvironmentStatus | undefined =>
-        s.environments.find((entry) => entry.processKey === 'r:default-r')
+        const rEntry = (
+          s: Awaited<ReturnType<typeof service.state>>
+        ): NotebookEnvironmentStatus | undefined =>
+          s.environments.find((entry) => entry.processKey === 'r:default-r')
 
-      await service.managePackages({ language: 'r', packages: ['ggplot2'] })
-      const afterInstall = await service.state({ sessionId: 's', workspaceCwd: root })
-      expect(rEntry(afterInstall)?.restartRecommended).toBe(true)
+        await service.managePackages({ language: 'r', packages: ['ggplot2'] })
+        const afterInstall = await service.state({ sessionId: 's', workspaceCwd: root })
+        expect(rEntry(afterInstall)?.restartRecommended).toBe(true)
 
-      await service.restart({ sessionId: 's', workspaceCwd: root })
-      const afterRestart = await service.state({ sessionId: 's', workspaceCwd: root })
-      expect(rEntry(afterRestart)?.restartRecommended).toBe(false)
-    })
+        await service.restart({ sessionId: 's', workspaceCwd: root })
+        const afterRestart = await service.state({ sessionId: 's', workspaceCwd: root })
+        expect(rEntry(afterRestart)?.restartRecommended).toBe(false)
+      }
+    )
 
     it('does not flag restartRecommended for a Python install', async () => {
       const root = await createStorageRoot()
@@ -12594,10 +12597,10 @@ describe('v4 runtime bindings & agent tools', () => {
       }
     })
 
-    // A versioned app-managed env slips past assertSafeEnvName but is refused by the provenance guard.
+    // Versioned defaults share the same reserved-name guard on creation and removal.
     await expect(
       service.manageEnvironments({ action: 'remove', name: 'default-python-3.13' })
-    ).rejects.toThrow(/app-managed and cannot be removed/)
+    ).rejects.toThrow(/reserved environment name/)
     expect(removed).toEqual([])
 
     // An agent-created env is removable.
