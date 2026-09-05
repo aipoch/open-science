@@ -998,8 +998,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       })
       await loadNotebookState()
     } catch (error) {
-      setActionError(getErrorMessage(error))
       await loadNotebookState()
+      setActionError(getErrorMessage(error))
     } finally {
       setIsAbortingWrite(false)
     }
