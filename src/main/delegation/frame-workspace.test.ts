@@ -125,3 +125,73 @@ describe('production delegated Frame workspace', () => {
     }
   )
 })
+
+describe('reported workspace lease regression', () => {
+  it.each(['before failure', 'after failure'] as const)(
+    'D02 closes a lease resolved %s when another input fails',
+    async (timing) => {
+      root = await mkdtemp(join(tmpdir(), 'delegated-workspace-lease-'))
+      const input = join(root, 'input.csv')
+      await writeFile(input, 'value\n1\n')
+      const close = vi.fn(async () => undefined)
+      let release!: () => void
+      const delayed = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let rejected!: () => void
+      const rejection = new Promise<void>((resolve) => {
+        rejected = resolve
+      })
+      const workspace = createProductionFrameWorkspace({
+        root: join(root, 'workspaces'),
+        async resolveInput(identity) {
+          if (identity === 'upload-version:broken') {
+            rejected()
+            throw new Error('input resolution failed')
+          }
+          if (timing === 'after failure') await delayed
+          return { path: input, close }
+        }
+      })
+      const preparation = workspace
+        .prepare({ projectId: 'project-1', sessionId: 'session-1' }, 'frame-1', [
+          'upload-version:valid',
+          'upload-version:broken'
+        ])
+        .then(
+          (value) => ({ value }),
+          (error) => ({ error })
+        )
+      await rejection
+      // Drain the immediate rejection before allowing the other resolver to finish.
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      release()
+      expect(await preparation).toMatchObject({ error: { message: 'input resolution failed' } })
+      expect(close).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('D02 closes every resolved lease exactly once when copying fails', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-workspace-copy-'))
+    const closes = [vi.fn(async () => undefined), vi.fn(async () => undefined)]
+    const workspace = createProductionFrameWorkspace({
+      root: join(root, 'workspaces'),
+      async resolveInput(identity) {
+        return {
+          path: join(root!, 'input.csv'),
+          close: closes[identity === 'upload-version:first' ? 0 : 1],
+          copyTo: async () => {
+            throw new Error('copy failed')
+          }
+        }
+      }
+    })
+    await expect(
+      workspace.prepare({ projectId: 'project-1', sessionId: 'session-1' }, 'frame-1', [
+        'upload-version:first',
+        'upload-version:second'
+      ])
+    ).rejects.toThrow('copy failed')
+    for (const close of closes) expect(close).toHaveBeenCalledOnce()
+  })
+})
