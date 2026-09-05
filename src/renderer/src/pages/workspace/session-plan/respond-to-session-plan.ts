@@ -204,5 +204,10 @@ export const respondToSessionPlan = async (
     }
     throw error
   }
-  await refreshSessionPlanProjection({ ...target, authoritativeProjection })
+  try {
+    await refreshSessionPlanProjection({ ...target, authoritativeProjection })
+  } catch (error) {
+    // The command committed. Existing Plan events and later reads can refresh its projection.
+    console.warn('Plan response committed, but projection refresh failed.', error)
+  }
 }

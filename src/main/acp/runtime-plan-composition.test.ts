@@ -263,6 +263,88 @@ beforeEach(() => {
 })
 
 describe('ACP Session Plan approval causality', () => {
+  it.each(
+    ['approved', 'rejected', 'feedback'].flatMap((responseKind) =>
+      [false, true].map((reusePrompt) => ({
+        responseKind: responseKind as 'approved' | 'rejected' | 'feedback',
+        reusePrompt
+      }))
+    )
+  )(
+    'P02 preserves the replacement waiter for $responseKind (reuse prompt: $reusePrompt)',
+    async ({ responseKind, reusePrompt }) => {
+      const harness = createHarness()
+      const replacementPrompt = reusePrompt ? 'prompt-1' : 'prompt-2'
+      const controller = new AbortController()
+      const generation = harness.workflow
+        .call({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          operation: 'generate',
+          input: {},
+          signal: controller.signal
+        })
+        .catch((error: unknown) => error)
+      await vi.waitFor(() =>
+        expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+      )
+      let releaseBegin!: () => void
+      const barrier = new Promise<void>((resolve) => {
+        releaseBegin = resolve
+      })
+      const originalBegin =
+        harness.deliveries.begin.getMockImplementation() as () => Promise<boolean>
+      harness.deliveries.begin.mockImplementationOnce(async () => {
+        await barrier
+        return originalBegin()
+      })
+      const response = harness.workflow.respond(
+        responseKind === 'feedback'
+          ? { projectId: 'project-1', sessionId: 'session-1', feedback: 'Revise the analysis.' }
+          : {
+              projectId: 'project-1',
+              sessionId: 'session-1',
+              artifactVersionId: 'version-1',
+              expectedRevision: 1,
+              decision: responseKind
+            }
+      )
+      await vi.waitFor(() => expect(harness.deliveries.begin).toHaveBeenCalledOnce())
+      controller.abort()
+      await expect(generation).resolves.toBeInstanceOf(Error)
+      harness.sessionInteractions.release(harness.interaction)
+      harness.sessionInteractions.claim({
+        sessionId: 'session-1',
+        kind: 'prompt',
+        promptMessageId: replacementPrompt
+      })
+      harness.interactions.register({
+        sessionId: 'session-1',
+        artifactVersionId: 'version-2',
+        interactionId: replacementPrompt
+      })
+      const received = vi.fn()
+      const replacement = harness.interactions
+        .parkApproval('session-1', replacementPrompt)
+        .then(received, () => undefined)
+      try {
+        releaseBegin()
+        await response
+        expect.soft(received).not.toHaveBeenCalled()
+        expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe(replacementPrompt)
+        expect(harness.deliveries.clear).not.toHaveBeenCalled()
+        expect(harness.deliveries.rearmUnaccepted).toHaveBeenCalledWith(
+          'project-1',
+          'session-1',
+          'receipt-1'
+        )
+      } finally {
+        harness.interactions.clearSession('session-1', 'test cleanup')
+        await replacement
+      }
+    }
+  )
+
   it('aborts generate by clearing the real approval waiter while retaining the pending Plan', async () => {
     const harness = createHarness()
     const controller = new AbortController()

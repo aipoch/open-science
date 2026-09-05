@@ -18,6 +18,15 @@ import {
   type ProviderPromptExecutionInput
 } from './provider-prompt-executor'
 import type { AcpProviderTurnAdapter, AcpProviderTurnProbe } from './provider-turn-adapter'
+import {
+  sanitizeSessionRuntimeContext,
+  type SessionRuntimeContext
+} from '../../shared/session-persistence'
+import {
+  SessionPlanDeliveryOwner,
+  type SessionPlanDeliverySessions
+} from './session-plan-delivery-owner'
+import { composeAcpRuntimePlanWorkflow } from './runtime-plan-composition'
 
 type NextUpdate = Awaited<ReturnType<ActiveSession['nextUpdate']>>
 
@@ -129,6 +138,86 @@ const setup = (
 }
 
 describe('AcpProviderPromptExecutor', () => {
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'P03 does not requeue accepted output after a receipt revision conflict on %s',
+    async (frameworkId) => {
+      const fixture = setup()
+      let context: SessionRuntimeContext = {
+        version: 1,
+        revision: 0,
+        plan: {
+          artifactId: 'artifact-1',
+          artifactVersionId: 'version-1',
+          artifactChecksum: 'a'.repeat(64),
+          originatingPromptMessageId: 'prompt-1',
+          approval: 'approved',
+          stepStatuses: {},
+          delivery: {
+            commandId: 'command-1',
+            kind: 'approved-plan',
+            state: 'delivering',
+            originatingPromptMessageId: 'prompt-1',
+            createdAt: 1
+          }
+        }
+      }
+      let concurrentWritePending = true
+      const sessions: SessionPlanDeliverySessions = {
+        readSessionRuntimeContext: vi.fn(async () => structuredClone(context)),
+        patchSessionRuntimeContext: vi.fn(async (command) => {
+          if (concurrentWritePending) {
+            concurrentWritePending = false
+            // An unrelated owner wins the same runtime-context revision; the receipt is unchanged.
+            context = { ...context, revision: context.revision + 1 }
+          }
+          if (command.expectedRevision !== context.revision) {
+            throw Object.assign(new Error('revision conflict'), { code: 'revision-conflict' })
+          }
+          const next = sanitizeSessionRuntimeContext({
+            ...context,
+            ...command.patch,
+            revision: context.revision + 1
+          })
+          if (!next) throw new Error('Session runtime context patch is not JSON-safe.')
+          context = next
+          return structuredClone(context)
+        })
+      }
+      const deliveries = new SessionPlanDeliveryOwner(sessions)
+      const workflow = composeAcpRuntimePlanWorkflow(
+        {} as Parameters<typeof composeAcpRuntimePlanWorkflow>[0],
+        {} as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
+        { publication: { pushEvent: vi.fn() } } as unknown as Parameters<
+          typeof composeAcpRuntimePlanWorkflow
+        >[2],
+        { deliveries }
+      )
+      const disconnected = new Error('provider disconnected after first output')
+      vi.mocked(fixture.session.nextUpdate)
+        .mockResolvedValueOnce(update())
+        .mockRejectedValueOnce(disconnected)
+      await expect(
+        fixture.executor.execute({
+          ...fixture.input,
+          frameworkId,
+          onAccepted: () =>
+            workflow.prompt.providerAccepted('session-1', {
+              kind: 'app-continuation',
+              planDelivery: { projectId: 'project-1', commandId: 'command-1' }
+            })
+        })
+      ).rejects.toBe(disconnected)
+      expect(fixture.routeNotification).toHaveBeenCalledWith(notification)
+      // A fresh owner sees only persisted state, as after a restart. Recovery uses this public operation.
+      const restartedOwner = new SessionPlanDeliveryOwner(sessions)
+      const requeued = await restartedOwner.rearmUnaccepted('project-1', 'session-1', 'command-1')
+      expect({ requeued, state: context.plan?.delivery?.state }).toEqual({
+        requeued: false,
+        state: 'accepted'
+      })
+    }
+  )
+
   it('gives the Claude adapter a transcript reader for the active config root', async () => {
     const executor = new AcpProviderPromptExecutor({
       backendGeneration: {

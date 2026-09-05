@@ -172,6 +172,7 @@ const composeAcpRuntimePlanWorkflow = (
     interactions.rejectApproval(sessionId, reason)
   }
   const call = async (input: AcpSessionPlanCall): Promise<unknown> => {
+    const approvalToken = interactions.approvalTokenFor(input.sessionId)
     if (!service) throw new Error('Session Plan capability is not configured.')
     if (input.operation === 'generate') {
       const execution = sessionInteractions.current(input.sessionId)
@@ -296,7 +297,7 @@ const composeAcpRuntimePlanWorkflow = (
           authorization.interactionSequence
         )
       }
-      interactions.resolveApproval(input.sessionId, result)
+      interactions.resolveApproval(input.sessionId, result, approvalToken)
       if (result.deliveryCommandId) {
         await clearDeliveryReceipt(input.projectId, input.sessionId, result.deliveryCommandId)
       }
@@ -374,6 +375,7 @@ const composeAcpRuntimePlanWorkflow = (
   const respond = async (input: PlanResponseCommand): Promise<PlanResponseResult> => {
     if (!service) throw new Error('Session Plan capability is not configured.')
     const approvalInteractionId = interactions.approvalInteractionIdFor(input.sessionId)
+    const approvalToken = interactions.approvalTokenFor(input.sessionId)
     const feedbackInteraction =
       input.decision === undefined ? sessionInteractions.current(input.sessionId) : undefined
     const detachedFeedback = input.decision === undefined && approvalInteractionId === undefined
@@ -418,7 +420,7 @@ const composeAcpRuntimePlanWorkflow = (
         ? (): void => {
             const activeInteraction = sessionInteractions.current(input.sessionId)
             if (
-              interactions.approvalInteractionIdFor(input.sessionId) === approvalInteractionId &&
+              interactions.approvalTokenFor(input.sessionId) === approvalToken &&
               interactions.interactionIdFor(input.sessionId, current.artifactVersionId) ===
                 approvalInteractionId &&
               activeInteraction?.kind === 'prompt' &&
@@ -441,7 +443,7 @@ const composeAcpRuntimePlanWorkflow = (
     const beforeDecisionCommit =
       input.decision !== undefined && approvalInteractionId
         ? (): boolean =>
-            interactions.approvalInteractionIdFor(input.sessionId) === approvalInteractionId &&
+            interactions.approvalTokenFor(input.sessionId) === approvalToken &&
             interactions.interactionIdFor(input.sessionId, current.artifactVersionId) ===
               approvalInteractionId
         : undefined
@@ -461,7 +463,7 @@ const composeAcpRuntimePlanWorkflow = (
       const waiterDetached =
         input.decision !== undefined &&
         approvalInteractionId !== undefined &&
-        interactions.approvalInteractionIdFor(input.sessionId) !== approvalInteractionId
+        interactions.approvalTokenFor(input.sessionId) !== approvalToken
       if (!waiterDetached) throw error
       retriedAfterDecisionDetach = true
       result = await service.respond({
@@ -478,7 +480,7 @@ const composeAcpRuntimePlanWorkflow = (
         interactionIsLive &&
         !retriedAfterDecisionDetach &&
         approvalInteractionId !== undefined &&
-        interactions.approvalInteractionIdFor(input.sessionId) === approvalInteractionId
+        interactions.approvalTokenFor(input.sessionId) === approvalToken
       if (result.deliveryCommandId && !sameWaiterIsLive) {
         publishProjection(input.sessionId, result.projection)
         return result
@@ -492,7 +494,8 @@ const composeAcpRuntimePlanWorkflow = (
       }
       const handedOffResult = { ...result }
       const resolved =
-        interactionIsLive && interactions.resolveApproval(input.sessionId, handedOffResult)
+        interactionIsLive &&
+        interactions.resolveApproval(input.sessionId, handedOffResult, approvalToken)
       if (result.deliveryCommandId && !resolved) {
         await rearmDeliveryReceipt(input.projectId, input.sessionId, result.deliveryCommandId)
         const queuedProjection =
@@ -565,25 +568,26 @@ const composeAcpRuntimePlanWorkflow = (
       currentInteraction.sequence === feedbackInteraction.sequence &&
       currentInteraction.promptMessageId === feedbackInteraction.promptMessageId
     const sameFeedbackWaiterIsLive =
-      interactionIsCurrent &&
-      interactions.approvalInteractionIdFor(input.sessionId) === approvalInteractionId
+      interactionIsCurrent && interactions.approvalTokenFor(input.sessionId) === approvalToken
     if (!sameFeedbackWaiterIsLive) {
       return result
     }
     if (!(await beginDeliveryReceipt(input.projectId, input.sessionId, result.deliveryCommandId))) {
       return result
     }
-    if (interactionIsCurrent) {
+    const afterBegin = sessionInteractions.current(input.sessionId)
+    const handedOffFeedback = { ...result }
+    const feedbackResolved =
+      afterBegin?.kind === 'prompt' &&
+      afterBegin.sequence === feedbackInteraction.sequence &&
+      afterBegin.promptMessageId === feedbackInteraction.promptMessageId &&
+      interactions.resolveApproval(input.sessionId, handedOffFeedback, approvalToken)
+    if (feedbackResolved) {
       interactions.authorizeAgentDecision({
         sessionId: input.sessionId,
         artifactVersionId: result.artifactVersionId,
         interactionSequence: feedbackInteraction.sequence
       })
-    }
-    const handedOffFeedback = { ...result }
-    const feedbackResolved = interactions.resolveApproval(input.sessionId, handedOffFeedback)
-    if (!feedbackResolved && interactionIsCurrent) {
-      interactions.releaseAgentDecisionAuthorization(input.sessionId, feedbackInteraction.sequence)
     }
     if (!feedbackResolved) {
       await rearmDeliveryReceipt(input.projectId, input.sessionId, result.deliveryCommandId)
@@ -707,14 +711,26 @@ const composeAcpRuntimePlanWorkflow = (
   }
   const providerAccepted = async (sessionId: string, mode: AcpPromptTurnMode): Promise<void> => {
     if (mode.kind !== 'app-continuation' || !mode.planDelivery || !deliveryOwner) return
-    if (
-      !(await deliveryOwner.accept(
-        mode.planDelivery.projectId,
-        sessionId,
-        mode.planDelivery.commandId
-      ))
-    ) {
+    try {
+      if (
+        await deliveryOwner.accept(
+          mode.planDelivery.projectId,
+          sessionId,
+          mode.planDelivery.commandId
+        )
+      )
+        return
       throw new Error('The Plan delivery could not record provider acceptance.')
+    } catch (error) {
+      // Acceptance is delivery evidence, not disposable usage telemetry. Keep the receipt uncertain.
+      pushEvent({
+        kind: 'error',
+        level: 'error',
+        sessionId,
+        title: 'Could not record Plan delivery acceptance',
+        text: 'The Agent has responded, but its Plan delivery receipt could not be saved. Check the conversation before sending another execution request.'
+      })
+      throw error
     }
   }
   const prompt: AcpPromptTurnPlanWorkflow = Object.freeze({

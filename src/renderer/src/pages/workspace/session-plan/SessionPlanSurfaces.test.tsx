@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ActivePlanProjection } from '../../../../../shared/session-plan/contract'
 import { PlanPreviewSurface, PlanProgressChip, WorkspacePlanCard } from './SessionPlanSurfaces'
 import { isPlanProgressVisible } from './plan-progress'
+import { respondToSessionPlan } from './respond-to-session-plan'
+import { useSessionStore } from '@/stores/session-store'
 
 afterEach(cleanup)
 
@@ -145,6 +147,64 @@ describe('Session Plan renderer surfaces', () => {
     expect(screen.getByRole('button', { name: 'Open' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
     expect(screen.queryByLabelText('Respond to Plan')).toBeNull()
+  })
+
+  it('P04 clears the submitted feedback card even when projection hydration fails', async () => {
+    const originalApi = window.api
+    const feedback = 'Split the analysis by cohort.'
+    const respondPlan = vi.fn().mockResolvedValue({
+      kind: 'feedback',
+      message: { id: 'feedback-1', role: 'user', content: feedback, createdAt: 10 }
+    })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        acp: {
+          respondPlan,
+          getPlanProjection: vi.fn().mockRejectedValue(new Error('refresh connection lost'))
+        }
+      }
+    })
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          status: 'waiting-plan-approval',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1,
+          activePlanProjection: projection
+        } as never
+      ]
+    })
+    try {
+      const view = render(
+        <WorkspacePlanCard
+          projection={projection}
+          onOpen={vi.fn()}
+          onRespond={vi.fn()}
+          onSubmitResponse={(text) =>
+            respondToSessionPlan(
+              { projectId: 'project-1', sessionId: 'session-1', projection },
+              { feedback: text }
+            )
+          }
+        />
+      )
+      const input = view.container.querySelector('textarea')!
+      fireEvent.change(input, { target: { value: feedback } })
+      await act(async () => {
+        fireEvent.submit(input.closest('form')!)
+      })
+      expect(respondPlan).toHaveBeenCalledOnce()
+      expect(useSessionStore.getState().sessions[0].messages).toHaveLength(1)
+      expect(view.container.querySelector('article')).toBeNull()
+      expect(view.container.querySelector('textarea')).toBeNull()
+      expect(screen.queryByText('refresh connection lost')).toBeNull()
+    } finally {
+      Object.defineProperty(window, 'api', { configurable: true, value: originalApi })
+    }
   })
 
   it('submits inline revision feedback as a user Message', async () => {

@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { SessionRuntimeContext } from '../../shared/session-persistence'
+import {
+  sanitizeSessionRuntimeContext,
+  type SessionRuntimeContext
+} from '../../shared/session-persistence'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { PlanService, type PlanServiceDependencies } from './plan-service'
 import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
@@ -202,6 +205,163 @@ const approveExecutionPlan = async (): Promise<
 }
 
 describe('PlanService', () => {
+  it.each(['EBUSY', 'EACCES'])(
+    'P05 retains the legacy plan after a temporary %s read failure and recovers on the next read',
+    async (code) => {
+      const fixture = setup()
+      const generated = await fixture.service.generate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        executionId: 'execution-1',
+        interactionId: 'interaction-1',
+        content
+      })
+      const legacyPlan = { ...fixture.context().plan! }
+      delete legacyPlan.document
+      fixture.setContext({ ...fixture.context(), plan: legacyPlan })
+      const before = structuredClone(fixture.context())
+      vi.mocked(fixture.dependencies.patchRuntimeContext).mockClear()
+      vi.mocked(fixture.dependencies.readArtifactVersion)
+        .mockClear()
+        .mockRejectedValueOnce(Object.assign(new Error('temporary read failure'), { code }))
+
+      await fixture.service.getProjection('project-1', 'session-1').catch(() => undefined)
+      expect.soft(fixture.context()).toEqual(before)
+      expect.soft(fixture.dependencies.patchRuntimeContext).not.toHaveBeenCalled()
+      expect.soft(fixture.status()).toBe('waiting-plan-approval')
+      await expect(fixture.service.getProjection('project-1', 'session-1')).resolves.toEqual(
+        generated.projection
+      )
+      expect(fixture.dependencies.readArtifactVersion).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it.each([400, 661])(
+    'P06 completes an admitted %s-step plan through the persistence sanitizer',
+    async (stepCount) => {
+      const fixture = setup()
+      if (stepCount === 661) {
+        fixture.setContext({
+          version: 1,
+          revision: 0,
+          delegatedWork: { records: [], messageCommands: [] },
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-1',
+              sessionId: 'session-1',
+              toolCallId: 'tool-1',
+              title: 'Run tests',
+              options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }]
+            },
+            originatingPromptMessageId: 'interaction-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        })
+      }
+      vi.mocked(fixture.dependencies.patchRuntimeContext).mockImplementation(
+        async ({ expectedRevision, plan, beforePersist }) => {
+          if (expectedRevision !== fixture.context().revision) throw new Error('revision conflict')
+          beforePersist?.()
+          const next = sanitizeSessionRuntimeContext({
+            ...fixture.context(),
+            revision: expectedRevision + 1,
+            plan
+          })
+          if (!next) throw new Error('Session runtime context patch is not JSON-safe.')
+          fixture.setContext(next)
+          return next
+        }
+      )
+      const steps = Array.from({ length: stepCount }, (_, index) => ({
+        title: `Step ${index + 1}`,
+        description: 'Produce the result.'
+      }))
+      const generated = await fixture.service.generate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        executionId: 'execution-1',
+        interactionId: 'interaction-1',
+        content: {
+          ...content,
+          phases: [{ name: 'Analysis', delegations: [{ name: 'Primary agent', steps }] }]
+        }
+      })
+      const identity = {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionId: generated.projection.artifactVersionId
+      }
+      await fixture.service.respond({
+        ...identity,
+        expectedRevision: fixture.context().revision,
+        decision: 'approved'
+      })
+      let failure: unknown
+      let completed = 0
+      try {
+        for (const step of steps) {
+          await fixture.service.updateStepStatus({
+            ...identity,
+            expectedRevision: fixture.context().revision,
+            title: step.title,
+            status: 'in_progress'
+          })
+          await fixture.service.updateStepStatus({
+            ...identity,
+            expectedRevision: fixture.context().revision,
+            title: step.title,
+            status: 'completed',
+            ...(stepCount === 661 ? { notes: 'Verified result.' } : {})
+          })
+          completed += 1
+        }
+      } catch (error) {
+        failure = error
+      }
+      expect({ completed, failure }).toEqual({ completed: steps.length, failure: undefined })
+      await expect(fixture.service.getProjection('project-1', 'session-1')).resolves.toMatchObject({
+        lifecycle: 'completed'
+      })
+    }
+  )
+
+  it('P06 rejects an oversized plan before creating its Artifact', async () => {
+    const fixture = setup()
+    const oversized = {
+      ...content,
+      phases: [
+        {
+          name: 'Analysis',
+          delegations: [
+            {
+              name: 'Primary agent',
+              steps: Array.from({ length: 662 }, (_, index) => ({
+                title: `Step ${index}`,
+                description: 'Work.'
+              }))
+            }
+          ]
+        }
+      ]
+    }
+    await expect(
+      fixture.service.generate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        executionId: 'execution-1',
+        interactionId: 'interaction-1',
+        content: oversized
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid-plan',
+      message: expect.stringMatching(/too large.*split/i)
+    })
+    expect(fixture.dependencies.writeArtifactForExecution).not.toHaveBeenCalled()
+    expect(fixture.context()).not.toHaveProperty('plan')
+  })
+
   it('durably verifies a generated Plan before atomically activating it for the Session', async () => {
     const { service, dependencies, context, status } = setup()
 
@@ -1851,7 +2011,7 @@ describe('PlanService', () => {
     )
   })
 
-  it('drops an unreadable embedded Plan document instead of exposing corrupt state', async () => {
+  it('P05 preserves an unreadable embedded Plan document as recovery evidence', async () => {
     const { service, context, setContext, status } = setup()
     await service.generate({
       projectId: 'project-1',
@@ -1868,12 +2028,14 @@ describe('PlanService', () => {
       }
     })
 
-    await expect(service.getProjection('project-1', 'session-1')).resolves.toBeNull()
-    expect(context().plan).toBeUndefined()
-    expect(status()).toBe('idle')
+    await expect(service.getProjection('project-1', 'session-1')).rejects.toMatchObject({
+      code: 'artifact-unavailable'
+    })
+    expect(context().plan).toBeDefined()
+    expect(status()).toBe('waiting-plan-approval')
   })
 
-  it('drops a checksum-valid restored Plan when the embedded document structure is corrupt', async () => {
+  it('P05 preserves a checksum-valid restored Plan with a corrupt document', async () => {
     const { service, context, setContext, status } = setup()
     await service.generate({
       projectId: 'project-1',
@@ -1899,9 +2061,11 @@ describe('PlanService', () => {
       }
     })
 
-    await expect(service.getProjection('project-1', 'session-1')).resolves.toBeNull()
-    expect(context().plan).toBeUndefined()
-    expect(status()).toBe('idle')
+    await expect(service.getProjection('project-1', 'session-1')).rejects.toMatchObject({
+      code: 'artifact-unavailable'
+    })
+    expect(context().plan).toBeDefined()
+    expect(status()).toBe('waiting-plan-approval')
   })
 
   it('retains a verified restored Plan when unpublished provenance content is unavailable', async () => {

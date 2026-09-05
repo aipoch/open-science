@@ -313,6 +313,30 @@ export const parsePlanDocumentV1 = (input: unknown): PlanDocumentV1 => {
   return createPlanDocumentV1(input)
 }
 
+// Keep the former document-size envelope; reserve independent space for every step's status/notes.
+const MAX_PLAN_DOCUMENT_NODES = 2_000
+export const MAX_PLAN_RUNTIME_CONTEXT_NODES = MAX_PLAN_DOCUMENT_NODES * 3
+
+export const assertPlanDocumentCapacity = (document: PlanDocumentV1): void => {
+  // V1 has eight fixed JSON values, three per phase/delegation/step, and one per desired output.
+  const nodes = document.phases.reduce(
+    (total, phase) =>
+      total +
+      3 +
+      phase.delegations.reduce(
+        (subtotal, delegation) => subtotal + 3 + 3 * delegation.steps.length,
+        0
+      ),
+    8 + document.desired_outputs.length
+  )
+  if (nodes > MAX_PLAN_DOCUMENT_NODES) {
+    throw new PlanCommandError(
+      'invalid-plan',
+      'The Plan is too large to track all of its steps. Split it into smaller Plans.'
+    )
+  }
+}
+
 export const planStepTitles = (document: PlanDocumentV1): string[] =>
   document.phases.flatMap((phase) =>
     phase.delegations.flatMap((delegation) => delegation.steps.map((step) => step.title))
