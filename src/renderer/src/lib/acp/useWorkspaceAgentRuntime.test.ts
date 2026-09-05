@@ -9,6 +9,7 @@ import type {
   PersistedChatSession,
   SessionPdfContext
 } from '../../../../shared/session-persistence'
+import { SessionSizeLimitError } from '../../../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import {
   MAX_COMPOSER_ATTACHMENTS,
@@ -2333,6 +2334,47 @@ describe('workspace agent message sending', () => {
       ]
     })
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('reports a size-limit failure while rearming a stable Message', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1',
+      content: 'Analyze the completed compute job',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    const failure = new SessionSizeLimitError()
+    vi.stubGlobal('window', {
+      api: { sessions: { saveSession: vi.fn().mockRejectedValue(failure) } }
+    })
+    const onSessionSizeLimit = vi.fn()
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    await expect(
+      sendWorkspaceMessage(
+        runtime,
+        {
+          sessionId: 'transport-session-1',
+          messageId: 'automatic-analysis-message-1',
+          text: 'Analyze the completed compute job',
+          cwd: '/workspace/project',
+          projectId: 'project-1',
+          agentFrameworkId: 'claude-code'
+        },
+        { onSessionSizeLimit }
+      )
+    ).resolves.toBeUndefined()
+
+    expect(onSessionSizeLimit).toHaveBeenCalledWith('transport-session-1')
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('redispatches a stable Message preserved on an inactive conversation Branch', async () => {
@@ -4751,7 +4793,7 @@ describe('workspace agent message sending', () => {
         delegationPolicy: 'deny' as const
       }
     })
-    const linkPdfContext = vi.fn().mockRejectedValue(new Error('PDF context unavailable'))
+    const linkPdfContext = vi.fn().mockRejectedValue(new SessionSizeLimitError())
     vi.stubGlobal('window', {
       api: {
         sessions: {
@@ -4775,6 +4817,7 @@ describe('workspace agent message sending', () => {
       resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-pdf-denied']))
     }
+    const onSessionSizeLimit = vi.fn()
 
     const sent = await sendWorkspaceMessage(
       runtime,
@@ -4791,7 +4834,7 @@ describe('workspace agent message sending', () => {
           }
         ]
       },
-      { awaitPendingPreparation: true }
+      { awaitPendingPreparation: true, onSessionSizeLimit }
     )
 
     expect(sent).toBeUndefined()
@@ -4809,6 +4852,7 @@ describe('workspace agent message sending', () => {
       status: 'error'
     })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(onSessionSizeLimit).toHaveBeenCalledWith('transport-session-pdf-denied')
 
     runtime.state = createSnapshot(['transport-session-pdf-denied'])
     const retried = await sendWorkspaceMessage(runtime, {

@@ -45,8 +45,11 @@ const PlanNoticeBanner = ({
 )
 
 type RestoredPlanResponder = Readonly<{
-  sessionId: string
+  sessionId?: string
+  enabled: boolean
   respond: (response: { decision: 'approved' | 'rejected' }) => Promise<void>
+  canRespondToSession?: (sessionId: string) => boolean
+  onSessionSizeLimit?: (sessionId: string) => void
 }>
 
 const lifecycleLabel = (projection: ActivePlanProjection, t: TFunction): string => {
@@ -110,6 +113,7 @@ const STEP_STATUS_PRESENTATION: Record<
 const WorkspacePlanCard = ({
   projection,
   stale = false,
+  enabled = true,
   embedded = false,
   className = '',
   onOpen,
@@ -122,12 +126,13 @@ const WorkspacePlanCard = ({
     onRespond: (decision: 'approved' | 'rejected') => Promise<void>
     onSubmitResponse?: (text: string) => Promise<void>
     onResolved?: () => void
+    enabled?: boolean
     embedded?: boolean
     className?: string
   }>): React.JSX.Element => {
   const { t } = useTranslation()
 
-  const decisionPending = projection.approval === 'pending' && !stale
+  const decisionPending = projection.approval === 'pending' && !stale && enabled
   const [responseText, setResponseText] = useState('')
   const [decisionBusy, setDecisionBusy] = useState(false)
   const [decisionError, setDecisionError] = useState<string>()

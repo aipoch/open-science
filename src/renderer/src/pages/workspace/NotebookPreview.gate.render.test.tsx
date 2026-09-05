@@ -1262,6 +1262,69 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(userCell?.textContent).toContain('r')
   })
 
+  it('lets the user cancel code reception and resume input without running partial code', async () => {
+    const activeWrite = {
+      cellId: 'unfinished',
+      writeId: 'write-1',
+      source: 'agent' as const,
+      startedAt: 1
+    }
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })], [], {}, 'idle', {
+      activeWrite
+    })
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    expect(input.disabled).toBe(true)
+    const state = vi.mocked(window.api.notebook.state)
+    const idleState = { ...(await state.mock.results[0]?.value), activeWrite: undefined }
+    const abort = vi.fn(async () => {
+      state.mockResolvedValue(idleState)
+      return { sessionId: 'session-1', cellId: 'unfinished', code: '', status: 'idle' }
+    })
+    window.api.notebook.abortCodeCell = abort
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel code reception' }))
+    })
+    expect(abort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        cellId: 'unfinished',
+        writeId: 'write-1'
+      })
+    )
+    expect(input.disabled).toBe(false)
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+  })
+
+  it('keeps cancellation failures visible after refreshing the active write', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })], [], {}, 'idle', {
+      activeWrite: {
+        cellId: 'unfinished',
+        writeId: 'write-1',
+        source: 'agent',
+        startedAt: 1
+      }
+    })
+    const state = vi.mocked(window.api.notebook.state)
+    state.mockClear()
+    window.api.notebook.abortCodeCell = vi.fn().mockRejectedValue(new Error('Cancellation failed'))
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel code reception' }))
+    })
+
+    expect(state).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('Cancellation failed')
+    expect(
+      (screen.getByRole('button', { name: 'Cancel code reception' }) as HTMLButtonElement).disabled
+    ).toBe(false)
+    expect(
+      (container.querySelector('[data-testid="kernel-terminal-input"]') as HTMLTextAreaElement)
+        .disabled
+    ).toBe(true)
+  })
+
   it('queues idle terminal input until a background refresh confirms it is safe', async () => {
     await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
 

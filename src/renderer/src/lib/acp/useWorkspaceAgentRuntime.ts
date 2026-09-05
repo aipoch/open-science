@@ -25,7 +25,10 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
-import type { MessagePdfContextSnapshot } from '../../../../shared/session-persistence'
+import {
+  isSessionSizeLimitError,
+  type MessagePdfContextSnapshot
+} from '../../../../shared/session-persistence'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import {
   usePreviewWorkbenchStore,
@@ -156,7 +159,9 @@ type WorkspaceAgentRuntime = {
 }
 const WorkspaceAgentRuntimeContext = createContext<WorkspaceAgentRuntime | null>(null)
 const RuntimeProvider = WorkspaceAgentRuntimeContext.Provider
-const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
+const useOwnedWorkspaceAgentRuntime = (
+  onSessionSizeLimit?: (sessionId: string) => void
+): WorkspaceAgentRuntime => {
   const runtime = useAcpRuntime()
   const subagentRuntimeUpdateListeners = useRef(new Set<SubagentRuntimeListener>())
   const subscribeToSubagentRuntimeUpdates = useCallback(
@@ -380,7 +385,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
               pendingPdfContextSelection,
               pdfContext
             )
-          }
+          },
+          onSessionSizeLimit
         }
       )
     },
@@ -389,6 +395,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       drainRuntimeEvents,
       handleSendPreparationStateChange,
       lifecycleOwner,
+      onSessionSizeLimit,
       resolveRuntimeSelection,
       runtime,
       visionRelayAvailable
@@ -412,7 +419,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
           agentConfiguration: configuration,
           historyReplayDescriptor: selected.historyReplayDescriptor,
           onSendPreparationStateChange: handleSendPreparationStateChange,
-          drainRuntimeEvents
+          drainRuntimeEvents,
+          onSessionSizeLimit
         }
       )
     },
@@ -420,6 +428,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       admitSendConfiguration,
       drainRuntimeEvents,
       handleSendPreparationStateChange,
+      onSessionSizeLimit,
       resolveRuntimeSelection,
       runtime,
       visionRelayAvailable
@@ -441,9 +450,11 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         runtime,
         sessionId,
         enabled,
-        handleSendPreparationStateChange
+        handleSendPreparationStateChange,
+        undefined,
+        onSessionSizeLimit
       ),
-    [handleSendPreparationStateChange, lifecycleOwner, runtime]
+    [handleSendPreparationStateChange, lifecycleOwner, onSessionSizeLimit, runtime]
   )
   const { saveAsSkillInFlightSessionIds, saveAsSkill } = useWorkspaceRuntimeSaveAsSkillOwner({
     runtime,
@@ -555,7 +566,9 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
             })
           }
         } catch (error) {
-          if (request && isRestoredRequest) {
+          if (request && isSessionSizeLimitError(error)) {
+            onSessionSizeLimit?.(request.sessionId)
+          } else if (request && isRestoredRequest) {
             // The main-owned authority is still valid. Keep the card actionable; useAcpRuntime retains
             // the transient action error separately for the active Session to display.
             const permission = useSessionStore
@@ -578,7 +591,13 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       attempt.promise = tracked
       return tracked
     },
-    [getSessionAgentTarget, pendingPermissions, permissionResponseAttemptOwner, runtime]
+    [
+      getSessionAgentTarget,
+      onSessionSizeLimit,
+      pendingPermissions,
+      permissionResponseAttemptOwner,
+      runtime
+    ]
   )
   const setPermissionProfile = useCallback(
     (sessionId: string, profile: PermissionProfileId): Promise<boolean> =>
@@ -622,8 +641,17 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   }
 }
 
-const WorkspaceAgentRuntimeProvider = ({ children }: PropsWithChildren): ReactElement =>
-  createElement(RuntimeProvider, { value: useOwnedWorkspaceAgentRuntime() }, children)
+const WorkspaceAgentRuntimeProvider = ({
+  children,
+  onSessionSizeLimit
+}: PropsWithChildren<{
+  onSessionSizeLimit?: (sessionId: string) => void
+}>): ReactElement =>
+  createElement(
+    RuntimeProvider,
+    { value: useOwnedWorkspaceAgentRuntime(onSessionSizeLimit) },
+    children
+  )
 
 const useWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const runtime = useContext(WorkspaceAgentRuntimeContext)

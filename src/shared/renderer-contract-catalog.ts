@@ -165,6 +165,7 @@ import type {
   ExportNotebookAllResult,
   ExportNotebookKernelRequest,
   ExportNotebookResult,
+  AbortNotebookCodeCellRequest,
   FinishNotebookCodeCellRequest,
   NotebookLanguage,
   NotebookNamespaceRequest,
@@ -761,14 +762,18 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
   >()('acp', ['acp:reset-session-context']),
   'acp.respondPlan': callable<(request: PlanResponseCommand) => Promise<unknown>>()('acp', [
-    'acp:respond-plan'
+    'acp:respond-plan',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
   ]),
   'acp.respondToElicitation': callable<
     (response: ElicitationResponse) => Promise<AcpStateCommandResponse>
-  >()('acp', ['acp:respond-elicitation']),
+  >()('acp', ['acp:respond-elicitation', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'acp.respondToPermission': callable<
     (response: AcpPermissionResponse) => Promise<AcpStateCommandResponse>
-  >()('acp', ['acp:respond-permission']),
+  >()('acp', ['acp:respond-permission', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'acp.resumeSession': callable<
     (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
   >()('acp', ['acp:resume-session']),
@@ -1155,6 +1160,14 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'notebook.exportIpynbAll': callable<
     (request: ExportNotebookAllRequest) => Promise<ExportNotebookAllResult>
   >()('notebook', ['notebook:export-ipynb-all', LOCAL]),
+  'notebook.abortCodeCell': callable<
+    (request: AbortNotebookCodeCellRequest) => Promise<{
+      sessionId: string
+      cellId: string
+      code: string
+      status: string
+    }>
+  >()('notebook', ['notebook:abort-code-cell']),
   'notebook.finishCodeCell': callable<
     (request: FinishNotebookCodeCellRequest) => Promise<{
       sessionId: string
@@ -1591,7 +1604,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   ),
   'sessions.updateArchive': callable<
     (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
-  >()('sessions', ['sessions:update-archive']),
+  >()('sessions', ['sessions:update-archive', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.unlinkPdfContext': callable<
     (request: UnlinkSessionPdfContextRequest) => Promise<SessionRuntimeContext>
   >()('sessions', ['sessions:unlink-pdf-context', WEB, undefined, undefined, RUNTIME_VALIDATED]),

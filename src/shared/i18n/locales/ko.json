@@ -99,6 +99,8 @@
     "Import Connector configuration": "커넥터 구성 가져오기"
   },
   "renderer": {
+    "Receiving code. Cancelling discards the unfinished code.": "코드를 수신 중입니다. 취소하면 미완성 코드가 삭제됩니다.",
+    "Cancel code reception": "코드 수신 취소",
     "First row is used as column headers": "첫 번째 행을 열 머리글로 사용합니다",
     "Notebook network access": "Notebook 네트워크 액세스",
     "Control which internet domains Notebook Python, R, REPL, and Bash can reach.": "Notebook의 Python, R, REPL 및 Bash가 액세스할 수 있는 인터넷 도메인을 제어합니다.",
@@ -705,6 +707,9 @@
     "Conversation": "대화",
     "Conversation imports": "대화 가져오기",
     "Conversation storage needs attention": "대화 저장소 확인 필요",
+    "Conversation storage limit reached": "대화 저장 용량 한도 도달",
+    "One or more saved conversations exceed the 256 MiB storage limit. They were left unchanged and cannot be opened. Review the affected files before retrying.": "저장된 대화가 하나 이상 256 MiB 저장 용량 한도를 초과했습니다. 파일은 변경되지 않았으며 열 수 없습니다. 다시 시도하기 전에 영향을 받는 파일을 검토하세요.",
+    "These files were left unchanged. Move them out of the Session folder before retrying, or use an older app version to export them.": "이 파일들은 변경되지 않았습니다. 다시 시도하기 전에 세션 폴더 밖으로 옮기거나 이전 버전의 앱에서 내보내세요.",
     "DNA": "DNA",
     "Data": "데이터",
     "Describes images when the main model can't see them. Only models with image input are listed.": "메인 모델이 이미지를 볼 수 없을 때 이미지를 설명합니다. 이미지 입력을 지원하는 모델만 표시됩니다.",
@@ -749,6 +754,7 @@
     "The database's migration record doesn't match this app — the file may have been copied from another installation or modified outside the app.": "데이터베이스의 마이그레이션 기록이 이 앱과 일치하지 않습니다. 다른 설치에서 파일을 복사했거나 앱 외부에서 수정되었을 수 있습니다.",
     "The existing database does not satisfy the required schema contract.": "기존 데이터베이스가 요구되는 스키마 계약을 충족하지 않습니다.",
     "This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.": "이 대화는 다른 창에서 변경되었습니다. 로컬 변경사항이 저장되지 않았습니다. 앱을 닫기 전에 최신 버전을 다시 로드해 보세요.",
+    "This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.": "이 대화가 256 MiB 저장 용량 한도를 초과했습니다. 현재 실행이 중지되었습니다. 계속 작업하려면 새 대화를 시작하세요. 마지막으로 저장된 이후의 변경 내용은 영구 저장되지 않습니다.",
     "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.": "<name>{{name}}</name>에 계속 연결된 대화는 <em>사용할 수 없게</em> 되며 메인 에이전트로 자동 <em>전환되지 않습니다</em>. 영향을 받는 각 대화가 다시 메시지를 보내기 전에 새 스페셜리스트 또는 메인 에이전트를 명시적으로 선택해야 합니다.",
     "Copied": "복사됨",
     "Copied!": "복사되었습니다!",

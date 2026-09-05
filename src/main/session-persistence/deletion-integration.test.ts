@@ -10,6 +10,7 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true }
 }))
 
+import { createLinearConversationGraph } from '../../shared/conversation-graph'
 import {
   SessionDeletionCommittedError,
   type PersistedChatSession
@@ -22,6 +23,7 @@ import { ProjectDeletionCoordinator } from '../projects/deletion-coordinator'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ProjectRepository } from '../projects/repository'
 import { UploadRepository } from '../uploads/repository'
+import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { SessionPersistenceCoordinator } from './coordinator'
 import { SessionRepository } from './repository'
 import { SessionProjectionRepository } from './projection'
@@ -560,6 +562,69 @@ describe('managed-file deletion integration', () => {
     })
     await expect(readdir(projectDir)).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
+  it.each(['Project', 'Session'])(
+    'deletes a legacy %s with a persisted pending upload without publishing the draft',
+    async (scope) => {
+      const [pending] = await stageUploadFixtures(uploads, {
+        files: [
+          {
+            name: 'draft.txt',
+            content: Buffer.from('unpublished draft').toString('base64')
+          }
+        ]
+      })
+      const session = createSession(uploadPath, artifactPath)
+      session.messages[0].uploads = [pending]
+      session.conversationGraph = createLinearConversationGraph({
+        sessionId: session.id,
+        messages: session.messages,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt
+      })
+      // Current Session saves reject pending references; reproduce a retained legacy JSON record.
+      await writeFile(
+        join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`),
+        JSON.stringify({ version: 2, session }),
+        'utf8'
+      )
+      const projectDeletion = new ProjectDeletionCoordinator(
+        new ProjectRepository(async () => client),
+        coordinator,
+        undefined,
+        new ArtifactProvenanceRepository({ storageRoot, getClient: async () => client })
+      )
+
+      if (scope === 'Project') {
+        const save = vi
+          .spyOn(sessions, 'saveSession')
+          .mockRejectedValueOnce(new Error('session file unavailable'))
+        await expect(projectDeletion.deleteProject(PROJECT_ID)).rejects.toThrow(
+          'session file unavailable'
+        )
+        save.mockRestore()
+        await expect(readFile(pending.path, 'utf8')).resolves.toBe('unpublished draft')
+        expect(
+          await readFile(join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`), 'utf8')
+        ).toContain(pending.id)
+        expect(await client.uploadVersion.count({ where: { uploadFileId: pending.id } })).toBe(0)
+        await expect(projectDeletion.deleteProject(PROJECT_ID)).resolves.toEqual({
+          status: 'deleted'
+        })
+      } else {
+        await coordinator.deleteSession(PROJECT_ID, SESSION_ID)
+      }
+
+      expect(await client.uploadVersion.count({ where: { uploadFileId: pending.id } })).toBe(0)
+      expect(await client.projectDeletionIntent.count()).toBe(0)
+      await expect(sessions.loadAll()).resolves.toMatchObject({ sessions: [] })
+      await expect(readFile(pending.path, 'utf8')).resolves.toBe('unpublished draft')
+      await new UploadRepository(storageRoot, {
+        getClient: async () => client
+      }).recoverStagingUploads()
+      await expect(readFile(pending.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
 
   it('soft-deletes project rows but retains upload and artifact bytes after project deletion', async () => {
     const legacyPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')

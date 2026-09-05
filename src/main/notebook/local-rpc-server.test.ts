@@ -153,6 +153,84 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it.each(['turn-ended', 'connection-released', 'session-released', 'server-closed'])(
+    'releases unfinished producer code when %s',
+    async (end) => {
+      const root = await createStorageRoot()
+      const execute = vi.fn()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+      })
+      const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+      const request = { projectId: 'default-project', sessionId: 'session-1', workspaceCwd: root }
+      const connection = await server.issueSessionConnection(
+        'session-1',
+        'default-project',
+        'root-frame-session-1'
+      )
+      server.setArtifactTurnBinding('session-1', {
+        ownerExecutionId: 'turn-1',
+        projectId: 'default-project',
+        provenanceContext: {
+          rootFrameId: 'root-frame-session-1',
+          agentFrameId: 'root-frame-session-1',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'runtime-1',
+          promptMessageId: 'prompt-1'
+        }
+      })
+      try {
+        const response = await fetchLocalRpc(
+          connection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'beginCodeCell',
+              params: { ...request, cellId: 'unfinished' }
+            })
+          },
+          'unfinished code test'
+        )
+        expect(response.status).toBe(200)
+        const { result } = (await response.json()) as {
+          result: { cellId: string; writeId: string }
+        }
+        await service.appendCodeCell({ ...request, ...result, delta: 'print("partial")' })
+        // A successful HTTP response ends normally; the stream must survive between requests.
+        expect((await service.state(request)).activeWrite?.writeId).toBe(result.writeId)
+        server.clearArtifactTurnBinding('session-1', 'stale-turn')
+        expect((await service.state(request)).activeWrite?.writeId).toBe(result.writeId)
+        if (end === 'turn-ended') server.clearArtifactTurnBinding('session-1', 'turn-1')
+        if (end === 'connection-released') connection.release?.()
+        if (end === 'session-released') server.releaseSessionCapabilities('session-1')
+        if (end === 'server-closed') await server.close()
+
+        await service.beginCodeCell(request)
+        await expect(
+          service.appendCodeCell({ ...request, ...result, delta: 'late' })
+        ).rejects.toThrow(/write lock/)
+        await expect(service.finishCodeCell({ ...request, ...result })).rejects.toThrow(
+          /write lock/
+        )
+        expect(
+          (await service.state(request)).cells.find((cell) => cell.id === result.cellId)?.code
+        ).toBe('')
+        expect(execute).not.toHaveBeenCalled()
+      } finally {
+        await server.close()
+        await service.shutdownSession(request.sessionId)
+      }
+    }
+  )
+
   it('canonicalizes caller-controlled notebook run sources to Agent authority', async () => {
     const beginCodeCell = vi.fn(async (request: unknown) => request)
     const runCell = vi.fn(async (request: unknown) => request)
@@ -195,7 +273,10 @@ describe('notebook local RPC server', () => {
         expect(response.status).toBe(200)
         await expect(response.json()).resolves.toMatchObject({ result: { source: 'agent' } })
       }
-      expect(beginCodeCell).toHaveBeenCalledWith(expect.objectContaining({ source: 'agent' }))
+      expect(beginCodeCell).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'agent' }),
+        expect.any(AbortSignal)
+      )
       expect(runCell).toHaveBeenCalledWith(
         expect.objectContaining({ source: 'agent' }),
         expect.any(AbortSignal)
@@ -3276,6 +3357,7 @@ describe('notebook local RPC server', () => {
       })
 
       expect(response.status).toBe(200)
+      expect(leasedInput.association).toBe('resolver-accessed')
       const document = JSON.parse(
         await readFile(join(root, 'notebooks', 'default-project', 'session-1', 'run.json'), 'utf8')
       ) as { runs: Array<Record<string, unknown>> }
@@ -3297,7 +3379,10 @@ describe('notebook local RPC server', () => {
         result: { inputFiles: Array<Record<string, unknown>> }
       }
       expect(payload.result.inputFiles).toEqual([
-        expect.objectContaining({ inputFileVersionId: 'upload-version-1' }),
+        expect.objectContaining({
+          inputFileVersionId: 'upload-version-1',
+          association: 'resolver-accessed'
+        }),
         expect.objectContaining({ inputFileVersionId: 'panel-a-v1' })
       ])
       expect(payload.result.inputFiles[0]).not.toHaveProperty('storageKey')

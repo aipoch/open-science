@@ -49,6 +49,7 @@ const request = {
 const requestByMethod = {
   beginCodeCell: request,
   appendCodeCell: { ...request, writeId: 'write-1', cellId: 'cell-1', delta: 'print(1)' },
+  abortCodeCell: { ...request, writeId: 'write-1', cellId: 'cell-1' },
   finishCodeCell: { ...request, writeId: 'write-1', cellId: 'cell-1' },
   runCell: { ...request, cellId: 'cell-1' },
   execute: {
@@ -80,6 +81,7 @@ describe('notebook local RPC adapter', () => {
     expect(NOTEBOOK_LOCAL_RPC_METHODS).toEqual([
       'beginCodeCell',
       'appendCodeCell',
+      'abortCodeCell',
       'finishCodeCell',
       'runCell',
       'execute',
@@ -96,7 +98,7 @@ describe('notebook local RPC adapter', () => {
       'bindRuntime',
       'switchRuntime'
     ])
-    expect(new Set(NOTEBOOK_LOCAL_RPC_METHODS).size).toBe(17)
+    expect(new Set(NOTEBOOK_LOCAL_RPC_METHODS).size).toBe(18)
 
     for (const method of [
       'listPackages',

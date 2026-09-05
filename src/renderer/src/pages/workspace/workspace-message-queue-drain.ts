@@ -221,6 +221,15 @@ const sendQueuedItemNow = async (
     }
     const liveSession = current.getSession(sessionId)
     if (liveSession) {
+      if (current.isPersistenceBlocked(sessionId)) {
+        owner.replaceItem(sessionId, itemId, {
+          phase: 'queued',
+          error: undefined,
+          deferredUntilIdle: true
+        })
+        owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.deferredUntilIdle)
+        return
+      }
       const contextError = queueItemContextError(liveSession, item)
       if (contextError) {
         owner.replaceItem(sessionId, itemId, {

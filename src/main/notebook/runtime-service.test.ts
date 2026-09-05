@@ -1110,6 +1110,114 @@ describe('notebook runtime service', () => {
     expect(service.peekHandoffContext('session-1')).toBeUndefined()
   })
 
+  it('scopes explicit write cancellation and isolates later writes from stale producers', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+    const request = { sessionId: 'session-1', workspaceCwd: root }
+    const producer = new AbortController()
+    const begin = await service.beginCodeCell({ ...request, cellId: 'unfinished' }, producer.signal)
+    const write = { ...request, cellId: begin.cellId, writeId: begin.writeId }
+    await service.appendCodeCell({ ...write, delta: 'print("partial")' })
+    const other = { ...request, sessionId: 'session-2' }
+    const otherBegin = await service.beginCodeCell({ ...other, cellId: begin.cellId })
+    await expect(service.abortCodeCell({ ...write, writeId: 'wrong' })).rejects.toThrow(
+      /write lock/
+    )
+    await expect(service.abortCodeCell({ ...write, cellId: 'wrong' })).rejects.toThrow(
+      /cell not found/
+    )
+    await expect(service.abortCodeCell({ ...write, sessionId: other.sessionId })).rejects.toThrow(
+      /write lock/
+    )
+    await expect(service.abortCodeCell({ ...write, projectId: 'wrong-project' })).rejects.toThrow()
+    expect((await service.state(request)).activeWrite?.writeId).toBe(begin.writeId)
+    await expect(service.abortCodeCell(write)).resolves.toMatchObject({ code: '', status: 'idle' })
+    const next = await service.beginCodeCell(request)
+    producer.abort()
+    await expect(service.abortCodeCell(write)).rejects.toThrow(/write lock/)
+    await expect(service.appendCodeCell({ ...write, delta: 'late' })).rejects.toThrow(/write lock/)
+    await expect(service.finishCodeCell(write)).rejects.toThrow(/write lock/)
+    expect((await service.state(request)).activeWrite?.writeId).toBe(next.writeId)
+    expect((await service.state(other)).activeWrite?.writeId).toBe(otherBegin.writeId)
+    expect((await service.state(request)).runCount).toBe(0)
+    await service.shutdownSession(request.sessionId)
+    await service.shutdownSession(other.sessionId)
+  })
+
+  it('detaches cancellation after a normal finish and rejects an already cancelled begin', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+    const request = { sessionId: 'session-1', workspaceCwd: root }
+    const producer = new AbortController()
+    const begin = await service.beginCodeCell(request, producer.signal)
+    await service.appendCodeCell({ ...request, ...begin, delta: 'print("complete")' })
+    await service.finishCodeCell({ ...request, ...begin })
+    const next = await service.beginCodeCell(request)
+    producer.abort()
+    expect((await service.state(request)).activeWrite?.writeId).toBe(next.writeId)
+    await service.abortCodeCell({ ...request, ...next })
+    await expect(service.beginCodeCell(request, producer.signal)).rejects.toThrow()
+    const state = await service.state(request)
+    expect(state.activeWrite).toBeUndefined()
+    expect(state.cells.find((cell) => cell.id === begin.cellId)?.code).toBe('print("complete")')
+    await service.shutdownSession(request.sessionId)
+  })
+
+  it('releases only the cancelled producer write and rejects its stale writeId', async () => {
+    const root = await createStorageRoot()
+    const { service, changedSessions } = lifecycleCallbackHarness(root)
+    const request = { sessionId: 'session-1', workspaceCwd: root }
+    const producer = new AbortController()
+    const begin = await service.beginCodeCell({ ...request, cellId: 'unfinished' }, producer.signal)
+    const write = { ...request, ...begin }
+    await service.appendCodeCell({ ...write, delta: 'print("partial")' })
+    const changes = changedSessions.length
+    producer.abort()
+
+    const next = await service.beginCodeCell(request)
+    expect(changedSessions.length).toBeGreaterThan(changes)
+    await expect(service.appendCodeCell({ ...write, delta: 'late' })).rejects.toThrow(/write lock/)
+    await expect(service.finishCodeCell(write)).rejects.toThrow(/write lock/)
+    const state = await service.state(request)
+    expect(state.activeWrite?.writeId).toBe(next.writeId)
+    expect(state.cells.find((cell) => cell.id === begin.cellId)?.code).toBe('')
+    expect(state.runCount).toBe(0)
+    await service.shutdownSession(request.sessionId)
+  })
+
+  it.each([false, true])(
+    'releases an unfinished write on full restart (in-place: %s)',
+    async (inPlaceRestart) => {
+      const root = await createStorageRoot()
+      const { service } = lifecycleCallbackHarness(root, { inPlaceRestart })
+      const request = { sessionId: 'session-1', workspaceCwd: root }
+      const begin = await service.beginCodeCell({ ...request, cellId: 'unfinished' })
+      const write = { ...request, cellId: begin.cellId, writeId: begin.writeId }
+      await service.appendCodeCell({ ...write, delta: 'print("partial")' })
+      await expect(service.beginCodeCell(request)).rejects.toThrow(
+        'Notebook cell is already receiving code: unfinished'
+      )
+
+      await service.restart(request)
+
+      // Assert recovery through the same public begin boundary that was locked above.
+      const next = await service.beginCodeCell(request)
+      await expect(service.appendCodeCell({ ...write, delta: 'late' })).rejects.toThrow(
+        /write lock/
+      )
+      await expect(service.finishCodeCell(write)).rejects.toThrow(/write lock/)
+      const state = await service.state(request)
+      expect(state.activeWrite?.writeId).toBe(next.writeId)
+      expect(state.cells.find((cell) => cell.id === begin.cellId)).toMatchObject({
+        code: '',
+        status: 'idle',
+        writeId: undefined
+      })
+      expect(state.runCount).toBe(0)
+      await service.shutdownSession(request.sessionId)
+    }
+  )
+
   it('rejects oversized streamed code and releases the write lock', async () => {
     const root = await createStorageRoot()
     const { service } = lifecycleCallbackHarness(root)
@@ -3410,6 +3518,7 @@ describe('notebook runtime service', () => {
     it('cancels and drains queued shell work before Session shutdown completes', async () => {
       const root = await createStorageRoot()
       const entered: string[] = []
+      const firstStarted = createDeferred<void>()
       const signals = new Map<string, AbortSignal | undefined>()
       const releases = new Map<string, () => void>()
       const execute = vi.fn<NotebookShellProcess['execute']>(
@@ -3430,6 +3539,7 @@ describe('notebook runtime service', () => {
             signals.set(command, signal)
             releases.set(command, () => finish(false))
             signal?.addEventListener('abort', () => finish(true), { once: true })
+            if (command === 'first') firstStarted.resolve(undefined)
           })
       )
       const service = new NotebookRuntimeService({
@@ -3466,7 +3576,8 @@ describe('notebook runtime service', () => {
         provenanceContext: childContext
       })
 
-      await vi.waitFor(() => expect(entered).toEqual(['first']))
+      await firstStarted.promise
+      expect(entered).toEqual(['first'])
       const shutdown = service.shutdownSession('session-1')
       await shutdown
 
@@ -4431,6 +4542,7 @@ describe('notebook runtime service', () => {
 
   it('runs different sessions in parallel instead of serializing across sessions', async () => {
     const root = await createStorageRoot()
+    const bothStarted = createDeferred<void>()
     let active = 0
     let maxConcurrent = 0
     const releases = new Map<string, () => void>()
@@ -4446,7 +4558,10 @@ describe('notebook runtime service', () => {
           maxConcurrent = Math.max(maxConcurrent, active)
 
           // Hold each session's execution open until released so both can overlap.
-          await new Promise<void>((resolve) => releases.set(sessionId, resolve))
+          await new Promise<void>((resolve) => {
+            releases.set(sessionId, resolve)
+            if (releases.size === 2) bothStarted.resolve(undefined)
+          })
           active -= 1
 
           return {
@@ -4478,7 +4593,7 @@ describe('notebook runtime service', () => {
 
     // Both sessions should be inside their own executors at the same time — the per-session queue
     // must not serialize one session behind another.
-    await vi.waitFor(() => expect(releases.size).toBe(2))
+    await bothStarted.promise
     expect(maxConcurrent).toBe(2)
 
     releases.get('session-a')?.()

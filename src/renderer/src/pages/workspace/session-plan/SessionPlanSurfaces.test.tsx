@@ -131,6 +131,22 @@ describe('Session Plan renderer surfaces', () => {
     expect(card?.classList.contains('shadow-none')).toBe(true)
   })
 
+  it('keeps a persistence-blocked Plan readable without response controls', () => {
+    render(
+      <WorkspacePlanCard
+        enabled={false}
+        projection={projection}
+        onOpen={vi.fn()}
+        onRespond={vi.fn()}
+        onSubmitResponse={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Open' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(screen.queryByLabelText('Respond to Plan')).toBeNull()
+  })
+
   it('submits inline revision feedback as a user Message', async () => {
     const onRespond = vi.fn().mockResolvedValue(undefined)
     const onSubmitResponse = vi.fn().mockResolvedValue(undefined)

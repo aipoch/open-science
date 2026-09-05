@@ -11,6 +11,7 @@ import { sanitizeAnnotations, type Annotation } from './annotations'
 import {
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ACP_RUNTIME_EVENTS,
   MAX_ACP_SESSION_IMAGE_BYTES,
   sanitizeAcpContextUsage,
   sanitizeAcpContextWindowSample,
@@ -553,6 +554,26 @@ export type PersistedChatMessage = {
   updatedAt: number
 }
 
+// Runtime recovery can replay only its bounded suffix. Once a projection is terminal, older IDs no
+// longer provide supported duplicate-suppression coverage and must not grow the Session forever.
+export const retainRecentSessionEventIds = (eventIds: readonly string[]): string[] => {
+  if (eventIds.length <= MAX_ACP_RUNTIME_EVENTS) return [...eventIds]
+
+  const recent: string[] = []
+  const seen = new Set<string>()
+  for (
+    let index = eventIds.length - 1;
+    index >= 0 && recent.length < MAX_ACP_RUNTIME_EVENTS;
+    index--
+  ) {
+    const eventId = eventIds[index]
+    if (eventId === undefined || seen.has(eventId)) continue
+    seen.add(eventId)
+    recent.push(eventId)
+  }
+  return recent.reverse()
+}
+
 export const isHiddenControlMessage = (
   message: Pick<PersistedChatMessage, 'turnIntent'>
 ): boolean => message.turnIntent === 'save-as-skill'
@@ -906,8 +927,28 @@ export type SaveSessionOptions = {
   conflictRebaseFields?: SessionConflictRebaseField[]
 }
 
+export const MAX_PERSISTED_SESSION_BYTES = 256 * 1024 * 1024
+export const SESSION_SIZE_LIMIT_ERROR_CODE = 'session-size-limit' as const
 export const SESSION_REVISION_CONFLICT_ERROR_CODE = 'session-revision-conflict' as const
 export const SESSION_DETAILS_CONFLICT_ERROR_CODE = 'session-details-conflict' as const
+
+export class SessionSizeLimitError extends Error {
+  readonly code = SESSION_SIZE_LIMIT_ERROR_CODE
+
+  constructor(readonly maxBytes = MAX_PERSISTED_SESSION_BYTES) {
+    super(`Session exceeds the ${maxBytes} byte persistence limit.`)
+    this.name = 'SessionSizeLimitError'
+  }
+}
+
+export const isSessionSizeLimitError = (
+  error: unknown
+): error is Readonly<{ code: typeof SESSION_SIZE_LIMIT_ERROR_CODE }> =>
+  error instanceof SessionSizeLimitError ||
+  (typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === SESSION_SIZE_LIMIT_ERROR_CODE)
 
 export class SessionDetailsConflictError extends Error {
   readonly code = SESSION_DETAILS_CONFLICT_ERROR_CODE
@@ -4460,9 +4501,27 @@ export type SessionFileDecodeResult =
 // Wraps a session in the on-disk envelope written per file.
 export const createSessionFile = (session: PersistedChatSession): PersistedSessionFile => {
   const materialized = materializeSessionConversationGraph(session)
+  const compactMessage = <Message extends PersistedChatMessage>(message: Message): Message =>
+    message.status === 'streaming'
+      ? message
+      : ({ ...message, eventIds: retainRecentSessionEventIds(message.eventIds) } as Message)
+  const compactActivity = <Activity extends PersistedToolActivity>(activity: Activity): Activity =>
+    activity.status === 'pending' || activity.status === 'in_progress'
+      ? activity
+      : ({ ...activity, eventIds: retainRecentSessionEventIds(activity.eventIds) } as Activity)
+  const compacted: MaterializedPersistedChatSession = {
+    ...materialized,
+    messages: materialized.messages.map(compactMessage),
+    activities: materialized.activities?.map(compactActivity),
+    conversationGraph: {
+      ...materialized.conversationGraph,
+      messages: materialized.conversationGraph.messages.map(compactMessage),
+      activities: materialized.conversationGraph.activities.map(compactActivity)
+    }
+  }
   return {
     version: SESSION_FILE_VERSION,
-    session: sanitizeSessionMessageImages(materialized)
+    session: sanitizeSessionMessageImages(compacted)
   }
 }
 
@@ -4603,6 +4662,12 @@ export type SessionLoadWarning =
     }
   | {
       kind: 'unsupported-version'
+      projectId: string
+      fileName: string
+      recovered: false
+    }
+  | {
+      kind: 'too-large'
       projectId: string
       fileName: string
       recovered: false

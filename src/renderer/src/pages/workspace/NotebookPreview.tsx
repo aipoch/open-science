@@ -481,6 +481,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const [isLoading, setIsLoading] = useState(false)
   const [submittingTarget, setSubmittingTarget] = useState<string | undefined>()
   const [actionError, setActionError] = useState<string | null>(null)
+  const [isAbortingWrite, setIsAbortingWrite] = useState(false)
   const [isRestarting, setIsRestarting] = useState(false)
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const [frameFilter, setFrameFilter] = useState<NotebookFrameFilterValue>()
@@ -984,6 +985,26 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     }
   }
 
+  const handleAbortWrite = async (): Promise<void> => {
+    const write = notebookState?.activeWrite
+    if (!write || isAbortingWrite) return
+    setIsAbortingWrite(true)
+    setActionError(null)
+    try {
+      await window.api.notebook.abortCodeCell({
+        ...createNotebookRequest(item.notebook),
+        cellId: write.cellId,
+        writeId: write.writeId
+      })
+      await loadNotebookState()
+    } catch (error) {
+      await loadNotebookState()
+      setActionError(getErrorMessage(error))
+    } finally {
+      setIsAbortingWrite(false)
+    }
+  }
+
   // Restarts only the selected R environment, then replaces state so its banner clears.
   const handleRestart = async (): Promise<void> => {
     if (!activeEnvName) return
@@ -1438,6 +1459,20 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
               {environmentLabel(envName)}
             </button>
           ))}
+        </div>
+      ) : null}
+
+      {notebookState?.activeWrite ? (
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border-100 bg-bg-300 px-3 py-1.5 text-[11px] text-text-100">
+          <span>{t('Receiving code. Cancelling discards the unfinished code.')}</span>
+          <button
+            type="button"
+            disabled={isAbortingWrite}
+            onClick={() => void handleAbortWrite()}
+            className="shrink-0 rounded-md border border-border-200 px-2 py-0.5 font-medium text-text-100 transition-colors hover:bg-bg-200 disabled:opacity-50"
+          >
+            {t('Cancel code reception')}
+          </button>
         </div>
       ) : null}
 

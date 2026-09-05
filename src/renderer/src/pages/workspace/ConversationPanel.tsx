@@ -503,13 +503,15 @@ const ConversationPanel = ({
       submitMode,
       revise: canEditMessage,
       resume: canResumeSession,
-      branch: canBranchInNewSession
+      branch: canBranchInNewSession,
+      planResponse: canRespondToPlan
     },
     actions: {
       submit: { draft: submitDraft, restoredPlan: onRespondToRestoredPlan },
       revise: onSendEditedMessage,
       branch: onBranchFromAgentMessage,
       sideChat: { start: onStartSideChat },
+      reportSessionSizeLimit: onSessionSizeLimit,
       resume: onResumeSession,
       cancel: onCancelRun
     },
@@ -895,7 +897,7 @@ const ConversationPanel = ({
   const respondToPendingPlan = async (
     response: { decision: 'approved' | 'rejected' } | { feedback: string }
   ): Promise<void> => {
-    if (!activeSession || !pendingPlan) return
+    if (!activeSession || !pendingPlan || !canRespondToPlan) return
     if (!activeSession.activeRun) {
       await onRespondToRestoredPlan(response)
       return
@@ -906,7 +908,8 @@ const ConversationPanel = ({
         sessionId: activeSession.id,
         projection: pendingPlan
       },
-      response
+      response,
+      { onSessionSizeLimit }
     )
   }
 
@@ -1507,6 +1510,7 @@ const ConversationPanel = ({
                         <ResizablePlanComposer key={activePendingPlanKey}>
                           <WorkspacePlanCard
                             embedded
+                            enabled={canRespondToPlan}
                             projection={pendingPlan}
                             onOpen={openPendingPlan}
                             onRespond={(decision) => respondToPendingPlan({ decision })}

@@ -141,6 +141,7 @@ test('edits and navigates message revisions that persist after relaunch', async 
   await conversation.getByRole('button', { name: 'Edit message' }).click()
   await conversation.getByRole('textbox', { name: 'Edit message' }).fill(EDITED_USER_MESSAGE)
   await conversation.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
 
   const revision = conversation.getByLabel('Message revision', { exact: true })
   const previousRevision = conversation.getByRole('button', {
@@ -181,6 +182,7 @@ test('edits and navigates message revisions that persist after relaunch', async 
 
   await conversation.getByRole('button', { name: 'Next message revision' }).click()
   await expect(conversation.getByText(EDITED_USER_MESSAGE, { exact: true })).toBeVisible()
+  await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveCount(1)
   await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText('2/2')
 })
 

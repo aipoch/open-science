@@ -1,5 +1,6 @@
 import type { AcpCreateSessionResponse } from '../../../../shared/acp'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
+import { isSessionSizeLimitError } from '../../../../shared/session-persistence'
 import { toPersistedSession, useSessionStore, type ChatSession } from '../../stores/session-store'
 import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import type { useAcpRuntime } from './useAcpRuntime'
@@ -44,7 +45,8 @@ const reconfigureWorkspaceMemory = async (
   sessionId: string,
   enabled: boolean,
   persistSession: (sessionId: string) => Promise<void> = persistWorkspaceSession,
-  onPreparationStateChange?: (sessionId: string, inFlight: boolean) => void
+  onPreparationStateChange?: (sessionId: string, inFlight: boolean) => void,
+  onSessionSizeLimit?: (sessionId: string) => void
 ): Promise<void> => {
   const releasePreparation = acquireWorkspacePromptPreparation(sessionId, onPreparationStateChange)
   if (!releasePreparation) {
@@ -77,6 +79,7 @@ const reconfigureWorkspaceMemory = async (
       useSessionStore.getState().openContextResetRuntimeSegment(sessionId)
       await persistSession(sessionId)
     } catch (error) {
+      if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(sessionId)
       if (!contextReset) {
         useSessionStore.getState().setMemoryEnabled(sessionId, previousEnabled)
         await persistSession(sessionId).catch(() => undefined)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
+import { MAX_ACP_RUNTIME_EVENTS, MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
 import { MAX_ELICITATION_OPTIONS_PER_FIELD } from './elicitation'
 
 import {
@@ -487,6 +487,47 @@ describe('conversation graph materialization diagnostics', () => {
     expect(written.session.conversationGraph.messages).toEqual([
       expect.objectContaining({ id: 'message-1', content: 'Persist me' })
     ])
+  })
+
+  it('compacts terminal event IDs in both canonical and compatibility projections', () => {
+    const eventIds = Array.from(
+      { length: MAX_ACP_RUNTIME_EVENTS + 1 },
+      (_, index) => `event-${index}`
+    )
+    const written = createSessionFile({
+      ...(createSessionWithActivity(
+        createOpenToolActivity('tool-1', { status: 'completed', eventIds })
+      ) as PersistedChatSession),
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Run the tests',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'response-1',
+          role: 'agent',
+          content: 'Done',
+          status: 'complete',
+          responseToMessageId: 'prompt-1',
+          eventIds,
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+    const expected = eventIds.slice(1)
+
+    expect(written.session.messages[1]?.eventIds).toEqual(expected)
+    expect(written.session.activities?.[0]?.eventIds).toEqual(expected)
+    expect(
+      written.session.conversationGraph.messages.find(({ id }) => id === 'response-1')?.eventIds
+    ).toEqual(expected)
+    expect(written.session.conversationGraph.activities[0]?.eventIds).toEqual(expected)
   })
 
   it('identifies message synchronization failures without exposing the raw graph error', () => {

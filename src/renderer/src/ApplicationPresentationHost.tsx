@@ -146,9 +146,21 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
   const isBasePresentationActive = activePresentation === 'base' || activePresentation === 'preview'
   const writeErrorAlert = sessions.writeError ? (
     <SessionPersistenceAlert
-      title={t('Conversation storage needs attention')}
+      title={
+        sessions.writeErrorRetryable
+          ? t('Conversation storage needs attention')
+          : t('Conversation storage limit reached')
+      }
       message={sessions.writeError}
-      onRetry={sessions.retryWrites}
+      onRetry={sessions.writeErrorRetryable ? sessions.retryWrites : undefined}
+      onAction={
+        sessions.writeErrorRetryable
+          ? undefined
+          : () => {
+              sessions.startNewConversationAfterSizeLimit()
+            }
+      }
+      actionLabel={sessions.writeErrorRetryable ? undefined : t('New conversation')}
     />
   ) : null
   const quitPersistenceAlert = startup.quitPersistence.notice ? (
@@ -207,10 +219,12 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
         {sessions.catalogRecovery.kind !== 'ready' && !startup.quitPersistence.notice
           ? writeErrorAlert
           : null}
-        <WorkspaceAgentRuntimeProvider>
+        <WorkspaceAgentRuntimeProvider onSessionSizeLimit={sessions.reportSessionSizeLimit}>
           <WorkspaceMessageQueueProvider>
             <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
-            <WorkspaceMessageQueueRuntimeBridge />
+            <WorkspaceMessageQueueRuntimeBridge
+              persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
+            />
             {events.navigation.view === 'home' ? (
               <HomePage
                 canDeleteProjects={sessions.canDeleteSessionsAndProjects}
@@ -222,6 +236,8 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
               <WorkspacePage
                 isSessionPersistenceHydrated={sessions.isHydrated}
                 isSessionPersistenceReady={sessions.isReady}
+                persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
+                onSessionSizeLimit={sessions.reportSessionSizeLimit}
                 canDeleteConversations={sessions.canDeleteSessionsAndProjects}
                 isPreviewPresentationActive={isBasePresentationActive}
               />

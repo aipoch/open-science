@@ -92,6 +92,7 @@ export const WEB_INVOKE_CHANNELS = {
   'memory.snapshot': 'memory:snapshot',
   'memory.updateCategory': 'memory:update-category',
   'memory.updateEntry': 'memory:update-entry',
+  'notebook.abortCodeCell': 'notebook:abort-code-cell',
   'notebook.appendCodeCell': 'notebook:append-code-cell',
   'notebook.beginCodeCell': 'notebook:begin-code-cell',
   'notebook.execute': 'notebook:execute',

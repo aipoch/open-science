@@ -4785,6 +4785,7 @@ describe('SessionPersistenceCoordinator', () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-upload-startup-partial-'))
     const client = createProjectDbClient(root)
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const content = Buffer.from('sample,value\na,1\n')
     const retainedPath = join(root, 'uploads', 'default-project', 'session-1', 'retained.csv')
     const missingPath = join(root, 'uploads', 'default-project', 'session-1', 'missing.csv')

@@ -16,6 +16,7 @@ import type { ProjectHandlers } from './projects/ipc'
 import type { SessionPersistenceHandlers } from './session-persistence/ipc'
 import type { ManagedPreviewOwnerRegistry } from './managed-preview-ipc'
 import { canMutateSessionDelegationPolicy } from './caller-context'
+import { preserveSessionSizeLimitCode } from './session-persistence/application-command-errors'
 
 import {
   ApplicationCommandError,
@@ -671,25 +672,27 @@ const registerDataContentApplicationCommands = (
         return result
       },
       'sessions:edit-details': (invocation) => {
-        return dependencies.withDataRootWrite(async () => {
-          try {
-            return await dependencies.sessions.editDetails(invocation.args[0])
-          } catch (error) {
-            if (SessionPersistence.isSessionDetailsConflictError(error)) {
-              throw new ApplicationCommandError(
-                SessionPersistence.SESSION_DETAILS_CONFLICT_ERROR_CODE,
-                error instanceof Error ? error.message : 'Session details changed elsewhere.'
-              )
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            try {
+              return await dependencies.sessions.editDetails(invocation.args[0])
+            } catch (error) {
+              if (SessionPersistence.isSessionDetailsConflictError(error)) {
+                throw new ApplicationCommandError(
+                  SessionPersistence.SESSION_DETAILS_CONFLICT_ERROR_CODE,
+                  error instanceof Error ? error.message : 'Session details changed elsewhere.'
+                )
+              }
+              if (SessionPersistence.isSessionRevisionConflictError(error)) {
+                throw new ApplicationCommandError(
+                  SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                  error instanceof Error ? error.message : 'Session revision conflict.'
+                )
+              }
+              throw error
             }
-            if (SessionPersistence.isSessionRevisionConflictError(error)) {
-              throw new ApplicationCommandError(
-                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
-                error instanceof Error ? error.message : 'Session revision conflict.'
-              )
-            }
-            throw error
-          }
-        })
+          })
+        )
       },
       'sessions:export-conversation': (invocation) => {
         assertElectronCaller(
@@ -706,19 +709,21 @@ const registerDataContentApplicationCommands = (
         dependencies.withDataRootWrite(() => dependencies.sessions.loadAll()),
       'sessions:list': () => dependencies.withDataRootWrite(() => dependencies.sessions.list()),
       'sessions:link-pdf-context': (invocation) =>
-        dependencies.withDataRootWrite(async () => {
-          try {
-            return await dependencies.sessions.linkPdfContext(invocation.args[0])
-          } catch (error) {
-            if (SessionPersistence.isSessionRevisionConflictError(error)) {
-              throw new ApplicationCommandError(
-                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
-                error instanceof Error ? error.message : 'Session revision conflict.'
-              )
+        dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            try {
+              return await dependencies.sessions.linkPdfContext(invocation.args[0])
+            } catch (error) {
+              if (SessionPersistence.isSessionRevisionConflictError(error)) {
+                throw new ApplicationCommandError(
+                  SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                  error instanceof Error ? error.message : 'Session revision conflict.'
+                )
+              }
+              throw error
             }
-            throw error
-          }
-        }),
+          })
+        ),
       'sessions:load-one': ({ args }) =>
         dependencies.withDataRootWrite(() => dependencies.sessions.loadOne(args[0])),
       'sessions:load-usage': () =>
@@ -727,133 +732,155 @@ const registerDataContentApplicationCommands = (
         dependencies.withDataRootWrite(() => dependencies.sessions.saveManifest(args[0])),
       'sessions:update-archive': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
-        return dependencies.withDataRootWrite(async () => {
-          const session = await dependencies.sessions.updateArchive(invocation.args[0])
-          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
-            session,
-            originClientId
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.updateArchive(invocation.args[0])
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
           })
-          return session
-        })
+        )
       },
       'sessions:unlink-pdf-context': (invocation) =>
-        dependencies.withDataRootWrite(async () => {
-          try {
-            return await dependencies.sessions.unlinkPdfContext(invocation.args[0])
-          } catch (error) {
-            if (SessionPersistence.isSessionRevisionConflictError(error)) {
-              throw new ApplicationCommandError(
-                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
-                error instanceof Error ? error.message : 'Session revision conflict.'
-              )
+        dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            try {
+              return await dependencies.sessions.unlinkPdfContext(invocation.args[0])
+            } catch (error) {
+              if (SessionPersistence.isSessionRevisionConflictError(error)) {
+                throw new ApplicationCommandError(
+                  SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                  error instanceof Error ? error.message : 'Session revision conflict.'
+                )
+              }
+              throw error
             }
-            throw error
-          }
-        }),
+          })
+        ),
       'sessions:save-session': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
-        return dependencies.withDataRootWrite(async () => {
-          let result: Awaited<ReturnType<SessionPersistenceHandlers['saveSession']>>
-          try {
-            result =
-              invocation.callerContext.surface === 'task'
-                ? await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1], {
-                    taskRunCommit: true
-                  })
-                : await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1])
-          } catch (error) {
-            if (SessionPersistence.isSessionRevisionConflictError(error)) {
-              throw new ApplicationCommandError(
-                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
-                error instanceof Error ? error.message : 'Session revision conflict.'
-              )
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            let result: Awaited<ReturnType<SessionPersistenceHandlers['saveSession']>>
+            try {
+              result =
+                invocation.callerContext.surface === 'task'
+                  ? await dependencies.sessions.saveSession(
+                      invocation.args[0],
+                      invocation.args[1],
+                      {
+                        taskRunCommit: true
+                      }
+                    )
+                  : await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1])
+            } catch (error) {
+              if (SessionPersistence.isSessionRevisionConflictError(error)) {
+                throw new ApplicationCommandError(
+                  SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                  error instanceof Error ? error.message : 'Session revision conflict.'
+                )
+              }
+              throw error
             }
-            throw error
-          }
-          publishLifecycle(
-            dependencies.events,
-            result.created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
-            { session: result.session, originClientId }
-          )
-          return result.session
-        })
+            publishLifecycle(
+              dependencies.events,
+              result.created
+                ? LIFECYCLE_CHANNELS.sessionCreated
+                : LIFECYCLE_CHANNELS.sessionUpdated,
+              { session: result.session, originClientId }
+            )
+            return result.session
+          })
+        )
       },
       'sessions:stage-task-completion': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
-        return dependencies.withDataRootWrite(async () => {
-          const session = await dependencies.sessions.stageTaskCompletion(invocation.args[0])
-          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
-            session,
-            originClientId
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.stageTaskCompletion(invocation.args[0])
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
           })
-          return session
-        })
+        )
       },
       'sessions:settle-task-completion': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
-        return dependencies.withDataRootWrite(async () => {
-          const session = await dependencies.sessions.settleTaskCompletion(invocation.args[0])
-          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
-            session,
-            originClientId
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.settleTaskCompletion(invocation.args[0])
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
           })
-          return session
-        })
+        )
       },
       'sessions:fail-task-run': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
-        return dependencies.withDataRootWrite(async () => {
-          const session = await dependencies.sessions.failTaskRun(invocation.args[0])
-          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
-            session,
-            originClientId
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.failTaskRun(invocation.args[0])
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
           })
-          return session
-        })
+        )
       },
       'sessions:set-delegation-policy': (invocation) => {
         assertSessionDelegationPolicyCaller(
           invocation,
           dataContentApplicationCommands.sessionSetDelegationPolicy.name
         )
-        return dependencies.withDataRootWrite(async () => {
-          const session = await dependencies.sessions.setDelegationPolicy(
-            invocation.args[0],
-            invocation.args[1],
-            invocation.args[2]
-          )
-          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
-            session,
-            originClientId: MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.setDelegationPolicy(
+              invocation.args[0],
+              invocation.args[1],
+              invocation.args[2]
+            )
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId: MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
+            })
+            return session
           })
-          return session
-        })
+        )
       },
       'sessions:update-configuration': (invocation) => {
         assertTaskCaller(invocation, dataContentApplicationCommands.sessionUpdateConfiguration.name)
         const originClientId = invocation.callerContext.lifecycleClientId
-        return dependencies.withDataRootWrite(async () => {
-          let session: SessionPersistence.PersistedChatSession
-          try {
-            session = await dependencies.sessions.updateSessionConfiguration(
-              invocation.args[0],
-              invocation.args[1]
-            )
-          } catch (error) {
-            if (SessionPersistence.isSessionRevisionConflictError(error)) {
-              throw new ApplicationCommandError(
-                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
-                error instanceof Error ? error.message : 'Session revision conflict.'
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            let session: SessionPersistence.PersistedChatSession
+            try {
+              session = await dependencies.sessions.updateSessionConfiguration(
+                invocation.args[0],
+                invocation.args[1]
               )
+            } catch (error) {
+              if (SessionPersistence.isSessionRevisionConflictError(error)) {
+                throw new ApplicationCommandError(
+                  SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                  error instanceof Error ? error.message : 'Session revision conflict.'
+                )
+              }
+              throw error
             }
-            throw error
-          }
-          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
-            session,
-            originClientId
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
           })
-          return session
-        })
+        )
       }
     })
     scope.registerGroup(dataContentApplicationCommandGroups[7], {

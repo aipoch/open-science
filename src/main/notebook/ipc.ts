@@ -7,6 +7,7 @@ import type {
   ExecuteNotebookCodeRequest,
   ExportNotebookAllRequest,
   ExportNotebookKernelRequest,
+  AbortNotebookCodeCellRequest,
   FinishNotebookCodeCellRequest,
   NotebookNamespaceRequest,
   NotebookRestartRequest,
@@ -34,6 +35,9 @@ const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void =
   )
   ipcMainHandle('notebook:append-code-cell', (_event, request: AppendNotebookCodeCellRequest) =>
     handlers.appendCodeCell(request)
+  )
+  ipcMainHandle('notebook:abort-code-cell', (_event, request: AbortNotebookCodeCellRequest) =>
+    handlers.abortCodeCell(request)
   )
   ipcMainHandle('notebook:finish-code-cell', (_event, request: FinishNotebookCodeCellRequest) =>
     handlers.finishCodeCell(request)

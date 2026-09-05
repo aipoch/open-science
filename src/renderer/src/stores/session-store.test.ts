@@ -17,6 +17,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactFile } from '../../../shared/artifacts'
+import { MAX_ACP_RUNTIME_EVENTS } from '../../../shared/acp'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
 import {
   INTERRUPTED_SESSION_ERROR,
@@ -3809,6 +3810,27 @@ describe('session store', () => {
     })
 
     expect(useSessionStore.getState().sessions[0]).toEqual(finishedSession)
+  })
+
+  it('keeps only the replayable event id window after a run finishes', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Stream a long response'
+    })
+    useSessionStore.getState().appendAgentMessageChunks(
+      Array.from({ length: MAX_ACP_RUNTIME_EVENTS + 1 }, (_, index) => ({
+        sessionId: 'transport-session-1',
+        streamId: 'assistant-message-1',
+        eventId: `event-${index}`,
+        content: 'x'
+      }))
+    )
+
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)?.eventIds).toEqual(
+      Array.from({ length: MAX_ACP_RUNTIME_EVENTS }, (_, index) => `event-${index + 1}`)
+    )
   })
 
   it('marks the active run and streaming agent message as failed', () => {

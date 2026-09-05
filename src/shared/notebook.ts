@@ -828,6 +828,9 @@ export type FinishNotebookCodeCellRequest = NotebookSessionRequest & {
   cellId: string
 }
 
+// Cancels exactly one active write and discards its unfinished code.
+export type AbortNotebookCodeCellRequest = FinishNotebookCodeCellRequest
+
 // Runs an existing cell in the shared interpreter.
 export type RunNotebookCellRequest = NotebookSessionRequest & {
   cellId: string

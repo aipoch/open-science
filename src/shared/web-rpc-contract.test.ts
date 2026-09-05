@@ -114,6 +114,7 @@ describe('Web RPC contract', () => {
     const eventPaths = Object.keys(WEB_EVENT_CHANNELS)
 
     expect(invokePaths.filter((path) => path.startsWith('notebook.'))).toEqual([
+      'notebook.abortCodeCell',
       'notebook.appendCodeCell',
       'notebook.beginCodeCell',
       'notebook.execute',

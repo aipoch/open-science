@@ -6,6 +6,7 @@ import type {
   ExportNotebookAllResult,
   ExportNotebookKernelRequest,
   ExportNotebookResult,
+  AbortNotebookCodeCellRequest,
   FinishNotebookCodeCellRequest,
   NotebookCell,
   NotebookNamespaceRequest,
@@ -49,6 +50,7 @@ type NotebookCommandRuntime = {
   getSessionReference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
   beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<BeginNotebookCodeCellResult>
   appendCodeCell(request: AppendNotebookCodeCellRequest): Promise<AppendNotebookCodeCellResult>
+  abortCodeCell(request: AbortNotebookCodeCellRequest): Promise<FinishNotebookCodeCellResult>
   finishCodeCell(request: FinishNotebookCodeCellRequest): Promise<FinishNotebookCodeCellResult>
   runCell(request: RunNotebookCellRequest): Promise<NotebookRunSummary>
   execute(request: ExecuteNotebookCodeRequest): Promise<NotebookRunSummary>
@@ -64,6 +66,7 @@ type NotebookCommandWorkflows = {
   reference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
   beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<BeginNotebookCodeCellResult>
   appendCodeCell(request: AppendNotebookCodeCellRequest): Promise<AppendNotebookCodeCellResult>
+  abortCodeCell(request: AbortNotebookCodeCellRequest): Promise<FinishNotebookCodeCellResult>
   finishCodeCell(request: FinishNotebookCodeCellRequest): Promise<FinishNotebookCodeCellResult>
   runCell(request: RunNotebookCellRequest): Promise<NotebookRunSummary>
   execute(request: ExecuteNotebookCodeRequest): Promise<NotebookRunSummary>
@@ -105,6 +108,7 @@ const createNotebookCommandWorkflows = (
   reference: (request) => runtime.getSessionReference(request),
   beginCodeCell: (request) => withDataRootWrite(() => runtime.beginCodeCell(request)),
   appendCodeCell: (request) => withDataRootWrite(() => runtime.appendCodeCell(request)),
+  abortCodeCell: (request) => withDataRootWrite(() => runtime.abortCodeCell(request)),
   finishCodeCell: (request) => withDataRootWrite(() => runtime.finishCodeCell(request)),
   runCell: (request) =>
     withDataRootWrite(() => runtime.runCell(withoutTrustedTurnContext(request))),

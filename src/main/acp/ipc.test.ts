@@ -13,7 +13,6 @@ import type {
   AcpResumeSessionRequest,
   AcpSteerFollowUpRequest
 } from '../../shared/acp'
-import { toAcpStateCommandResponse } from '../../shared/acp'
 import type { AcpRuntimeOptions } from './runtime'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
@@ -216,7 +215,7 @@ const registerWithFakes = (overrides?: {
   delegatedNotebookConnection?: AcpTestOptions['delegatedNotebookConnection']
   archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
   interruptedTurnSessions?: Parameters<typeof createAcpHandlerWorkflows>[4]
-  resolveMemoryEnabled?: Parameters<typeof installAcpIpcHandlers>[4]
+  resolveMemoryEnabled?: Parameters<typeof installAcpIpcHandlers>[3]
 }): AcpTestOptions => {
   const taskNotifications =
     overrides?.taskNotifications ??
@@ -269,7 +268,6 @@ const registerWithFakes = (overrides?: {
       overrides?.archiveAvailability,
       overrides?.interruptedTurnSessions
     ),
-    undefined,
     overrides?.archiveAvailability ?? passThroughSessionAdmission,
     overrides?.resolveMemoryEnabled
   )
@@ -302,55 +300,7 @@ afterEach(() => {
   AcpRuntimeMock.mockClear()
 })
 
-it('routes delegated question responses to their owner without touching Main elicitation', async () => {
-  const respondToElicitation = vi.fn()
-  const respondDelegatedQuestion = vi.fn().mockResolvedValue(undefined)
-  const snapshot = {
-    revision: 1,
-    status: 'idle' as const,
-    cwd: '/workspace',
-    sessionIds: [],
-    events: [],
-    pendingPermissions: [],
-    permissionProfiles: {},
-    permissionGrants: {},
-    contextUsageBySession: {},
-    promptInFlight: false,
-    promptInFlightSessionIds: []
-  }
-  const commandResponse = toAcpStateCommandResponse(snapshot)
-  const runtimeState = { ...commandResponse.result, revision: commandResponse.revision }
-  installAcpIpcHandlers(
-    { respondToElicitation, getSnapshot: () => snapshot, getState: () => runtimeState } as never,
-    {} as never,
-    respondDelegatedQuestion,
-    passThroughSessionAdmission
-  )
-
-  await expect(
-    handlers.get('acp:respond-elicitation')?.(undefined, {
-      requestId: 'question-1',
-      sessionId: 'session-1',
-      answers: {},
-      delegatedQuestion: {
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        action: 'confirm',
-        answers: [{ questionIndex: 0, value: 'Strict' }]
-      }
-    })
-  ).resolves.toEqual(commandResponse)
-  expect(respondDelegatedQuestion).toHaveBeenCalledWith({
-    projectId: 'project-1',
-    sessionId: 'session-1',
-    requestId: 'question-1',
-    action: 'confirm',
-    answers: [{ questionIndex: 0, value: 'Strict' }]
-  })
-  expect(respondToElicitation).not.toHaveBeenCalled()
-})
-
-it('rejects ACP response mutations before runtime work when Session admission is closed', async () => {
+it('rejects direct ACP policy mutations before runtime work when Session admission is closed', async () => {
   const failure = new Error('Project is being deleted.')
   const admitted: string[] = []
   const sessionAdmission = {
@@ -363,64 +313,12 @@ it('rejects ACP response mutations before runtime work when Session admission is
       throw failure
     }
   }
-  const responseSnapshot = {
-    status: 'idle',
-    cwd: '/workspace',
-    sessionIds: ['permission-session', 'elicitation-session'],
-    events: [],
-    pendingPermissions: [
-      {
-        requestId: 'permission-1',
-        sessionId: 'permission-session',
-        toolCallId: 'tool-1',
-        title: 'Use a tool',
-        options: []
-      }
-    ],
-    pendingElicitations: [
-      {
-        requestId: 'question-1',
-        sessionId: 'elicitation-session',
-        toolCallId: 'tool-2',
-        message: 'Choose',
-        fields: []
-      }
-    ],
-    permissionProfiles: {},
-    permissionGrants: {},
-    promptInFlight: false,
-    promptInFlightSessionIds: [],
-    contextUsageBySession: {}
-  }
   const responseRuntime = {
-    getSnapshot: vi.fn(() => responseSnapshot),
-    respondToPermission: vi.fn(),
-    respondToElicitation: vi.fn(),
-    respondSessionPlan: vi.fn(),
     setPermissionProfile: vi.fn(),
     revokePermissionGrant: vi.fn()
   }
-  installAcpIpcHandlers(responseRuntime as never, {} as never, undefined, sessionAdmission)
+  installAcpIpcHandlers(responseRuntime as never, {} as never, sessionAdmission)
 
-  await expect(
-    handlers.get('acp:respond-permission')?.(undefined, {
-      requestId: 'permission-1',
-      optionId: 'allow-once'
-    })
-  ).rejects.toBe(failure)
-  await expect(
-    handlers.get('acp:respond-elicitation')?.(undefined, {
-      requestId: 'question-1',
-      action: 'decline'
-    })
-  ).rejects.toBe(failure)
-  await expect(
-    handlers.get('acp:respond-plan')?.(undefined, {
-      projectId: 'project-1',
-      sessionId: 'plan-session',
-      feedback: 'Revise the plan.'
-    })
-  ).rejects.toBe(failure)
   await expect(
     handlers.get('acp:set-permission-profile')?.(undefined, {
       sessionId: 'profile-session',
@@ -434,116 +332,9 @@ it('rejects ACP response mutations before runtime work when Session admission is
     })
   ).rejects.toBe(failure)
 
-  expect(admitted).toEqual([
-    'permission-session',
-    'elicitation-session',
-    'plan-session',
-    'profile-session',
-    'profile-session'
-  ])
-  expect(responseRuntime.respondToPermission).not.toHaveBeenCalled()
-  expect(responseRuntime.respondToElicitation).not.toHaveBeenCalled()
-  expect(responseRuntime.respondSessionPlan).not.toHaveBeenCalled()
+  expect(admitted).toEqual(['profile-session', 'profile-session'])
   expect(responseRuntime.setPermissionProfile).not.toHaveBeenCalled()
   expect(responseRuntime.revokePermissionGrant).not.toHaveBeenCalled()
-})
-
-it('rejects forged and unknown ACP response authority before Session admission', () => {
-  const admitted: string[] = []
-  const withSessionAvailableById = <Result>(
-    sessionId: string,
-    operation: (projectId: string) => Promise<Result>
-  ): Promise<Result> => {
-    admitted.push(sessionId)
-    return operation('project-1')
-  }
-  const responseRuntime = {
-    getSnapshot: vi.fn(() => ({
-      status: 'idle',
-      cwd: '/workspace',
-      sessionIds: ['permission-session', 'elicitation-session', 'forged-session'],
-      events: [],
-      pendingPermissions: [
-        {
-          requestId: 'permission-1',
-          sessionId: 'permission-session',
-          toolCallId: 'tool-1',
-          title: 'Use a tool',
-          options: []
-        }
-      ],
-      pendingElicitations: [
-        {
-          requestId: 'question-1',
-          sessionId: 'elicitation-session',
-          toolCallId: 'tool-2',
-          message: 'Choose',
-          fields: []
-        }
-      ],
-      permissionProfiles: {},
-      permissionGrants: {},
-      promptInFlight: false,
-      promptInFlightSessionIds: [],
-      contextUsageBySession: {}
-    })),
-    respondToPermission: vi.fn(),
-    respondToElicitation: vi.fn()
-  }
-  const respondDelegatedQuestion = vi.fn()
-  installAcpIpcHandlers(responseRuntime as never, {} as never, respondDelegatedQuestion, {
-    withSessionAvailableById
-  })
-
-  expect(() =>
-    handlers.get('acp:respond-permission')?.(undefined, {
-      requestId: 'permission-1',
-      optionId: 'allow-once',
-      restored: { projectId: 'forged-project', sessionId: 'forged-session' }
-    })
-  ).toThrow('Permission response Session does not match the pending request.')
-  expect(() =>
-    handlers.get('acp:respond-elicitation')?.(undefined, {
-      requestId: 'question-1',
-      action: 'decline',
-      request: {
-        requestId: 'question-1',
-        sessionId: 'forged-session',
-        toolCallId: 'tool-2',
-        message: 'Choose',
-        fields: []
-      }
-    })
-  ).toThrow('Structured input response Session does not match the pending request.')
-  expect(() =>
-    handlers.get('acp:respond-elicitation')?.(undefined, {
-      requestId: 'question-1',
-      action: 'accept',
-      delegatedQuestion: {
-        projectId: 'forged-project',
-        sessionId: 'forged-session',
-        action: 'confirm',
-        answers: []
-      }
-    })
-  ).toThrow('Structured input response Session does not match the pending request.')
-  expect(() =>
-    handlers.get('acp:respond-permission')?.(undefined, {
-      requestId: 'unknown-permission',
-      optionId: 'allow-once'
-    })
-  ).toThrow('Unknown permission request.')
-  expect(() =>
-    handlers.get('acp:respond-elicitation')?.(undefined, {
-      requestId: 'unknown-question',
-      action: 'decline'
-    })
-  ).toThrow('Unknown structured input request.')
-
-  expect(admitted).toEqual([])
-  expect(responseRuntime.respondToPermission).not.toHaveBeenCalled()
-  expect(responseRuntime.respondToElicitation).not.toHaveBeenCalled()
-  expect(respondDelegatedQuestion).not.toHaveBeenCalled()
 })
 
 describe('ACP module transport seam', () => {
@@ -652,6 +443,11 @@ describe('ACP module transport seam', () => {
       .map(([, channel]) => channel)
       .sort()
 
+    const runtimeValidatedChannels = [
+      'acp:respond-elicitation',
+      'acp:respond-permission',
+      'acp:respond-plan'
+    ]
     expect([...handlers.keys()].sort()).toEqual([
       'acp:cancel',
       'acp:compact-session',
@@ -663,9 +459,6 @@ describe('ACP module transport seam', () => {
       'acp:get-plan-projection',
       'acp:get-state',
       'acp:reset-session-context',
-      'acp:respond-elicitation',
-      'acp:respond-permission',
-      'acp:respond-plan',
       'acp:resume-session',
       'acp:revoke-permission-grant',
       'acp:save-as-skill',
@@ -673,7 +466,7 @@ describe('ACP module transport seam', () => {
       'acp:set-permission-profile',
       'acp:steer-follow-up'
     ])
-    expect(invokeChannels).toEqual([...handlers.keys()].sort())
+    expect(invokeChannels).toEqual([...handlers.keys(), ...runtimeValidatedChannels].sort())
     expect(eventChannels).toEqual([
       'acp:agent-runtime-update',
       'acp:event',
@@ -694,12 +487,11 @@ describe('ACP module transport seam', () => {
     installAcpIpcHandlers(
       runtime,
       createAcpHandlerWorkflows(runtime, createSessionWorkflow, options.taskNotifications),
-      undefined,
       passThroughSessionAdmission
     )
 
     expect(handlers.has('acp:get-state')).toBe(true)
-    expect(handlers.has('acp:respond-permission')).toBe(true)
+    expect(handlers.has('acp:respond-permission')).toBe(false)
   })
 })
 
@@ -1350,7 +1142,7 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
         reason: 'prompt-required' as const
       }))
     )
-    installAcpIpcHandlers({ steerFollowUp } as never, {} as never, undefined, archiveAvailability)
+    installAcpIpcHandlers({ steerFollowUp } as never, {} as never, archiveAvailability)
     const request: AcpSteerFollowUpRequest = { sessionId: 's-1', text: 'focus on tests' }
 
     const outcome = await handlers.get('acp:steer-follow-up')?.({}, request)

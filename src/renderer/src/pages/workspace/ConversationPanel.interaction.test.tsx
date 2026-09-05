@@ -506,7 +506,8 @@ const createPanelDefaults = (): PanelProps => ({
       submitMode: undefined,
       revise: true,
       resume: true,
-      branch: true
+      branch: true,
+      planResponse: true
     },
     actions: {
       submit: {
@@ -516,6 +517,7 @@ const createPanelDefaults = (): PanelProps => ({
       revise: vi.fn(),
       branch: vi.fn(),
       sideChat: { start: vi.fn() },
+      reportSessionSizeLimit: vi.fn(),
       resume: vi.fn().mockResolvedValue(undefined),
       cancel: vi.fn(),
       delete: vi.fn()
@@ -3983,7 +3985,8 @@ describe('ConversationPanel + menu', () => {
 
     expect(respondToSessionPlanMock).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: 'project-a', sessionId: 'session-plan-feedback' }),
-      { feedback: 'Split the analysis by cohort.' }
+      { feedback: 'Split the analysis by cohort.' },
+      { onSessionSizeLimit: expect.any(Function) }
     )
   })
 
@@ -4024,7 +4027,8 @@ describe('ConversationPanel + menu', () => {
 
     expect(respondToSessionPlanMock).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'session-plan-text-approval' }),
-      { feedback: 'Approved for execution' }
+      { feedback: 'Approved for execution' },
+      { onSessionSizeLimit: expect.any(Function) }
     )
   })
 

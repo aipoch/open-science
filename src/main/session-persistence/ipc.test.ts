@@ -4,6 +4,7 @@ import {
   createEmptySessionManifest,
   materializeSessionConversationGraph,
   SessionRevisionConflictError,
+  SessionSizeLimitError,
   SessionDeletionCommittedError,
   type PersistedChatSession
 } from '../../shared/session-persistence'
@@ -754,18 +755,11 @@ describe('session persistence IPC handlers', () => {
       'sessions:load-usage',
       'sessions:load-one',
       'sessions:save-session',
-      'sessions:update-archive',
       'sessions:save-manifest',
       'sessions:open-recovery-folder'
     ])
 
     const deleteRequest = { projectId: 'project-a', sessionId: 'session-1' }
-    const archiveRequest = {
-      projectId: 'project-a',
-      sessionId: 'session-1',
-      archived: true,
-      expectedArchivedAt: null
-    }
     const manifestRequest = { lastSessionId: 'session-1' }
     const event = { sender: { id: 2 } }
     await expect(ipcHandlers.get('sessions:load-all')?.()).resolves.toBe(loadResult)
@@ -778,13 +772,12 @@ describe('session persistence IPC handlers', () => {
     })
     const updatedSession = { ...session, title: 'Updated session', updatedAt: 1710000000001 }
     await ipcHandlers.get('sessions:save-session')?.(event, updatedSession)
-    await ipcHandlers.get('sessions:update-archive')?.(event, archiveRequest)
     await ipcHandlers.get('sessions:save-manifest')?.(undefined, manifestRequest)
     await ipcHandlers.get('sessions:open-recovery-folder')?.(event, { projectId: 'project-a' })
 
     expect(repository.saveSession).toHaveBeenCalledWith(session)
     expect(repository.loadOne).toHaveBeenCalledWith(deleteRequest)
-    expect(repository.updateArchive).toHaveBeenCalledWith(archiveRequest)
+    expect(repository.updateArchive).not.toHaveBeenCalled()
     expect(repository.deleteSession).not.toHaveBeenCalled()
     expect(reviewRepository.deleteReviewsForSession).not.toHaveBeenCalled()
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
@@ -795,10 +788,6 @@ describe('session persistence IPC handlers', () => {
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:updated', {
       session: durableSession,
-      originClientId: 'electron:2'
-    })
-    expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:updated', {
-      session: { ...durableSession, archivedAt: 3 },
       originClientId: 'electron:2'
     })
   })
@@ -963,6 +952,40 @@ describe('session persistence IPC handlers', () => {
       error: {
         code: 'session-revision-conflict',
         message: conflict.message
+      }
+    })
+    expect(broadcastLifecycleEvent).not.toHaveBeenCalled()
+  })
+
+  it('returns a size-limit outcome without rejecting the Electron IPC handler', async () => {
+    const failure = new SessionSizeLimitError()
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const handlers: SessionPersistenceHandlers = {
+      loadAll: vi.fn(),
+      list: vi.fn(),
+      loadUsage: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn().mockRejectedValue(failure),
+      setDelegationPolicy: vi.fn(),
+      updateArchive: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), handlers)
+
+    await expect(
+      ipcHandlers.get('sessions:save-session')?.({ sender: { id: 1 } }, createSession())
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        code: 'session-size-limit',
+        message: failure.message
       }
     })
     expect(broadcastLifecycleEvent).not.toHaveBeenCalled()

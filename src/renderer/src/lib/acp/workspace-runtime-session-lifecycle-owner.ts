@@ -614,7 +614,8 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
       sessionId: string,
       enabled: boolean,
       onPreparationStateChange?: (sessionId: string, inFlight: boolean) => void,
-      persistSession?: (sessionId: string) => Promise<void>
+      persistSession?: (sessionId: string) => Promise<void>,
+      onSessionSizeLimit?: (sessionId: string) => void
     ): Promise<void> {
       const run = (): Promise<void> =>
         reconfigureWorkspaceMemory(
@@ -622,7 +623,8 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
           sessionId,
           enabled,
           persistSession,
-          onPreparationStateChange
+          onPreparationStateChange,
+          onSessionSizeLimit
         )
       const previous = memoryReconfigurationTails.get(sessionId)
       const operation = previous ? previous.catch(() => undefined).then(run) : run()

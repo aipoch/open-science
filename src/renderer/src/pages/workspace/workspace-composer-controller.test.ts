@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { TextAnnotation } from '../../../../shared/annotations'
-import type { SessionPdfContext } from '../../../../shared/session-persistence'
+import {
+  SessionSizeLimitError,
+  type SessionPdfContext
+} from '../../../../shared/session-persistence'
 import type { CustomizePrefillIntent } from '@/stores/navigation-store'
 import {
   createInitialPreviewWorkbenchState,
@@ -91,7 +94,8 @@ const renderController = (
   activeSession: Parameters<typeof useWorkspaceComposerController>[0]['activeSession'] | null = {
     id: 'session-a',
     projectId: 'project'
-  }
+  },
+  onSessionSizeLimit?: (sessionId: string) => void
 ): ControllerHook => {
   let currentDraftKey = 'session-a'
   let selectedActiveSession = activeSession ?? undefined
@@ -122,7 +126,8 @@ const renderController = (
       },
       canStageAttachments: true,
       supportsImageInput: true,
-      uploads: uploadApi
+      uploads: uploadApi,
+      onSessionSizeLimit
     })
     return null
   }
@@ -348,6 +353,39 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.actions.undo()).toBe(false)
     await flushAsyncWork()
     expect(linkPdfContext).toHaveBeenCalledOnce()
+  })
+
+  it('reports a Reading context size failure through the Session recovery owner', async () => {
+    const source = {
+      sourceKind: 'upload-version' as const,
+      sourceFileId: 'upload-a',
+      sourceVersionId: 'version-a'
+    }
+    const linkPdfContext = vi.fn().mockRejectedValue(new SessionSizeLimitError())
+    const onSessionSizeLimit = vi.fn()
+    window.api = {
+      sessions: { linkPdfContext, unlinkPdfContext: vi.fn() }
+    } as unknown as Window['api']
+    const hook = renderController(
+      uploads(),
+      undefined,
+      [],
+      {
+        id: 'session-a',
+        projectId: 'project',
+        runtimeContext: { revision: 0 }
+      },
+      onSessionSizeLimit
+    )
+    mounted.push(hook)
+
+    await act(async () => {
+      await expect(hook.result.current.actions.linkReadingContext(source)).rejects.toThrow(
+        'persistence limit'
+      )
+    })
+
+    expect(onSessionSizeLimit).toHaveBeenCalledWith('session-a')
   })
 
   it('removes the Reading redo entry when a link fails after an in-flight undo', async () => {

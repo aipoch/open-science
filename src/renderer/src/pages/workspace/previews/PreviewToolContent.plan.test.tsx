@@ -155,6 +155,12 @@ describe('Plan Preview workbench integration', () => {
           toolKind: 'plan',
           title: 'Session Plan'
         }}
+        restoredPlanResponder={{
+          sessionId: 'background-session',
+          enabled: true,
+          respond: vi.fn(),
+          canRespondToSession: () => true
+        }}
       />
     )
 
@@ -199,6 +205,30 @@ describe('Plan Preview workbench integration', () => {
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
   })
 
+  it('makes a background active Plan read-only when its Session is persistence-blocked', () => {
+    render(
+      <PreviewToolContent
+        item={{
+          id: 'tool:session-1:plan',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          type: 'tool',
+          toolKind: 'plan',
+          title: 'Session Plan'
+        }}
+        restoredPlanResponder={{
+          sessionId: 'selected-session',
+          enabled: true,
+          respond: vi.fn(),
+          canRespondToSession: () => false
+        }}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+  })
+
   it('makes an orphaned pending Plan read-only instead of offering ineffective controls', () => {
     useSessionStore.setState({
       sessions: [
@@ -229,6 +259,30 @@ describe('Plan Preview workbench integration', () => {
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
     expect(screen.getByText('Session Plan')).toBeTruthy()
+  })
+
+  it('makes an active Plan read-only while its Session is persistence-blocked', () => {
+    render(
+      <PreviewToolContent
+        item={{
+          id: 'tool:session-1:plan',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          type: 'tool',
+          toolKind: 'plan',
+          title: 'Session Plan'
+        }}
+        restoredPlanResponder={{
+          sessionId: 'session-1',
+          enabled: false,
+          respond: respondToRestoredPlan
+        }}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+    expect(respondPlan).not.toHaveBeenCalled()
   })
 
   it('preserves the Plan scroll position across a streamed durable progress refresh', () => {
@@ -349,6 +403,7 @@ describe('Plan Preview workbench integration', () => {
         item={item}
         restoredPlanResponder={{
           sessionId: 'session-2',
+          enabled: true,
           respond: respondToRestoredPlan
         }}
       />
@@ -360,6 +415,7 @@ describe('Plan Preview workbench integration', () => {
         item={item}
         restoredPlanResponder={{
           sessionId: 'session-1',
+          enabled: true,
           respond: respondToRestoredPlan
         }}
       />

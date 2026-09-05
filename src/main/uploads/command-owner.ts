@@ -287,13 +287,17 @@ const createUploadCommandOwner = (
       )
       const projectId = request.projectId ?? DEFAULT_UPLOAD_PROJECT_ID
       try {
-        const published = await withDataRootWrite(() =>
-          repository.finalizePendingSessionUploads(
-            STANDALONE_UPLOAD_SESSION_ID,
-            [attachment],
-            projectId
-          )
-        )
+        const published = await withDataRootWrite(() => {
+          const finalize = (): Promise<UploadedAttachment[]> =>
+            repository.finalizePendingSessionUploads(
+              STANDALONE_UPLOAD_SESSION_ID,
+              [attachment],
+              projectId
+            )
+          return options.withSessionMutation
+            ? options.withSessionMutation(projectId, STANDALONE_UPLOAD_SESSION_ID, finalize)
+            : finalize()
+        })
         if (published.length !== 1) {
           throw new Error(
             `Expected exactly one published standalone upload, received ${published.length}.`

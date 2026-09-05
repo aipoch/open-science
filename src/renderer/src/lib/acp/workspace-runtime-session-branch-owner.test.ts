@@ -6,7 +6,10 @@ import {
   type FinalizeUploadSessionRequest,
   type UploadedAttachment
 } from '../../../../shared/uploads'
-import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import {
+  SessionSizeLimitError,
+  type PersistedChatSession
+} from '../../../../shared/session-persistence'
 import {
   createInitialSessionState,
   useSessionStore,
@@ -71,6 +74,36 @@ describe('branchWorkspaceSessionFromMessage', () => {
       undefined,
       false
     )
+  })
+
+  it('reports branch size failures against the durable source Session', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'first question',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    const answer = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'answer-stream',
+      eventId: 'answer-event',
+      content: 'first answer'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    const onSessionSizeLimit = vi.fn()
+
+    await expect(
+      branchWorkspaceSessionFromMessage(
+        { createSession: vi.fn().mockRejectedValue(new SessionSizeLimitError()) },
+        {
+          sourceSessionId: 'source-session',
+          sourceMessageId: answer?.messageId ?? ''
+        },
+        onSessionSizeLimit
+      )
+    ).rejects.toThrow('persistence limit')
+
+    expect(onSessionSizeLimit).toHaveBeenCalledWith('source-session')
   })
 
   it('finalizes legacy branch history in bounded requests', async () => {

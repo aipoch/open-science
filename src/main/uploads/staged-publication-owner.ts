@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { createReadStream } from 'node:fs'
 import { mkdir, realpath, stat } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
@@ -26,6 +27,7 @@ type StagedPublicationOptions = {
 type PublicationOptions = {
   preserveLegacySource?: boolean
   requireExistingAuthority?: boolean
+  legacySessionUpload?: boolean
 }
 
 type UploadVersionRecord = {
@@ -33,6 +35,7 @@ type UploadVersionRecord = {
   uploadFileId: string
   versionNumber: number
   state: string
+  originKind: string
   contentStorageKey: string
   filename: string
   originalFilename: string
@@ -58,6 +61,43 @@ const runUploadTransaction = <Result>(
   operation: (transaction: Prisma.TransactionClient) => Promise<Result>
 ): Promise<Result> => client.$transaction(operation, UPLOAD_TRANSACTION_OPTIONS)
 
+// Publication authority is durable and must be read in the transaction that changes it. The
+// command scheduler orders local callers, but cannot substitute for these deletion barriers.
+const readUploadPublicationLifecycle = async (
+  tx: Prisma.TransactionClient,
+  projectId: string,
+  sessionId: string,
+  uploadFileId: string
+): Promise<{ projectExists: boolean; writable: boolean }> => {
+  const [project, deleting, origin, sync, projection] = await Promise.all([
+    tx.project.findUnique({ where: { id: projectId } }),
+    tx.projectDeletionIntent.findUnique({ where: { projectId } }),
+    tx.fileOriginSession.findUnique({ where: { projectId_sessionId: { projectId, sessionId } } }),
+    tx.managedFileSessionSync.findUnique({
+      where: { projectId_sessionId: { projectId, sessionId } }
+    }),
+    tx.managedFile.findUnique({
+      where: {
+        projectId_source_sourceFileId: { projectId, source: 'upload', sourceFileId: uploadFileId }
+      }
+    })
+  ])
+  return {
+    projectExists: project !== null,
+    writable:
+      !!project &&
+      !project.archivedAt &&
+      !project.deletedAt &&
+      !deleting &&
+      (!origin ||
+        (origin.state === 'active' && !origin.deletedAt && !origin.deletionOperationId)) &&
+      !sync?.deletedAt &&
+      !sync?.deleteOperationId &&
+      !projection?.deletedAt &&
+      !projection?.deleteOperationId
+  }
+}
+
 type StagedPublicationDependencies = {
   resolver: ManagedUploadResolver
   completeStagingUpload: (
@@ -65,7 +105,7 @@ type StagedPublicationDependencies = {
     sessionId: string,
     attachment: UploadedAttachment,
     version: UploadVersionRecord,
-    options?: { preserveSource?: boolean }
+    options?: { preserveSource?: boolean; legacySessionUpload?: boolean }
   ) => Promise<UploadedAttachment>
   hasOrphanLegacyCandidate: (
     projectId: string,
@@ -189,12 +229,26 @@ class StagedPublicationOwner {
       if (attachment.versionId && attachment.versionId !== existingVersion.id) {
         throw new Error('Upload Version identity conflicts with the existing immutable Version.')
       }
+      // Older legacy migrations used originKind=user_upload. A trusted path-only Session
+      // reference must still match this v1's exact legacy locator and immutable metadata.
+      const legacySessionUpload =
+        options.legacySessionUpload === true &&
+        attachment.sessionId === sessionId &&
+        !attachment.versionId &&
+        resolve(attachment.path) ===
+          resolve(getSessionUploadDir(this.storageRoot, sessionId), existingVersion.filename) &&
+        attachment.name === existingVersion.filename &&
+        attachment.size === Number(existingVersion.sizeBytes) &&
+        (!attachment.checksum || attachment.checksum === existingVersion.checksum)
       const published = await this.dependencies.completeStagingUpload(
         projectId,
         sessionId,
         attachment,
         existingVersion,
-        { preserveSource: options.preserveLegacySource === true }
+        {
+          preserveSource: options.preserveLegacySource === true,
+          legacySessionUpload
+        }
       )
       if (
         !options.preserveLegacySource &&
@@ -278,6 +332,12 @@ class StagedPublicationOwner {
         create: { projectId, sessionId },
         update: {}
       })
+      const lifecycle = await readUploadPublicationLifecycle(tx, projectId, sessionId, uploadFileId)
+      const legacySessionUpload =
+        options.legacySessionUpload === true && attachment.sessionId === sessionId
+      if (!lifecycle.writable && !(legacySessionUpload && lifecycle.projectExists)) {
+        throw new Error('Upload publication is blocked by the Project or origin lifecycle.')
+      }
       await tx.uploadFile.create({
         data: {
           id: uploadFileId,
@@ -293,6 +353,7 @@ class StagedPublicationOwner {
           uploadFileId,
           versionNumber: 1,
           state: 'staging',
+          originKind: legacySessionUpload ? 'legacy' : 'user_upload',
           contentStorageKey,
           filename: attachment.name,
           originalFilename: attachment.originalName,
@@ -305,10 +366,17 @@ class StagedPublicationOwner {
     })
 
     return this.dependencies.completeStagingUpload(projectId, sessionId, attachment, registered, {
-      preserveSource: options.preserveLegacySource === true
+      preserveSource: options.preserveLegacySource === true,
+      legacySessionUpload:
+        options.legacySessionUpload === true && attachment.sessionId === sessionId
     })
   }
 }
 
-export { OrphanLegacyUploadAuthorityMissingError, runUploadTransaction, StagedPublicationOwner }
+export {
+  OrphanLegacyUploadAuthorityMissingError,
+  readUploadPublicationLifecycle,
+  runUploadTransaction,
+  StagedPublicationOwner
+}
 export type { PublicationOptions, UploadVersionRecord }

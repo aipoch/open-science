@@ -599,6 +599,12 @@ class NotebookLocalRpcServer {
   // notebook process. Keeping it here prevents an agent from selecting another Specialist's scope
   // by forging an RPC parameter.
   private readonly sessionSpecialists = new Map<string, string>()
+  // One cancellation scope per authenticated producer, rotated with its task or capability.
+  private readonly codeWriteProducers = new Map<
+    string,
+    { sessionId: string; controller: AbortController }
+  >()
+
   private readonly activeArtifactTurnBindings = new Map<string, ActiveArtifactTurnBinding>()
   private readonly activeInputRunLeases = new Map<string, Set<NotebookInputRunLease>>()
   private readonly inputRunLeaseIds = new WeakMap<NotebookInputRunLease, string>()
@@ -768,6 +774,7 @@ class NotebookLocalRpcServer {
       }
       this.hostViewImage?.discardSession(binding.sessionId)
     }
+    this.cancelCodeWriteProducers()
     this.sessionRpcCapabilities.clear()
     this.hostViewImage?.shutdown()
     this.sessionRpcTokens.clear()
@@ -890,10 +897,40 @@ class NotebookLocalRpcServer {
     return ownedSessionIds
   }
 
+  private codeWriteProducerSignal(token: string, sessionId: string): AbortSignal {
+    let producer = this.codeWriteProducers.get(token)
+    if (!producer) {
+      producer = { sessionId, controller: new AbortController() }
+      this.codeWriteProducers.set(token, producer)
+    }
+    return producer.controller.signal
+  }
+
+  private cancelCodeWriteProducers(sessionId?: string): void {
+    for (const [token, producer] of this.codeWriteProducers) {
+      const owner = this.sessionAliases.get(producer.sessionId) ?? producer.sessionId
+      if (sessionId !== undefined && owner !== sessionId) continue
+      // A child Attempt owns its connection independently of the Main task lifecycle.
+      if (
+        sessionId !== undefined &&
+        this.sessionRpcCapabilities.get(token)?.delegatedWorkRole === 'delegate'
+      )
+        continue
+      producer.controller.abort()
+      this.codeWriteProducers.delete(token)
+    }
+  }
+
+  private revokeSessionCapability(token: string): void {
+    this.codeWriteProducers.get(token)?.controller.abort()
+    this.codeWriteProducers.delete(token)
+    this.sessionRpcCapabilities.delete(token)
+  }
+
   private revokeAgentSessionCapabilities(sessionId: string): void {
     for (const ownedSessionId of this.resolveSessionCapabilityOwners(sessionId)) {
       const token = this.sessionRpcTokens.get(ownedSessionId)
-      if (token) this.sessionRpcCapabilities.delete(token)
+      if (token) this.revokeSessionCapability(token)
       this.sessionRpcTokens.delete(ownedSessionId)
     }
   }
@@ -901,7 +938,7 @@ class NotebookLocalRpcServer {
   private revokeSkillImportSessionCapabilities(sessionId: string): void {
     for (const ownedSessionId of this.resolveSessionCapabilityOwners(sessionId)) {
       const token = this.skillImportRpcTokens.get(ownedSessionId)
-      if (token) this.sessionRpcCapabilities.delete(token)
+      if (token) this.revokeSessionCapability(token)
       this.skillImportRpcTokens.delete(ownedSessionId)
     }
   }
@@ -909,7 +946,7 @@ class NotebookLocalRpcServer {
   private revokePlanSessionCapabilities(sessionId: string): void {
     for (const ownedSessionId of this.resolveSessionCapabilityOwners(sessionId)) {
       const token = this.planRpcTokens.get(ownedSessionId)
-      if (token) this.sessionRpcCapabilities.delete(token)
+      if (token) this.revokeSessionCapability(token)
       this.planRpcTokens.delete(ownedSessionId)
     }
   }
@@ -923,6 +960,7 @@ class NotebookLocalRpcServer {
     this.revokeSkillImportSessionCapabilities(sessionId)
     this.revokePlanSessionCapabilities(sessionId)
     for (const ownedSessionId of ownedSessionIds) {
+      this.cancelCodeWriteProducers(ownedSessionId)
       this.sessionSpecialists.delete(ownedSessionId)
       this.executionAuthorizations.delete(ownedSessionId)
       this.consumedExecutionToolCalls.delete(ownedSessionId)
@@ -1109,7 +1147,7 @@ class NotebookLocalRpcServer {
         if (this.sessionRpcTokens.get(sessionId) === token) {
           this.sessionRpcTokens.delete(sessionId)
         }
-        this.sessionRpcCapabilities.delete(token)
+        this.revokeSessionCapability(token)
       }
     }
   }
@@ -1170,7 +1208,7 @@ class NotebookLocalRpcServer {
     const revoke = (): Promise<void> => {
       if (revokePromise) return revokePromise
       delegatedNotebook.revoked = true
-      this.sessionRpcCapabilities.delete(token)
+      this.revokeSessionCapability(token)
       const drained =
         delegatedNotebook.inFlightRequests === 0
           ? Promise.resolve()
@@ -1214,7 +1252,7 @@ class NotebookLocalRpcServer {
         if (this.skillImportRpcTokens.get(sessionId) === token) {
           this.skillImportRpcTokens.delete(sessionId)
         }
-        this.sessionRpcCapabilities.delete(token)
+        this.revokeSessionCapability(token)
       }
     }
   }
@@ -1236,7 +1274,7 @@ class NotebookLocalRpcServer {
       token,
       release: () => {
         if (this.planRpcTokens.get(sessionId) === token) this.planRpcTokens.delete(sessionId)
-        this.sessionRpcCapabilities.delete(token)
+        this.revokeSessionCapability(token)
       }
     }
   }
@@ -1321,7 +1359,7 @@ class NotebookLocalRpcServer {
           this.hostViewImage?.discard(controlInvocationId)
         }
         ownedControlInvocationIds.clear()
-        this.sessionRpcCapabilities.delete(token)
+        this.revokeSessionCapability(token)
       }
     }
   }
@@ -1340,6 +1378,7 @@ class NotebookLocalRpcServer {
       (previous.ownerExecutionId !== binding.ownerExecutionId ||
         previous.provenanceContext.promptMessageId !== binding.provenanceContext.promptMessageId)
     ) {
+      this.cancelCodeWriteProducers(sessionId)
       this.executionAuthorizations.delete(sessionId)
       this.consumedExecutionToolCalls.delete(sessionId)
     }
@@ -1364,6 +1403,7 @@ class NotebookLocalRpcServer {
   clearArtifactTurnBinding(sessionId: string, ownerExecutionId: string): void {
     if (this.activeArtifactTurnBindings.get(sessionId)?.ownerExecutionId !== ownerExecutionId)
       return
+    this.cancelCodeWriteProducers(sessionId)
     this.activeArtifactTurnBindings.delete(sessionId)
     this.executionAuthorizations.delete(sessionId)
     this.consumedExecutionToolCalls.delete(sessionId)
@@ -1542,6 +1582,7 @@ class NotebookLocalRpcServer {
     response: ServerResponse
   ): Promise<void> {
     const disconnect = new AbortController()
+    let writeProducerSignal: AbortSignal | undefined
     const activeRequest: NotebookRpcRequestLifecycle = {
       request,
       response,
@@ -1624,6 +1665,12 @@ class NotebookLocalRpcServer {
         const sessionBinding = this.sessionRpcCapabilities.get(bearerToken)
         if (sessionBinding) {
           authenticatedSessionBinding = sessionBinding
+          if (method === 'beginCodeCell') {
+            writeProducerSignal = this.codeWriteProducerSignal(
+              bearerToken,
+              sessionBinding.sessionId
+            )
+          }
           if (sessionBinding.allowedMethods && !sessionBinding.allowedMethods.has(method)) {
             throw new RpcHttpError(403, `Notebook RPC capability does not allow ${method}.`)
           }
@@ -1936,14 +1983,15 @@ class NotebookLocalRpcServer {
           resolvedParams = { ...resolvedParams, executionInvocationId }
         }
       }
+      const dispatchSignal = writeProducerSignal
+        ? AbortSignal.any([disconnect.signal, writeProducerSignal])
+        : disconnect.signal
       const result =
         method === 'capabilitiesCall'
           ? hostCapabilities
           : isNotebookLocalRpcMethod(method) && method !== 'requestNetworkAccess'
-            ? await withDataRootWrite(() =>
-                this.dispatch(method, resolvedParams, disconnect.signal)
-              )
-            : await this.dispatch(method, resolvedParams, disconnect.signal)
+            ? await withDataRootWrite(() => this.dispatch(method, resolvedParams, dispatchSignal))
+            : await this.dispatch(method, resolvedParams, dispatchSignal)
 
       writeJson(response, 200, { result })
     } catch (error) {

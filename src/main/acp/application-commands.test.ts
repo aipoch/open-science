@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpStateSnapshot } from '../../shared/acp'
 import { toAcpStateCommandResponse } from '../../shared/acp'
+import { SessionSizeLimitError } from '../../shared/session-persistence'
 import {
   createApplicationCommandRouter,
   type ApplicationCallerLease,
@@ -451,6 +452,58 @@ describe('ACP application commands', () => {
     ).rejects.toThrow(
       'Only a current human or Task automation caller can respond to a Session Plan.'
     )
+  })
+
+  it('preserves the Session size-limit code for Plan responses', async () => {
+    const dependencies = createDependencies()
+    vi.mocked(dependencies.runtime.respondSessionPlan).mockRejectedValue(
+      new SessionSizeLimitError(1024)
+    )
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPlan,
+        invocation([
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            artifactVersionId: 'version-1',
+            expectedRevision: 2,
+            decision: 'approved'
+          }
+        ])
+      )
+    ).rejects.toMatchObject({
+      name: 'ApplicationCommandError',
+      code: 'session-size-limit'
+    })
+  })
+
+  it('preserves the Session size-limit code for permission and elicitation responses', async () => {
+    const dependencies = createDependencies()
+    vi.mocked(dependencies.runtime.respondToPermission).mockRejectedValue(
+      new SessionSizeLimitError(1024)
+    )
+    vi.mocked(dependencies.runtime.respondToElicitation).mockRejectedValue(
+      new SessionSizeLimitError(1024)
+    )
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPermission,
+        invocation([{ requestId: 'permission-1', optionId: 'allow-once' }])
+      )
+    ).rejects.toMatchObject({ name: 'ApplicationCommandError', code: 'session-size-limit' })
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondElicitation,
+        invocation([{ requestId: 'question-1', action: 'decline' }])
+      )
+    ).rejects.toMatchObject({ name: 'ApplicationCommandError', code: 'session-size-limit' })
   })
 
   it('checks archive availability before resetting Session context or compacting', async () => {

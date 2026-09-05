@@ -13,8 +13,6 @@ import type {
   AcpCreateSessionRequest,
   AcpContinueInterruptedTurnRequest,
   AcpDeleteSessionRequest,
-  AcpPermissionResponse,
-  ElicitationResponse,
   AcpPromptRequest,
   AcpSteerFollowUpRequest,
   AcpResumeSessionRequest,
@@ -28,10 +26,6 @@ import { toAcpStateCommandResponse } from '../../shared/acp'
 import { sanitizeSessionReferences } from '../../shared/session-persistence'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpHandlerWorkflows } from './handler-workflows'
-import {
-  resolveElicitationResponseSessionId,
-  resolvePermissionResponseSessionId
-} from './response-session-admission'
 import { bindResumeRequestToProject } from './session-project-binding'
 import { installAgentShutdownGuard } from './shutdown-guard'
 
@@ -55,13 +49,6 @@ const withDurableMemoryPreference = async (
   return { ...request, memoryEnabled: memoryEnabled ?? false }
 }
 
-const withResponseAdmission = <Result>(
-  sessionAdmission: AcpIpcSessionAdmission,
-  sessionId: string | undefined,
-  operation: () => Promise<Result>
-): Promise<Result> =>
-  sessionId ? sessionAdmission.withSessionAvailableById(sessionId, operation) : operation()
-
 const stateCommand = async (operation: Promise<AcpStateUpdate>): Promise<AcpStateCommandResponse> =>
   toAcpStateCommandResponse(await operation)
 
@@ -69,9 +56,6 @@ const registerAcpIpcHandlerSet = (
   runtime: AcpRuntimeCoordinator,
   workflows: AcpHandlerWorkflows,
   sessionAdmission: AcpIpcSessionAdmission,
-  respondDelegatedQuestion?: (
-    input: NonNullable<ElicitationResponse['delegatedQuestion']> & { requestId: string }
-  ) => Promise<void>,
   resolveMemoryEnabled?: AcpSessionMemoryPreferenceResolver
 ): void => {
   ipcMainHandle('acp:get-state', () => runtime.getSnapshot())
@@ -153,45 +137,9 @@ const registerAcpIpcHandlerSet = (
     // retirement. Keeping that signal in one layer prevents a successful delete from firing twice.
     return stateCommand(runtime.deleteSession(request))
   })
-  ipcMainHandle('acp:respond-permission', (_event, response: AcpPermissionResponse) =>
-    stateCommand(
-      withResponseAdmission(
-        sessionAdmission,
-        resolvePermissionResponseSessionId(runtime.getSnapshot(), response),
-        () => runtime.respondToPermission(response)
-      )
-    )
-  )
   ipcMainHandle('acp:get-plan-projection', (_event, projectId: string, sessionId: string) =>
     runtime.getSessionPlanProjection(projectId, sessionId)
   )
-  ipcMainHandle(
-    'acp:respond-plan',
-    (_event, request: Parameters<AcpRuntimeCoordinator['respondSessionPlan']>[0]) =>
-      sessionAdmission.withSessionAvailableById(request.sessionId, () =>
-        runtime.respondSessionPlan(request)
-      )
-  )
-  ipcMainHandle('acp:respond-elicitation', (_event, response: ElicitationResponse) => {
-    return stateCommand(
-      withResponseAdmission(
-        sessionAdmission,
-        resolveElicitationResponseSessionId(runtime.getSnapshot(), response),
-        () => {
-          if (response.delegatedQuestion) {
-            if (!respondDelegatedQuestion) {
-              throw new Error('Delegated question response owner is unavailable.')
-            }
-            return respondDelegatedQuestion({
-              ...response.delegatedQuestion,
-              requestId: response.requestId
-            }).then(() => runtime.getState())
-          }
-          return runtime.respondToElicitation(response)
-        }
-      )
-    )
-  })
   ipcMainHandle('acp:set-permission-profile', (_event, request: AcpSetPermissionProfileRequest) =>
     stateCommand(
       sessionAdmission.withSessionAvailableById(request.sessionId, () =>
@@ -212,23 +160,12 @@ const registerAcpIpcHandlerSet = (
 const installAcpIpcHandlers = (
   runtime: AcpRuntimeCoordinator,
   workflows: AcpHandlerWorkflows,
-  respondDelegatedQuestion:
-    | ((
-        input: NonNullable<ElicitationResponse['delegatedQuestion']> & { requestId: string }
-      ) => Promise<void>)
-    | undefined,
   sessionAdmission: AcpIpcSessionAdmission,
   resolveMemoryEnabled?: AcpSessionMemoryPreferenceResolver
 ): IpcHandlerInstallation => {
   const scope = createIpcHandlerInstallationScope()
   try {
-    registerAcpIpcHandlerSet(
-      runtime,
-      workflows,
-      sessionAdmission,
-      respondDelegatedQuestion,
-      resolveMemoryEnabled
-    )
+    registerAcpIpcHandlerSet(runtime, workflows, sessionAdmission, resolveMemoryEnabled)
     // Kill the agent child on quit so it never outlives the app as an orphaned process.
     return scope.complete(installAgentShutdownGuard(app, runtime))
   } catch (error) {

@@ -3,7 +3,9 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 import type { ApplicationCommandOutcome } from '../../shared/application-command-contract'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 import {
+  isSessionSizeLimitError,
   isSessionRevisionConflictError,
+  SESSION_SIZE_LIMIT_ERROR_CODE,
   SessionDeletionCommittedError,
   SESSION_REVISION_CONFLICT_ERROR_CODE
 } from '../../shared/session-persistence'
@@ -352,15 +354,18 @@ const registerSessionPersistenceIpcHandlers = (
           return result.session
         })
       } catch (error) {
-        if (!isSessionRevisionConflictError(error)) throw error
+        if (!isSessionRevisionConflictError(error) && !isSessionSizeLimitError(error)) throw error
+        const sizeLimit = isSessionSizeLimitError(error)
         return Object.freeze({
           ok: false,
           error: Object.freeze({
-            code: SESSION_REVISION_CONFLICT_ERROR_CODE,
+            code: sizeLimit ? SESSION_SIZE_LIMIT_ERROR_CODE : SESSION_REVISION_CONFLICT_ERROR_CODE,
             message:
               error instanceof Error
                 ? error.message
-                : 'Session revision conflict. Reload and retry.'
+                : sizeLimit
+                  ? 'Session exceeds the persistence limit.'
+                  : 'Session revision conflict. Reload and retry.'
           })
         })
       }
@@ -368,14 +373,6 @@ const registerSessionPersistenceIpcHandlers = (
       return Object.freeze({ ok: true, result: durable })
     }
   )
-  ipcMainHandle('sessions:update-archive', async (event, request: UpdateSessionArchiveRequest) => {
-    const originClientId = getLifecycleClientId(event)
-    return withDataRootWrite(async () => {
-      const session = await handlers.updateArchive(request)
-      broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionUpdated, { session, originClientId })
-      return session
-    })
-  })
   ipcMainHandle('sessions:save-manifest', (_event, request: SaveSessionManifestRequest) =>
     withDataRootWrite(() => handlers.saveManifest(request))
   )

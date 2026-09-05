@@ -71,7 +71,6 @@ describe('production Electron runtime wiring', () => {
     expect(installAcpIpcHandlers).toHaveBeenCalledWith(
       runtime,
       workflows,
-      undefined,
       sessionAdmission,
       undefined
     )

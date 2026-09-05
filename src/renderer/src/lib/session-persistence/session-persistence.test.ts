@@ -135,6 +135,25 @@ describe('deriveSessionCatalogRecovery', () => {
       ]
     })
   })
+
+  it('preserves oversized Session files as distinct recovery authority', () => {
+    expect(
+      deriveSessionCatalogRecovery({
+        isComplete: false,
+        warnings: [
+          {
+            kind: 'too-large',
+            projectId: 'project-a',
+            fileName: 'session-1.json',
+            recovered: false
+          }
+        ]
+      })
+    ).toEqual({
+      kind: 'oversized-authority',
+      affectedFiles: [{ projectId: 'project-a', fileName: 'session-1.json' }]
+    })
+  })
 })
 
 describe('reconcilePendingArtifacts', () => {

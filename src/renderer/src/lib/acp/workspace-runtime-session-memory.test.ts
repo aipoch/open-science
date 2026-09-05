@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { SessionSizeLimitError } from '../../../../shared/session-persistence'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
 import { reconfigureWorkspaceMemory } from './workspace-runtime-session-memory-owner'
@@ -110,6 +111,28 @@ describe('workspace Session Memory reconfiguration', () => {
     expect(resetSessionContext).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]?.memoryEnabled).toBe(true)
     expect(persist).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports a size-limit failure while persisting the preference', async () => {
+    const failure = new SessionSizeLimitError()
+    const persist = vi.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce(undefined)
+    const onSessionSizeLimit = vi.fn()
+
+    await expect(
+      reconfigureWorkspaceMemory(
+        {
+          state: { sessionIds: ['session-1'], cwd: '/workspace' },
+          resetSessionContext: vi.fn()
+        } as never,
+        'session-1',
+        false,
+        persist,
+        undefined,
+        onSessionSizeLimit
+      )
+    ).rejects.toBe(failure)
+
+    expect(onSessionSizeLimit).toHaveBeenCalledWith('session-1')
   })
 
   it('serializes rapid changes so the last conversation preference owns the capabilities', async () => {

@@ -4,6 +4,7 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'command-unavailable',
   'command-failed',
   'session-details-conflict',
+  'session-size-limit',
   'session-revision-conflict'
 ] as const
 

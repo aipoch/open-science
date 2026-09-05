@@ -101,6 +101,8 @@
     "Import Connector configuration": "Importar configuración del conector"
   },
   "renderer": {
+    "Receiving code. Cancelling discards the unfinished code.": "Se está recibiendo código. Al cancelar, se descarta el código incompleto.",
+    "Cancel code reception": "Cancelar recepción de código",
     "First row is used as column headers": "La primera fila se usa como encabezados de columna",
     "Notebook network access": "Acceso de red de Notebook",
     "Control which internet domains Notebook Python, R, REPL, and Bash can reach.": "Controle a qué dominios de Internet pueden acceder los entornos Python, R, REPL y Bash de Notebook.",
@@ -731,6 +733,9 @@
     "Conversation": "Conversación",
     "Conversation imports": "Importaciones de conversaciones",
     "Conversation storage needs attention": "El almacenamiento de conversaciones necesita atención",
+    "Conversation storage limit reached": "Se alcanzó el límite de almacenamiento de la conversación",
+    "One or more saved conversations exceed the 256 MiB storage limit. They were left unchanged and cannot be opened. Review the affected files before retrying.": "Una o varias conversaciones guardadas superan el límite de almacenamiento de 256 MiB. Se dejaron sin cambios y no se pueden abrir. Revise los archivos afectados antes de volver a intentarlo.",
+    "These files were left unchanged. Move them out of the Session folder before retrying, or use an older app version to export them.": "Estos archivos se dejaron sin cambios. Muévalos fuera de la carpeta de la sesión antes de volver a intentarlo o use una versión anterior de la aplicación para exportarlos.",
     "DNA": "ADN",
     "Data": "Datos",
     "Describes images when the main model can't see them. Only models with image input are listed.": "Describe imágenes cuando el modelo principal no puede verlas. Solo se enumeran los modelos con entrada de imagen.",
@@ -775,6 +780,7 @@
     "The database's migration record doesn't match this app — the file may have been copied from another installation or modified outside the app.": "El registro de migración de la base de datos no coincide con esta aplicación; es posible que el archivo se haya copiado de otra instalación o se haya modificado fuera de la aplicación.",
     "The existing database does not satisfy the required schema contract.": "La base de datos existente no cumple con el contrato de esquema requerido.",
     "This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.": "Esta conversación cambió en otra ventana. Sus cambios locales no se guardaron. Vuelva a intentar recargar la última versión antes de cerrar la aplicación.",
+    "This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.": "Esta conversación superó el límite de almacenamiento de 256 MiB. Se detuvo su ejecución actual. Inicie una nueva conversación para continuar trabajando. Los cambios posteriores al último guardado correcto no se conservarán.",
     "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.": "Las conversaciones que aún estén vinculadas a <name>{{name}}</name> dejarán de estar <em>disponibles</em> y <em>no</em> cambiarán automáticamente al agente principal. Para poder volver a enviar mensajes en cada conversación afectada, deberá elegir explícitamente un especialista nuevo o el agente principal.",
     "Copied": "Copiado",
     "Copied!": "¡Copiado!",

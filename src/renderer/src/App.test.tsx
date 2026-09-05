@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => {
       sessionId: input.sessionId ?? 'session-1',
       messageId: input.messageId ?? 'analysis-message'
     })),
+    runtimeCancelRun: vi.fn(async () => undefined),
     navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
     sessions: [] as Array<{ id: string } & Record<string, unknown>>,
     appendRoutedUserMessage: vi.fn(),
@@ -99,12 +100,20 @@ const mocks = vi.hoisted(() => {
             kind: 'unsupported-version'
             affectedFileCount: number
           }
+        | {
+            kind: 'oversized-authority'
+            affectedFiles: Array<{ projectId: string; fileName: string }>
+          }
         | { kind: 'project-deletion-recovery' },
       canDeleteSessionsAndProjects: true,
       loadError: undefined as string | undefined,
       loadWarning: undefined as string | undefined,
       writeError: undefined as string | undefined,
+      writeErrorRetryable: true,
+      persistenceBlockedSessionIds: [] as string[],
+      reportSessionSizeLimit: vi.fn(),
       dismissLoadWarning: vi.fn(),
+      startNewConversationAfterSizeLimit: vi.fn(),
       retryLoad: vi.fn(),
       retryWrites: vi.fn()
     },
@@ -134,7 +143,13 @@ const mocks = vi.hoisted(() => {
       connectorApproval: undefined as { active?: boolean } | undefined,
       credentialRequest: undefined as { active?: boolean } | undefined,
       skillImportApproval: undefined as { active?: boolean } | undefined,
-      workspace: undefined as { isPreviewPresentationActive?: boolean } | undefined
+      workspace: undefined as
+        | {
+            isPreviewPresentationActive?: boolean
+            persistenceBlockedSessionIds?: readonly string[]
+            onSessionSizeLimit?: (sessionId: string) => void
+          }
+        | undefined
     }
   }
 })
@@ -283,7 +298,8 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
     promptInFlightSessionIds: [],
     sendPreparationInFlightSessionIds: [],
     saveAsSkillInFlightSessionIds: [],
-    sendMessage: mocks.runtimeSendMessage
+    sendMessage: mocks.runtimeSendMessage,
+    cancelRun: mocks.runtimeCancelRun
   })
 }))
 vi.mock('@/pages/home/HomePage', () => ({
@@ -364,16 +380,24 @@ vi.mock('@/pages/workspace/EnvStatusBanner', () => ({
 vi.mock('@/pages/workspace/WorkspacePage', () => ({
   WorkspacePage: ({
     isSessionPersistenceReady,
+    persistenceBlockedSessionIds,
+    onSessionSizeLimit,
     canDeleteConversations,
     isPreviewPresentationActive
   }: {
     isSessionPersistenceReady: boolean
+    persistenceBlockedSessionIds?: readonly string[]
+    onSessionSizeLimit?: (sessionId: string) => void
     canDeleteConversations: boolean
     isPreviewPresentationActive?: boolean
   }): React.JSX.Element => (
     <div
       ref={() => {
-        mocks.presentationProps.workspace = { isPreviewPresentationActive }
+        mocks.presentationProps.workspace = {
+          isPreviewPresentationActive,
+          persistenceBlockedSessionIds,
+          onSessionSizeLimit
+        }
       }}
       data-testid="workspace-page"
       data-ready={String(isSessionPersistenceReady)}
@@ -430,6 +454,7 @@ describe('App startup routing', () => {
     mocks.compute.jobsMarkConsumed.mockClear()
     mocks.compute.jobsTransitionAnalysis.mockClear()
     mocks.runtimeSendMessage.mockClear()
+    mocks.runtimeCancelRun.mockReset().mockResolvedValue(undefined)
     mocks.navigation.view = 'home'
     mocks.startupView = 'app'
     mocks.sessionPersistence.isReady = true
@@ -441,10 +466,14 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.loadError = undefined
     mocks.sessionPersistence.loadWarning = undefined
     mocks.sessionPersistence.writeError = undefined
+    mocks.sessionPersistence.writeErrorRetryable = true
+    mocks.sessionPersistence.persistenceBlockedSessionIds = []
+    mocks.sessionPersistence.reportSessionSizeLimit.mockClear()
     mocks.update.isDialogOpen = false
     mocks.update.status.state = 'idle'
     mocks.update.closeDialog.mockClear()
     mocks.sessionPersistence.dismissLoadWarning.mockClear()
+    mocks.sessionPersistence.startNewConversationAfterSizeLimit.mockClear()
     mocks.sessionPersistence.retryLoad.mockClear()
     mocks.sessionPersistence.retryWrites.mockClear()
     mocks.settings.pendingApprovals = []
@@ -1398,6 +1427,50 @@ describe('App startup routing', () => {
 
     container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')?.click()
     expect(mocks.sessionPersistence.retryWrites).toHaveBeenCalledOnce()
+  })
+
+  it('offers a new conversation instead of retrying a Session size-limit failure', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.sessionPersistence.writeError =
+      'This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.'
+    mocks.sessionPersistence.writeErrorRetryable = false
+    mocks.sessionPersistence.persistenceBlockedSessionIds = ['session-1']
+
+    await render()
+
+    const alert = container.querySelector('[data-testid="session-persistence-alert"]')
+    expect(alert?.textContent).toContain('Conversation storage limit reached')
+    expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
+
+    container
+      .querySelector<HTMLButtonElement>('[data-testid="session-persistence-action"]')
+      ?.click()
+    expect(mocks.sessionPersistence.startNewConversationAfterSizeLimit).toHaveBeenCalledOnce()
+    expect(mocks.presentationProps.workspace?.persistenceBlockedSessionIds).toEqual(['session-1'])
+    mocks.presentationProps.workspace?.onSessionSizeLimit?.('session-plan')
+    expect(mocks.sessionPersistence.reportSessionSizeLimit).toHaveBeenCalledWith('session-plan')
+  })
+
+  it('stops a persistence-blocked active run while the Home page is visible', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'home'
+    mocks.sessions = [
+      {
+        id: 'session-1',
+        status: 'running',
+        activeRun: { promptMessageId: 'message-1', startedAt: 1 }
+      }
+    ]
+    mocks.sessionPersistence.persistenceBlockedSessionIds = ['session-1']
+    mocks.runtimeCancelRun
+      .mockRejectedValueOnce(new Error('transient cancellation failure'))
+      .mockResolvedValueOnce(undefined)
+
+    await render()
+
+    await vi.waitFor(() => expect(mocks.runtimeCancelRun).toHaveBeenCalledTimes(2))
+    expect(container.querySelector('[data-testid="home-page"]')).toBeTruthy()
   })
 
   it('keeps failed writes retryable while catalog recovery is visible', async () => {

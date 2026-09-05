@@ -19,6 +19,9 @@ vi.mock('./ipc-handler-registry', () => ({
 import { registerApplicationCommandElectronAdapter } from './application-command-electron-adapter'
 
 const validatedChannels = [
+  'acp:respond-elicitation',
+  'acp:respond-permission',
+  'acp:respond-plan',
   'memory:clear-all',
   'memory:create-category',
   'memory:create-entry',
@@ -42,6 +45,7 @@ const validatedChannels = [
   'sessions:link-pdf-context',
   'sessions:set-delegation-policy',
   'sessions:unlink-pdf-context',
+  'sessions:update-archive',
   'tags:create',
   'tags:delete',
   'tags:reorder',

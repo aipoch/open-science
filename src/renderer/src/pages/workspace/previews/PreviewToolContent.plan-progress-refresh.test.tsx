@@ -119,6 +119,12 @@ describe('Session Plan durable progress refresh', () => {
           title: 'Session Plan',
           planArtifactVersionId: historicalProjection.artifactVersionId
         }}
+        restoredPlanResponder={{
+          sessionId,
+          enabled: true,
+          respond: vi.fn(),
+          canRespondToSession: () => true
+        }}
       />
     )
   }

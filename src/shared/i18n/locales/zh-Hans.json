@@ -99,6 +99,8 @@
     "Import Connector configuration": "导入连接器配置"
   },
   "renderer": {
+    "Receiving code. Cancelling discards the unfinished code.": "正在接收代码。取消将丢弃未完成的代码。",
+    "Cancel code reception": "取消代码接收",
     "First row is used as column headers": "首行用作列标题",
     "Notebook network access": "Notebook 网络访问",
     "Control which internet domains Notebook Python, R, REPL, and Bash can reach.": "控制 Notebook Python、R、REPL 和 Bash 可以访问哪些互联网域名。",
@@ -815,7 +817,11 @@
     "Conversation": "对话",
     "Conversation imports": "对话导入",
     "Conversation storage needs attention": "对话存储需要处理",
+    "Conversation storage limit reached": "已达到对话存储上限",
+    "One or more saved conversations exceed the 256 MiB storage limit. They were left unchanged and cannot be opened. Review the affected files before retrying.": "一个或多个已保存的对话超过了 256 MiB 存储上限。文件保持不变，但无法打开。请先检查受影响的文件，再重试。",
+    "These files were left unchanged. Move them out of the Session folder before retrying, or use an older app version to export them.": "这些文件保持不变。请先将它们移出会话文件夹再重试，或使用旧版应用导出它们。",
     "This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.": "此对话已在另一个窗口中更改。你的本地更改尚未保存。请在关闭应用前重试，以重新加载最新版本。",
+    "This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.": "此对话已超过 256 MiB 的存储上限。当前运行已停止。请新建对话以继续工作。上次成功保存后的更改不会持久保留。",
     "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.": "仍绑定到 <name>{{name}}</name> 的对话将变为<em>不可用</em>，并且<em>不会</em>自动切换到主智能体。对每个受影响的对话，你需要先明确选择一个新专家或主智能体，之后它才能继续发送消息。",
     "Copied": "已复制",
     "Copied!": "已复制！",

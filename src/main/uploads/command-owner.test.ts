@@ -448,6 +448,7 @@ describe('upload command owner', () => {
     const client = createProjectDbClient(root)
     try {
       await migrateApplicationDatabase(client)
+      await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
       const repository = new UploadRepository(root, { getClient: async () => client })
       const owner = createUploadCommandOwner(repository)
       const caller = createCaller(new ApplicationCallerLeaseRegistry(), 16)
@@ -543,6 +544,49 @@ describe('upload command owner', () => {
       )
     ).rejects.toThrow('publish failed')
     expect(repository.deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+  })
+
+  it('schedules standalone publication after copying and cleans the draft if deletion wins', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'upload-owner-'))
+    temporaryRoots.push(root)
+    const sourcePath = join(root, 'notes.txt')
+    await writeFile(sourcePath, 'standalone')
+    const attachment = {
+      id: 'draft',
+      sessionId: '.pending',
+      name: 'notes.txt',
+      originalName: 'notes.txt',
+      path: sourcePath,
+      size: 10
+    }
+    const order: string[] = []
+    const repository = {
+      stageLocalFile: vi.fn(async () => {
+        order.push('copy')
+        return attachment
+      }),
+      finalizePendingSessionUploads: vi.fn(async () => [attachment]),
+      deleteUpload: vi.fn(async () => {
+        order.push('cleanup')
+      })
+    } as unknown as UploadRepository
+    const owner = createUploadCommandOwner(repository, {
+      withSessionMutation: async (projectId, sessionId) => {
+        order.push('schedule')
+        expect([projectId, sessionId]).toEqual(['project-1', 'standalone-uploads'])
+        throw new Error('Project deletion won')
+      }
+    })
+    const caller = createCaller(new ApplicationCallerLeaseRegistry(), 17)
+    await expect(
+      owner.stageLocalPath(
+        invocationFor(caller, [
+          { transferId: 'scheduled-copy', sourcePath, name: 'notes.txt', projectId: 'project-1' }
+        ])
+      )
+    ).rejects.toThrow('Project deletion won')
+    expect(order).toEqual(['copy', 'schedule', 'cleanup'])
+    expect(repository.finalizePendingSessionUploads).not.toHaveBeenCalled()
   })
 
   it('finalizes session uploads inside the injected session mutation', async () => {

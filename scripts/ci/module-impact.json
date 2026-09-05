@@ -722,10 +722,13 @@
           "src/main/uploads/active-transfer-owner.test.ts",
           "src/main/uploads/repository.test.ts",
           "src/main/uploads/repository.characterization.test.ts",
+          "src/main/uploads/publication-lifecycle.integration.test.ts",
           "src/main/uploads/repository.architecture.test.ts"
         ],
         "contract": ["src/main/uploads/ipc.test.ts", "src/main/uploads/command-owner.test.ts"],
         "consumer": [
+          "src/main/acp/runtime.test.ts",
+          "src/main/session-persistence/coordinator.test.ts",
           "src/main/session-persistence/deletion-integration.test.ts",
           "src/main/acp/file-reference-resolver.test.ts",
           "src/main/acp/prompt-content-owner.test.ts",

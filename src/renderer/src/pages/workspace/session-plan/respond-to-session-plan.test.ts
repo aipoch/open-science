@@ -177,4 +177,22 @@ describe('respondToSessionPlan', () => {
       expect.objectContaining({ role: 'user', content: feedbackMessage.content })
     ])
   })
+
+  it('reports a size-limit response through the shared Session recovery owner', async () => {
+    const error = Object.assign(new Error('Session is too large.'), {
+      code: 'session-size-limit'
+    })
+    const onSessionSizeLimit = vi.fn()
+    respondPlan.mockRejectedValue(error)
+
+    await expect(
+      respondToSessionPlan(
+        { projectId: 'project-1', sessionId: 'session-1', projection },
+        'approved',
+        { onSessionSizeLimit }
+      )
+    ).rejects.toBe(error)
+
+    expect(onSessionSizeLimit).toHaveBeenCalledWith('session-1')
+  })
 })

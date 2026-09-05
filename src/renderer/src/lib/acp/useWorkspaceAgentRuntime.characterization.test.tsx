@@ -21,6 +21,7 @@ import {
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
+import { SESSION_SIZE_LIMIT_ERROR_CODE } from '../../../../shared/session-persistence'
 import { createInitialSettingsState, useSettingsStore } from '../../stores/settings-store'
 import { resetDeferredArtifactEventsForTests } from './workspace-events'
 import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
@@ -119,10 +120,10 @@ describe('workspace Agent Runtime hook contract', () => {
     return null
   }
 
-  const render = async (): Promise<void> => {
+  const render = async (onSessionSizeLimit?: (sessionId: string) => void): Promise<void> => {
     await act(async () =>
       root.render(
-        <WorkspaceAgentRuntimeProvider>
+        <WorkspaceAgentRuntimeProvider onSessionSizeLimit={onSessionSizeLimit}>
           <Probe />
         </WorkspaceAgentRuntimeProvider>
       )
@@ -923,6 +924,31 @@ describe('workspace Agent Runtime hook contract', () => {
     deferred.resolve(createSnapshot({ sessionIds: ['session-1'] }))
     await act(async () => response)
     expect(latest.pendingPermissions).toEqual([])
+  })
+
+  it('reports a permission response size limit for the affected Session', async () => {
+    const request = {
+      requestId: 'permission-size-limit',
+      sessionId: 'session-1',
+      toolCallId: 'tool-1',
+      title: 'Allow command?',
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+    const runtime = createRuntime(
+      createSnapshot({ sessionIds: ['session-1'], pendingPermissions: [request] })
+    )
+    runtime.respondToPermission.mockRejectedValue(
+      Object.assign(new Error('Session exceeds the persistence limit.'), {
+        code: SESSION_SIZE_LIMIT_ERROR_CODE
+      })
+    )
+    runtimeMock.current = runtime
+    const onSessionSizeLimit = vi.fn()
+    await render(onSessionSizeLimit)
+
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+
+    expect(onSessionSizeLimit).toHaveBeenCalledWith('session-1')
   })
 
   it('reattaches a restored permission wait before sending its main-validated decision', async () => {
