@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import Ajv2020 from 'ajv/dist/2020.js'
+import { createDeterministicDelegateExecution } from '../delegation/deterministic-execution'
+import { createInMemoryDelegatedWorkRecords } from '../delegation/durable-delegated-work'
+import { createTestDurableDelegatedWork } from '../delegation/durable-delegated-work-test-fixture'
 
 import {
   COLLECT_AGENT_CONTRACT,
@@ -183,4 +187,46 @@ describe('Agent-facing collect contract', () => {
       parseCollectRpcCall({ selectors: ['frame-1'], options: { return_when: 'first' } })
     ).toThrow('return_when must be all or any')
   })
+})
+
+it('D03 collect schema accepts the actual pending-question observation', async () => {
+  const caller = {
+    session: { projectId: 'project-1', sessionId: 'session-1' },
+    frameId: 'root',
+    role: 'main' as const,
+    originMessageId: 'origin',
+    toolInvocationId: 'delegate'
+  }
+  const records = createInMemoryDelegatedWorkRecords({
+    session: caller.session,
+    rootFrameId: caller.frameId,
+    originMessageId: caller.originMessageId
+  })
+  const execution = createDeterministicDelegateExecution()
+  const work = createTestDurableDelegatedWork({ execution, records })
+  const receipt = await work.delegate(caller, { task: 'Ask', name: 'Question' }, { wait: false })
+  await expect.poll(() => execution.controls()).toHaveLength(1)
+  const control = execution.controls()[0]
+  await work.requestUserInput(
+    {
+      ...caller,
+      role: 'delegate',
+      frameId: control.input.frameId,
+      attemptId: control.input.attemptId,
+      originMessageId: control.input.turn!.promptMessageId,
+      toolInvocationId: 'ask'
+    },
+    {
+      sessionId: caller.session.sessionId,
+      questions: [{ question: 'Which cohort?', options: [{ label: 'Strict' }, { label: 'Broad' }] }]
+    }
+  )
+  control.complete('Waiting for your answer')
+  await expect.poll(() => execution.releasedFrames()).toHaveLength(1)
+  const observation = await work.collect(caller, [receipt.children[0]], { timeoutSeconds: 0 })
+  await work.stopSession(caller.session)
+  expect(observation[0].status).toBe('awaiting_user')
+  // Descriptive contract extensions such as optional/discriminator are not JSON Schema keywords.
+  const validate = new Ajv2020({ strict: false }).compile(COLLECT_AGENT_CONTRACT.returns)
+  expect(validate(observation), JSON.stringify(validate.errors)).toBe(true)
 })
