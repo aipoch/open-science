@@ -23,7 +23,11 @@ import type {
   AcpStateSnapshot,
   AcpStateUpdate
 } from './acp'
-import type { ActivePlanProjection, PlanResponseCommand } from './session-plan/contract'
+import type {
+  ActivePlanProjection,
+  PlanResponseCommand,
+  PlanResponseIdentity
+} from './session-plan/contract'
 import type {
   SideChatCloseRequest,
   SideChatPromptRequest,
@@ -761,6 +765,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'acp.resetSessionContext': callable<
     (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
   >()('acp', ['acp:reset-session-context']),
+  'acp.discardUnavailablePlan': callable<
+    (request: PlanResponseIdentity) => Promise<{ revision: number }>
+  >()('acp', ['acp:discard-unavailable-plan', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'acp.respondPlan': callable<(request: PlanResponseCommand) => Promise<unknown>>()('acp', [
     'acp:respond-plan',
     WEB,

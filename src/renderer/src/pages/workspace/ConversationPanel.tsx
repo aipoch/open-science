@@ -1,3 +1,4 @@
+import { UnavailablePlanNotice } from './session-plan/UnavailablePlanNotice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
@@ -1106,6 +1107,12 @@ const ConversationPanel = ({
             {/* Runtime and session errors stay near the composer so recovery is visible. */}
             <div className={composerContentClassName}>
               <div className="px-1 md:px-3">
+                {!sideChat && conversation.planProjectionRecoveryError && activeSession ? (
+                  <UnavailablePlanNotice
+                    key={`${activeSession.id}:${String(activeSession.runtimeContext?.revision)}`}
+                    session={activeSession}
+                  />
+                ) : null}
                 {composerError ? (
                   <div
                     role="alert"

@@ -98,7 +98,7 @@ const createProductionPlanService = ({
                   plan: {
                     ...input.markPlanReview!.plan,
                     reviewFeedbackMessageId: message.id,
-                    continuation: {
+                    delivery: {
                       commandId: input.markPlanReview!.commandId,
                       kind: 'review-feedback' as const,
                       state: 'queued' as const,

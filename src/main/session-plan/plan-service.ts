@@ -8,6 +8,7 @@ import type {
   SessionRuntimeContext
 } from '../../shared/session-persistence'
 import {
+  assertPlanDocumentCapacity,
   createPlanDocumentV1,
   derivePlanLifecycle,
   isPlanTerminalOutcome,
@@ -183,6 +184,7 @@ class PlanService {
     content: GeneratePlanContent
   }): Promise<{ projection: ActivePlanProjection; pauseInteraction: true }> {
     const document = createPlanDocumentV1(input.content)
+    assertPlanDocumentCapacity(document)
     const serialized = JSON.stringify(document, null, 2)
     const checksum = sha256(serialized)
     const current = await this.dependencies.readRuntimeContext(input.projectId, input.sessionId)
@@ -368,6 +370,7 @@ class PlanService {
       }
     }
     const { context, plan, document } = await this.loadActive(input, input.decision)
+    if (input.decision === 'approved') assertPlanDocumentCapacity(document)
     if (plan.approval === input.decision) {
       this.dependencies.interactions.release(input.sessionId, plan.artifactVersionId)
       this.dependencies.onApprovalSettled?.({
@@ -581,6 +584,7 @@ class PlanService {
       })
     }
     const { plan, document } = loaded
+    assertPlanDocumentCapacity(document)
     if (plan.approval !== 'approved') {
       throw new PlanCommandError(
         'plan-not-approved',
@@ -636,6 +640,42 @@ class PlanService {
       : updated
     const next = await this.patch(identity, settled, 'running')
     return { projection: this.project(document, settled, next.revision), changed: true }
+  }
+
+  // Explicit recovery only: queries never discard approval, progress or delivery authority.
+  async discardUnavailable(
+    input: PlanIdentityCommand & {
+      authorizeDiscard?: (plan: SessionPlanRuntimeContext) => Promise<void>
+      beforePersist?: () => void
+    }
+  ): Promise<{ revision: number }> {
+    const context = await this.dependencies.readRuntimeContext(input.projectId, input.sessionId)
+    const plan = context.plan
+    if (!plan || plan.artifactVersionId !== input.artifactVersionId) {
+      throw new PlanCommandError('stale-plan', 'A newer Plan is active.')
+    }
+    if (context.revision !== input.expectedRevision) {
+      throw new PlanCommandError('revision-conflict', 'The Plan revision changed concurrently.')
+    }
+    await input.authorizeDiscard?.(plan)
+    try {
+      await this.readDocument(input.projectId, input.sessionId, plan)
+    } catch (error) {
+      if (!(error instanceof PlanCommandError) || error.code !== 'artifact-unavailable') throw error
+      const next = await this.patch(input, undefined, 'idle', input.beforePersist)
+      this.dependencies.interactions.release(input.sessionId, plan.artifactVersionId)
+      this.dependencies.onApprovalSettled?.({
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        artifactVersionId: plan.artifactVersionId,
+        state: 'cancelled'
+      })
+      return { revision: next.revision }
+    }
+    throw new PlanCommandError(
+      'invalid-plan',
+      'The Plan is readable again. Review it before continuing.'
+    )
   }
 
   async getProjection(projectId: string, sessionId: string): Promise<ActivePlanProjection | null> {
@@ -709,56 +749,10 @@ class PlanService {
   } | null> {
     const context = await this.dependencies.readRuntimeContext(projectId, sessionId)
     if (!context.plan) return null
-    try {
-      return {
-        context,
-        plan: context.plan,
-        document: await this.readDocument(projectId, sessionId, context.plan)
-      }
-    } catch (error) {
-      if (!(error instanceof PlanCommandError) || error.code !== 'artifact-unavailable') throw error
-      await this.dropUnavailablePlan(projectId, sessionId, context)
-      return null
-    }
-  }
-
-  private async dropUnavailablePlan(
-    projectId: string,
-    sessionId: string,
-    observed: SessionRuntimeContext
-  ): Promise<void> {
-    let current = observed
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        await this.dependencies.patchRuntimeContext({
-          projectId,
-          sessionId,
-          expectedRevision: current.revision,
-          plan: undefined,
-          sessionStatus: 'idle'
-        })
-        if (observed.plan?.approval === 'pending') {
-          this.dependencies.onApprovalSettled?.({
-            projectId,
-            sessionId,
-            artifactVersionId: observed.plan.artifactVersionId,
-            state: 'expired'
-          })
-        }
-        return
-      } catch (error) {
-        if (!this.dependencies.isRevisionConflict(error)) throw error
-        const latest = await this.dependencies.readRuntimeContext(projectId, sessionId)
-        if (!latest.plan || !observed.plan) return
-        if (
-          latest.plan.artifactId !== observed.plan.artifactId ||
-          latest.plan.artifactVersionId !== observed.plan.artifactVersionId ||
-          latest.plan.artifactChecksum !== observed.plan.artifactChecksum
-        ) {
-          return
-        }
-        current = latest
-      }
+    return {
+      context,
+      plan: context.plan,
+      document: await this.readDocument(projectId, sessionId, context.plan)
     }
   }
 
@@ -810,7 +804,7 @@ class PlanService {
 
   private async patch(
     input: PlanIdentityCommand,
-    plan: SessionPlanRuntimeContext,
+    plan: SessionPlanRuntimeContext | undefined,
     sessionStatus: 'waiting-plan-approval' | 'running' | 'idle',
     beforePersist?: () => void
   ): Promise<SessionRuntimeContext> {

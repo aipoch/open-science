@@ -41,6 +41,7 @@ import { sanitizeActivityGroupTitle } from './activity-groups'
 import { sanitizeElicitationProjection, type ElicitationProjection } from './elicitation'
 import {
   derivePlanLifecycle,
+  MAX_PLAN_RUNTIME_CONTEXT_NODES,
   parsePlanDocumentV1,
   planStepTitles,
   projectPlanStepStates,
@@ -2679,7 +2680,10 @@ export const sanitizeSessionRuntimeContext = (
       owner === 'permission' ||
       owner === 'pdfContext'
     ) {
-      const sanitizedJson = sanitizeRuntimeContextValue(ownerValue, budget)
+      const sanitizedJson = sanitizeRuntimeContextValue(
+        ownerValue,
+        owner === 'plan' ? { remaining: MAX_PLAN_RUNTIME_CONTEXT_NODES } : budget
+      )
       if (sanitizedJson === undefined) return undefined
       if (owner === 'pdfContext') {
         const pdfContext = sanitizeSessionPdfContext(sanitizedJson)

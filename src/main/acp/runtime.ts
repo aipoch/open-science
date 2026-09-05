@@ -146,7 +146,11 @@ import {
 import type { PlanResponseResult, PlanServiceDependencies } from '../session-plan/plan-service'
 import { matchPlanDelivery } from '../session-plan/plan-delivery'
 import { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
-import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
+import type {
+  ActivePlanProjection,
+  PlanResponseCommand,
+  PlanResponseIdentity
+} from '../../shared/session-plan/contract'
 import type {
   SessionCatalog,
   SessionMutation,
@@ -784,6 +788,10 @@ class AcpRuntime {
     sessionId: string
   ): Promise<ActivePlanProjection | null> {
     return this.sessionPlanWorkflow.projection(projectId, sessionId)
+  }
+
+  discardUnavailableSessionPlan(input: PlanResponseIdentity): Promise<{ revision: number }> {
+    return this.sessionPlanWorkflow.discardUnavailable(input)
   }
 
   async respondSessionPlan(input: PlanResponseCommand): Promise<PlanResponseResult> {
@@ -2219,14 +2227,16 @@ class AcpRuntime {
       return
     }
     if (command.state === 'delivering') {
-      if (await owner.rearmUnaccepted(projectId, sessionId, command.commandId)) {
-        this.clearPlanDeliveryClaimRetry(sessionId, command.commandId)
-        setTimeout(() => {
-          this.scheduleQueuedPlanDelivery(projectId, sessionId, command.commandId)
-        }, 0)
-      } else {
-        this.retryPlanDeliveryClaim(projectId, sessionId, command.commandId)
-      }
+      this.clearPlanDeliveryClaimRetry(sessionId, command.commandId)
+      // Persisted delivering alone cannot prove that the provider never received this command.
+      this.pushEvent({
+        kind: 'error',
+        level: 'error',
+        sessionId,
+        title: 'Plan delivery outcome is uncertain',
+        text: 'This Plan delivery may already have been accepted by the Agent. It was not sent again. Check the conversation before sending another execution request.'
+      })
+      this.emitState()
       return
     }
     if (command.state !== 'queued') {

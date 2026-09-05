@@ -85,6 +85,51 @@ beforeEach(() => {
 })
 
 describe('respondToSessionPlan', () => {
+  it.each([false, true])(
+    'P04 preserves submit failure when refresh failure is %s',
+    async (refreshFails) => {
+      const failure = new Error('feedback commit failed')
+      respondPlan.mockRejectedValue(failure)
+      if (refreshFails) getPlanProjection.mockRejectedValue(new Error('refresh connection lost'))
+      await expect(
+        respondToSessionPlan(
+          { projectId: 'project-1', sessionId: 'session-1', projection },
+          { feedback: feedbackMessage.content }
+        )
+      ).rejects.toBe(failure)
+      expect(useSessionStore.getState().sessions[0].messages).toEqual([])
+      expect(getPlanProjection).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each(['approved', 'rejected', 'feedback'] as const)(
+    'P04 keeps committed %s successful when projection refresh fails',
+    async (kind) => {
+      respondPlan.mockResolvedValue(
+        kind === 'feedback'
+          ? { kind: 'feedback', message: feedbackMessage }
+          : { changed: true, projection: { ...approvedProjection, approval: kind } }
+      )
+      getPlanProjection.mockRejectedValue(new Error('refresh connection lost'))
+      const outcome = await respondToSessionPlan(
+        { projectId: 'project-1', sessionId: 'session-1', projection },
+        kind === 'feedback' ? { feedback: feedbackMessage.content } : kind
+      ).then(
+        () => ({ committed: true }),
+        (error: unknown) => ({ error })
+      )
+
+      expect(respondPlan).toHaveBeenCalledOnce()
+      expect(getPlanProjection).toHaveBeenCalledOnce()
+      if (kind === 'feedback') {
+        expect(useSessionStore.getState().sessions[0].messages).toEqual([
+          expect.objectContaining({ id: feedbackMessage.id, content: feedbackMessage.content })
+        ])
+      }
+      expect(outcome).toEqual({ committed: true })
+    }
+  )
+
   it('shares the version-bound response and projection refresh across renderer surfaces', async () => {
     await respondToSessionPlan(
       { projectId: 'project-1', sessionId: 'session-1', projection },

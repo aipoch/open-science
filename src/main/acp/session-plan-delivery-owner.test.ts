@@ -64,6 +64,83 @@ const createSessions = (
 }
 
 describe('Session Plan delivery owner', () => {
+  it.each(['command', 'version', 'accepted'] as const)(
+    'does not overwrite a concurrent %s replacement while retrying acceptance',
+    async (replacement) => {
+      const fixture = createSessions({
+        commandId: 'delivery-1',
+        kind: 'approved-plan',
+        state: 'delivering',
+        originatingPromptMessageId: 'prompt-1',
+        createdAt: 42
+      })
+      const originalPatch =
+        fixture.patch.getMockImplementation() as SessionPlanDeliverySessions['patchSessionRuntimeContext']
+      fixture.patch.mockImplementationOnce(async (command) => {
+        const plan = fixture.context().plan!
+        await originalPatch({
+          ...command,
+          patch: {
+            plan: {
+              ...plan,
+              ...(replacement === 'version' ? { artifactVersionId: 'replacement-version' } : {}),
+              delivery: {
+                ...plan.delivery!,
+                ...(replacement === 'command' ? { commandId: 'replacement-command' } : {}),
+                state: replacement === 'accepted' ? 'accepted' : 'delivering'
+              }
+            }
+          }
+        })
+        throw Object.assign(new Error('revision conflict'), { code: 'revision-conflict' })
+      })
+      const owner = new SessionPlanDeliveryOwner(fixture.sessions)
+      await expect(owner.accept('project-1', 'session-1', 'delivery-1')).resolves.toBe(
+        replacement === 'accepted'
+      )
+      expect(fixture.patch).toHaveBeenCalledOnce()
+      if (replacement === 'command')
+        expect(fixture.context().plan?.delivery?.commandId).toBe('replacement-command')
+      if (replacement === 'version')
+        expect(fixture.context().plan?.artifactVersionId).toBe('replacement-version')
+    }
+  )
+
+  it('bounds persistent acceptance conflicts without marking the receipt unaccepted', async () => {
+    const fixture = createSessions({
+      commandId: 'delivery-1',
+      kind: 'approved-plan',
+      state: 'delivering',
+      originatingPromptMessageId: 'prompt-1',
+      createdAt: 42
+    })
+    fixture.patch.mockRejectedValue(
+      Object.assign(new Error('revision conflict'), { code: 'revision-conflict' })
+    )
+    await expect(
+      new SessionPlanDeliveryOwner(fixture.sessions).accept('project-1', 'session-1', 'delivery-1')
+    ).resolves.toBe(false)
+    expect(fixture.patch).toHaveBeenCalledTimes(3)
+    expect(fixture.context().plan?.delivery?.state).toBe('delivering')
+  })
+
+  it('preserves uncertain delivery evidence when acceptance storage fails', async () => {
+    const fixture = createSessions({
+      commandId: 'delivery-1',
+      kind: 'approved-plan',
+      state: 'delivering',
+      originatingPromptMessageId: 'prompt-1',
+      createdAt: 42
+    })
+    const failure = Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+    fixture.patch.mockRejectedValue(failure)
+    await expect(
+      new SessionPlanDeliveryOwner(fixture.sessions).accept('project-1', 'session-1', 'delivery-1')
+    ).rejects.toBe(failure)
+    expect(fixture.patch).toHaveBeenCalledOnce()
+    expect(fixture.context().plan?.delivery?.state).toBe('delivering')
+  })
+
   it('claims one queued delivery before dispatch without changing Session status', async () => {
     const fixture = createSessions()
     const owner = new SessionPlanDeliveryOwner(fixture.sessions)

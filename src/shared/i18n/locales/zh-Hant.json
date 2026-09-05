@@ -99,6 +99,10 @@
     "Import Connector configuration": "匯入連接器設定"
   },
   "renderer": {
+    "Unable to discard the Plan.": "無法捨棄計畫。",
+    "Discard unavailable Plan": "捨棄無法使用的計畫",
+    "Discard unavailable Plan?": "要捨棄無法使用的計畫嗎？",
+    "This removes the active Plan and its approval and progress from this conversation. Messages and Artifacts are kept. This cannot be undone.": "這會從此對話中移除目前的計畫及其核准和進度。訊息和產物會保留。此操作無法復原。",
     "Receiving code. Cancelling discards the unfinished code.": "正在接收程式碼。取消將捨棄未完成的程式碼。",
     "Cancel code reception": "取消程式碼接收",
     "Checking version…": "正在檢查版本…",

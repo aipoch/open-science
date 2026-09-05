@@ -62,6 +62,7 @@ const createDependencies = (): AcpApplicationCommandDependencies => ({
     respondToElicitation: vi.fn(async () => snapshot),
     getSessionPlanProjection: vi.fn(async () => null),
     respondSessionPlan: vi.fn(async () => ({ projection: {} as never, changed: true })),
+    discardUnavailableSessionPlan: vi.fn(async () => ({ revision: 2 })),
     setPermissionProfile: vi.fn(async () => snapshot),
     revokePermissionGrant: vi.fn(async () => snapshot)
   },
@@ -140,6 +141,7 @@ describe('ACP application commands', () => {
       'acp:continue-interrupted-turn',
       'acp:create-session',
       'acp:delete-session',
+      'acp:discard-unavailable-plan',
       'acp:disconnect',
       'acp:get-plan-projection',
       'acp:get-state',
@@ -404,6 +406,55 @@ describe('ACP application commands', () => {
     ).rejects.toThrow('Caller authorization is no longer current.')
 
     expect(dependencies.runtime.respondToPermission).toHaveBeenCalledTimes(humanCallers.length)
+  })
+
+  it('admits explicit unavailable Plan discard only for a current human and an available Session', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    const available = vi.fn(
+      async (_project: string, _session: string, operation: () => Promise<unknown>) => operation()
+    )
+    const archiveAvailability = {
+      ...ownerResolvingArchiveAvailability('project-1'),
+      withSessionAvailable: available
+    } as NonNullable<AcpApplicationCommandDependencies['archiveAvailability']>
+    registerAcpCommands(router.registrar, { ...dependencies, archiveAvailability })
+    const request = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: 'version-1',
+      expectedRevision: 1
+    }
+    await expect(
+      router.dispatcher.invoke(acpCommands.discardUnavailablePlan, invocation([request]))
+    ).resolves.toEqual({ revision: 2 })
+    expect(available).toHaveBeenCalledWith('project-1', 'session-1', expect.any(Function))
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.discardUnavailablePlan,
+        invocation([request], createTaskCallerContext())
+      )
+    ).rejects.toThrow('Only a current human')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.discardUnavailablePlan,
+        invocation(
+          [request],
+          createWebCallerContext('stale', { isAuthorizationCurrent: () => false })
+        )
+      )
+    ).rejects.toThrow('Caller authorization')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.discardUnavailablePlan,
+        invocation([{ ...request, expectedRevision: -1 }])
+      )
+    ).rejects.toBeInstanceOf(Error)
+    available.mockRejectedValueOnce(new Error('Session archived'))
+    await expect(
+      router.dispatcher.invoke(acpCommands.discardUnavailablePlan, invocation([request]))
+    ).rejects.toThrow('Session archived')
+    expect(dependencies.runtime.discardUnavailableSessionPlan).toHaveBeenCalledTimes(1)
   })
 
   it('routes Plan decisions and revision feedback from current humans and Task automation', async () => {

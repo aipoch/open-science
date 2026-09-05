@@ -421,6 +421,7 @@ describe('renderer contract catalog', () => {
 
   it('marks the runtime-validated command slice', () => {
     expect(paths(({ applicationCommand }) => applicationCommand === 'runtime-validated')).toEqual([
+      'acp.discardUnavailablePlan',
       'acp.respondPlan',
       'acp.respondToElicitation',
       'acp.respondToPermission',
@@ -457,6 +458,7 @@ describe('renderer contract catalog', () => {
       'uploads.finalizeSession'
     ])
     expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
+      'acp:discard-unavailable-plan',
       'acp:respond-elicitation',
       'acp:respond-permission',
       'acp:respond-plan',

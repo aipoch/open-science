@@ -19,6 +19,7 @@ vi.mock('./ipc-handler-registry', () => ({
 import { registerApplicationCommandElectronAdapter } from './application-command-electron-adapter'
 
 const validatedChannels = [
+  'acp:discard-unavailable-plan',
   'acp:respond-elicitation',
   'acp:respond-permission',
   'acp:respond-plan',

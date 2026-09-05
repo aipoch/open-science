@@ -90,6 +90,7 @@ const createHarness = (
   queueReviewFeedbackDelivery: ReturnType<typeof vi.fn>
   getProjection: ReturnType<typeof vi.fn>
   getDeliveryContext: ReturnType<typeof vi.fn>
+  discardUnavailable: ReturnType<typeof vi.fn>
   containsMessageOnActiveBranch: ReturnType<typeof vi.fn>
   deliveryState: () => 'queued' | 'delivering' | 'accepted' | undefined
   deliveries: Readonly<{
@@ -181,6 +182,16 @@ const createHarness = (
     if (!options.deliveryContext) throw new Error('No delivery context configured.')
     return options.deliveryContext
   })
+  const discardUnavailable = vi.fn(
+    async (input: {
+      authorizeDiscard?: (plan: { originatingPromptMessageId: string }) => Promise<void>
+      beforePersist?: () => void
+    }) => {
+      await input.authorizeDiscard?.({ originatingPromptMessageId: 'prompt-1' })
+      input.beforePersist?.()
+      return { revision: current.revision + 1 }
+    }
+  )
   const service = {
     generate,
     respond,
@@ -188,7 +199,8 @@ const createHarness = (
     queueSettledDecisionDelivery,
     queueReviewFeedbackDelivery,
     getProjection,
-    getDeliveryContext
+    getDeliveryContext,
+    discardUnavailable
   }
   const deliveries = {
     accept: vi.fn(async () => {
@@ -252,6 +264,7 @@ const createHarness = (
     queueReviewFeedbackDelivery,
     getProjection,
     getDeliveryContext,
+    discardUnavailable,
     containsMessageOnActiveBranch,
     deliveryState: () => deliveryState,
     deliveries
@@ -263,6 +276,88 @@ beforeEach(() => {
 })
 
 describe('ACP Session Plan approval causality', () => {
+  it.each(
+    ['approved', 'rejected', 'feedback'].flatMap((responseKind) =>
+      [false, true].map((reusePrompt) => ({
+        responseKind: responseKind as 'approved' | 'rejected' | 'feedback',
+        reusePrompt
+      }))
+    )
+  )(
+    'P02 preserves the replacement waiter for $responseKind (reuse prompt: $reusePrompt)',
+    async ({ responseKind, reusePrompt }) => {
+      const harness = createHarness()
+      const replacementPrompt = reusePrompt ? 'prompt-1' : 'prompt-2'
+      const controller = new AbortController()
+      const generation = harness.workflow
+        .call({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          operation: 'generate',
+          input: {},
+          signal: controller.signal
+        })
+        .catch((error: unknown) => error)
+      await vi.waitFor(() =>
+        expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+      )
+      let releaseBegin!: () => void
+      const barrier = new Promise<void>((resolve) => {
+        releaseBegin = resolve
+      })
+      const originalBegin =
+        harness.deliveries.begin.getMockImplementation() as () => Promise<boolean>
+      harness.deliveries.begin.mockImplementationOnce(async () => {
+        await barrier
+        return originalBegin()
+      })
+      const response = harness.workflow.respond(
+        responseKind === 'feedback'
+          ? { projectId: 'project-1', sessionId: 'session-1', feedback: 'Revise the analysis.' }
+          : {
+              projectId: 'project-1',
+              sessionId: 'session-1',
+              artifactVersionId: 'version-1',
+              expectedRevision: 1,
+              decision: responseKind
+            }
+      )
+      await vi.waitFor(() => expect(harness.deliveries.begin).toHaveBeenCalledOnce())
+      controller.abort()
+      await expect(generation).resolves.toBeInstanceOf(Error)
+      harness.sessionInteractions.release(harness.interaction)
+      harness.sessionInteractions.claim({
+        sessionId: 'session-1',
+        kind: 'prompt',
+        promptMessageId: replacementPrompt
+      })
+      harness.interactions.register({
+        sessionId: 'session-1',
+        artifactVersionId: 'version-2',
+        interactionId: replacementPrompt
+      })
+      const received = vi.fn()
+      const replacement = harness.interactions
+        .parkApproval('session-1', replacementPrompt)
+        .then(received, () => undefined)
+      try {
+        releaseBegin()
+        await response
+        expect.soft(received).not.toHaveBeenCalled()
+        expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe(replacementPrompt)
+        expect(harness.deliveries.clear).not.toHaveBeenCalled()
+        expect(harness.deliveries.rearmUnaccepted).toHaveBeenCalledWith(
+          'project-1',
+          'session-1',
+          'receipt-1'
+        )
+      } finally {
+        harness.interactions.clearSession('session-1', 'test cleanup')
+        await replacement
+      }
+    }
+  )
+
   it('aborts generate by clearing the real approval waiter while retaining the pending Plan', async () => {
     const harness = createHarness()
     const controller = new AbortController()
@@ -1148,5 +1243,66 @@ describe('ACP Runtime Session Plan composition', () => {
     expect(prompt).toContain('plan: host.plan')
     expect(plan).toContain('const prompt: AcpPromptTurnPlanWorkflow = Object.freeze({')
     expect(plan).not.toMatch(/from ['"]electron['"]|application-commands|ipc|runtime-coordinator/)
+  })
+})
+
+describe('explicit unavailable Plan recovery ownership', () => {
+  const identity = {
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    artifactVersionId: 'version-1',
+    expectedRevision: 1
+  }
+  it('allows restored recovery on the active branch without a live prompt', async () => {
+    const harness = createHarness()
+    harness.sessionInteractions.release(harness.interaction)
+    await expect(harness.workflow.discardUnavailable(identity)).resolves.toMatchObject({
+      revision: expect.any(Number)
+    })
+    expect(harness.containsMessageOnActiveBranch).toHaveBeenCalledWith(
+      'project-1',
+      'session-1',
+      'prompt-1'
+    )
+  })
+  it('rejects cross-branch recovery without releasing the waiter', async () => {
+    const harness = createHarness({ containsOriginatingMessage: false })
+    const approval = harness.interactions
+      .parkApproval('session-1', 'prompt-1')
+      .catch(() => undefined)
+    const token = harness.interactions.approvalTokenFor('session-1')
+    await expect(harness.workflow.discardUnavailable(identity)).rejects.toMatchObject({
+      code: 'interaction-mismatch'
+    })
+    expect(harness.interactions.approvalTokenFor('session-1')).toBe(token)
+    harness.interactions.rejectApproval('session-1', 'test cleanup')
+    await approval
+  })
+  it('releases only the parked approval after successful persistence', async () => {
+    const harness = createHarness()
+    const approval = harness.interactions
+      .parkApproval('session-1', 'prompt-1')
+      .catch((error: unknown) => error)
+    await harness.workflow.discardUnavailable(identity)
+    expect(await approval).toMatchObject({ message: 'The unavailable Session Plan was discarded.' })
+  })
+  it('does not discard during an executing prompt or after a replacement claims the Session', async () => {
+    const harness = createHarness()
+    await expect(harness.workflow.discardUnavailable(identity)).rejects.toMatchObject({
+      code: 'interaction-mismatch'
+    })
+    expect(harness.discardUnavailable).not.toHaveBeenCalled()
+    harness.sessionInteractions.release(harness.interaction)
+    harness.containsMessageOnActiveBranch.mockImplementation(async () => {
+      harness.sessionInteractions.claim({
+        sessionId: 'session-1',
+        kind: 'prompt',
+        promptMessageId: 'replacement'
+      })
+      return true
+    })
+    await expect(harness.workflow.discardUnavailable(identity)).rejects.toMatchObject({
+      code: 'interaction-mismatch'
+    })
   })
 })
