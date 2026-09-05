@@ -2609,8 +2609,13 @@ describe('session store', () => {
     })
 
     const current = useSessionStore.getState().sessions[0]
-    expect(current.messages.at(-1)?.content).toBe('Delegation complete')
-    const persisted = toPersistedSession(current)
+    // Mid-stream text growth lives in the streamingMessages slice; the message object keeps the
+    // creation-time content until the turn materializes.
+    expect(current.messages.at(-1)?.content).toBe('De')
+    expect(useSessionStore.getState().streamingMessages[current.messages.at(-1)!.id]?.content).toBe(
+      'Delegation complete'
+    )
+    const persisted = toPersistedSession(current, useSessionStore.getState().streamingMessages)
     useSessionStore.getState().hydrateSessions([persisted])
 
     expect(persisted.messages.at(-1)?.content).toBe('Delegation complete')
