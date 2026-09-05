@@ -149,7 +149,17 @@ type FakePdfTextItem =
       dir?: string
     }>
 let fakePdf: { numPages: number; pages: FakePdfTextItem[][] }
-const getDocument = vi.fn(() => ({
+type FakePdfDocument = {
+  promise: Promise<{
+    numPages: number
+    getPage: (pageNumber: number) => Promise<{
+      getTextContent: () => Promise<{ items: unknown[] }>
+      cleanup: () => void
+    }>
+    destroy: () => Promise<void>
+  }>
+}
+const getDocument = vi.fn<(options?: { data?: Uint8Array }) => FakePdfDocument>(() => ({
   promise: Promise.resolve({
     numPages: fakePdf.numPages,
     getPage: async (pageNumber: number) => ({
@@ -168,7 +178,7 @@ const getDocument = vi.fn(() => ({
 }))
 
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
-  getDocument: (options?: unknown) => getDocument(options)
+  getDocument: (options?: unknown) => getDocument(options as { data?: Uint8Array } | undefined)
 }))
 
 let root: string
@@ -669,8 +679,7 @@ describe('extractPdfText', () => {
         data: expect.any(Uint8Array)
       })
     )
-    const options = getDocument.mock.calls[0]?.[0] as { data: Uint8Array }
-    expect(options.data.byteLength).toBe(bytes.byteLength)
+    expect(getDocument.mock.calls[0]?.[0]?.data?.byteLength).toBe(bytes.byteLength)
   })
 
   it('does not inspect or read PDF sources above the automatic extraction limit', async () => {
