@@ -670,6 +670,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     const [editBaseline, setEditBaseline] = useState<{
       text: string
       expectedHeadVersionId: string
+      basedOnVersionId: string
     }>()
     const [saving, setSaving] = useState(false)
     const [editError, setEditError] = useState<string>()
@@ -695,12 +696,14 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         : undefined
     )
     const sourceItem = storedItem?.type === 'file' ? storedItem : item
-    const itemIdentityKey = `${sourceItem.projectId ?? ''}:${sourceItem.source ?? 'artifact'}:${sourceItem.id}:${sourceItem.managedFileId ?? ''}:${sourceItem.artifactId ?? ''}:${sourceItem.selectedVersionId ?? ''}:${sourceItem.path}`
+    // Managed paths advance with the head; only logical file/selection changes discard a draft.
+    const itemIdentityKey = `${sourceItem.projectId ?? ''}:${sourceItem.source ?? 'artifact'}:${sourceItem.id}:${sourceItem.managedFileId ?? ''}:${sourceItem.artifactId ?? ''}:${sourceItem.selectedVersionId ?? ''}:${sourceItem.managedFileId ? '' : sourceItem.path}`
     const previewItem = versionOverride?.key === itemIdentityKey ? versionOverride.item : sourceItem
     const projectId = previewItem.projectId ?? activeProjectId
     const previewIdentityKey = `${previewItem.projectId ?? ''}:${previewItem.source ?? 'artifact'}:${previewItem.id}:${previewItem.managedFileId ?? ''}:${previewItem.artifactId ?? ''}:${previewItem.selectedVersionId ?? ''}:${previewItem.path}`
     const managedWorkflow = useManagedVersionWorkflow({
       item: previewItem,
+      sourceItem,
       projectId,
       mode,
       setMode,
@@ -1011,7 +1014,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
           applyVersionItem(nextItem, true, onApplied)
         })
       }
-      const nextIdentityKey = `${nextItem.projectId ?? ''}:${nextItem.source ?? 'artifact'}:${nextItem.id}:${nextItem.managedFileId ?? ''}:${nextItem.artifactId ?? ''}:${nextItem.selectedVersionId ?? ''}:${nextItem.path}`
+      const nextIdentityKey = `${nextItem.projectId ?? ''}:${nextItem.source ?? 'artifact'}:${nextItem.id}:${nextItem.managedFileId ?? ''}:${nextItem.artifactId ?? ''}:${nextItem.selectedVersionId ?? ''}:${nextItem.managedFileId ? '' : nextItem.path}`
       if (workbenchConnected) {
         acceptedIdentityTransitionRef.current = nextIdentityKey
         if (!usePreviewWorkbenchStore.getState().upsertItem(nextItem, true)) {
@@ -1150,7 +1153,8 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       setDraft(managedInspect.text)
       setEditBaseline({
         text: managedInspect.text,
-        expectedHeadVersionId: managedInspect.headVersionId
+        expectedHeadVersionId: managedInspect.headVersionId,
+        basedOnVersionId: managedInspect.selectedVersionId
       })
       setEditError(undefined)
       setConflictHead(undefined)
@@ -1160,7 +1164,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     const saveEdit = async (): Promise<void> => {
       if (
         !managedIdentity ||
-        !managedInspect ||
+        !managedInspect?.canEdit ||
         !editBaseline ||
         draft === editBaseline.text ||
         saving
@@ -1179,13 +1183,13 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
           previous.source !== managedIdentity.source ||
           previous.projectId !== managedIdentity.projectId ||
           previous.fileId !== managedIdentity.fileId ||
-          previous.basedOnVersionId !== managedInspect.selectedVersionId ||
+          previous.basedOnVersionId !== editBaseline.basedOnVersionId ||
           previous.expectedHeadVersionId !== editBaseline.expectedHeadVersionId ||
           previous.content !== draft
         ) {
           pendingSaveRef.current = {
             ...managedIdentity,
-            basedOnVersionId: managedInspect.selectedVersionId,
+            basedOnVersionId: editBaseline.basedOnVersionId,
             expectedHeadVersionId: editBaseline.expectedHeadVersionId,
             content: draft,
             operationId: crypto.randomUUID()
@@ -1384,7 +1388,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                           type="button"
                           size="sm"
                           aria-label={t('Save changes')}
-                          disabled={!isDirty || saving}
+                          disabled={!isDirty || saving || !managedInspect?.canEdit}
                           onClick={() => void saveEdit()}
                         >
                           {t('Save')}

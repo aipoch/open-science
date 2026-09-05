@@ -11,6 +11,8 @@ import {
 } from 'react'
 
 import { errorDetail } from '@/lib/error-detail'
+import { useProjectStore } from '@/stores/project-store'
+import { useSessionStore } from '@/stores/session-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type {
   ManagedFileIdentity,
@@ -48,12 +50,14 @@ const isSourceTextVersion = (inspect: ManagedFileVersionInspectResult): boolean 
 
 const useManagedVersionWorkflow = ({
   item,
+  sourceItem = item,
   projectId,
   mode,
   setMode,
   t
 }: {
   item: PreviewFileItem
+  sourceItem?: PreviewFileItem
   projectId: string | undefined
   mode: ManagedVersionMode
   setMode: Dispatch<SetStateAction<ManagedVersionMode>>
@@ -80,8 +84,38 @@ const useManagedVersionWorkflow = ({
         : undefined,
     [item.managedFileId, projectId, source]
   )
+  // Select primitive snapshots so unrelated messages/project edits do not invalidate inspection.
+  const sessionRevision = useSessionStore((state) => {
+    const session = state.sessions.find((candidate) => candidate.id === item.sessionId)
+    return JSON.stringify([session?.id, session?.filesRevision, session?.archivedAt])
+  })
+  const projectLifecycle = useProjectStore((state) => {
+    const project = state.projects.find((candidate) => candidate.id === projectId)
+    return JSON.stringify([
+      project?.id,
+      project?.archivedAt,
+      projectId ? state.projectDeletionRequests.has(projectId) : false
+    ])
+  })
+  // A local historical selection must still observe its parent file metadata advancing.
   const requestKey = identity
-    ? `${source}:${projectId}:${identity.fileId}:${item.selectedVersionId ?? ''}:${refresh}`
+    ? JSON.stringify([
+        source,
+        projectId,
+        identity.fileId,
+        item.selectedVersionId,
+        item.sessionId,
+        sourceItem.path,
+        sourceItem.name,
+        sourceItem.size,
+        sourceItem.mtimeMs,
+        sourceItem.versionNumber,
+        sourceItem.originSession?.state,
+        sourceItem.originSession?.deletedAt,
+        sessionRevision,
+        projectLifecycle,
+        refresh
+      ])
     : undefined
   const inspect =
     storedInspect && storedInspect.key === requestKey ? storedInspect.value : undefined
@@ -141,7 +175,10 @@ const useManagedVersionWorkflow = ({
   const navigationInspect = initialNavigationInspect
     ? { ...initialNavigationInspect, versions: history.versions }
     : undefined
-  const controlsInspect = inspect ?? (mode === 'diff' ? navigationInspect : undefined)
+  // Keep Cancel/Stop comparing available during refresh, without granting stale write authority.
+  const controlsInspect =
+    inspect ??
+    (mode !== 'view' && navigationInspect ? { ...navigationInspect, canEdit: false } : undefined)
   const selectedDownloadVersion =
     navigationInspect?.selectedVersion ??
     navigationInspect?.versions.find(
@@ -161,6 +198,20 @@ const useManagedVersionWorkflow = ({
     },
     [setMode]
   )
+
+  useEffect(() => {
+    if (!identity) return
+    return window.api.projectFiles?.onChanged?.((event) => {
+      if (event.projectId !== identity.projectId) return
+      if (
+        event.kind !== 'reset' &&
+        (!event.sources.includes(identity.source) ||
+          (event.sessionId !== undefined && event.sessionId !== item.sessionId))
+      )
+        return
+      setRefresh((value) => value + 1)
+    })
+  }, [identity, item.sessionId])
 
   useEffect(() => {
     let active = true

@@ -538,6 +538,156 @@ describe('PreviewFileSurface managed text versions', () => {
       if (change === 'baseline') expect(save.mock.calls[1][0].basedOnVersionId).toBe('upload-v1')
     }
   )
+  it('uses the refreshed head for editing and downloads after same-file metadata changes', async () => {
+    const latestVersion = { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 }
+    const currentItem = { ...managedUploadItem, selectedVersionId: undefined }
+    await act(async () => root.render(<PreviewFileSurface item={currentItem} onClose={vi.fn()} />))
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        ...managedInspect,
+        headVersionId: 'upload-v3',
+        selectedVersionId: 'upload-v3',
+        versions: [...managedInspect.versions, latestVersion],
+        text: '# New head\n'
+      }
+    })
+    await act(async () =>
+      root.render(
+        <PreviewFileSurface
+          item={{ ...currentItem, size: 100, mtimeMs: 3, versionNumber: 3 }}
+          onClose={vi.fn()}
+        />
+      )
+    )
+    expect(downloadButtonSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        versionId: 'upload-v3',
+        latestVersionId: 'upload-v3'
+      })
+    )
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# New head\n')
+  })
+
+  it('refreshes the head from parent metadata while keeping a locally selected historical version', async () => {
+    let head = 'upload-v2'
+    window.api.managedFileVersions.inspect = vi.fn<typeof window.api.managedFileVersions.inspect>(
+      async (request) => ({
+        ok: true,
+        value: {
+          ...managedInspect,
+          headVersionId: head,
+          headVersion: {
+            ...managedInspect.versions[1],
+            id: head,
+            versionNumber: head === 'upload-v2' ? 2 : 3
+          },
+          selectedVersionId: request.versionId ?? head
+        }
+      })
+    )
+    const currentItem = { ...managedUploadItem, selectedVersionId: undefined }
+    await act(async () => root.render(<PreviewFileSurface item={currentItem} onClose={vi.fn()} />))
+    await click(container.querySelector('[aria-label="Previous file version"]'))
+    expect(window.api.managedFileVersions.inspect).toHaveBeenLastCalledWith(
+      expect.objectContaining({ versionId: 'upload-v1' })
+    )
+    head = 'upload-v3'
+    await act(async () =>
+      root.render(
+        <PreviewFileSurface
+          item={{ ...currentItem, mtimeMs: 3, versionNumber: 3 }}
+          onClose={vi.fn()}
+        />
+      )
+    )
+    expect(downloadButtonSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        versionId: 'upload-v1',
+        latestVersionId: 'upload-v3'
+      })
+    )
+  })
+
+  it('preserves a draft and its original version baseline when the default file path advances', async () => {
+    const currentItem = { ...managedUploadItem, selectedVersionId: undefined }
+    await act(async () => root.render(<PreviewFileSurface item={currentItem} onClose={vi.fn()} />))
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        ...managedInspect,
+        headVersionId: 'upload-v3',
+        selectedVersionId: 'upload-v3',
+        text: '# New head\n'
+      }
+    })
+    window.api.managedFileVersions.saveTextEdit = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { kind: 'conflict', actualHead: managedInspect.versions[1] }
+    })
+    await act(async () =>
+      root.render(
+        <PreviewFileSurface
+          item={{
+            ...currentItem,
+            path: 'upload-version:project-1/session-1/upload-v3',
+            versionNumber: 3
+          }}
+          onClose={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
+    await click(container.querySelector('[aria-label="Save changes"]'))
+    expect(window.api.managedFileVersions.saveTextEdit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        basedOnVersionId: 'upload-v2',
+        expectedHeadVersionId: 'upload-v2',
+        content: '# Draft\n'
+      })
+    )
+  })
+
+  it('retains draft controls but disables saving during external reinspection and after deletion', async () => {
+    let notify!: Parameters<typeof window.api.projectFiles.onChanged>[0]
+    window.api.projectFiles = {
+      ...window.api.projectFiles,
+      onChanged: vi.fn((listener) => {
+        notify = listener
+        return vi.fn()
+      })
+    }
+    await act(async () =>
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+    )
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    type Result = Awaited<ReturnType<typeof window.api.managedFileVersions.inspect>>
+    let resolveInspect!: (value: Result) => void
+    window.api.managedFileVersions.inspect = vi.fn(
+      () =>
+        new Promise<Result>((resolve) => {
+          resolveInspect = resolve
+        })
+    )
+    await act(async () => notify?.({ projectId: 'project-1', sources: ['upload'], kind: 'delete' }))
+    const saveButton = (): HTMLButtonElement | null =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')
+    expect(saveButton()?.disabled).toBe(true)
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
+    await act(async () =>
+      resolveInspect({
+        ok: true,
+        value: { ...managedInspect, canEdit: false, unavailableReason: 'FILE_DELETED' }
+      })
+    )
+    expect(saveButton()?.disabled).toBe(true)
+    await click(saveButton())
+    expect(window.api.managedFileVersions.saveTextEdit).not.toHaveBeenCalled()
+  })
 
   it.each(['plot.png', 'report.pdf', 'README.md'])(
     'offers older history for %s only alongside a version navigator',
