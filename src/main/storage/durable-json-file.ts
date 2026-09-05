@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 
 import { defaultFileDurability } from './file-durability'
 import { retryFileReplacement } from './file-replacement'
@@ -32,6 +33,7 @@ export type DurableJsonFileDependencies = {
   mkdir(path: string, options: { recursive: true }): Promise<unknown>
   readDirectoryEntries(path: string): Promise<DurableJsonDirectoryEntry[]>
   readFile(path: string): Promise<string>
+  readFileWithinLimit(path: string, maxBytes: number): Promise<string>
   remove(path: string, options: { force: true; recursive: false }): Promise<void>
   rename(source: string, destination: string): Promise<void>
   stat(path: string): Promise<DurableJsonFileStat>
@@ -55,11 +57,43 @@ export class DurableJsonReadLimitError extends DurableJsonRecoveryBarrierError {
   }
 }
 
+const BOUNDED_READ_CHUNK_BYTES = 64 * 1024
+
+export const readFileWithinLimit = async (path: string, maxBytes: number): Promise<string> => {
+  const file = await open(path, 'r')
+  try {
+    const metadata = await file.stat()
+    if (!metadata.isFile()) throw new Error(`${basename(path)} is not a regular file.`)
+    if (metadata.size > maxBytes) throw new DurableJsonReadLimitError(basename(path), maxBytes)
+
+    const decoder = new StringDecoder('utf8')
+    const parts: string[] = []
+    let bytesReadTotal = 0
+    while (bytesReadTotal <= maxBytes) {
+      const buffer = Buffer.allocUnsafe(
+        Math.min(BOUNDED_READ_CHUNK_BYTES, maxBytes + 1 - bytesReadTotal)
+      )
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, null)
+      if (bytesRead === 0) break
+      bytesReadTotal += bytesRead
+      if (bytesReadTotal > maxBytes) {
+        throw new DurableJsonReadLimitError(basename(path), maxBytes)
+      }
+      parts.push(decoder.write(buffer.subarray(0, bytesRead)))
+    }
+    parts.push(decoder.end())
+    return parts.join('')
+  } finally {
+    await file.close()
+  }
+}
+
 const DEFAULT_DEPENDENCIES: DurableJsonFileDependencies = {
   createTemporarySuffix: () => `${process.pid}-${randomUUID()}`,
   mkdir: (path, options) => mkdir(path, options),
   readDirectoryEntries: (path) => readdir(path, { withFileTypes: true }),
   readFile: (path) => readFile(path, 'utf8'),
+  readFileWithinLimit,
   remove: (path, options) => rm(path, options),
   rename: (source, destination) => rename(source, destination),
   stat: (path) => stat(path),
@@ -251,6 +285,7 @@ export const readDurableJsonFile = async <Value>(
       if (size > options.maxBytes) {
         throw new DurableJsonReadLimitError(basename(path), options.maxBytes)
       }
+      return dependencies.readFileWithinLimit(path, options.maxBytes)
     }
     return dependencies.readFile(path)
   }

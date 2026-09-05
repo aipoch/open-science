@@ -32,6 +32,7 @@ import {
 import {
   DurableJsonRecoveryBarrierError,
   DurableJsonReadLimitError,
+  readFileWithinLimit,
   readDurableJsonFile,
   recoverDurableJsonDirectory,
   writeDurableJsonFile
@@ -191,6 +192,7 @@ type SessionRepositoryDependencies = {
   readDirectoryEntries(path: string): Promise<SessionDirectoryEntry[]>
   readManifestFile(path: string): Promise<string>
   readSessionFile(path: string): Promise<string>
+  readSessionFileWithinLimit(path: string, maxBytes: number): Promise<string>
   renameFile(source: string, destination: string): Promise<void>
   wait(delayMs: number): Promise<void>
 }
@@ -203,6 +205,7 @@ const DEFAULT_DEPENDENCIES: SessionRepositoryDependencies = {
   readDirectoryEntries: (path) => readdir(path, { withFileTypes: true }),
   readManifestFile: (path) => readFile(path, 'utf8'),
   readSessionFile: (path) => readFile(path, 'utf8'),
+  readSessionFileWithinLimit: readFileWithinLimit,
   renameFile: (source, destination) => rename(source, destination),
   wait: (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))
 }
@@ -309,6 +312,17 @@ class SessionRepository {
         dependencies.readDirectoryEntries ?? DEFAULT_DEPENDENCIES.readDirectoryEntries,
       readManifestFile: dependencies.readManifestFile ?? DEFAULT_DEPENDENCIES.readManifestFile,
       readSessionFile: dependencies.readSessionFile ?? DEFAULT_DEPENDENCIES.readSessionFile,
+      readSessionFileWithinLimit:
+        dependencies.readSessionFileWithinLimit ??
+        (dependencies.readSessionFile
+          ? async (path, maxBytes) => {
+              const contents = await dependencies.readSessionFile!(path)
+              if (Buffer.byteLength(contents, 'utf8') > maxBytes) {
+                throw new DurableJsonReadLimitError(basename(path), maxBytes)
+              }
+              return contents
+            }
+          : DEFAULT_DEPENDENCIES.readSessionFileWithinLimit),
       renameFile: dependencies.renameFile ?? DEFAULT_DEPENDENCIES.renameFile,
       wait: dependencies.wait ?? DEFAULT_DEPENDENCIES.wait
     }
@@ -1463,6 +1477,7 @@ class SessionRepository {
         {
           readDirectoryEntries: this.dependencies.readDirectoryEntries,
           readFile: this.dependencies.readSessionFile,
+          readFileWithinLimit: this.dependencies.readSessionFileWithinLimit,
           remove: this.dependencies.remove,
           rename: this.dependencies.renameFile,
           wait: this.dependencies.wait
@@ -1555,6 +1570,7 @@ class SessionRepository {
         {
           readDirectoryEntries: this.dependencies.readDirectoryEntries,
           readFile: this.dependencies.readSessionFile,
+          readFileWithinLimit: this.dependencies.readSessionFileWithinLimit,
           remove: this.dependencies.remove,
           rename: this.dependencies.renameFile,
           wait: this.dependencies.wait
