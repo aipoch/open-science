@@ -529,12 +529,13 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
       if (existing?.contentLoaded === false) {
         const loaded = hydrateSession(session)
+        const incomingIsNewer = sessionRevision(session) > sessionRevision(existing)
         const hydrated: ChatSession = {
           ...loaded,
           number: existing.number ?? loaded.number,
-          title: existing.title,
-          pinned: existing.pinned,
-          archivedAt: existing.archivedAt,
+          title: !incomingIsNewer || existing.unsavedTitle ? existing.title : loaded.title,
+          pinned: incomingIsNewer ? loaded.pinned : existing.pinned,
+          archivedAt: incomingIsNewer ? loaded.archivedAt : existing.archivedAt,
           revision: Math.max(existing.revision ?? 0, loaded.revision ?? 0),
           filesRevision: Math.max(existing.filesRevision ?? 0, loaded.filesRevision ?? 0),
           updatedAt: Math.max(existing.updatedAt, loaded.updatedAt),
