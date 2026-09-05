@@ -1546,11 +1546,16 @@ const createStoreSaver = (
 
       const hasUnsavedLocalTitle =
         session.unsavedTitle === true && Boolean(authority && session.title !== authority.title)
+      const hasUnsavedContextReset =
+        session.branchContextResetRequired === true && !authority?.branchContextResetRequired
       if (
         (previousById.get(session.id) !== session ||
           isForced ||
           streamingDirtySessionIds.has(session.id)) &&
-        (isForced || !isExternallyHydratedSession(session) || hasUnsavedLocalTitle) &&
+        (isForced ||
+          !isExternallyHydratedSession(session) ||
+          hasUnsavedLocalTitle ||
+          hasUnsavedContextReset) &&
         !hasStagedUploads(session) &&
         // A terminal graph-integrity failure keeps the renderer responsive, but the flat projection
         // is no longer proven to match the immutable Branch graph. Preserve the last durable copy.
