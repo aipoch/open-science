@@ -537,13 +537,12 @@ export const defaultDiscoveryDeps = (
           const output = `${stdout}\n${stderr}`
           return isPython3Version(output) ? output.trim().replace(/^Python\s+/i, '') : undefined
         }
-        // No shell: execFile runs the interpreter directly, so a path with spaces/metacharacters is
-        // handled safely (shell:true would break "C:\Program Files\…" and allow injection).
-        const { stdout, stderr } = await exec(
-          interpreterPath,
-          ['--version'],
-          probeOptions(interpreterPath)
-        )
+        // Probe through Rscript rather than R.exe. On Windows R.exe may create its own visible
+        // frontend even when the child process has windowsHide set; Rscript is the headless CLI we
+        // already use for readiness checks and kernel launches. No shell means paths with spaces or
+        // metacharacters are passed safely.
+        const rscript = rscriptFor(interpreterPath)
+        const { stdout, stderr } = await exec(rscript, ['--version'], probeOptions(rscript))
         return parseRVersion(`${stdout}\n${stderr}`)
       } catch {
         return undefined
