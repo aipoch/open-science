@@ -24,7 +24,10 @@ import {
   type ComposerPastedTextStage
 } from './composer/composer-doc'
 
+import type { MessageQueueEditIntent } from './workspace-message-queue-owner'
+
 export type ComposerDraft = {
+  queuedEdit?: MessageQueueEditIntent
   doc: ComposerDoc
   annotations: Annotation[]
   attachments: UploadedAttachment[]
@@ -622,6 +625,10 @@ export const useWorkspaceComposerUploadController = ({
                 .abortTransfer({ transferId: transfer.transferId })
                 .catch(() => undefined)
               throw claimError
+            }
+            if (controller.signal.aborted) {
+              await uploads.deleteUpload({ path: attachment.path }).catch(() => undefined)
+              continue
             }
             commitDraftAttachment(draftKey, transfer.transferId, attachment, transfer.pastedTextId)
           } catch (uploadError) {

@@ -633,9 +633,13 @@ colors communicate a successful or failed probe/migration result.
   hairline separators rather than nested cards. Dragging over another row moves neighboring rows
   aside to preview whether the item will land before or after it. Each row also supports Arrow
   Up/Arrow Down keyboard reordering, Edit, Remove, and Send now. Edit moves an item back into an
-  unchanged empty composer. Send now promotes the item and first tries to inject it into the current
+  empty composer, including its annotations, attachments and unfinished transfers. Restored queue
+  edits retain their branch, authorization, model configuration and historical revision target in
+  renderer memory. The composer identifies queued editing; Exit queued editing keeps the content
+  as an ordinary draft. Submitting a restored edit reuses queue admission and dispatch. Send now promotes the item and first tries to inject it into the current
   run through the agent framework's native follow-up, without cancelling that run. While inject is in
-  flight, the row shows a sending state. If inject is unavailable or refused, Send now keeps the live
+  flight, the row shows a sending state. Native follow-up validates the captured target against the
+  bound runtime generation and rechecks the turn after asynchronous preparation. If inject is unavailable or refused, Send now keeps the live
   turn and sends the promoted item after that run finishes; the row returns to queued. Stop remains
   the explicit control for cancelling a live turn without sending a queued message. Branch, admission,
   cancellation, or edit failures keep

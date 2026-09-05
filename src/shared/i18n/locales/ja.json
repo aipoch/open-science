@@ -4063,6 +4063,12 @@
     "{{percent}}% of {{size}}": "{{size}} の {{percent}}%",
     "Could not save project. Please try again.": "プロジェクトを保存できませんでした。もう一度お試しください。",
     "Could not attach the file. Check available storage and try again.": "ファイルを添付できませんでした。ストレージの空き容量を確認して、もう一度お試しください。",
-    "Close the file browser and open it again to retry.": "ファイルブラウザーを閉じて再度開き、もう一度お試しください。"
+    "Close the file browser and open it again to retry.": "ファイルブラウザーを閉じて再度開き、もう一度お試しください。",
+    "Editing a historical revision": "過去のメッセージの修正を編集中",
+    "Editing a queued message": "キュー内のメッセージを編集中",
+    "Exit queued editing": "キューの編集を終了",
+    "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "キュー内のメッセージは、このセッションと一致しなくなりました。キューの編集を終了して、新しいメッセージとして送信してください。",
+    "Remove attachments before submitting a historical revision.": "過去のメッセージの修正を送信する前に、添付ファイルを削除してください。",
+    "Exit queued editing before choosing another send mode.": "別の送信モードを選択する前に、キューの編集を終了してください。"
   }
 }

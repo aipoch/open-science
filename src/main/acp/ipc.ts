@@ -118,6 +118,7 @@ const registerAcpIpcHandlerSet = (
     runtime.steerFollowUp({
       sessionId: request.sessionId,
       text: typeof request.text === 'string' ? request.text : '',
+      ...(request.agentTarget ? { agentTarget: request.agentTarget } : {}),
       ...(Array.isArray(request.attachments) ? { attachments: request.attachments } : {}),
       ...(Array.isArray(request.referencedArtifacts)
         ? { referencedArtifacts: request.referencedArtifacts }

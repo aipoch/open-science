@@ -4373,6 +4373,12 @@
     "{{percent}}% of {{size}}": "{{percent}} % de {{size}}",
     "Could not save project. Please try again.": "No se pudo guardar el proyecto. Vuelva a intentarlo.",
     "Could not attach the file. Check available storage and try again.": "No se pudo adjuntar el archivo. Compruebe el espacio de almacenamiento disponible y vuelva a intentarlo.",
-    "Close the file browser and open it again to retry.": "Cierre el explorador de archivos y vuelva a abrirlo para intentarlo de nuevo."
+    "Close the file browser and open it again to retry.": "Cierre el explorador de archivos y vuelva a abrirlo para intentarlo de nuevo.",
+    "Editing a historical revision": "Editando una revisión de un mensaje anterior",
+    "Editing a queued message": "Editando un mensaje en cola",
+    "Exit queued editing": "Salir de la edición de la cola",
+    "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "El mensaje en cola ya no corresponde a esta sesión. Salga de la edición de la cola para enviarlo como un mensaje nuevo.",
+    "Remove attachments before submitting a historical revision.": "Quite los archivos adjuntos antes de enviar una revisión de un mensaje anterior.",
+    "Exit queued editing before choosing another send mode.": "Salga de la edición de la cola antes de elegir otro modo de envío."
   }
 }

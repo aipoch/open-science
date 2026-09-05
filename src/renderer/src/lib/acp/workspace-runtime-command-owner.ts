@@ -54,6 +54,7 @@ import type { useAcpRuntime } from './useAcpRuntime'
 import { validateImageAnnotationSourcesBeforeSend } from '../../pages/workspace/annotations/image-annotation-source-validation'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 type SendWorkspaceMessageIntent = {
+  expectedFrameworkId?: AgentFrameworkId
   sessionId?: string
   // Optional durable caller identity for restart-safe application-owned prompts.
   messageId?: string
@@ -104,6 +105,8 @@ type WorkspaceCommandLifecycle = {
   onSessionSizeLimit?: (sessionId: string) => void
 }
 type ResendEditedMessageInput = {
+  expectedFrameworkId?: AgentFrameworkId
+  agentConfiguration?: SessionAgentConfiguration
   text: string
   annotations?: annotationProtocol.Annotation[]
   parts?: MessagePart[]

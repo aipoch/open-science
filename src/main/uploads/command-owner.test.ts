@@ -131,6 +131,33 @@ describe('upload command owner', () => {
     owner.claimLocalFile(invocationFor(caller, [{ transferId: 'native-transfer' }] as const))
   })
 
+  it('Q02 deletes the exact claimed pending file after a late renderer cancellation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'upload-claim-'))
+    temporaryRoots.push(root)
+    const sourcePath = join(root, 'notes.txt')
+    await writeFile(sourcePath, 'keep the original')
+    const repository = new UploadRepository(root)
+    const owner = createUploadCommandOwner(repository)
+    const caller = createCaller(new ApplicationCallerLeaseRegistry(), 17)
+    const attachment = await owner.stageLocalFile(
+      invocationFor(caller, [
+        {
+          transferId: 'late-claim',
+          sourcePath,
+          name: 'notes.txt',
+          size: 17
+        }
+      ] as const),
+      { report: () => undefined }
+    )
+    owner.claimLocalFile(invocationFor(caller, [{ transferId: 'late-claim' }] as const))
+    await owner.abortTransfer(invocationFor(caller, [{ transferId: 'late-claim' }] as const))
+    await expect(readFile(attachment.path, 'utf8')).resolves.toBe('keep the original')
+    await owner.deleteUpload(invocationFor(caller, [{ path: attachment.path }] as const))
+    await expect(stat(attachment.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(sourcePath, 'utf8')).resolves.toBe('keep the original')
+  })
+
   it('rejects an invalid standalone native path before staging', async () => {
     const repository = { stageLocalFile: vi.fn() } as unknown as UploadRepository
     const owner = createUploadCommandOwner(repository)

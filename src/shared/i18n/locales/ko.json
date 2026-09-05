@@ -4061,6 +4061,12 @@
     "{{percent}}% of {{size}}": "{{size}} 중 {{percent}}%",
     "Could not save project. Please try again.": "프로젝트를 저장하지 못했습니다. 다시 시도해 주세요.",
     "Could not attach the file. Check available storage and try again.": "파일을 첨부하지 못했습니다. 저장 공간을 확인한 후 다시 시도해 주세요.",
-    "Close the file browser and open it again to retry.": "파일 브라우저를 닫았다가 다시 열어 재시도해 주세요."
+    "Close the file browser and open it again to retry.": "파일 브라우저를 닫았다가 다시 열어 재시도해 주세요.",
+    "Editing a historical revision": "이전 메시지 수정 내용 편집 중",
+    "Editing a queued message": "대기 중인 메시지 편집 중",
+    "Exit queued editing": "대기열 편집 종료",
+    "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "대기 중인 메시지가 더 이상 이 세션과 일치하지 않습니다. 대기열 편집을 종료하여 새 메시지로 보내세요.",
+    "Remove attachments before submitting a historical revision.": "이전 메시지 수정 내용을 제출하기 전에 첨부 파일을 제거하세요.",
+    "Exit queued editing before choosing another send mode.": "다른 전송 모드를 선택하기 전에 대기열 편집을 종료하세요."
   }
 }

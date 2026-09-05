@@ -1721,6 +1721,23 @@ const ConversationPanel = ({
                       {...messageQueue}
                       expanded={messageQueueExpanded}
                     />
+                    {composer.view.queuedEdit ? (
+                      <div className="flex items-center justify-between gap-2 text-xs text-text-300">
+                        <span>
+                          {composer.view.queuedEdit.revisionMessageId
+                            ? t('Editing a historical revision')
+                            : t('Editing a queued message')}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={composer.actions.cancelQueuedEdit}
+                          className="rounded px-2 py-1 hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          disabled={!canEditDraft}
+                        >
+                          {t('Exit queued editing')}
+                        </button>
+                      </div>
+                    ) : null}
                     <AnnotationDraftCards
                       annotations={annotations}
                       disabled={!canEditDraft}

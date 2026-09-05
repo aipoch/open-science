@@ -4503,6 +4503,12 @@
     "{{percent}}% of {{size}}": "{{percent}}% из {{size}}",
     "Could not save project. Please try again.": "Не удалось сохранить проект. Повторите попытку.",
     "Could not attach the file. Check available storage and try again.": "Не удалось прикрепить файл. Проверьте свободное место и повторите попытку.",
-    "Close the file browser and open it again to retry.": "Закройте файловый браузер и откройте его снова, чтобы повторить попытку."
+    "Close the file browser and open it again to retry.": "Закройте файловый браузер и откройте его снова, чтобы повторить попытку.",
+    "Editing a historical revision": "Редактирование предыдущего сообщения",
+    "Editing a queued message": "Редактирование сообщения в очереди",
+    "Exit queued editing": "Завершить редактирование очереди",
+    "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "Сообщение в очереди больше не соответствует этому сеансу. Завершите редактирование очереди, чтобы отправить его как новое сообщение.",
+    "Remove attachments before submitting a historical revision.": "Удалите вложения перед отправкой исправления предыдущего сообщения.",
+    "Exit queued editing before choosing another send mode.": "Завершите редактирование очереди, прежде чем выбрать другой режим отправки."
   }
 }

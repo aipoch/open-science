@@ -4373,6 +4373,12 @@
     "{{percent}}% of {{size}}": "{{percent}} % de {{size}}",
     "Could not save project. Please try again.": "Impossible d’enregistrer le projet. Veuillez réessayer.",
     "Could not attach the file. Check available storage and try again.": "Impossible de joindre le fichier. Vérifiez l’espace de stockage disponible et réessayez.",
-    "Close the file browser and open it again to retry.": "Fermez le navigateur de fichiers et rouvrez-le pour réessayer."
+    "Close the file browser and open it again to retry.": "Fermez le navigateur de fichiers et rouvrez-le pour réessayer.",
+    "Editing a historical revision": "Modification d’un ancien message",
+    "Editing a queued message": "Modification d’un message en attente",
+    "Exit queued editing": "Quitter la modification de la file",
+    "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "Le message en attente ne correspond plus à cette session. Quittez la modification de la file pour l’envoyer comme nouveau message.",
+    "Remove attachments before submitting a historical revision.": "Retirez les pièces jointes avant d’envoyer la modification d’un ancien message.",
+    "Exit queued editing before choosing another send mode.": "Quittez la modification de la file avant de choisir un autre mode d’envoi."
   }
 }

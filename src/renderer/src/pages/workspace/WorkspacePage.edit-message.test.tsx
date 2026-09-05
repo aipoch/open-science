@@ -25,6 +25,8 @@ import {
   setDefaultWorkspaceAgentSettings
 } from './workspace-page-test-fixtures'
 
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
 // Capture the ConversationPanel props the page computes, notably canEditMessage and the resend handler.
 let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
 
@@ -194,7 +196,9 @@ describe('WorkspacePage inline edit resend', () => {
       },
       preview: {
         load: vi.fn(() => Promise.resolve(undefined)),
-        save: vi.fn(() => Promise.resolve())
+        save: vi.fn(({ expectedRevision }: { expectedRevision: number }) =>
+          Promise.resolve({ status: 'saved', revision: expectedRevision + 1 })
+        )
       },
       uploads: { deleteUpload: vi.fn() },
       reviewer: {
@@ -248,6 +252,90 @@ describe('WorkspacePage inline edit resend', () => {
       forcedSkillIds: ['skill-forecast'],
       referencedArtifacts: []
     })
+  })
+
+  it('Q01 preserves an independent draft when editing a queued historical revision', async () => {
+    await renderPage()
+    const draft: ComposerDoc = { nodes: [{ type: 'text', text: 'Unsent independent draft' }] }
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(draft)
+      setSession({ status: 'running', messages: [promptMessage] })
+    })
+    await act(async () => {
+      await conversationProps.conversation.actions.revise('message-1', editedDoc, [])
+    })
+    expect(conversationProps.composer.view.doc).toEqual(draft)
+    const queued = conversationProps.conversation.queue.items[0]
+    expect(queued).toMatchObject({ text: 'Run /forecast tomorrow', phase: 'queued' })
+
+    await act(async () => conversationProps.conversation.queue.actions.edit(queued.id))
+
+    expect.soft(conversationProps.composer.view.doc).toEqual(draft)
+    expect
+      .soft(conversationProps.conversation.queue.items)
+      .toEqual([expect.objectContaining({ id: queued.id, error: { kind: 'edit' } })])
+    expect(runtime.resendEditedMessage).not.toHaveBeenCalled()
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('Q01 retains the historical revision target after queue editing and submitting', async () => {
+    runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'new-message' })
+    runtime.resendEditedMessage.mockResolvedValue(true)
+    await renderPage()
+    await act(async () => setSession({ status: 'running', messages: [promptMessage] }))
+    await act(async () => {
+      await conversationProps.conversation.actions.revise('message-1', editedDoc, [])
+    })
+    const queued = conversationProps.conversation.queue.items[0]
+    await act(async () => conversationProps.conversation.queue.actions.edit(queued.id))
+    expect(conversationProps.composer.view.doc).toEqual(editedDoc)
+    expect(conversationProps.conversation.queue.items).toEqual([])
+    await act(async () => setSession({ messages: [promptMessage] }))
+    await act(async () => {
+      await conversationProps.conversation.actions.submit.draft({
+        forcedSkillIds: ['skill-forecast']
+      })
+    })
+
+    expect
+      .soft(runtime.resendEditedMessage)
+      .toHaveBeenCalledWith(
+        'sess-a',
+        'message-1',
+        expect.objectContaining({ text: 'Run /forecast tomorrow' })
+      )
+    expect.soft(runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('Q01 retains a restored revision when its original branch is no longer active', async () => {
+    await renderPage()
+    await act(async () => setSession({ status: 'running', messages: [promptMessage] }))
+    await act(async () => {
+      await conversationProps.conversation.actions.revise('message-1', editedDoc, [])
+    })
+    await act(async () =>
+      conversationProps.conversation.queue.actions.edit(
+        conversationProps.conversation.queue.items[0].id
+      )
+    )
+    const graph = createSession().conversationGraph!
+    await act(async () =>
+      setSession({
+        messages: [promptMessage],
+        conversationGraph: {
+          ...graph,
+          frames: graph.frames.map((frame) => ({ ...frame, activeBranchId: 'branch-b' }))
+        }
+      })
+    )
+    await act(async () =>
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    )
+    expect(conversationProps.composer.view.doc).toEqual(editedDoc)
+    expect(conversationProps.composer.view.queuedEdit?.revisionMessageId).toBe('message-1')
+    expect(conversationProps.composer.view.error).toContain('no longer matches')
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+    expect(runtime.resendEditedMessage).not.toHaveBeenCalled()
   })
 
   it('queues a revision while a run is active and still rejects an empty edit', async () => {

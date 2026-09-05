@@ -428,6 +428,66 @@ describe('workspace message queue controller', () => {
     )
   })
 
+  it('Q03 forwards the captured configuration when a queued revision drains', async () => {
+    let currentSession = session()
+    const resendEditedMessage = vi.fn(async () => true)
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      runtime: { sendMessage: vi.fn(), resendEditedMessage, cancelRun: vi.fn() },
+      getSession: () => currentSession
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const queued = { ...admission('revised prompt'), revisionMessageId: 'message-user-a' }
+    act(() => hook.result.current.lifecycle.enqueue(queued))
+    currentSession = {
+      ...session('idle'),
+      agentConfiguration: { providerId: 'openai', model: 'gpt-5', reasoningEffort: 'high' }
+    }
+    await act(async () => hook.rerender({ ...input, activeSession: currentSession }))
+    expect(resendEditedMessage).toHaveBeenCalledOnce()
+    expect(resendEditedMessage).toHaveBeenCalledWith(
+      'session-a',
+      'message-user-a',
+      expect.objectContaining({ agentConfiguration: queued.agentConfiguration })
+    )
+  })
+
+  it('Q03 preserves the captured target when Send now attempts native follow-up', async () => {
+    const currentSession = {
+      ...session(),
+      agentConfiguration: { providerId: 'openai', model: 'gpt-5', reasoningEffort: 'high' as const }
+    }
+    const queued = admission('use the queued model')
+    const steerFollowUp = vi.fn(async () => ({
+      injected: true as const,
+      transport: 'acp-steering' as const,
+      messageId: 'steered'
+    }))
+    const input = options(currentSession, {
+      runtime: { sendMessage: vi.fn(), cancelRun: vi.fn(), steerFollowUp }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.lifecycle.enqueue(queued))
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+
+    // The runtime can verify its real live binding only if it receives the intended target.
+    // Deferring before attempting injection is also safe; silently injecting without it is not.
+    if (steerFollowUp.mock.calls.length > 0) {
+      expect(steerFollowUp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentConfiguration: queued.agentConfiguration
+        })
+      )
+    } else {
+      expect(hook.result.current.items).toEqual([
+        expect.objectContaining({ text: queued.text, phase: 'queued', deferredUntilIdle: true })
+      ])
+    }
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+  })
+
   it('dispatches a queued revision through the unified edited-message runtime seam', async () => {
     let currentSession = session()
     const resendEditedMessage = vi.fn(async () => true)
@@ -451,6 +511,7 @@ describe('workspace message queue controller', () => {
 
     await vi.waitFor(() => expect(resendEditedMessage).toHaveBeenCalledOnce())
     expect(resendEditedMessage).toHaveBeenCalledWith('session-a', 'message-user-a', {
+      agentConfiguration: admission('').agentConfiguration,
       text: 'revised prompt',
       annotations: [],
       referencedArtifacts: [],
@@ -817,6 +878,7 @@ describe('workspace message queue controller', () => {
     })
     await vi.waitFor(() => expect(steerFollowUp).toHaveBeenCalledOnce())
     expect(steerFollowUp).toHaveBeenCalledWith({
+      agentConfiguration: admission('').agentConfiguration,
       sessionId: 'session-a',
       text: 'Draw a pie chart',
       attachments: [attachment],
@@ -1482,6 +1544,7 @@ describe('workspace message queue controller', () => {
     await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
 
     expect(steerFollowUp).toHaveBeenCalledWith({
+      agentConfiguration: admission('').agentConfiguration,
       sessionId: 'session-a',
       text: 'steer me',
       parts: textDoc('steer me').nodes
@@ -1777,6 +1840,7 @@ describe('workspace message queue controller', () => {
 
     await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
     expect(steerFollowUp).toHaveBeenCalledWith({
+      agentConfiguration: admission('').agentConfiguration,
       sessionId: 'session-a',
       text: 'with file',
       attachments: [attachment],
@@ -1811,6 +1875,7 @@ describe('workspace message queue controller', () => {
 
     await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
     expect(steerFollowUp).toHaveBeenCalledWith({
+      agentConfiguration: admission('').agentConfiguration,
       sessionId: 'session-a',
       text: 'use research',
       forcedSkillIds: ['research'],
