@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => {
       sessionId: input.sessionId ?? 'session-1',
       messageId: input.messageId ?? 'analysis-message'
     })),
+    runtimeCancelRun: vi.fn(async () => undefined),
     navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
     sessions: [] as Array<{ id: string } & Record<string, unknown>>,
     appendRoutedUserMessage: vi.fn(),
@@ -295,7 +296,8 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
     promptInFlightSessionIds: [],
     sendPreparationInFlightSessionIds: [],
     saveAsSkillInFlightSessionIds: [],
-    sendMessage: mocks.runtimeSendMessage
+    sendMessage: mocks.runtimeSendMessage,
+    cancelRun: mocks.runtimeCancelRun
   })
 }))
 vi.mock('@/pages/home/HomePage', () => ({
@@ -447,6 +449,7 @@ describe('App startup routing', () => {
     mocks.compute.jobsMarkConsumed.mockClear()
     mocks.compute.jobsTransitionAnalysis.mockClear()
     mocks.runtimeSendMessage.mockClear()
+    mocks.runtimeCancelRun.mockReset().mockResolvedValue(undefined)
     mocks.navigation.view = 'home'
     mocks.startupView = 'app'
     mocks.sessionPersistence.isReady = true
@@ -1439,6 +1442,27 @@ describe('App startup routing', () => {
       ?.click()
     expect(mocks.sessionPersistence.startNewConversationAfterSizeLimit).toHaveBeenCalledOnce()
     expect(mocks.presentationProps.workspace?.persistenceBlockedSessionIds).toEqual(['session-1'])
+  })
+
+  it('stops a persistence-blocked active run while the Home page is visible', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'home'
+    mocks.sessions = [
+      {
+        id: 'session-1',
+        status: 'running',
+        activeRun: { promptMessageId: 'message-1', startedAt: 1 }
+      }
+    ]
+    mocks.sessionPersistence.persistenceBlockedSessionIds = ['session-1']
+    mocks.runtimeCancelRun
+      .mockRejectedValueOnce(new Error('transient cancellation failure'))
+      .mockResolvedValueOnce(undefined)
+
+    await render()
+
+    await vi.waitFor(() => expect(mocks.runtimeCancelRun).toHaveBeenCalledTimes(2))
+    expect(container.querySelector('[data-testid="home-page"]')).toBeTruthy()
   })
 
   it('keeps failed writes retryable while catalog recovery is visible', async () => {

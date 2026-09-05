@@ -762,6 +762,12 @@ const registerDataContentApplicationCommands = (
                   })
                 : await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1])
           } catch (error) {
+            if (SessionPersistence.isSessionSizeLimitError(error)) {
+              throw new ApplicationCommandError(
+                SessionPersistence.SESSION_SIZE_LIMIT_ERROR_CODE,
+                error instanceof Error ? error.message : 'Session exceeds the persistence limit.'
+              )
+            }
             if (SessionPersistence.isSessionRevisionConflictError(error)) {
               throw new ApplicationCommandError(
                 SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,

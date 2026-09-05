@@ -373,7 +373,6 @@ const useWorkspaceConversationController = (
     optionsRef.current = options
   }, [options])
   const inFlightDraftKeysRef = useRef(new Set<string>())
-  const cancelledPersistenceBlockedSessions = useRef(new Set<string>())
   const [optimisticMessages, setOptimisticMessages] = useState<Record<string, ChatMessage>>({})
   const planProjectionRecoveryError = usePlanProjectionRecovery(
     options.activeSession,
@@ -406,28 +405,6 @@ const useWorkspaceConversationController = (
     getSession: options.getSession,
     subscribeSessionChanges: options.subscribeSessionChanges
   })
-  useEffect(() => {
-    const current = optionsRef.current
-    const blocked = new Set(current.persistenceBlockedSessionIds)
-    for (const sessionId of cancelledPersistenceBlockedSessions.current) {
-      if (!blocked.has(sessionId)) cancelledPersistenceBlockedSessions.current.delete(sessionId)
-    }
-    for (const sessionId of blocked) {
-      if (cancelledPersistenceBlockedSessions.current.has(sessionId)) continue
-      const session = current.getSession(sessionId)
-      if (!session?.activeRun && !session?.agentPromptInFlight && session?.status !== 'running') {
-        continue
-      }
-      cancelledPersistenceBlockedSessions.current.add(sessionId)
-      void current.runtime
-        .cancelRun(sessionId)
-        .catch(() => current.runtime.cancelRun(sessionId))
-        .catch((error: unknown) => {
-          cancelledPersistenceBlockedSessions.current.delete(sessionId)
-          console.warn('Failed to stop oversized conversation:', error)
-        })
-    }
-  }, [options.persistenceBlockedSessionIds])
   const [actions] = useState<WorkspaceConversationController['actions']>(() => {
     const submitDraft = ({ forcedSkillIds, mode = 'continue' }: DraftSubmitIntent): void => {
       const current = optionsRef.current

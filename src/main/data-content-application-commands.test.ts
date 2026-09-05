@@ -25,6 +25,7 @@ import {
   materializeSessionConversationGraph,
   SessionDetailsConflictError,
   SessionRevisionConflictError,
+  SessionSizeLimitError,
   type PersistedChatSession,
   type SessionDeletionResult
 } from '../shared/session-persistence'
@@ -950,6 +951,25 @@ describe('Data and content application commands', () => {
     ).rejects.toMatchObject({
       code: 'session-revision-conflict',
       message: expect.stringContaining('expected 1, actual 2')
+    })
+    expect(deps.events.publish).not.toHaveBeenCalled()
+  })
+
+  it('preserves the Session size-limit code across the application command boundary', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.sessions.saveSession.mockRejectedValueOnce(new SessionSizeLimitError())
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionSave,
+        invocation([deps.session] as const)
+      )
+    ).rejects.toMatchObject({
+      name: 'ApplicationCommandError',
+      code: 'session-size-limit',
+      message: expect.stringContaining('persistence limit')
     })
     expect(deps.events.publish).not.toHaveBeenCalled()
   })

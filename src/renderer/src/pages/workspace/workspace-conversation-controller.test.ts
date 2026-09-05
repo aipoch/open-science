@@ -221,35 +221,6 @@ afterEach(() => {
 })
 
 describe('workspace conversation controller', () => {
-  it('retries stopping a persistence-blocked active run after a transient cancellation failure', async () => {
-    const activeSession = session({
-      status: 'running',
-      activeRun: { promptMessageId: 'message-user-a', startedAt: 2 }
-    })
-    const cancelRun = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('transient cancellation failure'))
-      .mockResolvedValueOnce(undefined)
-    const input = options({
-      activeSession,
-      persistenceBlockedSessionIds: [activeSession.id],
-      getSession: () => activeSession,
-      runtime: {
-        sendMessage: vi.fn(() =>
-          Promise.resolve({ sessionId: 'session-a', messageId: 'message-a' })
-        ),
-        resendEditedMessage: vi.fn(() => Promise.resolve(true)),
-        cancelRun,
-        resumeInterruptedSession: vi.fn(() => Promise.resolve()),
-        ensureSessionReady: vi.fn(() => Promise.resolve())
-      }
-    })
-    const hook = renderController(input)
-    mounted.push(hook)
-
-    await vi.waitFor(() => expect(cancelRun).toHaveBeenCalledTimes(2))
-  })
-
   it('admits and sends a structured annotation without message text', async () => {
     const annotation = {
       id: 'annotation-1',
