@@ -98,8 +98,10 @@ describe('startup quit ownership handoff', () => {
             isMigrationInProgress: () => false,
             detectActiveSessions: () => [],
             hasActiveReviewerWork: () => false,
+            getActiveSettingsInstallId: () => undefined,
             createConfirmClose: () => async () => 'quit',
             prepareForQuit: async () => {},
+            holdSettingsInstallAdmission: () => () => undefined,
             abortQuitPreparation: () => {},
             flushSessionPersistence: async () => {},
             shutdownBackends: () => runtime.dispose()
