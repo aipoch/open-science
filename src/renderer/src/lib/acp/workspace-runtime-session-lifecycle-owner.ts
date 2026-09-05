@@ -57,22 +57,6 @@ const findUnansweredUserTurn = (messages: ChatMessage[]): ChatMessage | undefine
   return undefined
 }
 
-const restoreRemovedTurnProjection = (sessionBeforeRemoval: ChatSession): void => {
-  useSessionStore.setState((state) => ({
-    sessions: state.sessions.map((session) => {
-      if (session.id !== sessionBeforeRemoval.id) return session
-
-      return {
-        ...session,
-        messages: sessionBeforeRemoval.messages,
-        conversationGraph: sessionBeforeRemoval.conversationGraph,
-        filesRevision: sessionBeforeRemoval.filesRevision,
-        updatedAt: Date.now()
-      }
-    })
-  }))
-}
-
 const ensureWorkspaceSessionReady = async (
   runtime: WorkspaceMessageRuntime,
   sessionId: string,
@@ -332,6 +316,9 @@ const compactWorkspaceSession = async (
   }
 }
 
+// One live recovery may own a Session's compaction projection. Entries never leave renderer memory.
+const contextOverflowRecoveryAttempts = new Map<string, object>()
+
 const recoverContextOverflowWorkspaceSession = async (
   runtime: WorkspaceMessageRuntime,
   sessionId: string,
@@ -342,129 +329,152 @@ const recoverContextOverflowWorkspaceSession = async (
   supportsImageRelay?: boolean
 ): Promise<boolean> => {
   const session = workspaceSession(sessionId)
-
   if (!session) return false
-
   const resumeCwd = session.cwd || runtime.state.cwd
-
   if (!resumeCwd) return false
-
   const interruptedTurn = findUnansweredUserTurn(session.messages)
-
   if (!interruptedTurn) return false
 
-  // Flip to the neutral compacting state up front so the UI never shows the raw overflow error while the
-  // reset round-trip is in flight (idempotent with the event-path beginCompaction).
+  const attempt = {}
+  contextOverflowRecoveryAttempts.set(sessionId, attempt)
   useSessionStore.getState().beginCompaction(sessionId, { supersedeActiveRun: true })
-  const isCompactionStillActive = (): boolean => workspaceSession(sessionId)?.compacting === true
+  const frameId = session.conversationGraph?.activeFrameId
+  const branchId = session.conversationGraph?.frames.find(
+    (frame) => frame.id === frameId
+  )?.activeBranchId
+  let current = true
+  const ownsCompaction = (): boolean => {
+    const live = workspaceSession(sessionId)
+    return (
+      current &&
+      contextOverflowRecoveryAttempts.get(sessionId) === attempt &&
+      live?.compacting === true &&
+      !live.activeRun &&
+      live.createdAt === session.createdAt &&
+      live.projectId === session.projectId &&
+      live.conversationGraph?.activeFrameId === frameId &&
+      live.conversationGraph?.frames.find((frame) => frame.id === frameId)?.activeBranchId ===
+        branchId &&
+      findUnansweredUserTurn(live.messages)?.id === interruptedTurn.id
+    )
+  }
+  // Latch invalidation so switching away and back cannot revive a stale async continuation.
+  const unsubscribe = useSessionStore.subscribe(() => {
+    current = ownsCompaction()
+  })
+  const isCurrent = (): boolean => ownsCompaction() && !cancelledSessionIds?.has(sessionId)
   const finishCancelledRecovery = (): boolean => {
-    if (cancelledSessionIds?.delete(sessionId) !== true) return false
+    if (!ownsCompaction() || cancelledSessionIds?.delete(sessionId) !== true) return false
     useSessionStore.getState().finishCompaction(sessionId)
     return true
   }
 
-  const supportsNativeCompaction =
-    runtime.state.nativeContextCompactionSessionIds?.includes(sessionId) === true &&
-    runtime.compactSession !== undefined
-  let nativeCompacted = false
-  let postRecoveryState: WorkspaceMessageRuntime['state'] | undefined
-
-  if (supportsNativeCompaction) {
-    try {
-      const compactedState = await runtime.compactSession?.(sessionId, 'overflow-recovery')
-      postRecoveryState = compactedState ? { ...runtime.state, ...compactedState } : undefined
-      nativeCompacted = Boolean(compactedState)
-    } catch {
-      // Fall through to the replacement+replay safety net below.
+  try {
+    const supportsNativeCompaction =
+      runtime.state.nativeContextCompactionSessionIds?.includes(sessionId) === true &&
+      runtime.compactSession !== undefined
+    let nativeCompacted = false
+    let postRecoveryState: WorkspaceMessageRuntime['state'] | undefined
+    if (supportsNativeCompaction) {
+      try {
+        const compactedState = await runtime.compactSession?.(sessionId, 'overflow-recovery')
+        postRecoveryState = compactedState ? { ...runtime.state, ...compactedState } : undefined
+        nativeCompacted = Boolean(compactedState)
+      } catch {
+        // A current failed native control turn can still use replacement and history replay.
+      }
+      if (finishCancelledRecovery() || !isCurrent()) return false
     }
-
-    // Cancellation intent is consumed only after the native control turn actually stops, keeping the
-    // composer locked between the cancel acknowledgement and the terminal response.
-    if (finishCancelledRecovery()) return false
-    // Disconnect handling clears the local compacting state. Respect that terminal transition instead
-    // of turning a dropped native control turn into reset-and-replay.
-    if (!isCompactionStillActive()) return false
-  }
-
-  if (!nativeCompacted) {
-    try {
-      const replacement = await runtime.resetSessionContext(
-        sessionId,
-        resumeCwd,
-        session.projectId,
-        session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-        session.memoryEnabled !== false
-      )
+    if (!nativeCompacted) {
+      let replacement
+      try {
+        replacement = await runtime.resetSessionContext(
+          sessionId,
+          resumeCwd,
+          session.projectId,
+          session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+          session.memoryEnabled !== false
+        )
+      } catch (error) {
+        if (!finishCancelledRecovery() && isCurrent()) {
+          useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
+        }
+        return false
+      }
+      if (finishCancelledRecovery() || !isCurrent()) return false
       replaceWorkspaceProviderIdentity(sessionId, replacement)
       const remainingPromptInFlightSessionIds = runtime.state.promptInFlightSessionIds.filter(
         (id) => id !== sessionId
       )
-      // resetSessionContext returns session metadata rather than a runtime snapshot. Its terminal
-      // response nevertheless releases this session's operation lease, so project that fact into the
-      // stale event snapshot retained by this recovery task before applying the authoritative guard.
       postRecoveryState = {
         ...runtime.state,
         promptInFlight: remainingPromptInFlightSessionIds.length > 0,
         promptInFlightSessionIds: remainingPromptInFlightSessionIds
       }
-    } catch (error) {
-      if (finishCancelledRecovery()) return false
-      if (!isCompactionStillActive()) return false
-      useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
-      return false
+    }
+    if (finishCancelledRecovery() || !isCurrent()) return false
+    const retryRuntime = { ...runtime, state: postRecoveryState ?? runtime.state }
+    // A premature adapter response cannot release runtime ownership of a control turn.
+    if (retryRuntime.state.promptInFlightSessionIds.includes(sessionId)) return false
+
+    // Rearm the same unanswered Message. Admission failures must never fork or truncate its Branch.
+    const retried = await sendWorkspaceMessage(
+      retryRuntime,
+      {
+        sessionId,
+        messageId: interruptedTurn.id,
+        requireExistingSession: true,
+        preserveSelection: true,
+        text: interruptedTurn.content,
+        annotations: interruptedTurn.annotations,
+        attachments: (interruptedTurn.uploads ?? []).map((upload) =>
+          toRuntimeUploadedAttachment(upload, session.projectId)
+        ),
+        parts: interruptedTurn.parts,
+        pdfContext: interruptedTurn.pdfContext,
+        cwd: resumeCwd,
+        projectId: session.projectId,
+        permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+        // Native compaction retained its own framework-authored summary. Only a replacement session needs
+        // OpenScience to replay the prior transcript into its first prompt.
+        forceHistoryReplay: !nativeCompacted,
+        allowCompactionRecovery: true,
+        supportsImageInput,
+        supportsImageRelay,
+        agentFrameworkId: agentTarget?.frameworkId,
+        agentBackendId: agentTarget
+          ? `${agentTarget.frameworkId}:${agentTarget.providerId}`
+          : session.agentBackendId,
+        agentModel: agentTarget?.model ?? session.agentModel,
+        agentConfiguration: agentTarget
+          ? {
+              providerId: agentTarget.providerId,
+              ...(agentTarget.model ? { model: agentTarget.model } : {}),
+              reasoningEffort: agentTarget.reasoningEffort
+            }
+          : session.agentConfiguration,
+        historyReplayDescriptor
+      },
+      { isCurrent }
+    )
+    if (finishCancelledRecovery()) return false
+    if (!retried && isCurrent()) {
+      useSessionStore.getState().failCompaction(sessionId, 'Agent run failed')
+    }
+    return Boolean(retried)
+  } catch (error) {
+    if (!finishCancelledRecovery() && isCurrent()) {
+      useSessionStore
+        .getState()
+        .failCompaction(sessionId, getErrorMessage(error).trim() || 'Agent run failed')
+    }
+    return false
+  } finally {
+    unsubscribe()
+    if (contextOverflowRecoveryAttempts.get(sessionId) === attempt) {
+      contextOverflowRecoveryAttempts.delete(sessionId)
     }
   }
-
-  // A user can cancel while the reset request is in flight. The fresh context may already exist, but
-  // cancellation still owns the UI decision: leave the unanswered turn intact and do not resend it.
-  if (finishCancelledRecovery()) return false
-  if (!isCompactionStillActive()) return false
-
-  const retryRuntime = { ...runtime, state: postRecoveryState ?? runtime.state }
-  // Do not mutate the transcript unless the terminal compaction/reset response confirms that the
-  // runtime released this session. This protects against an adapter returning a premature snapshot.
-  if (retryRuntime.state.promptInFlightSessionIds.includes(sessionId)) return false
-
-  // Drop the unanswered turn so the re-send does not duplicate the bubble; the remaining prior turns are
-  // replayed as a text preamble via forceHistoryReplay (session.messages was captured before removal).
-  useSessionStore.getState().removeMessage(sessionId, interruptedTurn.id)
-
-  const retried = await sendWorkspaceMessage(retryRuntime, {
-    sessionId,
-    text: interruptedTurn.content,
-    annotations: interruptedTurn.annotations,
-    attachments: (interruptedTurn.uploads ?? []).map((upload) =>
-      toRuntimeUploadedAttachment(upload, session.projectId)
-    ),
-    parts: interruptedTurn.parts,
-    pdfContext: interruptedTurn.pdfContext,
-    cwd: resumeCwd,
-    projectId: session.projectId,
-    permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-    // Native compaction retained its own framework-authored summary. Only a replacement session needs
-    // OpenScience to replay the prior transcript into its first prompt.
-    forceHistoryReplay: !nativeCompacted,
-    allowCompactionRecovery: true,
-    supportsImageInput,
-    supportsImageRelay,
-    agentFrameworkId: agentTarget?.frameworkId,
-    agentBackendId: agentTarget
-      ? `${agentTarget.frameworkId}:${agentTarget.providerId}`
-      : session.agentBackendId,
-    agentModel: agentTarget?.model ?? session.agentModel,
-    agentConfiguration: agentTarget
-      ? {
-          providerId: agentTarget.providerId,
-          ...(agentTarget.model ? { model: agentTarget.model } : {}),
-          reasoningEffort: agentTarget.reasoningEffort
-        }
-      : session.agentConfiguration,
-    historyReplayDescriptor
-  })
-
-  if (!retried) restoreRemovedTurnProjection(session)
-
-  return Boolean(retried)
 }
 
 const cancelWorkspaceRun = async (
@@ -523,13 +533,26 @@ const processContextOverflowRecovery = (
 
     recoveryCooldownSessionIds.add(sessionId)
     activeRecoverySessionIds.add(sessionId)
-    void recover(runtime, sessionId).finally(() => {
-      activeRecoverySessionIds.delete(sessionId)
-      setTimeout(
-        () => recoveryCooldownSessionIds.delete(sessionId),
-        CONTEXT_OVERFLOW_RECOVERY_COOLDOWN_MS
-      )
-    })
+    void (async () => {
+      let recoverySession = workspaceSession(sessionId)
+      try {
+        const pending = recover(runtime, sessionId)
+        recoverySession = workspaceSession(sessionId)
+        await pending
+      } catch (error) {
+        // The recovery owner handles expected failures. Contain unexpected setup/recovery errors
+        // without allowing this scheduler fallback to alter a newer Session projection.
+        if (workspaceSession(sessionId) === recoverySession) {
+          useSessionStore.getState().failCompaction(sessionId, getErrorMessage(error))
+        }
+      } finally {
+        activeRecoverySessionIds.delete(sessionId)
+        setTimeout(
+          () => recoveryCooldownSessionIds.delete(sessionId),
+          CONTEXT_OVERFLOW_RECOVERY_COOLDOWN_MS
+        )
+      }
+    })()
   }
 
   // Forget ids that fell out of the bounded runtime event window so the set cannot grow unbounded.

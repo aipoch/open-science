@@ -16,6 +16,103 @@ const createModes = (
 })
 
 describe('permission profile controller', () => {
+  describe('A03: native permission downgrade', () => {
+    it.each(['ask', 'auto'] as const)(
+      'rejects %s when the current native bypass has no advertised exit',
+      (profile) => {
+        expect(() =>
+          resolvePermissionProfileApplication(profile, createModes(['bypassPermissions']))
+        ).toThrow(PermissionProfileUnavailableError)
+      }
+    )
+
+    it.each(['ask', 'auto'] as const)(
+      'rejects %s from CodeBuddy fullAccess even with broker fallback enabled',
+      (profile) => {
+        expect(() =>
+          resolvePermissionProfileApplication(profile, createModes(['fullAccess']), {
+            fullAccessModeId: 'fullAccess',
+            brokerEnforcesFullAccess: true
+          })
+        ).toThrow(PermissionProfileUnavailableError)
+      }
+    )
+
+    it('rejects Ask from bypass when Auto is advertised but default is missing', () => {
+      const modes = createModes(['auto', 'bypassPermissions'], 'bypassPermissions')
+      expect(() => resolvePermissionProfileApplication('ask', modes)).toThrow(
+        PermissionProfileUnavailableError
+      )
+    })
+
+    it('can leave bypass through an advertised native Auto mode without default', () => {
+      const modes = createModes(['auto', 'bypassPermissions'], 'bypassPermissions')
+      expect(resolvePermissionProfileApplication('auto', modes)).toMatchObject({
+        modeId: 'auto',
+        state: { effectiveProfile: 'auto', currentModeId: 'auto', autoReviewStrategy: 'native' }
+      })
+    })
+
+    // Preserve the existing fallback outside the confirmed native-bypass defect. These mapping
+    // checks do not prove that an unknown provider delegates every permission to the broker.
+    it.each([
+      { label: 'null mode state', modes: null },
+      { label: 'undefined mode state', modes: undefined },
+      { label: 'unknown current mode', modes: createModes(['custom'], 'custom') }
+    ])('preserves the existing fallback for $label', ({ modes }) => {
+      for (const profile of ['ask', 'auto'] as const) {
+        expect(resolvePermissionProfileApplication(profile, modes)).toMatchObject({
+          modeId: undefined,
+          state: {
+            selectedProfile: profile,
+            effectiveProfile: profile,
+            currentModeId: modes?.currentModeId
+          }
+        })
+      }
+    })
+
+    it('retains a known default posture even when it is absent from the mode catalog', () => {
+      for (const profile of ['ask', 'auto'] as const) {
+        expect(
+          resolvePermissionProfileApplication(profile, createModes([], 'default'))
+        ).toMatchObject({
+          modeId: undefined,
+          state: { selectedProfile: profile, effectiveProfile: profile, currentModeId: 'default' }
+        })
+      }
+    })
+
+    it('can leave an unknown mode using an advertised default', () => {
+      for (const profile of ['ask', 'auto'] as const) {
+        expect(
+          resolvePermissionProfileApplication(profile, createModes(['default'], 'custom'))
+        ).toMatchObject({
+          modeId: 'default',
+          state: { selectedProfile: profile, effectiveProfile: profile, currentModeId: 'default' }
+        })
+      }
+    })
+
+    it.each([null, undefined, createModes(['build', 'plan'])])(
+      'retains app-enforced profiles when the framework guarantees broker enforcement (%j)',
+      (modes) => {
+        for (const profile of ['ask', 'auto', 'full'] as const) {
+          expect(
+            resolvePermissionProfileApplication(profile, modes, { brokerEnforcesFullAccess: true })
+          ).toMatchObject({
+            modeId: undefined,
+            state: {
+              selectedProfile: profile,
+              effectiveProfile: profile,
+              fullAccessAvailable: true
+            }
+          })
+        }
+      }
+    )
+  })
+
   it('maps Ask and native Auto to advertised ACP modes', () => {
     const modes = createModes(['default', 'auto', 'bypassPermissions'])
 

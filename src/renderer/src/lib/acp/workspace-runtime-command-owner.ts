@@ -96,6 +96,8 @@ type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
 }
 type SendWorkspaceMessageResult = { sessionId: string; messageId: string }
 type WorkspaceCommandLifecycle = {
+  // Ownership of asynchronous admission, before the command establishes its own prompt run.
+  isCurrent?: () => boolean
   awaitPendingPreparation?: boolean
   onSendPreparationStateChange?: (sessionId: string, inFlight: boolean) => void
   drainRuntimeEvents?: (sessionId?: string) => Promise<void>
@@ -169,13 +171,16 @@ const latestFailureId = (events: AcpRuntimeEvent[], sessionId: string): string |
 const failPrompt = async (
   sessionId: string,
   message: string,
+  isCurrent: () => boolean,
   priorErrorEventId?: string
 ): Promise<void> => {
+  if (!isCurrent()) return
   if (useSessionStore.getState().sessions.find((item) => item.id === sessionId)?.compacting) return
 
   let reportable: boolean | undefined
   try {
     const snapshot = await window.api.acp.getState()
+    if (!isCurrent()) return
     const status = snapshot.sessionConnectionStatuses?.[sessionId] ?? snapshot.status
     if (status === 'closed' || status === 'error') {
       useSessionStore.getState().markDisconnected(sessionId, message)
@@ -188,6 +193,7 @@ const failPrompt = async (
   } catch {
     reportable = undefined
   }
+  if (!isCurrent()) return
   useSessionStore.getState().failRun(sessionId, message, { reportable })
 }
 const replayHistory = (
@@ -219,9 +225,6 @@ const ownsPrompt = (sessionId: string, messageId: string): boolean => {
   return session?.status === 'running' && session.activeRun?.promptMessageId === messageId
 }
 
-const isOverlappingPromptRejection = (error: unknown): boolean =>
-  /An ACP (?:prompt|interaction) is already running/i.test(errorMessage(error))
-
 type PromptDispatch = {
   sessionId: string
   messageId: string
@@ -240,6 +243,14 @@ type PromptDispatch = {
 }
 
 const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatch): void => {
+  // Recovery can rearm the same Message, so its ID cannot identify a dispatch attempt.
+  const admittedRun = useSessionStore
+    .getState()
+    .sessions.find((session) => session.id === request.sessionId)?.activeRun
+  const isCurrent = (): boolean =>
+    admittedRun !== undefined &&
+    useSessionStore.getState().sessions.find((session) => session.id === request.sessionId)
+      ?.activeRun === admittedRun
   const priorErrorEventId = latestFailureId(
     [...(runtime.currentRuntimeEvents?.() ?? runtime.state.events)],
     request.sessionId
@@ -277,10 +288,9 @@ const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatc
   void result
     .then(() => request.accepted?.())
     .catch((error) => {
-      if (isOverlappingPromptRejection(error) && !ownsPrompt(request.sessionId, request.messageId))
-        return
+      if (!isCurrent()) return
       const message = errorMessage(error).trim() || 'Agent run failed'
-      void failPrompt(request.sessionId, message, priorErrorEventId)
+      void failPrompt(request.sessionId, message, isCurrent, priorErrorEventId)
     })
 }
 
@@ -649,6 +659,7 @@ const sendWorkspaceMessage = async (
       lifecycle.onSessionSizeLimit
     )
   }
+  if (lifecycle.isCurrent?.() === false) return undefined
   const content = input.text.trim()
   const replaySession = input.sessionId
     ? useSessionStore.getState().sessions.find((item) => item.id === input.sessionId)
@@ -679,6 +690,7 @@ const sendWorkspaceMessage = async (
     throw new Error(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
   }
   await validateImageAnnotationSourcesBeforeSend(annotations)
+  if (lifecycle.isCurrent?.() === false) return undefined
   const effectiveAttachments =
     attachments.length > 0 || !replayPrompt?.uploads?.length
       ? attachments
@@ -802,7 +814,9 @@ const sendWorkspaceMessage = async (
       }
       const hasResponse = session?.messages.some(
         (message) =>
-          message.role === 'agent' && message.responseToMessageId === existingStableMessage.id
+          message.role === 'agent' &&
+          message.responseToMessageId === existingStableMessage.id &&
+          !(input.allowCompactionRecovery && message.status === 'error')
       )
       if (hasResponse || session?.activeRun?.promptMessageId === existingStableMessage.id) {
         return { sessionId, messageId: existingStableMessage.id }
@@ -814,8 +828,10 @@ const sendWorkspaceMessage = async (
     if (session?.delegationPolicyAuthorityPending) {
       try {
         await confirmPendingDelegationPolicyAuthority(session)
+        if (lifecycle.isCurrent?.() === false) return undefined
         session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
       } catch (error) {
+        if (lifecycle.isCurrent?.() === false) return undefined
         useSessionStore.getState().failRun(sessionId, errorMessage(error))
         return undefined
       }
@@ -903,8 +919,10 @@ const sendWorkspaceMessage = async (
         includeResumeFallback: Boolean(input.forcedSkillIds?.length)
       },
       onPreparationStateChange: lifecycle.onSendPreparationStateChange,
-      drainRuntimeEvents: lifecycle.drainRuntimeEvents
+      drainRuntimeEvents: lifecycle.drainRuntimeEvents,
+      isCurrent: lifecycle.isCurrent
     })
+    if (lifecycle.isCurrent?.() === false) return undefined
     if (!prepared) return undefined
     let promptAttachments
     try {
@@ -914,12 +932,14 @@ const sendWorkspaceMessage = async (
         pendingPdfContextVersions: input.pendingPdfContextVersions,
         projectId
       })
+      if (lifecycle.isCurrent?.() === false) return undefined
       promptAttachments = await finalizeWorkspaceAttachments({
         sessionId,
         attachments: effectiveAttachments,
         projectId,
         preserveSourceOwnership: Boolean(input.truncateFromMessageId)
       })
+      if (lifecycle.isCurrent?.() === false) return undefined
       const pdfContextSources = [
         ...finalizedPdfContextSources({
           attachmentIds: eligiblePendingPdfContext.attachmentIds,
@@ -944,11 +964,15 @@ const sendWorkspaceMessage = async (
         lifecycle.onPdfContextLinked?.(sessionId, pdfContext)
       }
     } catch (error) {
+      if (lifecycle.isCurrent?.() === false) return undefined
       if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
       useSessionStore.getState().failRun(sessionId, errorMessage(error))
       return undefined
     }
+    if (lifecycle.isCurrent?.() === false) return undefined
     if (!canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
+    // Replay conversion may reject malformed media; complete it before establishing a run.
+    const replay = prepared.replay()
     if (input.truncateFromMessageId) {
       if (promptAttachments.length > 0) {
         useSessionStore.getState().replaceMessageUploads({
@@ -984,7 +1008,9 @@ const sendWorkspaceMessage = async (
       preserveSelection: input.preserveSelection
     })
     if (!appended) return undefined
-    if (stableMessageId) {
+    // Recovery rearms an existing Message; its normal store saver already owns persistence.
+    // Keep the explicit durability barrier for new application-authored stable identities.
+    if (stableMessageId && !(input.allowCompactionRecovery && rearmExistingStableMessage)) {
       const durableSession = useSessionStore
         .getState()
         .sessions.find((candidate) => candidate.id === sessionId)
@@ -998,7 +1024,6 @@ const sendWorkspaceMessage = async (
       }
       if (!ownsPrompt(sessionId, appended.messageId)) return undefined
     }
-    const replay = prepared.replay()
     const promptMedia =
       input.truncateFromMessageId && promptAttachments.length > 0
         ? partitionWorkspacePromptAttachments({
@@ -1008,21 +1033,34 @@ const sendWorkspaceMessage = async (
             supportsImageRelay: input.supportsImageRelay
           })
         : undefined
-    dispatchPrompt(runtime, {
-      sessionId,
-      messageId: appended.messageId,
-      content,
-      annotations,
-      attachments: promptMedia?.currentAttachments ?? promptAttachments,
-      forcedSkillIds: input.forcedSkillIds,
-      referencedArtifacts: withPdf(projectId, input.referencedArtifacts, pdfContext),
-      referencedSessions: collectSessionReferences(input.parts),
-      replay: promptMedia
-        ? { ...replay, historyAttachments: promptMedia.historyAttachments }
-        : replay,
-      turnIntent: input.turnIntent,
-      accepted: () => prepared.acceptPrompt(appended.messageId)
-    })
+    const admittedRun = useSessionStore
+      .getState()
+      .sessions.find((item) => item.id === sessionId)?.activeRun
+    try {
+      dispatchPrompt(runtime, {
+        sessionId,
+        messageId: appended.messageId,
+        content,
+        annotations,
+        attachments: promptMedia?.currentAttachments ?? promptAttachments,
+        forcedSkillIds: input.forcedSkillIds,
+        referencedArtifacts: withPdf(projectId, input.referencedArtifacts, pdfContext),
+        referencedSessions: collectSessionReferences(input.parts),
+        replay: promptMedia
+          ? { ...replay, historyAttachments: promptMedia.historyAttachments }
+          : replay,
+        turnIntent: input.turnIntent,
+        accepted: () => prepared.acceptPrompt(appended.messageId)
+      })
+    } catch (error) {
+      if (
+        useSessionStore.getState().sessions.find((item) => item.id === sessionId)?.activeRun ===
+        admittedRun
+      ) {
+        useSessionStore.getState().failRun(sessionId, errorMessage(error))
+      }
+      return undefined
+    }
     return appended
   }
 

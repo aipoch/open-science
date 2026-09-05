@@ -15,6 +15,7 @@ import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
 import type { ReadyPreparedPromptHandle } from './prompt-preparation-owner'
 import { AcpPromptTurnWorkflow, type AcpPromptTurnWorkflowOptions } from './prompt-turn-workflow'
+import { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
 import { AcpSessionAggregate } from './session-aggregate'
 import { AcpSessionInteractionOwner } from './session-interaction-owner'
@@ -225,6 +226,7 @@ const createHarness = (
   )
   const context = {
     complete: vi.fn(() => true),
+    captureTerminal: vi.fn(() => undefined),
     fail: vi.fn(),
     supersede: vi.fn()
   } as unknown as ContextWindowTurnHandle
@@ -985,6 +987,135 @@ describe('AcpPromptTurnWorkflow', () => {
       harness.onProviderPromptAccepted.mock.invocationCallOrder[0]
     )
   })
+
+  it.each([
+    ['Plan', 'disconnect', 'text', false],
+    ['Plan', 'interaction', 'tool', false],
+    ['Plan', 'session', 'stop', false],
+    ['relay', 'disconnect', 'text', false],
+    ['relay', 'interaction', 'tool', false],
+    ['relay', 'session', 'stop', false],
+    ['Plan', 'disconnect', 'text', true],
+    ['relay', 'disconnect', 'text', true]
+  ] as const)(
+    'drops stale live acceptance after %s wait (%s, first %s, rejection=%s)',
+    async (waitAt, invalidation, firstKind, rejects) => {
+      const entered = deferred<void>()
+      const release = deferred<void>()
+      const persistedReceipt = vi.fn()
+      const durableNotification = vi.fn()
+      const failure = new Error('acceptance persistence failed')
+      const settleReceipt = async (identity: unknown): Promise<void> => {
+        entered.resolve()
+        await release.promise
+        if (rejects) throw failure
+        persistedReceipt(identity)
+        durableNotification(identity)
+      }
+      const commit = vi.fn(settleReceipt)
+      const restore = vi.fn()
+      const executor = new AcpProviderPromptExecutor({
+        backendGeneration: { current: backend, openCodeUsageApi: () => undefined }
+      })
+      const harness = createHarness({
+        execute: (input) => executor.execute(input),
+        finalize: (handles, outcome) => new AcpPromptOutcomeFinalizer().finalize(handles, outcome),
+        ...(waitAt === 'relay'
+          ? { sideChatClaim: () => ({ historyPreamble: 'Side note.', commit, restore }) }
+          : {})
+      })
+      if (waitAt === 'Plan') {
+        harness.planLifecycle.providerAccepted.mockImplementationOnce((_sessionId, mode) =>
+          settleReceipt(mode)
+        )
+      }
+      const response: PromptResponse = { stopReason: 'end_turn' }
+      type NextUpdate = Awaited<ReturnType<ActiveSession['nextUpdate']>>
+      const terminal = { kind: 'stop', response } as NextUpdate
+      const update =
+        firstKind === 'tool'
+          ? {
+              sessionUpdate: 'tool_call_update' as const,
+              toolCallId: 'old-tool',
+              status: 'in_progress' as const
+            }
+          : {
+              sessionUpdate: 'agent_message_chunk' as const,
+              content: { type: 'text' as const, text: 'Old answer' }
+            }
+      const messages: NextUpdate[] =
+        firstKind === 'stop'
+          ? [terminal]
+          : [
+              { kind: 'session_update', notification: { sessionId: 'provider-1', update }, update },
+              terminal
+            ]
+      const nextUpdate = vi.fn(async () => messages.shift()!)
+      harness.setSession({
+        sessionId: 'provider-1',
+        prompt: vi.fn(async () => undefined),
+        nextUpdate
+      } as unknown as ActiveSession)
+      const mode =
+        waitAt === 'Plan'
+          ? {
+              kind: 'app-continuation' as const,
+              promptAttemptId: 'old-attempt',
+              planDelivery: { projectId: 'project-1', commandId: 'delivery-1' }
+            }
+          : { kind: 'user' as const, promptAttemptId: 'old-attempt' }
+      const pending = harness.workflow.run(request(), mode)
+      await entered.promise
+      const oldInteraction = harness.owner.current('s1')!
+      let replacement: typeof oldInteraction | undefined
+      if (invalidation === 'disconnect') {
+        harness.owner.supersedeAll()
+      } else if (invalidation === 'interaction') {
+        harness.owner.supersede(oldInteraction)
+        replacement = harness.owner.activatePrompt(
+          harness.owner.reservePrompt({
+            sessionId: 's1',
+            kind: 'prompt',
+            promptMessageId: 'new-message'
+          })
+        )
+      } else {
+        // Keep the same interaction and provider id: only attachment object identity changes.
+        harness.setSession({ sessionId: 'provider-1' } as ActiveSession)
+        expect(harness.owner.current('s1')).toBe(oldInteraction)
+      }
+      expect(harness.onProviderPromptAccepted).not.toHaveBeenCalled()
+      release.resolve()
+      await expect(pending).resolves.toEqual(response)
+
+      expect.soft(harness.onProviderPromptAccepted).not.toHaveBeenCalled()
+      expect
+        .soft(harness.emitSkillActivities.mock.calls.map((call) => call[3]))
+        .toEqual(['in_progress'])
+      expect.soft(harness.routeNotification).not.toHaveBeenCalled()
+      expect.soft(harness.finalizer.mock.calls[0][1]).toEqual({ kind: 'superseded', response })
+      expect.soft(harness.finalization.pushEvent).not.toHaveBeenCalled()
+      expect(nextUpdate).toHaveBeenCalledTimes(firstKind === 'stop' ? 1 : 2)
+      expect(harness.owner.current('s1')).toBe(replacement)
+      expect(harness.prepared.close).toHaveBeenCalledOnce()
+      expect(harness.artifacts.dispose).toHaveBeenCalledOnce()
+      if (replacement) {
+        expect(harness.finalization.onPromptEnded).not.toHaveBeenCalled()
+        expect(harness.permission.clearCorrelationsForSession).not.toHaveBeenCalled()
+        expect(harness.planLifecycle.beforeRelease).not.toHaveBeenCalled()
+        expect(harness.planLifecycle.afterRelease).not.toHaveBeenCalled()
+        harness.owner.release(replacement)
+      }
+      expect(restore).not.toHaveBeenCalled()
+      expect(commit).toHaveBeenCalledTimes(waitAt === 'relay' ? 1 : 0)
+      expect(persistedReceipt).toHaveBeenCalledTimes(rejects ? 0 : 1)
+      expect(durableNotification).toHaveBeenCalledTimes(rejects ? 0 : 1)
+      if (!rejects) {
+        expect(persistedReceipt).toHaveBeenCalledWith(waitAt === 'Plan' ? mode : 'message-1')
+        expect(durableNotification).toHaveBeenCalledWith(waitAt === 'Plan' ? mode : 'message-1')
+      }
+    }
+  )
 
   it('restores claimed side-chat advisories when the provider never accepts the prompt', async () => {
     const commit = vi.fn()

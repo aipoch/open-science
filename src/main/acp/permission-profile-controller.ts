@@ -54,6 +54,16 @@ const resolvePermissionProfileApplication = (
     throw new PermissionProfileUnavailableError(profile)
   }
 
+  // Broker fallback cannot downgrade a provider that remains in native bypass.
+  if (
+    profile !== 'full' &&
+    modes?.currentModeId === fullAccessModeId &&
+    !hasMode(DEFAULT_MODE_ID) &&
+    !(profile === 'auto' && hasMode(AUTO_MODE_ID))
+  ) {
+    throw new PermissionProfileUnavailableError(profile)
+  }
+
   if (profile === 'auto') {
     const nativeAuto = hasMode(AUTO_MODE_ID)
     const modeId = nativeAuto

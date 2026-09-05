@@ -399,6 +399,108 @@ describe('ACP permission broker with durable grants', () => {
     await expect(providerResponse).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
   })
 
+  describe.each([
+    { blockedOperation: 'settleLive', fails: false },
+    { blockedOperation: 'remember', fails: false },
+    { blockedOperation: 'settleLive', fails: true },
+    { blockedOperation: 'remember', fails: true }
+  ] as const)('A01: blocked $blockedOperation (fails=$fails)', ({ blockedOperation, fails }) => {
+    it.each(['cancelForSession', 'cancelAllPending', 'abandonAllPending'] as const)(
+      '%s cancels a remembered response before provider release',
+      async (cancelMethod) => {
+        let enterPersistence!: () => void
+        const persistenceEntered = new Promise<void>((resolve) => {
+          enterPersistence = resolve
+        })
+        let finishPersistence!: () => void
+        const persistence = new Promise<void>((resolve) => {
+          finishPersistence = resolve
+        })
+        const waitForPersistence = async (operation: typeof blockedOperation): Promise<void> => {
+          if (operation !== blockedOperation) return
+          enterPersistence()
+          await persistence
+          if (fails) throw new Error('storage unavailable')
+        }
+        let grantSaved = false
+        const registry = {
+          resolve: vi.fn().mockResolvedValue(undefined),
+          remember: vi.fn(async () => {
+            await waitForPersistence('remember')
+            grantSaved = true
+            return undefined as never
+          }),
+          list: vi.fn().mockResolvedValue([]),
+          listCached: vi.fn().mockReturnValue([]),
+          revoke: vi.fn(),
+          extendUndo: vi.fn(),
+          restore: vi.fn(),
+          prune: vi.fn(),
+          finalizeOwnerDeletion: vi.fn(),
+          subscribe: vi.fn().mockReturnValue(() => undefined)
+        } satisfies PermissionGrantRegistry
+        type EmittedRequest = Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]
+        let publish!: (request: EmittedRequest) => void
+        const published = new Promise<EmittedRequest>((resolve) => {
+          publish = resolve
+        })
+        const settleLive = vi.fn(() => waitForPersistence('settleLive'))
+        const onSettled = vi.fn()
+        const broker = new AcpPermissionBroker(publish, undefined, registry, onSettled, {
+          persist: vi.fn(async () => true),
+          settleLive
+        })
+        const released = vi.fn()
+        const providerResponse = broker.requestPermission(shellRequest('session-1'), {
+          profile: 'ask',
+          projectId: 'project-1',
+          promptMessageId: 'prompt-1'
+        })
+        void providerResponse.then(released)
+        const request = await published
+        expect(request.durable).toBe(true)
+        const projectOption = request.options.find((option) => option.scope === 'project')
+        expect(projectOption).toBeDefined()
+        const response = broker.respond({
+          requestId: request.requestId,
+          optionId: projectOption!.optionId
+        })
+        const responseCompleted = fails
+          ? expect(response).rejects.toThrow('Permission approval could not be saved')
+          : expect(response).resolves.toBe(true)
+        await persistenceEntered
+        expect(released).not.toHaveBeenCalled()
+
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          if (cancelMethod === 'cancelForSession') broker.cancelForSession('session-1')
+          else broker[cancelMethod]()
+        }
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        expect.soft(released).toHaveBeenCalledWith({ outcome: { outcome: 'cancelled' } })
+        finishPersistence()
+        await responseCompleted
+        const result = await providerResponse
+
+        expect(settleLive).toHaveBeenCalledOnce()
+        expect
+          .soft(registry.remember)
+          .toHaveBeenCalledTimes(blockedOperation === 'remember' ? 1 : 0)
+        expect.soft(grantSaved).toBe(blockedOperation === 'remember' && !fails)
+        expect(registry.revoke).not.toHaveBeenCalled()
+        expect(released).toHaveBeenCalledOnce()
+        expect(onSettled.mock.calls.length).toBeLessThanOrEqual(1)
+        expect(broker.getPendingRequests()).toEqual([])
+        await expect(
+          broker.respond({ requestId: request.requestId, optionId: projectOption!.optionId })
+        ).resolves.toBe(false)
+        expect.soft(result).toEqual({ outcome: { outcome: 'cancelled' } })
+        expect
+          .soft(onSettled.mock.calls.map(([, state]) => state))
+          .toEqual(cancelMethod === 'abandonAllPending' ? [] : ['cancelled'])
+      }
+    )
+  })
+
   it('settles durable Session authority before committing a persistent grant', async () => {
     const journal: string[] = []
     const registry = {

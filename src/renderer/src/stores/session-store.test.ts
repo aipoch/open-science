@@ -1931,6 +1931,74 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].title).toBe('Remote later')
   })
 
+  it('keeps the new run reference when an old source acknowledges the same message and millisecond', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1710000000000)
+    try {
+      const input = {
+        sessionId: 'session-1',
+        messageId: 'retry-prompt',
+        content: 'Retry the same question'
+      }
+      useSessionStore.getState().appendUserMessage(input)
+      const source = useSessionStore.getState().sessions[0]
+      const durable = structuredClone(toPersistedSession(source))
+      durable.revision = (durable.revision ?? 0) + 1
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.getState().appendUserMessage({ ...input, rearmExisting: true })
+      const current = useSessionStore.getState().sessions[0]
+      expect(current).not.toBe(source)
+      expect(current.activeRun).toBeDefined()
+      expect(current.activeRun).toEqual(source.activeRun)
+      expect(current.activeRun).not.toBe(source.activeRun)
+
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: durable,
+        mode: 'replace-persisted-if-current'
+      })
+
+      const projected = useSessionStore.getState().sessions[0]
+      expect(projected.activeRun).toBe(current.activeRun)
+      expect(projected.activeRun).not.toBe(source.activeRun)
+      expect(projected.status).toBe('running')
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it.each(['promptMessageId', 'startedAt'] as const)(
+    'does not reuse the old run reference when the current save acknowledgement changes %s',
+    (field) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        messageId: 'earlier-prompt',
+        content: 'Earlier question'
+      })
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        messageId: 'current-prompt',
+        content: 'Current question'
+      })
+      const source = useSessionStore.getState().sessions[0]
+      const durable = structuredClone(toPersistedSession(source))
+      durable.revision = (durable.revision ?? 0) + 1
+      expect(durable.activeRun).toBeDefined()
+      if (field === 'promptMessageId') durable.activeRun!.promptMessageId = 'earlier-prompt'
+      else durable.activeRun!.startedAt += 1
+
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: durable,
+        mode: 'replace-persisted-if-current'
+      })
+
+      const projected = useSessionStore.getState().sessions[0]
+      expect(projected.activeRun).toEqual(durable.activeRun)
+      expect(projected.activeRun).not.toBe(source.activeRun)
+    }
+  )
+
   it('keeps a newer unsaved title when a durable save acknowledgement is for the previous title', () => {
     useSessionStore.getState().hydrateSessions([
       {
