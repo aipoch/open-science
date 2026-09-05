@@ -260,6 +260,7 @@ const reviseWorkspaceElicitation = async (
     }
     await (options.flushPersistence ?? flushSessionPersistence)()
     const snapshot = await runtime.respondToElicitation(responseToSend)
+    useSessionStore.getState().clearBranchContextReset(session.id)
     syncWorkspaceInteractionState(snapshot)
     if (
       !snapshot.pendingElicitations?.some(

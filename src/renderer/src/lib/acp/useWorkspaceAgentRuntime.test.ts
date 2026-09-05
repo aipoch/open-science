@@ -1905,7 +1905,7 @@ describe('workspace durable elicitation', () => {
     expect(toPersistedSession(revised).branchContextResetRequired).toBeUndefined()
   })
 
-  it('restores the transcript and forces replay when a revised answer cannot be submitted', async () => {
+  it.each([false, true])('retries a failed revision: %s', async (retryRevision) => {
     const session = useSessionStore.getState().sessions[0]
     const prompt = session.messages[0]
     const questionAt = prompt.createdAt + 10
@@ -2023,6 +2023,25 @@ describe('workspace durable elicitation', () => {
     expect(restored.activities?.map((activity) => activity.id)).toEqual(['answered-choice'])
     expect(restored.branchContextResetRequired).toBe(true)
 
+    if (retryRevision) {
+      const respondToElicitation = vi.fn().mockResolvedValue(createSnapshot([session.id]))
+      await respondToWorkspaceElicitation(
+        {
+          state: createSnapshot([session.id]),
+          resumeSession: vi.fn(),
+          resetSessionContext,
+          respondToElicitation
+        },
+        response,
+        { supportsImageInput: true }
+      )
+      expect(respondToElicitation).toHaveBeenCalledOnce()
+      expect(resetSessionContext).toHaveBeenCalledTimes(2)
+      const saved = toPersistedSession(useSessionStore.getState().sessions[0])
+      useSessionStore.setState(createInitialSessionState())
+      useSessionStore.getState().hydrateSessions([saved])
+    }
+
     const sendPrompt = vi.fn().mockResolvedValue(createSnapshot([session.id]))
     const replayReset = vi.fn().mockResolvedValue({
       sessionId: session.id,
@@ -2051,9 +2070,11 @@ describe('workspace durable elicitation', () => {
     )
 
     expect(sent).toBeDefined()
-    expect(replayReset).toHaveBeenCalledOnce()
+    expect(replayReset).toHaveBeenCalledTimes(retryRevision ? 0 : 1)
     await vi.waitFor(() => expect(sendPrompt).toHaveBeenCalledOnce())
-    expect(sendPrompt.mock.calls[0]?.[5]).toContain('The old answer path')
+    if (!retryRevision) {
+      expect(sendPrompt.mock.calls[0]?.[5]).toContain('The old answer path')
+    }
   })
 })
 
