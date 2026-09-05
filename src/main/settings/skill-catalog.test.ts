@@ -1190,7 +1190,11 @@ describe('reported Skill integrity regressions through Settings APIs', () => {
       references: [{ path: 'old.csv', dataBase64: Buffer.from('old').toString('base64') }]
     })
     const old = await catalog.getSkillDetail('personal-draft')
+    const oldCompatibility = (await catalog.listUserSkills()).find(
+      (skill) => skill.id === old.id
+    )!.compatibility!
     await catalog.updateSkill({
+      ...{ expectedCompatibility: oldCompatibility },
       id: old.id,
       description: 'Newer description',
       body: 'Newer body',
@@ -1201,6 +1205,7 @@ describe('reported Skill integrity regressions through Settings APIs', () => {
     })
     const result = await catalog
       .updateSkill({
+        ...{ expectedCompatibility: oldCompatibility },
         id: old.id,
         description: old.description,
         body: 'Old editor body edit',
@@ -1221,5 +1226,72 @@ describe('reported Skill integrity regressions through Settings APIs', () => {
         'utf8'
       )
     ).resolves.toBe('new')
+  })
+})
+
+describe('SK06 optimistic editor boundary', () => {
+  it('accepts one of two saves with the same precondition, then accepts a freshly read edit', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({ name: 'concurrent', description: 'Initial', body: 'Initial' })
+    const expectedCompatibility = (await catalog.listUserSkills())[0].compatibility!
+    const request = {
+      id: 'personal-concurrent',
+      expectedCompatibility,
+      description: 'First',
+      body: 'First'
+    }
+    const results = await Promise.allSettled([
+      catalog.updateSkill(request),
+      catalog.updateSkill({ ...request, description: 'Second', body: 'Second' })
+    ])
+    expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected'])
+    const current = await catalog.getSkillDetail(request.id)
+    const next = {
+      ...request,
+      expectedCompatibility: (await catalog.listUserSkills())[0].compatibility!,
+      body: 'Fresh edit'
+    }
+    await catalog.updateSkill(next)
+    expect((await catalog.getSkillDetail(current.id)).body).toBe('Fresh edit')
+  })
+
+  it('rejects a missing precondition without mutating the package', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({ name: 'missing-token', description: 'Original', body: 'Original' })
+    await expect(
+      catalog.updateSkill({
+        id: 'personal-missing-token',
+        description: 'Changed',
+        body: 'Changed'
+      } as never)
+    ).rejects.toThrow(/reload|version/i)
+    expect((await catalog.getSkillDetail('personal-missing-token')).body).toBe('Original')
+  })
+
+  it('detects attachment-only changes even when SKILL.md is unchanged', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({
+      name: 'attachment',
+      description: 'Original',
+      body: 'Original',
+      references: [{ path: 'data.csv', dataBase64: Buffer.from('before').toString('base64') }]
+    })
+    const expectedCompatibility = (await catalog.listUserSkills())[0].compatibility!
+    const file = join(
+      userSkillSourceDir(catalog, 'personal'),
+      'attachment',
+      'references',
+      'data.csv'
+    )
+    await writeFile(file, 'after')
+    const request = {
+      id: 'personal-attachment',
+      expectedCompatibility,
+      description: 'Changed',
+      body: 'Changed'
+    }
+    await expect(catalog.updateSkill(request)).rejects.toThrow(/changed|reload/i)
+    expect(await readFile(file, 'utf8')).toBe('after')
+    expect((await catalog.getSkillDetail(request.id)).body).toBe('Original')
   })
 })

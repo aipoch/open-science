@@ -99,3 +99,43 @@ describe('SkillEditLoader', () => {
     expect(onDone).toHaveBeenCalledOnce()
   })
 })
+
+it('SK06 submits the loaded compatibility and retains the draft on a stale-save rejection', async () => {
+  const onDone = vi.fn()
+  const updateSkill = vi
+    .fn()
+    .mockRejectedValue(new Error('This Skill changed. Reload it before saving.'))
+  useSettingsStore.setState({ updateSkill })
+  ;(window as unknown as { api: unknown }).api = {
+    settings: {
+      getSkillDetail: vi.fn().mockResolvedValue({ ...detail, compatibility: 'loaded-version' })
+    }
+  }
+  await act(async () => {
+    root.render(<SkillEditLoader skillId={detail.id} onDone={onDone} />)
+  })
+  const body = container.querySelector<HTMLTextAreaElement>('[aria-label="Skill body"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+      body,
+      'My unsaved draft'
+    )
+    body.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  const save = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+    (button) => button.textContent?.trim() === 'Save'
+  )!
+  expect(save).toBeDefined()
+  await act(async () => {
+    save.click()
+  })
+  expect
+    .soft(updateSkill)
+    .toHaveBeenCalledWith(
+      expect.objectContaining({ expectedCompatibility: 'loaded-version', body: 'My unsaved draft' })
+    )
+  expect(body.value).toBe('My unsaved draft')
+  expect(container.textContent).toContain('This Skill changed. Reload it before saving.')
+  expect(onDone).not.toHaveBeenCalled()
+  expect(save.disabled).toBe(false)
+})

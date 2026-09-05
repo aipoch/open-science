@@ -34,11 +34,12 @@ const reference = (path: string, text = 'a,b\n1,2\n'): SkillReference => ({
 
 // Only the external GitHub transport is controlled. Both scan and import run their real owners.
 const githubFetch =
-  (sha: string, body: string): FetchLike =>
+  (sha: string, body: string, extraFiles: Record<string, string> = {}): FetchLike =>
   async (url) => {
     const files: Record<string, string> = {
       'SKILL.md': document('demo', body),
-      'data.csv': 'a,b\n1,2\n'
+      'data.csv': 'a,b\n1,2\n',
+      ...extraFiles
     }
     let payload: unknown
     let content = ''
@@ -211,6 +212,7 @@ describe('reported Skill integrity regressions through UserSkillRepository', () 
     const secondFetch = githubFetch('b'.repeat(40), 'revision B')
     const [secondCandidate] = await repo.scanRepo('acme/skills', secondFetch)
     expect(secondCandidate.url).toContain('b'.repeat(40))
+    expect.soft(secondCandidate.alreadyImported).toBe(false)
     const second = await repo.importFromGitHub(secondCandidate.url, secondFetch)
     expect.soft(second).toEqual({ status: 'updated', id: first.id })
     expect.soft(await repo.list()).toHaveLength(1)
@@ -224,5 +226,110 @@ describe('reported Skill integrity regressions through UserSkillRepository', () 
     await repo.importFromGitHub(candidate.url, fetch)
     const [other] = await repo.scanRepo('other/skills', fetch)
     expect(other.alreadyImported).toBe(false)
+  })
+})
+
+describe('Skill integrity boundary controls', () => {
+  it.each(['../evil.csv', 'C:\\evil.csv', '.', '..', 'CON.csv', 'bad:name.csv', 'trailing.'])(
+    'SK01 rejects unsafe reference %s without changing the live package',
+    async (path) => {
+      const { root, repo } = await fixture()
+      const id = await repo.createPersonal({ ...baseInput, references: [reference('keep.csv')] })
+      const before = await repo.body(id)
+      await expect(
+        repo.updatePersonal(id, { ...baseInput, body: 'changed', references: [reference(path)] })
+      ).rejects.toThrow()
+      expect(await repo.body(id)).toBe(before)
+      expect(await readFile(join(root, 'skills/personal/demo/references/keep.csv'), 'utf8')).toBe(
+        'a,b\n1,2\n'
+      )
+    }
+  )
+
+  it.each(['agent-home', 'publish', 'github'] as const)(
+    'SK03 rejects reserved metadata via %s before replacing existing data',
+    async (source) => {
+      const { root, repo } = await fixture()
+      await repo.createPersonal(baseInput)
+      const home = join(root, 'external')
+      await mkdir(home)
+      await writeFile(join(home, 'SKILL.md'), document())
+      const metadata = JSON.stringify({
+        id: 'foreign-id',
+        version: '1',
+        contentHash: 'untrusted',
+        standalone: false,
+        ownerIds: ['absent-owner']
+      })
+      await writeFile(join(home, '.specialist-package.json'), metadata)
+      const transport = githubFetch('a'.repeat(40), 'original', {
+        '.specialist-package.json': metadata
+      })
+      const operation =
+        source === 'agent-home'
+          ? repo.importAgentHomeSkill(home, { source: 'agents', slug: 'demo' })
+          : source === 'publish'
+            ? repo.publishPersonalDirectory('demo', home, true)
+            : repo.importFromGitHub('https://github.com/acme/skills/tree/main/demo', transport)
+      await expect(operation).rejects.toThrow(/reserved/i)
+      expect((await repo.list()).map((skill) => skill.id)).toEqual(['personal-demo'])
+      expect(await repo.body('personal-demo')).toContain('original')
+    }
+  )
+
+  it.each(['zip', 'github'] as const)(
+    'SK02 repairs a renamed %s installation and recognizes its normalized healthy copy',
+    async (source) => {
+      const { root, repo } = await fixture()
+      await repo.createPersonal(baseInput)
+      const bytes = zip({ 'wrapped/SKILL.md': document(), 'wrapped/data.csv': 'data' })
+      const importSkill = (): Promise<ImportOutcome> =>
+        source === 'zip'
+          ? repo.importFromZip(bytes)
+          : repo.importFromGitHub(
+              'https://github.com/acme/skills/tree/main/demo',
+              githubFetch('a'.repeat(40), 'original')
+            )
+      const first = await importSkill()
+      expect(first.id).toBe('imported-demo-2')
+      const dir = join(root, 'skills/imported/demo-2')
+      const original = await readFile(join(dir, 'data.csv'), 'utf8')
+      expect(await readFile(join(dir, 'SKILL.md'), 'utf8')).toContain('name: demo-2')
+      expect((await importSkill()).status).toBe('unchanged')
+      await writeFile(join(dir, 'data.csv'), 'corrupted')
+      expect.soft(await importSkill()).toEqual({ status: 'updated', id: first.id })
+      expect(await readFile(join(dir, 'data.csv'), 'utf8')).toBe(original)
+      expect((await importSkill()).status).toBe('unchanged')
+    }
+  )
+
+  it('SK07 refuses to choose between historical copies of the same GitHub source', async () => {
+    const { root, repo } = await fixture()
+    for (const [name, sha] of [
+      ['demo', 'a'],
+      ['demo-2', 'b']
+    ]) {
+      const dir = join(root, 'skills/imported', name)
+      await mkdir(dir, { recursive: true })
+      await writeFile(join(dir, 'SKILL.md'), document(name, `historical ${sha}`))
+      await writeFile(
+        join(dir, '.source.json'),
+        JSON.stringify({
+          url: `https://github.com/acme/skills/tree/${sha.repeat(40)}/demo`,
+          signature: sha.repeat(64)
+        })
+      )
+    }
+    await expect(
+      repo.importFromGitHub(
+        `https://github.com/acme/skills/tree/${'c'.repeat(40)}/demo`,
+        githubFetch('c'.repeat(40), 'next')
+      )
+    ).rejects.toThrow(/multiple|ambiguous/i)
+    expect((await repo.list()).map((skill) => skill.id).sort()).toEqual([
+      'imported-demo',
+      'imported-demo-2'
+    ])
+    expect(await repo.body('imported-demo')).toContain('historical a')
   })
 })
