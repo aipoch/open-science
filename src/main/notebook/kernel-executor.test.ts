@@ -2383,6 +2383,23 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
     60_000
   )
 
+  it('does not preload optional plotting packages for non-plotting cells', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-lazy-graphics-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+      platform: 'linux'
+    })
+    try {
+      await expect(
+        executor.execute({ ...request, code: 'cat("ragg" %in% loadedNamespaces())', language: 'r' })
+      ).resolves.toMatchObject({ status: 'completed', stdout: 'FALSE' })
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
   it.each([
     {
       name: 'base graphics through a PNG device',
@@ -2403,6 +2420,16 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
         'ggplot2::geom_point(); ' +
         `ggplot2::ggsave(${JSON.stringify(path)}, plot = p, device = "tiff")`,
       unavailable: /ggplot2 unavailable|tiff unavailable/u,
+      verifySignature: (bytes: Buffer) =>
+        expect(bytes.subarray(0, 2).toString('ascii')).toMatch(/^(II|MM)$/u)
+    },
+    {
+      name: 'ragg through a TIFF device',
+      fileName: 'ragg-only.tiff',
+      code: (path: string) =>
+        'if (!requireNamespace("ragg", quietly = TRUE)) stop("ragg unavailable"); ' +
+        `ragg::agg_tiff(${JSON.stringify(path)}); graphics::plot(1:3); grDevices::dev.off()`,
+      unavailable: /ragg unavailable/u,
       verifySignature: (bytes: Buffer) =>
         expect(bytes.subarray(0, 2).toString('ascii')).toMatch(/^(II|MM)$/u)
     },
