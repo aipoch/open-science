@@ -660,6 +660,7 @@ describe('preload bridge — public surface inventory', () => {
       'specialist.setEnabled',
       'specialist.setSessionSpecialist',
       'specialist.update',
+      'storage.acceptMissingDataRoot',
       'storage.ackDataRootHandoffFlush',
       'storage.cancelMigrate',
       'storage.commitAndRelaunch',

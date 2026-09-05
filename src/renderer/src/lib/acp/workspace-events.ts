@@ -359,6 +359,14 @@ const finalizeArtifactEvent = async (
         result.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
       )
       if (artifactVersionIds.every((versionId) => reconciledVersionIds.has(versionId))) {
+        // Reconciliation also completes ordinary pre-stop Artifact events. Publish the returned
+        // descriptor into the live projection so preview readiness changes without changing bytes.
+        useSessionStore.getState().replaceMessageArtifacts({
+          sessionId: event.sessionId,
+          messageId: appliedMessage.id,
+          artifacts: result,
+          preserveArtifactIds: appliedMessage.artifactIds
+        })
         const resolvedArtifactIds = new Set([
           ...event.artifacts.map((artifact) => artifact.id),
           ...result.map((artifact) => artifact.id)

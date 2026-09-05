@@ -277,7 +277,7 @@ describe('Compute service architecture', () => {
   it('restores local owner barriers before runtime and defers remote recovery until after startup', () => {
     const source = readSource(computePaths.mainIpc)
     const projectBarriers = source.indexOf(
-      'await projectDeletionCoordinator.restorePendingDeletionBarriers()'
+      'projectDeletionCoordinator.restorePendingDeletionBarriers()'
     )
     const jobBarriers = source.indexOf(
       'await jobDeletionOwner.restoreOrphanJobDeletionBarriers',

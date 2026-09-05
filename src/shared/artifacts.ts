@@ -17,6 +17,8 @@ export type ArtifactFile = ProjectIdScope & {
   artifactId?: string
   versionId?: string
   versionNumber?: number
+  // Derived from native publication authority; never persist as a second source of truth.
+  isPublished?: boolean
   checksum?: string
   createdAt?: string
   producerRunId?: string

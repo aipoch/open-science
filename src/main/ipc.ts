@@ -354,10 +354,13 @@ import type {
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import {
+  initializeDataRootWriteAvailability,
   isMigrationInProgress,
   isMigrationPending,
+  runDataRootStartupRecovery,
   withDataRootWrite
 } from './storage/migration-state'
+import { isDataRootMissing } from './storage/path-presence'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import { DataRootCleanupJournal } from './storage/data-root-cleanup'
 import {
@@ -669,26 +672,33 @@ const createApplicationModules = async (
   // Prime the data-root cache from settings before any data repository is constructed below. A change
   // to this value only takes effect after a restart, so reading it once here is sufficient.
   initDataRoot(storedSettings.dataRoot)
+  const configuredDataRootMissing =
+    Boolean(storedSettings.dataRoot?.trim()) && (await isDataRootMissing(resolveDataRoot()))
+  initializeDataRootWriteAvailability(configuredDataRootMissing)
   const dataRootCleanupJournal = new DataRootCleanupJournal(resolveConfigRoot())
-  try {
-    const cleanup = await dataRootCleanupJournal.recover(
-      resolveDataRoot(),
-      deleteSources,
-      (sourceRoot) => {
-        const runtimeRoot = join(sourceRoot, 'runtime')
-        const workloadRemoved = removeNotebookWorkloadCache(runtimeRoot)
-        const micromambaRemoved = removeMicromambaCacheForRoot(runtimeRoot)
-        return workloadRemoved && micromambaRemoved
+  await runDataRootStartupRecovery(
+    async () => {
+      const cleanup = await dataRootCleanupJournal.recover(
+        resolveDataRoot(),
+        deleteSources,
+        (sourceRoot) => {
+          const runtimeRoot = join(sourceRoot, 'runtime')
+          const workloadRemoved = removeNotebookWorkloadCache(runtimeRoot)
+          const micromambaRemoved = removeMicromambaCacheForRoot(runtimeRoot)
+          return workloadRemoved && micromambaRemoved
+        }
+      )
+      if (cleanup.pending) {
+        storageLog.warn('old data root cleanup remains pending', {
+          cleanupFailureCount: cleanup.failureCount
+        })
       }
-    )
-    if (cleanup.pending) {
-      storageLog.warn('old data root cleanup remains pending', {
-        cleanupFailureCount: cleanup.failureCount
-      })
+    },
+    {
+      reportFailure: (error) =>
+        storageLog.warn('old data root cleanup recovery failed', diagnosticErrorFields(error))
     }
-  } catch (error) {
-    storageLog.warn('old data root cleanup recovery failed', diagnosticErrorFields(error))
-  }
+  )
   const notificationInbox = createNotificationInboxController({
     headless,
     repository: new NotificationInboxDbRepository(() => getProjectDbClient(resolveConfigRoot())),
@@ -707,16 +717,16 @@ const createApplicationModules = async (
   // Constructed once here (rather than left to each register*IpcHandlers' own default) so the
   // one-time legacy-path normalization pass below can share the exact instances the IPC surface uses.
   const uploadRepository = createDefaultUploadRepository()
-  try {
-    await uploadRepository.recoverStagingUploads()
-  } catch (error) {
-    // Ready bytes remain fail-closed; keep startup available so Files can surface unaffected rows and
-    // the next launch can retry any recoverable staging Version.
-    storageLog.error(
-      'staging upload recovery incomplete; will retry next launch',
-      diagnosticErrorFields(error)
-    )
-  }
+  await runDataRootStartupRecovery(() => uploadRepository.recoverStagingUploads(), {
+    reportFailure: (error) => {
+      // Ready bytes remain fail-closed; keep startup available so Files can surface unaffected rows and
+      // the next launch can retry any recoverable staging Version.
+      storageLog.error(
+        'staging upload recovery incomplete; will retry next launch',
+        diagnosticErrorFields(error)
+      )
+    }
+  })
   const managedFileVersionService = new ManagedFileVersionService({
     storageRoot: resolveDataRoot(),
     getClient: () => getProjectDbClient(resolveConfigRoot())
@@ -783,25 +793,29 @@ const createApplicationModules = async (
   // startup on failure: an error is logged and the marker stays unset, so the pass simply retries on
   // the next launch.
   if (!storedSettings.pathsNormalizedAt) {
-    const normalizationOperation = startDiagnosticOperation(storageLog, {
-      operation: 'legacy-data-root-normalization',
-      fields: { mode: 'legacy-normalize' }
-    })
-    normalizationOperation.phase('rewrite-paths')
-    try {
-      await normalizeLegacyDataPaths({
-        sessionRepository,
-        sessionUploads: uploadRepository,
-        previewStateRepository,
-        projectRepository,
-        dataRoot: resolveDataRoot()
-      })
-      normalizationOperation.phase('persist-marker')
-      await settingsService.markPathsNormalized()
-      normalizationOperation.complete()
-    } catch (error) {
-      normalizationOperation.fail(error)
-    }
+    let normalizationOperation: DiagnosticOperation | undefined
+    await runDataRootStartupRecovery(
+      async () => {
+        normalizationOperation = startDiagnosticOperation(storageLog, {
+          operation: 'legacy-data-root-normalization',
+          fields: { mode: 'legacy-normalize' }
+        })
+        normalizationOperation.phase('rewrite-paths')
+        await normalizeLegacyDataPaths({
+          sessionRepository,
+          sessionUploads: uploadRepository,
+          previewStateRepository,
+          projectRepository,
+          dataRoot: resolveDataRoot()
+        })
+        normalizationOperation.phase('persist-marker')
+        await settingsService.markPathsNormalized()
+        normalizationOperation.complete()
+      },
+      {
+        reportFailure: (error) => normalizationOperation?.fail(error)
+      }
+    )
   }
 
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
@@ -1937,15 +1951,22 @@ const createApplicationModules = async (
   sessionEnabledComputeHostsOwnerRef.current = sessionEnabledComputeHostsOwner
   sessionCacheOwnerRef.current = sessionCacheOwner
   computeJobDeletionRef.current = withSessionCacheDeletion(jobDeletionOwner, sessionCacheOwner)
-  await projectDeletionCoordinator.restorePendingDeletionBarriers()
-  try {
-    await withDataRootWrite(() => managedFileVersionService.recoverPendingWrites())
-  } catch (error) {
-    storageLog.error(
-      'managed file version recovery incomplete; will retry next launch',
-      diagnosticErrorFields(error)
-    )
-  }
+  await runDataRootStartupRecovery(() =>
+    projectDeletionCoordinator.restorePendingDeletionBarriers()
+  )
+  await runDataRootStartupRecovery(
+    async () => {
+      await withDataRootWrite(() => managedFileVersionService.recoverPendingWrites())
+    },
+    {
+      reportFailure: (error) => {
+        storageLog.error(
+          'managed file version recovery incomplete; will retry next launch',
+          diagnosticErrorFields(error)
+        )
+      }
+    }
+  )
   void managedFileVersionService
     .auditActiveVersionIntegrity()
     .then((integrityErrors) => {
@@ -3628,9 +3649,10 @@ const createApplicationModules = async (
   // create, on-demand materialize, install) can await it and never race recovery's cleanup/delete.
   // Fire-and-forget so a slow/failed recovery never blocks IPC registration; the barrier itself is what
   // actually orders the prefix work.
-  void notebookService
-    .recoverInterruptedOperations()
-    .catch((error) => notebookStartupLog.error('operation recovery failed', errorLogFields(error)))
+  void runDataRootStartupRecovery(() => notebookService.recoverInterruptedOperations(), {
+    reportFailure: (error) =>
+      notebookStartupLog.error('operation recovery failed', errorLogFields(error))
+  })
   const waitForRecovery = (): Promise<void> => notebookService.ensureRecovered()
   // Lets UI provision/repair refuse when recovery left the default env's prefix blocked (an
   // unknown-liveness orphan may still be writing it) — throws with an actionable message.

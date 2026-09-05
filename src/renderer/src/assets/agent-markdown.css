@@ -192,9 +192,10 @@
   }
 
   /* --- Streamdown dropdown panels & items --- */
+  /* Match menu divs, not the absolutely positioned SVG/img inside source-link icon spans. */
   :is(
     .agent-markdown-root [data-streamdown='mermaid-block-actions'] .relative > .absolute,
-    [data-streamdown='table-fullscreen'] .relative > .absolute
+    [data-streamdown='table-fullscreen'] div.relative > div.absolute
   ) {
     @apply fixed! m-0! overflow-hidden rounded-md border border-sd-border bg-sd-surface! shadow-sd-menu-lg break-normal;
     top: var(--sd-menu-top, 0) !important;
@@ -207,7 +208,7 @@
     @apply z-markdown-menu min-w-[7.5rem] w-max shadow-sd-menu;
   }
 
-  [data-streamdown='table-fullscreen'] .relative > .absolute {
+  [data-streamdown='table-fullscreen'] div.relative > div.absolute {
     @apply z-markdown-menu! min-w-32! w-max! max-w-[calc(100vw-1rem)]! transform-none!;
   }
 
@@ -222,7 +223,7 @@
 
   :is(
     .agent-markdown-root [data-streamdown='table-wrapper'] .relative > .absolute button,
-    [data-streamdown='table-fullscreen'] .relative > .absolute button,
+    [data-streamdown='table-fullscreen'] div.relative > div.absolute button,
     .agent-markdown-root [data-streamdown='mermaid-block-actions'] .relative > .absolute button,
     body
       > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not(

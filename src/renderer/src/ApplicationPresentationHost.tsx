@@ -99,6 +99,18 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
     )
   }
 
+  // Session hydration may be waiting behind the missing-root write gate. Keep recovery reachable
+  // before the session-loading branch so reconnect/relocate/accept-empty can release that gate.
+  if (startup.storageRecovery.missingDataRoot !== undefined && !startup.sessions.isHydrated) {
+    return (
+      <DataRootMissingDialog
+        open
+        dataRoot={startup.storageRecovery.missingDataRoot}
+        onResolved={startup.storageRecovery.resolveMissingDataRoot}
+      />
+    )
+  }
+
   if (!sessions.isHydrated && sessions.isLoading) {
     return (
       <main

@@ -3753,6 +3753,34 @@ describe('TaskRunner', () => {
     expect(cancelPrompt).not.toHaveBeenCalled()
   })
 
+  it('retries Task journal initialization after a transient load failure', async () => {
+    const load = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary journal read failure'))
+      .mockResolvedValueOnce([
+        {
+          id: 'restored-run',
+          sessionId: session.id,
+          projectId: project.id,
+          cwd: session.cwd,
+          status: 'completed',
+          startedAt: 1,
+          completedAt: 2,
+          artifacts: [],
+          preferredComputeHostIds: []
+        } satisfies TaskRunJournalEntry
+      ])
+    const runner = createRunner({
+      runJournal: { load, replace: async () => undefined }
+    })
+
+    await expect(runner.initialize()).rejects.toThrow('temporary journal read failure')
+    await expect(runner.initialize()).resolves.toBeUndefined()
+
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(runner.getRun('restored-run')).toMatchObject({ status: 'completed' })
+  })
+
   it('recovers cancellation accepted while the final Session save is draining', async () => {
     let finalSaveStarted: (() => void) | undefined
     let releaseFinalSave: (() => void) | undefined

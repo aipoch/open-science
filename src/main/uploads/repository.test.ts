@@ -289,6 +289,18 @@ describe('upload repository', () => {
     await expect(readFile(finalized.path, 'utf8')).resolves.toBe('keep')
   })
 
+  it('does not recreate a missing data root during startup recovery', async () => {
+    const parent = await createStorageRoot()
+    const missingRoot = join(parent, 'missing-data-root')
+    const repository = new UploadRepository(missingRoot)
+
+    await expect(stat(missingRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+
+    await repository.recoverStagingUploads()
+
+    await expect(stat(missingRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('stages pathless files in bounded, offset-checked chunks', async () => {
     const root = await createStorageRoot()
     const repository = new UploadRepository(root)

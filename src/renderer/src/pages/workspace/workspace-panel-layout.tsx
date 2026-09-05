@@ -25,6 +25,9 @@ const SIDEBAR_TOGGLE_RIGHT_INSET = 38
 const PREVIEW_PANEL_DEFAULT_SIZE = 40
 const PREVIEW_PANEL_DEFAULT_SIZE_CSS = `${PREVIEW_PANEL_DEFAULT_SIZE}%`
 const PREVIEW_PANEL_MIN_OPEN_SIZE = 30
+// Match the visible divider and its hit area to the resize library's hover/drag region.
+const WORKSPACE_RESIZE_HANDLE_CLASS_NAME =
+  'z-20 after:w-5 before:top-0 before:h-full before:translate-y-0 before:bg-text-200 hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=hover]:before:opacity-100 data-[separator=active]:before:opacity-100 transition-opacity duration-200 ease-out'
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
@@ -574,6 +577,7 @@ const WorkspacePanelLayout = ({
         ) : null}
         <ResizablePanelGroup
           orientation="horizontal"
+          resizeTargetMinimumSize={{ coarse: 20, fine: 20 }}
           aria-hidden={isMobile && mobileSidebar.isOpen ? true : undefined}
           inert={isMobile && mobileSidebar.isOpen ? true : undefined}
           className={isMobile ? 'min-w-0 flex-1' : '-mr-[10px] min-w-0 flex-1'}
@@ -602,8 +606,8 @@ const WorkspacePanelLayout = ({
                 aria-label={t('Resize left panel')}
                 disabled={sidebar.state === 'collapsed'}
                 aria-hidden={sidebar.state === 'collapsed'}
-                className={`before:left-auto before:right-full before:mr-[3px] before:translate-x-0 transition-opacity duration-200 ease-out ${
-                  sidebar.state === 'collapsed' ? 'opacity-0' : 'opacity-100'
+                className={`${WORKSPACE_RESIZE_HANDLE_CLASS_NAME} ${
+                  sidebar.state === 'collapsed' ? 'pointer-events-none opacity-0' : 'opacity-100'
                 }`}
               />
             </>
@@ -622,8 +626,8 @@ const WorkspacePanelLayout = ({
                 aria-label={t('Resize right panel')}
                 disabled={preview.state === 'collapsed'}
                 aria-hidden={preview.state === 'collapsed'}
-                className={`bg-border shadow-[1px_0_3px_rgba(30,28,24,0.08)] before:left-auto before:right-full before:mr-0.5 before:w-1 before:translate-x-0 transition-opacity duration-200 ease-out ${
-                  preview.state === 'collapsed' ? 'opacity-0' : 'opacity-100'
+                className={`${WORKSPACE_RESIZE_HANDLE_CLASS_NAME} bg-border shadow-[1px_0_3px_rgba(30,28,24,0.08)] ${
+                  preview.state === 'collapsed' ? 'pointer-events-none opacity-0' : 'opacity-100'
                 }`}
               />
 

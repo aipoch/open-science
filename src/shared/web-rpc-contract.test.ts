@@ -196,6 +196,24 @@ describe('Web RPC contract', () => {
     expect(
       webRpcBootstrapSchema.safeParse({
         platform: 'test',
+        webCallerLocation: 'local',
+        versions: { electron: '1', chrome: '1', node: '1' },
+        rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
+        rpcCapabilities: [WEB_RPC_CAPABILITY_UPDATE_CLI_V1],
+        rpcChannels: [],
+        eventStream: {
+          protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+          streamId: 'stream-1',
+          latestSequence: 0
+        }
+      }).success
+    ).toBe(true)
+  })
+
+  it('accepts bootstrap data from an older protocol-v1 Main without caller location', () => {
+    expect(
+      webRpcBootstrapSchema.safeParse({
+        platform: 'test',
         versions: { electron: '1', chrome: '1', node: '1' },
         rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
         rpcCapabilities: [WEB_RPC_CAPABILITY_UPDATE_CLI_V1],

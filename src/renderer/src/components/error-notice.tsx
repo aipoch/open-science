@@ -74,7 +74,7 @@ const ErrorNotice = ({
 }: ErrorNoticeProps): React.JSX.Element => {
   return (
     <section className="flex w-full min-w-0 max-w-md flex-col gap-4 text-left">
-      <FlaskLogo className="size-10 text-text-300" />
+      <FlaskLogo className="mb-4 size-18 self-center text-text-300" />
 
       {title !== undefined || description !== undefined ? (
         <div className="flex min-w-0 items-start gap-3">

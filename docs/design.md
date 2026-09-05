@@ -787,6 +787,10 @@ colors communicate a successful or failed probe/migration result.
 - Activity stream: `ScrollArea className="min-w-0 flex-1"`.
 - Composer: fixed to the bottom of the activity stream and constrained to `max-w-4xl`, with the composer text track aligned to the message content.
 - Right viewer area: `border-l border-border/20`.
+- Desktop side-panel dividers reveal a centered, full-height 2px `text-200` line on hover,
+  keyboard focus, and drag. Mouse resize targets extend 10px to either side of the divider;
+  collapsed dividers stay hidden and disabled. Keep the one-pixel layout footprint.
+  Arrow-key resizing must work on first opening and after collapsing and reopening either panel.
 - Right card: `m-2 rounded-lg bg-card shadow-sm`.
 - An open Notebook Variables view shares the Preview with the Notebook and manual kernel terminal
   when the Notebook surface is at least `55rem` wide, using a fixed 40% right column. Below that
@@ -934,8 +938,9 @@ colors communicate a successful or failed probe/migration result.
 
 ## Error notices
 
-Use the shared `ErrorNotice` for error summaries. Keep the decorative flask mark compact (`size-10`),
-use one bounded column (`max-w-md`, `min-w-0`), and left-align headings, descriptions, codes, and help.
+Use the shared `ErrorNotice` for error summaries. Center the decorative flask mark (`size-18`) above
+the summary with a 32px gap to distinguish it from the smaller status icon. Use one bounded column
+(`max-w-md`, `min-w-0`), and left-align headings, descriptions, codes, and help.
 Pair the status icon with the first text line. Long error text and identifiers must wrap inside the
 column. Group primary and secondary actions at the trailing edge with `flex-wrap` and a consistent
 small gap; wrap whole controls instead of splitting their labels. Preserve semantic status tones,

@@ -1008,6 +1008,15 @@ describe('installPackages', () => {
     })
   })
 
+  it('passes the workload cache to conda and its nested pip subprocesses', async () => {
+    const { spawn, calls } = scriptedSpawn([ok])
+    await installPackages({ language: 'python', packages: ['pandas'] }, { spawn, ...base })
+    const cacheRoot = join(runtimeRoot(base.storageRoot), 'cache', 'notebook')
+
+    expect(calls[0][2]?.PIP_CACHE_DIR).toBe(join(cacheRoot, 'pip'))
+    expect(calls[0][2]?.OPEN_SCIENCE_NOTEBOOK_CACHE_DIR).toBe(cacheRoot)
+  })
+
   it('does not set CA vars when no bundle is configured', async () => {
     const { spawn, calls } = scriptedSpawn([ok])
     await installPackages({ language: 'python', packages: ['numpy'] }, { spawn, ...base })

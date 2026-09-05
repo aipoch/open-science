@@ -780,7 +780,13 @@ class TaskRunner {
   }
 
   initialize(): Promise<void> {
-    if (!this.initialization) this.initialization = this.restoreRuns()
+    if (!this.initialization) {
+      const attempt = this.restoreRuns().catch((error) => {
+        if (this.initialization === attempt) this.initialization = undefined
+        throw error
+      })
+      this.initialization = attempt
+    }
     return this.initialization
   }
 
@@ -2431,6 +2437,11 @@ class TaskRunner {
   private async restoreRuns(): Promise<void> {
     const journal = this.dependencies.runJournal
     if (!journal) return
+    // A failed restoration may already have projected part of the journal into memory. Task API
+    // requests remain behind initialize(), so a retry can rebuild that projection atomically from
+    // the durable journal without exposing stale entries.
+    this.runs.clear()
+    this.activeRunBySession.clear()
     const loadedRuns = await journal.load()
     const storedRuns = loadedRuns.slice(-MAX_RETAINED_RUNS)
     const sessions = storedRuns.some(

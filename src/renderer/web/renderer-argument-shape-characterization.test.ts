@@ -151,6 +151,7 @@ beforeEach(async () => {
         return new Response(
           JSON.stringify({
             platform: 'test',
+            webCallerLocation: 'local',
             versions: { electron: '1', chrome: '1', node: '1' },
             rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
             rpcChannels: WEB_RPC_ALLOWED_CHANNELS,
