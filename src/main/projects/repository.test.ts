@@ -128,7 +128,10 @@ describe('project repository', () => {
     const projects = await repository.list()
 
     expect(projects.map(({ id }) => id)).toEqual(['corrupt-project', 'healthy-project'])
-    expect(projects[0]?.sessionDefaults).toEqual({})
+    expect(projects[0]?.sessionDefaults).toEqual({
+      permissionProfile: 'ask',
+      delegationPolicy: 'deny'
+    })
   })
 
   it('returns null when a project is not found', async () => {
@@ -147,17 +150,43 @@ describe('project repository', () => {
     await expect(repository.get('project-1')).resolves.toBeNull()
   })
 
-  it('keeps project metadata readable when stored Session defaults fail validation', async () => {
+  it('preserves valid safety defaults when another stored default fails validation', async () => {
     const { client } = createMockClient({
       findUnique: () =>
-        Promise.resolve(createRow({ sessionDefaults: '{"memoryEnabled":"not-a-boolean"}' }))
+        Promise.resolve(
+          createRow({
+            sessionDefaults:
+              '{"permissionProfile":"ask","delegationPolicy":"deny","memoryEnabled":"not-a-boolean"}'
+          })
+        )
     })
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
     await expect(repository.get('project-1')).resolves.toMatchObject({
       id: 'project-1',
       name: 'Research',
-      sessionDefaults: {}
+      sessionDefaults: { permissionProfile: 'ask', delegationPolicy: 'deny' }
+    })
+  })
+
+  it('uses conservative values when stored safety defaults fail validation', async () => {
+    const { client } = createMockClient({
+      findUnique: () =>
+        Promise.resolve(
+          createRow({
+            sessionDefaults:
+              '{"permissionProfile":"unrestricted","delegationPolicy":"sometimes","memoryEnabled":false}'
+          })
+        )
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(repository.get('project-1')).resolves.toMatchObject({
+      sessionDefaults: {
+        permissionProfile: 'ask',
+        delegationPolicy: 'deny',
+        memoryEnabled: false
+      }
     })
   })
 

@@ -31,10 +31,34 @@ type ProjectDeletionResult = Readonly<{ memoryRevision: number }>
 
 const decodeProjectSessionDefaults = (value: string | null): Project['sessionDefaults'] => {
   try {
-    const decoded = projectSessionDefaultsSchema.safeParse(JSON.parse(value ?? '{}'))
-    return decoded.success ? decoded.data : {}
+    const decoded: unknown = JSON.parse(value ?? '{}')
+    if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
+      return { permissionProfile: 'ask', delegationPolicy: 'deny' }
+    }
+    const source = decoded as Record<string, unknown>
+    const defaults = Object.fromEntries(
+      Object.entries(projectSessionDefaultsSchema.shape).flatMap(([key, schema]) => {
+        const field = schema.safeParse(source[key])
+        return field.success && field.data !== undefined ? [[key, field.data]] : []
+      })
+    )
+    if (
+      source.permissionProfile !== undefined &&
+      !projectSessionDefaultsSchema.shape.permissionProfile.safeParse(source.permissionProfile)
+        .success
+    ) {
+      defaults.permissionProfile = 'ask'
+    }
+    if (
+      source.delegationPolicy !== undefined &&
+      !projectSessionDefaultsSchema.shape.delegationPolicy.safeParse(source.delegationPolicy)
+        .success
+    ) {
+      defaults.delegationPolicy = 'deny'
+    }
+    return projectSessionDefaultsSchema.parse(defaults)
   } catch {
-    return {}
+    return { permissionProfile: 'ask', delegationPolicy: 'deny' }
   }
 }
 
