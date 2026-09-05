@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client'
+import { createHash } from 'node:crypto'
 import type { ReadStream } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -326,4 +327,95 @@ describe('upload publication lifecycle (SQLite + filesystem)', () => {
       deleteOperationId: 'delete-during-publication'
     })
   })
+
+  it('publishes recovered legacy evidence after its project is unarchived', async () => {
+    const oldRepository = new UploadRepository(root)
+    const [legacy] = await oldRepository.finalizePendingSessionUploads(
+      sessionId,
+      await stage(oldRepository),
+      projectId
+    )
+    await block('archived project')
+    const repository = new UploadRepository(root, { getClient: async () => client })
+    const upgraded = await repository.upgradeLegacySessionUploads(sessionWithUpload(legacy), {
+      mode: 'live-save'
+    })
+    await repository.upgradeLegacySessionUploads(upgraded, { mode: 'live-save' })
+    expect(await client.managedFile.count()).toBe(0)
+    expect((await client.uploadFile.findFirstOrThrow()).currentVersionId).toBeNull()
+    await client.project.update({ where: { id: projectId }, data: { archivedAt: null } })
+
+    await repository.upgradeLegacySessionUploads(upgraded, { mode: 'live-save' })
+
+    const versionId = upgraded.messages[0].uploads![0].versionId
+    expect
+      .soft(await client.uploadFile.findFirstOrThrow())
+      .toMatchObject({ currentVersionId: versionId })
+    expect.soft(await client.managedFile.count({ where: { deletedAt: null } })).toBe(1)
+  })
+
+  it.each(['archived project', 'project deletion intent'])(
+    'recovers a pre-existing legacy staging row behind a %s barrier',
+    async (barrier) => {
+      const oldRepository = new UploadRepository(root)
+      const [legacy] = await oldRepository.finalizePendingSessionUploads(
+        sessionId,
+        await stage(oldRepository),
+        projectId
+      )
+      await client.fileOriginSession.create({ data: { projectId, sessionId } })
+      await client.uploadFile.create({
+        data: {
+          id: legacy.id,
+          projectId,
+          sessionId,
+          filename: legacy.name,
+          originalFilename: legacy.originalName,
+          versions: {
+            create: {
+              id: 'interrupted-legacy-version',
+              versionNumber: 1,
+              state: 'staging',
+              contentStorageKey: `uploads/${projectId}/${sessionId}/${legacy.id}/versions/interrupted-legacy-version/content`,
+              filename: legacy.name,
+              originalFilename: legacy.originalName,
+              sizeBytes: BigInt(Buffer.byteLength(content)),
+              checksum: createHash('sha256').update(content).digest('hex')
+            }
+          }
+        }
+      })
+      expect((await client.uploadVersion.findFirstOrThrow()).originKind).toBe('user_upload')
+      await block(barrier)
+      const repository = new UploadRepository(root, { getClient: async () => client })
+
+      const wrongPath = join(root, 'uploads', 'default-project', sessionId, 'unrelated.txt')
+      await writeFile(wrongPath, content)
+      await expect(
+        repository.upgradeLegacySessionUploads(sessionWithUpload({ ...legacy, path: wrongPath }), {
+          mode: 'live-save'
+        })
+      ).rejects.toThrow(/lifecycle/)
+      expect(await client.uploadVersion.count({ where: { state: 'ready' } })).toBe(0)
+
+      await expect(
+        repository.upgradeLegacySessionUploads(
+          sessionWithUpload({ ...legacy, checksum: '0'.repeat(64) }),
+          { mode: 'live-save' }
+        )
+      ).rejects.toThrow(/lifecycle/)
+      expect(await client.uploadVersion.count({ where: { state: 'ready' } })).toBe(0)
+
+      await expect(
+        repository.upgradeLegacySessionUploads(sessionWithUpload(legacy), {
+          mode: 'live-save'
+        })
+      ).resolves.toMatchObject({
+        messages: [{ uploads: [{ versionId: 'interrupted-legacy-version' }] }]
+      })
+
+      expect(await client.uploadVersion.count()).toBe(1)
+      expect(await client.managedFile.count()).toBe(0)
+    }
+  )
 })

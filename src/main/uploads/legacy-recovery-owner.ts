@@ -109,7 +109,35 @@ class LegacyRecoveryOwner {
         const persisted = toPersistedUploadedAttachment(
           toRuntimeUploadedAttachment(upload, session.projectId)
         )
-        if (isLiveSave) return persisted
+        if (isLiveSave) {
+          if (this.options.getClient) {
+            const client = await this.options.getClient()
+            const headless = await client.uploadVersion.findFirst({
+              where: {
+                id: upload.versionId,
+                uploadFileId: upload.id,
+                versionNumber: 1,
+                state: 'ready',
+                uploadFile: {
+                  projectId: session.projectId,
+                  sessionId: upload.sessionId,
+                  currentVersionId: null
+                }
+              }
+            })
+            // Archived legacy adoption preserves ready evidence without publishing a head. Retry
+            // that publication after restore, using the same transactional lifecycle checks.
+            if (headless)
+              await this.completeStagingUpload(
+                session.projectId,
+                upload.sessionId,
+                toRuntimeUploadedAttachment(upload, session.projectId),
+                headless,
+                { preserveSource: true }
+              )
+          }
+          return persisted
+        }
         const reconciliationKey = `${upload.id}:${upload.versionId}`
         let reconciliation = reconciliations.get(reconciliationKey)
         if (!reconciliation) {
@@ -461,8 +489,7 @@ class LegacyRecoveryOwner {
         if (current.state === 'ready') return current
         if (!(
           options.legacySessionUpload &&
-          ((current.originKind === 'legacy' && lifecycle.projectExists) ||
-            file.currentVersionId === current.id)
+          (lifecycle.projectExists || file.currentVersionId === current.id)
         )) {
           throw new Error('Upload publication is blocked by the Project or origin lifecycle.')
         }

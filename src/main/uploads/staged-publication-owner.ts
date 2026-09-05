@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { createReadStream } from 'node:fs'
 import { mkdir, realpath, stat } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
@@ -228,6 +229,17 @@ class StagedPublicationOwner {
       if (attachment.versionId && attachment.versionId !== existingVersion.id) {
         throw new Error('Upload Version identity conflicts with the existing immutable Version.')
       }
+      // Older legacy migrations used originKind=user_upload. A trusted path-only Session
+      // reference must still match this v1's exact legacy locator and immutable metadata.
+      const legacySessionUpload =
+        options.legacySessionUpload === true &&
+        attachment.sessionId === sessionId &&
+        !attachment.versionId &&
+        resolve(attachment.path) ===
+          resolve(getSessionUploadDir(this.storageRoot, sessionId), existingVersion.filename) &&
+        attachment.name === existingVersion.filename &&
+        attachment.size === Number(existingVersion.sizeBytes) &&
+        (!attachment.checksum || attachment.checksum === existingVersion.checksum)
       const published = await this.dependencies.completeStagingUpload(
         projectId,
         sessionId,
@@ -235,8 +247,7 @@ class StagedPublicationOwner {
         existingVersion,
         {
           preserveSource: options.preserveLegacySource === true,
-          legacySessionUpload:
-            options.legacySessionUpload === true && attachment.sessionId === sessionId
+          legacySessionUpload
         }
       )
       if (

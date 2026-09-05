@@ -8,11 +8,13 @@ import {
   SessionDeletionCommittedError,
   type LoadAllSessionsResult,
   type PersistedChatSession,
+  type PersistedChatMessage,
   type PersistedSessionStatus,
   type SessionLoadFailure,
   type SessionLoadWarning,
   type UpdateSessionArchiveRequest
 } from '../../shared/session-persistence'
+import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
 import { ArchiveAvailabilityError } from '../archive/availability-error'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
@@ -26,6 +28,33 @@ import type { ProjectSessionDeletionState } from './repository'
 import { saveSessionWithRevision } from './save-session'
 import type { SessionPersistenceStateOwner } from './state-owner'
 import { hasLegacySessionUpload } from './legacy-upload'
+
+// Old JSON may still reference process-local drafts. Drop only those references during deletion;
+// the existing startup transfer owner cleans their bytes after the process ends.
+const withoutPendingUploadReferences = (session: PersistedChatSession): PersistedChatSession => {
+  const strip = <Message extends PersistedChatMessage>(message: Message): Message => ({
+    ...message,
+    ...(message.uploads
+      ? {
+          uploads: message.uploads.filter(
+            (upload) => upload.versionId || upload.sessionId !== PENDING_UPLOAD_SESSION_ID
+          )
+        }
+      : {})
+  })
+  return {
+    ...session,
+    messages: session.messages.map(strip),
+    ...(session.conversationGraph
+      ? {
+          conversationGraph: {
+            ...session.conversationGraph,
+            messages: session.conversationGraph.messages.map(strip)
+          }
+        }
+      : {})
+  }
+}
 
 type ProjectSessionDeletionResult =
   { status: 'completed' } | { status: 'orphan-retained'; reason: 'missing-upload-authority' }
@@ -246,9 +275,10 @@ class SessionPersistenceDeletionOwner {
       return this.uploads.upgradeLegacySessionUploads(session, { mode: 'terminal-delete' })
     }
 
-    const upgradedSession = await this.uploads.upgradeLegacySessionUploads(session, {
-      mode: 'live-save'
-    })
+    const upgradedSession = await this.uploads.upgradeLegacySessionUploads(
+      withoutPendingUploadReferences(session),
+      { mode: 'live-save' }
+    )
     const persisted = await saveSessionWithRevision(this.repository, upgradedSession)
     return this.uploads.upgradeLegacySessionUploads(persisted, {
       mode: 'terminal-delete'
@@ -266,9 +296,12 @@ class SessionPersistenceDeletionOwner {
 
     let terminalSession = session
     if (hasLegacySessionUpload(session)) {
-      terminalSession = await this.uploads.upgradeLegacySessionUploads(session, {
-        mode: requireExistingUploadAuthority ? 'orphan-recovery' : 'live-save'
-      })
+      terminalSession = await this.uploads.upgradeLegacySessionUploads(
+        withoutPendingUploadReferences(session),
+        {
+          mode: requireExistingUploadAuthority ? 'orphan-recovery' : 'live-save'
+        }
+      )
       await saveUpgradedSession(terminalSession)
     }
 
