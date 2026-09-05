@@ -323,6 +323,7 @@ export class NotebookSessionAggregate<
       code: '',
       status: 'receiving-code'
     }
+    cell.language = input.language
     cell.status = 'receiving-code'
     cell.code = ''
     cell.writeId = input.writeId
