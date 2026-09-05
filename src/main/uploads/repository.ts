@@ -45,21 +45,21 @@ class UploadRepository {
   private readonly stagedPublicationOwner: StagedPublicationOwner
   private readonly legacyRecoveryOwner: LegacyRecoveryOwner
 
-  constructor(storageRoot: string, options: UploadRepositoryOptions = {}) {
-    this.transferOwner = new ActiveTransferOwner(storageRoot, options)
-    this.managedUploadResolver = new ManagedUploadResolver(storageRoot, options)
-    const cleanupOwner = new VerifiedLegacyCleanupOwner(storageRoot, options, {
+  constructor(dataRoot: string, options: UploadRepositoryOptions = {}) {
+    this.transferOwner = new ActiveTransferOwner(dataRoot, options)
+    this.managedUploadResolver = new ManagedUploadResolver(dataRoot, options)
+    const cleanupOwner = new VerifiedLegacyCleanupOwner(dataRoot, options, {
       resolveManagedUploadPath: (...args) =>
         this.managedUploadResolver.resolveManagedUploadPath(...args)
     })
-    this.stagedPublicationOwner = new StagedPublicationOwner(storageRoot, options, {
+    this.stagedPublicationOwner = new StagedPublicationOwner(dataRoot, options, {
       resolver: this.managedUploadResolver,
       completeStagingUpload: (...args) => this.legacyRecoveryOwner.completeStagingUpload(...args),
       hasOrphanLegacyCandidate: (...args) =>
         this.legacyRecoveryOwner.hasOrphanLegacyCandidate(...args),
       removeVerifiedLegacyCopy: (input) => this.legacyRecoveryOwner.removeVerifiedLegacyCopy(input)
     })
-    this.legacyRecoveryOwner = new LegacyRecoveryOwner(storageRoot, options, {
+    this.legacyRecoveryOwner = new LegacyRecoveryOwner(dataRoot, options, {
       resolveManagedUploadPath: (request) =>
         this.managedUploadResolver.resolveManagedUploadPath(request),
       finalizeSessionUploads: (...args) =>

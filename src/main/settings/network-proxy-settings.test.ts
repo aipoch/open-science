@@ -68,7 +68,7 @@ describe('Network proxy settings persistence', () => {
   it('projects old documents as System and applies saved changes only after persistence', async () => {
     const repository = new SettingsRepository(dir)
     const applyNetworkProxy = vi.fn().mockResolvedValue(undefined)
-    const service = new SettingsService({ repository, storageRoot: dir, applyNetworkProxy })
+    const service = new SettingsService({ repository, configRoot: dir, applyNetworkProxy })
 
     await expect(service.getSettingsView()).resolves.toMatchObject({
       networkProxy: { mode: 'system' }
@@ -82,7 +82,7 @@ describe('Network proxy settings persistence', () => {
   it('does not persist a proxy setting that the runtime rejected', async () => {
     const repository = new SettingsRepository(dir)
     const applyNetworkProxy = vi.fn().mockRejectedValueOnce(new Error('proxy session unavailable'))
-    const service = new SettingsService({ repository, storageRoot: dir, applyNetworkProxy })
+    const service = new SettingsService({ repository, configRoot: dir, applyNetworkProxy })
 
     await expect(service.setNetworkProxy({ mode: 'direct' })).rejects.toThrow(
       'proxy session unavailable'
@@ -103,7 +103,7 @@ describe('Network proxy settings persistence', () => {
       runtimeProxy = settings
       if (settings.mode === 'direct') throw new Error('notebook proxy refresh failed')
     })
-    const service = new SettingsService({ repository, storageRoot: dir, applyNetworkProxy })
+    const service = new SettingsService({ repository, configRoot: dir, applyNetworkProxy })
 
     await expect(service.setNetworkProxy({ mode: 'direct' })).rejects.toThrow(
       'notebook proxy refresh failed'
@@ -128,7 +128,7 @@ describe('Network proxy settings persistence', () => {
       .fn()
       .mockRejectedValueOnce(applyError)
       .mockRejectedValueOnce(runtimeRollbackError)
-    const service = new SettingsService({ repository, storageRoot: dir, applyNetworkProxy })
+    const service = new SettingsService({ repository, configRoot: dir, applyNetworkProxy })
 
     const result = service.setNetworkProxy({ mode: 'direct' })
 
@@ -157,7 +157,7 @@ describe('Network proxy settings persistence', () => {
       if (settings.mode === 'direct') await firstApply
       runtimeMode = settings.mode
     })
-    const service = new SettingsService({ repository, storageRoot: dir, applyNetworkProxy })
+    const service = new SettingsService({ repository, configRoot: dir, applyNetworkProxy })
 
     const firstSave = service.setNetworkProxy({ mode: 'direct' })
     await vi.waitFor(() => expect(applyNetworkProxy).toHaveBeenCalledWith({ mode: 'direct' }))

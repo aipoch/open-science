@@ -155,7 +155,7 @@ describe('AgentRuntimeManager', () => {
 
     return new AgentRuntimeManager({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       userClaudeDir: join(storageRoot, 'user-claude'),
       skills,
       connectors,

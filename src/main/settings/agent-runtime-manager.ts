@@ -120,8 +120,8 @@ const CODEX_INSTALL_TARGET: InstallTarget = {
   scriptUnix: ''
 }
 
-const isManagedCodexPath = (adapterPath: string, storageRoot: string): boolean =>
-  adapterPath === managedCodexAdapterEntry(storageRoot)
+const isManagedCodexPath = (adapterPath: string, configRoot: string): boolean =>
+  adapterPath === managedCodexAdapterEntry(configRoot)
 
 export type ExecuteClaudeProbe = (
   executablePath: string,
@@ -285,7 +285,7 @@ const codexVersionsFromProbe = (
 
 export type AgentRuntimeManagerOptions = {
   repository: SettingsRepository
-  storageRoot: string
+  configRoot: string
   userClaudeDir: string
   skills: SkillCatalogModule
   connectors: ConnectorSettingsModule
@@ -316,7 +316,7 @@ export type AgentRuntimeManagerOptions = {
 // reconnect decisions remain outside this module.
 export class AgentRuntimeManager {
   private readonly repository: SettingsRepository
-  private readonly storageRoot: string
+  private readonly configRoot: string
   private readonly userClaudeDir: string
   private readonly skills: SkillCatalogModule
   private readonly connectors: ConnectorSettingsModule
@@ -346,7 +346,7 @@ export class AgentRuntimeManager {
 
   constructor(options: AgentRuntimeManagerOptions) {
     this.repository = options.repository
-    this.storageRoot = options.storageRoot
+    this.configRoot = options.configRoot
     this.userClaudeDir = options.userClaudeDir
     this.skills = options.skills
     this.connectors = options.connectors
@@ -355,25 +355,25 @@ export class AgentRuntimeManager {
     const baseDetectDeps = options.detectDeps ?? createDefaultDetectDeps()
     this.detectDeps = {
       ...baseDetectDeps,
-      extraDirs: [...(baseDetectDeps.extraDirs ?? []), managedClaudeDir(this.storageRoot)]
+      extraDirs: [...(baseDetectDeps.extraDirs ?? []), managedClaudeDir(this.configRoot)]
     }
 
     const baseOpencodeDetectDeps = options.opencodeDetectDeps ?? createOpencodeDetectDeps()
     this.opencodeDetectDeps = {
       ...baseOpencodeDetectDeps,
-      extraDirs: [...(baseOpencodeDetectDeps.extraDirs ?? []), managedOpencodeDir(this.storageRoot)]
+      extraDirs: [...(baseOpencodeDetectDeps.extraDirs ?? []), managedOpencodeDir(this.configRoot)]
     }
     const baseCodeBuddyDetectDeps = options.codebuddyDetectDeps ?? createOpencodeDetectDeps()
     this.codebuddyDetectDeps = {
       ...baseCodeBuddyDetectDeps,
       extraDirs: [
         ...(baseCodeBuddyDetectDeps.extraDirs ?? []),
-        managedCodeBuddyDir(this.storageRoot)
+        managedCodeBuddyDir(this.configRoot)
       ]
     }
 
-    const managedAdapterPath = managedCodexAdapterEntry(this.storageRoot)
-    const managedNativePath = managedCodexBinary(this.storageRoot)
+    const managedAdapterPath = managedCodexAdapterEntry(this.configRoot)
+    const managedNativePath = managedCodexBinary(this.configRoot)
     this.codexDetectDeps = options.codexDetectDeps ?? {
       env: baseOpencodeDetectDeps.env,
       homePath: baseOpencodeDetectDeps.homePath,
@@ -482,7 +482,7 @@ export class AgentRuntimeManager {
     )
 
     return runEnvironmentCheck({
-      storageRoot: this.storageRoot,
+      storageRoot: this.configRoot,
       agentFrameworkId,
       frameworks: [
         {
@@ -577,7 +577,7 @@ export class AgentRuntimeManager {
         const outcome = await this.installManagedClaudeImpl({
           installId,
           onEvent,
-          dataRoot: this.storageRoot,
+          dataRoot: this.configRoot,
           registries,
           verifyBinary: this.detectDeps.getVersion
         })
@@ -617,7 +617,7 @@ export class AgentRuntimeManager {
         const outcome = await this.installManagedOpencodeImpl({
           installId,
           onEvent,
-          dataRoot: this.storageRoot
+          dataRoot: this.configRoot
         })
         if (outcome.result.ok && outcome.resolvedPath) {
           await this.repository.setOpencodeInfo(outcome.resolvedPath, outcome.version)
@@ -645,7 +645,7 @@ export class AgentRuntimeManager {
       const outcome = await this.installManagedCodeBuddyImpl({
         installId,
         onEvent,
-        dataRoot: this.storageRoot
+        dataRoot: this.configRoot
       })
       if (outcome.result.ok && outcome.resolvedPath) {
         await this.repository.setCodeBuddyInfo(outcome.resolvedPath, outcome.version)
@@ -665,7 +665,7 @@ export class AgentRuntimeManager {
         const settings = await this.repository.getSettings()
         const configuredCodexPath = settings.codex?.nativePath
         const managedCodexPath =
-          this.codexDetectDeps.managedCodexPath ?? managedCodexBinary(this.storageRoot)
+          this.codexDetectDeps.managedCodexPath ?? managedCodexBinary(this.configRoot)
         const externalCodexPath =
           configuredCodexPath && configuredCodexPath !== managedCodexPath
             ? configuredCodexPath
@@ -677,7 +677,7 @@ export class AgentRuntimeManager {
         const outcome = await this.installManagedCodexImpl({
           installId,
           onEvent,
-          dataRoot: this.storageRoot,
+          dataRoot: this.configRoot,
           ...(existingCodexPath ? { existingCodexPath } : {})
         })
         if (
@@ -729,11 +729,11 @@ export class AgentRuntimeManager {
     const resolvedPath = settings.claude?.resolvedPath
     const wasActive = (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID) === 'claude-code'
 
-    if (!resolvedPath || !isManagedClaudePath(resolvedPath, this.storageRoot)) {
+    if (!resolvedPath || !isManagedClaudePath(resolvedPath, this.configRoot)) {
       return { activeBackendAffected: false }
     }
 
-    await uninstallManagedClaude(this.storageRoot)
+    await uninstallManagedClaude(this.configRoot)
     await this.detectClaude()
     await this.autoSwitchAwayFrom('claude-code')
     return { activeBackendAffected: wasActive }
@@ -744,11 +744,11 @@ export class AgentRuntimeManager {
     const resolvedPath = settings.opencodePath
     const wasActive = (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID) === 'opencode'
 
-    if (!resolvedPath || !isManagedOpencodePath(resolvedPath, this.storageRoot)) {
+    if (!resolvedPath || !isManagedOpencodePath(resolvedPath, this.configRoot)) {
       return { activeBackendAffected: false }
     }
 
-    await uninstallManagedOpencode(this.storageRoot)
+    await uninstallManagedOpencode(this.configRoot)
     await this.detectOpencode()
     await this.autoSwitchAwayFrom('opencode')
     return { activeBackendAffected: wasActive }
@@ -759,11 +759,11 @@ export class AgentRuntimeManager {
     const resolvedPath = settings.codebuddyPath
     const wasActive = (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID) === 'codebuddy'
 
-    if (!resolvedPath || !isManagedCodeBuddyPath(resolvedPath, this.storageRoot)) {
+    if (!resolvedPath || !isManagedCodeBuddyPath(resolvedPath, this.configRoot)) {
       return { activeBackendAffected: false }
     }
 
-    await uninstallManagedCodeBuddy(this.storageRoot)
+    await uninstallManagedCodeBuddy(this.configRoot)
     await this.detectCodeBuddy()
     await this.autoSwitchAwayFrom('codebuddy')
     return { activeBackendAffected: wasActive }
@@ -774,11 +774,11 @@ export class AgentRuntimeManager {
     const resolvedPath = settings.codex?.resolvedPath
     const wasActive = (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID) === 'codex'
 
-    if (!resolvedPath || !isManagedCodexPath(resolvedPath, this.storageRoot)) {
+    if (!resolvedPath || !isManagedCodexPath(resolvedPath, this.configRoot)) {
       return { activeBackendAffected: false }
     }
 
-    await uninstallManagedCodex(this.storageRoot)
+    await uninstallManagedCodex(this.configRoot)
     await this.repository.clearCodexInfo()
     await this.detectCodex()
     await this.autoSwitchAwayFrom('codex')
@@ -786,10 +786,10 @@ export class AgentRuntimeManager {
   }
 
   isManagedRuntimePath(frameworkId: AgentFrameworkId, path: string): boolean {
-    if (frameworkId === 'claude-code') return isManagedClaudePath(path, this.storageRoot)
-    if (frameworkId === 'opencode') return isManagedOpencodePath(path, this.storageRoot)
-    if (frameworkId === 'codebuddy') return isManagedCodeBuddyPath(path, this.storageRoot)
-    return isManagedCodexPath(path, this.storageRoot)
+    if (frameworkId === 'claude-code') return isManagedClaudePath(path, this.configRoot)
+    if (frameworkId === 'opencode') return isManagedOpencodePath(path, this.configRoot)
+    if (frameworkId === 'codebuddy') return isManagedCodeBuddyPath(path, this.configRoot)
+    return isManagedCodexPath(path, this.configRoot)
   }
 
   async isNpmAvailable(): Promise<boolean> {
@@ -835,7 +835,7 @@ export class AgentRuntimeManager {
     )
     await syncConnectorSkillDocs(join(configRoot, 'skills'), bundledConnectorIds)
     const customSkillSync = await syncMaterializedCustomServerSkillDocs(
-      connectorSkillSourceDir(this.storageRoot),
+      connectorSkillSourceDir(this.configRoot),
       join(configRoot, 'skills'),
       this.connectors.materializedCustomSkillNames()
     )
@@ -859,7 +859,7 @@ export class AgentRuntimeManager {
     includeSkillAndConnectorContext = true
   ): Promise<ClaudeRuntimeAssets> {
     return provisionClaudeRuntime({
-      storageRoot: this.storageRoot,
+      storageRoot: this.configRoot,
       provisionPrivateProfile: (privateProfileDir) =>
         provisionAppClaudePrivateProfile(privateProfileDir, modelConfig),
       materializeProjection: async (projectionRoot) => {
@@ -923,7 +923,7 @@ export class AgentRuntimeManager {
       throw new Error('Codex native executable not found. Re-detect or install Codex in settings.')
     }
     const adapterPath =
-      this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.storageRoot)
+      this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.configRoot)
     if (!(await this.pathExists(adapterPath))) {
       throw new Error('Open Science Codex ACP adapter not found. Install Codex in settings.')
     }
@@ -964,7 +964,7 @@ export class AgentRuntimeManager {
 
     const runtimeConfig = await this.provisionClaudeRuntimeConfig(settings)
     const envOverrides = buildProviderEnv(provider, {
-      storageRoot: this.storageRoot,
+      storageRoot: this.configRoot,
       claudeExecutablePath: executablePath,
       userClaudeConfigDir: this.userClaudeDir
     })
@@ -1214,7 +1214,7 @@ export class AgentRuntimeManager {
   ): Promise<ConfiguredCodexRuntimeProbe> {
     if (!codex?.resolvedPath) return {}
     const controlledAdapterPath =
-      this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.storageRoot)
+      this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.configRoot)
     if (codex.resolvedPath !== controlledAdapterPath) return {}
 
     const [adapterOutput, nativeOutput] = await Promise.all([
@@ -1327,7 +1327,7 @@ export class AgentRuntimeManager {
     const codexNativePath =
       codexRuntime.codexComponents?.nativeCliPath ?? settings.codex?.nativePath
     const controlledAdapterPath =
-      this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.storageRoot)
+      this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.configRoot)
     this.storeReusableRuntimeProbe('preflightRuntimeProbe', {
       fingerprint: runtimeProbeFingerprint({
         claudePath,

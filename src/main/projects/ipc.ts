@@ -18,7 +18,7 @@ import type { ProjectDeletionCoordinator } from './deletion-coordinator'
 import { PreviewStateRepository } from './preview-repository'
 import { getProjectDbClient } from './prisma-client'
 import { ProjectRepository } from './repository'
-import { resolveStorageRoot } from '../storage-root'
+import { resolveConfigRoot } from '../storage-root'
 
 type ProjectHandlers = {
   list: () => Promise<Project[]>
@@ -35,10 +35,10 @@ type ProjectHandlers = {
 // passed as a provider (not a resolved promise) so a failed first initialization can be retried on the
 // next request instead of being cached for the app's lifetime.
 const createDefaultProjectRepository = (): ProjectRepository =>
-  new ProjectRepository(() => getProjectDbClient(resolveStorageRoot()))
+  new ProjectRepository(() => getProjectDbClient(resolveConfigRoot()))
 
 const createDefaultPreviewStateRepository = (): PreviewStateRepository =>
-  new PreviewStateRepository(() => getProjectDbClient(resolveStorageRoot()))
+  new PreviewStateRepository(() => getProjectDbClient(resolveConfigRoot()))
 
 type ProjectDeleteHandler = Pick<
   ProjectDeletionCoordinator,

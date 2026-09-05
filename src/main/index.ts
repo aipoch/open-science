@@ -309,7 +309,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { installDatabaseStartupQuitGuard, registerDatabaseStartupIpc },
         { buildStartupDiagnostics },
         { getProjectDbClient },
-        { resolveStorageRoot },
+        { resolveConfigRoot },
         { SettingsDocumentStore },
         { SettingsRepository }
       ] = await Promise.all([
@@ -337,7 +337,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // Create the settings document owner before any native surface. The startup locale repository
       // and the later application Settings repository share this store, so every settings.json
       // mutation uses one serialization queue and one atomic-write implementation.
-      const settingsStore = new SettingsDocumentStore(resolveStorageRoot())
+      const settingsStore = new SettingsDocumentStore(resolveConfigRoot())
       const startupSettingsRepository = new SettingsRepository(settingsStore)
       const startupSettings = await startupSettingsRepository.getSettings()
       const localeOwner = new LocalePreferenceOwner(
@@ -363,7 +363,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         reportBlocked: databaseStartupLogging.reportBlocked,
         buildDiagnostics: (error) =>
           buildStartupDiagnostics(error, {
-            configRoot: resolveStorageRoot(),
+            configRoot: resolveConfigRoot(),
             dataRoot: startupSettings.dataRoot
           }),
         environment: {
@@ -375,7 +375,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         },
         verifyDatabase: async (onProgress) => {
           await getProjectDbClient(
-            resolveStorageRoot(),
+            resolveConfigRoot(),
             databaseStartupLogging.migrationOptions(onProgress)
           )
         }

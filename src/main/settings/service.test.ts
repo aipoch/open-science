@@ -204,7 +204,7 @@ const createService = (
   new SettingsService({
     repository,
     log: options.log ?? silentLog,
-    storageRoot,
+    configRoot: storageRoot,
     // Point at a non-existent user Claude dir so tests never read the real ~/.claude. The same
     // path is now used by claude-isolated skill-scanning; claude-default is gone.
     userClaudeDir: options.userClaudeDir ?? join(storageRoot, 'no-user-claude'),
@@ -3905,7 +3905,7 @@ describe('SettingsService: skills', () => {
   const createSkillService = async (): Promise<InstanceType<typeof SettingsService>> =>
     new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle())
     })
 
@@ -4224,7 +4224,7 @@ describe('SettingsService: skills', () => {
     )
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       userClaudeDir,
       skillRegistry: new SkillRegistry(skillBundle)
     })
@@ -4307,7 +4307,7 @@ describe('SettingsService: skills', () => {
     await chmod(adapterPath, 0o755)
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle()),
       codexDetectDeps: {
         env: { PATH: dirname(adapterPath) },
@@ -4415,7 +4415,7 @@ describe('SettingsService: skills', () => {
     )
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle())
     })
     const empty = await repository.getSettings()
@@ -4448,7 +4448,7 @@ describe('SettingsService: skills', () => {
     await chmod(adapterPath, 0o755)
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle()),
       codexDetectDeps: {
         env: {},
@@ -4535,7 +4535,7 @@ describe('SettingsService: skills', () => {
   it('uses the frontmatter name when nudging an imported skill', async () => {
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle()),
       userSkills: {
         list: () =>
@@ -4564,7 +4564,7 @@ describe('SettingsService: skills', () => {
     const importFromGitHub = vi.fn().mockResolvedValue({ status: 'imported', id: 'imported-x' })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle()),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { importFromGitHub, list: () => Promise.resolve([]) } as any
@@ -4585,7 +4585,7 @@ describe('SettingsService: skills', () => {
     const scanRepo = vi.fn().mockResolvedValue([])
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { scanRepo } as any
     })
@@ -4616,7 +4616,7 @@ describe('SettingsService: skills', () => {
     vi.stubGlobal('fetch', fetch)
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { scanRepo } as any
     })
@@ -4645,7 +4645,7 @@ describe('SettingsService: skills', () => {
     })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { previewGitHubSkill } as any
     })
@@ -4864,7 +4864,7 @@ describe('checkEnvironment', () => {
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       detectDeps: {
         env: {},
         homePath: '/home',
@@ -4889,7 +4889,7 @@ describe('checkEnvironment', () => {
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       detectDeps: {
         env: { PATH: '/other-bin' },
         homePath: '/home',
@@ -4916,7 +4916,7 @@ describe('checkEnvironment', () => {
     await repository.setClaudeInfo({ resolvedPath: stale, version: '2.1.0' })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       detectDeps: {
         env: { PATH: '/found-bin' },
         homePath: '/home',
@@ -6300,7 +6300,7 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
       .mockRejectedValue(new Error(`EACCES: ${join(hostSkillPath, 'SKILL.md')}`))
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       userClaudeDir,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { previewAgentHomeSkill } as any

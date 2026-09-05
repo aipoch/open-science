@@ -200,8 +200,8 @@ export class DeviceCredentialStore {
   private readonly filePath: string
   private operation = Promise.resolve()
 
-  constructor(storageRoot: string) {
-    this.filePath = join(storageRoot, 'credentials.json')
+  constructor(configRoot: string) {
+    this.filePath = join(configRoot, 'credentials.json')
   }
 
   async list(): Promise<StoredDeviceCredential[]> {

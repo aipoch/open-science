@@ -342,7 +342,7 @@ describe('resolveDataRoot / initDataRoot', () => {
   })
 })
 
-describe('resolveStorageRoot', () => {
+describe('resolveConfigRoot', () => {
   beforeEach(() => {
     appMock.isPackaged = false
     appMock.getPath.mockClear()
@@ -354,13 +354,13 @@ describe('resolveStorageRoot', () => {
   })
 
   it('uses the normal development directory by default', () => {
-    expect(resolveStorageRoot()).toBe(join('/Users/tester', '.open-science-project'))
+    expect(resolveConfigRoot()).toBe(join('/Users/tester', '.open-science-project'))
   })
 
   it('uses an absolute development preview override without changing HOME', () => {
     vi.stubEnv('OPEN_SCIENCE_STORAGE_ROOT', '/tmp/open-science-preview/storage')
 
-    expect(resolveStorageRoot()).toBe(normalize('/tmp/open-science-preview/storage'))
+    expect(resolveConfigRoot()).toBe(normalize('/tmp/open-science-preview/storage'))
     expect(appMock.getPath).not.toHaveBeenCalled()
   })
 
@@ -368,14 +368,14 @@ describe('resolveStorageRoot', () => {
     appMock.isPackaged = true
     vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', '/tmp/open-science-certification/storage')
 
-    expect(resolveStorageRoot()).toBe(normalize('/tmp/open-science-certification/storage'))
+    expect(resolveConfigRoot()).toBe(normalize('/tmp/open-science-certification/storage'))
     expect(appMock.getPath).not.toHaveBeenCalled()
   })
 
   it('rejects an ambiguous relative E2E root', () => {
     vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', 'certification/storage')
 
-    expect(() => resolveStorageRoot()).toThrow(
+    expect(() => resolveConfigRoot()).toThrow(
       'OPEN_SCIENCE_E2E_STORAGE_ROOT must be an absolute path'
     )
   })
@@ -383,13 +383,17 @@ describe('resolveStorageRoot', () => {
   it('rejects an ambiguous relative preview override', () => {
     vi.stubEnv('OPEN_SCIENCE_STORAGE_ROOT', 'preview/storage')
 
-    expect(() => resolveStorageRoot()).toThrow('must be an absolute path')
+    expect(() => resolveConfigRoot()).toThrow('must be an absolute path')
   })
 
   it('ignores the preview override in packaged builds', () => {
     appMock.isPackaged = true
     vi.stubEnv('OPEN_SCIENCE_STORAGE_ROOT', '/tmp/ignored')
 
-    expect(resolveStorageRoot()).toBe(join('/Users/tester', '.open-science'))
+    expect(resolveConfigRoot()).toBe(join('/Users/tester', '.open-science'))
+  })
+
+  it('keeps resolveStorageRoot as a compatibility alias', () => {
+    expect(resolveStorageRoot()).toBe(resolveConfigRoot())
   })
 })
