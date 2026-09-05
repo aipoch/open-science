@@ -207,7 +207,11 @@ export const respondToSessionPlan = async (
   try {
     await refreshSessionPlanProjection({ ...target, authoritativeProjection })
   } catch (error) {
-    // The command committed. Existing Plan events and later reads can refresh its projection.
+    // A stale cached projection suppresses the existing recovery hook. Invalidate only
+    // the submitted version/revision, preserving a newer projection delivered meanwhile.
+    if ('feedback' in payload) {
+      useSessionStore.getState().invalidateActivePlanProjection(target.sessionId, target.projection)
+    }
     console.warn('Plan response committed, but projection refresh failed.', error)
   }
 }

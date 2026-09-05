@@ -974,6 +974,7 @@ describe('Session Store architecture', () => {
       'finishCompaction',
       'finishRun',
       'interruptRun',
+      'invalidateActivePlanProjection',
       'markResumed',
       'prepareInterruptedTurnContinuation',
       'recordArtifactError',

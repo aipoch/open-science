@@ -533,6 +533,73 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.view.canEditDraft).toBe(true)
   })
 
+  it('retries a failed feedback refresh while an old projection was cached', async () => {
+    vi.useFakeTimers()
+    const pending = {
+      ...planProjection('pending'),
+      originatingPromptMessageId: planOriginMessage.id
+    }
+    useSessionStore.setState({
+      sessions: [
+        createSession({
+          status: 'waiting-plan-approval',
+          messages: [planOriginMessage],
+          activePlanProjection: pending,
+          runtimeContext: {
+            version: 1,
+            revision: pending.revision,
+            plan: {
+              artifactId: pending.artifactId,
+              artifactVersionId: pending.artifactVersionId,
+              artifactChecksum: pending.artifactChecksum,
+              approval: 'pending',
+              stepStatuses: {},
+              originatingPromptMessageId: planOriginMessage.id,
+              document: pending.document
+            }
+          }
+        })
+      ],
+      selectedSessionId: 'sess-a'
+    })
+    vi.mocked(window.api.acp.respondPlan).mockResolvedValue({
+      kind: 'feedback',
+      message: {
+        id: 'committed-feedback',
+        content: 'Split by cohort.',
+        createdAt: 2,
+        responseToMessageId: planOriginMessage.id
+      },
+      planRevision: pending.revision + 1
+    })
+    vi.mocked(window.api.acp.getPlanProjection).mockRejectedValue(
+      new Error('temporary refresh failure')
+    )
+    await renderPage()
+    await act(async () => {
+      await conversationProps.conversation.actions.submit.restoredPlan({
+        feedback: 'Split by cohort.'
+      })
+    })
+    expect(
+      useSessionStore
+        .getState()
+        .sessions[0].messages.some((message) => message.id === 'committed-feedback')
+    ).toBe(true)
+    const callsAfterSubmission = vi.mocked(window.api.acp.getPlanProjection).mock.calls.length
+    const latest = { ...pending, revision: pending.revision + 1 }
+    vi.mocked(window.api.acp.getPlanProjection).mockResolvedValue(latest)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000)
+    })
+    expect(vi.mocked(window.api.acp.getPlanProjection).mock.calls.length).toBeGreaterThan(
+      callsAfterSubmission
+    )
+    expect(useSessionStore.getState().sessions[0].activePlanProjection?.revision).toBe(
+      latest.revision
+    )
+  })
+
   it('submits restored Plan-card feedback through the atomic human-gated Plan command', async () => {
     const pending = {
       ...planProjection('pending'),

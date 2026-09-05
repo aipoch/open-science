@@ -2696,6 +2696,47 @@ describe('session store', () => {
     ).toBe(current.messages.at(-1)?.id)
   })
 
+  it('invalidates only the matching transient Plan cache without changing durable Session data', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan cache recovery',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const projection = createPlanProjection('version-1')
+    useSessionStore.getState().setActivePlanProjection('session-1', projection)
+    const before = useSessionStore.getState().sessions[0]
+    const durable = toPersistedSession(before)
+    const listener = vi.fn()
+    const unsubscribe = useSessionStore.subscribe(listener)
+    for (const expected of [
+      { ...projection, artifactVersionId: 'old-version' },
+      { ...projection, revision: projection.revision - 1 }
+    ]) {
+      useSessionStore.getState().invalidateActivePlanProjection('session-1', expected)
+      expect(useSessionStore.getState().sessions[0]).toBe(before)
+    }
+    expect(listener).not.toHaveBeenCalled()
+
+    useSessionStore.getState().invalidateActivePlanProjection('session-1', projection)
+    const after = useSessionStore.getState().sessions[0]
+    expect(after.activePlanProjection).toBeUndefined()
+    expect(after.runtimeContext).toBe(before.runtimeContext)
+    expect(after.messages).toBe(before.messages)
+    expect(after.status).toBe(before.status)
+    expect(toPersistedSession(after)).toEqual(durable)
+    expect(listener).toHaveBeenCalledTimes(1)
+    useSessionStore.getState().invalidateActivePlanProjection('session-1', projection)
+    expect(listener).toHaveBeenCalledTimes(1)
+    unsubscribe()
+  })
+
   it('restores branch-bound Plan history after saving and hydrating a Session', () => {
     useSessionStore.getState().hydrateSessions(
       [
@@ -6034,6 +6075,7 @@ describe('session store public contract', () => {
         'hydrateSessionSummaries',
         'hydrateSessions',
         'interruptRun',
+        'invalidateActivePlanProjection',
         'markDisconnected',
         'markResumed',
         'markSpecialistSwitchResetRequired',

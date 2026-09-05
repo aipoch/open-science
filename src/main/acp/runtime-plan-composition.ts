@@ -393,7 +393,10 @@ const composeAcpRuntimePlanWorkflow = (
     const result = await service.discardUnavailable({
       ...input,
       authorizeDiscard: async (plan) => {
+        // Legacy Plans may predate origin provenance. Explicit cleanup remains bound to
+        // the exact Session/version/revision and the current interaction below.
         if (
+          plan.originatingPromptMessageId !== undefined &&
           !(await containsDurableBranchMessage(
             input.projectId,
             input.sessionId,

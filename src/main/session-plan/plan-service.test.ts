@@ -8,6 +8,8 @@ import {
 import type { ActivePlanProjection, PlanResponseIdentity } from '../../shared/session-plan/contract'
 import { PlanService, type PlanServiceDependencies } from './plan-service'
 import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
+import { composeAcpRuntimePlanWorkflow } from '../acp/runtime-plan-composition'
+import { AcpSessionInteractionOwner } from '../acp/session-interaction-owner'
 
 const content = {
   task_summary: 'Analyze one dataset',
@@ -2047,6 +2049,29 @@ describe('PlanService', () => {
         }
       }
     }
+
+    it('permits confirmed discard for a legacy Plan without origin provenance', async () => {
+      const fixture = await unavailable()
+      const legacy = { ...fixture.context().plan! }
+      delete legacy.originatingPromptMessageId
+      fixture.setContext({ ...fixture.context(), plan: legacy })
+      const containsMessageOnActiveBranch = vi.fn(async () => false)
+      const workflow = composeAcpRuntimePlanWorkflow(
+        { plan: { sessions: { containsMessageOnActiveBranch } } } as never,
+        {
+          planService: fixture.service,
+          planInteractions: fixture.interactions,
+          sessionInteractions: new AcpSessionInteractionOwner()
+        } as never,
+        { publication: { pushEvent: vi.fn() } } as never
+      )
+      const result = await workflow
+        .discardUnavailable(fixture.identity)
+        .catch((error: unknown) => error)
+      expect(result).toEqual({ revision: fixture.identity.expectedRevision + 1 })
+      expect(fixture.context().plan).toBeUndefined()
+      expect(containsMessageOnActiveBranch).not.toHaveBeenCalled()
+    })
 
     it('preserves failed rejection evidence, then permits explicit discard', async () => {
       const fixture = await unavailable()
