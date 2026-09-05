@@ -100,7 +100,6 @@ export type ChatSession = Omit<
   agentPromptInFlight?: boolean
   // Transient provenance owner for responses emitted while an interrupted turn is resumed.
   activeRunRuntimeSegmentId?: string
-  branchContextResetRequired?: boolean
   specialistSwitchResetRequired?: boolean
   // Transient: a restored durable choice resumed into a fresh Agent context. Keep the request id
   // until its hidden continuation is accepted so a renderer/IPC retry replays the same history.
@@ -299,7 +298,6 @@ export const toPersistedSession = (
     awaitingFirstAgentOutput,
     agentPromptInFlight,
     activeRunRuntimeSegmentId,
-    branchContextResetRequired,
     specialistSwitchResetRequired,
     elicitationHistoryReplayRequestId,
     branchSwitchBlocked,
@@ -328,7 +326,6 @@ export const toPersistedSession = (
   void awaitingFirstAgentOutput
   void agentPromptInFlight
   void activeRunRuntimeSegmentId
-  void branchContextResetRequired
   void specialistSwitchResetRequired
   void elicitationHistoryReplayRequestId
   void branchSwitchBlocked

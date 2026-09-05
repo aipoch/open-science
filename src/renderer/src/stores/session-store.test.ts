@@ -6309,7 +6309,6 @@ describe('session store public contract', () => {
       'agentStatus',
       'awaitingFirstAgentOutput',
       'agentPromptInFlight',
-      'branchContextResetRequired',
       'specialistSwitchResetRequired',
       'elicitationHistoryReplayRequestId',
       'branchSwitchBlocked',

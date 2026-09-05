@@ -9,7 +9,11 @@ import type {
   PersistedChatSession,
   SessionPdfContext
 } from '../../../../shared/session-persistence'
-import { SessionSizeLimitError } from '../../../../shared/session-persistence'
+import {
+  createSessionFile,
+  normalizeSessionFile,
+  SessionSizeLimitError
+} from '../../../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import {
   MAX_COMPOSER_ATTACHMENTS,
@@ -3433,6 +3437,228 @@ describe('workspace agent message sending', () => {
       messages: [expect.objectContaining({ content: 'Existing prompt' })]
     })
   })
+
+  it.each([
+    ['edit-first', 'attachments'],
+    ['edit-middle', 'attachments'],
+    ['resume', 'attachments'],
+    ['resume', 'event-drain'],
+    ['edit-middle', 'pdf'],
+    ['edit-middle', 'admission']
+  ] as const)(
+    'B01: replays visible history on ordinary retry after %s resets context and %s fails',
+    async (mode, failureStage) => {
+      const sessionId = 'transport-session-1'
+      const first = useSessionStore.getState().appendUserMessage({
+        sessionId,
+        content: 'The sample is blue.',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      })!
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId,
+        streamId: 'answer-1',
+        eventId: 'answer-1',
+        content: 'I will remember blue.'
+      })
+      useSessionStore.getState().finishRun(sessionId)
+      const middle = useSessionStore.getState().appendUserMessage({
+        sessionId,
+        content: 'Keep the original sample.'
+      })!
+      useSessionStore.getState().finishRun(sessionId)
+      const visibleHistory = useSessionStore
+        .getState()
+        .sessions[0].messages.map((message) => message.content)
+      const pdfSource = {
+        sourceKind: 'upload-version' as const,
+        sourceFileId: 'file-1',
+        sourceVersionId: 'version-1'
+      }
+      const failure = new Error(`${failureStage} failed`)
+      vi.stubGlobal('window', {
+        api: {
+          sessions: {
+            ...createSessionPolicyApi(),
+            filterPdfContextCandidates: vi
+              .fn()
+              .mockResolvedValue({ sources: [pdfSource], pendingAttachmentIds: [] }),
+            linkPdfContext: vi.fn().mockRejectedValue(failure)
+          },
+          uploads: {
+            finalizeSession: vi.fn(async () => {
+              if (failureStage === 'attachments') throw failure
+              if (failureStage === 'admission') runtime.state.promptInFlightSessionIds = [sessionId]
+              return [createAttachment()]
+            })
+          }
+        }
+      })
+      const runtime = {
+        state: createSnapshot(mode === 'resume' ? [] : [sessionId]),
+        createSession: vi.fn(),
+        resumeSession: vi.fn().mockResolvedValue({ sessionId, contextReset: true }),
+        resetSessionContext: vi.fn().mockResolvedValue({ sessionId }),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot([sessionId]))
+      }
+      expect(
+        await sendWorkspaceMessage(
+          runtime,
+          {
+            sessionId,
+            text: 'Change the sample to red.',
+            attachments: [createAttachment()],
+            cwd: '/workspace/project',
+            projectId: 'project-1',
+            pendingPdfContextVersions: failureStage === 'pdf' ? [pdfSource] : undefined,
+            truncateFromMessageId:
+              mode === 'resume'
+                ? undefined
+                : mode === 'edit-first'
+                  ? first.messageId
+                  : middle.messageId
+          },
+          {
+            drainRuntimeEvents:
+              failureStage === 'event-drain' ? vi.fn().mockRejectedValue(failure) : undefined
+          }
+        )
+      ).toBeUndefined()
+      expect(
+        mode === 'resume' ? runtime.resumeSession : runtime.resetSessionContext
+      ).toHaveBeenCalledOnce()
+      expect(runtime.sendPrompt).not.toHaveBeenCalled()
+      expect(
+        useSessionStore.getState().sessions[0].messages.map((message) => message.content)
+      ).toEqual(visibleHistory)
+
+      runtime.state = createSnapshot([sessionId])
+      expect(
+        await sendWorkspaceMessage(runtime, {
+          sessionId,
+          text: 'What color is the sample?',
+          cwd: '/workspace/project',
+          projectId: 'project-1'
+        })
+      ).toBeDefined()
+      await flushRuntimeTasks()
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+      const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
+      for (const content of visibleHistory)
+        expect(preamble).toEqual(expect.stringContaining(content))
+      expect(preamble).not.toContain('Change the sample to red.')
+      expect(runtime.sendPrompt.mock.calls[0]?.[10]).toBe(true)
+      expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toBeUndefined()
+    }
+  )
+
+  it.each([
+    [false, false],
+    [true, false],
+    [false, true]
+  ])(
+    'B03: sends the selected branch after restart (fresh resume=%s, reset fails once=%s)',
+    async (contextReset, resetFailsOnce) => {
+      const sessionId = 'transport-session-1'
+      const first = useSessionStore.getState().appendUserMessage({
+        sessionId,
+        content: 'The sample is blue.',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      })!
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId,
+        streamId: 'blue-answer',
+        eventId: 'blue-answer',
+        content: 'I remember blue.'
+      })
+      useSessionStore.getState().finishRun(sessionId)
+      const runtime = {
+        state: createSnapshot([sessionId]),
+        createSession: vi.fn(),
+        resumeSession: vi
+          .fn()
+          .mockResolvedValue({ sessionId, contextReset, providerSessionId: 'provider-red' }),
+        resetSessionContext: vi
+          .fn()
+          .mockResolvedValue({ sessionId, providerSessionId: 'provider-fresh' }),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot([sessionId]))
+      }
+      await sendWorkspaceMessage(runtime, {
+        sessionId,
+        text: 'The sample is red.',
+        truncateFromMessageId: first.messageId,
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      })
+      await flushRuntimeTasks()
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId,
+        streamId: 'red-answer',
+        eventId: 'red-answer',
+        content: 'I remember red.'
+      })
+      useSessionStore.getState().finishRun(sessionId)
+      useSessionStore.getState().markResumed(sessionId, { providerSessionId: 'provider-red' })
+      const originalBranchId =
+        useSessionStore.getState().sessions[0].conversationGraph!.branches[0].id
+      useSessionStore.getState().activateMessageBranch(sessionId, originalBranchId)
+      const file = JSON.parse(
+        JSON.stringify(
+          createSessionFile(toPersistedSession(useSessionStore.getState().sessions[0]))
+        )
+      )
+      const restored = normalizeSessionFile(file)!
+      expect(restored).toBeDefined()
+      useSessionStore.setState(createInitialSessionState())
+      useSessionStore.getState().hydrateSessions([restored])
+      expect(
+        useSessionStore.getState().sessions[0].messages.map((message) => message.content)
+      ).toEqual(['The sample is blue.', 'I remember blue.'])
+      expect(restored.providerSessionId).toBe('provider-red')
+      runtime.state = createSnapshot([])
+      runtime.resetSessionContext.mockClear()
+      runtime.sendPrompt.mockClear()
+      if (resetFailsOnce) {
+        runtime.resetSessionContext.mockRejectedValueOnce(new Error('Context reset failed'))
+        expect(
+          await sendWorkspaceMessage(runtime, {
+            sessionId,
+            text: 'What color is the sample?',
+            cwd: '/workspace/project',
+            projectId: 'project-1'
+          })
+        ).toBeUndefined()
+        expect(runtime.sendPrompt).not.toHaveBeenCalled()
+        // Another save/restart after failure must retain the obligation as well.
+        const failed = normalizeSessionFile(
+          JSON.parse(
+            JSON.stringify(
+              createSessionFile(toPersistedSession(useSessionStore.getState().sessions[0]))
+            )
+          )
+        )!
+        useSessionStore.setState(createInitialSessionState())
+        useSessionStore.getState().hydrateSessions([failed])
+      }
+      await sendWorkspaceMessage(runtime, {
+        sessionId,
+        text: 'What color is the sample?',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      })
+      await flushRuntimeTasks()
+      expect(runtime.resumeSession).toHaveBeenCalledTimes(resetFailsOnce ? 2 : 1)
+      expect(runtime.resetSessionContext).toHaveBeenCalledTimes(
+        contextReset ? 0 : resetFailsOnce ? 2 : 1
+      )
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+      expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('The sample is blue.')
+      expect(runtime.sendPrompt.mock.calls[0]?.[5]).not.toContain('The sample is red.')
+      expect(runtime.sendPrompt.mock.calls[0]?.[10]).toBe(true)
+      expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBeUndefined()
+    }
+  )
 
   it('rejects an ordinary runtime prompt while Plan approval owns the Session', async () => {
     useSessionStore.getState().appendUserMessage({

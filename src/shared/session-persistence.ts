@@ -826,6 +826,9 @@ export type PersistedChatSession = {
   // either the full completed active Branch (for an interrupted control operation) or only history
   // before an interrupted prompt. The interrupted prompt itself is never replayed.
   pendingHistoryReplay?: PersistedPendingHistoryReplay
+  // The selected Branch has not yet been accepted by the provider. Resuming its old identity
+  // must reset that context before replaying the selected history, including after a restart.
+  branchContextResetRequired?: boolean
   error?: string
   // Whether a failed run's error is worth a GitHub issue. False for a recognized failure (a provider/
   // model error the agent relayed, or one of the app's own actionable reminders); true/absent for an
@@ -4276,6 +4279,7 @@ const sanitizeSession = (
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
   if (branchSource) sanitized.branchSource = branchSource
   if (pendingHistoryReplay) sanitized.pendingHistoryReplay = pendingHistoryReplay
+  if (session.branchContextResetRequired === true) sanitized.branchContextResetRequired = true
   if (error) sanitized.error = error
   // Only meaningful alongside an error; persisted only when explicitly false (absent = reportable).
   if (error && session.errorReportable === false) sanitized.errorReportable = false
