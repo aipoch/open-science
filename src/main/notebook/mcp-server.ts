@@ -388,7 +388,9 @@ const resolveNotebookRpcFetch = (method: string): typeof fetchLocalRpc =>
   method === 'execute' ||
   method === 'executeControl' ||
   method === 'executeShell' ||
-  method === 'requestNetworkAccess'
+  method === 'requestNetworkAccess' ||
+  method === 'managePackages' ||
+  method === 'manageEnvironments'
     ? fetchLongLivedLocalRpc
     : fetchLocalRpc
 
@@ -1421,7 +1423,8 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     method: 'managePackages',
     inputSchema: managePackagesToolSchema,
     mapResult: compactManagePackagesResult,
-    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
+    progressMessage: 'Package operation is still running.'
   },
   {
     name: 'manage_environments',
@@ -1430,7 +1433,8 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     method: 'manageEnvironments',
     inputSchema: manageEnvironmentsToolSchema,
     mapResult: compactManageEnvironmentsResult,
-    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
+    progressMessage: 'Environment operation is still running.'
   },
   {
     name: 'list_memory_categories',

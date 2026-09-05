@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -122,6 +122,60 @@ describe('publishMicromambaArchives', () => {
     expect(validateWorkingRoot).toHaveBeenCalledOnce()
   })
 
+  it('validates cache ownership only before and after traversing extracted packages', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-mm-archive-tree-'))
+    roots.push(root)
+    const runtimeRoot = join(root, 'runtime')
+    const workingRoot = join(root, 'working')
+    for (let index = 0; index < 25; index += 1) {
+      await mkdir(join(workingRoot, `package-${index}`, 'lib', 'python', 'site-packages'), {
+        recursive: true
+      })
+    }
+    await writeFile(join(workingRoot, 'a-1.conda'), 'trusted')
+    const validateWorkingRoot = vi.fn(() => true)
+
+    await expect(
+      publishMicromambaArchives(
+        runtimeRoot,
+        workingRoot,
+        [authorization('a-1.conda', 'trusted')],
+        undefined,
+        validateWorkingRoot
+      )
+    ).resolves.toBe(1)
+    expect(validateWorkingRoot).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects an external directory link even when its archive digest is authorized', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-mm-archive-link-'))
+    roots.push(root)
+    const runtimeRoot = join(root, 'runtime')
+    const workingRoot = join(root, 'working')
+    const outside = join(root, 'outside')
+    await mkdir(workingRoot)
+    await mkdir(outside)
+    await writeFile(join(outside, 'a-1.conda'), 'trusted')
+    await symlink(
+      outside,
+      join(workingRoot, 'linked'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    await expect(
+      publishMicromambaArchives(
+        runtimeRoot,
+        workingRoot,
+        [authorization('a-1.conda', 'trusted')],
+        undefined,
+        () => true
+      )
+    ).rejects.toThrow(/untrusted.*(?:link|reparse)/i)
+    await expect(readFile(join(runtimeRoot, 'pkgs', 'a-1.conda'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+
   it('aborts when the validated root identity changes during traversal', async () => {
     const root = await mkdtemp(join(tmpdir(), 'os-mm-archive-traversal-'))
     roots.push(root)
@@ -129,11 +183,7 @@ describe('publishMicromambaArchives', () => {
     const workingRoot = join(root, 'working')
     await mkdir(workingRoot)
     await writeFile(join(workingRoot, 'a-1.conda'), 'trusted')
-    const validateWorkingRoot = vi
-      .fn()
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false)
+    const validateWorkingRoot = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false)
 
     await expect(
       publishMicromambaArchives(
@@ -144,7 +194,10 @@ describe('publishMicromambaArchives', () => {
         validateWorkingRoot
       )
     ).rejects.toThrow(/changed during archive traversal/i)
-    expect(validateWorkingRoot).toHaveBeenCalledTimes(3)
+    expect(validateWorkingRoot).toHaveBeenCalledTimes(2)
+    await expect(readFile(join(runtimeRoot, 'pkgs', 'a-1.conda'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
   })
 
   it('refuses to overwrite a conflicting durable archive', async () => {

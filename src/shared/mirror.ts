@@ -14,6 +14,10 @@ export type AutomaticPackageMirrorCandidate = Readonly<{
   mirror: PackageMirror
   probeUrl: string
   biocondaProbeUrl: string
+  // Package mirrors may redirect archive downloads to a fixed partner host. Keep these hosts
+  // explicit: trusting arbitrary redirect targets would let an allowed mirror bypass the Notebook
+  // network policy.
+  trustedRedirectDomains?: readonly string[]
 }>
 
 const condaRepodata = (base: string): string =>
@@ -52,7 +56,10 @@ export const AUTOMATIC_PACKAGE_MIRROR_CANDIDATES: readonly AutomaticPackageMirro
       cranMirror: 'https://mirrors.ustc.edu.cn/CRAN/'
     },
     probeUrl: condaRepodata('https://mirrors.ustc.edu.cn/'),
-    biocondaProbeUrl: biocondaRepodata('https://mirrors.ustc.edu.cn/')
+    biocondaProbeUrl: biocondaRepodata('https://mirrors.ustc.edu.cn/'),
+    // USTC documents cache-miss redirects for conda-forge/bioconda archives:
+    // https://mirrors.ustc.edu.cn/help/anaconda.html
+    trustedRedirectDomains: ['mirrors.nju.edu.cn']
   },
   {
     name: 'aliyun',
@@ -78,6 +85,7 @@ export const AUTOMATIC_PACKAGE_MIRROR_DOMAINS = [
       ]
         .filter((url): url is string => Boolean(url))
         .map((url) => new URL(url).hostname)
+        .concat(candidate.trustedRedirectDomains ?? [])
     )
   )
 ]

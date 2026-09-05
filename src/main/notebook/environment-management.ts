@@ -15,7 +15,8 @@ type NotebookEnvironmentManager = {
     name: string,
     language: NotebookLanguage,
     packages?: string[],
-    request?: Extract<ManageEnvironmentsRequest, { action: 'create' }>
+    request?: Extract<ManageEnvironmentsRequest, { action: 'create' }>,
+    signal?: AbortSignal
   ) => Promise<EnvironmentInfo>
   listEnvironments: () => EnvironmentInfo[]
   removeEnvironment: (name: string) => void
@@ -50,7 +51,11 @@ class NotebookEnvironmentManagementOwner {
     this.manager = manager
   }
 
-  async manage(request: ManageEnvironmentsRequest): Promise<ManageEnvironmentsResult> {
+  async manage(
+    request: ManageEnvironmentsRequest,
+    signal?: AbortSignal
+  ): Promise<ManageEnvironmentsResult> {
+    signal?.throwIfAborted()
     const manager = this.manager
     if (!manager) {
       throw new Error('Environment management is unavailable (no environment manager configured).')
@@ -68,29 +73,36 @@ class NotebookEnvironmentManagementOwner {
         if (request.language !== 'python' && request.language !== 'r') {
           throw new Error('Creating an environment requires a language of "python" or "r".')
         }
+        signal?.throwIfAborted()
         await this.options.ensureRecovered()
         this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
-        return this.options.environmentOperations.runMutation(name, async () => {
-          const created = await manager.createNamedEnvironment(
-            name,
-            request.language,
-            request.packages,
-            request
-          )
-          const { runtimeId } = managedRuntimeIdentity(
-            this.options.runtimeRoot,
-            request.language,
-            name
-          )
-          return {
-            created: {
+        return this.options.environmentOperations.runMutation(
+          name,
+          async () => {
+            signal?.throwIfAborted()
+            const created = await manager.createNamedEnvironment(
               name,
-              language: request.language,
-              runtimeId,
-              runnable: created.ready
+              request.language,
+              request.packages,
+              request,
+              signal
+            )
+            const { runtimeId } = managedRuntimeIdentity(
+              this.options.runtimeRoot,
+              request.language,
+              name
+            )
+            return {
+              created: {
+                name,
+                language: request.language,
+                runtimeId,
+                runnable: created.ready
+              }
             }
-          }
-        })
+          },
+          signal
+        )
       }
       case 'list':
         return { environments: manager.listEnvironments() }
@@ -113,11 +125,16 @@ class NotebookEnvironmentManagementOwner {
         }
         await this.options.ensureRecovered()
         this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
-        return this.options.environmentOperations.runMutation(name, async () => {
-          manager.removeEnvironment(name)
-          this.options.runtimeRepair.completeRemovedManagedEnvironment(name)
-          return { removed: { name } }
-        })
+        return this.options.environmentOperations.runMutation(
+          name,
+          async () => {
+            signal?.throwIfAborted()
+            manager.removeEnvironment(name)
+            this.options.runtimeRepair.completeRemovedManagedEnvironment(name)
+            return { removed: { name } }
+          },
+          signal
+        )
       }
     }
   }

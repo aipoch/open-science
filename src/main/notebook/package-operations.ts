@@ -236,7 +236,8 @@ class NotebookPackageOperations {
     }
   }
 
-  async manage(request: InstallRequest): Promise<InstallResult> {
+  async manage(request: InstallRequest, signal?: AbortSignal): Promise<InstallResult> {
+    signal?.throwIfAborted()
     const resolution = await this.admission.resolveTarget(request)
     try {
       await this.options.ensureRecovered()
@@ -247,7 +248,7 @@ class NotebookPackageOperations {
       )
       const admission = await this.admission.admit(request, resolution)
       if (admission.status === 'refused') return admission.result
-      const result = await this.mutation.mutate({ target: admission.target, mirror })
+      const result = await this.mutation.mutate({ target: admission.target, mirror }, signal)
       if (result.needsRestart && request.language === 'r') {
         this.options.environmentOperations.recommendRestart('r', admission.target.environmentName)
         for (const session of this.options.sessions()) this.options.notifyChanged(session)

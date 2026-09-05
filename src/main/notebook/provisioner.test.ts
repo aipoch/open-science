@@ -1669,6 +1669,32 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
     resolvePyVerify?.()
     await py
   })
+
+  it('passes the named-environment caller signal to micromamba', async () => {
+    const root = makeRoot()
+    const { deps } = makeNamedEnvDeps(root)
+    const runArgv = vi.fn(deps.runArgv)
+    const provisioner = new DefaultRuntimeProvisioner({ ...deps, runArgv })
+    const cancellation = new AbortController()
+
+    await provisioner.createNamedEnvironment(
+      'my-analysis',
+      'python',
+      [],
+      undefined,
+      cancellation.signal
+    )
+
+    expect(runArgv).toHaveBeenCalledWith(
+      expect.any(Array),
+      cancellation.signal,
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Object),
+      expect.any(Number),
+      expect.any(Object)
+    )
+  })
 })
 
 describe('DefaultRuntimeProvisioner.upgradeIfNeeded (shared pkgs cache lock)', () => {
