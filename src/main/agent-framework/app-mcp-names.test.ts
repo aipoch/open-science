@@ -72,7 +72,31 @@ describe('resolveCanonicalMcpToolIdentity', () => {
   it('states the feedback-to-decision policy once in stable Plan guidance', () => {
     expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND.match(/kind: feedback/g)).toHaveLength(1)
     expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
-      'for ambiguous or conditional language, do not grant execution authority'
+      'for ambiguous or conditional language, do not infer a decision'
+    )
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain('is active Plan context')
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain('current durable Message Branch')
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).not.toContain('execution authority')
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).not.toContain('bind it to the current interaction')
+  })
+
+  it('defines when later Messages replace or continue an approved Plan', () => {
+    const ownershipRule =
+      'The originating Conversation Turn retains ownership of the Plan; related later ordinary or application Attempts on the same durable Message Branch receive it only as active context.'
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(ownershipRule)
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
+      'The latest explicit user Message takes precedence over the active Plan. Treat application Messages as contextual events and judge how they relate to the approved steps without letting them override user intent.'
+    )
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
+      'If it changes the goal, desired outputs, risks, or material scope, generate a replacement Plan revision and wait for approval before doing the changed work.'
+    )
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
+      'Routine execution details and progress updates within the approved scope do not require another approval.'
+    )
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND.indexOf(ownershipRule)).toBeLessThan(
+      SESSION_PLAN_SYSTEM_PROMPT_APPEND.indexOf(
+        'The latest explicit user Message takes precedence over the active Plan. Treat application Messages as contextual events and judge how they relate to the approved steps without letting them override user intent.'
+      )
     )
   })
 

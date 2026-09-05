@@ -62,7 +62,7 @@ describe('WorkspaceAgentLoadingRow', () => {
     useNotebookEnvStore.setState({
       progress: {
         phase: 'create-r',
-        message: 'Creating default-r environment…',
+        event: { code: 'environment-create', environment: 'default-r' },
         progress: 0.45,
         scope: 'r',
         sessionId: 's1',
@@ -81,7 +81,7 @@ describe('WorkspaceAgentLoadingRow', () => {
     useNotebookEnvStore.setState({
       progress: {
         phase: 'create-r',
-        message: 'Creating default-r environment…',
+        event: { code: 'environment-create', environment: 'default-r' },
         progress: 0.45,
         scope: 'r',
         sessionId: 's1',

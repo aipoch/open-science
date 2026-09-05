@@ -17,7 +17,14 @@ export const DownloadProgressLine = ({
       <div className="mb-1 text-xs text-muted-foreground tabular-nums">
         {formatProgressLine(t, progress)}
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-300">
+      <div
+        className="h-1.5 w-full overflow-hidden rounded-full bg-bg-300"
+        role="progressbar"
+        aria-label={t('Download progress')}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={known ? Math.round(progress.percent!) : undefined}
+      >
         <div
           className={`h-full origin-left rounded-full bg-primary transition-transform duration-150 ease-out motion-reduce:transition-none ${
             reconnecting ? 'animate-pulse' : ''

@@ -205,7 +205,7 @@ const createService = (
   new SettingsService({
     repository,
     log: options.log ?? silentLog,
-    storageRoot,
+    configRoot: storageRoot,
     // Point at a non-existent user Claude dir so tests never read the real ~/.claude. The same
     // path is now used by claude-isolated skill-scanning; claude-default is gone.
     userClaudeDir: options.userClaudeDir ?? join(storageRoot, 'no-user-claude'),
@@ -727,6 +727,7 @@ describe('SettingsService: providers', () => {
         apiEndpoints: ['responses'],
         models: [
           'gpt-5.6-sol',
+          'gpt-6-astra',
           'gpt-5.6-terra',
           'gpt-5.6-luna',
           'gpt-5.5',
@@ -3906,7 +3907,7 @@ describe('SettingsService: skills', () => {
   const createSkillService = async (): Promise<InstanceType<typeof SettingsService>> =>
     new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle())
     })
 
@@ -4225,7 +4226,7 @@ describe('SettingsService: skills', () => {
     )
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       userClaudeDir,
       skillRegistry: new SkillRegistry(skillBundle)
     })
@@ -4308,7 +4309,7 @@ describe('SettingsService: skills', () => {
     await chmod(adapterPath, 0o755)
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle()),
       codexDetectDeps: {
         env: { PATH: dirname(adapterPath) },
@@ -4416,7 +4417,7 @@ describe('SettingsService: skills', () => {
     )
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle())
     })
     const empty = await repository.getSettings()
@@ -4449,7 +4450,7 @@ describe('SettingsService: skills', () => {
     await chmod(adapterPath, 0o755)
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle()),
       codexDetectDeps: {
         env: {},
@@ -4536,7 +4537,7 @@ describe('SettingsService: skills', () => {
   it('uses the frontmatter name when nudging an imported skill', async () => {
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle()),
       userSkills: {
         list: () =>
@@ -4565,7 +4566,7 @@ describe('SettingsService: skills', () => {
     const importFromGitHub = vi.fn().mockResolvedValue({ status: 'imported', id: 'imported-x' })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle()),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { importFromGitHub, list: () => Promise.resolve([]) } as any
@@ -4586,7 +4587,7 @@ describe('SettingsService: skills', () => {
     const scanRepo = vi.fn().mockResolvedValue([])
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { scanRepo } as any
     })
@@ -4617,7 +4618,7 @@ describe('SettingsService: skills', () => {
     vi.stubGlobal('fetch', fetch)
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { scanRepo } as any
     })
@@ -4646,7 +4647,7 @@ describe('SettingsService: skills', () => {
     })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { previewGitHubSkill } as any
     })
@@ -4916,7 +4917,7 @@ describe('checkEnvironment', () => {
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       detectDeps: {
         env: {},
         homePath: '/home',
@@ -4941,7 +4942,7 @@ describe('checkEnvironment', () => {
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       detectDeps: {
         env: { PATH: '/other-bin' },
         homePath: '/home',
@@ -4968,7 +4969,7 @@ describe('checkEnvironment', () => {
     await repository.setClaudeInfo({ resolvedPath: stale, version: '2.1.0' })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       detectDeps: {
         env: { PATH: '/found-bin' },
         homePath: '/home',
@@ -5314,19 +5315,19 @@ describe('SettingsService: reasoning effort', () => {
   it('uses the OpenAI and Anthropic registries for subscription models', async () => {
     const service = createService()
     const codex = (await service.upsertProvider({ type: 'codex-isolated' })).providers[0]
-    await service.setActiveProvider(codex.id, 'gpt-5.6-sol')
+    await service.setActiveProvider(codex.id, 'gpt-6-astra')
 
-    expect(await service.resolveActiveReasoningEffort('max')).toBe('ultra')
+    expect(await service.resolveActiveReasoningEffort('max')).toBe('max')
 
     const claude = (
       await service.upsertProvider({
         type: 'claude-shared',
-        model: 'claude-haiku-4-5-20251001'
+        model: 'claude-fable-5-1'
       })
     ).providers.find((provider) => provider.type === 'claude-shared')!
-    await service.setActiveProvider(claude.id, 'claude-haiku-4-5-20251001')
+    await service.setActiveProvider(claude.id, 'claude-fable-5-1')
 
-    expect(await service.resolveActiveReasoningEffort('max')).toBe('default')
+    expect(await service.resolveActiveReasoningEffort('max')).toBe('max')
   })
 
   it('does not guess an effort profile for an unpinned Codex subscription model', async () => {
@@ -6352,7 +6353,7 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
       .mockRejectedValue(new Error(`EACCES: ${join(hostSkillPath, 'SKILL.md')}`))
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       userClaudeDir,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { previewAgentHomeSkill } as any

@@ -357,7 +357,6 @@ const planProjectionMatchesRuntimePlan = (
     projection.originatingPromptMessageId === plan.originatingPromptMessageId &&
     projection.materializedAt === plan.materializedAt &&
     projection.approval === plan.approval &&
-    projection.continuationState === plan.continuation?.state &&
     JSON.stringify(projection.stepStatuses) === JSON.stringify(plan.stepStatuses)
   )
 

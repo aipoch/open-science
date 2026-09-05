@@ -328,6 +328,24 @@ const matchesPersistedPlanProjection = (
   )
 }
 
+const projectRuntimePlanHistoryAuthority = (
+  incoming: Pick<PersistedChatSession, 'planHistoryProjections' | 'runtimeContext'>
+): ActivePlanProjection[] | undefined => {
+  const byArtifactVersionId = new Map<string, ActivePlanProjection>()
+  // Runtime lifecycle events carry a complete Main-owned Session projection. An omitted history is
+  // therefore an authoritative clear; genuinely older echoes are rejected by the revision guard.
+  for (const projection of incoming.planHistoryProjections ?? []) {
+    byArtifactVersionId.set(projection.artifactVersionId, projection)
+  }
+
+  const currentRuntimeArtifactVersionId = incoming.runtimeContext?.plan?.artifactVersionId
+  return sanitizePlanHistoryProjections(
+    [...byArtifactVersionId.values()].filter(
+      ({ artifactVersionId }) => artifactVersionId !== currentRuntimeArtifactVersionId
+    )
+  )
+}
+
 const withTransientSessionState = (
   session: PersistedChatSession,
   source: ChatSession
@@ -715,6 +733,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           interactionState,
           runtimeContext: session.runtimeContext,
           activePlanProjection,
+          planHistoryProjections: projectRuntimePlanHistoryAuthority(session),
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
         markExternallyHydratedSession(projected, session)

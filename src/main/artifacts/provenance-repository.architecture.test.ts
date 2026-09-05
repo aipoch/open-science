@@ -401,6 +401,7 @@ describe('Artifact Provenance repository architecture', () => {
       [
         'src/main/artifacts/provenance-lifecycle-contract.test.ts',
         'src/main/artifacts/provenance-dependency-read.test.ts',
+        'src/main/artifacts/provenance-message-snapshot-durability.test.ts',
         'src/main/artifacts/provenance-message-snapshot.test.ts',
         'src/main/artifacts/provenance-repository.architecture.test.ts',
         'src/main/artifacts/provenance-repository.test.ts',

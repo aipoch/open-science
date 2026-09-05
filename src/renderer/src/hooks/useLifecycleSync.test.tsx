@@ -16,6 +16,7 @@ import {
   type SessionUpsertEvent
 } from '../../../shared/lifecycle-events'
 import type { Project } from '../../../shared/projects'
+import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import { hasCurrentRunningDelegatedAttempt } from '../../../shared/delegated-work-projection'
 import {
   createLinearConversationGraph,
@@ -79,6 +80,36 @@ const session: SessionUpsertEvent['session'] = {
   messages: [],
   createdAt: 1,
   updatedAt: 1
+}
+
+const completedPlanHistoryProjection: ActivePlanProjection = {
+  artifactId: 'historical-plan',
+  artifactVersionId: 'historical-plan-version',
+  artifactChecksum: 'b'.repeat(64),
+  originatingPromptMessageId: 'historical-plan-prompt',
+  revision: 1,
+  approval: 'approved',
+  lifecycle: 'completed',
+  document: {
+    schema_version: 1,
+    task_summary: 'Completed historical Plan',
+    phases: [
+      {
+        name: 'Execution',
+        delegations: [
+          {
+            name: 'Primary agent',
+            steps: [{ title: 'Finish history', description: 'Complete the work.' }]
+          }
+        ]
+      }
+    ],
+    desired_outputs: [],
+    feasibility: { confidence: 'high', rationale: 'The work is complete.' }
+  },
+  stepStatuses: { 'Finish history': { status: 'completed', updatedAt: 1 } },
+  stepStates: { 'Finish history': { status: 'completed' } },
+  counts: { phases: 1, delegations: 1, steps: 1, completed: 1, inProgress: 0 }
 }
 
 describe('useLifecycleSync', () => {
@@ -1055,6 +1086,7 @@ describe('useLifecycleSync', () => {
           revision: 3,
           status: 'waiting-plan-approval',
           updatedAt: replyTimestamp,
+          planHistoryProjections: [completedPlanHistoryProjection],
           runtimeContext: {
             version: 1,
             revision: 1,
@@ -1074,7 +1106,10 @@ describe('useLifecycleSync', () => {
     expect(projected).toMatchObject({
       revision: 3,
       status: 'waiting-plan-approval',
-      runtimeContext: { revision: 1, plan: { approval: 'pending' } }
+      runtimeContext: { revision: 1, plan: { approval: 'pending' } },
+      planHistoryProjections: [
+        expect.objectContaining({ artifactVersionId: 'historical-plan-version' })
+      ]
     })
     expect(projected.messages.map((message) => message.content)).toEqual([
       'Keep this live prompt',

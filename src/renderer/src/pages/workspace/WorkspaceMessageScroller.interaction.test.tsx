@@ -4242,7 +4242,6 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       revision: 1,
       approval: 'pending',
       lifecycle: 'awaiting_approval',
-      requiresExplicitContinuation: false,
       document: {
         schema_version: 1,
         task_summary: 'Analyze the dataset',

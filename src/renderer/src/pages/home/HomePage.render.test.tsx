@@ -94,7 +94,6 @@ const pendingPlan: ActivePlanProjection = {
   revision: 1,
   approval: 'pending',
   lifecycle: 'awaiting_approval',
-  requiresExplicitContinuation: false,
   document: {
     schema_version: 1,
     task_summary: 'Review the generated plan',
@@ -613,7 +612,7 @@ describe('HomePage activity overview', () => {
     expect(document.body.textContent).not.toContain('Save changes')
   })
 
-  it('disables Project archive while any current delegated Attempt is running', async () => {
+  it('explains unavailable archive in menu content without relying on native title', async () => {
     useProjectStore.setState({
       ...createInitialProjectState(),
       projects: [project],
@@ -644,8 +643,11 @@ describe('HomePage activity overview', () => {
 
     const archiveItem = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
-    ).find((item) => item.textContent?.trim() === 'Archive')
+    ).find((item) => item.textContent?.trim().startsWith('Archive'))
     expect(archiveItem?.getAttribute('aria-disabled')).toBe('true')
+    expect(document.body.querySelector('[role="menu"]')?.textContent).toContain(
+      'Finish or stop active sessions before archiving this project.'
+    )
   })
 
   it('pins and unpins a Project from the first menu action', async () => {

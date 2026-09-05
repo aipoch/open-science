@@ -34,11 +34,20 @@ class NetworkProxySettingsOwner {
     try {
       await this.options.apply(networkProxy)
     } catch (error) {
+      const rollbackErrors: unknown[] = []
       try {
         await this.options.repository.setNetworkProxy(previous)
       } catch (rollbackError) {
+        rollbackErrors.push(rollbackError)
+      }
+      try {
+        await this.options.apply(previous)
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError)
+      }
+      if (rollbackErrors.length > 0) {
         throw new AggregateError(
-          [error, rollbackError],
+          [error, ...rollbackErrors],
           'Could not apply or restore the proxy configuration.'
         )
       }

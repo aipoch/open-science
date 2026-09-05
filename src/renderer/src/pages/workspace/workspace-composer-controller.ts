@@ -120,6 +120,7 @@ type WorkspaceComposerController = {
     attachments: UploadedAttachment[]
     transfers: ComposerUploadTransfer[]
     error: string | null
+    errorDetail?: string
     historyStatus: string
     isHistoryBrowsing: boolean
     isUploading: boolean
@@ -277,7 +278,7 @@ const useWorkspaceComposerController = ({
     automaticReadingEnabledRef,
     setActiveAutomaticReadingEnabled
   })
-  const { attachments, transfers, error, isUploading } = uploadController.view
+  const { attachments, transfers, error, errorDetail, isUploading } = uploadController.view
   const {
     changeDoc,
     stageFiles,
@@ -1097,6 +1098,7 @@ const useWorkspaceComposerController = ({
       attachments,
       transfers,
       error,
+      errorDetail,
       historyStatus,
       isHistoryBrowsing: historyBrowsingKey === currentDraftKey,
       isUploading,

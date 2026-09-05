@@ -21,7 +21,7 @@ import type {
 } from '../../shared/session-persistence'
 import { broadcastLifecycleEvent, getLifecycleClientId } from '../lifecycle-broadcast'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
-import { resolveStorageRoot } from '../storage-root'
+import { resolveConfigRoot } from '../storage-root'
 import { SessionRepository } from './repository'
 import { SessionProjectionRepository } from './projection'
 import { ReviewRepository } from '../reviewer/repository'
@@ -261,13 +261,13 @@ const createDefaultSessionRepository = (
   hasLiveRuntimeSession: (projectId: string, sessionId: string) => boolean = () => false
 ): SessionRepository =>
   new SessionRepository(
-    resolveStorageRoot(),
+    resolveConfigRoot(),
     { hasActiveRuntimePrompt, hasLiveRuntimeSession },
-    new SessionProjectionRepository(() => getProjectDbClient(resolveStorageRoot()))
+    new SessionProjectionRepository(() => getProjectDbClient(resolveConfigRoot()))
   )
 
 const createDefaultReviewRepository = (): ReviewRepository =>
-  new ReviewRepository(() => getProjectDbClient(resolveStorageRoot()))
+  new ReviewRepository(() => getProjectDbClient(resolveConfigRoot()))
 
 // Registers renderer-callable persistence commands without coupling them to ACP runtime IPC.
 const registerSessionPersistenceIpcHandlers = (

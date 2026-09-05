@@ -144,7 +144,8 @@ import {
   type AcpTurnSkillOwner
 } from './turn-skill-owner'
 import type { PlanResponseResult, PlanServiceDependencies } from '../session-plan/plan-service'
-import { SessionPlanContinuationOwner } from './session-plan-continuation-owner'
+import { matchPlanDelivery } from '../session-plan/plan-delivery'
+import { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type {
   SessionCatalog,
@@ -428,8 +429,8 @@ const PERMISSION_CANCELLED_CONTINUATION_TEXT =
   'execute or retry the parked tool call unless the user explicitly approves it later. Continue ' +
   'only with independent work that is already permitted, or explain what cannot be completed.'
 
-const PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS = 3
-const PLAN_CONTINUATION_CLAIM_RETRY_BASE_DELAY_MS = 25
+const PLAN_DELIVERY_CLAIM_MAX_ATTEMPTS = 3
+const PLAN_DELIVERY_CLAIM_RETRY_BASE_DELAY_MS = 25
 const AGENT_STDERR_REPORT_WINDOW_MS = 1000
 const MAX_RAW_AGENT_STDERR_SAMPLE_BYTES = 4096
 const CODEX_TRANSPORT_SIGNAL_SAMPLE_CHARACTERS = 512
@@ -495,7 +496,7 @@ type AgentStderrWindow = {
   timer: ReturnType<typeof setTimeout>
 }
 
-type PlanContinuationClaimRetry = {
+type PlanDeliveryClaimRetry = {
   commandId: string
   failedAttempts: number
   timer?: ReturnType<typeof setTimeout>
@@ -538,13 +539,14 @@ class AcpRuntime {
   >()
   private readonly durableContinuationContext: AcpRuntimeSessionOwners['durableContinuationContext']
   private readonly permissionWaitOwner: AcpRuntimeSessionOwners['permissionWaitOwner']
-  private readonly planContinuationOwner: SessionPlanContinuationOwner | undefined
+  private readonly planDeliveryOwner: SessionPlanDeliveryOwner | undefined
   private durablePermissionContinuations?: Map<
     string,
     { projectId: string; requestId: string; cancellationRequested?: boolean }
   >
-  private durablePlanContinuations?: Map<string, { projectId: string; commandId: string }>
-  private readonly planContinuationClaimRetries = new Map<string, PlanContinuationClaimRetry>()
+  private durablePlanDeliveries?: Map<string, { projectId: string; commandId: string }>
+  private readonly planDeliveryClaimRetries = new Map<string, PlanDeliveryClaimRetry>()
+  private readonly planDeliveryPreparations = new Set<string>()
   private readonly agentStderrWindows = new Map<ChildProcessWithoutNullStreams, AgentStderrWindow>()
   private restoredContinuationContextResetSessionIds?: Set<string>
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
@@ -609,14 +611,14 @@ class AcpRuntime {
     this.elicitationOwner = session.elicitationOwner
     this.durableContinuationContext = session.durableContinuationContext
     this.permissionWaitOwner = session.permissionWaitOwner
-    this.planContinuationOwner = options.plan
-      ? new SessionPlanContinuationOwner(options.plan.sessions)
+    this.planDeliveryOwner = options.plan
+      ? new SessionPlanDeliveryOwner(options.plan.sessions)
       : undefined
     this.appContinuations = session.appContinuations
     this.reviewerSessions = session.reviewerSessions
     this.sessionUpdateProjector = session.sessionUpdateProjector
     this.sessionPlanWorkflow = composeAcpRuntimePlanWorkflow(options, base, session, {
-      continuations: this.planContinuationOwner
+      deliveries: this.planDeliveryOwner
     })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
       plan: this.sessionPlanWorkflow.prompt,
@@ -786,12 +788,10 @@ class AcpRuntime {
 
   async respondSessionPlan(input: PlanResponseCommand): Promise<PlanResponseResult> {
     const result = await this.sessionPlanWorkflow.respond(input)
-    const continuationProjection =
-      'projection' in result ? result.projection : result.continuationProjection
-    if (continuationProjection?.continuationState === 'queued') {
-      this.scheduleQueuedPlanContinuation(input.projectId, input.sessionId)
-    }
-    return result
+    if (result.deliveryCommandId) this.scheduleQueuedPlanDelivery(input.projectId, input.sessionId)
+    const response = { ...result }
+    Reflect.deleteProperty(response, 'deliveryCommandId')
+    return response
   }
 
   // Lists sessions with an in-flight prompt, for the pre-migration active-session warning.
@@ -924,7 +924,7 @@ class AcpRuntime {
         this.restoredContinuationContextResetSessionIds = contextResetSessionIds
         contextResetSessionIds.add(request.sessionId)
       }
-      this.scheduleQueuedPlanContinuation(
+      this.scheduleQueuedPlanDelivery(
         this.sessionEnvironment.projectId(request.sessionId),
         request.sessionId
       )
@@ -1182,11 +1182,11 @@ class AcpRuntime {
 
   // Tears down every local session route and closes the underlying agent process.
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
-    this.clearAllPlanContinuationClaimRetries()
+    this.clearAllPlanDeliveryClaimRetries()
     try {
       return await this.connectionClose.disconnect(emitClosedStatus)
     } finally {
-      this.clearAllPlanContinuationClaimRetries()
+      this.clearAllPlanDeliveryClaimRetries()
     }
   }
 
@@ -1195,7 +1195,7 @@ class AcpRuntime {
   // the app is gone would be an orphaned process still holding its network connection open. The OS
   // reclaims the remaining connection/session state as the process exits.
   shutdown(): void {
-    this.clearAllPlanContinuationClaimRetries()
+    this.clearAllPlanDeliveryClaimRetries()
     this.connectionClose.shutdown()
   }
 
@@ -1205,11 +1205,11 @@ class AcpRuntime {
   // remains — assigned, connecting, or mid-spawn. Returns { reaped } so the caller can tell a clean
   // teardown from a degraded one (taskkill fallback left grandchildren) before committing to app.exit.
   async shutdownForQuit(): Promise<{ reaped: boolean }> {
-    this.clearAllPlanContinuationClaimRetries()
+    this.clearAllPlanDeliveryClaimRetries()
     try {
       return await this.connectionClose.shutdownForQuit()
     } finally {
-      this.clearAllPlanContinuationClaimRetries()
+      this.clearAllPlanDeliveryClaimRetries()
     }
   }
 
@@ -1224,11 +1224,11 @@ class AcpRuntime {
   // signal (so a degraded reap makes the caller refuse the install); if that await is abandoned on
   // timeout the caller refuses on !completed and the stale-generation self-reap still collects the child.
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
-    this.clearAllPlanContinuationClaimRetries()
+    this.clearAllPlanDeliveryClaimRetries()
     try {
       return await this.connectionClose.shutdownForUpdateGate()
     } finally {
-      this.clearAllPlanContinuationClaimRetries()
+      this.clearAllPlanDeliveryClaimRetries()
     }
   }
 
@@ -1477,14 +1477,16 @@ class AcpRuntime {
   // and must never be projected into the transcript as a second user-authored message.
   async sendAppContinuation(
     request: AcpPromptRequest,
-    promptAttemptId?: string
+    promptAttemptId?: string,
+    planDelivery?: Readonly<{ projectId: string; commandId: string }>
   ): Promise<PromptResponse> {
     // A parked continuation itself blocks reconnect. Enter the generation directly so it can finish
     // before that barrier is released instead of waiting on the barrier it intentionally holds.
     return this.generationActivity.withOperation(() =>
       this.runPromptTurn(request, {
         kind: 'app-continuation',
-        ...(promptAttemptId === undefined ? {} : { promptAttemptId })
+        ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
+        ...(planDelivery ? { planDelivery } : {})
       })
     )
   }
@@ -1498,7 +1500,11 @@ class AcpRuntime {
           attribution: MessageAttribution
           promptAttemptId?: string
         }>
-      | Readonly<{ kind: 'app-continuation'; promptAttemptId?: string }>,
+      | Readonly<{
+          kind: 'app-continuation'
+          promptAttemptId?: string
+          planDelivery?: Readonly<{ projectId: string; commandId: string }>
+        }>,
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
     return withDataRootWrite(async () => {
@@ -1605,12 +1611,12 @@ class AcpRuntime {
 
   // Closes the agent-side session when supported, then removes local routing state.
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
-    this.clearPlanContinuationClaimRetry(request.sessionId)
+    this.clearPlanDeliveryClaimRetry(request.sessionId)
     this.sessionPlanWorkflow.sessionDeleted(request.sessionId)
     try {
       return await this.sessionDeletion.delete(request.sessionId)
     } finally {
-      this.clearPlanContinuationClaimRetry(request.sessionId)
+      this.clearPlanDeliveryClaimRetry(request.sessionId)
     }
   }
 
@@ -2089,114 +2095,139 @@ class AcpRuntime {
     }
   }
 
-  private clearPlanContinuationClaimRetry(sessionId: string, commandId?: string): void {
-    const retry = this.planContinuationClaimRetries.get(sessionId)
+  private clearPlanDeliveryClaimRetry(sessionId: string, commandId?: string): void {
+    const retry = this.planDeliveryClaimRetries.get(sessionId)
     if (!retry || (commandId && retry.commandId !== commandId)) return
     if (retry.timer) clearTimeout(retry.timer)
-    this.planContinuationClaimRetries.delete(sessionId)
+    this.planDeliveryClaimRetries.delete(sessionId)
   }
 
-  private clearAllPlanContinuationClaimRetries(): void {
-    for (const sessionId of this.planContinuationClaimRetries.keys()) {
-      this.clearPlanContinuationClaimRetry(sessionId)
+  private clearAllPlanDeliveryClaimRetries(): void {
+    for (const sessionId of this.planDeliveryClaimRetries.keys()) {
+      this.clearPlanDeliveryClaimRetry(sessionId)
     }
   }
 
-  private retryPlanContinuationClaim(
-    projectId: string,
-    sessionId: string,
-    commandId: string
-  ): void {
-    const current = this.planContinuationClaimRetries.get(sessionId)
+  private retryPlanDeliveryClaim(projectId: string, sessionId: string, commandId: string): void {
+    const current = this.planDeliveryClaimRetries.get(sessionId)
     if (current && current.commandId !== commandId) {
-      this.clearPlanContinuationClaimRetry(sessionId)
+      this.clearPlanDeliveryClaimRetry(sessionId)
     }
     const failedAttempts = current?.commandId === commandId ? current.failedAttempts + 1 : 1
-    const retry: PlanContinuationClaimRetry = { commandId, failedAttempts }
-    this.planContinuationClaimRetries.set(sessionId, retry)
-    if (failedAttempts >= PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS) {
+    const retry: PlanDeliveryClaimRetry = { commandId, failedAttempts }
+    this.planDeliveryClaimRetries.set(sessionId, retry)
+    if (failedAttempts >= PLAN_DELIVERY_CLAIM_MAX_ATTEMPTS) {
       this.pushEvent({
         kind: 'error',
         level: 'error',
         sessionId,
-        title: 'Could not claim the Plan continuation',
-        text: 'The Plan continuation remained safely queued after concurrent Session updates.'
+        title: 'Could not claim the Plan delivery',
+        text: 'The Plan delivery remained safely queued after concurrent Session updates.'
       })
       this.emitState()
       return
     }
-    const delay = PLAN_CONTINUATION_CLAIM_RETRY_BASE_DELAY_MS * 2 ** (failedAttempts - 1)
+    const delay = PLAN_DELIVERY_CLAIM_RETRY_BASE_DELAY_MS * 2 ** (failedAttempts - 1)
     retry.timer = setTimeout(() => {
-      const pending = this.planContinuationClaimRetries.get(sessionId)
+      const pending = this.planDeliveryClaimRetries.get(sessionId)
       if (pending !== retry) return
       retry.timer = undefined
-      this.scheduleQueuedPlanContinuation(projectId, sessionId, commandId)
+      this.scheduleQueuedPlanDelivery(projectId, sessionId, commandId)
     }, delay)
   }
 
-  private scheduleQueuedPlanContinuation(
+  private scheduleQueuedPlanDelivery(
     projectId: string,
     sessionId: string,
     expectedCommandId?: string
   ): void {
     queueMicrotask(() => {
-      void this.queueDurablePlanContinuation(projectId, sessionId, expectedCommandId).catch(
-        (error) => {
-          this.pushEvent({
-            kind: 'error',
-            level: 'error',
-            sessionId,
-            title: 'Could not prepare the Plan continuation',
-            text: errorMessage(error)
-          })
-          this.emitState()
-        }
-      )
+      void this.queueDurablePlanDelivery(projectId, sessionId, expectedCommandId).catch((error) => {
+        this.pushEvent({
+          kind: 'error',
+          level: 'error',
+          sessionId,
+          title: 'Could not prepare the Plan delivery',
+          text: errorMessage(error)
+        })
+        this.emitState()
+      })
     })
   }
 
-  private async queueDurablePlanContinuation(
+  private async queueDurablePlanDelivery(
     projectId: string,
     sessionId: string,
     expectedCommandId?: string
   ): Promise<void> {
-    const owner = this.planContinuationOwner
+    if (this.planDeliveryPreparations.has(sessionId)) return
+    this.planDeliveryPreparations.add(sessionId)
+    try {
+      await this.prepareDurablePlanDelivery(projectId, sessionId, expectedCommandId)
+    } finally {
+      this.planDeliveryPreparations.delete(sessionId)
+    }
+  }
+
+  private async prepareDurablePlanDelivery(
+    projectId: string,
+    sessionId: string,
+    expectedCommandId?: string
+  ): Promise<void> {
+    const owner = this.planDeliveryOwner
     const sessions = this.options.plan?.sessions
     if (
       !owner ||
       !sessions ||
       !this.activeSessionFor(sessionId) ||
-      this.durablePlanContinuations?.has(sessionId)
+      this.durablePlanDeliveries?.has(sessionId)
     ) {
       return
     }
 
     const observed = await sessions.readSessionRuntimeContext(projectId, sessionId)
     const plan = observed.plan
-    const command = plan?.continuation
-    const claimRetry = this.planContinuationClaimRetries.get(sessionId)
-    if (expectedCommandId && command?.commandId !== expectedCommandId) {
-      this.clearPlanContinuationClaimRetry(sessionId, expectedCommandId)
+    const rawCommand = plan?.delivery
+    const claimRetry = this.planDeliveryClaimRetries.get(sessionId)
+    if (expectedCommandId && rawCommand?.commandId !== expectedCommandId) {
+      this.clearPlanDeliveryClaimRetry(sessionId, expectedCommandId)
       return
     }
-    if (claimRetry && claimRetry.commandId !== command?.commandId) {
-      this.clearPlanContinuationClaimRetry(sessionId)
+    if (claimRetry && claimRetry.commandId !== rawCommand?.commandId) {
+      this.clearPlanDeliveryClaimRetry(sessionId)
     } else if (
       claimRetry?.timer ||
-      claimRetry?.failedAttempts === PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS
+      claimRetry?.failedAttempts === PLAN_DELIVERY_CLAIM_MAX_ATTEMPTS
     ) {
       return
     }
-    if (
-      !plan ||
-      command?.state !== 'queued' ||
-      (command.kind === 'approved-plan' && plan.approval !== 'approved') ||
-      (command.kind === 'rejected-plan' && plan.approval !== 'rejected') ||
-      (command.kind === 'review-feedback' &&
-        (plan.approval !== 'pending' ||
-          plan.reviewFeedbackMessageId !== command.originatingPromptMessageId))
-    ) {
-      if (command) this.clearPlanContinuationClaimRetry(sessionId, command.commandId)
+    const command = matchPlanDelivery(plan)
+    if (!plan || !command) {
+      if (rawCommand) this.clearPlanDeliveryClaimRetry(sessionId, rawCommand.commandId)
+      return
+    }
+    if (command.state === 'accepted') {
+      if (!(await owner.clear(projectId, sessionId, command.commandId))) {
+        this.retryPlanDeliveryClaim(projectId, sessionId, command.commandId)
+      } else {
+        this.clearPlanDeliveryClaimRetry(sessionId, command.commandId)
+        await this.publishCurrentPlanProjection(projectId, sessionId)
+      }
+      return
+    }
+    if (command.state === 'delivering') {
+      if (await owner.rearmUnaccepted(projectId, sessionId, command.commandId)) {
+        this.clearPlanDeliveryClaimRetry(sessionId, command.commandId)
+        setTimeout(() => {
+          this.scheduleQueuedPlanDelivery(projectId, sessionId, command.commandId)
+        }, 0)
+      } else {
+        this.retryPlanDeliveryClaim(projectId, sessionId, command.commandId)
+      }
+      return
+    }
+    if (command.state !== 'queued') {
+      this.clearPlanDeliveryClaimRetry(sessionId, command.commandId)
       return
     }
 
@@ -2225,10 +2256,10 @@ class AcpRuntime {
     if (command.kind === 'review-feedback' && !reviewFeedback) {
       throw new Error('The durable Plan review feedback Message is unavailable.')
     }
-    const durablePlanContinuations =
-      this.durablePlanContinuations ?? new Map<string, { projectId: string; commandId: string }>()
-    this.durablePlanContinuations = durablePlanContinuations
-    durablePlanContinuations.set(sessionId, { projectId, commandId: command.commandId })
+    const durablePlanDeliveries =
+      this.durablePlanDeliveries ?? new Map<string, { projectId: string; commandId: string }>()
+    this.durablePlanDeliveries = durablePlanDeliveries
+    durablePlanDeliveries.set(sessionId, { projectId, commandId: command.commandId })
     const rejected = command.kind === 'rejected-plan'
     const reviewed = command.kind === 'review-feedback'
     const request: AcpPromptRequest = {
@@ -2251,13 +2282,6 @@ class AcpRuntime {
       ...(continuation.referencedSessions?.length
         ? { referencedSessions: continuation.referencedSessions }
         : {}),
-      planContinuation: {
-        projectId,
-        artifactVersionId: plan.artifactVersionId,
-        expectedRevision: observed.revision,
-        ...(rejected ? { settledAction: 'rejected' as const } : {}),
-        ...(reviewed ? { pendingAction: 'review' as const } : {})
-      },
       ...(continuation.historyReplay?.historyPreamble
         ? { historyPreamble: continuation.historyReplay.historyPreamble }
         : {}),
@@ -2273,52 +2297,40 @@ class AcpRuntime {
       request,
       beforeSend: async () => {
         if (!(await owner.begin(projectId, sessionId, command.commandId))) {
-          durablePlanContinuations.delete(sessionId)
+          durablePlanDeliveries.delete(sessionId)
           const latest = await sessions.readSessionRuntimeContext(projectId, sessionId)
           if (
-            latest.plan?.continuation?.commandId === command.commandId &&
-            latest.plan.continuation.state === 'queued'
+            latest.plan?.delivery?.commandId === command.commandId &&
+            latest.plan.delivery.state === 'queued'
           ) {
-            this.retryPlanContinuationClaim(projectId, sessionId, command.commandId)
+            this.retryPlanDeliveryClaim(projectId, sessionId, command.commandId)
           } else {
-            this.clearPlanContinuationClaimRetry(sessionId, command.commandId)
+            this.clearPlanDeliveryClaimRetry(sessionId, command.commandId)
           }
           return undefined
         }
-        this.clearPlanContinuationClaimRetry(sessionId, command.commandId)
+        this.clearPlanDeliveryClaimRetry(sessionId, command.commandId)
         let dispatchReady = false
         try {
           const claimed = await sessions.readSessionRuntimeContext(projectId, sessionId)
           const claimedPlan = claimed.plan
           if (
-            !claimedPlan ||
-            claimedPlan.artifactVersionId !== plan.artifactVersionId ||
-            claimedPlan.continuation?.commandId !== command.commandId ||
-            claimedPlan.continuation.state !== 'continuing' ||
-            claimedPlan.continuation.kind !== command.kind ||
-            (command.kind === 'approved-plan' && claimedPlan.approval !== 'approved') ||
-            (command.kind === 'rejected-plan' && claimedPlan.approval !== 'rejected') ||
-            (command.kind === 'review-feedback' &&
-              (claimedPlan.approval !== 'pending' ||
-                claimedPlan.reviewFeedbackMessageId !== command.originatingPromptMessageId))
+            !matchPlanDelivery(claimedPlan, {
+              artifactVersionId: plan.artifactVersionId,
+              commandId: command.commandId,
+              state: 'delivering',
+              kind: command.kind,
+              originatingPromptMessageId: command.originatingPromptMessageId
+            })
           ) {
-            throw new Error('The Plan continuation changed before dispatch.')
+            throw new Error('The Plan delivery changed before dispatch.')
           }
           dispatchReady = true
-          return {
-            ...request,
-            planContinuation: {
-              projectId,
-              artifactVersionId: claimedPlan.artifactVersionId,
-              expectedRevision: claimed.revision,
-              ...(command.kind === 'rejected-plan' ? { settledAction: 'rejected' as const } : {}),
-              ...(command.kind === 'review-feedback' ? { pendingAction: 'review' as const } : {})
-            }
-          }
+          return request
         } finally {
           if (!dispatchReady) {
-            durablePlanContinuations.delete(sessionId)
-            await owner.rearmUndispatched(projectId, sessionId, command.commandId)
+            durablePlanDeliveries.delete(sessionId)
+            await owner.rearmUnaccepted(projectId, sessionId, command.commandId)
           }
         }
       }
@@ -2351,9 +2363,14 @@ class AcpRuntime {
         ? await continuation.beforeSend()
         : continuation.request
       if (!request) return
-      const response = await this.sendAppContinuation(request)
+      const planDelivery = this.durablePlanDeliveries?.get(sessionId)
+      const response = await this.sendAppContinuation(
+        request,
+        planDelivery?.commandId,
+        planDelivery
+      )
       cancelled = response.stopReason === 'cancelled'
-      completed = !this.durablePlanContinuations?.has(sessionId) || !cancelled
+      completed = !this.durablePlanDeliveries?.has(sessionId) || !cancelled
     } catch (error) {
       this.pushEvent({
         kind: 'error',
@@ -2366,7 +2383,7 @@ class AcpRuntime {
       this.emitState()
     } finally {
       const durablePermission = this.durablePermissionContinuations?.get(sessionId)
-      const durablePlan = this.durablePlanContinuations?.get(sessionId)
+      const durablePlan = this.durablePlanDeliveries?.get(sessionId)
       this.permissionContext.clearRestoredDecision(sessionId)
       if (durablePermission?.cancellationRequested) {
         await this.settleCancelledDurablePermissionContinuation(sessionId)
@@ -2429,9 +2446,9 @@ class AcpRuntime {
           this.durablePermissionContinuations?.delete(sessionId)
         }
       }
-      if (cancelled && durablePlan && this.planContinuationOwner) {
+      if (cancelled && durablePlan && this.planDeliveryOwner) {
         try {
-          await this.planContinuationOwner.interrupt(
+          await this.planDeliveryOwner.interrupt(
             durablePlan.projectId,
             sessionId,
             durablePlan.commandId
@@ -2441,47 +2458,50 @@ class AcpRuntime {
             kind: 'error',
             level: 'error',
             sessionId,
-            title: 'Could not mark the Plan continuation as interrupted',
+            title: 'Could not mark the Plan delivery as interrupted',
             text: errorMessage(error)
           })
         }
-      } else if (completed && durablePlan && this.planContinuationOwner) {
+      } else if (completed && durablePlan && this.planDeliveryOwner) {
         try {
-          await this.clearSettledPlanContinuation(sessionId, durablePlan)
+          await this.clearSettledPlanDelivery(sessionId, durablePlan)
         } catch (error) {
           this.pushEvent({
             kind: 'error',
             level: 'error',
             sessionId,
-            title: 'Could not settle the Plan continuation',
+            title: 'Could not settle the Plan delivery',
             text: errorMessage(error)
           })
         }
       }
       if (durablePlan) await this.publishCurrentPlanProjection(durablePlan.projectId, sessionId)
-      if (durablePlan) this.durablePlanContinuations?.delete(sessionId)
+      if (durablePlan) this.durablePlanDeliveries?.delete(sessionId)
       this.appContinuations.complete(sessionId)
       this.emitState()
     }
   }
 
-  private async clearSettledPlanContinuation(
+  private async clearSettledPlanDelivery(
     sessionId: string,
     durablePlan: Readonly<{ projectId: string; commandId: string }>
   ): Promise<void> {
-    const owner = this.planContinuationOwner
+    const owner = this.planDeliveryOwner
     const sessions = this.options.plan?.sessions
     if (!owner || !sessions) return
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (await owner.clear(durablePlan.projectId, sessionId, durablePlan.commandId)) return
       const current = await sessions.readSessionRuntimeContext(durablePlan.projectId, sessionId)
-      const continuation = current.plan?.continuation
-      if (!continuation) return
-      if (continuation.commandId !== durablePlan.commandId || continuation.state !== 'continuing') {
-        throw new Error('The Plan continuation changed before settlement.')
+      const delivery = current.plan?.delivery
+      if (!delivery) return
+      if (
+        delivery.commandId !== durablePlan.commandId ||
+        (delivery.state !== 'accepted' && delivery.state !== 'delivering')
+      ) {
+        throw new Error('The Plan delivery changed before settlement.')
       }
     }
-    throw new Error('The Plan continuation could not be settled after concurrent updates.')
+    throw new Error('The Plan delivery could not be settled after concurrent updates.')
   }
 
   private async publishCurrentPlanProjection(projectId: string, sessionId: string): Promise<void> {
@@ -2498,7 +2518,7 @@ class AcpRuntime {
         planProjection: projection
       })
     } catch (error) {
-      safeLogError('Session Plan continuation projection failed', errorLogFields(error))
+      safeLogError('Session Plan delivery projection failed', errorLogFields(error))
     }
   }
 

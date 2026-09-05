@@ -97,7 +97,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     PRIMARY KEY ("sessionId", "callId"),
     CONSTRAINT "SessionModelCallUsage_sessionId_messageId_fkey" FOREIGN KEY ("sessionId", "messageId") REFERENCES "SessionTurnUsage" ("sessionId", "messageId") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "SessionModelCallUsage_identity_check" CHECK (length(trim("messageId")) > 0 AND length(trim("callId")) > 0 AND "callIndex" >= 0 AND ("sourceInvocationId" IS NULL OR length(trim("sourceInvocationId")) > 0) AND ("frameworkId" IS NULL OR length(trim("frameworkId")) > 0) AND ("backendId" IS NULL OR length(trim("backendId")) > 0) AND ("model" IS NULL OR length(trim("model")) > 0)),
-    CONSTRAINT "SessionModelCallUsage_nonnegative_check" CHECK ("inputTokens" >= 0 AND "cacheTokens" >= 0 AND "outputTokens" >= 0 AND (("cachedReadTokens" IS NULL AND "cachedWriteTokens" IS NULL) OR ("cachedReadTokens" >= 0 AND "cachedWriteTokens" >= 0)) AND ("contextUsedTokens" IS NULL OR "contextUsedTokens" >= 0) AND ("contextWindowSize" IS NULL OR "contextWindowSize" > 0))
+    CONSTRAINT "SessionModelCallUsage_nonnegative_check" CHECK ("inputTokens" >= 0 AND "cacheTokens" >= 0 AND "outputTokens" >= 0 AND (("cachedReadTokens" IS NULL AND "cachedWriteTokens" IS NULL) OR ("cachedReadTokens" IS NOT NULL AND "cachedWriteTokens" IS NOT NULL AND "cachedReadTokens" >= 0 AND "cachedWriteTokens" >= 0)) AND ("contextUsedTokens" IS NULL OR "contextUsedTokens" >= 0) AND ("contextWindowSize" IS NULL OR "contextWindowSize" > 0))
 );`,
   `CREATE TABLE IF NOT EXISTS "SessionAuxiliaryTurnUsage" (
     "sessionId" TEXT NOT NULL,
@@ -117,7 +117,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     PRIMARY KEY ("sessionId", "eventId"),
     CONSTRAINT "SessionAuxiliaryTurnUsage_identity_check" CHECK (length(trim("sessionId")) > 0 AND length(trim("eventId")) > 0 AND length(trim("frameworkId")) > 0 AND ("model" IS NULL OR length(trim("model")) > 0)),
     CONSTRAINT "SessionAuxiliaryTurnUsage_source_check" CHECK ("source" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction')),
-    CONSTRAINT "SessionAuxiliaryTurnUsage_nonnegative_check" CHECK ("completedAtMs" >= 0 AND "inputTokens" >= 0 AND "cacheTokens" >= 0 AND "outputTokens" >= 0 AND (("cachedReadTokens" IS NULL AND "cachedWriteTokens" IS NULL) OR ("cachedReadTokens" >= 0 AND "cachedWriteTokens" >= 0)) AND ("modelCallCount" IS NULL OR "modelCallCount" > 0))
+    CONSTRAINT "SessionAuxiliaryTurnUsage_nonnegative_check" CHECK ("completedAtMs" >= 0 AND "inputTokens" >= 0 AND "cacheTokens" >= 0 AND "outputTokens" >= 0 AND (("cachedReadTokens" IS NULL AND "cachedWriteTokens" IS NULL) OR ("cachedReadTokens" IS NOT NULL AND "cachedWriteTokens" IS NOT NULL AND "cachedReadTokens" >= 0 AND "cachedWriteTokens" >= 0)) AND ("modelCallCount" IS NULL OR "modelCallCount" > 0))
 );`,
   `CREATE TABLE IF NOT EXISTS "SessionRun" (
     "sessionId" TEXT NOT NULL,
@@ -263,7 +263,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "updatedAt" DATETIME NOT NULL,
     "deletedAt" DATETIME,
     "deleteOperationId" TEXT,
-    CONSTRAINT "ManagedFile_source_check" CHECK ("source" IN ('artifact', 'upload'))
+    CONSTRAINT "ManagedFile_source_check" CHECK ("source" IN ('artifact', 'upload')),
+    CONSTRAINT "ManagedFile_numeric_bounds_check" CHECK ("sizeBytes" >= 0)
 );`,
   `CREATE TABLE IF NOT EXISTS "ManagedFileSessionSync" (
     "projectId" TEXT NOT NULL,
@@ -341,7 +342,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "UploadVersion_uploadFileId_basedOnVersionId_fkey" FOREIGN KEY ("uploadFileId", "basedOnVersionId") REFERENCES "UploadVersion" ("uploadFileId", "id") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "UploadVersion_state_check" CHECK ("state" IN ('staging', 'ready')),
     CONSTRAINT "UploadVersion_originKind_check" CHECK ("originKind" IN ('user_upload', 'user_edit', 'legacy')),
-    CONSTRAINT "UploadVersion_userEdit_check" CHECK (("originKind" <> 'user_edit' OR ("state" = 'ready' AND "basedOnVersionId" IS NOT NULL AND "storageTag" IS NOT NULL AND "storedFilename" IS NOT NULL)))
+    CONSTRAINT "UploadVersion_userEdit_check" CHECK (("originKind" <> 'user_edit' OR ("state" = 'ready' AND "basedOnVersionId" IS NOT NULL AND "storageTag" IS NOT NULL AND "storedFilename" IS NOT NULL))),
+    CONSTRAINT "UploadVersion_numeric_bounds_check" CHECK ("sizeBytes" >= 0 AND "versionNumber" >= 1)
 );`,
   `CREATE TABLE IF NOT EXISTS "VisionEvidence" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -433,7 +435,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ArtifactVersion_provenance_check" CHECK ((("originKind" = 'agent_generated' AND "artifactRunId" IS NOT NULL AND "rootFrameId" IS NOT NULL AND "agentFrameId" IS NOT NULL AND "messageBranchId" IS NOT NULL AND "runtimeSegmentId" IS NOT NULL AND "promptMessageId" IS NOT NULL AND "evidenceStorageKey" IS NOT NULL AND "evidenceJson" IS NOT NULL AND "evidenceChecksum" IS NOT NULL AND "evidenceSchemaVersion" IS NOT NULL) OR ("originKind" = 'user_edit' AND "state" = 'finalized' AND "basedOnVersionId" IS NOT NULL AND "storageTag" IS NOT NULL AND "storedFilename" IS NOT NULL AND "artifactRunId" IS NULL AND "writeRequestChecksum" IS NULL AND "rootFrameId" IS NULL AND "agentFrameId" IS NULL AND "messageBranchId" IS NULL AND "runtimeSegmentId" IS NULL AND "promptMessageId" IS NULL AND "notebookSessionId" IS NULL AND "producerRunId" IS NULL AND "producerRunIndex" IS NULL AND "messageId" IS NULL AND "messageSnapshotId" IS NULL AND "evidenceStorageKey" IS NULL AND "evidenceJson" IS NULL AND "evidenceChecksum" IS NULL AND "evidenceSchemaVersion" IS NULL AND "executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR "originKind" = 'legacy')),
     CONSTRAINT "ArtifactVersion_evidenceJson_check" CHECK ("evidenceJson" IS NULL OR (json_valid("evidenceJson") AND json_type("evidenceJson") = 'object')),
     CONSTRAINT "ArtifactVersion_executionSnapshotJson_check" CHECK ("executionSnapshotJson" IS NULL OR (json_valid("executionSnapshotJson") AND json_type("executionSnapshotJson") = 'object')),
-    CONSTRAINT "ArtifactVersion_executionSnapshotBundle_check" CHECK ((("executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR ("executionSnapshotJson" IS NOT NULL AND "executionSnapshotChecksum" IS NOT NULL AND "executionSnapshotStorageKey" IS NOT NULL AND "executionSnapshotSchemaVersion" IS NOT NULL)))
+    CONSTRAINT "ArtifactVersion_executionSnapshotBundle_check" CHECK ((("executionSnapshotJson" IS NULL AND "executionSnapshotChecksum" IS NULL AND "executionSnapshotStorageKey" IS NULL AND "executionSnapshotSchemaVersion" IS NULL) OR ("executionSnapshotJson" IS NOT NULL AND "executionSnapshotChecksum" IS NOT NULL AND "executionSnapshotStorageKey" IS NOT NULL AND "executionSnapshotSchemaVersion" IS NOT NULL))),
+    CONSTRAINT "ArtifactVersion_numeric_bounds_check" CHECK ("sizeBytes" >= 0 AND "versionNumber" >= 1)
 );`,
   `CREATE TABLE IF NOT EXISTS "ManagedFileVersionWriteOperation" (
     "operationId" TEXT NOT NULL PRIMARY KEY,
@@ -454,7 +457,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "ManagedFileVersionWriteOperation_source_check" CHECK ("source" IN ('artifact', 'upload')),
-    CONSTRAINT "ManagedFileVersionWriteOperation_state_check" CHECK ("state" IN ('staging', 'file_ready', 'published', 'conflict', 'failed'))
+    CONSTRAINT "ManagedFileVersionWriteOperation_state_check" CHECK ("state" IN ('staging', 'file_ready', 'published', 'conflict', 'failed')),
+    CONSTRAINT "ManagedFileVersionWriteOperation_numeric_bounds_check" CHECK ("sizeBytes" >= 0)
 );`,
   `CREATE TABLE IF NOT EXISTS "ArtifactVersionInput" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -481,7 +485,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ArtifactVersionInput_sourceProjectId_sourceSessionId_fkey" FOREIGN KEY ("sourceProjectId", "sourceSessionId") REFERENCES "FileOriginSession" ("projectId", "sessionId") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version')),
     CONSTRAINT "ArtifactVersionInput_sourceIdentity_check" CHECK ((("sourceKind" = 'artifact-version' AND "sourceArtifactVersionId" IS NOT NULL AND "sourceUploadVersionId" IS NULL AND "inputFileVersionId" = "sourceArtifactVersionId") OR ("sourceKind" = 'upload-version' AND "sourceArtifactVersionId" IS NULL AND "sourceUploadVersionId" IS NOT NULL AND "inputFileVersionId" = "sourceUploadVersionId"))),
-    CONSTRAINT "ArtifactVersionInput_strongestAssociation_check" CHECK ("strongestAssociation" IN ('turn-attached', 'resolver-accessed', 'captured-version'))
+    CONSTRAINT "ArtifactVersionInput_strongestAssociation_check" CHECK ("strongestAssociation" IN ('turn-attached', 'resolver-accessed', 'captured-version')),
+    CONSTRAINT "ArtifactVersionInput_numeric_bounds_check" CHECK ("sizeBytes" >= 0 AND ("sourceVersionNumber" IS NULL OR "sourceVersionNumber" >= 1))
 );`,
   `CREATE TABLE IF NOT EXISTS "ReviewFindingDisposition" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -596,7 +601,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ComputeJobOperation_revision_check" CHECK ("revision" >= 1),
     CONSTRAINT "ComputeJobOperation_attemptCount_check" CHECK ("attemptCount" >= 0),
     CONSTRAINT "ComputeJobOperation_phase_check" CHECK ("phase" IN ('active', 'settled')),
-    CONSTRAINT "ComputeJobOperation_lifecycle_check" CHECK (("phase" = 'active' AND "outcome" IS NULL AND "settledAt" IS NULL) OR ("phase" = 'settled' AND "outcome" IN ('fulfilled', 'superseded') AND "settledAt" IS NOT NULL)),
+    CONSTRAINT "ComputeJobOperation_lifecycle_check" CHECK (("phase" = 'active' AND "outcome" IS NULL AND "settledAt" IS NULL) OR ("phase" = 'settled' AND "outcome" IS NOT NULL AND "outcome" IN ('fulfilled', 'superseded') AND "settledAt" IS NOT NULL)),
     CONSTRAINT "ComputeJobOperation_claim_check" CHECK (("claimToken" IS NULL AND "claimExpiresAt" IS NULL) OR ("phase" = 'active' AND "claimToken" IS NOT NULL AND "claimExpiresAt" IS NOT NULL)),
     CONSTRAINT "ComputeJobOperation_settled_implementation_check" CHECK ("phase" = 'active' OR ("eligibleAt" IS NULL AND "claimToken" IS NULL AND "claimExpiresAt" IS NULL))
 );`,
@@ -703,7 +708,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "revision" INTEGER NOT NULL DEFAULT 1,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "MemoryCategory_shape_check" CHECK ((("systemKey" = 'about-you' AND "name" IS NULL AND "nameKey" IS NULL AND "guidance" = '' AND "autoRecall" = true) OR ("systemKey" IS NULL AND "name" IS NOT NULL AND "nameKey" IS NOT NULL))),
+    CONSTRAINT "MemoryCategory_shape_check" CHECK ((("systemKey" IS NOT NULL AND "systemKey" = 'about-you' AND "name" IS NULL AND "nameKey" IS NULL AND "guidance" = '' AND "autoRecall" = true) OR ("systemKey" IS NULL AND "name" IS NOT NULL AND "nameKey" IS NOT NULL))),
     CONSTRAINT "MemoryCategory_name_check" CHECK ("name" IS NULL OR length(trim("name")) BETWEEN 1 AND 64),
     CONSTRAINT "MemoryCategory_nameKey_check" CHECK ("nameKey" IS NULL OR length("nameKey") BETWEEN 1 AND 64),
     CONSTRAINT "MemoryCategory_guidance_check" CHECK (length("guidance") <= 1000),

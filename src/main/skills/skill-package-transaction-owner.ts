@@ -221,11 +221,31 @@ export class SkillPackageTransactionOwner {
 
     for (const [directoryName, backups] of backupsByDirectoryName) {
       const live = join(dir, directoryName)
-      const liveExists = await stat(live).then(
+      let liveExists = await stat(live).then(
         () => true,
         () => false
       )
       backups.sort((left, right) => right.generation.localeCompare(left.generation))
+      if (liveExists) {
+        // A live directory with a backup may have crashed before final validation. Revalidate
+        // before deleting any recovery copy, including when only cleanup failed last time.
+        const generation = backups[0].generation
+        try {
+          await this.validatePromoted?.({
+            source,
+            directoryName,
+            staging: join(dir, `.${directoryName}.import-${generation}`),
+            generation
+          })
+        } catch (error) {
+          log.warn('interrupted Skill package update failed validation; restoring backup', {
+            directoryName,
+            error
+          })
+          await rm(live, { recursive: true, force: true })
+          liveExists = false
+        }
+      }
       for (let index = 0; index < backups.length; index += 1) {
         const path = join(dir, backups[index].entry)
         if (index === 0 && !liveExists) {

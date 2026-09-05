@@ -1,10 +1,11 @@
 import { create } from 'zustand'
 
 import type { NotebookLanguage } from '../../../shared/notebook'
-import type {
-  ProvisionProgress,
-  ProvisionScope,
-  ProvisionStatus
+import {
+  isTerminalProvisionPhase,
+  type ProvisionProgress,
+  type ProvisionScope,
+  type ProvisionStatus
 } from '../../../shared/notebook-env'
 import { deriveProvisionUi, type ProvisionUiState } from '../pages/workspace/provisioning-view'
 
@@ -235,19 +236,19 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
               : progress.scope === 'upgrade'
                 ? { scope: undefined }
                 : {}),
-            error: progress.phase === 'error' ? progress.message : undefined
+            error: progress.phase === 'error' ? progress.diagnostic : undefined
           })
           // Route a language-tagged event into that language's slot so its card advances/settles on its
           // own. Explicit UI runs stay preparing until their IPC call returns; `done` can arrive before
           // that boundary. Automatic runs have no awaiting caller, so their terminal event settles them.
           const language = progress.language
           if (language) {
-            const terminal = progress.phase === 'done' || progress.phase === 'error'
+            const terminal = isTerminalProvisionPhase(progress.phase)
             trackLanguageProgress(language, progress.operationId, terminal)
             const settled = terminal && !explicitRuns.has(language)
             applyLang(language, {
               progress,
-              error: progress.phase === 'error' ? progress.message : undefined,
+              error: progress.phase === 'error' ? progress.diagnostic : undefined,
               preparing: !settled
             })
           } else if (progress.phase === 'error') {

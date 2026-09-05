@@ -361,10 +361,15 @@ describe('navigation store', () => {
   })
 
   it('returns to the home screen without losing session state', () => {
+    useSessionStore
+      .getState()
+      .hydrateSessions([createSession({})], { version: SESSION_MANIFEST_VERSION })
     useNavigationStore.getState().openSession('project-a', 'session-1', 'user')
     useNavigationStore.getState().goHome('user')
 
     expect(useNavigationStore.getState().view).toBe('home')
+    expect(useNavigationStore.getState().activeProjectId).toBeUndefined()
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
   })
 
   it('routes a New Project request home as a one-shot intent', () => {

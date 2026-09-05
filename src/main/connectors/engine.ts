@@ -40,12 +40,12 @@ function redactUrl(url: string): string {
 class ConnectorRequestTimeoutError extends Error {
   override readonly name = 'ConnectorRequestTimeoutError'
 
-  constructor(url: string, timeoutMs: number, attempts: number, kind: 'idle' | 'total' = 'idle') {
+  constructor(target: string, timeoutMs: number, attempts?: number) {
     super(
       `${
-        kind === 'total'
-          ? `Connector request exceeded the ${timeoutMs}ms total deadline after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'} for ${redactUrl(url)}`
-          : `Connector request timed out after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'} of ${timeoutMs}ms for ${redactUrl(url)}`
+        attempts === undefined
+          ? `Connector call exceeded the ${timeoutMs}ms total deadline for ${target}`
+          : `Connector request timed out after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'} of ${timeoutMs}ms for ${redactUrl(target)}`
       }. This is the Connector's own deadline; increasing an outer execution timeout will not extend it. Do not retry solely with a longer timeout.`
     )
   }
@@ -94,29 +94,61 @@ export class ParserEngine {
     for (const key of descriptor.required ?? []) {
       if (args[key] == null) throw new Error(`missing required arg: ${key}`)
     }
-    const ctx = this.makeContext(
-      credentials,
-      signal,
-      descriptor.totalTimeoutMs ?? this.totalTimeoutMs,
-      descriptor.maxResponseBytes ?? this.maxResponseBytes
+    const totalTimeoutMs = descriptor.totalTimeoutMs ?? this.totalTimeoutMs
+    const deadline = Date.now() + totalTimeoutMs
+    const controller = new AbortController()
+    const callSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+    const totalTimer = setTimeout(
+      () =>
+        controller.abort(
+          new ConnectorRequestTimeoutError(
+            `${descriptor.connector}/${descriptor.id}`,
+            totalTimeoutMs
+          )
+        ),
+      totalTimeoutMs
     )
-    if (descriptor.run) {
-      const result = await descriptor.run(ctx, args)
-      signal?.throwIfAborted()
+    let onAbort: () => void = () => {}
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(callSignal.reason)
+      callSignal.addEventListener('abort', onAbort, { once: true })
+    })
+    const execute = async (): Promise<unknown> => {
+      const ctx = this.makeContext(
+        credentials,
+        callSignal,
+        deadline,
+        descriptor.maxResponseBytes ?? this.maxResponseBytes
+      )
+      let result: unknown
+      if (descriptor.run) {
+        result = await descriptor.run(ctx, args)
+      } else {
+        if (!descriptor.url || !descriptor.parse) {
+          throw new Error(`descriptor ${descriptor.id} needs either run() or url()+parse()`)
+        }
+        const url = descriptor.url(args)
+        const raw =
+          descriptor.format === 'text' ? await ctx.fetchText(url) : await ctx.fetchJson(url)
+        result = await descriptor.parse(raw, args)
+      }
+      callSignal.throwIfAborted()
       return result
     }
-    if (!descriptor.url || !descriptor.parse) {
-      throw new Error(`descriptor ${descriptor.id} needs either run() or url()+parse()`)
+    try {
+      return await Promise.race([execute(), aborted])
+    } finally {
+      clearTimeout(totalTimer)
+      callSignal.removeEventListener('abort', onAbort)
+      // Stop sibling requests if a run-style descriptor fails partway through a batch.
+      controller.abort()
     }
-    const url = descriptor.url(args)
-    const raw = descriptor.format === 'text' ? await ctx.fetchText(url) : await ctx.fetchJson(url)
-    return descriptor.parse(raw, args)
   }
 
   private makeContext(
     credentials: ConnectorCredentials,
-    signal: AbortSignal | undefined,
-    totalTimeoutMs: number,
+    signal: AbortSignal,
+    deadline: number,
     maxResponseBytes: number
   ): ToolContext {
     const doFetch = async (
@@ -125,23 +157,21 @@ export class ParserEngine {
       init?: RequestInit
     ): Promise<{ response: Response; bodyText?: string }> => {
       for (let attempt = 0; ; attempt++) {
+        signal.throwIfAborted()
         const controller = new AbortController()
         let idleTimer: ReturnType<typeof setTimeout> | undefined
-        let timedOut: 'idle' | 'total' | undefined
-        const abortForTimeout = (kind: 'idle' | 'total'): void => {
-          timedOut ??= kind
-          controller.abort()
-        }
+        let timedOut = false
         const armTimeout = (): void => {
           if (idleTimer) clearTimeout(idleTimer)
-          idleTimer = setTimeout(() => abortForTimeout('idle'), this.timeoutMs)
+          idleTimer = setTimeout(() => {
+            timedOut = true
+            controller.abort()
+          }, this.timeoutMs)
         }
-        const totalTimer = setTimeout(() => abortForTimeout('total'), totalTimeoutMs)
-        const requestSignal = signal
-          ? AbortSignal.any([controller.signal, signal])
-          : controller.signal
+        const requestSignal = AbortSignal.any([controller.signal, signal])
         let res: Response | undefined
         let bodyText: string | undefined
+        let bodyComplete = false
         let caught = false
         let failure: unknown
         try {
@@ -153,6 +183,12 @@ export class ParserEngine {
           })
           if (res.ok && res.body) {
             const reader = res.body.getReader()
+            // Native fetch observes abort too; explicitly cancel injected/independent streams.
+            const cancelReader = (): void => {
+              void reader.cancel(requestSignal.reason).catch(() => {})
+            }
+            requestSignal.addEventListener('abort', cancelReader, { once: true })
+            if (requestSignal.aborted) cancelReader()
             const decoder = new TextDecoder()
             const chunks: string[] = []
             let responseBytes = 0
@@ -160,7 +196,11 @@ export class ParserEngine {
               armTimeout()
               for (;;) {
                 const chunk = await reader.read()
-                if (chunk.done) break
+                requestSignal.throwIfAborted()
+                if (chunk.done) {
+                  bodyComplete = true
+                  break
+                }
                 if (chunk.value.byteLength === 0) continue
                 responseBytes += chunk.value.byteLength
                 if (responseBytes > maxResponseBytes) {
@@ -174,6 +214,7 @@ export class ParserEngine {
               chunks.push(decoder.decode())
               bodyText = chunks.join('')
             } finally {
+              requestSignal.removeEventListener('abort', cancelReader)
               reader.releaseLock()
             }
           }
@@ -182,18 +223,18 @@ export class ParserEngine {
           failure = err
         } finally {
           if (idleTimer) clearTimeout(idleTimer)
-          if (totalTimer) clearTimeout(totalTimer)
+          // Do not drain unbounded error bodies or wait for a broken cancellation hook.
+          // A cleanup failure must never replace the HTTP/read error.
+          if (res?.body && !bodyComplete) {
+            void res.body.cancel().catch(() => {})
+            controller.abort()
+          }
         }
+        signal.throwIfAborted()
         if (caught) {
-          if (signal?.aborted) throw failure
           if (failure instanceof ConnectorResponseTooLargeError) throw failure
           if (timedOut) {
-            throw new ConnectorRequestTimeoutError(
-              url,
-              timedOut === 'total' ? totalTimeoutMs : this.timeoutMs,
-              attempt + 1,
-              timedOut
-            )
+            throw new ConnectorRequestTimeoutError(url, this.timeoutMs, attempt + 1)
           }
           // Immediate network failures may be transient, so retry them within the bounded budget.
           if (attempt < this.retries) {
@@ -207,15 +248,20 @@ export class ParserEngine {
           signal?.throwIfAborted()
           return { response: res, ...(bodyText !== undefined ? { bodyText } : {}) }
         }
-        // Retry only transient upstream statuses; client errors (4xx except 429) fail fast.
-        if (attempt < this.retries && CONNECTOR_RETRYABLE_STATUS.has(res.status)) {
-          await abortableDelay(
-            connectorRetryDelay(attempt, res.headers?.get?.('retry-after') ?? null, this.backoffMs),
-            signal
-          )
+        // Retry only transient upstream statuses; never shorten the server's requested wait.
+        const retryable = CONNECTOR_RETRYABLE_STATUS.has(res.status)
+        const retryAfter = res.headers?.get?.('retry-after') ?? null
+        const delay = retryable ? connectorRetryDelay(attempt, retryAfter, this.backoffMs) : 0
+        const insufficientBudget = delay >= deadline - Date.now()
+        if (attempt < this.retries && retryable && !(retryAfter && insufficientBudget)) {
+          await abortableDelay(delay, signal)
           continue
         }
-        throw new Error(`HTTP ${res.status} for ${redactUrl(url)}`)
+        const retryHint =
+          retryable && retryAfter
+            ? ` Retry after ${Math.ceil(delay / 1_000)}s.${insufficientBudget ? ' The remaining call budget cannot accommodate this wait.' : ''}`
+            : ''
+        throw new Error(`HTTP ${res.status} for ${redactUrl(url)}.${retryHint}`)
       }
     }
     return {

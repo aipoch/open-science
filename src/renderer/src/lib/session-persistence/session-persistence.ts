@@ -151,6 +151,7 @@ const conflictRebaseFieldChanged = (
 const MAIN_OWNED_SESSION_FIELDS = new Set<keyof PersistedChatSession>([
   'revision',
   'runtimeContext',
+  'planHistoryProjections',
   'archivedAt',
   'branchSource',
   'delegationPolicy',

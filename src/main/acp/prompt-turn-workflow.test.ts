@@ -64,6 +64,7 @@ type Harness = {
   >
   owner: AcpSessionInteractionOwner
   planLifecycle: {
+    providerAccepted: Mock<AcpPromptTurnWorkflowOptions['plan']['providerAccepted']>
     beforeRelease: Mock<AcpPromptTurnWorkflowOptions['plan']['beforeRelease']>
     afterRelease: Mock<AcpPromptTurnWorkflowOptions['plan']['afterRelease']>
   }
@@ -106,7 +107,6 @@ const planProjection = (): ActivePlanProjection => ({
   revision: 2,
   approval: 'approved',
   lifecycle: 'approved',
-  requiresExplicitContinuation: false,
   document: {
     schema_version: 1,
     task_summary: 'Analyze the result',
@@ -213,9 +213,9 @@ const createHarness = (
     journal.push('authorize')
     return input.authorize?.() ?? skill
   })
-  const preflightPlan: Harness['preflightPlan'] = vi.fn((request: AcpPromptRequest) => {
+  const preflightPlan: Harness['preflightPlan'] = vi.fn((request, mode) => {
     journal.push('preflight')
-    return input.preflightPlan?.(request) ?? {}
+    return input.preflightPlan?.(request, mode) ?? {}
   })
   const admitPlan: Harness['admitPlan'] = vi.fn(
     (...args: Parameters<AcpPromptTurnWorkflowOptions['plan']['admit']>) => {
@@ -241,6 +241,9 @@ const createHarness = (
     return input.prepare?.(request) ?? prepared
   })
   const planLifecycle: Harness['planLifecycle'] = {
+    providerAccepted: vi.fn(async () => {
+      journal.push('plan:provider-accepted')
+    }),
     beforeRelease: vi.fn(() => {
       journal.push('plan:before-release')
     }),
@@ -502,6 +505,7 @@ describe('AcpPromptTurnWorkflow', () => {
       'event:message',
       'skills:in_progress',
       'execute',
+      'plan:provider-accepted',
       'accepted',
       'skills:completed',
       'finalize'
@@ -1012,13 +1016,28 @@ describe('AcpPromptTurnWorkflow', () => {
     expect(claim).not.toHaveBeenCalled()
   })
 
-  it('passes protected Plan guidance through the interaction-scoped lifecycle', async () => {
+  it.each([
+    ['user', { kind: 'user' as const }],
+    [
+      'application',
+      {
+        kind: 'application' as const,
+        attribution: {
+          kind: 'application' as const,
+          feature: 'compute' as const,
+          purpose: 'job-completion-analysis' as const,
+          deliveryKey: 'compute-delivery-1',
+          jobIds: ['job-1']
+        }
+      }
+    ]
+  ])('passes protected Plan guidance through an ordinary %s Attempt', async (_name, mode) => {
     const projection = planProjection()
-    const harness = createHarness({ admitPlan: () => ({ authorized: projection }) })
+    const harness = createHarness({ admitPlan: () => ({ active: projection }) })
     const prompt = request()
     prompt.turnIntent = 'plan-first'
 
-    await harness.workflow.run(prompt, { kind: 'user' })
+    await harness.workflow.run(prompt, mode)
 
     expect(harness.preparation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1049,7 +1068,7 @@ describe('AcpPromptTurnWorkflow', () => {
     )
   })
 
-  it('passes rejected Plan continuation as protected guidance', async () => {
+  it('passes a rejected Plan delivery as protected guidance', async () => {
     const rejected = {
       ...planProjection(),
       approval: 'rejected' as const,

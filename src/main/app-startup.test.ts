@@ -414,6 +414,8 @@ describe('waitForStartupShell', () => {
     destroy: ReturnType<typeof vi.fn>
     emitWindow: (event: string) => void
     emitWebContents: (event: string, ...args: unknown[]) => void
+    windowListenerCount: (event: string) => number
+    webContentsListenerCount: (event: string) => number
     window: Pick<BrowserWindow, 'destroy' | 'once' | 'removeListener' | 'webContents'>
   } => {
     const windowEvents = new EventEmitter()
@@ -423,6 +425,8 @@ describe('waitForStartupShell', () => {
       destroy,
       emitWindow: (event) => windowEvents.emit(event),
       emitWebContents: (event, ...args) => webContentsEvents.emit(event, ...args),
+      windowListenerCount: (event) => windowEvents.listenerCount(event),
+      webContentsListenerCount: (event) => webContentsEvents.listenerCount(event),
       window: Object.assign(windowEvents, {
         destroy,
         webContents: webContentsEvents
@@ -474,5 +478,39 @@ describe('waitForStartupShell', () => {
 
     await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce())
     expect(source.destroy).not.toHaveBeenCalled()
+  })
+
+  it('discards a silent startup window after a bounded wait', async () => {
+    vi.useFakeTimers()
+    try {
+      const source = makeWindow()
+      const settled = vi.fn()
+      const diagnostics = { phase: vi.fn() }
+      void waitForStartupShell(source.window, { diagnostics }).then(settled)
+
+      await vi.advanceTimersByTimeAsync(15_000)
+
+      expect(settled).toHaveBeenCalledOnce()
+      expect(source.destroy).toHaveBeenCalledOnce()
+      expect(diagnostics.phase).toHaveBeenCalledOnce()
+      expect(diagnostics.phase).toHaveBeenCalledWith('startup-shell-timeout', {
+        timeoutMs: 15_000
+      })
+      expect(source.windowListenerCount('ready-to-show')).toBe(0)
+      expect(source.windowListenerCount('closed')).toBe(0)
+      expect(source.webContentsListenerCount('did-fail-load')).toBe(0)
+      expect(source.webContentsListenerCount('render-process-gone')).toBe(0)
+
+      source.emitWindow('ready-to-show')
+      source.emitWindow('closed')
+      source.emitWebContents('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'file://index', true)
+      source.emitWebContents('render-process-gone', {}, { reason: 'crashed', exitCode: 1 })
+      await Promise.resolve()
+
+      expect(settled).toHaveBeenCalledOnce()
+      expect(source.destroy).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

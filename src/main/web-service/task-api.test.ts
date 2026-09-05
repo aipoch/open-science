@@ -676,9 +676,10 @@ describe('HeadlessTaskApi adapter', () => {
       if (channel === 'acp:respond-plan') return { projection, changed: true }
       throw new Error(`Unexpected Task command: ${channel}`)
     })
+    const agent = createAgent()
     const api = new HeadlessTaskApi({
       commands: commandsFrom(commandInvoke),
-      agent: createAgent()
+      agent
     })
 
     await expect(api.getSessionPlan(persisted.id)).resolves.toBe(projection)
@@ -703,6 +704,15 @@ describe('HeadlessTaskApi adapter', () => {
         expectedRevision: 3
       }
     ])
+    expect(agent.resumeSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: persisted.id,
+        projectId: project.id,
+        cwd: persisted.cwd,
+        permissionProfile: 'ask',
+        memoryEnabled: true
+      })
+    )
     await api.dispose()
   })
   it('exposes Task Run progress through one subscription seam', async () => {

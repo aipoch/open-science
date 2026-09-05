@@ -87,14 +87,13 @@ const navigationState = (
   NavigationStore,
   'view' | 'activeProjectId' | 'userNavigationRevision' | 'explicitNavigationRevision'
 > => ({
-  activeProjectId: state.activeProjectId,
+  view: next.view,
+  activeProjectId:
+    next.view === 'home' ? undefined : (next.activeProjectId ?? state.activeProjectId),
   userNavigationRevision:
     origin === 'user' ? state.userNavigationRevision + 1 : state.userNavigationRevision,
   explicitNavigationRevision:
-    origin === 'automatic'
-      ? state.explicitNavigationRevision
-      : state.explicitNavigationRevision + 1,
-  ...next
+    origin === 'automatic' ? state.explicitNavigationRevision : state.explicitNavigationRevision + 1
 })
 
 // Picks the most recently updated non-pending session in a project so opening a project lands on its

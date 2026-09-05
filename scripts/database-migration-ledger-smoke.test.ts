@@ -72,7 +72,7 @@ const rebuildComputeJobWithoutAnalysisConstraints = async (
 
 describe('packaged database migration ledger smoke', () => {
   it('pins every packaged application migration identity and checksum', () => {
-    expect(MIGRATION_MANIFEST.slice(-5).map(({ id, checksum }) => ({ id, checksum }))).toEqual([
+    expect(MIGRATION_MANIFEST.slice(-6).map(({ id, checksum }) => ({ id, checksum }))).toEqual([
       {
         id: '0023_compute_job_operation',
         checksum: 'c625e336996c7dd1eba64da8ccd306104ccd68cf219e60ee2c3889749f86b079'
@@ -92,6 +92,10 @@ describe('packaged database migration ledger smoke', () => {
       {
         id: '0027_project_session_defaults',
         checksum: 'af7f3740a6032de71789e25567ee6605f961ee0dea3b89df2b47f9a589e738c7'
+      },
+      {
+        id: '0028_database_numeric_and_null_constraints',
+        checksum: '7ee2e3ec746080d5e1bedcddaea5ded1b080d8bcbc8ec59ed4139ff8c5e5de4a'
       }
     ])
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
@@ -129,7 +133,7 @@ describe('packaged database migration ledger smoke', () => {
       }
       await rebuildComputeJobWithoutAnalysisConstraints(client, true)
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints')`
       )
 
       await migrateApplicationDatabase(client)
@@ -165,7 +169,7 @@ describe('packaged database migration ledger smoke', () => {
       await migrateApplicationDatabase(client)
       await rebuildComputeJobWithoutAnalysisConstraints(client, false)
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints')`
       )
       await client.$executeRawUnsafe(`INSERT INTO "ComputeJob" (
         "id", "providerId", "shape", "sessionId", "projectId", "status", "intent",
@@ -199,7 +203,7 @@ describe('packaged database migration ledger smoke', () => {
       await migrateApplicationDatabase(client)
       await client.$executeRawUnsafe('DROP INDEX "MemoryEntry_global_contentKey_key"')
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints')`
       )
       await client.memoryEntry.createMany({
         data: [
@@ -297,7 +301,7 @@ describe('packaged database migration ledger smoke', () => {
         'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
       )
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints')`
       )
       await rebuildComputeJobWithoutAnalysisConstraints(client, true)
 
@@ -374,7 +378,8 @@ describe('packaged database migration ledger smoke', () => {
            '0024_compute_job_file_evidence',
            '0025_managed_file_version_foundation',
            '0026_compute_job_remote_cleanup',
-           '0027_project_session_defaults'
+           '0027_project_session_defaults',
+           '0028_database_numeric_and_null_constraints'
          )`
       )
       await rebuildComputeJobWithoutAnalysisConstraints(client, true)

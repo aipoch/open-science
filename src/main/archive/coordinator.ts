@@ -33,7 +33,7 @@ type SessionRuntimeActivity = {
 // archive/restore decision and the final runtime admission observe one consistent active state.
 // Prompt execution stays outside it; Task resume holds it only until the Session is durably running.
 class ArchiveCoordinator {
-  private queue: Promise<void> = Promise.resolve()
+  private readonly projectQueues = new Map<string, Promise<void>>()
   private markReadSessions: (sessionIds: string[]) => Promise<void> = async () => undefined
   private readonly deletingProjectIds = new Set<string>()
 
@@ -43,12 +43,19 @@ class ArchiveCoordinator {
     private readonly runtime: SessionRuntimeActivity
   ) {}
 
-  private enqueue<Result>(operation: () => Promise<Result>): Promise<Result> {
-    const result = this.queue.then(operation, operation)
-    this.queue = result.then(
+  private enqueue<Result>(projectId: string, operation: () => Promise<Result>): Promise<Result> {
+    const currentQueue = this.projectQueues.get(projectId) ?? Promise.resolve()
+    const result = currentQueue.then(operation, operation)
+    const nextQueue = result.then(
       () => undefined,
       () => undefined
     )
+    this.projectQueues.set(projectId, nextQueue)
+    void nextQueue.then(() => {
+      if (this.projectQueues.get(projectId) === nextQueue) {
+        this.projectQueues.delete(projectId)
+      }
+    })
     return result
   }
 
@@ -64,7 +71,7 @@ class ArchiveCoordinator {
   }
 
   updateProjectArchive(request: UpdateProjectArchiveRequest): Promise<Project> {
-    return this.enqueue(async () => {
+    return this.enqueue(request.id, async () => {
       this.assertProjectDeletionAvailable(request.id)
       const project = await this.projects.get(request.id)
       if (!project) throw new Error('Project not found.')
@@ -93,7 +100,7 @@ class ArchiveCoordinator {
   }
 
   updateSessionArchive(request: UpdateSessionArchiveRequest): Promise<PersistedChatSession> {
-    return this.enqueue(async () => {
+    return this.enqueue(request.projectId, async () => {
       await this.activeProject(request.projectId)
       const session = await this.sessions.updateArchive(request, () =>
         this.runtime.isSessionBusy(request.projectId, request.sessionId)
@@ -109,7 +116,7 @@ class ArchiveCoordinator {
 
   assertProjectAvailable(projectId: string | undefined): Promise<void> {
     if (!projectId) return Promise.resolve()
-    return this.enqueue(async () => {
+    return this.enqueue(projectId, async () => {
       await this.activeProject(projectId)
     })
   }
@@ -119,7 +126,7 @@ class ArchiveCoordinator {
     operation: () => Promise<Result>
   ): Promise<Result> {
     if (!projectId) return operation()
-    return this.enqueue(async () => {
+    return this.enqueue(projectId, async () => {
       await this.activeProject(projectId)
       return operation()
     })
@@ -129,7 +136,7 @@ class ArchiveCoordinator {
     projectId: string,
     operation: () => Promise<Result>
   ): Promise<Result> {
-    return this.enqueue(async () => {
+    return this.enqueue(projectId, async () => {
       // ProjectDeletionIntent is durable before this boundary. Re-entry is a recovery retry, and a
       // failed teardown must retain the fence until the coordinator completes or explicitly aborts.
       this.deletingProjectIds.add(projectId)
@@ -143,7 +150,7 @@ class ArchiveCoordinator {
   ): Promise<Result> {
     // Parent-message delivery holds this short lifecycle through validation, optional resume, and
     // provider acceptance so Project deletion cannot snapshot ACP ownership in the middle.
-    return this.enqueue(async () => {
+    return this.enqueue(projectId, async () => {
       this.assertProjectDeletionAvailable(projectId)
       return operation()
     })
@@ -158,7 +165,7 @@ class ArchiveCoordinator {
   }
 
   assertSessionAvailable(projectId: string, sessionId: string): Promise<void> {
-    return this.enqueue(() => this.assertSessionAvailableNow(projectId, sessionId))
+    return this.enqueue(projectId, () => this.assertSessionAvailableNow(projectId, sessionId))
   }
 
   withSessionAvailable<Result>(
@@ -166,17 +173,20 @@ class ArchiveCoordinator {
     sessionId: string,
     operation: () => Promise<Result>
   ): Promise<Result> {
-    // ponytail: reuse the global archive queue until measured resume contention justifies
-    // partitioning it by Project.
-    return this.enqueue(async () => {
+    return this.enqueue(projectId, async () => {
       await this.assertSessionAvailableNow(projectId, sessionId)
       return operation()
     })
   }
 
   assertSessionAvailableById(sessionId: string): Promise<void> {
-    return this.enqueue(async () => {
-      await this.assertSessionAvailableByIdNow(sessionId)
+    return this.resolveSessionProjectId(sessionId).then((projectId) => {
+      if (!projectId) {
+        throw new Error('Cannot use a Session whose Project owner is unavailable.')
+      }
+      return this.enqueue(projectId, async () => {
+        await this.assertSessionAvailableByIdNow(sessionId, projectId)
+      })
     })
   }
 
@@ -184,9 +194,14 @@ class ArchiveCoordinator {
     sessionId: string,
     operation: (projectId: string) => Promise<Result>
   ): Promise<Result> {
-    return this.enqueue(async () => {
-      const projectId = await this.assertSessionAvailableByIdNow(sessionId)
-      return operation(projectId)
+    return this.resolveSessionProjectId(sessionId).then((projectId) => {
+      if (!projectId) {
+        throw new Error('Cannot use a Session whose Project owner is unavailable.')
+      }
+      return this.enqueue(projectId, async () => {
+        await this.assertSessionAvailableByIdNow(sessionId, projectId)
+        return operation(projectId)
+      })
     })
   }
 
@@ -194,12 +209,12 @@ class ArchiveCoordinator {
     sessionId: string,
     operation: () => Promise<Result>
   ): Promise<Result> {
-    const admitted = this.enqueue(async () => {
-      const projectId =
-        (await this.sessions.sessionProjectId(sessionId)) ??
-        this.runtime.liveSessionProjectId(sessionId)
-      if (projectId) this.assertProjectDeletionAvailable(projectId)
-      return { result: operation() }
+    const admitted = this.resolveSessionProjectId(sessionId).then((projectId) => {
+      if (!projectId) return { result: operation() }
+      return this.enqueue(projectId, async () => {
+        this.assertProjectDeletionAvailable(projectId)
+        return { result: operation() }
+      })
     })
     return admitted.then(({ result }) => result)
   }
@@ -225,16 +240,16 @@ class ArchiveCoordinator {
     await this.sessions.assertSessionAvailable(ownerProjectId, sessionId)
   }
 
-  private async assertSessionAvailableByIdNow(sessionId: string): Promise<string> {
-    const projectId =
-      (await this.sessions.sessionProjectId(sessionId)) ??
-      this.runtime.liveSessionProjectId(sessionId)
-    if (!projectId) {
-      throw new Error('Cannot use a Session whose Project owner is unavailable.')
-    }
+  private async assertSessionAvailableByIdNow(sessionId: string, projectId: string): Promise<void> {
     await this.activeProject(projectId)
     await this.sessions.assertSessionAvailable(projectId, sessionId)
-    return projectId
+  }
+
+  private async resolveSessionProjectId(sessionId: string): Promise<string | undefined> {
+    return (
+      (await this.sessions.sessionProjectId(sessionId)) ??
+      this.runtime.liveSessionProjectId(sessionId)
+    )
   }
 
   private assertProjectDeletionAvailable(projectId: string): void {

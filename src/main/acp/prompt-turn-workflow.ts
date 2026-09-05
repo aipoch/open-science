@@ -43,10 +43,14 @@ type AcpPromptTurnMode =
       attribution: MessageAttribution
       promptAttemptId?: string
     }>
-  | Readonly<{ kind: 'app-continuation'; promptAttemptId?: string }>
+  | Readonly<{
+      kind: 'app-continuation'
+      promptAttemptId?: string
+      planDelivery?: Readonly<{ projectId: string; commandId: string }>
+    }>
 
 type AcpPromptTurnPlanContext = Readonly<{
-  authorized?: ActivePlanProjection
+  active?: ActivePlanProjection
   protectedPending?: ActivePlanProjection
   protectedRejected?: ActivePlanProjection
 }>
@@ -122,13 +126,15 @@ type AcpPromptTurnArtifacts = Readonly<{
 
 type AcpPromptTurnPlanWorkflow = Readonly<{
   preflight: (
-    request: AcpPromptRequest
+    request: AcpPromptRequest,
+    mode: AcpPromptTurnMode
   ) => AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext>
   admit: (
     request: AcpPromptRequest,
     interaction: AcpPromptSessionInteractionScope,
     plan: AcpPromptTurnPlanContext
   ) => AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext>
+  providerAccepted: (sessionId: string, mode: AcpPromptTurnMode) => void | Promise<void>
   beforeRelease: (sessionId: string, interaction: AcpPromptSessionInteractionScope) => void
   afterRelease: (sessionId: string) => Promise<void>
 }>
@@ -205,7 +211,7 @@ class AcpPromptTurnWorkflow {
     try {
       const preemption = this.options.finalization.preemptCompaction(request.sessionId)
       if (preemption) await preemption
-      const planPreflight = this.options.plan.preflight(request)
+      const planPreflight = this.options.plan.preflight(request, mode)
       plan = planPreflight instanceof Promise ? await planPreflight : planPreflight
       const authorization = this.options.skills.authorize({
         role: this.options.environment.role?.(),
@@ -370,7 +376,7 @@ class AcpPromptTurnWorkflow {
       const snapshot = registry.lookup(sessionId)?.aggregate.snapshot()
       const backend = env.backend()
       const planContext =
-        turn.plan.authorized ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
+        turn.plan.active ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
       prepared = await preparation.prepare({
         request: preparationRequest,
         connectionGeneration: turn.connectionGeneration,
@@ -451,6 +457,7 @@ class AcpPromptTurnWorkflow {
           },
           captureStop: () => interactions.captureTerminal(interaction, 'stop'),
           onAccepted: async () => {
+            await plan.providerAccepted(sessionId, turn.mode)
             if (sideChatRelay && !sideChatRelaySettled) {
               sideChatRelaySettled = true
               try {

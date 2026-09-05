@@ -29,6 +29,8 @@ type SessionReconciliationFileIndex = {
 type SessionReconciliationProvenance = {
   captureFinalizedMessages(session: PersistedChatSession): Promise<void>
   reconcileSessionDeletions(activeSessions: PersistedChatSession[]): Promise<void>
+  reconcileSessionCleanup?(activeSessions: PersistedChatSession[]): Promise<void>
+  reconcileMessageSnapshots?(activeSessions: PersistedChatSession[]): Promise<void>
 }
 
 type SessionPermissionGrantReconciliation = {
@@ -289,6 +291,16 @@ class SessionPersistenceReconciliationOwner {
 
     input.phase('reconcile-derived-state')
     try {
+      const provenance = this.provenance
+      const splitProvenance =
+        provenance?.reconcileSessionCleanup && provenance.reconcileMessageSnapshots
+          ? {
+              reconcileSessionCleanup: provenance.reconcileSessionCleanup.bind(provenance),
+              reconcileMessageSnapshots: provenance.reconcileMessageSnapshots.bind(provenance)
+            }
+          : undefined
+      await splitProvenance?.reconcileSessionCleanup(sessions)
+
       if (this.uploads) {
         for (let index = 0; index < sessions.length; index += 1) {
           const session = sessions[index]
@@ -320,7 +332,6 @@ class SessionPersistenceReconciliationOwner {
         }
       }
 
-      await this.provenance?.reconcileSessionDeletions(sessions)
       const projectReconciliations = new Map<string, ArtifactProjectReconciliationSnapshot>()
       if (this.artifactStorage) {
         for (const projectId of new Set(sessions.map((session) => session.projectId))) {
@@ -362,6 +373,11 @@ class SessionPersistenceReconciliationOwner {
           result = { ...result, sessions }
         }
       }
+      // Message snapshot repair needs the authoritative Artifact attachments recovered above;
+      // otherwise a ready snapshot can be compared against incomplete Session JSON and stay
+      // unavailable even after the Session is repaired later in this same startup pass.
+      if (splitProvenance) await splitProvenance.reconcileMessageSnapshots(sessions)
+      else await this.provenance?.reconcileSessionDeletions(sessions)
       // Restore active owners before scan-order-dependent sync offers canonical rows elsewhere.
       await this.fileIndex.reconcileActiveSessions(sessions)
       for (const session of sessions) {

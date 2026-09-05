@@ -95,7 +95,6 @@ const pendingPlanProjection: ActivePlanProjection = {
   revision: 1,
   approval: 'pending',
   lifecycle: 'awaiting_approval',
-  requiresExplicitContinuation: false,
   document: {
     schema_version: 1,
     task_summary: 'Review the generated plan',
@@ -229,6 +228,79 @@ describe('workspace runtime events', () => {
       activeRun: undefined,
       activePlanProjection: { approval: 'pending', lifecycle: 'awaiting_approval' }
     })
+  })
+
+  it('keeps Main-owned completed Plan history when the runtime advances to a new Plan', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    const completedPlan = {
+      ...pendingPlanProjection,
+      artifactId: 'plan-a',
+      artifactVersionId: 'plan-version-a',
+      originatingPromptMessageId: promptMessageId,
+      revision: 7,
+      approval: 'approved' as const,
+      lifecycle: 'completed' as const,
+      document: {
+        ...pendingPlanProjection.document,
+        phases: [
+          {
+            name: 'Execution',
+            delegations: [
+              {
+                name: 'Primary agent',
+                steps: [{ title: 'Finish Plan A', description: 'Complete the work.' }]
+              }
+            ]
+          }
+        ]
+      },
+      stepStatuses: { 'Finish Plan A': { status: 'completed' as const, updatedAt: 7 } },
+      stepStates: { 'Finish Plan A': { status: 'completed' as const } },
+      counts: { phases: 1, delegations: 1, steps: 1, completed: 1, inProgress: 0 }
+    }
+    const nextPlan = {
+      ...pendingPlanProjection,
+      artifactId: 'plan-b',
+      artifactVersionId: 'plan-version-b',
+      originatingPromptMessageId: promptMessageId,
+      revision: 8
+    }
+    useSessionStore.getState().setActivePlanProjection('transport-session-1', completedPlan)
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        planHistoryProjections: [completedPlan],
+        runtimeContext: {
+          version: 1,
+          revision: 8,
+          plan: {
+            artifactId: nextPlan.artifactId,
+            artifactVersionId: nextPlan.artifactVersionId,
+            artifactChecksum: nextPlan.artifactChecksum,
+            originatingPromptMessageId: nextPlan.originatingPromptMessageId,
+            approval: nextPlan.approval,
+            stepStatuses: nextPlan.stepStatuses
+          }
+        },
+        updatedAt: source.updatedAt + 1
+      },
+      mode: 'runtime-context-authority'
+    })
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'plan-b-ready', kind: 'plan', planProjection: nextPlan })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.activePlanProjection).toBe(nextPlan)
+    expect(session.planHistoryProjections).toEqual([expect.objectContaining(completedPlan)])
+    expect(
+      session.planHistoryProjections?.filter(
+        ({ artifactVersionId }) => artifactVersionId === nextPlan.artifactVersionId
+      )
+    ).toEqual([])
   })
 
   it('projects Plan feedback runtime events as settled user Messages', async () => {

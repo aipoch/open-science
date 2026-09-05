@@ -290,7 +290,7 @@ class HeadlessTaskApi {
     sessionId: string,
     request: TaskPlanResponseRequest
   ): Promise<PlanResponseResult> {
-    const session = await this.runner.getSession(sessionId)
+    const session = await this.runner.ensureSessionAttached(sessionId)
     const command: PlanResponseCommand =
       'feedback' in request && typeof request.feedback === 'string'
         ? { projectId: session.projectId, sessionId: session.id, feedback: request.feedback }

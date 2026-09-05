@@ -293,6 +293,7 @@ const buildCodexNativeModelCatalog = (
   provider: CodexNativeModelCatalogInput,
   catalog: readonly AgentModelCatalogEntry[] = []
 ): Record<string, unknown> | undefined => {
+  const activeModel = provider.model?.trim()
   const candidates = new Map<string, CodexNativeModelCatalogInput>()
   for (const entry of catalog) {
     const model = entry.provider.model?.trim()
@@ -304,14 +305,23 @@ const buildCodexNativeModelCatalog = (
       reasoningEfforts: entry.reasoningEfforts
     })
   }
-  if (provider.model) {
-    const catalogEntry = candidates.get(provider.model)
-    candidates.set(provider.model, {
+  if (activeModel) {
+    const catalogEntry = candidates.get(activeModel)
+    candidates.set(activeModel, {
       ...catalogEntry,
       ...provider,
+      model: activeModel,
       reasoningEffort: provider.reasoningEffort ?? catalogEntry?.reasoningEffort,
       reasoningEfforts: provider.reasoningEfforts ?? catalogEntry?.reasoningEfforts
     })
+  }
+
+  // model_catalog_json replaces Codex's native catalog rather than extending it. Keep the native
+  // catalog intact when the active official model already has trusted bundled metadata; an
+  // unbundled sibling in the provider catalog should not replace the active model's metadata.
+  const activeCatalogEntry = activeModel ? candidates.get(activeModel) : undefined
+  if (activeCatalogEntry && buildCodexNativeModelCatalogEntry(activeCatalogEntry) === undefined) {
+    return undefined
   }
 
   const models = [...candidates.values()]

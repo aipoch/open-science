@@ -29,6 +29,39 @@ type ProjectClient = Pick<
 
 type ProjectDeletionResult = Readonly<{ memoryRevision: number }>
 
+const decodeProjectSessionDefaults = (value: string | null): Project['sessionDefaults'] => {
+  try {
+    const decoded: unknown = JSON.parse(value ?? '{}')
+    if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
+      return { permissionProfile: 'ask', delegationPolicy: 'deny' }
+    }
+    const source = decoded as Record<string, unknown>
+    const defaults = Object.fromEntries(
+      Object.entries(projectSessionDefaultsSchema.shape).flatMap(([key, schema]) => {
+        const field = schema.safeParse(source[key])
+        return field.success && field.data !== undefined ? [[key, field.data]] : []
+      })
+    )
+    if (
+      source.permissionProfile !== undefined &&
+      !projectSessionDefaultsSchema.shape.permissionProfile.safeParse(source.permissionProfile)
+        .success
+    ) {
+      defaults.permissionProfile = 'ask'
+    }
+    if (
+      source.delegationPolicy !== undefined &&
+      !projectSessionDefaultsSchema.shape.delegationPolicy.safeParse(source.delegationPolicy)
+        .success
+    ) {
+      defaults.delegationPolicy = 'deny'
+    }
+    return projectSessionDefaultsSchema.parse(defaults)
+  } catch {
+    return { permissionProfile: 'ask', delegationPolicy: 'deny' }
+  }
+}
+
 // Normalizes Prisma rows into the epoch-ms shape shared with the renderer.
 const toProject = (row: PrismaProject): Project => ({
   id: row.id,
@@ -36,7 +69,7 @@ const toProject = (row: PrismaProject): Project => ({
   description: row.description,
   // An empty Agent Context is omitted on the wire, matching the optional shared schema field.
   ...(row.agentContext ? { agentContext: row.agentContext } : {}),
-  sessionDefaults: projectSessionDefaultsSchema.parse(JSON.parse(row.sessionDefaults ?? '{}')),
+  sessionDefaults: decodeProjectSessionDefaults(row.sessionDefaults),
   isExample: row.isExample,
   ...(row.pinned ? { pinned: true } : {}),
   ...(row.archivedAt ? { archivedAt: row.archivedAt.getTime() } : {}),
@@ -55,12 +88,16 @@ class ProjectRepository {
   // Lists projects most-recently-updated first for the home screen.
   async list(): Promise<Project[]> {
     const client = await this.getClient()
+    const deletionIntents = await client.projectDeletionIntent.findMany({
+      select: { projectId: true }
+    })
     const rows = await client.project.findMany({
       where: { deletedAt: null },
       orderBy: { updatedAt: 'desc' }
     })
+    const deletingProjectIds = new Set(deletionIntents.map(({ projectId }) => projectId))
 
-    return rows.map(toProject)
+    return rows.filter(({ id }) => !deletingProjectIds.has(id)).map(toProject)
   }
 
   // Returns a single project or null when it no longer exists.
@@ -69,6 +106,15 @@ class ProjectRepository {
     const row = await client.project.findUnique({ where: { id } })
 
     return row && row.deletedAt === null ? toProject(row) : null
+  }
+
+  async exists(id: string): Promise<boolean> {
+    const client = await this.getClient()
+    const row = await client.project.findUnique({
+      where: { id },
+      select: { deletedAt: true }
+    })
+    return row?.deletedAt === null
   }
 
   // Creates a project; rejects blank names before touching the database.

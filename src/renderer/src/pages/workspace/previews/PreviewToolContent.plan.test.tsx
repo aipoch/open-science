@@ -26,7 +26,6 @@ const pendingProjection: ActivePlanProjection = {
   revision: 3,
   approval: 'pending',
   lifecycle: 'awaiting_approval',
-  requiresExplicitContinuation: false,
   document: {
     schema_version: 1,
     task_summary: 'Analyze one dataset',
@@ -229,7 +228,6 @@ describe('Plan Preview workbench integration', () => {
 
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
-    expect(screen.getByText(/original Agent interaction has ended/u)).toBeTruthy()
     expect(screen.getByText('Session Plan')).toBeTruthy()
   })
 

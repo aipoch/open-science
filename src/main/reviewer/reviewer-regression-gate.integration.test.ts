@@ -393,7 +393,6 @@ describe('Reviewer enhancement executable end-to-end gate', () => {
           revision: 1,
           approval: 'approved',
           lifecycle: 'in_progress',
-          requiresExplicitContinuation: false,
           document: {
             schema_version: 1,
             task_summary: 'Create a CSV report and summary',

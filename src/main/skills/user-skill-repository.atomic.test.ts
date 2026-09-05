@@ -2,15 +2,15 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Wrap the real fs/promises but make `rename` a spy we can fail on demand. Every other call (mkdir,
-// writeFile, stat, rm) stays real so the test exercises the actual staging/backup dance on disk.
+// Wrap real filesystem operations with spies for deterministic swap and cleanup failures.
 vi.mock('node:fs/promises', async (importActual) => {
   const actual = await importActual<typeof import('node:fs/promises')>()
   return {
     ...actual,
-    rename: vi.fn((...args: Parameters<typeof actual.rename>) => actual.rename(...args))
+    rename: vi.fn((...args: Parameters<typeof actual.rename>) => actual.rename(...args)),
+    rm: vi.fn((...args: Parameters<typeof actual.rm>) => actual.rm(...args))
   }
 })
 
@@ -23,9 +23,12 @@ const SKILL_URL = 'https://github.com/acme/skills/tree/main/pack/foo'
 // The unmocked rename, captured once; each test resets the spy to pass through to it so a prior test's
 // failure injection can't leak into the next test's setup.
 let realRename: typeof import('node:fs/promises').rename
+let realRm: typeof import('node:fs/promises').rm
 beforeEach(async () => {
   realRename = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).rename
+  realRm = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).rm
   vi.mocked(fsp.rename).mockImplementation((from, to) => realRename(from, to))
+  vi.mocked(fsp.rm).mockImplementation((path, options) => realRm(path, options))
 })
 
 const fetchSkill =
@@ -154,6 +157,107 @@ describe('writeImported swap atomicity', () => {
     // Staging was discarded; nothing partial remains.
     vi.mocked(fsp.rename).mockImplementation((from, to) => realRename(from, to))
     expect(await repo.list()).toEqual([])
+  })
+})
+
+describe.each(['imported', 'personal'] as const)('%s replacement recovery validation', (source) => {
+  let root: string
+  let sourceDir: string
+  let live: string
+  let backup: string
+  let staging: string
+  const oldDocument = '---\nname: foo\n---\nold body'
+  const newDocument = '---\nname: foo\n---\nnew body'
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'atomic-recovery-validation-'))
+    sourceDir = join(root, 'skills', source)
+    live = join(sourceDir, 'foo')
+    backup = join(sourceDir, '.foo.backup-crash')
+    staging = join(sourceDir, '.foo.import-crash')
+    await mkdir(live, { recursive: true })
+    await writeFile(join(live, 'SKILL.md'), oldDocument)
+    if (source === 'imported') {
+      await writeFile(join(live, '.source.json'), JSON.stringify({ url: SKILL_URL }))
+    }
+    await mkdir(staging)
+    await writeFile(join(staging, 'SKILL.md'), newDocument)
+  })
+
+  afterEach(async () => {
+    await realRm(root, { recursive: true, force: true })
+  })
+
+  it.each(['first rename', 'second rename'])(
+    'restores the previous package after a crash following the %s',
+    async (boundary) => {
+      await realRename(live, backup)
+      if (boundary === 'second rename') await realRename(staging, live)
+      const validate = vi.fn<NonNullable<ConstructorParameters<typeof UserSkillRepository>[2]>>(
+        async (list) => {
+          const skills = await list()
+          const document = await readFile(join(skills[0].sourceDir, 'SKILL.md'), 'utf8')
+          if (document.includes('new body')) throw new Error('new helper rejected')
+        }
+      )
+      const restarted = new UserSkillRepository(root, undefined, validate)
+
+      // Public reads execute the real runRecovered path and repository validator binding.
+      expect.soft(await restarted.body(`${source}-foo`)).toBe('old body')
+      expect.soft(validate).toHaveBeenCalledTimes(boundary === 'second rename' ? 1 : 0)
+      expect.soft(await readFile(join(live, 'SKILL.md'), 'utf8')).toBe(oldDocument)
+      expect(await fsp.readdir(sourceDir)).toEqual(['foo'])
+    }
+  )
+
+  it('rolls back when promotion validation fails', async () => {
+    const validate = vi.fn(async () => {
+      throw new Error('new helper rejected')
+    })
+    const repo = new UserSkillRepository(root, undefined, validate)
+
+    if (source === 'imported') {
+      await expect(repo.importFromGitHub(SKILL_URL, fetchSkill(newDocument))).rejects.toThrow(
+        'new helper rejected'
+      )
+    } else {
+      await expect(
+        repo.updatePersonal('personal-foo', { name: 'foo', description: '', body: 'new body' })
+      ).rejects.toThrow('new helper rejected')
+    }
+
+    expect(validate).toHaveBeenCalledTimes(1)
+    expect(await readFile(join(live, 'SKILL.md'), 'utf8')).toBe(oldDocument)
+    expect(await fsp.readdir(sourceDir)).toEqual(['foo'])
+  })
+
+  it('revalidates a successful promotion before retrying failed backup cleanup', async () => {
+    const validate = vi.fn(async () => {})
+    const repo = new UserSkillRepository(root, undefined, validate)
+    vi.mocked(fsp.rm).mockImplementation(async (path, options) => {
+      if (String(path).includes('.backup-')) throw new Error('backup cleanup failed')
+      return realRm(path, options)
+    })
+    if (source === 'imported') {
+      await repo.importFromGitHub(SKILL_URL, fetchSkill(newDocument))
+    } else {
+      await repo.updatePersonal('personal-foo', { name: 'foo', description: '', body: 'new body' })
+    }
+    expect(validate).toHaveBeenCalledTimes(1)
+    const entries = await fsp.readdir(sourceDir)
+    const leftover = entries.find((entry) => entry.includes('.backup-'))!
+    expect(await readFile(join(sourceDir, leftover, 'SKILL.md'), 'utf8')).toBe(oldDocument)
+
+    validate.mockClear()
+    const restarted = new UserSkillRepository(root, undefined, validate)
+    expect(await restarted.body(`${source}-foo`)).toBe('new body')
+    expect.soft(validate).toHaveBeenCalledTimes(1)
+    expect(await fsp.readdir(sourceDir)).toContain(leftover)
+
+    vi.mocked(fsp.rm).mockImplementation((path, options) => realRm(path, options))
+    expect(await restarted.body(`${source}-foo`)).toBe('new body')
+    expect.soft(validate).toHaveBeenCalledTimes(2)
+    expect(await fsp.readdir(sourceDir)).toEqual(['foo'])
   })
 })
 

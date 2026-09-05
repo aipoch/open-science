@@ -25,8 +25,8 @@ export type SessionSearchGroups = {
   other: SessionSearchResult[]
 }
 
-const foldAsciiCase = (value: string): string =>
-  value.replace(/[A-Z]/g, (character) => character.toLowerCase())
+// Normalize only comparison text: compatibility forms match, but accents remain significant.
+const normalizeSearchText = (value: string): string => value.normalize('NFKC').toLowerCase()
 
 const compareByRecency = (left: SearchableSession, right: SearchableSession): number =>
   right.updatedAt - left.updatedAt || right.id.localeCompare(left.id)
@@ -59,8 +59,13 @@ export const searchSessionTitles = ({
   query: string
   visiblePrimaryCount: number
 }): SessionSearchGroups => {
-  const foldedQuery = foldAsciiCase(query.trim())
+  const foldedQuery = normalizeSearchText(query).trim()
   const numericQuery = /^\d+$/.test(foldedQuery) ? foldedQuery : undefined
+  // A literal substring must include trailing marks (e.g. the dot added when İ lowercases).
+  const titlePattern = new RegExp(
+    `${foldedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!\\p{M})`,
+    'u'
+  )
   const matches = sessions
     .filter(
       (session) =>
@@ -68,7 +73,7 @@ export const searchSessionTitles = ({
         projectNames.has(session.projectId) &&
         (numericQuery
           ? String(validSessionNumber(session.number) ?? '').startsWith(numericQuery)
-          : foldAsciiCase(session.title).includes(foldedQuery))
+          : titlePattern.test(normalizeSearchText(session.title)))
     )
     .sort((left, right) => {
       if (numericQuery) {

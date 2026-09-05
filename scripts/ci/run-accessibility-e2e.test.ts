@@ -1,13 +1,17 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { spawnSync } from 'node:child_process'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   EXPECTED_ACCESSIBILITY_SURFACES,
   publishInfrastructureFailure,
-  readAccessibilityResult
+  readAccessibilityResult,
+  runAccessibilityE2e
 } from './run-accessibility-e2e.mjs'
+
+vi.mock('node:child_process', () => ({ spawnSync: vi.fn() }))
 
 type CompleteResult = {
   schemaVersion: number
@@ -22,29 +26,72 @@ type CompleteResult = {
 const completeResult = (status: 'passed' | 'advisory'): CompleteResult => ({
   schemaVersion: 1,
   status,
-  plannedTests: 5,
-  completedTests: 5,
-  readyTests: 5,
+  plannedTests: 11,
+  completedTests: 11,
+  readyTests: 11,
   axeRunCount: EXPECTED_ACCESSIBILITY_SURFACES.length,
   scans: EXPECTED_ACCESSIBILITY_SURFACES.map((surface) => ({ surface }))
 })
 
 describe('accessibility E2E result contract', () => {
+  it.each([
+    ['passed', 0, 0],
+    ['advisory', 0, 1],
+    ['advisory', 1, 1],
+    ['infra-failure', 1, 1]
+  ] as const)(
+    'returns %s findings with process status %s as exit %s',
+    (status, processStatus, expected) => {
+      const root = mkdtempSync(join(tmpdir(), 'accessibility-exit-'))
+      const resultPath = join(root, 'summary.json')
+      vi.mocked(spawnSync).mockImplementation((_command, _args, options) => {
+        expect(options?.env?.ACCESSIBILITY_COLLECT_ALL).toBe('1')
+        expect(options?.env?.ACCESSIBILITY_ADVISORY).toBeUndefined()
+        writeFileSync(resultPath, JSON.stringify({ ...completeResult('passed'), status }))
+        return { status: processStatus } as ReturnType<typeof spawnSync>
+      })
+      try {
+        expect(runAccessibilityE2e({ ACCESSIBILITY_RESULT_PATH: resultPath })).toBe(expected)
+        expect(JSON.parse(readFileSync(resultPath, 'utf8')).status).toBe(status)
+      } finally {
+        vi.mocked(spawnSync).mockReset()
+        rmSync(root, { force: true, recursive: true })
+      }
+    }
+  )
+
   it.each(['passed', 'advisory'] as const)('accepts a versioned %s result', (status) => {
     const root = mkdtempSync(join(tmpdir(), 'accessibility-result-'))
     const path = join(root, 'summary.json')
 
     try {
       writeFileSync(path, JSON.stringify(completeResult(status)))
-      expect(readAccessibilityResult(path)).toMatchObject({ status, axeRunCount: 12 })
+      expect(readAccessibilityResult(path)).toMatchObject({
+        status,
+        axeRunCount: EXPECTED_ACCESSIBILITY_SURFACES.length
+      })
     } finally {
       rmSync(root, { force: true, recursive: true })
     }
   })
 
   it.each([
-    { name: 'stale schema', result: { schemaVersion: 0, status: 'passed', axeRunCount: 12 } },
-    { name: 'unknown status', result: { schemaVersion: 1, status: 'unknown', axeRunCount: 12 } },
+    {
+      name: 'stale schema',
+      result: {
+        schemaVersion: 0,
+        status: 'passed',
+        axeRunCount: EXPECTED_ACCESSIBILITY_SURFACES.length
+      }
+    },
+    {
+      name: 'unknown status',
+      result: {
+        schemaVersion: 1,
+        status: 'unknown',
+        axeRunCount: EXPECTED_ACCESSIBILITY_SURFACES.length
+      }
+    },
     { name: 'missing axe count', result: { schemaVersion: 1, status: 'passed' } },
     { name: 'zero axe evidence', result: { ...completeResult('passed'), axeRunCount: 0 } },
     { name: 'missing surface evidence', result: { ...completeResult('passed'), scans: [] } },
@@ -57,7 +104,7 @@ describe('accessibility E2E result contract', () => {
         )
       }
     },
-    { name: 'incomplete ready evidence', result: { ...completeResult('passed'), readyTests: 4 } }
+    { name: 'incomplete ready evidence', result: { ...completeResult('passed'), readyTests: 10 } }
   ])('rejects $name', ({ result }) => {
     const root = mkdtempSync(join(tmpdir(), 'accessibility-result-'))
     const path = join(root, 'nested', 'summary.json')
@@ -85,4 +132,38 @@ describe('accessibility E2E result contract', () => {
       rmSync(root, { force: true, recursive: true })
     }
   })
+})
+
+it('accepts complete evidence from the expanded responsive and contrast matrix', () => {
+  const root = mkdtempSync(join(tmpdir(), 'accessibility-expanded-'))
+  const path = join(root, 'summary.json')
+  const surfaces = [
+    ...EXPECTED_ACCESSIBILITY_SURFACES.slice(0, 15),
+    'Home (375px, light)',
+    'Home (375px, dark)',
+    'Home (767px, light)',
+    'Home (767px, dark)',
+    'Reported text (light)',
+    'Reported text (dark)'
+  ]
+  try {
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...completeResult('passed'),
+        plannedTests: 11,
+        completedTests: 11,
+        readyTests: 11,
+        axeRunCount: surfaces.length,
+        scans: surfaces.map((surface) => ({ surface }))
+      })
+    )
+    expect(readAccessibilityResult(path)).toMatchObject({
+      status: 'passed',
+      plannedTests: 11,
+      axeRunCount: 21
+    })
+  } finally {
+    rmSync(root, { force: true, recursive: true })
+  }
 })

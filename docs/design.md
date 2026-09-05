@@ -119,7 +119,7 @@ The light theme uses a warm off-white page background, white cards, and a deep-g
   --bg-400: hsl(45 10% 88%);
   --border-ink-channel: 60 2% 12%;
   --text-000: hsl(0 0% 7%);
-  --text-100: hsl(43 3% 47%);
+  --text-100: var(--muted-foreground);
   --text-300: hsl(43 3% 57%);
   --rail-card-bg: 0 0% 100%;
   --danger-000: hsl(0 45% 38%);
@@ -687,6 +687,10 @@ colors communicate a successful or failed probe/migration result.
 - Viewer toolbar buttons: `Button variant="ghost" size="icon"`, `size-7 rounded-md`.
 - Image / document preview area: `flex-1 min-h-0 overflow-auto bg-card`.
 - Empty preview panel shell and scroll body use `bg-bg-10`.
+- CSV/TSV previews use the first record as column headers and explicitly disclose that convention,
+  including for files without headers. Byte-limited reads and parser row limits independently make
+  the total unknown; show only the previewed row/column range in that case. Show an exact total only
+  when neither limit truncated the content. Keep parsing and rendering bounded.
 - File library search: `Input` or `CommandInput`, with focus using `ring-ring`.
 - File library view switch: `ToggleGroup type="single"`; inactive hover uses `bg-muted`, and the selected item uses `bg-bg-400 text-text-000`. Keep these states neutral rather than using `accent`.
 - File row: `h-9 rounded-md px-2 hover:bg-bg-200`; keep the text color unchanged on hover.
@@ -751,6 +755,12 @@ colors communicate a successful or failed probe/migration result.
   quiet monospaced tabular text. Do not render a redundant Session type badge. A pure numeric query
   matches positive Session-number prefixes and ranks an exact number first; nonnumeric queries remain
   title-only so global search does not expand into message-body or metadata search.
+- Session title search compares NFKC-normalized, lowercase text while preserving the original title
+  for display. Compatibility forms (including full-width input) and composed/decomposed accents
+  match; accents remain significant, so substring matches must include any trailing combining marks
+  (including the dot produced by lowercasing `İ`). `ß` is not expanded to `ss`. Full-width numeric queries
+  follow the same Session-number lookup as ASCII digits. This policy applies to the local Session
+  title catalog, not the separate Artifact filename search.
 - List row: `h-10 rounded-lg px-3 hover:bg-accent hover:text-accent-foreground`.
 - Inline more actions: default `opacity-0`, then `opacity-100` on hover or focus-visible.
 
@@ -921,6 +931,21 @@ colors communicate a successful or failed probe/migration result.
 - Trailing controls retain Connector-specific retry, configure, and sign-in actions, followed by Tag assignment, one `ChevronDown` action menu for custom Connectors, and the unlabeled Main switch. The custom menu orders Export, Edit, separator, Remove; removal continues to use the Specialist impact check and confirmation dialog.
 - Creating a custom OAuth Connector saves its configuration first, then immediately starts browser authorization in a cancellable dialog. Cancelling or failing authorization keeps the saved Connector disabled so the user can retry from the same dialog or finish later. Existing Connector rows reuse this dialog for sign-in rather than presenting a separate inline waiting state.
 - When a runtime refresh shows that a previously authenticated OAuth Connector has lost its tokens, the app raises one transient global notice with a shortcut back to Settings. The Connector row remains the persistent source of truth and continues to show that sign-in is required. This notice is session-local UI state: it adds no persisted status field, migration, or shared enum value.
+
+## Error notices
+
+Use the shared `ErrorNotice` for error summaries. Keep the decorative flask mark compact (`size-10`),
+use one bounded column (`max-w-md`, `min-w-0`), and left-align headings, descriptions, codes, and help.
+Pair the status icon with the first text line. Long error text and identifiers must wrap inside the
+column. Group primary and secondary actions at the trailing edge with `flex-wrap` and a consistent
+small gap; wrap whole controls instead of splitting their labels. Preserve semantic status tones,
+disabled/loading behavior, and immediately visible keyboard focus.
+
+Provenance diagnostics share the summary's width below a divider. A disclosure button exposes its
+expanded state and controls the diagnostic region; the copy action belongs in that region's header
+and appears only while expanded. Keep diagnostics selectable, keyboard-scrollable, and bounded in
+height. Report copy success inline and copy failures next to the diagnostic text. The error summary's
+alert region excludes the diagnostic payload so opening it does not announce the entire JSON blob.
 
 ## Clickable Area Guidelines
 

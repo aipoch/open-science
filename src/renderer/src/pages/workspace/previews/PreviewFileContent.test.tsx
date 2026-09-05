@@ -753,7 +753,8 @@ describe('PreviewFileContent', () => {
 
     await renderFile(createFileItem({ format: 'csv', name: 'measurements.tsv' }))
 
-    expect(container.textContent).toContain('100+ rows · 26 columns')
+    expect(container.textContent).not.toContain('100+ rows · 26 columns')
+    expect(container.textContent).not.toContain('100 rows · 26 columns')
     expect(container.textContent).toContain('Showing 100 rows · 24 columns')
     expect(container.textContent).toContain('2 more columns hidden in this preview')
     expect(container.textContent).toContain('r1c1')

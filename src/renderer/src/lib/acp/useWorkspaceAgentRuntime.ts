@@ -345,9 +345,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       const selected = resolveRuntimeSelection(agentConfiguration)
       const rememberAdmittedTarget = (sessionId: string | undefined): void => {
         if (!sessionId) return
-        lifecycleOwner.recordPromptPlanAuthority({
+        lifecycleOwner.recordPromptAdmission({
           sessionId,
-          planContinuation: resolvedInput.planContinuation,
           agentTarget: selected.agentTarget
         })
       }
