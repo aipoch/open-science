@@ -1726,8 +1726,16 @@ const useSessionPersistence = (): SessionPersistenceState => {
   )
   const dismissLoadWarning = useCallback(() => setLoadWarning(undefined), [])
   const startNewConversationAfterSizeLimit = useCallback(() => {
+    for (const target of sizeLimitTargets.current) {
+      failedWriteTargets.current.delete(target)
+      failedConflictRebaseFields.current.delete(target)
+      revisionConflictTargets.current.delete(target)
+      unresolvedSessionRevisionConflictTargets.delete(target)
+      liveSessionPersistence.clearWriteFailure(target)
+    }
     useSessionStore.getState().clearSelection()
     setWriteError(undefined)
+    setWriteErrorRetryable(true)
   }, [])
   const retryLoad = useCallback(() => {
     // A partial snapshot remains interactive. Keep the session the user chose from that snapshot so

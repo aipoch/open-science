@@ -390,6 +390,8 @@ describe('session persistence startup', () => {
     expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
       'changes saved'
     )
+    expect(probe?.dataset.persistenceBlocked).toBe('session-1')
+    await expect(flushSessionPersistence()).resolves.toBeUndefined()
   })
 
   it('accepts an external Plan size-limit report into the shared recovery state', async () => {
