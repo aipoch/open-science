@@ -526,6 +526,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               detectActiveSessions,
               hasActiveReviewerWork,
               getActiveSettingsInstallId,
+              holdSettingsInstallAdmission,
               prepareForQuit,
               abortQuitPreparation,
               dispose: disposeApplicationRuntime
@@ -668,6 +669,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               detectActiveSessions,
               hasActiveReviewerWork,
               getActiveSettingsInstallId,
+              holdSettingsInstallAdmission,
               prepareForQuit,
               abortQuitPreparation,
               createSessionPersistenceFlush: (
@@ -774,6 +776,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         detectActiveSessions: ctx.detectActiveSessions,
         hasActiveReviewerWork: ctx.hasActiveReviewerWork,
         getActiveSettingsInstallId: ctx.getActiveSettingsInstallId,
+        holdSettingsInstallAdmission: ctx.holdSettingsInstallAdmission,
         prepareForQuit: ctx.prepareForQuit,
         abortQuitPreparation: (reason) => {
           ctx.abortQuitPreparation()

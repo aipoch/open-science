@@ -457,6 +457,7 @@ export type ApplicationRuntimeInterfaces = {
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   hasActiveReviewerWork: () => boolean
   getActiveSettingsInstallId: () => string | undefined
+  holdSettingsInstallAdmission: () => () => void
   prepareForQuit: () => Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
   abortQuitPreparation: () => void
 }
@@ -4233,6 +4234,7 @@ const createApplicationModules = async (
       }),
     hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
     getActiveSettingsInstallId: () => settingsService.getActiveInstallId(),
+    holdSettingsInstallAdmission: () => settingsService.holdInstallAdmission(),
     prepareForQuit: () => runtime.prepareForQuit(),
     abortQuitPreparation: () => runtime.abortQuitPreparation(),
     electronAdapters: {

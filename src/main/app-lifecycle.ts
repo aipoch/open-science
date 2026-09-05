@@ -60,6 +60,8 @@ export type AppLifecycleDeps = {
   shutdownBackends: () => Promise<ShutdownStepOutcome | void>
   // Requests active ACP turns to cancel, then waits a bounded interval for terminal usage events.
   prepareForQuit: () => Promise<ShutdownStepOutcome | void>
+  // Closes installation admission synchronously across asynchronous quit preparation.
+  holdSettingsInstallAdmission: () => () => void
   // Reopens Main/renderer admission when persistence prevents an orderly quit from committing.
   abortQuitPreparation: (reason?: SessionPersistenceFlushAbortReason) => Promise<void> | void
   // Drains renderer runtime events and its ordered Session write queue before the window disappears.
@@ -425,6 +427,7 @@ export const installAppLifecycle = (
 
     event.preventDefault()
     shutdownStarted = true
+    const releaseSettingsInstallAdmission = deps.holdSettingsInstallAdmission()
     void (async () => {
       const diagnostics = deps.log
         ? startDiagnosticOperation(deps.log, {
@@ -566,6 +569,7 @@ export const installAppLifecycle = (
               // Restoring the visible app remains authoritative; rollback diagnostics are best-effort.
             }
           }
+          releaseSettingsInstallAdmission()
           shutdownStarted = false
           quitConfirmed = false
           confirmedSettingsInstallId = undefined

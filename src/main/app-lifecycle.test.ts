@@ -170,6 +170,7 @@ const setup = (
       | 'configureMainWindow'
     >
   > & {
+    holdSettingsInstallAdmission?: () => () => void
     trayHost?: boolean
     detectActiveSessions?: () => ActiveSessionInfo[]
     hasActiveReviewerWork?: () => boolean
@@ -216,6 +217,8 @@ const setup = (
       },
       shutdownBackends,
       prepareForQuit,
+      holdSettingsInstallAdmission:
+        overrides.holdSettingsInstallAdmission ?? (() => () => undefined),
       abortQuitPreparation,
       flushSessionPersistence,
       log: overrides.log,
@@ -483,6 +486,7 @@ describe('installAppLifecycle', () => {
       detectActiveSessions: (): ActiveSessionInfo[] => [],
       hasActiveReviewerWork: () => false,
       getActiveSettingsInstallId: () => undefined,
+      holdSettingsInstallAdmission: () => () => undefined,
       createConfirmClose: () => (): Promise<CloseConfirmChoice> => Promise.resolve('quit')
     })
 
@@ -719,6 +723,47 @@ describe('installAppLifecycle', () => {
       })
     )
   })
+
+  it.each(['completed', 'conflict'] as const)(
+    'holds installation admission during quit preparation and handles %s persistence',
+    async (outcome) => {
+      let held = false
+      const release = vi.fn(() => {
+        held = false
+      })
+      const hold = vi.fn(() => {
+        held = true
+        return release
+      })
+      const persistence = Promise.withResolvers<RendererSessionPersistenceFlushOutcome>()
+      const { app, closeOpts } = setup({
+        holdSettingsInstallAdmission: hold,
+        flushSessionPersistence: () => persistence.promise,
+        // A failed rollback must still restore Settings admission.
+        abortQuitPreparation: async () => {
+          throw new Error('rollback failed')
+        }
+      })
+      closeOpts[0].requestQuit()
+      app.emit('before-quit')
+      const admissionClosedBeforePersistence = held
+      app.emit('before-quit')
+      persistence.resolve(outcome)
+      await flush()
+
+      expect(admissionClosedBeforePersistence).toBe(true)
+      expect(hold).toHaveBeenCalledOnce()
+      if (outcome === 'conflict') {
+        expect(release).toHaveBeenCalledOnce()
+        expect(held).toBe(false)
+        expect(app.exit).not.toHaveBeenCalled()
+      } else {
+        expect(release).not.toHaveBeenCalled()
+        expect(held).toBe(true)
+        expect(app.exit).toHaveBeenCalledWith(0)
+      }
+    }
+  )
 
   it('keeps the app open when the renderer reports an unresolved Session revision conflict', async () => {
     const flushSessionPersistence = vi.fn(async () => 'conflict' as const)
