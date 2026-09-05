@@ -230,3 +230,68 @@ describe('permission summaries', () => {
     if (tool === 'notebook_bind_runtime') expect(html).toContain('/long/runtime/bin/R')
   })
 })
+
+it.each([false, true])('renders runtime switch receipts (partial failure: %s)', (failed) => {
+  const result = failed
+    ? {
+        ok: false,
+        bindingChanged: true,
+        error: 'Could not confirm storage',
+        target: { runtimeId: '/envs/analysis-r/bin/R' }
+      }
+    : {
+        bound: {
+          language: 'r',
+          runtimeId: '/envs/analysis-r/bin/R',
+          label: 'analysis-r',
+          version: '4.4.3',
+          source: 'managed',
+          status: 'active'
+        }
+      }
+  const item = activity({
+    title: 'mcp__open_science_notebook__notebook_switch_runtime',
+    status: failed ? 'failed' : 'completed',
+    rawInput: { language: 'r', runtimeId: '/envs/analysis-r/bin/R' },
+    rawOutput: {
+      result: { content: [{ type: 'text', text: JSON.stringify(result) }] },
+      error: null
+    }
+  })
+  const details = buildToolActivityDetails(item)!
+  const html = renderToStaticMarkup(
+    <WorkspaceToolDetailsRow activity={item} details={details} isExpanded onToggle={vi.fn()} />
+  )
+  expect(html).toContain('tool-summary-card')
+  expect(html).toContain('Switch notebook runtime')
+  expect(html).toContain('/envs/analysis-r/bin/R')
+  if (failed) {
+    expect(html).toContain('Could not confirm storage')
+    expect(html).toContain('The runtime binding changed despite the error.')
+  } else {
+    expect(html).toContain('analysis-r')
+    expect(html).toContain('4.4.3')
+    expect(html).toContain('Active')
+  }
+})
+
+it('shows the switch target and memory impact before approval', () => {
+  const html = renderToStaticMarkup(
+    <PermissionApprovalControls
+      requests={[
+        permission('notebook_switch_runtime', {
+          language: 'r',
+          runtimeId: 'C:\\runtimes\\analysis-r\\R.exe'
+        })
+      ]}
+      onRespond={vi.fn()}
+    />
+  )
+  expect(html).toContain('tool-summary-card')
+  expect(html).toContain('Switch notebook runtime')
+  expect(html).toContain('C:\\runtimes\\analysis-r\\R.exe')
+  expect(html).toContain(
+    'Clears memory in the selected language kernel. Other kernels are unaffected.'
+  )
+  expect(html).toContain('permission-actions')
+})

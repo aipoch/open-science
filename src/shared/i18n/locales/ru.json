@@ -4531,6 +4531,8 @@
     "Restarted": "Перезапущено",
     "The runtime binding changed despite the error.": "Привязка среды выполнения изменилась, несмотря на ошибку.",
     "Runtime source": "Источник среды выполнения",
-    "File content omitted": "Содержимое файла опущено"
+    "File content omitted": "Содержимое файла опущено",
+    "Switch notebook runtime": "Переключить среду выполнения Notebook",
+    "Clears memory in the selected language kernel. Other kernels are unaffected.": "Очищает память ядра выбранного языка. Другие ядра не затрагиваются."
   }
 }

@@ -4089,6 +4089,8 @@
     "Restarted": "다시 시작됨",
     "The runtime binding changed despite the error.": "오류가 발생했지만 런타임 연결은 변경되었습니다.",
     "Runtime source": "런타임 출처",
-    "File content omitted": "파일 내용 생략됨"
+    "File content omitted": "파일 내용 생략됨",
+    "Switch notebook runtime": "Notebook 런타임 전환",
+    "Clears memory in the selected language kernel. Other kernels are unaffected.": "선택한 언어 커널의 메모리를 지웁니다. 다른 커널에는 영향을 주지 않습니다."
   }
 }

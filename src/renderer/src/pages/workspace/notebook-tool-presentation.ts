@@ -82,6 +82,7 @@ export const isNotebookSummaryTool = (identity: string | undefined): boolean =>
     'notebook_state',
     'list_notebook_runtimes',
     'notebook_bind_runtime',
+    'notebook_switch_runtime',
     'notebook_restart'
   ].includes(matchNotebookControlTool(identity) ?? '')
 
@@ -112,10 +113,15 @@ export const buildNotebookToolSummary = (
     if (approval) summary.note = t('Clears in-memory variables. Run history is preserved.')
     else if (result?.status === 'restarted' && !summary.error)
       summary.note = t('In-memory variables cleared. Run history preserved.')
-  } else if (tool === 'notebook_bind_runtime') {
+  } else if (tool === 'notebook_bind_runtime' || tool === 'notebook_switch_runtime') {
     const bound = record(result?.bound)
     const target = record(result?.target)
-    summary.title = t('Bind notebook runtime')
+    summary.title =
+      tool === 'notebook_switch_runtime' ? t('Switch notebook runtime') : t('Bind notebook runtime')
+    if (approval && tool === 'notebook_switch_runtime')
+      summary.note = t(
+        'Clears memory in the selected language kernel. Other kernels are unaffected.'
+      )
     summary.subtitle = text(bound?.label)
     field(t('Language'), language(bound?.language ?? input.language))
     field(t('Version'), bound?.version)

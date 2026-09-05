@@ -4401,6 +4401,8 @@
     "Restarted": "Redémarré",
     "The runtime binding changed despite the error.": "L’association de l’environnement a été modifiée malgré l’erreur.",
     "Runtime source": "Origine de l’environnement",
-    "File content omitted": "Contenu du fichier omis"
+    "File content omitted": "Contenu du fichier omis",
+    "Switch notebook runtime": "Changer l’environnement Notebook",
+    "Clears memory in the selected language kernel. Other kernels are unaffected.": "Efface la mémoire du noyau du langage sélectionné. Les autres noyaux ne sont pas affectés."
   }
 }

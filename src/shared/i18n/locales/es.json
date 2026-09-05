@@ -4401,6 +4401,8 @@
     "Restarted": "Reiniciado",
     "The runtime binding changed despite the error.": "La vinculación del entorno cambió a pesar del error.",
     "Runtime source": "Origen del entorno",
-    "File content omitted": "Contenido del archivo omitido"
+    "File content omitted": "Contenido del archivo omitido",
+    "Switch notebook runtime": "Cambiar entorno de ejecución de Notebook",
+    "Clears memory in the selected language kernel. Other kernels are unaffected.": "Borra la memoria del kernel del lenguaje seleccionado. Los demás kernels no se ven afectados."
   }
 }

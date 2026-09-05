@@ -4091,6 +4091,8 @@
     "Restarted": "已重启",
     "The runtime binding changed despite the error.": "虽然发生错误，但运行环境绑定已更改。",
     "Runtime source": "运行环境来源",
-    "File content omitted": "文件内容已省略"
+    "File content omitted": "文件内容已省略",
+    "Switch notebook runtime": "切换 Notebook 运行环境",
+    "Clears memory in the selected language kernel. Other kernels are unaffected.": "清空所选语言内核的内存，不影响其他内核。"
   }
 }

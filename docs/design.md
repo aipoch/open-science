@@ -553,7 +553,7 @@ colors communicate a successful or failed probe/migration result.
 
 ### Activity Stream
 
-- Notebook tool details use compact summary cards for runtime discovery, runtime binding, restart,
+- Notebook tool details use compact summary cards for runtime discovery, runtime binding/switching, restart,
   and state inspection; Artifact writes show file name, type and size without loading file bytes.
   Keep the existing tool-row disclosure and put raw Notebook input/output behind collapsed detail
   disclosures. Runtime paths in Message summaries are expandable; approval cards show exact targets.
@@ -561,7 +561,8 @@ colors communicate a successful or failed probe/migration result.
   failed activity must not confirm a successful restart. State summaries show recent runs and mark
   compacted history; full history remains in the Notebook preview.
 - Permission cards for these operations summarize the requested action and its impact before
-  execution. Restart approvals explain variable loss and retained history. Artifact approvals retain
+  execution. Restart approvals explain variable loss and retained history. Runtime switch approvals
+  explain that the selected language kernel loses its memory while other kernels are unaffected. Artifact approvals retain
   source paths and inspectable request metadata while omitting inline content bytes. Keep existing
   Allow/Deny options, scopes, correlation, and submission behavior unchanged.
 

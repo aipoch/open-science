@@ -4091,6 +4091,8 @@
     "Restarted": "再起動済み",
     "The runtime binding changed despite the error.": "エラーが発生しましたが、ランタイムの関連付けは変更されました。",
     "Runtime source": "ランタイムの提供元",
-    "File content omitted": "ファイル内容は省略されています"
+    "File content omitted": "ファイル内容は省略されています",
+    "Switch notebook runtime": "Notebook ランタイムを切り替え",
+    "Clears memory in the selected language kernel. Other kernels are unaffected.": "選択した言語のカーネルのメモリを消去します。他のカーネルには影響しません。"
   }
 }

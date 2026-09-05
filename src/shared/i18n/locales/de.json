@@ -4246,6 +4246,8 @@
     "Restarted": "Neu gestartet",
     "The runtime binding changed despite the error.": "Die Laufzeitzuordnung wurde trotz des Fehlers geändert.",
     "Runtime source": "Laufzeitquelle",
-    "File content omitted": "Dateiinhalt ausgelassen"
+    "File content omitted": "Dateiinhalt ausgelassen",
+    "Switch notebook runtime": "Notebook-Laufzeit wechseln",
+    "Clears memory in the selected language kernel. Other kernels are unaffected.": "Löscht den Speicher des Kernels der ausgewählten Sprache. Andere Kernel bleiben unverändert."
   }
 }
