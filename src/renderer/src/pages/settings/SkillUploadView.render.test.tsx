@@ -408,3 +408,66 @@ describe('SkillUploadView (batch upload)', () => {
     )
   })
 })
+
+describe('SK08 same-named upload selection regressions', () => {
+  it.each(['zip', 'md'])(
+    'submits exactly one selected %s file when names collide',
+    async (extension) => {
+      const alphaBase64 = btoa('alpha zip')
+      useSettingsStore.setState({
+        previewSkillZip: vi.fn().mockImplementation(async (base64: string) => ({
+          previews: [
+            {
+              subPath: 'demo',
+              name: base64 === alphaBase64 ? 'alpha' : 'beta',
+              description: '',
+              metadata: {},
+              body: base64,
+              files: ['SKILL.md'],
+              alreadyImported: false
+            }
+          ],
+          skipped: []
+        })),
+        importSkillZipBatch: vi.fn().mockResolvedValue({
+          results: [{ subPath: 'demo', status: 'imported', id: 'imported-demo' }],
+          skills: []
+        })
+      })
+      act(() => root.render(<SkillUploadView onUploaded={vi.fn()} onWriteInstead={vi.fn()} />))
+      await dropFiles(
+        ['alpha', 'beta'].map(
+          (name) =>
+            new File(
+              [extension === 'zip' ? `${name} zip` : `---\nname: ${name}\n---\n${name} body`],
+              `pack.${extension}`,
+              { type: extension === 'zip' ? 'application/zip' : 'text/markdown' }
+            )
+        )
+      )
+      const alpha = document.body.querySelector<HTMLInputElement>('[aria-label="Select alpha"]')
+      const beta = document.body.querySelector<HTMLInputElement>('[aria-label="Select beta"]')
+      expect(alpha).not.toBeNull()
+      expect(beta).not.toBeNull()
+      expect(alpha!.checked).toBe(false)
+      expect(beta!.checked).toBe(false)
+      act(() => alpha!.click())
+      expect.soft(beta!.checked).toBe(false)
+      expect(document.body.textContent).toContain('Import selected (1)')
+      clickButton('Import selected')
+      await flush()
+      const state = useSettingsStore.getState()
+      if (extension === 'zip') {
+        expect.soft(state.importSkillZipBatch).toHaveBeenCalledTimes(1)
+        expect(state.importSkillZipBatch).toHaveBeenCalledWith(alphaBase64, [
+          { subPath: 'demo', replaceId: undefined }
+        ])
+      } else {
+        expect.soft(state.createSkill).toHaveBeenCalledTimes(1)
+        expect(state.createSkill).toHaveBeenCalledWith(
+          expect.objectContaining({ name: 'alpha', body: 'alpha body' })
+        )
+      }
+    }
+  )
+})

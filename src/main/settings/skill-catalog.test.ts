@@ -1140,3 +1140,86 @@ describe('SkillCatalogModule', () => {
     ])
   })
 })
+
+describe('reported Skill integrity regressions through Settings APIs', () => {
+  it('SK03 importing wrapped metadata cannot make an existing personal skill unavailable', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({ name: 'victim', description: 'Victim', body: 'Original victim' })
+    const file = join(userSkillSourceDir(catalog, 'personal'), 'victim', 'SKILL.md')
+    const original = await readFile(file, 'utf8')
+    const bytes = zipSync({
+      'wrapped/SKILL.md': strToU8('---\nname: external\ndescription: External\n---\nExternal body'),
+      'wrapped/.specialist-package.json': strToU8(
+        JSON.stringify({
+          id: 'personal-victim',
+          version: '1.0.0',
+          contentHash: 'external',
+          standalone: false,
+          ownerIds: ['absent-owner']
+        })
+      )
+    })
+    const result = await catalog
+      .importSkillZip({ dataBase64: Buffer.from(bytes).toString('base64') })
+      .then(
+        (outcome) => ({ outcome }),
+        (error: unknown) => ({ error })
+      )
+    // The reported attack corrupts identity, not the original file bytes.
+    expect(await readFile(file, 'utf8')).toBe(original)
+    const skills = await catalog.listSkills()
+    expect
+      .soft(skills.find((skill) => skill.name === 'victim'))
+      .toMatchObject({ id: 'personal-victim', available: true })
+    if ('outcome' in result)
+      expect
+        .soft(skills.find((skill) => skill.name === 'external'))
+        .toMatchObject({ id: result.outcome.id, available: true })
+    else expect(String(result.error)).toMatch(/reserved|metadata/i)
+    await expect(catalog.getSkillDetail('personal-victim')).resolves.toMatchObject({
+      body: expect.stringContaining('Original victim')
+    })
+  })
+
+  it('SK06 an old detail snapshot cannot overwrite a later save and delete its new attachment', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({
+      name: 'draft',
+      description: 'Original description',
+      body: 'Original body',
+      references: [{ path: 'old.csv', dataBase64: Buffer.from('old').toString('base64') }]
+    })
+    const old = await catalog.getSkillDetail('personal-draft')
+    await catalog.updateSkill({
+      id: old.id,
+      description: 'Newer description',
+      body: 'Newer body',
+      references: [
+        { path: 'old.csv' },
+        { path: 'new.csv', dataBase64: Buffer.from('new').toString('base64') }
+      ]
+    })
+    const result = await catalog
+      .updateSkill({
+        id: old.id,
+        description: old.description,
+        body: 'Old editor body edit',
+        metadata: old.metadata,
+        references: old.references.map(({ path }) => ({ path }))
+      })
+      .then(
+        () => 'saved',
+        () => 'rejected'
+      )
+    expect.soft(result).toBe('rejected')
+    const latest = await catalog.getSkillDetail(old.id)
+    expect.soft(latest.description).toBe('Newer description')
+    expect.soft(latest.references.map(({ path }) => path)).toContain('new.csv')
+    await expect(
+      readFile(
+        join(userSkillSourceDir(catalog, 'personal'), 'draft', 'references', 'new.csv'),
+        'utf8'
+      )
+    ).resolves.toBe('new')
+  })
+})
