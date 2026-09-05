@@ -153,6 +153,7 @@
     "Add context for the Agent": "Kontext für den Agenten hinzufügen",
     "Agent Message": "Agentennachricht",
     "An annotated image is no longer available. Restore access to its fixed version or remove the annotation, then try again.": "Ein annotiertes Bild ist nicht mehr verfügbar. Stellen Sie den Zugriff auf die zugehörige unveränderliche Version wieder her oder entfernen Sie die Anmerkung und versuchen Sie es erneut.",
+    "An Agent Runtime is still installing. Wait for it to finish before restarting to update.": "Eine Agent-Laufzeit wird noch installiert. Warten Sie, bis die Installation abgeschlossen ist, bevor Sie zum Aktualisieren neu starten.",
     "Annotated for Agent": "Für den Agenten annotiert",
     "Annotate": "Annotieren",
     "Historical versions cannot be annotated. Switch to the latest version to annotate.": "Historische Versionen können nicht annotiert werden. Wechseln Sie zur neuesten Version, um sie zu annotieren.",

@@ -807,7 +807,7 @@ describe('PreviewFileContent', () => {
     })
 
     expect(fetch).toHaveBeenLastCalledWith(
-      'open-science-preview://resource-2/file-1',
+      'open-science-preview://resource-1/file-1',
       expect.objectContaining({ headers: { Range: expect.stringMatching(/^bytes=5-/u) } })
     )
     expect(container.textContent).toContain('second page')

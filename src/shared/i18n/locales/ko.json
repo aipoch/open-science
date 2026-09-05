@@ -154,6 +154,7 @@
     "Add context for the Agent": "에이전트에게 전달할 컨텍스트 추가",
     "Agent Message": "에이전트 메시지",
     "An annotated image is no longer available. Restore access to its fixed version or remove the annotation, then try again.": "주석이 추가된 이미지를 더 이상 사용할 수 없습니다. 고정 버전에 대한 액세스를 복원하거나 주석을 제거한 후 다시 시도하세요.",
+    "An Agent Runtime is still installing. Wait for it to finish before restarting to update.": "에이전트 런타임을 설치하는 중입니다. 설치가 완료될 때까지 기다린 후 다시 시작하여 업데이트하세요.",
     "Annotated for Agent": "에이전트용으로 주석 처리됨",
     "Annotate": "주석 달기",
     "Historical versions cannot be annotated. Switch to the latest version to annotate.": "이전 버전에는 주석을 달 수 없습니다. 주석을 달려면 최신 버전으로 전환하세요.",

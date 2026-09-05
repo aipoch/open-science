@@ -141,6 +141,7 @@ type ManagedInstallImpl = (options: {
   onEvent: (event: { kind: string; installId: string }) => void
   dataRoot: string
   registries?: string[]
+  signal?: AbortSignal
 }) => Promise<{
   result: { installId: string; ok: boolean; error?: string }
   resolvedPath?: string
@@ -4661,6 +4662,93 @@ describe('SettingsService: skills', () => {
 })
 
 describe('installClaude (app-managed source)', () => {
+  it('drains authentication cleanup before reporting an installation disposal failure', async () => {
+    const { AgentRuntimeManager } = await import('./agent-runtime-manager')
+    const { ProviderAccountsModule } = await import('./provider-accounts')
+    const failure = new Error('Installer cleanup was not confirmed')
+    const authCleanup = Promise.withResolvers<void>()
+    const runtimeDispose = vi
+      .spyOn(AgentRuntimeManager.prototype, 'dispose')
+      .mockRejectedValue(failure)
+    const authDispose = vi
+      .spyOn(ProviderAccountsModule.prototype, 'dispose')
+      .mockReturnValue(authCleanup.promise)
+    try {
+      const service = createService()
+      let settled = false
+      const disposal = service.dispose().then(
+        () => {
+          settled = true
+          return undefined
+        },
+        (error: unknown) => {
+          settled = true
+          return error
+        }
+      )
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const waitedForAuthentication = !settled
+      authCleanup.resolve()
+      expect(await disposal).toBe(failure)
+      expect(waitedForAuthentication).toBe(true)
+    } finally {
+      authCleanup.resolve()
+      runtimeDispose.mockRestore()
+      authDispose.mockRestore()
+    }
+  })
+
+  it('reports an in-flight install until the installer settles', async () => {
+    let finishInstall!: (outcome: Awaited<ReturnType<ManagedInstallImpl>>) => void
+    const installOutcome = new Promise<Awaited<ReturnType<ManagedInstallImpl>>>((resolve) => {
+      finishInstall = resolve
+    })
+    const service = createService(undefined, {
+      installManagedClaudeImpl: () => installOutcome
+    })
+
+    const install = service.installClaude({ source: 'managed' }, () => undefined)
+    expect(service.hasActiveInstall()).toBe(true)
+    expect(service.getActiveInstallId()).toMatch(/^install-/)
+
+    finishInstall({ result: { installId: 'completed', ok: false } })
+    await install
+
+    expect(service.hasActiveInstall()).toBe(false)
+    expect(service.getActiveInstallId()).toBeUndefined()
+  })
+
+  it('aborts and drains an active runtime install during dispose', async () => {
+    const installStarted = Promise.withResolvers<void>()
+    const releaseCleanup = Promise.withResolvers<void>()
+    let installSignal: AbortSignal | undefined
+    const service = createService(undefined, {
+      installManagedClaudeImpl: async ({ installId, signal }) => {
+        installSignal = signal
+        installStarted.resolve()
+        await releaseCleanup.promise
+        return { result: { installId, ok: false, error: 'Installation cancelled.' } }
+      }
+    })
+    const install = service.installClaude({ source: 'managed' }, () => undefined)
+    await installStarted.promise
+
+    let disposed = false
+    const dispose = service.dispose().then(() => {
+      disposed = true
+    })
+    try {
+      await Promise.resolve()
+      expect(installSignal?.aborted).toBe(true)
+      expect(disposed).toBe(false)
+    } finally {
+      releaseCleanup.resolve()
+      await install
+      await dispose
+    }
+    expect(disposed).toBe(true)
+  })
+
   it('routes managed installs through the managed installer and persists the resolved path', async () => {
     const service = createService(undefined, {
       installManagedClaudeImpl: async ({ installId }) => ({

@@ -89,6 +89,36 @@ describe('codex-detect', () => {
     })
   })
 
+  it('passes cancellation through managed version probes and the initialize smoke check', async () => {
+    const controller = new AbortController()
+    const adapterPath = '/data/codex-managed/adapter/dist/index.js'
+    const codexPath = '/data/codex-managed/codex/bin/codex'
+    const resolveNpmBinDirs = vi.fn().mockResolvedValue([])
+    const getAdapterVersion = vi.fn().mockResolvedValue('codex-acp 1.6.2')
+    const getCodexVersion = vi.fn().mockResolvedValue('codex-cli 0.144.6')
+    const smokeInitialize = vi.fn().mockResolvedValue(true)
+
+    await detectCodex(
+      createDeps(
+        { [adapterPath]: '@agentclientprotocol/codex-acp 1.6.2' },
+        {
+          managedAdapterPath: adapterPath,
+          managedCodexPath: codexPath,
+          resolveNpmBinDirs,
+          getAdapterVersion,
+          getCodexVersion,
+          smokeInitialize
+        }
+      ),
+      controller.signal
+    )
+
+    expect(resolveNpmBinDirs).toHaveBeenCalledWith(controller.signal)
+    expect(getAdapterVersion).toHaveBeenCalledWith(adapterPath, controller.signal)
+    expect(getCodexVersion).toHaveBeenCalledWith(codexPath, controller.signal)
+    expect(smokeInitialize).toHaveBeenCalledWith(adapterPath, { codexPath }, controller.signal)
+  })
+
   it('pairs the managed adapter with a detected global native Codex executable', async () => {
     const adapterPath = '/data/codex-managed/adapter/dist/index.js'
     const managedCodexPath = '/data/codex-managed/codex/vendor/linux/bin/codex'
@@ -504,6 +534,38 @@ describe('detectNativeCodex', () => {
 })
 
 describe('detectCodexComponents', () => {
+  it('cancels diagnostic discovery before starting version probes', async () => {
+    const { detectCodexComponents } = await import('./codex-detect')
+    const controller = new AbortController()
+    const entered = Promise.withResolvers<AbortSignal | undefined>()
+    const release = Promise.withResolvers<void>()
+    const getCodexVersion = vi.fn(async () => undefined)
+    const pending = detectCodexComponents(
+      createDeps(
+        {},
+        {
+          resolveNpmBinDirs: async (signal) => {
+            entered.resolve(signal)
+            await release.promise
+            return []
+          },
+          getCodexVersion
+        }
+      ),
+      controller.signal
+    )
+    const outcome = pending.then(
+      () => 'resolved',
+      (error: Error) => error.name
+    )
+    const signal = await entered.promise
+    controller.abort()
+    release.resolve()
+    expect(await outcome).toBe('AbortError')
+    expect(signal).toBe(controller.signal)
+    expect(getCodexVersion).not.toHaveBeenCalled()
+  })
+
   it('ignores a global adapter when the app-owned adapter is missing', async () => {
     const { detectCodexComponents } = await import('./codex-detect')
     const managedAdapterPath = '/data/codex-managed/adapter/dist/index.js'
@@ -557,9 +619,11 @@ describe('detectCodexComponents', () => {
       adapterPath: managedAdapterPath,
       adapterVersion: '1.6.2'
     })
-    expect(smokeInitialize).toHaveBeenCalledWith(managedAdapterPath, {
-      codexPath: globalCodexPath
-    })
+    expect(smokeInitialize).toHaveBeenCalledWith(
+      managedAdapterPath,
+      { codexPath: globalCodexPath },
+      undefined
+    )
   })
 
   it('reports both components found when adapter passes smoke test', async () => {

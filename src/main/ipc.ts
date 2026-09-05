@@ -459,6 +459,8 @@ export type ApplicationRuntimeInterfaces = {
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   hasActiveReviewerWork: () => boolean
+  getActiveSettingsInstallId: () => string | undefined
+  holdSettingsInstallAdmission: () => () => void
   prepareForQuit: () => Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
   abortQuitPreparation: () => void
 }
@@ -624,8 +626,8 @@ const createApplicationModules = async (
       dispose: () => capability.dispose()
     }
   })
-  const settingsService = await modules.add(undefined, () => ({
-    capability: new SettingsService({
+  const settingsService = await modules.add(undefined, () => {
+    const capability = new SettingsService({
       repository: settingsRepository,
       skillRuntimeMcpEntryPath: mainEntryPath,
       openAlexFetch: netFetchStandard,
@@ -649,7 +651,14 @@ const createApplicationModules = async (
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
-  }))
+    return {
+      name: 'settings-service',
+      capability,
+      rollback: () => capability.dispose(),
+      dispose: () => capability.dispose(),
+      disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
+    }
+  })
   settingsServiceRef.current = settingsService
   const settingsSnapshotCommits = new SettingsSnapshotCommitOwner(
     settingsService,
@@ -3171,6 +3180,7 @@ const createApplicationModules = async (
       notebook: notebookService
     }).map((session) => session.kind)
     if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
+    if (settingsService.hasActiveInstall()) blockers.push('settings-install')
     return blockers
   }
   const durableDataRootHandoffGate = (
@@ -3199,20 +3209,28 @@ const createApplicationModules = async (
   // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
+  let releaseSettingsInstallAdmission: (() => void) | undefined
   const abortUpdateHandoff = (): void => {
+    const releaseAdmission = releaseSettingsInstallAdmission
+    releaseSettingsInstallAdmission = undefined
+    releaseAdmission?.()
     try {
       sideChatRuntime.resumeAfterHandoff()
     } finally {
       notifyRendererDurabilityAborted()
     }
   }
+  const updateInstallGate = createActiveResearchSafeInstallGate(
+    detectResearchBlockers,
+    durableBackendHandoffGate,
+    () => isMigrationInProgress() || isMigrationPending()
+  )
   const updateStrategy = createUpdateStrategy(process.platform, {
     translate,
-    installGate: createActiveResearchSafeInstallGate(
-      detectResearchBlockers,
-      durableBackendHandoffGate,
-      () => isMigrationInProgress() || isMigrationPending()
-    ),
+    installGate: async () => {
+      releaseSettingsInstallAdmission = settingsService.holdInstallAdmission()
+      return updateInstallGate()
+    },
     releaseInstallHandoff: abortUpdateHandoff
   })
   const updateCommandOwner = createUpdateCommandOwner(updateStrategy)
@@ -3697,6 +3715,12 @@ const createApplicationModules = async (
   composition.phase('notebook-provisioner')
 
   // Registered after the acp/notebook handlers exist: migration needs to interrupt both runtimes.
+  let releaseDataRootInstallAdmission: (() => void) | undefined
+  const abortDataRootInstallAdmission = (): void => {
+    const releaseAdmission = releaseDataRootInstallAdmission
+    releaseDataRootInstallAdmission = undefined
+    releaseAdmission?.()
+  }
   const storageCommandOwner = createStorageCommandOwner({
     runtime,
     notebook: notebookService,
@@ -3708,6 +3732,7 @@ const createApplicationModules = async (
     micromambaRunner,
     acknowledgeWebRendererFlush: webSessionPersistenceFlush.acknowledge,
     notifyDataRootHandoffAborted: () => {
+      abortDataRootInstallAdmission()
       try {
         sideChatRuntime.resumeAfterHandoff()
       } finally {
@@ -3720,12 +3745,16 @@ const createApplicationModules = async (
     },
     prepareDataRootHandoff: async (target, confirmedInterruption) => {
       let prepared = false
+      releaseDataRootInstallAdmission ??= settingsService.holdInstallAdmission()
       try {
         const readiness = await durableDataRootHandoffGate(target, confirmedInterruption)
         prepared = readiness.completed && readiness.reaped
         return prepared
       } finally {
-        if (!prepared) sideChatRuntime.resumeAfterHandoff()
+        if (!prepared) {
+          abortDataRootInstallAdmission()
+          sideChatRuntime.resumeAfterHandoff()
+        }
       }
     },
     cleanupJournal: dataRootCleanupJournal
@@ -4226,6 +4255,8 @@ const createApplicationModules = async (
         notebook: notebookService
       }),
     hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
+    getActiveSettingsInstallId: () => settingsService.getActiveInstallId(),
+    holdSettingsInstallAdmission: () => settingsService.holdInstallAdmission(),
     prepareForQuit: () => runtime.prepareForQuit(),
     abortQuitPreparation: () => runtime.abortQuitPreparation(),
     electronAdapters: {

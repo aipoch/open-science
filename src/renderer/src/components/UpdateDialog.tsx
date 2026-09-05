@@ -28,6 +28,8 @@ const UPDATE_BACKGROUND_PROCESS_ERROR =
   'Could not stop background processes before updating. Please try again.'
 const UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR =
   'Could not fully stop background processes before updating. Please try again.'
+const UPDATE_SETTINGS_INSTALL_ERROR =
+  'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
 
 // Update confirmation dialog: shows the target version and release notes so the user can decide
 // before a large download. Opened from the external capsule and the settings About section. When the
@@ -158,7 +160,11 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                         ? t(
                             'Could not fully stop background processes before updating. Please try again.'
                           )
-                        : (dialogStatus.error ?? t('Update failed'))}
+                        : dialogStatus.error === UPDATE_SETTINGS_INSTALL_ERROR
+                          ? t(
+                              'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
+                            )
+                          : (dialogStatus.error ?? t('Update failed'))}
                   </p>
                   {isBackgroundProcessError ? (
                     <p className="mt-2 text-xs text-muted-foreground">

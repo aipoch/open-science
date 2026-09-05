@@ -153,6 +153,7 @@ test('shows project-scoped memory and opens its project from Settings', async ({
   const createProject = page.getByRole('dialog', { name: 'New project' })
   await createProject.getByLabel('Name').fill(projectName)
   await createProject.getByRole('button', { name: 'Create project' }).click()
+  await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   await page.evaluate(async () => {
     const project = (await window.api.projects.list()).find(

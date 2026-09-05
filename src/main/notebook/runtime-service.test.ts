@@ -1611,6 +1611,148 @@ describe('notebook runtime service', () => {
     ])
   })
 
+  it.each(
+    (['python', 'r', 'repl'] as const).flatMap((kind) =>
+      (['appendRun', 'updateRun'] as const).map((write) => ({ kind, write }))
+    )
+  )('settles $kind kernel activity after a transient $write failure', async ({ kind, write }) => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const failure = new Error('injected run write failure')
+    const writeSpy = vi.spyOn(repository, write).mockRejectedValueOnce(failure)
+    const { service } = lifecycleCallbackHarness(root, { repository })
+    const request = { sessionId: 'session-1', workspaceCwd: root, code: '1' }
+
+    await expect(
+      kind === 'repl'
+        ? service.executeControl(request)
+        : service.execute({ ...request, language: kind })
+    ).rejects.toBe(failure)
+    expect(writeSpy).toHaveBeenCalledTimes(1)
+
+    // Reading state retries only the terminal record; live ownership must already be settled.
+    const state = await service.state(request)
+    expect(state.runs.map((run) => run.status)).toEqual(write === 'updateRun' ? ['completed'] : [])
+    expect(state.activeRunId).toBeUndefined()
+    expect(state.cells.every((cell) => cell.status !== 'running')).toBe(true)
+    if (kind === 'python') expect.soft(state.kernelStatus).toBe('idle')
+    const processKey =
+      kind === 'repl' ? 'repl' : `${kind}:${kind === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV}`
+    expect(state.environments).toContainEqual(
+      expect.objectContaining({ processKey, status: 'idle' })
+    )
+    expect(
+      (
+        await new NotebookRunRepository(root).findExisting('default-project', 'session-1')
+      )?.runs.map((run) => run.status)
+    ).toEqual(write === 'updateRun' ? ['completed'] : [])
+    await service.dispose()
+  })
+
+  it.each(['python', 'r', 'repl'] as const)(
+    'preserves a later %s termination when retrying a terminal Run write',
+    async (kind) => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const failure = new Error('injected terminal write failure')
+      vi.spyOn(repository, 'updateRun').mockRejectedValueOnce(failure)
+      const { service, lifecycles } = lifecycleCallbackHarness(root, { repository })
+      const request = { sessionId: 'session-1', workspaceCwd: root, code: '1' }
+      await expect(
+        kind === 'repl'
+          ? service.executeControl(request)
+          : service.execute({ ...request, language: kind })
+      ).rejects.toBe(failure)
+
+      const environment = kind === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
+      await lifecycles[0].onTerminated(kind, environment)
+      const state = await service.state(request)
+      expect(state.runs).toEqual([expect.objectContaining({ status: 'completed' })])
+      expect(state.activeRunId).toBeUndefined()
+      if (kind === 'python') expect(state.kernelStatus).toBe('terminated')
+      expect(state.environments).toContainEqual(
+        expect.objectContaining({
+          processKey: kind === 'repl' ? 'repl' : `${kind}:${environment}`,
+          status: 'terminated'
+        })
+      )
+      expect(
+        (await new NotebookRunRepository(root).findExisting('default-project', 'session-1'))?.kernel
+          .terminatedKernelInstances
+      ).toContainEqual(kind === 'repl' ? { kind } : { kind, environment })
+      await service.dispose()
+    }
+  )
+
+  it.each(['terminated', 'idle-shutdown', 'error'] as const)(
+    'preserves a concurrent %s transition when the terminal Run write fails',
+    async (transition) => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const failure = new Error('injected terminal write failure')
+      const restartFailure = new Error('injected restart failure')
+      const { service, lifecycles } = lifecycleCallbackHarness(root, {
+        repository,
+        shutdown:
+          transition === 'error'
+            ? vi.fn().mockRejectedValueOnce(restartFailure).mockResolvedValue({ reaped: true })
+            : undefined
+      })
+      const request = { sessionId: 'session-1', workspaceCwd: root, code: '1' }
+      vi.spyOn(repository, 'updateRun').mockImplementationOnce(async () => {
+        if (transition === 'error') {
+          await expect(service.restart(request)).rejects.toBe(restartFailure)
+        } else if (transition === 'idle-shutdown') {
+          await lifecycles[0].onIdleShutdown('python', DEFAULT_PY_ENV)
+        } else {
+          await lifecycles[0].onTerminated('python', DEFAULT_PY_ENV)
+        }
+        throw failure
+      })
+
+      await expect(service.execute(request)).rejects.toBe(failure)
+      const state = await service.state(request)
+      const status = transition === 'error' ? 'error' : 'terminated'
+      expect(state.runs).toEqual([expect.objectContaining({ status: 'completed' })])
+      expect(state.activeRunId).toBeUndefined()
+      expect(state.kernelStatus).toBe(status)
+      expect(state.environments).toContainEqual(
+        expect.objectContaining({ processKey: `python:${DEFAULT_PY_ENV}`, status })
+      )
+      await service.dispose()
+    }
+  )
+
+  it.each(['python', 'r', 'repl'] as const)(
+    'preserves an existing %s termination when the initial Run write prevents dispatch',
+    async (kind) => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const { service, lifecycles } = lifecycleCallbackHarness(root, { repository })
+      const request = { sessionId: 'session-1', workspaceCwd: root, code: '1' }
+      const execute = (): Promise<unknown> =>
+        kind === 'repl'
+          ? service.executeControl(request)
+          : service.execute({ ...request, language: kind })
+      await execute()
+      const environment = kind === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
+      await lifecycles[0].onTerminated(kind, environment)
+      const failure = new Error('injected initial write failure')
+      vi.spyOn(repository, 'appendRun').mockRejectedValueOnce(failure)
+
+      await expect(execute()).rejects.toBe(failure)
+      const state = await service.state(request)
+      expect(state.activeRunId).toBeUndefined()
+      expect(state.environments).toContainEqual(
+        expect.objectContaining({
+          processKey: kind === 'repl' ? 'repl' : `${kind}:${environment}`,
+          status: 'terminated'
+        })
+      )
+      await service.dispose()
+    }
+  )
+
   it('does not invoke the executor when the initial running record cannot be persisted', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

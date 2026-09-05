@@ -787,6 +787,10 @@ colors communicate a successful or failed probe/migration result.
 - Activity stream: `ScrollArea className="min-w-0 flex-1"`.
 - Composer: fixed to the bottom of the activity stream and constrained to `max-w-4xl`, with the composer text track aligned to the message content.
 - Right viewer area: `border-l border-border/20`.
+- Desktop side-panel dividers reveal a centered, full-height 2px `text-200` line on hover,
+  keyboard focus, and drag. Mouse resize targets extend 10px to either side of the divider;
+  collapsed dividers stay hidden and disabled. Keep the one-pixel layout footprint.
+  Arrow-key resizing must work on first opening and after collapsing and reopening either panel.
 - Right card: `m-2 rounded-lg bg-card shadow-sm`.
 - An open Notebook Variables view shares the Preview with the Notebook and manual kernel terminal
   when the Notebook surface is at least `55rem` wide, using a fixed 40% right column. Below that

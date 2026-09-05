@@ -221,9 +221,10 @@ const uninstallManagedClaude = async (dataRoot: string): Promise<void> => {
 
 // ---- Registry metadata -----------------------------------------------------------------------------
 
-export type FetchJson = (url: string) => Promise<unknown>
+export type FetchJson = (url: string, signal?: AbortSignal) => Promise<unknown>
 export type FetchTarball = (
-  url: string
+  url: string,
+  signal?: AbortSignal
 ) => Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }>
 
 export type NativeResolution = {
@@ -237,8 +238,12 @@ const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 
 // Reads the wrapper package's `dist-tags.latest` from a registry.
-const fetchLatestVersion = async (registry: string, fetchJson: FetchJson): Promise<string> => {
-  const meta = asRecord(await fetchJson(`${registry}/${ENCODED_WRAPPER}`))
+const fetchLatestVersion = async (
+  registry: string,
+  fetchJson: FetchJson,
+  signal?: AbortSignal
+): Promise<string> => {
+  const meta = asRecord(await fetchJson(`${registry}/${ENCODED_WRAPPER}`, signal))
   const latest = asRecord(meta['dist-tags']).latest
 
   if (typeof latest !== 'string' || latest.length === 0) {
@@ -254,16 +259,18 @@ const resolveNativePackage = async ({
   registry,
   platform,
   version,
-  fetchJson
+  fetchJson,
+  signal
 }: {
   registry: string
   platform: ManagedPlatform
   version?: string
   fetchJson: FetchJson
+  signal?: AbortSignal
 }): Promise<NativeResolution> => {
-  const resolvedVersion = version ?? (await fetchLatestVersion(registry, fetchJson))
+  const resolvedVersion = version ?? (await fetchLatestVersion(registry, fetchJson, signal))
   const encodedPkg = `${ENCODED_WRAPPER}-${platform.key}`
-  const meta = asRecord(await fetchJson(`${registry}/${encodedPkg}/${resolvedVersion}`))
+  const meta = asRecord(await fetchJson(`${registry}/${encodedPkg}/${resolvedVersion}`, signal))
   const dist = asRecord(meta.dist)
   const tarball = dist.tarball
   const integrity = dist.integrity
@@ -286,7 +293,8 @@ const downloadAndVerify = async ({
   destPath,
   installId,
   onEvent,
-  fetchTarball
+  fetchTarball,
+  signal
 }: {
   url: string
   integrity: string
@@ -294,8 +302,9 @@ const downloadAndVerify = async ({
   installId: string
   onEvent: (event: ClaudeInstallEvent) => void
   fetchTarball: FetchTarball
+  signal?: AbortSignal
 }): Promise<void> => {
-  const { stream, totalBytes } = await fetchTarball(url)
+  const { stream, totalBytes } = await fetchTarball(url, signal)
   const hash = createHash('sha512')
   let received = 0
   let lastPercent = 0
@@ -330,7 +339,7 @@ const downloadAndVerify = async ({
   })
 
   await mkdir(dirname(destPath), { recursive: true })
-  await pipeline(stream, meter, createWriteStream(destPath))
+  await pipeline(stream, meter, createWriteStream(destPath), { signal })
 
   const digest = `sha512-${hash.digest('base64')}`
   if (digest !== integrity) {
@@ -448,11 +457,13 @@ class SingleEntrySink extends Writable {
 const extractFileFromTgz = async ({
   tgzPath,
   entryName,
-  destPath
+  destPath,
+  signal
 }: {
   tgzPath: string
   entryName: string
   destPath: string
+  signal?: AbortSignal
 }): Promise<boolean> => {
   await mkdir(dirname(destPath), { recursive: true })
 
@@ -473,11 +484,22 @@ const extractFileFromTgz = async ({
     })
 
   const sink = new SingleEntrySink(entryName, write)
-
-  await pipeline(createReadStream(tgzPath), createGunzip(), sink)
-  await new Promise<void>((resolve, reject) =>
-    out.end((error?: Error | null) => (error ? reject(error) : resolve()))
-  )
+  const outputClosed = new Promise<void>((resolve) => out.once('close', resolve))
+  const abortOutput = (): void => {
+    out.destroy()
+  }
+  signal?.addEventListener('abort', abortOutput, { once: true })
+  try {
+    signal?.throwIfAborted()
+    await pipeline(createReadStream(tgzPath), createGunzip(), sink, { signal })
+    await new Promise<void>((resolve, reject) =>
+      out.end((error?: Error | null) => (error ? reject(error) : resolve()))
+    )
+  } finally {
+    signal?.removeEventListener('abort', abortOutput)
+    if (!out.closed) out.destroy()
+    await outputClosed
+  }
 
   if (!sink.isFound()) {
     await rm(destPath, { force: true })
@@ -506,7 +528,8 @@ export type InstallManagedClaudeOptions = {
   platform?: ManagedPlatform
   fetchJson?: FetchJson
   fetchTarball?: FetchTarball
-  verifyBinary: (binPath: string) => Promise<string | undefined>
+  verifyBinary: (binPath: string, signal?: AbortSignal) => Promise<string | undefined>
+  signal?: AbortSignal
   renamePath?: typeof rename
   tmpDir?: string
 }
@@ -594,6 +617,7 @@ const installManagedClaude = async ({
   fetchJson = defaultFetchJson,
   fetchTarball = defaultFetchTarball,
   verifyBinary,
+  signal,
   renamePath = rename,
   tmpDir
 }: InstallManagedClaudeOptions): Promise<ManagedInstallOutcome> => {
@@ -634,7 +658,13 @@ const installManagedClaude = async ({
           stream: 'system',
           chunk: `Resolving Claude from ${registry} …\n`
         })
-        const resolution = await resolveNativePackage({ registry, platform, version, fetchJson })
+        const resolution = await resolveNativePackage({
+          registry,
+          platform,
+          version,
+          fetchJson,
+          signal
+        })
 
         await downloadAndVerify({
           url: resolution.tarball,
@@ -642,25 +672,28 @@ const installManagedClaude = async ({
           destPath: tgzPath,
           installId,
           onEvent,
-          fetchTarball
+          fetchTarball,
+          signal
         })
 
         onEvent({ kind: 'progress', installId, phase: 'extracting' })
         const found = await extractFileFromTgz({
           tgzPath,
           entryName: `package/${platform.binName}`,
-          destPath: stagedPath
+          destPath: stagedPath,
+          signal
         })
 
         if (!found) throw new Error(`Native package did not contain ${platform.binName}`)
         if (process.platform !== 'win32') await chmod(stagedPath, 0o755)
-        const installedVersion = await verifyBinary(stagedPath)
+        const installedVersion = await verifyBinary(stagedPath, signal)
         if (!installedVersion) {
           throw new Error(
             'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
           )
         }
         await ensureClaudeRuntimeOwnerMarker(stagedRoot)
+        signal?.throwIfAborted()
 
         reachedPublication = true
         await replaceManagedClaudeRoot(stagedRoot, root, renamePath)
@@ -685,6 +718,7 @@ const installManagedClaude = async ({
           stream: 'system',
           chunk: `${registry} failed: ${lastError}\n`
         })
+        if (signal?.aborted) return { result: { installId, ok: false, error: lastError } }
         if (reachedPublication) return { result: { installId, ok: false, error: lastError } }
       } finally {
         await rm(tgzPath, { force: true }).catch(() => undefined)
@@ -793,12 +827,15 @@ const withInactivityTimeout = (
   return output
 }
 
-const defaultFetchJson: FetchJson = async (url) => {
-  const response = await fetchSuccessfulResponse(url, { signal: AbortSignal.timeout(20_000) })
+const defaultFetchJson: FetchJson = async (url, signal) => {
+  const timeout = AbortSignal.timeout(20_000)
+  const response = await fetchSuccessfulResponse(url, {
+    signal: signal ? AbortSignal.any([timeout, signal]) : timeout
+  })
   return (await response.json()) as unknown
 }
 
-const defaultFetchTarball: FetchTarball = async (url) => {
+const defaultFetchTarball: FetchTarball = async (url, signal) => {
   const controller = new AbortController()
   const timeoutError = new Error(`Request timed out for ${url}`)
   let headerTimedOut = false
@@ -809,7 +846,9 @@ const defaultFetchTarball: FetchTarball = async (url) => {
 
   let response: Response
   try {
-    response = await fetchSuccessfulResponse(url, { signal: controller.signal })
+    response = await fetchSuccessfulResponse(url, {
+      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal
+    })
   } catch (error) {
     if (headerTimedOut) throw timeoutError
     throw error

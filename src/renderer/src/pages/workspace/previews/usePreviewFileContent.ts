@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { ArtifactPreviewResult } from '../../../../../shared/artifacts'
+import type { ManagedPreviewResource } from '../../../../../shared/preview-resources'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { createManagedPreviewRequest } from './preview-file-reader'
@@ -40,6 +41,8 @@ type UsePreviewFileContentRequest = {
   encoding?: 'utf8' | 'base64'
 }
 
+type PreviewResourceOwner = { resource?: ManagedPreviewResource }
+
 const encodeBase64 = (bytes: Uint8Array): string => {
   let binary = ''
   for (let offset = 0; offset < bytes.length; offset += 32 * 1024) {
@@ -64,11 +67,12 @@ const readManagedPreviewPage = async (
     encoding: 'utf8' | 'base64'
     offset: number
     signal: AbortSignal
-  }
+  },
+  owner?: PreviewResourceOwner
 ): Promise<ArtifactPreviewResult> => {
   const previewRequest = createManagedPreviewRequest(request)
-  let resource
-  for (let attempt = 0; ; attempt += 1) {
+  let resource = owner?.resource
+  for (let attempt = 0; !resource; attempt += 1) {
     if (request.signal.aborted) throw request.signal.reason
     try {
       resource = await window.api.previewResources.acquire(previewRequest)
@@ -83,6 +87,7 @@ const readManagedPreviewPage = async (
 
   try {
     if (request.signal.aborted) throw request.signal.reason
+    if (owner) owner.resource = resource
 
     const requestedBytes = Number.isFinite(request.maxBytes)
       ? Math.floor(request.maxBytes)
@@ -138,8 +143,16 @@ const readManagedPreviewPage = async (
       offset: request.offset,
       ...(size > nextOffset ? { nextOffset } : {})
     }
+  } catch (error) {
+    // A failed sequence cannot navigate further; retry starts from a fresh resource.
+    // Aborting an obsolete page must not revoke the resource used by its successor.
+    if (!request.signal.aborted && owner?.resource === resource) owner.resource = undefined
+    throw error
   } finally {
-    await window.api.previewResources.release({ resourceId: resource.id }).catch(() => undefined)
+    // Path reads and acquisitions that completed after cancellation still release per page.
+    if (owner?.resource !== resource) {
+      await window.api.previewResources.release({ resourceId: resource.id }).catch(() => undefined)
+    }
   }
 }
 
@@ -174,6 +187,7 @@ export const usePreviewFileContent = ({
   )
   const activePageState =
     pageState.fileKey === fileKey ? pageState : { fileKey, offsets: [0], index: 0 }
+  if (pageState.fileKey !== fileKey) setPageState(activePageState)
   const offset = activePageState.offsets[activePageState.index] ?? 0
   const requestKey = `${fileKey}:${offset}`
   const [state, setState] = useState<PreviewFileContentInternalState>({
@@ -181,22 +195,40 @@ export const usePreviewFileContent = ({
     requestKey
   })
 
+  const resourceOwnerRef = useRef<PreviewResourceOwner>({})
+  useEffect(() => {
+    const owner: PreviewResourceOwner = {}
+    resourceOwnerRef.current = owner
+    return () => {
+      // The capability pins one immutable version across forward and backward page reads.
+      // Identity changes and refresh/remount boundaries start a new pagination sequence.
+      if (owner.resource) {
+        void window.api.previewResources
+          .release({ resourceId: owner.resource.id })
+          .catch(() => undefined)
+      }
+    }
+  }, [fileKey])
+
   useEffect(() => {
     let canceled = false
     const abortController = new AbortController()
 
-    void readManagedPreviewPage({
-      projectId,
-      sessionId,
-      source,
-      path,
-      ...(managedFileId ? { managedFileId } : {}),
-      ...(selectedVersionId ? { selectedVersionId } : {}),
-      maxBytes,
-      encoding,
-      offset,
-      signal: abortController.signal
-    })
+    void readManagedPreviewPage(
+      {
+        projectId,
+        sessionId,
+        source,
+        path,
+        ...(managedFileId ? { managedFileId } : {}),
+        ...(selectedVersionId ? { selectedVersionId } : {}),
+        maxBytes,
+        encoding,
+        offset,
+        signal: abortController.signal
+      },
+      source === 'artifact' || source === 'upload' ? resourceOwnerRef.current : undefined
+    )
       .then((preview) => {
         if (!canceled) setState({ status: 'ready', preview, requestKey })
       })
@@ -225,7 +257,11 @@ export const usePreviewFileContent = ({
     source
   ])
 
-  if (state.requestKey !== requestKey) return { status: 'loading' }
+  if (state.requestKey !== requestKey) {
+    // Remember pending identities too, so returning to a file cannot revive its old page.
+    setState({ status: 'loading', requestKey })
+    return { status: 'loading' }
+  }
 
   if (state.status !== 'ready') return state
 

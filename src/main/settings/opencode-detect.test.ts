@@ -1,5 +1,5 @@
 import { posix, win32 } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   collectCandidateDirs,
@@ -37,6 +37,20 @@ describe('opencode-detect', () => {
     const result = await detectOpencode(createDeps({ '/usr/local/bin/opencode': '1.18.0' }))
 
     expect(result).toEqual({ resolvedPath: '/usr/local/bin/opencode', version: '1.18.0' })
+  })
+
+  it('passes cancellation through npm discovery and version probing', async () => {
+    const controller = new AbortController()
+    const resolveNpmBinDirs = vi.fn().mockResolvedValue([])
+    const getVersion = vi.fn().mockResolvedValue('1.18.0')
+
+    await detectOpencode(
+      createDeps({ '/usr/local/bin/opencode': '1.18.0' }, { resolveNpmBinDirs, getVersion }),
+      controller.signal
+    )
+
+    expect(resolveNpmBinDirs).toHaveBeenCalledWith(controller.signal)
+    expect(getVersion).toHaveBeenCalledWith('/usr/local/bin/opencode', controller.signal)
   })
 
   it('finds a managed opencode via extraDirs even when it is not on PATH', async () => {
