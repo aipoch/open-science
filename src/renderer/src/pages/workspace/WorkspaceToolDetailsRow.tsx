@@ -20,6 +20,7 @@ import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 import { WorkspaceToolDiffBlock } from './WorkspaceToolDiffBlock'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
+import { WorkspaceToolSummaryCard } from './WorkspaceToolSummaryCard'
 import type { ToolExecutionPhase } from './tool-execution-phase'
 import type { SessionTextAnnotationItemType } from '../../../../shared/annotations'
 import type { AnnotationPort } from './annotations/annotation-port'
@@ -173,6 +174,8 @@ const WorkspaceToolDetailsRow = ({
   }, [isNearViewport, notebookRunId, onNotebookRunNearViewport])
 
   const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
+    if (section.kind === 'summary')
+      return <WorkspaceToolSummaryCard key={index} summary={section.summary} file={section.file} />
     if (section.kind === 'literature') {
       return <WorkspaceLiteratureToolCard key={index} summary={section.summary} />
     }

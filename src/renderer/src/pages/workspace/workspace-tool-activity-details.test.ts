@@ -1099,16 +1099,16 @@ describe('workspace tool activity details', () => {
     const section = details?.sections[0]
 
     expect(section).toMatchObject({
-      kind: 'code',
-      label: 'Tool output image',
-      language: 'json'
-    })
-    if (section?.kind !== 'code') throw new Error('Expected an artifact summary.')
-    expect(JSON.parse(section.text)).toEqual({
-      file: 'report.png',
-      type: 'image/png',
-      size: '2 KB',
-      path: '/files/report.png'
+      kind: 'summary',
+      summary: {
+        title: 'Tool output image',
+        subtitle: 'report.png',
+        fields: [
+          { label: 'Type', value: 'image/png' },
+          { label: 'Size', value: '2 KB' },
+          { label: 'Path', value: '/files/report.png', expandable: true }
+        ]
+      }
     })
   })
 
@@ -1149,11 +1149,10 @@ describe('workspace tool activity details', () => {
 
     const section = details?.sections[0]
 
-    expect(section?.kind).toBe('code')
-    expect(section?.kind === 'code' && section.text).toContain('report.csv')
-    expect(section?.kind === 'code' && section.text).toContain('/files/report.csv')
-    // The raw file content must never be dumped into the transcript.
-    expect(section?.kind === 'code' && section.text).not.toContain('a,b')
+    expect(section?.kind).toBe('summary')
+    expect(JSON.stringify(section)).toContain('report.csv')
+    expect(JSON.stringify(section)).toContain('/files/report.csv')
+    expect(JSON.stringify(section)).not.toContain('a,b')
   })
 
   it('matches the artifact-write tool by name even when MCP-namespaced', () => {
@@ -1166,7 +1165,7 @@ describe('workspace tool activity details', () => {
 
     expect(details?.displayName).toBe('Write file')
     expect(details?.subtitle).toBe('data.csv')
-    expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).not.toContain('a,b')
+    expect(JSON.stringify(details?.sections)).not.toContain('a,b')
   })
 
   it('does not classify artifact-file lookalikes as managed writes', () => {
@@ -1219,16 +1218,12 @@ describe('workspace tool activity details', () => {
     expect(details?.displayName).toBe('Write file')
     expect(details?.subtitle).toBe('sin.png')
     expect(details?.metaLabel).toBe('41 KB')
-    expect(details?.sections.map((section) => 'label' in section && section.label)).toEqual([
-      'Tool output image'
-    ])
-    expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).toContain('sin.png')
-    expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).not.toContain(
-      'artifact_id'
-    )
-    expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).not.toContain(
-      'structuredContent'
-    )
+    expect(details?.sections[0]).toMatchObject({
+      kind: 'summary',
+      summary: { title: 'Tool output image', subtitle: 'sin.png' }
+    })
+    expect(JSON.stringify(details?.sections)).not.toContain('artifact_id')
+    expect(JSON.stringify(details?.sections)).not.toContain('structuredContent')
   })
 
   it('renders a WebFetch with its URL, prompt, and fetched result', () => {
