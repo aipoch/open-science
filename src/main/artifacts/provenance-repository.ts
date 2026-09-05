@@ -1101,6 +1101,9 @@ class ArtifactProvenanceRepository {
       artifactId: version.artifactId,
       versionId: version.id,
       versionNumber: version.versionNumber,
+      isPublished:
+        version.state === 'finalized' &&
+        (version.originKind !== 'agent_generated' || version.managedVisibleAt !== null),
       checksum: version.checksum,
       createdAt: version.createdAt.toISOString(),
       producerRunId: version.producerRunId ?? undefined,

@@ -439,12 +439,16 @@ export class ArtifactProvenanceMessageFinalizer {
           'Artifact Versions must be finalized before their visible head can advance.'
         )
       }
+      const publishedAt = this.options.now()
       await transaction.artifactVersion.updateMany({
         where: { id: { in: matching.map((version) => version.id) }, managedVisibleAt: null },
-        data: { managedVisibleAt: this.options.now() }
+        data: { managedVisibleAt: publishedAt }
       })
       await this.activateLineageHeads(transaction, matching)
-      return matching
+      return matching.map((version) => ({
+        ...version,
+        managedVisibleAt: version.managedVisibleAt ?? publishedAt
+      }))
     })
     return Promise.all(
       versions.map((version) =>

@@ -75,6 +75,7 @@ const artifact: MessageArtifact = {
   id: 'version-1',
   artifactId: 'artifact-1',
   versionId: 'version-1',
+  isPublished: true,
   kind: 'managed-file',
   path: '/managed/session/sin_curve.png',
   name: 'sin_curve.png',
@@ -177,7 +178,7 @@ describe('SessionMessageMarkdown', () => {
     const onPreviewArtifactModal = vi.fn()
     const pendingArtifact = {
       ...artifact,
-      path: '/managed/session/.pending/run-1/sin_curve.png'
+      isPublished: false
     }
 
     await act(async () => {
@@ -199,6 +200,22 @@ describe('SessionMessageMarkdown', () => {
     await act(async () => artifactLink?.click())
     expect(onPreviewArtifact).not.toHaveBeenCalled()
     expect(onPreviewArtifactModal).not.toHaveBeenCalled()
+
+    await act(async () => {
+      root.render(
+        <SessionMessageMarkdown
+          content={'![Sine curve](sin_curve.png)\n\n[sin_curve.png](sin_curve.png)'}
+          artifacts={[artifact]}
+          onPreviewArtifact={onPreviewArtifact}
+          onPreviewArtifactModal={onPreviewArtifactModal}
+        />
+      )
+    })
+    expect(previewResourceHarness.enabled).toBe(true)
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-session-artifact-link]')?.disabled
+    ).toBe(false)
+    expect(container.querySelector('[data-session-artifact-image]')).not.toBeNull()
   })
 
   it('retains the existing safe-link component for external links', async () => {

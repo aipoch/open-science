@@ -433,7 +433,8 @@ describe('Artifact Provenance repository architecture', () => {
         'src/renderer/src/lib/acp/workspace-events.test.ts',
         'src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx',
         'src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx',
-        'src/renderer/src/pages/workspace/WorkspaceMessageScroller.interaction.test.tsx'
+        'src/renderer/src/pages/workspace/WorkspaceMessageScroller.interaction.test.tsx',
+        'src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx'
       ].sort()
     )
     expect(module.capabilityOverlays).toEqual(['windows_sensitive'])
