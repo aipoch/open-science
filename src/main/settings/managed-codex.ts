@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { spawn, spawnSync } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { createReadStream, type Dirent } from 'node:fs'
 import {
   chmod,
@@ -19,6 +19,7 @@ import { arch as osArch } from 'node:os'
 import { dirname, join, posix, resolve, sep } from 'node:path'
 import { Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { promisify } from 'node:util'
 import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
@@ -41,6 +42,8 @@ import { createLogger } from '../logger'
 import { stripCodexCredentialEnv } from './process-tree'
 import { terminateProcessTree } from '../process-tree'
 import { toErrorMessage } from '../error-message'
+
+const execFileAsync = promisify(execFile)
 
 export const CODEX_ACP_VERSION = MINIMUM_CODEX_ACP_VERSION
 export const CODEX_VERSION = '0.144.6'
@@ -1013,7 +1016,7 @@ export type ManagedCodexInstallOutcome = {
   codexVersion?: string
 }
 
-export type VersionVerifier = (path: string) => Promise<string | undefined>
+export type VersionVerifier = (path: string, signal?: AbortSignal) => Promise<string | undefined>
 export type PairVerifier = (
   adapterPath: string,
   codexPath: string,
@@ -1051,37 +1054,67 @@ export type ManagedCodexVersionSpawn = (
     windowsHide: true
     env?: NodeJS.ProcessEnv
     shell?: boolean
+    signal?: AbortSignal
   }
-) => { status: number | null; stdout: string }
+) => Promise<{ status: number | null; stdout: string }>
 
-export const runManagedCodexVersion = (
+const spawnManagedCodexVersion: ManagedCodexVersionSpawn = async (executable, args, options) => {
+  try {
+    const { stdout } = await execFileAsync(executable, args, options)
+    return { status: 0, stdout }
+  } catch (error) {
+    const failure = error as { code?: string | number; stdout?: string }
+    return {
+      status: typeof failure.code === 'number' ? failure.code : null,
+      stdout: typeof failure.stdout === 'string' ? failure.stdout : ''
+    }
+  }
+}
+
+export const runManagedCodexVersion = async (
   executable: string,
   args: string[],
   env?: NodeJS.ProcessEnv,
   _platform: NodeJS.Platform = process.platform,
-  spawnVersion: ManagedCodexVersionSpawn = spawnSync as unknown as ManagedCodexVersionSpawn
-): string | undefined => {
+  spawnVersion: ManagedCodexVersionSpawn = spawnManagedCodexVersion,
+  signal?: AbortSignal
+): Promise<string | undefined> => {
   const useShell = _platform === 'win32' && /\.(cmd|bat)$/i.test(executable)
-  const result = spawnVersion(useShell ? `"${executable}"` : executable, args, {
+  const result = await spawnVersion(useShell ? `"${executable}"` : executable, args, {
     encoding: 'utf8',
     timeout: 10_000,
     windowsHide: true,
     env,
+    signal,
     ...(useShell ? { shell: true } : {})
   })
 
   return result.status === 0 ? parseVersion(result.stdout) : undefined
 }
 
-const defaultVerifyAdapter: VersionVerifier = async (adapterPath) =>
-  runManagedCodexVersion(process.execPath, [adapterPath, '--version'], {
-    ...process.env,
-    ELECTRON_RUN_AS_NODE: '1',
-    NO_BROWSER: '1'
-  })
+const defaultVerifyAdapter: VersionVerifier = async (adapterPath, signal) =>
+  runManagedCodexVersion(
+    process.execPath,
+    [adapterPath, '--version'],
+    {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      NO_BROWSER: '1'
+    },
+    process.platform,
+    undefined,
+    signal
+  )
 
-const defaultVerifyCodex: VersionVerifier = async (codexPath) =>
-  runManagedCodexVersion(codexPath, ['--version'], { ...process.env, NO_BROWSER: '1' })
+const defaultVerifyCodex: VersionVerifier = async (codexPath, signal) =>
+  runManagedCodexVersion(
+    codexPath,
+    ['--version'],
+    { ...process.env, NO_BROWSER: '1' },
+    process.platform,
+    undefined,
+    signal
+  )
 
 // Keeps adapter stderr useful for troubleshooting while preventing credentials or unbounded child
 // output from entering the app log. The installer never logs the child environment or initialize body.
@@ -1460,11 +1493,14 @@ export const installManagedCodex = async (
       }
 
       onEvent({ kind: 'progress', installId, phase: 'installing' })
-      const adapterVersion = await verifyAdapter(stagedAdapter)
+      signal?.throwIfAborted()
+      const adapterVersion = await verifyAdapter(stagedAdapter, signal)
+      signal?.throwIfAborted()
       if (!adapterVersion) throw new Error('Installed Codex ACP adapter failed its --version check')
       let codexVersion: string
       try {
-        const verifiedVersion = await verifyCodex(codexPath)
+        const verifiedVersion = await verifyCodex(codexPath, signal)
+        signal?.throwIfAborted()
         if (!verifiedVersion) throw new Error('Installed Codex binary failed its --version check')
         // Smoke home lives in scratch (auto-removed), NEVER inside stagedRoot: stagedRoot is moved to
         // the final runtime, so anything Codex might write here must not ride along into the install.

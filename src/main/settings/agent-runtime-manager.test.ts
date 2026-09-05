@@ -40,6 +40,15 @@ vi.mock('./environment-check', () => ({
   }))
 }))
 
+const { runInstallWithFallbackSpy } = vi.hoisted(() => ({
+  runInstallWithFallbackSpy: vi.fn()
+}))
+
+vi.mock('./claude-install', async (importActual) => ({
+  ...(await importActual<typeof import('./claude-install')>()),
+  runInstallWithFallback: runInstallWithFallbackSpy
+}))
+
 const { AgentRuntimeManager } = await import('./agent-runtime-manager')
 const { SettingsRepository } = await import('./repository')
 const { getAppClaudeConfigDir } = await import('./provider-env')
@@ -182,6 +191,7 @@ describe('AgentRuntimeManager', () => {
   }
 
   beforeEach(async () => {
+    runInstallWithFallbackSpy.mockReset()
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-runtime-manager-'))
     repository = new SettingsRepository(storageRoot)
     inventory = createInventory()
@@ -228,6 +238,41 @@ describe('AgentRuntimeManager', () => {
         nativeVersion: '0.144.6'
       }
     })
+  })
+
+  it('keeps the install cancellation signal through successful post-install discovery', async () => {
+    const claudePath = '/usr/local/bin/claude'
+    const opencodePath = '/usr/local/bin/opencode'
+    inventory.claude.set(claudePath, '2.1.0')
+    inventory.opencode.set(opencodePath, '1.19.0')
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.6.2')
+    inventory.codexNative.set(managedCodexPath, 'codex-cli 0.144.6')
+    const claudeDeps = createClaudeDeps(inventory)
+    const opencodeDeps = createOpencodeDeps(inventory)
+    const codexDeps = createCodexDeps(inventory, managedAdapterPath, managedCodexPath)
+    const claudeGetVersion = vi.spyOn(claudeDeps, 'getVersion')
+    const opencodeGetVersion = vi.spyOn(opencodeDeps, 'getVersion')
+    const codexGetAdapterVersion = vi.spyOn(codexDeps, 'getAdapterVersion')
+    runInstallWithFallbackSpy.mockImplementation(async ({ installId }) => ({
+      installId,
+      ok: true
+    }))
+    manager = createManager({
+      detectDeps: claudeDeps,
+      opencodeDetectDeps: opencodeDeps,
+      codexDetectDeps: codexDeps
+    })
+
+    await manager.installClaude({ source: 'npm' }, vi.fn())
+    await manager.installOpencode({ source: 'npm' }, vi.fn())
+    await manager.installCodex({ source: 'npm' }, vi.fn())
+
+    const signals = runInstallWithFallbackSpy.mock.calls.map(
+      ([options]) => (options as { signal: AbortSignal }).signal
+    )
+    expect(claudeGetVersion).toHaveBeenCalledWith(claudePath, signals[0])
+    expect(opencodeGetVersion).toHaveBeenCalledWith(opencodePath, signals[1])
+    expect(codexGetAdapterVersion).toHaveBeenCalledWith(managedAdapterPath, signals[2])
   })
 
   it('rejects and clears a cached CodeBuddy runtime outside the pinned version', async () => {

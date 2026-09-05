@@ -537,8 +537,9 @@ export class AgentRuntimeManager {
     })
   }
 
-  async detectClaude(): Promise<ClaudeDetectResult> {
-    const result = await detectClaude(this.detectDeps)
+  async detectClaude(signal?: AbortSignal): Promise<ClaudeDetectResult> {
+    const result = await detectClaude(this.detectDeps, signal)
+    signal?.throwIfAborted()
 
     if (result.found && result.path) {
       await this.repository.setClaudeInfo({ resolvedPath: result.path, version: result.version })
@@ -552,8 +553,9 @@ export class AgentRuntimeManager {
     return result
   }
 
-  async detectOpencode(): Promise<void> {
-    const detected = await detectOpencode(this.opencodeDetectDeps)
+  async detectOpencode(signal?: AbortSignal): Promise<void> {
+    const detected = await detectOpencode(this.opencodeDetectDeps, signal)
+    signal?.throwIfAborted()
 
     if (detected) {
       await this.repository.setOpencodeInfo(detected.resolvedPath, detected.version)
@@ -573,8 +575,9 @@ export class AgentRuntimeManager {
     }
   }
 
-  async detectCodex(): Promise<void> {
-    const detected = await detectCodex(this.codexDetectDeps)
+  async detectCodex(signal?: AbortSignal): Promise<void> {
+    const detected = await detectCodex(this.codexDetectDeps, signal)
+    signal?.throwIfAborted()
 
     if (detected) {
       await this.repository.setCodexInfo({
@@ -611,7 +614,8 @@ export class AgentRuntimeManager {
         })
 
         if (outcome.result.ok && outcome.resolvedPath) {
-          const installedVersion = await this.detectDeps.getVersion(outcome.resolvedPath)
+          const installedVersion = await this.detectDeps.getVersion(outcome.resolvedPath, signal)
+          signal.throwIfAborted()
           if (!installedVersion) {
             const error =
               'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
@@ -634,7 +638,7 @@ export class AgentRuntimeManager {
         onEvent,
         signal
       })
-      if (result.ok) await this.detectClaude()
+      if (result.ok) await this.detectClaude(signal)
       return result
     })
   }
@@ -666,7 +670,7 @@ export class AgentRuntimeManager {
         installTarget: OPENCODE_INSTALL_TARGET,
         signal
       })
-      if (result.ok) await this.detectOpencode()
+      if (result.ok) await this.detectOpencode(signal)
       return result
     })
   }
@@ -707,9 +711,11 @@ export class AgentRuntimeManager {
             ? configuredCodexPath
             : undefined
         const existingCodexPath =
-          externalCodexPath && (await this.codexDetectDeps.getCodexVersion(externalCodexPath))
+          externalCodexPath &&
+          (await this.codexDetectDeps.getCodexVersion(externalCodexPath, signal))
             ? externalCodexPath
             : undefined
+        signal.throwIfAborted()
         const outcome = await this.installManagedCodexImpl({
           installId,
           onEvent,
@@ -741,7 +747,7 @@ export class AgentRuntimeManager {
         installTarget: CODEX_INSTALL_TARGET,
         signal
       })
-      if (result.ok) await this.detectCodex()
+      if (result.ok) await this.detectCodex(signal)
       return result
     })
   }

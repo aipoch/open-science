@@ -89,6 +89,36 @@ describe('codex-detect', () => {
     })
   })
 
+  it('passes cancellation through managed version probes and the initialize smoke check', async () => {
+    const controller = new AbortController()
+    const adapterPath = '/data/codex-managed/adapter/dist/index.js'
+    const codexPath = '/data/codex-managed/codex/bin/codex'
+    const resolveNpmBinDirs = vi.fn().mockResolvedValue([])
+    const getAdapterVersion = vi.fn().mockResolvedValue('codex-acp 1.6.2')
+    const getCodexVersion = vi.fn().mockResolvedValue('codex-cli 0.144.6')
+    const smokeInitialize = vi.fn().mockResolvedValue(true)
+
+    await detectCodex(
+      createDeps(
+        { [adapterPath]: '@agentclientprotocol/codex-acp 1.6.2' },
+        {
+          managedAdapterPath: adapterPath,
+          managedCodexPath: codexPath,
+          resolveNpmBinDirs,
+          getAdapterVersion,
+          getCodexVersion,
+          smokeInitialize
+        }
+      ),
+      controller.signal
+    )
+
+    expect(resolveNpmBinDirs).toHaveBeenCalledWith(controller.signal)
+    expect(getAdapterVersion).toHaveBeenCalledWith(adapterPath, controller.signal)
+    expect(getCodexVersion).toHaveBeenCalledWith(codexPath, controller.signal)
+    expect(smokeInitialize).toHaveBeenCalledWith(adapterPath, { codexPath }, controller.signal)
+  })
+
   it('pairs the managed adapter with a detected global native Codex executable', async () => {
     const adapterPath = '/data/codex-managed/adapter/dist/index.js'
     const managedCodexPath = '/data/codex-managed/codex/vendor/linux/bin/codex'
