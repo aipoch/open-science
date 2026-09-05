@@ -279,16 +279,26 @@ class NotebookExecutionOwner {
     signal?: AbortSignal,
     helperModuleIds?: readonly string[]
   ): Promise<{ run: NotebookRunRecord; dependencyProjection: NotebookDependencyProjection }> {
-    const cell = session.cellView(request.cellId)
-    if (session.isCellReceiving(cell.id)) {
-      throw new Error(`Notebook cell is still receiving code: ${cell.id}`)
-    }
-    const route = this.options.dataExecutionAdmission.route(session, cell.language)
-    return session.enqueueExecution(
-      route.processKey,
-      () => this.executeDataCellExclusive(session, cell, request, signal, helperModuleIds),
-      signal
-    )
+    // Snapshot caller-owned inputs before the first queue/preparation/persistence wait.
+    // The host-owned input lease stays live so resolver access reaches the completed run.
+    const { registeredInputFiles, ...submittedRequest } = request
+    const executionRequest = { ...structuredClone(submittedRequest), registeredInputFiles }
+    const executionHelperIds = helperModuleIds?.slice()
+    return session.withCellExecution(executionRequest.cellId, (cell) => {
+      const route = this.options.dataExecutionAdmission.route(session, cell.language)
+      return session.enqueueExecution(
+        route.processKey,
+        () =>
+          this.executeDataCellExclusive(
+            session,
+            cell,
+            executionRequest,
+            signal,
+            executionHelperIds
+          ),
+        signal
+      )
+    })
   }
   private async executeDataCellExclusive(
     session: NotebookSessionAggregate,
