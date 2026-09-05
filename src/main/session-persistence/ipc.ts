@@ -345,14 +345,6 @@ const registerSessionPersistenceIpcHandlers = (
       return Object.freeze({ ok: true, result: durable })
     }
   )
-  ipcMainHandle('sessions:update-archive', async (event, request: UpdateSessionArchiveRequest) => {
-    const originClientId = getLifecycleClientId(event)
-    return withDataRootWrite(async () => {
-      const session = await handlers.updateArchive(request)
-      broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionUpdated, { session, originClientId })
-      return session
-    })
-  })
   ipcMainHandle('sessions:save-manifest', (_event, request: SaveSessionManifestRequest) =>
     withDataRootWrite(() => handlers.saveManifest(request))
   )

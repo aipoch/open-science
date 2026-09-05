@@ -217,6 +217,7 @@ describe('application command composition', () => {
       'sessions:link-pdf-context',
       'sessions:set-delegation-policy',
       'sessions:unlink-pdf-context',
+      'sessions:update-archive',
       'tags:create',
       'tags:delete',
       'tags:reorder',

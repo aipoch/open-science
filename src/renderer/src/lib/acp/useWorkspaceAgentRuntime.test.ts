@@ -2336,6 +2336,47 @@ describe('workspace agent message sending', () => {
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
   })
 
+  it('reports a size-limit failure while rearming a stable Message', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      messageId: 'automatic-analysis-message-1',
+      content: 'Analyze the completed compute job',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    const failure = new SessionSizeLimitError()
+    vi.stubGlobal('window', {
+      api: { sessions: { saveSession: vi.fn().mockRejectedValue(failure) } }
+    })
+    const onSessionSizeLimit = vi.fn()
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    await expect(
+      sendWorkspaceMessage(
+        runtime,
+        {
+          sessionId: 'transport-session-1',
+          messageId: 'automatic-analysis-message-1',
+          text: 'Analyze the completed compute job',
+          cwd: '/workspace/project',
+          projectId: 'project-1',
+          agentFrameworkId: 'claude-code'
+        },
+        { onSessionSizeLimit }
+      )
+    ).resolves.toBeUndefined()
+
+    expect(onSessionSizeLimit).toHaveBeenCalledWith('transport-session-1')
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+  })
+
   it('redispatches a stable Message preserved on an inactive conversation Branch', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',

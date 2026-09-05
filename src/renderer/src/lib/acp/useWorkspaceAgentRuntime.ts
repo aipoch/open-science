@@ -450,9 +450,11 @@ const useOwnedWorkspaceAgentRuntime = (
         runtime,
         sessionId,
         enabled,
-        handleSendPreparationStateChange
+        handleSendPreparationStateChange,
+        undefined,
+        onSessionSizeLimit
       ),
-    [handleSendPreparationStateChange, lifecycleOwner, runtime]
+    [handleSendPreparationStateChange, lifecycleOwner, onSessionSizeLimit, runtime]
   )
   const { saveAsSkillInFlightSessionIds, saveAsSkill } = useWorkspaceRuntimeSaveAsSkillOwner({
     runtime,

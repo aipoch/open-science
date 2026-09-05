@@ -1595,7 +1595,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   ),
   'sessions.updateArchive': callable<
     (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
-  >()('sessions', ['sessions:update-archive']),
+  >()('sessions', ['sessions:update-archive', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.unlinkPdfContext': callable<
     (request: UnlinkSessionPdfContextRequest) => Promise<SessionRuntimeContext>
   >()('sessions', ['sessions:unlink-pdf-context', WEB, undefined, undefined, RUNTIME_VALIDATED]),

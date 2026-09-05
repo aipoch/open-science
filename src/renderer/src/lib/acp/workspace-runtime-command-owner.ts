@@ -992,6 +992,7 @@ const sendWorkspaceMessage = async (
       try {
         await saveSessionInOrder(toPersistedSession(durableSession))
       } catch (error) {
+        if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
         useSessionStore.getState().failRun(sessionId, errorMessage(error))
         return undefined
       }
