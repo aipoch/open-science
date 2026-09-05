@@ -1455,6 +1455,19 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
     )
   })
 
+  it('completes a named create without capturing archive publications when no cache retainer exists', async () => {
+    const root = makeRoot()
+    const captureExplicitLock = vi.fn(
+      async () => `@EXPLICIT\nhttps://conda.example/osx-arm64/python-1.tar.bz2#${'a'.repeat(32)}\n`
+    )
+    const { deps } = makeNamedEnvDeps(root, { captureExplicitLock })
+
+    await new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python')
+
+    expect(await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()).toEqual([])
+    expect(captureExplicitLock).not.toHaveBeenCalled()
+  })
+
   it('publishes and releases the Windows working cache after a successful create', async () => {
     const root = makeRoot()
     const release = vi.fn().mockResolvedValue(true)

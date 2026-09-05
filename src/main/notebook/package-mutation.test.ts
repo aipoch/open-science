@@ -254,6 +254,21 @@ describe('NotebookPackageMutationOwner', () => {
     expect(options.runtimeRepair.quarantineProtectedIdentity).not.toHaveBeenCalled()
   })
 
+  it('completes a managed conda install without retaining archive publication when no cache retainer exists', async () => {
+    const { owner, target, runtimeRoot } = ownerHarness({
+      installPackages: vi.fn(async (_request, deps) => {
+        deps?.onCondaArchiveAuthorizations?.(
+          [{ file: 'numpy-1.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }],
+          '/managed-working-cache'
+        )
+        return { ok: true, needsRestart: false, log: 'installed', method: 'conda' as const }
+      })
+    })
+
+    await expect(owner.mutate({ target, mirror: {} })).resolves.toMatchObject({ ok: true })
+    expect(await pending(runtimeRoot)).toEqual([])
+  })
+
   it('publishes a successful conda transaction before releasing its working cache', async () => {
     let finishPublication!: (published: boolean) => void
     const publication = new Promise<boolean>((resolve) => {

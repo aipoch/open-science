@@ -182,7 +182,10 @@ const archiveFiles = async (root: string, validateRoot?: () => boolean): Promise
       const path = join(dir, entry.name)
       const state = await lstat(path)
       if (state.isSymbolicLink()) {
-        throw new Error('Micromamba working cache contains an untrusted reparse entry.')
+        // Extracted Conda packages legitimately contain executable/library links.
+        // Never follow them or consider them archive sources, even if their names
+        // match an authorization; missing authorized archives still fail publication.
+        continue
       }
       const physical = await realpath(path)
       if (!isInsideOrEqual(physicalRoot, physical)) {

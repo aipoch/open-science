@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -28,6 +28,58 @@ afterEach(async () => {
 })
 
 describe('publishMicromambaArchives', () => {
+  it.skipIf(process.platform === 'win32').each(['archive', 'directory'])(
+    'does not publish an authorized archive reached through a %s symlink',
+    async (linkType) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-mm-archive-untrusted-link-'))
+      roots.push(root)
+      const runtimeRoot = join(root, 'runtime')
+      const workingRoot = join(root, 'working')
+      const outside = join(root, 'outside')
+      const file = 'python-3.12-0.conda'
+      await mkdir(workingRoot)
+      await mkdir(outside)
+      await writeFile(join(outside, file), 'trusted archive')
+      if (linkType === 'archive') await symlink(join(outside, file), join(workingRoot, file))
+      else await symlink(outside, join(workingRoot, 'extracted-directory'))
+
+      await expect(
+        publishMicromambaArchives(runtimeRoot, workingRoot, [
+          authorization(file, 'trusted archive')
+        ])
+      ).rejects.toThrow(/authorized package archive is unavailable/)
+      await expect(readFile(join(runtimeRoot, 'pkgs', file))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'publishes verified archives alongside extracted Python and dylib symlinks',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'os-mm-archive-extracted-links-'))
+      roots.push(root)
+      const runtimeRoot = join(root, 'runtime')
+      const workingRoot = join(root, 'working')
+      const extracted = join(workingRoot, 'python-3.12-0')
+      await mkdir(join(extracted, 'bin'), { recursive: true })
+      await mkdir(join(extracted, 'lib'))
+      await writeFile(join(extracted, 'bin', 'python3.12'), 'extracted executable')
+      await symlink('python3.12', join(extracted, 'bin', 'python'))
+      await symlink('libpython3.12.dylib', join(extracted, 'lib', 'libpython.dylib'))
+      await writeFile(join(workingRoot, 'python-3.12-0.conda'), 'trusted archive')
+
+      await expect(
+        publishMicromambaArchives(runtimeRoot, workingRoot, [
+          authorization('python-3.12-0.conda', 'trusted archive')
+        ])
+      ).resolves.toBe(1)
+      expect(await readFile(join(runtimeRoot, 'pkgs', 'python-3.12-0.conda'), 'utf8')).toBe(
+        'trusted archive'
+      )
+    }
+  )
+
   it('derives archive authority from explicit locks and structured transaction results', () => {
     const md5 = createHash('md5').update('a').digest('hex')
     const sha256 = createHash('sha256').update('b').digest('hex')

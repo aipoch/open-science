@@ -1170,8 +1170,9 @@ export async function installPackages(
   req: InstallRequest,
   deps: Partial<InstallDeps> = {}
 ): Promise<InstallResult> {
-  // Every install subprocess inherits the parent env plus the CA-bundle vars (no-op when unset), so a
-  // custom corporate CA is trusted by conda/pip/R. Wrapping here keeps every run() call site 2-arg.
+  // Start from the parent env plus the CA-bundle vars; managed runtimes sanitize host Python/R/user
+  // state below while external runtimes keep the caller environment. Wrapping here keeps every run()
+  // call site 2-arg.
   const baseSpawn = deps.spawn ?? defaultSpawn
   let spawnEnv: NodeJS.ProcessEnv = {
     ...process.env,

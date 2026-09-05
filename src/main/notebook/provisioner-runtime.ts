@@ -64,8 +64,8 @@ export const killAndConfirmExit = (
   return terminateTree(child).then(({ reaped }) => reaped)
 }
 
-// Merges extra vars over the current process env for a subprocess (used to inject the CA-bundle vars
-// so an online provision behind an enterprise TLS proxy verifies HTTPS). Undefined → inherit as-is.
+// Builds the subprocess environment. By default extra vars merge over the current process env; callers
+// that already built a sanitized managed-runtime environment set completeEnv to prevent re-inheritance.
 type VerifyExecutableOptions = {
   prefix?: string
   env?: NodeJS.ProcessEnv

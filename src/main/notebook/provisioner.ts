@@ -1346,6 +1346,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           })
         )
         await this.deps.verify(bin, prefix)
+        if (!this.deps.retainWorkingCache) return []
         const explicitLock = await this.deps.captureExplicitLock?.(prefix)
         return explicitLock
           ? [
