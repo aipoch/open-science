@@ -37,7 +37,9 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
       'notebook_shutdown',
       'inspect_packages',
       'manage_packages',
-      'manage_environments'
+      'manage_environments',
+      'list_memory_categories',
+      'search_memories'
     ]
   },
   {

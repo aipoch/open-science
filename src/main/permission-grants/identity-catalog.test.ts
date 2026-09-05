@@ -6,17 +6,29 @@ import {
 } from './identity-catalog'
 
 describe('permission identity catalog', () => {
-  it('contains the closed 37-identity v1 bootstrap inventory', () => {
-    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(37)
+  it('contains the closed 39-identity bootstrap inventory', () => {
+    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(39)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.builtin_tool).toEqual([])
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.customize_mutation).toHaveLength(8)
-    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(20)
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(22)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toContain(
       'mcp:open-science-notebook/request_network_access'
     )
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.execution).toHaveLength(2)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.file_operation).toHaveLength(6)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.skill_operation).toHaveLength(1)
+  })
+
+  it('admits memory queries without granting the memory write tool', () => {
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toEqual(
+      expect.arrayContaining([
+        'mcp:open-science-notebook/list_memory_categories',
+        'mcp:open-science-notebook/search_memories'
+      ])
+    )
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).not.toContain(
+      'mcp:open-science-notebook/remember_memory'
+    )
   })
 
   it('admits both Session Plan capabilities to remembered permission scopes', () => {
