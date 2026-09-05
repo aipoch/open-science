@@ -248,7 +248,7 @@ class NotebookPackageOperations {
       const admission = await this.admission.admit(request, resolution)
       if (admission.status === 'refused') return admission.result
       const result = await this.mutation.mutate({ target: admission.target, mirror })
-      if (result.ok && result.needsRestart && request.language === 'r') {
+      if (result.needsRestart && request.language === 'r') {
         this.options.environmentOperations.recommendRestart('r', admission.target.environmentName)
         for (const session of this.options.sessions()) this.options.notifyChanged(session)
       }
