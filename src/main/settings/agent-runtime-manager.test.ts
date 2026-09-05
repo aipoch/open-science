@@ -706,6 +706,28 @@ describe('AgentRuntimeManager', () => {
     expect(installManagedClaudeImpl).toHaveBeenCalledOnce()
   })
 
+  it('keeps admission closed until every overlapping handoff releases it', async () => {
+    const installManagedClaudeImpl: NonNullable<ManagerOptions['installManagedClaudeImpl']> = vi.fn(
+      async ({ installId }) => ({
+        result: { installId, ok: false, error: 'installer was invoked' }
+      })
+    )
+    manager = createManager({ installManagedClaudeImpl })
+    const releaseUpdate = manager.holdInstallAdmission()
+    const releaseDataRoot = manager.holdInstallAdmission()
+
+    releaseUpdate()
+    await expect(manager.installClaude({ source: 'managed' }, vi.fn())).resolves.toMatchObject({
+      ok: false,
+      error: 'Another install is already in progress.'
+    })
+    expect(installManagedClaudeImpl).not.toHaveBeenCalled()
+
+    releaseDataRoot()
+    await manager.installClaude({ source: 'managed' }, vi.fn())
+    expect(installManagedClaudeImpl).toHaveBeenCalledOnce()
+  })
+
   it('keeps managed CodeBuddy installs behind the shared install lock', async () => {
     const installStarted = Promise.withResolvers<void>()
     const releaseInstall = Promise.withResolvers<void>()
