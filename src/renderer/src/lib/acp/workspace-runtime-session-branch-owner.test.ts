@@ -106,6 +106,119 @@ describe('branchWorkspaceSessionFromMessage', () => {
     expect(onSessionSizeLimit).toHaveBeenCalledWith('source-session')
   })
 
+  it.each([
+    ['policy', 'deleted'],
+    ['pdf', 'deleted'],
+    ['save', 'deleted'],
+    ['policy', 'runtime'],
+    ['policy', 'persistence'],
+    ['policy', 'rejected']
+  ] as const)(
+    'B02: reconciles the child after %s fails and deletion returns %s',
+    async (failureStage, deletionOutcome) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'source-session',
+        content: 'The sample is blue.',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        ...(failureStage === 'pdf'
+          ? {
+              pdfContext: {
+                version: 1 as const,
+                bindings: [
+                  {
+                    version: 1 as const,
+                    bindingId: 'source-binding',
+                    sourceKind: 'upload-version' as const,
+                    sourceFileId: 'file-1',
+                    sourceVersionId: 'version-1',
+                    sourceSessionId: 'source-session',
+                    name: 'paper.pdf',
+                    mimeType: 'application/pdf' as const,
+                    sizeBytes: 1024,
+                    checksum: 'a'.repeat(64),
+                    linkedAt: 1
+                  }
+                ]
+              }
+            }
+          : {})
+      })
+      const answer = useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'source-session',
+        streamId: 'answer',
+        eventId: 'answer',
+        content: 'I remember blue.'
+      })!
+      useSessionStore.getState().finishRun('source-session')
+      const disk = new Map<string, PersistedChatSession>()
+      const failure = new Error(`${failureStage} initialization failed`)
+      const runtime = {
+        createSession: vi
+          .fn()
+          .mockResolvedValue({ sessionId: 'child-session', cwd: '/workspace/project' }),
+        deleteSession: vi.fn().mockResolvedValue(undefined)
+      }
+      const saveSession = vi.fn(async (session: PersistedChatSession) => {
+        if (failureStage === 'save') throw failure
+        disk.set(session.id, structuredClone(session))
+        return session
+      })
+      const deleteSession = vi.fn(async ({ sessionId }: { sessionId: string }) => {
+        if (deletionOutcome === 'rejected') throw new Error('Deletion IPC failed')
+        if (deletionOutcome === 'runtime')
+          return { status: 'failed', reason: 'runtime', runtimeDetached: false }
+        await runtime.deleteSession(sessionId)
+        if (deletionOutcome === 'persistence')
+          return { status: 'failed', reason: 'persistence', runtimeDetached: true }
+        disk.delete(sessionId)
+        return { status: 'deleted', runtimeDetached: true }
+      })
+      vi.stubGlobal('window', {
+        api: {
+          sessions: {
+            saveSession,
+            deleteSession,
+            setDelegationPolicy: vi.fn(async () => {
+              if (failureStage === 'policy') throw failure
+              return disk.get('child-session')!
+            }),
+            linkPdfContext: vi.fn().mockRejectedValue(failure)
+          }
+        }
+      })
+      await expect(
+        branchWorkspaceSessionFromMessage(runtime, {
+          sourceSessionId: 'source-session',
+          sourceMessageId: answer.messageId
+        })
+      ).rejects.toBe(failure)
+
+      expect(saveSession).toHaveBeenCalled()
+      expect(saveSession.mock.calls[0][0].messages).toHaveLength(2)
+      if (deletionOutcome === 'deleted') {
+        expect(runtime.deleteSession).toHaveBeenCalledWith('child-session')
+        expect(useSessionStore.getState().sessions.map((session) => session.id)).toEqual([
+          'source-session'
+        ])
+        expect([...disk.keys()]).toEqual([])
+      } else {
+        expect([...disk.keys()]).toEqual(['child-session'])
+        expect(
+          useSessionStore.getState().sessions.find((session) => session.id === 'child-session')
+        ).toMatchObject({
+          status: 'error',
+          error: failure.message,
+          messages: [expect.anything(), expect.anything()]
+        })
+      }
+      expect(deleteSession).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        sessionId: 'child-session'
+      })
+    }
+  )
+
   it('finalizes legacy branch history in bounded requests', async () => {
     const uploads = Array.from({ length: MAX_COMPOSER_ATTACHMENTS + 1 }, (_, index) => ({
       id: `legacy-upload-${index}`,

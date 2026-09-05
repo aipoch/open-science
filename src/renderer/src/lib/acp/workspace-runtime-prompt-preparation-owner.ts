@@ -289,17 +289,13 @@ const prepareExistingWorkspacePrompt = async (
           currentSession?.permissionProfile ?? request.permissionProfile,
           currentSession?.memoryEnabled !== false
         )
-        useSessionStore.getState().markResumed(
-          sessionId,
-          reset
-            ? {
-                agentFrameworkId: reset.frameworkId,
-                agentBackendId: reset.backendId,
-                providerSessionId: reset.providerSessionId,
-                providerContinuityToken: reset.providerContinuityToken
-              }
-            : undefined
-        )
+        useSessionStore.getState().markResumed(sessionId, {
+          agentFrameworkId: reset?.frameworkId,
+          agentBackendId: reset?.backendId,
+          providerSessionId: reset?.providerSessionId,
+          providerContinuityToken: reset?.providerContinuityToken,
+          pendingHistoryReplay: currentSession?.pendingHistoryReplay ?? { kind: 'all' }
+        })
         agentContextResetPerformed = true
       }
       branchContextResetPerformed = true
@@ -345,7 +341,13 @@ const prepareExistingWorkspacePrompt = async (
               agentFrameworkId: resumeResult.frameworkId,
               agentBackendId: resumeResult.backendId,
               providerSessionId: resumeResult.providerSessionId,
-              providerContinuityToken: resumeResult.providerContinuityToken
+              providerContinuityToken: resumeResult.providerContinuityToken,
+              ...(contextResetFromResume
+                ? {
+                    pendingHistoryReplay:
+                      currentSession?.pendingHistoryReplay ?? ({ kind: 'all' } as const)
+                  }
+                : {})
             }
           : undefined
       )
@@ -358,17 +360,13 @@ const prepareExistingWorkspacePrompt = async (
           currentSession?.permissionProfile ?? request.permissionProfile,
           currentSession?.memoryEnabled !== false
         )
-        useSessionStore.getState().markResumed(
-          sessionId,
-          reset
-            ? {
-                agentFrameworkId: reset.frameworkId,
-                agentBackendId: reset.backendId,
-                providerSessionId: reset.providerSessionId,
-                providerContinuityToken: reset.providerContinuityToken
-              }
-            : undefined
-        )
+        useSessionStore.getState().markResumed(sessionId, {
+          agentFrameworkId: reset?.frameworkId,
+          agentBackendId: reset?.backendId,
+          providerSessionId: reset?.providerSessionId,
+          providerContinuityToken: reset?.providerContinuityToken,
+          pendingHistoryReplay: currentSession?.pendingHistoryReplay ?? { kind: 'all' }
+        })
         contextResetFromResume = true
       }
 
