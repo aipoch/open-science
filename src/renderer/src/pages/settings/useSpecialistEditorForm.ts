@@ -21,6 +21,8 @@ export const formFromProfile = (profile: SpecialistView): SpecialistEditorFormDr
   selectedSkillIds: profile.selectedCapabilities.skillIds,
   excludedConnectorIds: profile.fullAccess.excludedConnectorIds,
   connectorIds: profile.selectedCapabilities.connectorIds,
+  fullConnectorTools: profile.fullAccess.connectorTools,
+  selectedConnectorTools: profile.selectedCapabilities.connectorTools,
   // Pin base revision so concurrent remote writes do not silently refresh it.
   // Only a successful save or an explicit Reload may update it.
   baseRevision: profile.revision
@@ -41,6 +43,8 @@ export const formFromCreateInput = (
   selectedSkillIds: input?.selectedCapabilities?.skillIds ?? [],
   excludedConnectorIds: input?.fullAccess?.excludedConnectorIds ?? [],
   connectorIds: input?.selectedCapabilities?.connectorIds ?? [],
+  fullConnectorTools: input?.fullAccess?.connectorTools ?? [],
+  selectedConnectorTools: input?.selectedCapabilities?.connectorTools ?? [],
   baseRevision: 0
 })
 
@@ -77,7 +81,7 @@ export const useSpecialistEditorForm = ({
   // Editor drafts survive unmounts — opening a capability's detail page navigates Settings away —
   // so a returning editor re-seeds from the draft instead of the stored profile. A draft restores
   // only while the profile revision it was taken from still matches; the create form additionally
-  // yields to a provided initialInput (e.g. a marketplace import's prefill) so an abandoned
+  // yields to a new initialInput (e.g. a marketplace import's prefill) so an abandoned
   // earlier draft cannot swallow the new prefill.
   const draftKey = editSpecialist ? editSpecialist.id : CREATE_SPECIALIST_DRAFT_KEY
   const storedDraft = useSpecialistStore.getState().editorDrafts[draftKey]
@@ -85,7 +89,7 @@ export const useSpecialistEditorForm = ({
     storedDraft !== undefined &&
     (editSpecialist !== undefined
       ? storedDraft.form.baseRevision === editSpecialist.revision
-      : initialInput === undefined)
+      : initialInput === undefined || storedDraft.initialInput === initialInput)
       ? storedDraft
       : undefined
   const [form, setForm] = useState<SpecialistEditorFormDraft>(() =>
@@ -112,8 +116,8 @@ export const useSpecialistEditorForm = ({
       suppressDraftWriteRef.current = false
       return
     }
-    saveEditorDraft(draftKey, { form, idTouched, activeCapTab })
-  }, [saveEditorDraft, draftKey, form, idTouched, activeCapTab])
+    saveEditorDraft(draftKey, { form, idTouched, activeCapTab, initialInput })
+  }, [saveEditorDraft, draftKey, form, idTouched, activeCapTab, initialInput])
 
   const clearDraft = useCallback(() => clearEditorDraft(draftKey), [clearEditorDraft, draftKey])
   const suppressNextDraftWrite = useCallback(() => {

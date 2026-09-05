@@ -795,7 +795,7 @@ const InstalledSpecialistsPanel = ({
             onReload={async () => {
               // Load the fresh list and read the result from the store directly —
               // not from the render closure, which captured the pre-load items.
-              await load()
+              await load({ force: true })
               const refreshed = useSpecialistStore
                 .getState()
                 .items.find((item) => item.kind === 'custom' && item.id === view.id)
@@ -1548,7 +1548,7 @@ const InstalledSpecialistsPanel = ({
             variant="outline"
             size="sm"
             className="mt-3"
-            onClick={() => void load()}
+            onClick={() => void load({ force: true })}
           >
             {t('Retry')}
           </Button>
@@ -1570,7 +1570,12 @@ const InstalledSpecialistsPanel = ({
             </div>
           </div>
           <div className="mt-3 flex gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void load({ force: true })}
+            >
               {t('Retry')}
             </Button>
             <Button
@@ -2432,7 +2437,7 @@ const InstalledSpecialistsPanel = ({
                       }
                     } catch (err) {
                       // Reload the list so a retry picks up the current revision.
-                      void load()
+                      void load({ force: true })
                       setDeleteError(
                         err instanceof Error
                           ? err.message

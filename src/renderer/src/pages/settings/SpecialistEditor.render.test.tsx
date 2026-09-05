@@ -1663,6 +1663,8 @@ describe('SpecialistEditor', () => {
             selectedSkillIds: [],
             excludedConnectorIds: [],
             connectorIds: [],
+            fullConnectorTools: [],
+            selectedConnectorTools: [],
             baseRevision: 0
           },
           idTouched: false,

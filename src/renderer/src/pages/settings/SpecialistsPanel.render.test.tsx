@@ -2227,3 +2227,71 @@ describe('SpecialistsPanel Chat with agent', () => {
     expect(onNavigate).not.toHaveBeenCalled()
   })
 })
+
+describe('S04 explicit Specialist refresh controls', () => {
+  it.each(['read failure', 'repaired file'])(
+    'Retry reads an already loaded catalog after %s',
+    async (scenario) => {
+      useSpecialistStore.setState(
+        scenario === 'read failure'
+          ? {
+              loadError: 'Open Science could not load Specialists. Retry to continue.'
+            }
+          : {
+              integrity: {
+                status: 'degraded',
+                issues: [{ code: 'record-sanitized', recordIndex: 0 }]
+              }
+            }
+      )
+      await act(async () =>
+        root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+      )
+      expect(window.api.specialist.list).not.toHaveBeenCalled()
+      const retry = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Retry'
+      )!
+      expect(retry).toBeDefined()
+      await act(async () => fireEvent.click(retry))
+      expect(window.api.specialist.list).toHaveBeenCalledOnce()
+      expect(useSpecialistStore.getState()).toMatchObject({
+        loadError: undefined,
+        integrity: { status: 'ok' }
+      })
+    }
+  )
+
+  it('Reload fetches and adopts the latest revision after a conflict', async () => {
+    vi.mocked(window.api.specialist.update).mockRejectedValueOnce(
+      new Error('Revision conflict: expected 1, found 2.')
+    )
+    const fresh = { ...specialistItems[0], revision: 2, description: 'Fresh server description' }
+    vi.mocked(window.api.specialist.list).mockResolvedValue({
+      items: [fresh],
+      integrity: { status: 'ok' }
+    })
+    await act(async () =>
+      root.render(
+        <SpecialistsPanel view={{ kind: 'edit', id: 'rna-reviewer' }} onNavigate={vi.fn()} />
+      )
+    )
+    const click = async (text: string): Promise<void> => {
+      const button = Array.from(container.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent === text
+      )!
+      expect(button).toBeDefined()
+      await act(async () => fireEvent.click(button))
+    }
+    await click('Save changes')
+    await click('Reload')
+    expect(window.api.specialist.list).toHaveBeenCalledOnce()
+    expect(container.querySelector<HTMLInputElement>('#sp-description')!.value).toBe(
+      'Fresh server description'
+    )
+    vi.mocked(window.api.specialist.update).mockResolvedValue(fresh as never)
+    await click('Save changes')
+    expect(window.api.specialist.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({ revision: 2 })
+    )
+  })
+})

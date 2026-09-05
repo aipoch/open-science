@@ -1,3 +1,8 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { SpecialistService } from '../../../main/specialist/service'
+import { SpecialistRepository } from '../../../main/specialist/repository'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SpecialistExportPreview } from '../../../shared/specialist-package'
@@ -108,7 +113,7 @@ describe('specialist store catalog', () => {
             }>((resolve) => (resolveInitial = resolve))
         )
         .mockResolvedValueOnce({ items: refreshedItems, integrity: { status: 'ok' } }),
-      setEnabled: vi.fn().mockResolvedValue(undefined)
+      setEnabled: vi.fn().mockResolvedValue({ id: 'researcher' })
     })
 
     const initialLoad = useSpecialistStore.getState().load()
@@ -348,4 +353,158 @@ describe('specialist store package import', () => {
       setupPending: true
     })
   })
+})
+
+describe('S04 and S05 catalog recovery regressions', () => {
+  const profile = {
+    id: 'confirmed',
+    name: 'Confirmed',
+    description: '',
+    systemPrompt: '',
+    enabled: true,
+    capabilityMode: 'full' as const,
+    fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+    selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+    revision: 1
+  }
+
+  it('S04 Retry reads again after an already-loaded catalog refresh fails', async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [], integrity: { status: 'ok' } })
+      .mockRejectedValueOnce(new Error('catalog enrichment unavailable'))
+      .mockResolvedValue({ items: [{ kind: 'custom', ...profile }], integrity: { status: 'ok' } })
+    setSpecialistApi({ list, update: vi.fn().mockResolvedValue(profile) })
+    await useSpecialistStore.getState().load()
+    await useSpecialistStore
+      .getState()
+      .update({ id: profile.id, revision: 1, description: 'Updated' })
+    await vi.waitFor(() => expect(useSpecialistStore.getState().loadError).toBeDefined())
+    // The explicit action wired to Retry bypasses the cached mount load.
+    await useSpecialistStore.getState().load({ force: true })
+    expect(list).toHaveBeenCalledTimes(3)
+    expect(useSpecialistStore.getState().loadError).toBeUndefined()
+    expect(useSpecialistStore.getState().items).toEqual([{ kind: 'custom', ...profile }])
+  })
+
+  it.each(['create', 'setEnabled', 'delete', 'installPackage'] as const)(
+    'S05 %s retains its successful write receipt when the subsequent list fails',
+    async (operation) => {
+      const list = vi.fn().mockRejectedValue(new Error('catalog enrichment unavailable'))
+      const create = vi.fn().mockResolvedValue(profile)
+      const setEnabled = vi.fn().mockResolvedValue(profile)
+      const remove = vi.fn().mockResolvedValue({ status: 'deleted' })
+      const installPackage = vi.fn().mockResolvedValue({ status: 'installed', specialist: profile })
+      setSpecialistApi({ list, create, setEnabled, delete: remove, installPackage })
+      useSpecialistStore.setState({
+        packagePreview: {
+          candidateToken: 'candidate',
+          summary: {
+            id: profile.id,
+            name: profile.name,
+            version: '0.1.0',
+            description: '',
+            source: 'zip',
+            skills: [],
+            bundledSkillIds: [],
+            requiredSkillIds: [],
+            builtinSkillIds: [],
+            connectorIds: []
+          },
+          diagnostics: [],
+          installable: true
+        }
+      })
+      useSpecialistStore.setState({
+        items: [
+          { ...profile, enabled: false, kind: 'custom' },
+          { kind: 'reviewer', id: 'reviewer' }
+        ]
+      })
+      const store = useSpecialistStore.getState()
+      const result =
+        operation === 'create'
+          ? store.create({ name: profile.name })
+          : operation === 'setEnabled'
+            ? store.setEnabled(profile.id, true)
+            : operation === 'delete'
+              ? store.delete(profile.id, 1, [])
+              : store.installPackage()
+      await expect(result).resolves.toEqual(
+        operation === 'create'
+          ? profile
+          : operation === 'setEnabled'
+            ? undefined
+            : operation === 'delete'
+              ? { status: 'deleted' }
+              : { status: 'installed', specialist: profile }
+      )
+      await vi.waitFor(() => expect(useSpecialistStore.getState().loadError).toBeDefined())
+      expect(list).toHaveBeenCalledOnce()
+      expect(
+        { create, setEnabled, delete: remove, installPackage }[operation]
+      ).toHaveBeenCalledOnce()
+      expect(useSpecialistStore.getState().items).toEqual(
+        operation === 'delete'
+          ? [{ kind: 'reviewer', id: 'reviewer' }]
+          : [
+              { ...profile, kind: 'custom' },
+              { kind: 'reviewer', id: 'reviewer' }
+            ]
+      )
+      if (operation === 'installPackage')
+        expect(useSpecialistStore.getState().packagePreview).toBeUndefined()
+    }
+  )
+})
+
+it('S05 a committed create remains successful even when catalog enrichment fails', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'specialist-create-receipt-'))
+  try {
+    const service = new SpecialistService(new SpecialistRepository(directory))
+    setSpecialistApi({
+      create: (input) => service.create(input),
+      list: vi.fn().mockRejectedValue(new Error('catalog enrichment unavailable'))
+    })
+    const result = await useSpecialistStore
+      .getState()
+      .create({ name: 'Durable example' })
+      .then(
+        (value) => ({ value, error: undefined }),
+        (error) => ({ value: undefined, error })
+      )
+    const document = JSON.parse(await readFile(join(directory, 'specialists.json'), 'utf8'))
+    expect(document.specialists).toHaveLength(1)
+    expect(document.specialists[0].name).toBe('Durable example')
+    await expect(service.create({ name: 'Durable example' })).rejects.toThrow(
+      'Name is already in use'
+    )
+    expect(result.error).toBeUndefined()
+    expect(result.value).toMatchObject({ id: document.specialists[0].id })
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+it('keeps the forced snapshot when an older initial load finishes last', async () => {
+  let finishInitial!: (value: unknown) => void
+  const fresh = { items: [{ kind: 'reviewer', id: 'reviewer' }], integrity: { status: 'ok' } }
+  const list = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishInitial = resolve
+        })
+    )
+    .mockResolvedValueOnce(fresh)
+  setSpecialistApi({ list })
+  const initial = useSpecialistStore.getState().load()
+  await useSpecialistStore.getState().load({ force: true })
+  finishInitial({ items: [], integrity: { status: 'ok' } })
+  await initial
+  expect(list).toHaveBeenCalledTimes(2)
+  expect(useSpecialistStore.getState().items).toEqual(fresh.items)
+  await useSpecialistStore.getState().load()
+  expect(list).toHaveBeenCalledTimes(2)
 })
