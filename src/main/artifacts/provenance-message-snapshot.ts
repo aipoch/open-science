@@ -478,9 +478,17 @@ class ProvenanceMessageSnapshotRepository {
   }
 
   async reconcileSessionDeletions(activeSessions: PersistedChatSession[]): Promise<void> {
-    const client = await this.options.getClient()
+    await this.reconcileMessageSnapshots(activeSessions)
+    await this.reconcileSessionCleanup(activeSessions)
+  }
+
+  async reconcileMessageSnapshots(activeSessions: PersistedChatSession[]): Promise<void> {
     await this.recoverStagingMessageSnapshots()
     await this.repairReadyMessageSnapshots(activeSessions)
+  }
+
+  async reconcileSessionCleanup(activeSessions: PersistedChatSession[]): Promise<void> {
+    const client = await this.options.getClient()
     await this.recoverStagingReviewScopeSnapshots()
     const activeKeys = new Set(
       activeSessions.map((session) => `${session.projectId}\0${session.id}`)
