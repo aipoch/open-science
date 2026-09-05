@@ -779,6 +779,13 @@ describe('Settings backend ownership architecture', () => {
     expect(settingsModule).toContain('rollback: () => capability.dispose()')
     expect(settingsModule).toContain('dispose: () => capability.dispose()')
     expect(settingsModule).toContain('disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS')
+    const updateBlockerDetector = mainIpc.slice(
+      mainIpc.indexOf('const detectResearchBlockers'),
+      mainIpc.indexOf('const durableDataRootHandoffGate')
+    )
+    expect(updateBlockerDetector).toContain(
+      "if (settingsService.hasActiveInstall()) blockers.push('settings-install')"
+    )
     expect(mainIpc).toContain('permissionGrantRegistry,\n    settingsRepository')
   })
 

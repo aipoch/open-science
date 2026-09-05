@@ -3159,6 +3159,7 @@ const createApplicationModules = async (
       notebook: notebookService
     }).map((session) => session.kind)
     if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
+    if (settingsService.hasActiveInstall()) blockers.push('settings-install')
     return blockers
   }
   const durableDataRootHandoffGate = (
