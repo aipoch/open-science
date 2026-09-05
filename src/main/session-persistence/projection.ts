@@ -724,10 +724,21 @@ export class SessionProjectionRepository {
     operation: 'save' | 'delete' = 'save'
   ): Promise<void> {
     const client = await this.client()
-    await client.pendingSessionReconciliation.upsert({
-      where: { sessionId },
-      create: { sessionId, projectId, operation },
-      update: { projectId, operation, markedAt: new Date() }
+    await client.$transaction(async (tx) => {
+      if (operation === 'delete') {
+        const existing = await tx.session.findUnique({
+          where: { id: sessionId },
+          select: { projectId: true }
+        })
+        if (existing && existing.projectId !== projectId) {
+          throw new Error('Cannot delete a Session owned by another Project.')
+        }
+      }
+      await tx.pendingSessionReconciliation.upsert({
+        where: { sessionId },
+        create: { sessionId, projectId, operation },
+        update: { projectId, operation, markedAt: new Date() }
+      })
     })
   }
 

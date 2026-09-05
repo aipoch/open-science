@@ -143,6 +143,45 @@ describe('managed-file deletion integration', () => {
     await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('rejects wrong-project deletion without reporting a commit or leaving a retry intent', async () => {
+    const wrongProjectId = 'project-b'
+    await client.project.create({ data: { id: wrongProjectId, name: 'Project B' } })
+    const projection = new SessionProjectionRepository(() => Promise.resolve(client))
+    const repository = new SessionRepository(storageRoot, undefined, projection)
+    await repository.ensureSessionProjection(() => sessions.loadAll())
+    const owner = new SessionDeletionOwner({
+      runtime: {
+        liveSessionProjectId: () => undefined,
+        deleteSession: vi.fn().mockResolvedValue({ sessionIds: [] })
+      },
+      persistence: {
+        deleteSession: ({ projectId, sessionId }) => repository.deleteSession(projectId, sessionId)
+      },
+      log: { warn: vi.fn() }
+    })
+    await expect(
+      repository.loadSessionWithDiagnostics(wrongProjectId, SESSION_ID)
+    ).resolves.toEqual({
+      status: 'missing'
+    })
+    await expect(projection.pending()).resolves.toEqual([])
+
+    const result = await owner.delete({ projectId: wrongProjectId, sessionId: SESSION_ID })
+
+    expect.soft(result).toEqual({ status: 'failed', reason: 'persistence', runtimeDetached: true })
+    await expect.soft(projection.pending()).resolves.toEqual([])
+    await expect(
+      repository.loadSessionWithDiagnostics(PROJECT_ID, SESSION_ID)
+    ).resolves.toMatchObject({
+      status: 'found'
+    })
+    await expect(client.session.findUnique({ where: { id: SESSION_ID } })).resolves.toMatchObject({
+      projectId: PROJECT_ID,
+      deletedAtMs: null
+    })
+    await expect(repository.reconcilePendingSessionProjection()).resolves.toBeUndefined()
+  })
+
   it('replays a failed projection deletion when authority was already missing without a pending intent', async () => {
     const projection = new SessionProjectionRepository(() => Promise.resolve(client))
     const repository = new SessionRepository(storageRoot, undefined, projection)
