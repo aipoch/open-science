@@ -10,6 +10,7 @@ import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type { ProjectFilesChangedEvent } from '../../../../shared/project-files'
 import type {
   ManagedFileSource,
+  ManagedFileVersionDiffResult,
   ManagedFileVersionInspectResult,
   ManagedFileVersionIpcResult
 } from '../../../../shared/managed-file-versions'
@@ -420,5 +421,124 @@ it.each(['error', 'reject'] as const)(
     expect(workflow.inspect).toBeUndefined()
     // The pending refresh must retain Stop comparing; an obsolete failure must not leave diff mode.
     expect(workflow.controlsInspect?.headVersionId).toBe('v2')
+  }
+)
+
+it.each(['notification', 'metadata'] as const)(
+  'withholds the old diff until the refreshed head comparison completes after a %s',
+  async (trigger) => {
+    const oldDiff: ManagedFileVersionDiffResult = {
+      baseVersionId: 'v1',
+      selectedVersionId: 'v2',
+      lines: []
+    }
+    const newDiff: ManagedFileVersionDiffResult = {
+      baseVersionId: 'v2',
+      selectedVersionId: 'v3',
+      lines: []
+    }
+    let resolveInspect!: (value: InspectResult) => void
+    let resolveDiff!: (value: ManagedFileVersionIpcResult<ManagedFileVersionDiffResult>) => void
+    inspect.mockResolvedValueOnce({ ok: true, value: snapshot('upload', 2) })
+    inspect.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveInspect = resolve
+      })
+    )
+    window.api.managedFileVersions.diffText = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, value: oldDiff })
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveDiff = resolve
+        })
+      )
+    window.api.managedFileVersions.cancelDiff = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { cancelled: true } })
+    const item = itemFor('upload')
+    await render(item)
+    await act(async () => workflow.startDiff())
+    expect(workflow.diffResult).toEqual(oldDiff)
+
+    if (trigger === 'notification') await changed('upload')
+    else await render({ ...item, mtimeMs: 3, versionNumber: 3 })
+    expect.soft(workflow.diffResult).toBeUndefined()
+    expect(workflow.navigationInspect?.headVersionId).toBe('v2')
+    await act(async () => resolveInspect({ ok: true, value: snapshot('upload', 3) }))
+    expect.soft(workflow.diffResult).toBeUndefined()
+    expect(workflow.inspect?.headVersionId).toBe('v3')
+    await act(async () => resolveDiff({ ok: true, value: newDiff }))
+    expect(workflow.diffResult).toEqual(newDiff)
+  }
+)
+
+it('withholds an old diff error while rechecking and comparing the current version', async () => {
+  inspect.mockResolvedValue({ ok: true, value: snapshot('upload', 2) })
+  window.api.managedFileVersions.diffText = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('old comparison failed'))
+    .mockReturnValue(new Promise(() => undefined))
+  window.api.managedFileVersions.cancelDiff = vi
+    .fn()
+    .mockResolvedValue({ ok: true, value: { cancelled: true } })
+  await render(itemFor('upload'))
+  await act(async () => workflow.startDiff())
+  expect(workflow.diffError).toBeDefined()
+  await changed('upload')
+  expect(workflow.diffError).toBeUndefined()
+})
+
+it.each(['success', 'error', 'reject'] as const)(
+  'ignores an obsolete diff %s arriving with a file notification before React commits',
+  async (outcome) => {
+    inspect.mockResolvedValue({ ok: true, value: snapshot('upload', 2) })
+    let resolveOld!: (value: ManagedFileVersionIpcResult<ManagedFileVersionDiffResult>) => void
+    let rejectOld!: (error: Error) => void
+    let resolveLatest!: (value: ManagedFileVersionIpcResult<ManagedFileVersionDiffResult>) => void
+    window.api.managedFileVersions.diffText = vi
+      .fn()
+      .mockReturnValueOnce(
+        new Promise((resolve, reject) => {
+          resolveOld = resolve
+          rejectOld = reject
+        })
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveLatest = resolve
+        })
+      )
+    window.api.managedFileVersions.cancelDiff = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { cancelled: true } })
+    await render(itemFor('upload'))
+    await act(async () => workflow.startDiff())
+    const oldRequest = vi.mocked(window.api.managedFileVersions.diffText).mock.calls[0][0]
+    const result: ManagedFileVersionDiffResult = {
+      baseVersionId: 'v1',
+      selectedVersionId: 'v2',
+      lines: []
+    }
+    await act(async () => {
+      for (const listener of changedListeners) {
+        listener({ projectId: 'project-1', sources: ['upload'], kind: 'upsert' })
+      }
+      if (outcome === 'success') resolveOld({ ok: true, value: result })
+      else if (outcome === 'error')
+        resolveOld({
+          ok: false,
+          error: { code: 'STORAGE_UNAVAILABLE', message: 'obsolete failure' }
+        })
+      else rejectOld(new Error('obsolete failure'))
+      await Promise.resolve()
+    })
+    expect(workflow.diffResult).toBeUndefined()
+    expect(workflow.diffError).toBeUndefined()
+    expect(window.api.managedFileVersions.cancelDiff).toHaveBeenCalledWith({
+      requestId: oldRequest.requestId
+    })
+    await act(async () => resolveLatest({ ok: true, value: result }))
+    expect(workflow.diffResult).toEqual(result)
   }
 )

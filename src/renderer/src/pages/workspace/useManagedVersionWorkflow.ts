@@ -78,6 +78,7 @@ const useManagedVersionWorkflow = ({
     setRefresh(refreshGeneration.current)
   }, [])
   const [diff, setDiff] = useState<{
+    key?: string
     result?: ManagedFileVersionDiffResult
     error?: string
   }>({})
@@ -263,28 +264,29 @@ const useManagedVersionWorkflow = ({
   }, [identity, item.selectedVersionId, requestKey, refresh, resetDiff])
 
   useEffect(() => {
-    if (mode !== 'diff' || !identity || !inspect?.canDiff) return
+    if (mode !== 'diff' || !identity || !requestKey || !inspect?.canDiff) return
     const requestId = crypto.randomUUID()
     activeDiffRequestId.current = requestId
     void window.api.managedFileVersions
       .diffText({ ...identity, versionId: inspect.selectedVersionId, requestId })
       .then((result) => {
-        if (activeDiffRequestId.current !== requestId) return
+        if (activeDiffRequestId.current !== requestId || refresh !== refreshGeneration.current)
+          return
         activeDiffRequestId.current = undefined
-        if (result.ok) setDiff({ result: result.value })
+        if (result.ok) setDiff({ key: requestKey, result: result.value })
         else if (result.error.code !== 'DIFF_CANCELLED')
-          setDiff({ error: t('Diff could not be loaded.') })
+          setDiff({ key: requestKey, error: t('Diff could not be loaded.') })
       })
       .catch(() => {
-        if (activeDiffRequestId.current === requestId)
-          setDiff({ error: t('Diff could not be loaded.') })
+        if (activeDiffRequestId.current === requestId && refresh === refreshGeneration.current)
+          setDiff({ key: requestKey, error: t('Diff could not be loaded.') })
       })
     return () => {
       if (activeDiffRequestId.current !== requestId) return
       activeDiffRequestId.current = undefined
       void window.api.managedFileVersions.cancelDiff({ requestId })
     }
-  }, [identity, inspect?.canDiff, inspect?.selectedVersionId, mode, t])
+  }, [identity, inspect?.canDiff, inspect?.selectedVersionId, mode, requestKey, refresh, t])
 
   return {
     identity,
@@ -293,8 +295,9 @@ const useManagedVersionWorkflow = ({
     inspectError,
     navigationInspect,
     controlsInspect,
-    diffResult: diff.result,
-    diffError: diff.error,
+    // Navigation may survive a refresh; comparison content belongs to one confirmed inspection.
+    diffResult: inspect && diff.key === requestKey ? diff.result : undefined,
+    diffError: inspect && diff.key === requestKey ? diff.error : undefined,
     showTextTools: controlsInspect?.text !== undefined,
     isSelectedSourceText: inspect !== undefined && isSourceTextVersion(inspect),
     downloadVersionContext:
