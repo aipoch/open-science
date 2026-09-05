@@ -374,6 +374,29 @@ describe('AgentRuntimeManager', () => {
     }
   )
 
+  it('propagates failed installation cleanup through disposal', async () => {
+    const entered = Promise.withResolvers<void>()
+    const cleanupFailure = new Error('Installer cleanup was not confirmed')
+    runInstallWithFallbackSpy.mockImplementation(
+      ({ signal, installId, onCleanupFailure }) =>
+        new Promise((resolve) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              onCleanupFailure?.(cleanupFailure)
+              resolve({ installId, ok: false, error: 'Installation cancelled.' })
+            },
+            { once: true }
+          )
+          entered.resolve()
+        })
+    )
+    const install = manager.installClaude({ source: 'npm' }, vi.fn())
+    await entered.promise
+    await expect(manager.dispose()).rejects.toBe(cleanupFailure)
+    await expect(install).resolves.toMatchObject({ ok: false })
+  })
+
   it('rejects new detection and install work after disposal starts', async () => {
     await manager.dispose()
 

@@ -4662,6 +4662,42 @@ describe('SettingsService: skills', () => {
 })
 
 describe('installClaude (app-managed source)', () => {
+  it('drains authentication cleanup before reporting an installation disposal failure', async () => {
+    const { AgentRuntimeManager } = await import('./agent-runtime-manager')
+    const { ProviderAccountsModule } = await import('./provider-accounts')
+    const failure = new Error('Installer cleanup was not confirmed')
+    const authCleanup = Promise.withResolvers<void>()
+    const runtimeDispose = vi
+      .spyOn(AgentRuntimeManager.prototype, 'dispose')
+      .mockRejectedValue(failure)
+    const authDispose = vi
+      .spyOn(ProviderAccountsModule.prototype, 'dispose')
+      .mockReturnValue(authCleanup.promise)
+    try {
+      const service = createService()
+      let settled = false
+      const disposal = service.dispose().then(
+        () => {
+          settled = true
+          return undefined
+        },
+        (error: unknown) => {
+          settled = true
+          return error
+        }
+      )
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const waitedForAuthentication = !settled
+      authCleanup.resolve()
+      expect(await disposal).toBe(failure)
+      expect(waitedForAuthentication).toBe(true)
+    } finally {
+      authCleanup.resolve()
+      runtimeDispose.mockRestore()
+      authDispose.mockRestore()
+    }
+  })
+
   it('reports an in-flight install until the installer settles', async () => {
     let finishInstall!: (outcome: Awaited<ReturnType<ManagedInstallImpl>>) => void
     const installOutcome = new Promise<Awaited<ReturnType<ManagedInstallImpl>>>((resolve) => {

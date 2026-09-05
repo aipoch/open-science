@@ -15,10 +15,12 @@ import type {
   NpmAvailability
 } from '../../shared/settings'
 import { terminateProcessTree } from '../process-tree'
+import { createLogger, diagnosticErrorFields } from '../logger'
 import { augmentedPathEnv } from './shell-path'
 
 const execFileAsync = promisify(execFile)
 const INSTALL_CLEANUP_TIMEOUT_MS = 8_000
+const log = createLogger('settings-install')
 
 // Constructs and runs the one-click claude installer for a chosen source, streaming output back so
 // the UI can show live progress and never spin silently. Command construction is pure and testable;
@@ -280,6 +282,7 @@ export type RunInstallOptions = {
   installId: string
   onEvent: (event: ClaudeInstallEvent) => void
   signal?: AbortSignal
+  onCleanupFailure?: (error: Error) => void
   timeoutMs?: number
   // Host platform, injectable so tests exercise a fixed OS's spawn spec (e.g. bash vs powershell for
   // the official script) regardless of the machine running them. Defaults to the real process.platform.
@@ -329,6 +332,7 @@ const runInstall = async ({
   installId,
   onEvent,
   signal,
+  onCleanupFailure,
   timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS,
   spawnImpl = defaultInstallSpawn,
   platform = process.platform,
@@ -395,17 +399,27 @@ const runInstall = async ({
       if (settled || terminating) return
       terminating = true
       publisher.log('system', message)
-      const cleanupDeadline = new Promise<void>((resolve) => {
-        cleanupTimer = setTimeout(resolve, INSTALL_CLEANUP_TIMEOUT_MS)
+      const cleanupDeadline = new Promise<Error>((resolve) => {
+        cleanupTimer = setTimeout(
+          () => resolve(new Error('Installer process tree cleanup timed out.')),
+          INSTALL_CLEANUP_TIMEOUT_MS
+        )
         cleanupTimer.unref?.()
       })
       void Promise.race([
         terminateProcessTree(child).then(
-          () => undefined,
-          () => undefined
+          ({ reaped }) =>
+            reaped ? undefined : new Error('Installer process tree cleanup was not confirmed.'),
+          (cause: unknown) => new Error('Installer process tree cleanup failed.', { cause })
         ),
         cleanupDeadline
-      ]).then(() => settle(result))
+      ]).then((error) => {
+        if (error) {
+          log.warn('installer cleanup failed', { installId, ...diagnosticErrorFields(error) })
+          onCleanupFailure?.(error)
+        }
+        settle(result)
+      })
     }
 
     const abortInstall = (): void => {
@@ -489,6 +503,7 @@ const runInstallWithFallback = async ({
   installId,
   onEvent,
   signal,
+  onCleanupFailure,
   timeoutMs,
   spawnImpl,
   platform,
@@ -505,6 +520,7 @@ const runInstallWithFallback = async ({
       installId,
       onEvent,
       signal,
+      onCleanupFailure,
       timeoutMs,
       spawnImpl,
       platform,
@@ -532,6 +548,7 @@ const runInstallWithFallback = async ({
       installId,
       onEvent,
       signal,
+      onCleanupFailure,
       timeoutMs,
       spawnImpl,
       platform,

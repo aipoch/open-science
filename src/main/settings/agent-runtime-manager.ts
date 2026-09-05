@@ -333,7 +333,7 @@ export class AgentRuntimeManager {
   private readonly executeClaudeProbe: ExecuteClaudeProbe
   private activeInstallId: string | undefined
   private activeInstallAbort: AbortController | undefined
-  private activeInstallCompletion: Promise<void> | undefined
+  private activeInstallCompletion: Promise<Error | undefined> | undefined
   private installAdmissionHolders = 0
   private readonly shutdownAbort = new AbortController()
   private readonly activeDetections = new Set<Promise<unknown>>()
@@ -376,6 +376,8 @@ export class AgentRuntimeManager {
     const completion = this.activeInstallCompletion
     this.activeInstallAbort?.abort()
     await Promise.allSettled([...(completion ? [completion] : []), ...this.activeDetections])
+    const cleanupFailure = await completion
+    if (cleanupFailure) throw cleanupFailure
   }
 
   constructor(options: AgentRuntimeManagerOptions) {
@@ -651,7 +653,7 @@ export class AgentRuntimeManager {
   ): Promise<ClaudeInstallResult> {
     const installId = `install-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
-    return this.runExclusiveInstall(installId, async (signal) => {
+    return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
       if (request.source === 'managed') {
         const registries =
           request.managedRegistry === 'npmmirror'
@@ -689,6 +691,7 @@ export class AgentRuntimeManager {
         source: request.source,
         installId,
         onEvent,
+        onCleanupFailure,
         signal
       })
       if (result.ok) await this.detectClaude(signal)
@@ -702,7 +705,7 @@ export class AgentRuntimeManager {
   ): Promise<ClaudeInstallResult> {
     const installId = `install-opencode-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
-    return this.runExclusiveInstall(installId, async (signal) => {
+    return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
       if (request.source === 'managed') {
         const outcome = await this.installManagedOpencodeImpl({
           installId,
@@ -721,6 +724,7 @@ export class AgentRuntimeManager {
         installId,
         onEvent,
         installTarget: OPENCODE_INSTALL_TARGET,
+        onCleanupFailure,
         signal
       })
       if (result.ok) await this.detectOpencode(signal)
@@ -753,7 +757,7 @@ export class AgentRuntimeManager {
   ): Promise<ClaudeInstallResult> {
     const installId = `install-codex-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
-    return this.runExclusiveInstall(installId, async (signal) => {
+    return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
       if (request.source === 'managed') {
         const settings = await this.repository.getSettings()
         const configuredCodexPath = settings.codex?.nativePath
@@ -798,6 +802,7 @@ export class AgentRuntimeManager {
         installId,
         onEvent,
         installTarget: CODEX_INSTALL_TARGET,
+        onCleanupFailure,
         signal
       })
       if (result.ok) await this.detectCodex(signal)
@@ -807,7 +812,10 @@ export class AgentRuntimeManager {
 
   private async runExclusiveInstall(
     installId: string,
-    install: (signal: AbortSignal) => Promise<ClaudeInstallResult>
+    install: (
+      signal: AbortSignal,
+      onCleanupFailure: (error: Error) => void
+    ) => Promise<ClaudeInstallResult>
   ): Promise<ClaudeInstallResult> {
     if (this.shutdownAbort.signal.aborted) {
       return { installId, ok: false, error: 'Settings service is shutting down.' }
@@ -817,19 +825,22 @@ export class AgentRuntimeManager {
     }
 
     const controller = new AbortController()
-    const completion = Promise.withResolvers<void>()
+    const completion = Promise.withResolvers<Error | undefined>()
+    let cleanupFailure: Error | undefined
     this.activeInstallId = installId
     this.activeInstallAbort = controller
     this.activeInstallCompletion = completion.promise
     try {
-      return await install(controller.signal)
+      return await install(controller.signal, (error) => {
+        cleanupFailure = error
+      })
     } finally {
       if (this.activeInstallId === installId) {
         this.activeInstallId = undefined
         this.activeInstallAbort = undefined
         this.activeInstallCompletion = undefined
       }
-      completion.resolve()
+      completion.resolve(cleanupFailure)
     }
   }
 

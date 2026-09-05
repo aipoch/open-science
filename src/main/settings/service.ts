@@ -260,10 +260,14 @@ class SettingsService {
     return this.runtimeManager.holdInstallAdmission()
   }
 
-  dispose(): Promise<void> {
-    return Promise.all([this.providers.dispose(), this.runtimeManager.dispose()]).then(
-      () => undefined
-    )
+  async dispose(): Promise<void> {
+    const outcomes = await Promise.allSettled([
+      this.providers.dispose(),
+      this.runtimeManager.dispose()
+    ])
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') throw outcome.reason
+    }
   }
 
   constructor(options: SettingsServiceOptions = {}) {
