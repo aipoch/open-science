@@ -4,6 +4,7 @@ import { defineConfig, configDefaults } from 'vitest/config'
 
 const testRoot = resolve('.')
 const sharedInstallRoot = basename(dirname(testRoot)) === '.worktree' ? resolve('../..') : testRoot
+const windowsFullTest = process.env.VITEST_WINDOWS_FULL_TEST === '1'
 
 export function resolveVitestMaxWorkers(
   available = typeof availableParallelism === 'function' ? availableParallelism() : cpus().length
@@ -170,12 +171,12 @@ export default defineConfig({
     // shared CI runner, so a fast fully-mocked test can still be CPU-starved past 5s and time out
     // spuriously. 15s absorbs that contention without masking a genuine hang (real work is far slower).
     testTimeout: 15000,
-    // Schema-backed hooks can exceed Vitest's 10s default on loaded runners. Keep a safe repository
-    // default while allowing slower platform workflows to raise it explicitly from the CLI.
-    hookTimeout: 30000,
+    // Inline projects inherit these values before root CLI overrides are applied. Set the Windows
+    // budget here so every project's hooks actually receive the workflow's intended 60 seconds.
+    hookTimeout: windowsFullTest ? 60000 : 30000,
     // Pin the pool to Vitest's own CPU-minus-one bound so full-suite runs cannot spawn an unbounded
     // set of short-lived workers. Heavy files below run in later groups and do not share that pool.
-    maxWorkers: resolveVitestMaxWorkers(),
+    maxWorkers: windowsFullTest ? 1 : resolveVitestMaxWorkers(),
     projects: [
       {
         extends: true,

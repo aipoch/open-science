@@ -16,6 +16,7 @@ on:
         options:
           - full
           - notebook-sandbox
+          - regressions
 
 permissions:
   actions: read
@@ -58,13 +59,15 @@ jobs:
   windows_full_test:
     name: Windows full test (${{ matrix.shard }}/3)
     needs: plan
-    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'notebook-sandbox') }}
     runs-on: windows-latest
     timeout-minutes: 35
+    env:
+      VITEST_WINDOWS_FULL_TEST: '1'
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: ${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -80,6 +83,7 @@ jobs:
         run: node scripts/ci/npm-ci.mjs
 
       - name: Test complete suite shard
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
         # SQLite-heavy integration suites contend heavily for Windows disk I/O when Vitest uses
         # every available core, and hosted-runner disk latency occasionally exceeds the default
         # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; individual
@@ -87,10 +91,26 @@ jobs:
         # slow serial suite without treating a still-progressing shard as a hang.
         run: npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
 
+      - name: Test recent Windows regressions
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}
+        # Reuse the full job's runner, install and effective project budgets without running the
+        # unrelated shards or native sandbox. These are the suites from the recent failed batches.
+        run: >-
+          npm test --
+          vitest.config.test.ts
+          scripts/ci/release-workflows.test.ts
+          src/main/database/database-null-and-version-bounds.test.ts
+          src/main/database/migration-service.test.ts
+          src/main/notebook/runtime-service.test.ts
+          src/main/artifacts/provenance-repository.test.ts
+          src/main/artifacts/provenance-write-contract.test.ts
+          src/main/delegation/production-composition.test.ts
+          --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
+
   notebook_sandbox:
     name: Windows Notebook sandbox lifecycle
     needs: plan
-    if: needs.plan.outputs.should_test == 'true'
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'regressions') }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:

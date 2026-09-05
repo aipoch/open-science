@@ -1,4 +1,5 @@
 import { availableParallelism, cpus } from 'node:os'
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
@@ -90,7 +91,45 @@ it('ratchets full coverage without raising selective changed-source thresholds',
 })
 
 it('keeps a safe default timeout for schema-backed hooks', () => {
-  expect(vitestConfig.test?.hookTimeout).toBe(30_000)
+  expect(vitestConfig.test?.hookTimeout).toBe(
+    process.env.VITEST_WINDOWS_FULL_TEST === '1' ? 60_000 : 30_000
+  )
+})
+
+it.each(['0', '1'])('resolves real Vitest project budgets with Windows profile %s', (profile) => {
+  const probe = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `import { createVitest } from 'vitest/node'
+       const ctx = await createVitest('test', {
+         watch: false, hookTimeout: 60000, testTimeout: 60000, maxWorkers: 1
+       })
+       try {
+         console.log(JSON.stringify(ctx.projects.map(({ name, config }) => ({
+           name, hookTimeout: config.hookTimeout, maxWorkers: config.maxWorkers,
+           testTimeout: config.testTimeout
+         }))))
+       } finally { await ctx.close() }`
+    ],
+    {
+      cwd: process.cwd(),
+      env: { ...process.env, VITEST_WINDOWS_FULL_TEST: profile },
+      encoding: 'utf8',
+      timeout: 30_000
+    }
+  )
+  expect(probe.error).toBeUndefined()
+  expect(probe.status, probe.stderr).toBe(0)
+  expect(JSON.parse(probe.stdout)).toEqual(
+    ['default', 'architecture', 'process', 'database'].map((name) => ({
+      name,
+      hookTimeout: profile === '1' ? 60_000 : 30_000,
+      maxWorkers: profile === '1' || name !== 'default' ? 1 : resolveVitestMaxWorkers(),
+      testTimeout: 60_000
+    }))
+  )
 })
 
 it('prints captured console output only for failed tests', () => {
@@ -103,8 +142,9 @@ it('pins the full-suite worker cap to the machine rather than leaving it unbound
   expect(resolveVitestMaxWorkers(8)).toBe(7)
   expect(resolveVitestMaxWorkers(1)).toBe(1)
   expect(resolveVitestMaxWorkers(0)).toBe(1)
-  expect(vitestConfig.test?.maxWorkers).toBe(resolveVitestMaxWorkers())
-  expect(vitestConfig.test?.maxWorkers).toBe(Math.max(available - 1, 1))
+  expect(vitestConfig.test?.maxWorkers).toBe(
+    process.env.VITEST_WINDOWS_FULL_TEST === '1' ? 1 : Math.max(available - 1, 1)
+  )
 })
 
 type VitestProjectTest = {

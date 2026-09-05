@@ -57,14 +57,17 @@ describe('release and scheduled workflow topology', () => {
     const test = step(job, 'Test complete suite shard')
     const sandboxSmoke = step(sandbox, 'Test AppContainer ownership and removal lifecycle')
 
-    expect(job.strategy?.matrix?.shard).toEqual([1, 2, 3])
+    expect(job.strategy?.matrix?.shard).toBe(
+      "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3]') }}"
+    )
+    expect(job.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
     expect(test.run).toContain('--shard=${{ matrix.shard }}/3')
     expect(test.run).toContain('--maxWorkers=1')
     expect(windows.on).not.toHaveProperty('push')
     expect(schedule).toEqual([{ cron: '47 * * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'full',
-      options: ['full', 'notebook-sandbox']
+      options: ['full', 'notebook-sandbox', 'regressions']
     })
     expect(windows.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(plan).toMatchObject({
@@ -76,18 +79,37 @@ describe('release and scheduled workflow topology', () => {
     )
     expect(job).toMatchObject({
       needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'notebook-sandbox') }}",
       'timeout-minutes': 35
     })
     expect(sandbox).toMatchObject({
       needs: 'plan',
-      if: "needs.plan.outputs.should_test == 'true'",
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'regressions') }}",
       'runs-on': 'windows-latest',
       'timeout-minutes': 20
     })
     expect(sandboxSmoke.run).toContain('vendor/windows-src/ci/smoke.ps1')
     expect(sandboxSmoke.run).toContain('vendor/windows/x64/notebook-appcontainer-host.exe')
     expect(sandboxSmoke.run).toContain('-Mode Full')
+    expect(test.if).toBe("${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}")
+    const regressions = step(job, 'Test recent Windows regressions')
+    expect(regressions.if).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}"
+    )
+    expect(regressions.run).not.toContain('--shard')
+    expect(regressions.run).toContain('--maxWorkers=1 --testTimeout=60000 --hookTimeout=60000')
+    for (const file of [
+      'vitest.config.test.ts',
+      'scripts/ci/release-workflows.test.ts',
+      'src/main/database/database-null-and-version-bounds.test.ts',
+      'src/main/database/migration-service.test.ts',
+      'src/main/notebook/runtime-service.test.ts',
+      'src/main/artifacts/provenance-repository.test.ts',
+      'src/main/artifacts/provenance-write-contract.test.ts',
+      'src/main/delegation/production-composition.test.ts'
+    ]) {
+      expect(regressions.run).toContain(file)
+    }
   })
 
   it('runs a separate daily Windows resource soak with a focused manual smoke path', () => {
