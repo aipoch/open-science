@@ -140,6 +140,8 @@ const ArchivedPanel = ({
           setSessionDeleteError(result.reason)
           return
         }
+        if (result.cleanupPending)
+          setPanelError(t('The Session was deleted, but some cleanup could not be completed.'))
         useArchiveUndoStore.getState().dismissSession(session.id)
         setSessionToDelete(undefined)
       })

@@ -10,6 +10,7 @@ import {
   MAX_PERSISTED_SESSION_BYTES,
   SessionSizeLimitError,
   SessionRevisionConflictError,
+  SessionDeletionCommittedError,
   sanitizeSessionUploadedAttachments,
   sessionRevision,
   normalizeSessionManifest,
@@ -1030,7 +1031,12 @@ class SessionRepository {
           sessionId: safeSessionId
         })
       } else {
-        await this.projection?.commitDelete(safeProjectId, safeSessionId)
+        await this.projection?.markPending(safeProjectId, safeSessionId, 'delete')
+        await this.projection
+          ?.commitDelete(safeProjectId, safeSessionId)
+          .catch((error: unknown) => {
+            throw new SessionDeletionCommittedError(error)
+          })
       }
       return
     }
@@ -1063,15 +1069,17 @@ class SessionRepository {
       force: true,
       recursive: false
     })
+    this.sessionRevisions.delete(revisionKey)
     if (this.projectionWritesSuspended) {
       this.suspendedProjectionSessionWrites.set(revisionKey, {
         projectId: safeProjectId,
         sessionId: safeSessionId
       })
     } else {
-      await this.projection?.commitDelete(safeProjectId, safeSessionId)
+      await this.projection?.commitDelete(safeProjectId, safeSessionId).catch((error: unknown) => {
+        throw new SessionDeletionCommittedError(error)
+      })
     }
-    this.sessionRevisions.delete(revisionKey)
   }
 
   // Atomically moves a marked live directory into the durable deletion area. The marker/tombstone is

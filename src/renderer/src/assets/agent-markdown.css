@@ -176,14 +176,12 @@
   }
 
   .agent-markdown-streaming {
-    & blockquote:not(:has(p:not(:empty))),
     & hr {
       @apply hidden;
     }
 
-    & > div > :empty:not(:last-child) {
-      @apply hidden;
-    }
+    /* Hiding quotes with no non-empty paragraph moved render-side (createStreamingBlockquote in
+       streaming-blockquote.tsx) to keep structural selector re-matching off the streamed DOM path. */
 
     /* No streaming caret: keep Streamdown's default ::after suppressed (product decision). */
     & .agent-markdown > :last-child::after {

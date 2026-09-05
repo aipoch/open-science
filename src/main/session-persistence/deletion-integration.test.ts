@@ -10,7 +10,11 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true }
 }))
 
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import {
+  SessionDeletionCommittedError,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
+import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ManagedFileIndexRepository } from '../project-files/repository'
@@ -20,6 +24,15 @@ import { ProjectRepository } from '../projects/repository'
 import { UploadRepository } from '../uploads/repository'
 import { SessionPersistenceCoordinator } from './coordinator'
 import { SessionRepository } from './repository'
+import { SessionProjectionRepository } from './projection'
+import { SessionDeletionOwner } from '../session-deletion/owner'
+import {
+  initializeManagedWorkspaceOwnership,
+  finalizeManagedWorkspaceOwnership,
+  markManagedWorkspaceRetained,
+  restoreManagedWorkspaceActive,
+  readManagedWorkspaceOwnership
+} from '../storage/managed-workspace-ownership'
 
 const PROJECT_ID = 'project-a'
 const SESSION_ID = 'session-a'
@@ -129,6 +142,309 @@ describe('managed-file deletion integration', () => {
     await expect(readFile(artifactPath, 'utf8')).resolves.toBe('artifact bytes')
     await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
+  it('rejects wrong-project deletion without reporting a commit or leaving a retry intent', async () => {
+    const wrongProjectId = 'project-b'
+    await client.project.create({ data: { id: wrongProjectId, name: 'Project B' } })
+    const projection = new SessionProjectionRepository(() => Promise.resolve(client))
+    const repository = new SessionRepository(storageRoot, undefined, projection)
+    await repository.ensureSessionProjection(() => sessions.loadAll())
+    const owner = new SessionDeletionOwner({
+      runtime: {
+        liveSessionProjectId: () => undefined,
+        deleteSession: vi.fn().mockResolvedValue({ sessionIds: [] })
+      },
+      persistence: {
+        deleteSession: ({ projectId, sessionId }) => repository.deleteSession(projectId, sessionId)
+      },
+      log: { warn: vi.fn() }
+    })
+    await expect(
+      repository.loadSessionWithDiagnostics(wrongProjectId, SESSION_ID)
+    ).resolves.toEqual({
+      status: 'missing'
+    })
+    await expect(projection.pending()).resolves.toEqual([])
+
+    const result = await owner.delete({ projectId: wrongProjectId, sessionId: SESSION_ID })
+
+    expect.soft(result).toEqual({ status: 'failed', reason: 'persistence', runtimeDetached: true })
+    await expect.soft(projection.pending()).resolves.toEqual([])
+    await expect(
+      repository.loadSessionWithDiagnostics(PROJECT_ID, SESSION_ID)
+    ).resolves.toMatchObject({
+      status: 'found'
+    })
+    await expect(client.session.findUnique({ where: { id: SESSION_ID } })).resolves.toMatchObject({
+      projectId: PROJECT_ID,
+      deletedAtMs: null
+    })
+    await expect(repository.reconcilePendingSessionProjection()).resolves.toBeUndefined()
+  })
+
+  it('replays a failed projection deletion when authority was already missing without a pending intent', async () => {
+    const projection = new SessionProjectionRepository(() => Promise.resolve(client))
+    const repository = new SessionRepository(storageRoot, undefined, projection)
+    await repository.ensureSessionProjection(() => sessions.loadAll())
+    await rm(join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`))
+    await expect(repository.loadSessionWithDiagnostics(PROJECT_ID, SESSION_ID)).resolves.toEqual({
+      status: 'missing'
+    })
+    await expect(projection.pending()).resolves.toEqual([])
+    await expect(client.session.findUnique({ where: { id: SESSION_ID } })).resolves.toMatchObject({
+      deletedAtMs: null
+    })
+    const commitProjection = vi
+      .spyOn(projection, 'commitDelete')
+      .mockRejectedValueOnce(new Error('injected projection deletion failure'))
+
+    await expect(repository.deleteSession(PROJECT_ID, SESSION_ID)).rejects.toBeInstanceOf(
+      SessionDeletionCommittedError
+    )
+    await expect
+      .soft(projection.pending())
+      .resolves.toEqual([{ projectId: PROJECT_ID, sessionId: SESSION_ID, operation: 'delete' }])
+    commitProjection.mockRestore()
+    const restartedRepository = new SessionRepository(
+      storageRoot,
+      undefined,
+      new SessionProjectionRepository(() => Promise.resolve(client))
+    )
+    await restartedRepository.reconcilePendingSessionProjection()
+
+    await expect(projection.pending()).resolves.toEqual([])
+    await expect(client.session.findUnique({ where: { id: SESSION_ID } })).resolves.toMatchObject({
+      deletedAtMs: expect.any(BigInt)
+    })
+  })
+
+  it.each(['backup', 'json', 'projection', 'provenance', 'compute'] as const)(
+    'compensates only before authority removal when %s deletion fails',
+    async (failurePhase) => {
+      const primaryPath = join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`)
+      const backupPath = `${primaryPath}.pre-s2-backup`
+      const cwd = join(storageRoot, 'workspaces', 'delete-boundary')
+      await mkdir(cwd, { recursive: true })
+      await initializeManagedWorkspaceOwnership(cwd, PROJECT_ID, 100, storageRoot)
+      await finalizeManagedWorkspaceOwnership(cwd, SESSION_ID, 200, storageRoot)
+      await sessions.saveSession({ ...createSession(uploadPath, artifactPath), cwd })
+      await writeFile(backupPath, await readFile(primaryPath))
+
+      const failure = new Error(`injected ${failurePhase} deletion failure`)
+      const projection = new SessionProjectionRepository(() => Promise.resolve(client))
+      const repository = new SessionRepository(
+        storageRoot,
+        {
+          remove: async (path, options) => {
+            if (
+              (failurePhase === 'backup' && path === backupPath) ||
+              (failurePhase === 'json' && path === primaryPath)
+            ) {
+              throw failure
+            }
+            await rm(path, options)
+          }
+        },
+        projection
+      )
+      await repository.ensureSessionProjection(() => sessions.loadAll())
+      const commitProjection = vi.spyOn(projection, 'commitDelete')
+      if (failurePhase === 'projection') commitProjection.mockRejectedValue(failure)
+      const deleteAuthority = vi.spyOn(repository, 'deleteSession')
+      const restoreIndex = vi.spyOn(files, 'restoreSession')
+      const computeJobs = {
+        prepareSessionJobDeletion: vi.fn(async () => undefined),
+        commitSessionJobDeletion: vi.fn(async () => {
+          if (failurePhase === 'compute') throw failure
+        }),
+        abortSessionJobDeletion: vi.fn(async () => undefined),
+        prepareProjectJobDeletion: vi.fn(async () => undefined),
+        commitProjectJobDeletion: vi.fn(async () => undefined)
+      }
+      const provenance = {
+        validateFinalizedMessageBindings: vi.fn(async () => undefined),
+        captureFinalizedMessages: vi.fn(async () => undefined),
+        reconcileSessionDeletions: vi.fn(async () => undefined),
+        prepareSessionDeletion: vi.fn(async () => ({
+          kind: 'ordinary' as const,
+          projectId: PROJECT_ID,
+          sessionId: SESSION_ID
+        })),
+        completeSessionDeletion: vi.fn(async () => {
+          if (failurePhase === 'provenance') throw failure
+        }),
+        abortSessionDeletion: vi.fn(async () => undefined)
+      }
+      const workspaceOwnership = {
+        reconcileProvisional: vi.fn(async () => undefined),
+        markProjectRetained: vi.fn(async () => []),
+        restoreProjectActive: vi.fn(async () => undefined),
+        markRetained: (session: PersistedChatSession) =>
+          markManagedWorkspaceRetained(session, storageRoot),
+        restoreActive: vi.fn((session: PersistedChatSession) =>
+          restoreManagedWorkspaceActive(session, storageRoot)
+        )
+      }
+      const deletionCoordinator = new SessionPersistenceCoordinator(
+        repository,
+        files,
+        undefined,
+        provenance,
+        uploads,
+        undefined,
+        undefined,
+        undefined,
+        computeJobs,
+        undefined,
+        undefined,
+        workspaceOwnership
+      )
+      const notifyDeleted = vi.fn(async () => undefined)
+      deletionCoordinator.setSessionDeletionHandlers({ commit: notifyDeleted, reconcile: vi.fn() })
+      const owner = new SessionDeletionOwner({
+        runtime: {
+          liveSessionProjectId: () => undefined,
+          deleteSession: vi.fn().mockResolvedValue({ sessionIds: [] })
+        },
+        persistence: {
+          deleteSession: ({ projectId, sessionId }) =>
+            deletionCoordinator.deleteSession(projectId, sessionId)
+        }
+      })
+
+      const result = await owner.delete({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+      const authorityDeleted = failurePhase !== 'backup' && failurePhase !== 'json'
+      // Exercise a real remove followed by a rejected Repository promise, not an entry-point mock.
+      if (failurePhase === 'compute' || failurePhase === 'provenance') {
+        await expect(deleteAuthority.mock.results[0].value).resolves.toBeUndefined()
+      } else {
+        await expect(deleteAuthority.mock.results[0].value).rejects.toThrow(failure.message)
+      }
+      await expect(
+        repository.loadSessionWithDiagnostics(PROJECT_ID, SESSION_ID)
+      ).resolves.toMatchObject({
+        status: authorityDeleted ? 'missing' : 'found'
+      })
+      await expect(projection.pending()).resolves.toEqual(
+        failurePhase === 'compute' || failurePhase === 'provenance'
+          ? []
+          : [{ projectId: PROJECT_ID, sessionId: SESSION_ID, operation: 'delete' }]
+      )
+      expect.soft(restoreIndex).toHaveBeenCalledTimes(authorityDeleted ? 0 : 1)
+      expect
+        .soft(computeJobs.abortSessionJobDeletion)
+        .toHaveBeenCalledTimes(authorityDeleted ? 0 : 1)
+      expect.soft(workspaceOwnership.restoreActive).toHaveBeenCalledTimes(authorityDeleted ? 0 : 1)
+      expect.soft(await readManagedWorkspaceOwnership(cwd, storageRoot)).toMatchObject({
+        retainedAfterDelete: authorityDeleted
+      })
+      expect.soft(await files.getOverview(PROJECT_ID)).toMatchObject({
+        totalCount: authorityDeleted ? 0 : 2
+      })
+      if (authorityDeleted) {
+        // This result drives the UI copy claiming that the saved Session was kept.
+        expect.soft(result).toEqual({
+          status: 'deleted',
+          runtimeDetached: true,
+          cleanupPending: true
+        })
+        expect(notifyDeleted).toHaveBeenCalledWith([SESSION_ID])
+        expect((await deletionCoordinator.sessionMetadataSnapshot()).sessions).toEqual([])
+        await expect(
+          deletionCoordinator.saveSession(createSession(uploadPath, artifactPath))
+        ).rejects.toThrow(/session.*deleted/i)
+        expect.soft(computeJobs.commitSessionJobDeletion).toHaveBeenCalledOnce()
+        expect.soft(provenance.completeSessionDeletion).toHaveBeenCalledOnce()
+        if (failurePhase === 'projection') {
+          await expect(
+            owner.delete({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+          ).resolves.toEqual({
+            status: 'deleted',
+            runtimeDetached: true,
+            cleanupPending: true
+          })
+          expect(restoreIndex).not.toHaveBeenCalled()
+          expect(computeJobs.abortSessionJobDeletion).not.toHaveBeenCalled()
+          expect(await readManagedWorkspaceOwnership(cwd, storageRoot)).toMatchObject({
+            retainedAfterDelete: true
+          })
+        }
+        commitProjection.mockRestore()
+        await repository.reconcilePendingSessionProjection()
+        await expect(projection.pending()).resolves.toEqual([])
+        await expect(
+          repository.loadSessionWithDiagnostics(PROJECT_ID, SESSION_ID)
+        ).resolves.toEqual({
+          status: 'missing'
+        })
+      } else {
+        expect(result).toEqual({ status: 'failed', reason: 'persistence', runtimeDetached: true })
+        expect(computeJobs.commitSessionJobDeletion).not.toHaveBeenCalled()
+        expect(notifyDeleted).not.toHaveBeenCalled()
+      }
+    }
+  )
+
+  it.each(['projection', 'provenance'] as const)(
+    'preserves retained provenance and recovers after post-authority %s failure',
+    async (failurePhase) => {
+      const projection = new SessionProjectionRepository(() => Promise.resolve(client))
+      const repository = new SessionRepository(storageRoot, undefined, projection)
+      await repository.ensureSessionProjection(() => sessions.loadAll())
+      const provenance = new ProvenanceMessageSnapshotRepository({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const abortProvenance = vi.spyOn(provenance, 'abortSessionDeletion')
+      const commitProjection = vi.spyOn(projection, 'commitDelete')
+      const completeProvenance = vi.spyOn(provenance, 'completeSessionDeletion')
+      const failure = new Error(`injected ${failurePhase} failure`)
+      if (failurePhase === 'projection') commitProjection.mockRejectedValue(failure)
+      else completeProvenance.mockRejectedValueOnce(failure)
+      const notifyDeleted = vi.fn(async () => undefined)
+      const deletionCoordinator = new SessionPersistenceCoordinator(
+        repository,
+        files,
+        undefined,
+        provenance,
+        uploads
+      )
+      await deletionCoordinator.replaceSessionMetadata(
+        [createSession(uploadPath, artifactPath)],
+        true
+      )
+      deletionCoordinator.setSessionDeletionHandlers({ commit: notifyDeleted, reconcile: vi.fn() })
+
+      await expect(
+        deletionCoordinator.deleteSession(PROJECT_ID, SESSION_ID)
+      ).rejects.toBeInstanceOf(SessionDeletionCommittedError)
+
+      expect(abortProvenance).not.toHaveBeenCalled()
+      expect(completeProvenance).toHaveBeenCalledWith(expect.objectContaining({ kind: 'retained' }))
+      expect(notifyDeleted).toHaveBeenCalledWith([SESSION_ID])
+      expect((await deletionCoordinator.sessionMetadataSnapshot()).sessions).toEqual([])
+      await expect(repository.loadSessionWithDiagnostics(PROJECT_ID, SESSION_ID)).resolves.toEqual({
+        status: 'missing'
+      })
+      await expect(
+        client.fileOriginSession.findUniqueOrThrow({
+          where: { projectId_sessionId: { projectId: PROJECT_ID, sessionId: SESSION_ID } }
+        })
+      ).resolves.toMatchObject({ state: failurePhase === 'projection' ? 'deleted' : 'deleting' })
+      await expect(readFile(uploadPath, 'utf8')).resolves.toBe('upload bytes')
+      await expect(readFile(artifactPath, 'utf8')).resolves.toBe('artifact bytes')
+
+      commitProjection.mockRestore()
+      await repository.reconcilePendingSessionProjection()
+      await provenance.reconcileSessionDeletions([])
+      await expect(projection.pending()).resolves.toEqual([])
+      await expect(
+        client.fileOriginSession.findUniqueOrThrow({
+          where: { projectId_sessionId: { projectId: PROJECT_ID, sessionId: SESSION_ID } }
+        })
+      ).resolves.toMatchObject({ state: 'deleted', deletionOperationId: null })
+    }
+  )
 
   it('hides Version history during Session deletion and restores the unchanged head on compensation', async () => {
     const secondStorageRef =

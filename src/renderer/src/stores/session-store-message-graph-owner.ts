@@ -26,6 +26,7 @@ import {
 } from './session-store-message-graph-helpers'
 import {
   hydrateToolActivity,
+  pruneStreamingMessageContent,
   type ActiveRun,
   type ChatMessage,
   type ChatSession,
@@ -591,104 +592,126 @@ export const createSessionMessageGraphOwner = <
   removeMessage: (sessionId, messageId) => {
     if (!sessionId || !messageId) return
 
-    set(
-      (state) =>
-        ({
-          sessions: state.sessions.map((session) => {
-            if (session.id !== sessionId) return session
-            const cutIndex = session.messages.findIndex((message) => message.id === messageId)
-            if (cutIndex < 0) return session
-            const removedMessages = session.messages.slice(cutIndex)
-            const hasFiles = removedMessages.some(
-              (message) =>
-                (message.uploads?.length ?? 0) > 0 || (message.artifactIds?.length ?? 0) > 0
-            )
-            const now = Date.now()
-            const currentGraph = synchronizeSessionGraph(session, session.messages, now)
-            const conversationGraph = forkEditedConversationMessage(
-              currentGraph,
-              messageId,
-              createConversationBranchId(),
-              now
-            )
+    set((state) => {
+      let retainedMessageIds: Set<string> | undefined
+      const sessions = state.sessions.map((session) => {
+        if (session.id !== sessionId) return session
+        const cutIndex = session.messages.findIndex((message) => message.id === messageId)
+        if (cutIndex < 0) return session
+        const removedMessages = session.messages.slice(cutIndex)
+        const hasFiles = removedMessages.some(
+          (message) => (message.uploads?.length ?? 0) > 0 || (message.artifactIds?.length ?? 0) > 0
+        )
+        const now = Date.now()
+        const currentGraph = synchronizeSessionGraph(session, session.messages, now)
+        const conversationGraph = forkEditedConversationMessage(
+          currentGraph,
+          messageId,
+          createConversationBranchId(),
+          now
+        )
+        const retained = session.messages.slice(0, cutIndex)
+        retainedMessageIds = new Set(retained.map((message) => message.id))
 
-            return {
-              ...session,
-              messages: session.messages.slice(0, cutIndex),
-              conversationGraph,
-              pendingContextReplayMessageId: removedMessages.some(
-                (message) => message.id === session.pendingContextReplayMessageId
+        return {
+          ...session,
+          messages: retained,
+          conversationGraph,
+          pendingContextReplayMessageId: removedMessages.some(
+            (message) => message.id === session.pendingContextReplayMessageId
+          )
+            ? undefined
+            : session.pendingContextReplayMessageId,
+          filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
+          updatedAt: now
+        }
+      })
+      return {
+        sessions,
+        ...(retainedMessageIds
+          ? {
+              streamingMessages: pruneStreamingMessageContent(
+                state.streamingMessages,
+                sessionId,
+                retainedMessageIds
               )
-                ? undefined
-                : session.pendingContextReplayMessageId,
-              filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
-              updatedAt: now
             }
-          })
-        }) as Partial<State>
-    )
+          : {})
+      } as Partial<State>
+    })
   },
 
   truncateSessionFromMessage: (sessionId, messageId) => {
     if (!sessionId || !messageId) return
 
-    set(
-      (state) =>
-        ({
-          sessions: state.sessions.map((session) => {
-            if (session.id !== sessionId) return session
-            const cutIndex = session.messages.findIndex((message) => message.id === messageId)
-            if (cutIndex < 0) return session
+    set((state) => {
+      let retainedMessageIds: Set<string> | undefined
+      const sessions = state.sessions.map((session) => {
+        if (session.id !== sessionId) return session
+        const cutIndex = session.messages.findIndex((message) => message.id === messageId)
+        if (cutIndex < 0) return session
 
-            const cutMessage = session.messages[cutIndex]
-            const removed = session.messages.slice(cutIndex)
-            const hasFiles = removed.some(
-              (message) =>
-                (message.uploads?.length ?? 0) > 0 || (message.artifactIds?.length ?? 0) > 0
-            )
-            const activities = session.activities?.filter((activity) =>
-              isBeforeTimelineItem(activity, cutMessage)
-            )
-            const retainedActivityIds = new Set(activities?.map((activity) => activity.id) ?? [])
-            const activityGroups = session.activityGroups
-              ?.map((group) => ({
-                ...group,
-                activityIds: group.activityIds.filter((id) => retainedActivityIds.has(id))
-              }))
-              .filter((group) => group.activityIds.length > 0)
-            const now = Date.now()
-            const currentGraph = synchronizeSessionGraph(session, session.messages, now)
-            const conversationGraph = forkEditedConversationMessage(
-              currentGraph,
-              messageId,
-              createConversationBranchId(),
-              now
-            )
+        const cutMessage = session.messages[cutIndex]
+        const removed = session.messages.slice(cutIndex)
+        const hasFiles = removed.some(
+          (message) => (message.uploads?.length ?? 0) > 0 || (message.artifactIds?.length ?? 0) > 0
+        )
+        const activities = session.activities?.filter((activity) =>
+          isBeforeTimelineItem(activity, cutMessage)
+        )
+        const retainedActivityIds = new Set(activities?.map((activity) => activity.id) ?? [])
+        const activityGroups = session.activityGroups
+          ?.map((group) => ({
+            ...group,
+            activityIds: group.activityIds.filter((id) => retainedActivityIds.has(id))
+          }))
+          .filter((group) => group.activityIds.length > 0)
+        const now = Date.now()
+        const currentGraph = synchronizeSessionGraph(session, session.messages, now)
+        const conversationGraph = forkEditedConversationMessage(
+          currentGraph,
+          messageId,
+          createConversationBranchId(),
+          now
+        )
+        const retained = session.messages.slice(0, cutIndex)
+        retainedMessageIds = new Set(retained.map((message) => message.id))
 
-            return {
-              ...session,
-              status: 'idle',
-              messages: session.messages.slice(0, cutIndex),
-              activities,
-              activityGroups,
-              conversationGraph,
-              activeRun: undefined,
-              agentStatus: undefined,
-              error: undefined,
-              errorReportable: undefined,
-              interrupted: undefined,
-              branchContextResetRequired: true,
-              pendingContextReplayMessageId: removed.some(
-                (message) => message.id === session.pendingContextReplayMessageId
+        return {
+          ...session,
+          status: 'idle',
+          messages: retained,
+          activities,
+          activityGroups,
+          conversationGraph,
+          activeRun: undefined,
+          agentStatus: undefined,
+          error: undefined,
+          errorReportable: undefined,
+          interrupted: undefined,
+          branchContextResetRequired: true,
+          pendingContextReplayMessageId: removed.some(
+            (message) => message.id === session.pendingContextReplayMessageId
+          )
+            ? undefined
+            : session.pendingContextReplayMessageId,
+          filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
+          updatedAt: now
+        }
+      })
+      return {
+        sessions,
+        ...(retainedMessageIds
+          ? {
+              streamingMessages: pruneStreamingMessageContent(
+                state.streamingMessages,
+                sessionId,
+                retainedMessageIds
               )
-                ? undefined
-                : session.pendingContextReplayMessageId,
-              filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
-              updatedAt: now
             }
-          })
-        }) as Partial<State>
-    )
+          : {})
+      } as Partial<State>
+    })
   },
 
   setElicitationHistoryReplayRequest: (sessionId, requestId) => {
@@ -705,76 +728,97 @@ export const createSessionMessageGraphOwner = <
   reviseSessionFromElicitation: (sessionId, activityId) => {
     if (!sessionId || !activityId) return false
     let revised = false
-    set(
-      (state) =>
-        ({
-          sessions: state.sessions.map((session) => {
-            if (session.id !== sessionId) return session
-            const projection = projectElicitationRevision(
-              session,
-              activityId,
-              createConversationBranchId(),
-              Date.now()
-            )
-            revised = Boolean(projection)
-            return projection ?? session
-          })
-        }) as Partial<State>
-    )
+    set((state) => {
+      let retainedMessageIds: Set<string> | undefined
+      const sessions = state.sessions.map((session) => {
+        if (session.id !== sessionId) return session
+        const projection = projectElicitationRevision(
+          session,
+          activityId,
+          createConversationBranchId(),
+          Date.now()
+        )
+        revised = Boolean(projection)
+        if (projection) {
+          retainedMessageIds = new Set(projection.messages.map((message) => message.id))
+        }
+        return projection ?? session
+      })
+      return {
+        sessions,
+        ...(retainedMessageIds
+          ? {
+              streamingMessages: pruneStreamingMessageContent(
+                state.streamingMessages,
+                sessionId,
+                retainedMessageIds
+              )
+            }
+          : {})
+      } as Partial<State>
+    })
     return revised
   },
 
   activateMessageBranch: (sessionId, branchId) => {
     if (!sessionId || !branchId) return
-    set(
-      (state) =>
-        ({
-          sessions: state.sessions.map((session) => {
-            if (
-              session.id !== sessionId ||
-              !session.conversationGraph ||
-              session.activeRun ||
-              session.status === 'running' ||
-              session.status === 'waiting-for-user' ||
-              session.status === 'waiting-permission' ||
-              session.status === 'waiting-plan-approval' ||
-              session.fixLoopActive ||
-              session.compacting ||
-              session.branchSwitchBlocked
-            ) {
-              return session
-            }
-            const activeFrame = session.conversationGraph.frames.find(
-              (frame) => frame.id === session.conversationGraph?.activeFrameId
-            )
-            if (activeFrame?.activeBranchId === branchId) return session
-            const conversationGraph = activateConversationBranch(
-              session.conversationGraph,
-              branchId
-            )
-            const messages = resolveActiveConversationMessages(conversationGraph).map(
-              (message, index): ChatMessage => ({
-                ...projectConversationMessage(message),
-                sortIndex: index + 1
-              })
-            )
-            const projected = resolveActiveConversationActivities(conversationGraph)
-            return {
-              ...session,
-              conversationGraph,
-              messages,
-              activities: projected.activities.map(hydrateToolActivity),
-              activityGroups: projected.activityGroups,
-              status: 'idle',
-              activeRun: undefined,
-              error: undefined,
-              errorReportable: undefined,
-              branchContextResetRequired: true,
-              filesRevision: (session.filesRevision ?? 0) + 1,
-              updatedAt: Date.now()
-            }
+    set((state) => {
+      let retainedMessageIds: Set<string> | undefined
+      const sessions = state.sessions.map((session) => {
+        if (
+          session.id !== sessionId ||
+          !session.conversationGraph ||
+          session.activeRun ||
+          session.status === 'running' ||
+          session.status === 'waiting-for-user' ||
+          session.status === 'waiting-permission' ||
+          session.status === 'waiting-plan-approval' ||
+          session.fixLoopActive ||
+          session.compacting ||
+          session.branchSwitchBlocked
+        ) {
+          return session
+        }
+        const activeFrame = session.conversationGraph.frames.find(
+          (frame) => frame.id === session.conversationGraph?.activeFrameId
+        )
+        if (activeFrame?.activeBranchId === branchId) return session
+        const conversationGraph = activateConversationBranch(session.conversationGraph, branchId)
+        const messages = resolveActiveConversationMessages(conversationGraph).map(
+          (message, index): ChatMessage => ({
+            ...projectConversationMessage(message),
+            sortIndex: index + 1
           })
-        }) as Partial<State>
-    )
+        )
+        retainedMessageIds = new Set(messages.map((message) => message.id))
+        const projected = resolveActiveConversationActivities(conversationGraph)
+        return {
+          ...session,
+          conversationGraph,
+          messages,
+          activities: projected.activities.map(hydrateToolActivity),
+          activityGroups: projected.activityGroups,
+          status: 'idle',
+          activeRun: undefined,
+          error: undefined,
+          errorReportable: undefined,
+          branchContextResetRequired: true,
+          filesRevision: (session.filesRevision ?? 0) + 1,
+          updatedAt: Date.now()
+        }
+      })
+      return {
+        sessions,
+        ...(retainedMessageIds
+          ? {
+              streamingMessages: pruneStreamingMessageContent(
+                state.streamingMessages,
+                sessionId,
+                retainedMessageIds
+              )
+            }
+          : {})
+      } as Partial<State>
+    })
   }
 })

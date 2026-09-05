@@ -4,13 +4,14 @@ import {
   hasAnswerableDelegatedQuestion,
   hasCurrentRunningDelegatedAttempt
 } from '../../shared/delegated-work-projection'
-import type {
-  LoadAllSessionsResult,
-  PersistedChatSession,
-  PersistedSessionStatus,
-  SessionLoadFailure,
-  SessionLoadWarning,
-  UpdateSessionArchiveRequest
+import {
+  SessionDeletionCommittedError,
+  type LoadAllSessionsResult,
+  type PersistedChatSession,
+  type PersistedSessionStatus,
+  type SessionLoadFailure,
+  type SessionLoadWarning,
+  type UpdateSessionArchiveRequest
 } from '../../shared/session-persistence'
 import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
 import { ArchiveAvailabilityError } from '../archive/availability-error'
@@ -435,14 +436,17 @@ class SessionPersistenceDeletionOwner {
   async deleteSession(
     projectId: string,
     sessionId: string
-  ): Promise<SessionDeletionReceipt['kind']> {
+  ): Promise<{
+    receiptKind: SessionDeletionReceipt['kind']
+    cleanupError?: SessionDeletionCommittedError
+  }> {
     const operation = startDiagnosticOperation(this.log, {
       operation: 'session-persistence-deletion'
     })
     let failurePhase = 'load-authority'
     let token: ManagedFileSoftDeleteToken | undefined
     let receipt: SessionDeletionReceipt = { kind: 'ordinary', projectId, sessionId }
-    let jsonDeleted = false
+    const cleanupErrors: unknown[] = []
     let computeJobsPrepared = false
     let managedWorkspaceRetained = false
     let session: PersistedChatSession | undefined
@@ -485,19 +489,10 @@ class SessionPersistenceDeletionOwner {
       failurePhase = 'delete-authority'
       operation.phase(failurePhase)
       await this.repository.deleteSession(projectId, sessionId)
-      jsonDeleted = true
-      if (this.computeJobs) {
-        failurePhase = 'commit-compute-cleanup'
-        operation.phase(failurePhase)
-        await this.computeJobs.commitSessionJobDeletion(projectId, sessionId)
-      }
-      failurePhase = 'complete-provenance'
-      operation.phase(failurePhase)
-      await this.provenance?.completeSessionDeletion(receipt)
     } catch (error) {
       let recoveryPhase: string | undefined
       try {
-        if (!jsonDeleted) {
+        if (!(error instanceof SessionDeletionCommittedError)) {
           const recoveryErrors: unknown[] = []
           try {
             if (receipt.kind === 'retained') {
@@ -537,8 +532,6 @@ class SessionPersistenceDeletionOwner {
                 .join('; ')}`
             )
           }
-        } else {
-          this.fileIndex.markReconciliationIncomplete(projectId)
         }
       } catch (restoreError) {
         this.fileIndex.markReconciliationIncomplete(projectId)
@@ -546,11 +539,40 @@ class SessionPersistenceDeletionOwner {
         throw restoreError
       }
       operation.fail(error, { failurePhase })
-      throw error
+      if (!(error instanceof SessionDeletionCommittedError)) throw error
+      cleanupErrors.push(error)
     }
 
+    // Authority is gone. Each participant must get its completion attempt even if another fails;
+    // their existing recovery paths own any unfinished work, and none may be rolled back to active.
+    if (this.computeJobs) {
+      failurePhase = 'commit-compute-cleanup'
+      operation.phase(failurePhase)
+      try {
+        await this.computeJobs.commitSessionJobDeletion(projectId, sessionId)
+      } catch (error) {
+        operation.fail(error, { failurePhase })
+        cleanupErrors.push(error)
+      }
+    }
+    failurePhase = 'complete-provenance'
+    operation.phase(failurePhase)
+    try {
+      await this.provenance?.completeSessionDeletion(receipt)
+    } catch (error) {
+      operation.fail(error, { failurePhase })
+      cleanupErrors.push(error)
+    }
+    if (cleanupErrors.length > 0) {
+      this.fileIndex.markReconciliationIncomplete(projectId)
+      const cause =
+        cleanupErrors.length === 1
+          ? cleanupErrors[0]
+          : new AggregateError(cleanupErrors, 'Session deletion committed but cleanup failed.')
+      return { receiptKind: receipt.kind, cleanupError: new SessionDeletionCommittedError(cause) }
+    }
     operation.complete({ receiptKind: receipt.kind })
-    return receipt.kind
+    return { receiptKind: receipt.kind }
   }
 
   async reconcileSessionDeletion(

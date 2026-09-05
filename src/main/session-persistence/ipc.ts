@@ -6,6 +6,7 @@ import {
   isSessionSizeLimitError,
   isSessionRevisionConflictError,
   SESSION_SIZE_LIMIT_ERROR_CODE,
+  SessionDeletionCommittedError,
   SESSION_REVISION_CONFLICT_ERROR_CODE
 } from '../../shared/session-persistence'
 import type {
@@ -220,6 +221,33 @@ const createSessionPersistenceHandlers = (
     new MainMessageAttributionAuthority()
   )
 
+// Keeps production deletion finalizers testable without booting the Electron composition root.
+const withSessionDeletionCleanup =
+  (
+    deleteSession: SessionPersistenceBackend['deleteSession'],
+    cleanup: (projectId: string, sessionId: string) => unknown
+  ): SessionPersistenceBackend['deleteSession'] =>
+  async (projectId, sessionId) => {
+    let committedError: SessionDeletionCommittedError | undefined
+    try {
+      await deleteSession(projectId, sessionId)
+    } catch (error) {
+      if (!(error instanceof SessionDeletionCommittedError)) throw error
+      committedError = error
+    }
+    // A committed rejection must still run the next finalizer; an ordinary rejection must not.
+    try {
+      await cleanup(projectId, sessionId)
+    } catch (error) {
+      throw new SessionDeletionCommittedError(
+        committedError
+          ? new AggregateError([committedError, error], 'Session deletion cleanup failed.')
+          : error
+      )
+    }
+    if (committedError) throw committedError
+  }
+
 // Keeps the application-composition boundary injectable without exposing the rest of main-process
 // startup to tests. The coordinator owns admission; the wrapped backend owns the durable mutation.
 const coordinateSessionPersistenceWithProjectDeletions = (
@@ -366,7 +394,8 @@ export {
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   recoverProjectDeletionsForSessionRead,
-  registerSessionPersistenceIpcHandlers
+  registerSessionPersistenceIpcHandlers,
+  withSessionDeletionCleanup
 }
 export type {
   ProjectDeletionMutationCoordinator,

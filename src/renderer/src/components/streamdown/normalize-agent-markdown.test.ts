@@ -188,4 +188,39 @@ describe('createAgentMarkdownNormalizer', () => {
     expect(incremental('')).toBe('')
     expectAppendStreamMatchesFull(['> [!NOTE]\n> one', '\n> two', '\n> three'])
   })
+
+  it('matches full normalization when a whitespace-only partial line extends', () => {
+    expectAppendStreamMatchesFull([
+      'First paragraph.\n\n  ',
+      'Second paragraph.',
+      '\n\n> [!NOTE]\n> Body.'
+    ])
+  })
+
+  it('matches full normalization when an append splits a fence marker across the boundary', () => {
+    expectAppendStreamMatchesFull([
+      'Code below.\n\n``',
+      '`js\nconst a = 1',
+      '\n```\n\n> [!TIP]\n> Done.'
+    ])
+  })
+
+  it('matches full normalization when an unclosed mermaid opener widens past the last split', () => {
+    expectAppendStreamMatchesFull([
+      'First paragraph.\n\nSecond paragraph.\n\n',
+      '```mermaid\nxychart-beta\n    "T" x-axis [a, b]',
+      '\n```\n\nAfter the chart.'
+    ])
+  })
+
+  it('matches full normalization when a partial fence marker line gets replaced', () => {
+    const incremental = createAgentMarkdownNormalizer()
+    incremental('Intro.\n\n```merm')
+
+    const replaced = 'Intro.\n\n```js\nconst a = 1\n```'
+    expect(incremental(replaced)).toBe(normalizeAgentMarkdown(replaced))
+
+    const grown = `${replaced}\n\n> [!NOTE]\n> After the fence.`
+    expect(incremental(grown)).toBe(normalizeAgentMarkdown(grown))
+  })
 })
