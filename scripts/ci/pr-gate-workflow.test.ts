@@ -560,6 +560,10 @@ describe('PR Gate workflow', () => {
     expect(workflow.jobs.windows_e2e['timeout-minutes']).toBe(25)
   })
 
+  it('budgets the combined macOS builds and all four E2E groups', () => {
+    expect(workflow.jobs.macos_e2e['timeout-minutes']).toBe(20)
+  })
+
   it('shards every selected Windows journey without cancelling siblings or colliding artifacts', () => {
     const job = workflow.jobs.windows_e2e
     expect(job.strategy).toEqual({ 'fail-fast': false, matrix: { shard: [1, 2] } })
