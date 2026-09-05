@@ -168,14 +168,18 @@ describe('notebook local RPC adapter', () => {
     expect(runtimeRequest).not.toHaveProperty('kernelSkillIds')
   })
 
-  it.each(['bindRuntime', 'switchRuntime'] as const)(
-    'forwards the service-owned failure receipt for %s without deriving a target',
-    async (method) => {
+  it.each(
+    (['bindRuntime', 'switchRuntime'] as const).flatMap((method) =>
+      [false, true].map((bindingChanged) => ({ method, bindingChanged }))
+    )
+  )(
+    'forwards the $method failure receipt with bindingChanged=$bindingChanged',
+    async ({ method, bindingChanged }) => {
       const capability = createCapability()
       const failure = {
         ok: false,
-        bindingChanged: false,
-        error: '"analysis" is not an enabled python runtime.',
+        bindingChanged,
+        error: 'Binding persistence failed. The previous kernel has stopped.',
         target: { language: 'python', selection: 'unresolved' }
       }
       vi.mocked(capability[method]).mockResolvedValueOnce(failure)

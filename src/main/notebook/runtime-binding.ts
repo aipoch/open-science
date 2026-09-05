@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import type { NotebookLanguage } from '../../shared/notebook'
 import {
   isEnvEnabled,
@@ -44,7 +45,7 @@ type RuntimeBindingSession = Pick<
   readonly lane: NotebookSessionAggregate['lane']
 }
 
-type RuntimeBindingRepository = Pick<NotebookRunRepository, 'setRuntimeBindings'>
+type RuntimeBindingRepository = Pick<NotebookRunRepository, 'setRuntimeBindings' | 'findExisting'>
 
 type NotebookRuntimeBindingOwnerOptions = {
   dataRoot: string
@@ -77,6 +78,10 @@ const defaultEnvironment = (
 
 /** Owns Notebook runtime discovery, selection, binding transitions, and durable wire snapshots. */
 export class NotebookRuntimeBindingOwner {
+  private readonly changes = new WeakMap<
+    RuntimeBindingSession,
+    Promise<RuntimeBindingOperationResult>
+  >()
   private activeWrites = 0
   private readonly activeWritesBySession = new Map<string, number>()
   private globalWriteGate: AdmissionGate | undefined
@@ -225,25 +230,7 @@ export class NotebookRuntimeBindingOwner {
     runtimeId: string,
     beforeBind?: (binding: NotebookSessionRuntimeBinding) => Promise<void>
   ): Promise<RuntimeBindingOperationResult> {
-    try {
-      const binding = await this.resolveEnabledRuntime(language, runtimeId)
-      const existing = session.runtimeBinding(language)
-      if (existing && existing.runtimeId !== binding.runtimeId) {
-        throw new Error(
-          `A ${language} runtime is already bound for this session. Use ` +
-            'notebook_switch_runtime to change it (it tears down the current kernel first).'
-        )
-      }
-      if (!existing) await beforeBind?.(binding)
-      session.setRuntimeBinding(language, binding)
-      await this.persist(session)
-      return {
-        bound: this.toWireBinding(binding),
-        bindings: this.snapshot(session)
-      }
-    } catch (error) {
-      return this.failureResult(session, language, error)
-    }
+    return this.change(session, language, runtimeId, false, beforeBind)
   }
 
   async switch(
@@ -252,28 +239,103 @@ export class NotebookRuntimeBindingOwner {
     runtimeId: string,
     beforeReplace: () => Promise<void>
   ): Promise<RuntimeBindingOperationResult> {
+    return this.change(session, language, runtimeId, true, beforeReplace)
+  }
+
+  private change(
+    session: RuntimeBindingSession,
+    language: NotebookLanguage,
+    runtimeId: string,
+    replace: boolean,
+    beforeChange?: (binding: NotebookSessionRuntimeBinding) => Promise<void>
+  ): Promise<RuntimeBindingOperationResult> {
+    // Both languages share one durable snapshot. Build each candidate only after the previous
+    // change has settled, so a concurrent selection cannot erase the other language's binding.
+    const previous = this.changes.get(session) ?? Promise.resolve()
+    const operation = previous
+      .catch(() => undefined)
+      .then(async () => {
+        let binding: NotebookSessionRuntimeBinding
+        try {
+          binding = await this.resolveEnabledRuntime(language, runtimeId)
+          const existing = session.runtimeBinding(language)
+          if (!replace && existing && existing.runtimeId !== binding.runtimeId) {
+            throw new Error(
+              `A ${language} runtime is already bound for this session. Use ` +
+                'notebook_switch_runtime to change it (it tears down the current kernel first).'
+            )
+          }
+          if (replace || !existing) await beforeChange?.(binding)
+        } catch (error) {
+          return this.failureResult(session, language, error)
+        }
+        // Keep reconciliation failures outside the validation catch: an unreadable commit must not
+        // be turned into a fabricated bindingChanged:false receipt.
+        return this.commitBinding(session, binding)
+      })
+    this.changes.set(session, operation)
+    return operation.finally(() => {
+      if (this.changes.get(session) === operation) this.changes.delete(session)
+    })
+  }
+
+  private async commitBinding(
+    session: RuntimeBindingSession,
+    binding: NotebookSessionRuntimeBinding
+  ): Promise<RuntimeBindingOperationResult> {
+    const language = binding.language
+    const previous = this.snapshot(session)
+    const candidate = this.toWireBinding(binding)
     try {
-      const binding = await this.resolveEnabledRuntime(language, runtimeId)
-      await beforeReplace()
-      session.setRuntimeBinding(language, binding)
-      await this.persist(session)
-      return {
-        bound: this.toWireBinding(binding),
-        bindings: this.snapshot(session)
-      }
+      await this.options.repository.setRuntimeBindings(
+        session.projectId,
+        session.sessionId,
+        { ...previous, [language]: candidate },
+        session.lane
+      )
     } catch (error) {
-      return this.failureResult(session, language, error)
+      // A rename may have succeeded before directory sync or cache refresh failed. Read the exact
+      // lane back before deciding whether the old or the candidate binding is authoritative.
+      try {
+        const document = await this.options.repository.findExisting(
+          session.projectId,
+          session.sessionId,
+          session.lane
+        )
+        if (!document) throw new Error('Notebook document is missing.')
+        const wire = document.runtimeBindings?.[language]
+        const stored = wire ? this.toWireBinding(wire) : undefined
+        if (isDeepStrictEqual(stored, candidate)) {
+          session.setRuntimeBinding(language, binding)
+        } else if (!isDeepStrictEqual(stored, previous[language])) {
+          throw new Error('Stored runtime binding differs from both attempted bindings.')
+        }
+      } catch (readError) {
+        throw new Error(
+          `Could not confirm stored runtime binding after ${String(error)}: ${String(readError)}`,
+          { cause: error }
+        )
+      }
+      return this.failureResult(
+        session,
+        language,
+        error,
+        !isDeepStrictEqual(previous[language], this.snapshot(session)[language])
+      )
     }
+    session.setRuntimeBinding(language, binding)
+    return { bound: candidate, bindings: this.snapshot(session) }
   }
 
   private async failureResult(
     session: RuntimeBindingSession,
     language: NotebookLanguage,
-    error: unknown
+    error: unknown,
+    bindingChanged = false
   ): Promise<RuntimeBindingOperationResult> {
     return {
       ok: false,
-      bindingChanged: false,
+      bindingChanged,
       error: error instanceof Error ? error.message : String(error),
       bindings: this.snapshot(session),
       target: await this.effectiveTarget(session, language)

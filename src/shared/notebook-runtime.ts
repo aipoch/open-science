@@ -127,7 +127,8 @@ export type RuntimeBindingOperationResult =
     }
   | {
       ok: false
-      bindingChanged: false
+      // A failed durability confirmation may follow a published binding. Report the actual change.
+      bindingChanged: boolean
       error: string
       bindings: NotebookRuntimeBindings
       target: RuntimeTargetReceipt

@@ -734,55 +734,62 @@ class NotebookRuntimeService {
   async bindRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
   ): Promise<RuntimeBindingOperationResult> {
-    return this.sessionLifecycle.runProjectOperation(request, () =>
-      this.runtimeBindingOwner.runWrite(
-        notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
-        async () => {
-          const session = await this.sessionLifecycle.ensure(request)
-          return this.runtimeBindingOwner.bind(
-            session,
-            request.language,
-            request.runtimeId,
-            async (binding) => {
-              if (binding.source !== 'external') return
-              const oldEnv = this.resolveRunEnv(session, request.language)
-              const processKey = dataProcessKey(request.language, oldEnv)
-              if (session.kernelStatus(processKey) === undefined) return
-              const kind = request.language === 'r' ? 'r' : 'python'
-              await session.terminateExecutor(kind, oldEnv)
-              await this.tearDownLanguageBinding(session, request.language, oldEnv)
-            }
-          )
-        }
-      )
-    )
+    return this.changeRuntimeBinding(request, 'bind')
   }
 
-  // notebook_switch_runtime: an EXPLICIT switch — tear down the old kernel + clear that language's
-  // state, then rebind. Refuses a disabled/unknown runtime (same MAIN-process gate as bind).
+  // An explicit switch stops the previous kernel before committing the new runtime selection.
   async switchRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
+  ): Promise<RuntimeBindingOperationResult> {
+    return this.changeRuntimeBinding(request, 'switch')
+  }
+
+  private async changeRuntimeBinding(
+    request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string },
+    operation: 'bind' | 'switch'
   ): Promise<RuntimeBindingOperationResult> {
     return this.sessionLifecycle.runProjectOperation(request, () =>
       this.runtimeBindingOwner.runWrite(
         notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
         async () => {
           const session = await this.sessionLifecycle.ensure(request)
-          const result = await this.runtimeBindingOwner.switch(
-            session,
-            request.language,
-            request.runtimeId,
-            async () => {
-              // PHYSICALLY tear down the CURRENT runtime's kernel for this language BEFORE rebinding, so the
-              // new runtime starts fresh and two same-language interpreters never coexist.
-              const oldEnv = this.resolveRunEnv(session, request.language)
-              const kind = request.language === 'r' ? 'r' : 'python'
-              await session.terminateExecutor(kind, oldEnv)
-              await this.tearDownLanguageBinding(session, request.language, oldEnv)
-            }
-          )
-          if ('bound' in result) this.sessionLifecycle.notifyChanged(session)
-          return result
+          let kernelStopped = false
+          let bindingChanged = false
+          const stoppedDiagnostic =
+            ' The previous kernel has stopped; its variables are gone. The next execution starts a fresh kernel.'
+          const stopKernel = async (): Promise<void> => {
+            const oldEnv = this.resolveRunEnv(session, request.language)
+            const status = session.kernelStatus(dataProcessKey(request.language, oldEnv))
+            const kind = request.language === 'r' ? 'r' : 'python'
+            await session.terminateExecutor(kind, oldEnv)
+            kernelStopped = status !== undefined && status !== 'terminated'
+            await this.tearDownLanguageBinding(session, request.language, oldEnv)
+          }
+          try {
+            const result = await this.runtimeBindingOwner[operation](
+              session,
+              request.language,
+              request.runtimeId,
+              async (binding?: NotebookSessionRuntimeBinding) => {
+                if (operation === 'bind') {
+                  if (binding?.source !== 'external') return
+                  const env = this.resolveRunEnv(session, request.language)
+                  if (session.kernelStatus(dataProcessKey(request.language, env)) === undefined)
+                    return
+                }
+                await stopKernel()
+              }
+            )
+            bindingChanged = 'bound' in result || result.bindingChanged
+            return kernelStopped && 'error' in result
+              ? { ...result, error: result.error + stoppedDiagnostic }
+              : result
+          } catch (error) {
+            if (!kernelStopped) throw error
+            throw new Error(String(error) + stoppedDiagnostic, { cause: error })
+          } finally {
+            if (kernelStopped || bindingChanged) this.sessionLifecycle.notifyChanged(session)
+          }
         }
       )
     )
@@ -1059,6 +1066,9 @@ class NotebookRuntimeService {
       if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
         throw new Error('Notebook state history cursor is invalid.')
       const session = await this.sessionLifecycle.ensure(request)
+      // Project durable history only after the lane's binding commit settles, including reads
+      // that arrived just before shutdown closed session creation admission.
+      await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))
       await this.runTerminalization.reconcilePending(session)
       return this.sessionReadModel.state(
         session,

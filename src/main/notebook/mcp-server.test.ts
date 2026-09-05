@@ -1632,12 +1632,28 @@ describe('notebook control tool results', () => {
     expect(JSON.stringify(listedEnvironments)).not.toContain('internalPath')
   })
 
-  it('keeps failed bind/switch receipts explicit about the unchanged effective target', () => {
-    expect(
-      compactRuntimeBindingResult({
+  it.each([false, true])(
+    'keeps failed bind/switch receipts explicit when bindingChanged=%s',
+    (bindingChanged) => {
+      expect(
+        compactRuntimeBindingResult({
+          ok: false,
+          bindingChanged,
+          error: 'Binding persistence failed. The previous kernel has stopped.',
+          target: {
+            language: 'python',
+            selection: 'explicit-binding',
+            runtimeSource: 'managed',
+            environmentName: 'current-env',
+            runtimeId: '/runtime/envs/current-env/bin/python',
+            label: 'conda: current-env',
+            prefix: '/runtime/envs/current-env'
+          }
+        })
+      ).toEqual({
         ok: false,
-        bindingChanged: false,
-        error: '"analysis" is not an enabled python runtime.',
+        bindingChanged,
+        error: 'Binding persistence failed. The previous kernel has stopped.',
         target: {
           language: 'python',
           selection: 'explicit-binding',
@@ -1648,21 +1664,8 @@ describe('notebook control tool results', () => {
           prefix: '/runtime/envs/current-env'
         }
       })
-    ).toEqual({
-      ok: false,
-      bindingChanged: false,
-      error: '"analysis" is not an enabled python runtime.',
-      target: {
-        language: 'python',
-        selection: 'explicit-binding',
-        runtimeSource: 'managed',
-        environmentName: 'current-env',
-        runtimeId: '/runtime/envs/current-env/bin/python',
-        label: 'conda: current-env',
-        prefix: '/runtime/envs/current-env'
-      }
-    })
-  })
+    }
+  )
 })
 
 describe('manage_environments tool', () => {
