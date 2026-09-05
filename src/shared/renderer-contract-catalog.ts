@@ -761,14 +761,18 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
   >()('acp', ['acp:reset-session-context']),
   'acp.respondPlan': callable<(request: PlanResponseCommand) => Promise<unknown>>()('acp', [
-    'acp:respond-plan'
+    'acp:respond-plan',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
   ]),
   'acp.respondToElicitation': callable<
     (response: ElicitationResponse) => Promise<AcpStateCommandResponse>
-  >()('acp', ['acp:respond-elicitation']),
+  >()('acp', ['acp:respond-elicitation', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'acp.respondToPermission': callable<
     (response: AcpPermissionResponse) => Promise<AcpStateCommandResponse>
-  >()('acp', ['acp:respond-permission']),
+  >()('acp', ['acp:respond-permission', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'acp.resumeSession': callable<
     (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
   >()('acp', ['acp:resume-session']),

@@ -20,11 +20,6 @@ import type {
   AcpStateUpdate
 } from '../../shared/acp'
 import { toAcpStateCommandResponse } from '../../shared/acp'
-import { ApplicationCommandError } from '../../shared/application-command-contract'
-import {
-  isSessionSizeLimitError,
-  SESSION_SIZE_LIMIT_ERROR_CODE
-} from '../../shared/session-persistence'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
@@ -40,22 +35,7 @@ import {
 import { bindResumeRequestToProject } from './session-project-binding'
 import type { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
-
-const preserveSessionSizeLimitCode = async <Result>(
-  operation: () => Promise<Result>
-): Promise<Result> => {
-  try {
-    return await operation()
-  } catch (error) {
-    if (isSessionSizeLimitError(error)) {
-      throw new ApplicationCommandError(
-        SESSION_SIZE_LIMIT_ERROR_CODE,
-        error instanceof Error ? error.message : 'Session exceeds the persistence limit.'
-      )
-    }
-    throw error
-  }
-}
+import { preserveSessionSizeLimitCode } from '../session-persistence/application-command-errors'
 
 const acpCommands = Object.freeze({
   getState: defineApplicationCommand<'acp:get-state', readonly [], AcpStateSnapshot>(

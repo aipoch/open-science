@@ -421,6 +421,9 @@ describe('renderer contract catalog', () => {
 
   it('marks the runtime-validated command slice', () => {
     expect(paths(({ applicationCommand }) => applicationCommand === 'runtime-validated')).toEqual([
+      'acp.respondPlan',
+      'acp.respondToElicitation',
+      'acp.respondToPermission',
       'memory.clearAll',
       'memory.createCategory',
       'memory.createEntry',
@@ -453,6 +456,9 @@ describe('renderer contract catalog', () => {
       'uploads.finalizeSession'
     ])
     expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
+      'acp:respond-elicitation',
+      'acp:respond-permission',
+      'acp:respond-plan',
       'memory:clear-all',
       'memory:create-category',
       'memory:create-entry',

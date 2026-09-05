@@ -9,6 +9,7 @@ import type {
   PersistedChatSession,
   SessionPdfContext
 } from '../../../../shared/session-persistence'
+import { SessionSizeLimitError } from '../../../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import {
   MAX_COMPOSER_ATTACHMENTS,
@@ -4778,7 +4779,7 @@ describe('workspace agent message sending', () => {
         delegationPolicy: 'deny' as const
       }
     })
-    const linkPdfContext = vi.fn().mockRejectedValue(new Error('PDF context unavailable'))
+    const linkPdfContext = vi.fn().mockRejectedValue(new SessionSizeLimitError())
     vi.stubGlobal('window', {
       api: {
         sessions: {
@@ -4802,6 +4803,7 @@ describe('workspace agent message sending', () => {
       resetSessionContext: vi.fn(),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-pdf-denied']))
     }
+    const onSessionSizeLimit = vi.fn()
 
     const sent = await sendWorkspaceMessage(
       runtime,
@@ -4818,7 +4820,7 @@ describe('workspace agent message sending', () => {
           }
         ]
       },
-      { awaitPendingPreparation: true }
+      { awaitPendingPreparation: true, onSessionSizeLimit }
     )
 
     expect(sent).toBeUndefined()
@@ -4836,6 +4838,7 @@ describe('workspace agent message sending', () => {
       status: 'error'
     })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(onSessionSizeLimit).toHaveBeenCalledWith('transport-session-pdf-denied')
 
     runtime.state = createSnapshot(['transport-session-pdf-denied'])
     const retried = await sendWorkspaceMessage(runtime, {

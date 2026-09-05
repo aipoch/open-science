@@ -7,6 +7,7 @@ import {
   type AnnotationValidationError
 } from '../../../../shared/annotations'
 import {
+  isSessionSizeLimitError,
   MAX_SESSION_PDF_CONTEXTS,
   type MessagePdfContextSnapshot,
   type PdfReadingPosition,
@@ -111,6 +112,7 @@ type WorkspaceComposerControllerInput = {
   canStageAttachments: boolean
   supportsImageInput: boolean | undefined
   uploads: ComposerUploadApi
+  onSessionSizeLimit?: (sessionId: string) => void
 }
 
 type WorkspaceComposerController = {
@@ -185,7 +187,8 @@ const useWorkspaceComposerController = ({
   historyPolicy,
   canStageAttachments,
   supportsImageInput,
-  uploads
+  uploads,
+  onSessionSizeLimit
 }: WorkspaceComposerControllerInput): WorkspaceComposerController => {
   const [doc, setDoc] = useState<ComposerDoc>(emptyDoc)
   const [annotations, setAnnotations] = useState<Annotation[]>([])
@@ -505,6 +508,7 @@ const useWorkspaceComposerController = ({
             })
           )
           setError(error instanceof Error ? error.message : String(error))
+          if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(operationSessionId)
           throw error
         }
       })()
@@ -519,7 +523,7 @@ const useWorkspaceComposerController = ({
       readingMutationPromiseSessionIdRef.current = operationSessionId
       return tracked
     },
-    [activeSession, setError]
+    [activeSession, onSessionSizeLimit, setError]
   )
   useLayoutEffect(() => {
     restoreReadingContextSourcesRef.current = reconcileReadingContextSources

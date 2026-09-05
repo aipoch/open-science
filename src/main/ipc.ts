@@ -4226,12 +4226,6 @@ const createApplicationModules = async (
           if (!projectId) return undefined
           const session = await sessionRepository.loadSession(projectId, sessionId)
           return session ? session.memoryEnabled !== false : undefined
-        },
-        respondDelegatedQuestion: (input) => {
-          if (!delegatedWork.root.respondQuestion) {
-            throw new Error('Delegated question response owner is unavailable.')
-          }
-          return delegatedWork.root.respondQuestion(input)
         }
       },
       afterAcp: afterAcpAdapters

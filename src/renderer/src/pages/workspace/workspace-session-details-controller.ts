@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next'
 
 import {
   isSessionDetailsConflictError,
-  type EditSessionDetailsRequest
+  isSessionSizeLimitError,
+  type EditSessionDetailsRequest,
+  type PersistedChatSession
 } from '../../../../shared/session-persistence'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import {
@@ -31,11 +33,17 @@ type WorkspaceSessionDetailsController = {
 
 const useWorkspaceSessionDetailsController = (
   isPersistenceReady: boolean,
-  onLoadFailure: () => void
+  onLoadFailure: () => void,
+  onSessionSizeLimit?: (sessionId: string) => void
 ): WorkspaceSessionDetailsController => {
   const { t } = useTranslation()
   const [dialog, setDialog] = useState<SessionDetailsDialog | null>(null)
   const dialogIntentRef = useRef(0)
+  const editDetails = (request: EditSessionDetailsRequest): Promise<PersistedChatSession> =>
+    window.api.sessions.editDetails(request).catch((error: unknown) => {
+      if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(request.sessionId)
+      throw error
+    })
   const open = (session: ChatSession): void => {
     const intent = ++dialogIntentRef.current
     if (!isPersistenceReady) return
@@ -75,8 +83,7 @@ const useWorkspaceSessionDetailsController = (
       description: dialog.descriptionDraft
     }
     setDialog((current) => (current ? { ...current, isSaving: true, error: null } : current))
-    void window.api.sessions
-      .editDetails(request)
+    void editDetails(request)
       .then((persisted) => {
         useSessionStore.getState().upsertPersistedSession(persisted)
         setDialog((current) =>
@@ -110,19 +117,17 @@ const useWorkspaceSessionDetailsController = (
     const trimmedTitle = title.trim()
     if (!trimmedTitle || trimmedTitle === expectedTitle) return Promise.resolve(true)
     const submit = (authoritative: ChatSession): Promise<boolean> =>
-      window.api.sessions
-        .editDetails({
-          projectId: authoritative.projectId,
-          sessionId: authoritative.id,
-          expectedTitle,
-          expectedDescription: authoritative.description ?? '',
-          title: trimmedTitle,
-          description: authoritative.description ?? ''
-        })
-        .then((persisted) => {
-          useSessionStore.getState().upsertPersistedSession(persisted)
-          return true
-        })
+      editDetails({
+        projectId: authoritative.projectId,
+        sessionId: authoritative.id,
+        expectedTitle,
+        expectedDescription: authoritative.description ?? '',
+        title: trimmedTitle,
+        description: authoritative.description ?? ''
+      }).then((persisted) => {
+        useSessionStore.getState().upsertPersistedSession(persisted)
+        return true
+      })
     if (session.contentLoaded !== false) {
       return submit(session)
     }

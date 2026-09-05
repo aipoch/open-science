@@ -374,7 +374,8 @@ const WorkspacePage = ({
     beginSessionDeletion: (sessionId) => composer.lifecycle.beginSessionDeletion(sessionId),
     settleSessionDeletion: (sessionId, deleted) =>
       composer.lifecycle.settleSessionDeletion(sessionId, deleted),
-    deleteSession
+    deleteSession,
+    onSessionSizeLimit
   })
   const exportConversationSessionId = sessionController.view.dialogs.exportConversation?.id
   const currentExportConversationSession = useSessionStore((state) =>
@@ -465,7 +466,8 @@ const WorkspacePage = ({
     historyPolicy: composerHistoryPolicy,
     canStageAttachments: canEditDraft,
     supportsImageInput,
-    uploads: window.api.uploads
+    uploads: window.api.uploads,
+    onSessionSizeLimit
   })
   const { doc: draftDoc, error: attachmentError } = composer.view
   const { changeDoc: changeComposerDraftDoc, setError: setAttachmentError } = composer.actions
@@ -474,7 +476,8 @@ const WorkspacePage = ({
     selectedSessionId,
     selectedFrameworkId: selectedAgentFrameworkId,
     frameworks: agentFrameworks,
-    setError: setAttachmentError
+    setError: setAttachmentError,
+    onSessionSizeLimit
   })
   const previewAnnotations = {
     activeAnnotations: composer.view.annotations,

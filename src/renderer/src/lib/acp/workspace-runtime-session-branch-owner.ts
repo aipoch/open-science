@@ -6,7 +6,10 @@ import {
   type UploadedAttachment
 } from '../../../../shared/uploads'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
-import type { DelegationPolicy } from '../../../../shared/session-persistence'
+import {
+  isSessionSizeLimitError,
+  type DelegationPolicy
+} from '../../../../shared/session-persistence'
 import {
   confirmPendingDelegationPolicyAuthority,
   saveSessionInOrder
@@ -83,7 +86,8 @@ export const reconcileBranchedAttachments = async (
 
 export const branchWorkspaceSessionFromMessage = async (
   runtime: WorkspaceSessionBranchRuntime,
-  input: BranchWorkspaceSessionFromMessageIntent
+  input: BranchWorkspaceSessionFromMessageIntent,
+  onSessionSizeLimit?: (sessionId: string) => void
 ): Promise<BranchWorkspaceSessionFromMessageResult | undefined> => {
   const pending = useSessionStore.getState().branchInNewSession(input)
   if (!pending || pending.messageId) return undefined
@@ -185,6 +189,9 @@ export const branchWorkspaceSessionFromMessage = async (
     return { sessionId, messageId: input.sourceMessageId }
   } catch (error) {
     const failedSessionId = createdSessionId ?? pending.sessionId
+    if (isSessionSizeLimitError(error)) {
+      onSessionSizeLimit?.(createdSessionId ?? input.sourceSessionId)
+    }
     useSessionStore.getState().deleteSession(failedSessionId)
     if (createdSessionId && runtime.deleteSession) {
       await runtime.deleteSession(createdSessionId).catch(() => undefined)

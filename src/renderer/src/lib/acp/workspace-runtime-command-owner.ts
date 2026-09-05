@@ -5,6 +5,7 @@ import { withPdfContext as withPdf } from '../../../../shared/session-pdf-contex
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import {
   collectSessionReferences,
+  isSessionSizeLimitError,
   MAX_SESSION_PDF_CONTEXTS,
   type DelegationPolicy,
   type MessageAttribution,
@@ -104,6 +105,7 @@ type WorkspaceCommandLifecycle = {
   drainRuntimeEvents?: (sessionId?: string) => Promise<void>
   onSessionBound?: (pendingSessionId: string, sessionId: string) => void
   onPdfContextLinked?: (sessionId: string, pdfContext: MessagePdfContextSnapshot) => void
+  onSessionSizeLimit?: (sessionId: string) => void
 }
 type ResendEditedMessageInput = {
   text: string
@@ -467,7 +469,8 @@ const startPendingPrompt = (
   runtime: WorkspaceCommandRuntime,
   request: PendingPromptRequest,
   onSessionBound?: (pendingSessionId: string, sessionId: string) => void,
-  onPdfContextLinked?: (sessionId: string, pdfContext: MessagePdfContextSnapshot) => void
+  onPdfContextLinked?: (sessionId: string, pdfContext: MessagePdfContextSnapshot) => void,
+  onSessionSizeLimit?: (sessionId: string) => void
 ): Promise<boolean> => {
   return (async () => {
     const pending = request.pending
@@ -547,6 +550,7 @@ const startPendingPrompt = (
         }
         sessionMaterialized = true
       } catch (error) {
+        if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(created.sessionId)
         try {
           const snapshot = await runtime.deleteSession?.(created.sessionId)
           if (
@@ -606,6 +610,7 @@ const startPendingPrompt = (
         onPdfContextLinked?.(created.sessionId, pdfContext)
       }
     } catch (error) {
+      if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(created.sessionId)
       useSessionStore.getState().failRun(created.sessionId, errorMessage(error))
       return false
     }
@@ -635,16 +640,20 @@ const sendWorkspaceMessage = async (
   lifecycle: WorkspaceCommandLifecycle = {}
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   if (input.branchSourceSessionId && input.branchSourceMessageId) {
-    return branchWorkspaceSessionFromMessage(runtime, {
-      sourceSessionId: input.branchSourceSessionId,
-      sourceMessageId: input.branchSourceMessageId,
-      agentFrameworkId: input.agentFrameworkId,
-      agentBackendId: input.agentBackendId,
-      agentModel: input.agentModel,
-      agentConfiguration: input.agentConfiguration,
-      delegationPolicy: input.delegationPolicy,
-      specialistId: input.specialistId
-    })
+    return branchWorkspaceSessionFromMessage(
+      runtime,
+      {
+        sourceSessionId: input.branchSourceSessionId,
+        sourceMessageId: input.branchSourceMessageId,
+        agentFrameworkId: input.agentFrameworkId,
+        agentBackendId: input.agentBackendId,
+        agentModel: input.agentModel,
+        agentConfiguration: input.agentConfiguration,
+        delegationPolicy: input.delegationPolicy,
+        specialistId: input.specialistId
+      },
+      lifecycle.onSessionSizeLimit
+    )
   }
   const content = input.text.trim()
   const replaySession = input.sessionId
@@ -760,7 +769,8 @@ const sendWorkspaceMessage = async (
         contextReset: true
       },
       lifecycle.onSessionBound,
-      lifecycle.onPdfContextLinked
+      lifecycle.onPdfContextLinked,
+      lifecycle.onSessionSizeLimit
     )
     if (lifecycle.awaitPendingPreparation) {
       return (await preparation) ? pendingPrompt : undefined
@@ -869,7 +879,8 @@ const sendWorkspaceMessage = async (
           contextReset: Boolean(session.pendingContextReplayMessageId)
         },
         lifecycle.onSessionBound,
-        lifecycle.onPdfContextLinked
+        lifecycle.onPdfContextLinked,
+        lifecycle.onSessionSizeLimit
       )
       if (lifecycle.awaitPendingPreparation) {
         return (await preparation) ? appended : undefined
@@ -941,6 +952,7 @@ const sendWorkspaceMessage = async (
         lifecycle.onPdfContextLinked?.(sessionId, pdfContext)
       }
     } catch (error) {
+      if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
       useSessionStore.getState().failRun(sessionId, errorMessage(error))
       return undefined
     }
@@ -1069,7 +1081,8 @@ const sendWorkspaceMessage = async (
       turnIntent: input.turnIntent
     },
     lifecycle.onSessionBound,
-    lifecycle.onPdfContextLinked
+    lifecycle.onPdfContextLinked,
+    lifecycle.onSessionSizeLimit
   )
   if (lifecycle.awaitPendingPreparation) {
     return (await preparation) ? pending : undefined

@@ -386,7 +386,8 @@ const useOwnedWorkspaceAgentRuntime = (
               pendingPdfContextSelection,
               pdfContext
             )
-          }
+          },
+          onSessionSizeLimit
         }
       )
     },
@@ -395,6 +396,7 @@ const useOwnedWorkspaceAgentRuntime = (
       drainRuntimeEvents,
       handleSendPreparationStateChange,
       lifecycleOwner,
+      onSessionSizeLimit,
       resolveRuntimeSelection,
       runtime,
       visionRelayAvailable
@@ -418,7 +420,8 @@ const useOwnedWorkspaceAgentRuntime = (
           agentConfiguration: configuration,
           historyReplayDescriptor: selected.historyReplayDescriptor,
           onSendPreparationStateChange: handleSendPreparationStateChange,
-          drainRuntimeEvents
+          drainRuntimeEvents,
+          onSessionSizeLimit
         }
       )
     },
@@ -426,6 +429,7 @@ const useOwnedWorkspaceAgentRuntime = (
       admitSendConfiguration,
       drainRuntimeEvents,
       handleSendPreparationStateChange,
+      onSessionSizeLimit,
       resolveRuntimeSelection,
       runtime,
       visionRelayAvailable

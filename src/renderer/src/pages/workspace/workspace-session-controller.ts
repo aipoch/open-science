@@ -12,6 +12,7 @@ import type {
   DeleteSessionRequest,
   SessionDeletionResult
 } from '../../../../shared/session-persistence'
+import { isSessionSizeLimitError } from '../../../../shared/session-persistence'
 import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
@@ -57,6 +58,7 @@ type WorkspaceSessionControllerOptions = {
   beginSessionDeletion: (sessionId: string) => boolean
   settleSessionDeletion: (sessionId: string, deleted: boolean) => void
   deleteSession: (request: DeleteSessionRequest) => Promise<SessionDeletionResult>
+  onSessionSizeLimit?: (sessionId: string) => void
 }
 type SessionDeletionFailureReason = Extract<SessionDeletionResult, { status: 'failed' }>['reason']
 type SessionDeleteDialogState = {
@@ -150,7 +152,8 @@ const useWorkspaceSessionController = ({
   hasUnfinishedTransfers,
   beginSessionDeletion,
   settleSessionDeletion,
-  deleteSession
+  deleteSession,
+  onSessionSizeLimit
 }: WorkspaceSessionControllerOptions): WorkspaceSessionController => {
   const { t } = useTranslation()
   const togglePinned = useSessionStore((state) => state.togglePinned)
@@ -179,8 +182,10 @@ const useWorkspaceSessionController = ({
   )
   const specialistItemsRef = useRef(specialistItems)
   const [exportError, setExportError] = useState<string | null>(null)
-  const sessionDetails = useWorkspaceSessionDetailsController(isPersistenceReady, () =>
-    setExportError(t('Could not load this session for editing.'))
+  const sessionDetails = useWorkspaceSessionDetailsController(
+    isPersistenceReady,
+    () => setExportError(t('Could not load this session for editing.')),
+    onSessionSizeLimit
   )
   const [deleteDialog, setDeleteDialog] = useState<SessionDeleteDialogState | null>(null)
   const [downloadArtifactsDialog, setDownloadArtifactsDialog] = useState<ChatSession | null>(null)
@@ -262,7 +267,10 @@ const useWorkspaceSessionController = ({
         enqueueSessionArchive(archived)
         if (selectedSessionId === session.id) clearSelection()
       })
-      .catch((error: unknown) => setExportError(errorMessage(error)))
+      .catch((error: unknown) => {
+        if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(session.id)
+        setExportError(errorMessage(error))
+      })
       .finally(() => {
         setArchivingIds((current) => {
           const next = new Set(current)

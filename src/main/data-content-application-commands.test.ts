@@ -974,6 +974,33 @@ describe('Data and content application commands', () => {
     expect(deps.events.publish).not.toHaveBeenCalled()
   })
 
+  it('preserves the Session size-limit code for PDF context mutations', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.sessions.linkPdfContext.mockRejectedValueOnce(new SessionSizeLimitError())
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await expect(
+      dispatchCommand(router, 'sessionLinkPdfContext', [
+        {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          expectedRevision: 1,
+          sources: [
+            {
+              sourceKind: 'artifact-version',
+              sourceFileId: 'artifact-1',
+              sourceVersionId: 'version-1'
+            }
+          ]
+        }
+      ]).result
+    ).rejects.toMatchObject({
+      name: 'ApplicationCommandError',
+      code: 'session-size-limit'
+    })
+  })
+
   it('preserves the Session details conflict code across the application command boundary', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()

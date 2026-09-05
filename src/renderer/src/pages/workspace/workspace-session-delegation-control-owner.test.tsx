@@ -6,6 +6,7 @@ import type {
   DelegatedWorkRecord,
   PersistedChatSession
 } from '../../../../shared/session-persistence'
+import { SessionSizeLimitError } from '../../../../shared/session-persistence'
 import type { AgentFrameworkView } from '../../../../shared/settings'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 
@@ -109,6 +110,32 @@ describe('Workspace Session Delegation control owner', () => {
 
     expect(result.current).toMatchObject({ enabled: false, pending: false })
     expect(setError).toHaveBeenLastCalledWith('Policy update failed')
+  })
+
+  it('reports policy size failures through the Session recovery owner', async () => {
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          setDelegationPolicy: vi.fn().mockRejectedValue(new SessionSizeLimitError())
+        }
+      }
+    })
+    const onSessionSizeLimit = vi.fn()
+    const { result } = renderHook(() => {
+      const activeSession = useSessionStore((state) => state.sessions[0])
+      return useWorkspaceSessionDelegationControlOwner({
+        activeSession,
+        selectedSessionId: activeSession?.id,
+        selectedFrameworkId: 'claude-code',
+        frameworks,
+        setError: vi.fn(),
+        onSessionSizeLimit
+      })
+    })
+
+    await act(() => result.current.change(false))
+
+    expect(onSessionSizeLimit).toHaveBeenCalledWith('session-1')
   })
 
   it.each([
