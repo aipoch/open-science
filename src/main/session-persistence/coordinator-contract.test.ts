@@ -1,6 +1,9 @@
+import { setImmediate } from 'node:timers/promises'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
+import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
+import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
 import type {
   PersistedChatSession,
   SessionPlanRuntimeContext
@@ -115,6 +118,129 @@ const createFileIndex = (overrides: Partial<SessionFileIndex> = {}): SessionFile
 })
 
 describe('SessionPersistenceCoordinator contracts', () => {
+  it.each(
+    (['read', 'write', 'delete'] as const).flatMap((operation) =>
+      [false, true].map((withGlobalBarrier) => ({ operation, withGlobalBarrier }))
+    )
+  )(
+    'rejects Project deletion without stalling a $operation queued during scanning (global barrier: $withGlobalBarrier)',
+    async ({ operation, withGlobalBarrier }) => {
+      const scanStarted = createDeferred()
+      const scanGate = createDeferred()
+      const session = createSession()
+      const { repository, sessions } = createRepository([session])
+      vi.mocked(repository.loadProjectWithDiagnostics).mockImplementationOnce(async () => {
+        scanStarted.resolve()
+        await scanGate.promise
+        return { sessions: [session], isComplete: true }
+      })
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+      const deletion = coordinator.deleteProjectSessions(session.projectId)
+      await scanStarted.promise
+      const successor =
+        operation === 'read'
+          ? coordinator.readSessionRuntimeContext(session.projectId, session.id)
+          : operation === 'write'
+            ? coordinator.saveSession(session)
+            : coordinator.deleteSession(session.projectId, session.id)
+      // Observe the successor without leaving a rejection unhandled during the checkpoint.
+      const successorResult = Promise.allSettled([successor])
+      const independent = coordinator.saveSession(
+        createSession({ id: 'session-2', projectId: 'project-2' })
+      )
+      const snapshot = withGlobalBarrier ? coordinator.sessionMetadataSnapshot() : undefined
+      const later = coordinator.runSessionMutation('project-2', 'session-2', async () => 'later')
+      let allSettled = false
+      void Promise.allSettled([deletion, successor, independent, snapshot, later]).then(() => {
+        allSettled = true
+      })
+
+      await setImmediate()
+      expect(
+        vi.mocked(repository.saveSession).mock.calls.some(([saved]) => saved.id === 'session-2')
+      ).toBe(true)
+      expect(repository.deleteProjectSessions).not.toHaveBeenCalled()
+      scanGate.resolve()
+      // All fixture I/O is Promise-based. One event-loop turn drains runnable work; a dependency
+      // cycle leaves these operations unsettled. Fail on that behavior, not a test timeout.
+      await setImmediate()
+      expect(allSettled).toBe(true)
+      expect(repository.deleteProjectSessions).not.toHaveBeenCalled()
+      await expect(deletion).rejects.toThrow(
+        'Session identity reservation conflicted with a later operation. Retry the operation.'
+      )
+      const [result] = await successorResult
+      expect(result.status).toBe('fulfilled')
+      if (operation === 'read') {
+        expect(result).toMatchObject({ value: { version: 1 } })
+      } else if (operation === 'write') {
+        expect(result).toMatchObject({ value: { id: session.id } })
+      } else {
+        expect(result).toEqual({ status: 'fulfilled', value: undefined })
+      }
+      await expect(independent).resolves.toMatchObject({ id: 'session-2' })
+      if (snapshot)
+        await expect(snapshot).resolves.toMatchObject({
+          sessions: expect.arrayContaining([
+            { id: 'session-2', projectId: 'project-2', title: 'Session' }
+          ])
+        })
+      await expect(later).resolves.toBe('later')
+      expect(sessions.has(session.id)).toBe(operation !== 'delete')
+      expect(sessions.has('session-2')).toBe(true)
+      const retry = coordinator.deleteProjectSessions(session.projectId)
+      let retrySettled = false
+      void Promise.allSettled([retry]).then(() => {
+        retrySettled = true
+      })
+      await setImmediate()
+      expect(retrySettled).toBe(true)
+      await expect(retry).resolves.toEqual({ status: 'completed' })
+      expect(sessions.has(session.id)).toBe(false)
+    }
+  )
+
+  it('finishes deletion cleanup while another Project changes Compute Host access', async () => {
+    const scanStarted = createDeferred()
+    const scanGate = createDeferred()
+    const session = createSession()
+    const other = createSession({ id: 'session-2', projectId: 'project-2' })
+    const { repository } = createRepository([session, other])
+    vi.mocked(repository.loadProjectWithDiagnostics).mockImplementationOnce(async () => {
+      scanStarted.resolve()
+      await scanGate.promise
+      return { sessions: [session], isComplete: true }
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const hosts = new SessionEnabledComputeHostsOwner({
+      registry: new EnabledComputeHostsRegistry(),
+      hostExists: async () => true,
+      listHostIds: async () => [],
+      sessionAuthority: coordinator,
+      withDataRootWrite: (operation) => operation()
+    })
+    coordinator.setSessionDeletionHandlers({
+      commit: (sessionIds) => hosts.clear(sessionIds),
+      reconcile: async () => undefined
+    })
+    await coordinator.loadAll()
+    const deletion = coordinator.deleteProjectSessions(session.projectId)
+    await scanStarted.promise
+    const update = hosts.setHostEnabled(other.id, 'ssh:host', false)
+    await setImmediate()
+    let allSettled = false
+    const completion = Promise.allSettled([deletion, update])
+    void completion.then(() => {
+      allSettled = true
+    })
+    scanGate.resolve()
+    await setImmediate()
+    expect(repository.deleteProjectSessions).toHaveBeenCalledWith(session.projectId)
+    expect(allSettled).toBe(true)
+    expect((await completion).every((result) => result.status === 'fulfilled')).toBe(true)
+  })
+
   it('keeps scoped lanes failure-tolerant and snapshots behind a global barrier', async () => {
     const gate = createDeferred()
     const order: string[] = []
