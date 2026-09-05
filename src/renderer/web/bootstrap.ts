@@ -4,11 +4,13 @@ import {
 } from '../../shared/application-command-contract'
 import {
   WEB_EVENT_STREAM_PROTOCOL_VERSION,
+  WEB_RPC_CAPABILITY_UPDATE_CLI_V1,
   WEB_RPC_PROTOCOL_VERSION,
   webRpcBootstrapSchema,
   webRpcEventMessageSchema,
   webRpcResponseSchema
 } from '../../shared/web-rpc-contract'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../shared/web-caller-location'
 import {
   WEB_EVENT_CONNECTION_STATE_EVENT,
   WEB_EVENT_CONSUMERS_READY_EVENT,
@@ -420,6 +422,10 @@ const installWebApi = async (): Promise<EventCursor> => {
     )
   }
   const bootstrap = parsedBootstrap.data
+  const callerLocation =
+    bootstrap.webCallerLocation ??
+    (bootstrap.rpcCapabilities?.includes(WEB_RPC_CAPABILITY_UPDATE_CLI_V1) ? 'local' : 'remote')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, callerLocation)
   const api: Record<string, unknown> = { platform: bootstrap.platform }
   const availableRpcChannels = new Set(bootstrap.rpcChannels)
   const restrictedRpcChannels = new Set(bootstrap.restrictedRpcChannels ?? [])

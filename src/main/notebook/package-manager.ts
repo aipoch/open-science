@@ -1236,12 +1236,15 @@ export async function installPackages(
     const cache = deps.micromambaEnv?.selectCache
       ? deps.micromambaEnv.selectCache(root, DEFAULT_MAX_CACHE_RELATIVE_PATH)
       : selectMicromambaCache(root, DEFAULT_MAX_CACHE_RELATIVE_PATH, deps.micromambaEnv)
-    const env = micromambaSpawnEnv(
-      root,
-      deps.caBundle,
-      { ...deps.micromambaEnv, selectCache: () => cache },
-      DEFAULT_MAX_CACHE_RELATIVE_PATH
-    )
+    const env = {
+      ...micromambaSpawnEnv(
+        root,
+        deps.caBundle,
+        { ...deps.micromambaEnv, selectCache: () => cache },
+        DEFAULT_MAX_CACHE_RELATIVE_PATH
+      ),
+      ...notebookWorkloadCacheEnv(root)
+    }
     condaContext = { cache, env }
     return condaContext
   }

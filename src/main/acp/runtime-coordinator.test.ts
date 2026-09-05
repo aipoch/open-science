@@ -1083,6 +1083,7 @@ describe('AcpRuntimeCoordinator', () => {
       wakeMessages: vi.fn(async () => undefined),
       stopSession: vi.fn(async () => undefined),
       stopAll: vi.fn(async () => undefined),
+      shutdown: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
       deleteProject: vi.fn(async () => undefined)
     }
@@ -1159,6 +1160,43 @@ describe('AcpRuntimeCoordinator', () => {
     expect(delegated.stopAll).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    ['prepareForQuit', 'stopAll'],
+    ['disconnect', 'stopAll'],
+    ['shutdownForUpdateGate', 'stopAll'],
+    ['shutdownForQuit', 'shutdown'],
+    ['shutdown', 'shutdown']
+  ] as const)('uses delegated %s lifecycle with %s', async (operation, cleanup) => {
+    const delegated = {
+      pendingPermissions: () => [],
+      subscribe: () => () => undefined,
+      respondToPermission: async () => false,
+      setPermissionProfile: async () => undefined,
+      stopSession: async () => undefined,
+      stopAll: vi.fn(async () => undefined),
+      shutdown: vi.fn(async () => undefined),
+      deleteSession: async () => undefined,
+      deleteProject: async () => undefined
+    }
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({ frameworkId: 'codex', sessionIds: ['session-1'], callbacks }).runtime,
+      {},
+      '',
+      undefined,
+      undefined,
+      undefined,
+      {},
+      undefined,
+      delegated
+    )
+
+    await coordinator[operation]()
+
+    expect(delegated[cleanup]).toHaveBeenCalledOnce()
+    expect(delegated[cleanup === 'stopAll' ? 'shutdown' : 'stopAll']).not.toHaveBeenCalled()
+  })
+
   it('fences only the active Conversation Turn and exposes a separate Subagent Stop scope', async () => {
     const prompt = createDeferred<unknown>()
     let rejectChildCancellation!: (error: Error) => void
@@ -1177,6 +1215,7 @@ describe('AcpRuntimeCoordinator', () => {
       stopActiveBranch,
       stopSession: vi.fn(async () => undefined),
       stopAll: vi.fn(async () => undefined),
+      shutdown: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
       deleteProject: vi.fn(async () => undefined)
     }
@@ -1641,6 +1680,7 @@ describe('AcpRuntimeCoordinator', () => {
       setPermissionProfile: async () => undefined,
       stopSession: async () => undefined,
       stopAll: async () => undefined,
+      shutdown: async () => undefined,
       deleteSession: async () => undefined,
       deleteProject: async () => undefined,
       rootTurnStarted,
@@ -1723,6 +1763,7 @@ describe('AcpRuntimeCoordinator', () => {
         setPermissionProfile: async () => undefined,
         stopSession: async () => undefined,
         stopAll: async () => undefined,
+        shutdown: async () => undefined,
         deleteSession: async () => undefined,
         deleteProject: async () => undefined,
         rootTurnStarted,
@@ -3894,6 +3935,7 @@ describe('AcpRuntimeCoordinator', () => {
       setPermissionProfile: async () => undefined,
       stopSession: async () => undefined,
       stopAll: async () => undefined,
+      shutdown: async () => undefined,
       deleteSession: vi.fn(() => delegatedDeletion.promise),
       deleteProject: async () => undefined
     }

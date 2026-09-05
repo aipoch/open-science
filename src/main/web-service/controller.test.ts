@@ -125,6 +125,64 @@ const makeController = (
 }
 
 describe('createWebServiceController', () => {
+  it('finishes publishing and can shut down before Task journal restoration completes', async () => {
+    let releaseSessionLoad: (() => void) | undefined
+    const sessionLoadGate = new Promise<void>((resolve) => {
+      releaseSessionLoad = resolve
+    })
+    const applicationCommands = {
+      localWeb: { commandNames: () => [], invoke: vi.fn() },
+      remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() },
+      task: {
+        commandNames: () => ['sessions:load-all'],
+        invoke: vi.fn(async (name: string) => {
+          if (name !== 'sessions:load-all') throw new Error(`Unexpected Task command: ${name}`)
+          await sessionLoadGate
+          return { sessions: [], manifest: { version: 1 } }
+        })
+      }
+    } satisfies Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
+    const h = makeController(
+      {
+        createTaskRunJournal: () => ({
+          load: async () => [
+            {
+              id: 'run-interrupted',
+              sessionId: 'session-interrupted',
+              projectId: 'project-interrupted',
+              cwd: '/fake/root',
+              promptMessageId: 'prompt-interrupted',
+              status: 'running',
+              startedAt: 10,
+              artifacts: [],
+              preferredComputeHostIds: []
+            }
+          ],
+          replace: async () => undefined
+        })
+      },
+      vi.fn(),
+      applicationCommands
+    )
+
+    const startCompleted = vi.fn()
+    const start = h.controller.ensureStarted(44100, { attached: true })
+    void start.then(startCompleted)
+    try {
+      await vi.waitFor(() => expect(applicationCommands.task.invoke).toHaveBeenCalledOnce())
+      expect(h.startServer).toHaveBeenCalledOnce()
+      expect(h.writeState).toHaveBeenCalledOnce()
+      expect(startCompleted).toHaveBeenCalledOnce()
+
+      h.lastOptions().onShutdownRequest?.()
+      await vi.waitFor(() => expect(h.serverClose).toHaveBeenCalledOnce())
+    } finally {
+      releaseSessionLoad?.()
+      await start
+      await h.controller.dispose()
+    }
+  })
+
   it('passes the Session Compute preference authority to the Task façade', async () => {
     const project = {
       id: 'project-compute',
@@ -498,6 +556,7 @@ describe('createWebServiceController', () => {
       )
       controllers.push(second)
       await second.controller.ensureStarted(44101, { attached: false })
+      await second.lastOptions().waitUntilTasksReady?.()
 
       expect(second.lastOptions().tasks!.getRun(started.id)).toMatchObject({
         id: started.id,
@@ -535,6 +594,7 @@ describe('createWebServiceController', () => {
 
     try {
       await h.controller.ensureStarted(44100, { attached: false })
+      await h.lastOptions().waitUntilTasksReady?.()
       const tasks = h.lastOptions().tasks!
 
       expect(tasks.getRun('run-interrupted')).toMatchObject({

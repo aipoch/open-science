@@ -821,6 +821,15 @@ describe('ProviderAccountsModule', () => {
     expect(claudeSharedAuth.cancelLogin).toHaveBeenCalledOnce()
   })
 
+  it('cancels every provider login when its application owner is disposed', async () => {
+    await module.dispose()
+
+    expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect(claudeIsolatedAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect(claudeSharedAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect(xaiOAuth.cancelLogin).toHaveBeenCalledOnce()
+  })
+
   it('returns bounded failures for missing model catalogs and incompatible drafts', async () => {
     await expect(module.refreshProviderModels({ providerId: 'missing-provider' })).resolves.toEqual(
       {

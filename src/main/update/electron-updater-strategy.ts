@@ -584,9 +584,11 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
           error:
             readiness.blockedBy?.length === 1 && readiness.blockedBy[0] === 'delegated'
               ? 'Subagents are still running. Return to their tasks and stop them before restarting to update.'
-              : readiness.blockedBy?.length
-                ? 'Research work is still running. Stop it before restarting to update.'
-                : 'Could not fully stop background processes before updating. Please try again.',
+              : readiness.blockedBy?.length === 1 && readiness.blockedBy[0] === 'settings-install'
+                ? 'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
+                : readiness.blockedBy?.length
+                  ? 'Research work is still running. Stop it before restarting to update.'
+                  : 'Could not fully stop background processes before updating. Please try again.',
           ...(readiness.blockedBy ? { blockedBy: readiness.blockedBy } : {})
         })
         operation.fail(new Error('Install gate refused'), {

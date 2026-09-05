@@ -251,6 +251,28 @@ describe('UpdateDialog', () => {
     expect(issueLink?.textContent).toContain('open a GitHub issue')
   })
 
+  it('localizes the active Agent Runtime installation blocker', async () => {
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'error',
+        current: '0.17.0',
+        latest: '0.18.0',
+        error:
+          'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
+      }
+    })
+
+    act(() => root.render(<UpdateDialog />))
+
+    expect(document.body.textContent).toContain(
+      '智能体运行时仍在安装。请等待安装完成后再重启更新。'
+    )
+    expect(document.body.textContent).not.toContain('An Agent Runtime is still installing')
+    await act(async () => i18next.changeLanguage('en'))
+  })
+
   it('shows download size on the download button when totalBytes is present', () => {
     useUpdateStore.setState({
       isDialogOpen: true,

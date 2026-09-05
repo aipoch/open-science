@@ -14,6 +14,61 @@ const CONTEXT_COMPACTION_PROMPT = 'Preview context compaction.'
 const CITATION_PREVIEW_PROMPT = 'Preview a cited source.'
 const AXE_PATH = resolve(process.cwd(), 'node_modules/axe-core/axe.min.js')
 
+test('keeps source icons inside table cells after expanding a message table', async ({ app }) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await allowCitationPreviewDomain(page)
+  await page.route('https://citation.example/favicon.ico', (route) =>
+    route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="teal"/></svg>'
+    })
+  )
+  await createProject(page)
+  await page
+    .getByRole('textbox', { name: 'Ask anything' })
+    .fill('Expand a table with source links.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  const table = page.getByRole('region', { name: 'Conversation' }).locator('table')
+  await expect(table).toBeVisible()
+  await expect(table.locator('[data-session-link-favicon]')).toHaveCount(2)
+  await expect(table.locator('[data-session-link-favicon][data-state="local"]')).toHaveCount(1)
+  await table.hover()
+  await page.getByTitle('View fullscreen', { exact: true }).click()
+
+  const fullscreen = page.locator('[data-streamdown="table-fullscreen"]')
+  await expect(fullscreen).toBeVisible()
+  await expect(fullscreen.locator('[data-session-link-favicon]')).toHaveCount(2)
+  // Exercise the actual portal and stylesheet: jsdom cannot detect an icon covering the dialog.
+  await expect
+    .poll(() =>
+      fullscreen.locator('[data-session-link-favicon]').evaluateAll((icons) =>
+        icons.every((icon) => {
+          const cell = icon.closest('td')!.getBoundingClientRect()
+          return [...icon.querySelectorAll('svg, img')].every((image) => {
+            const bounds = image.getBoundingClientRect()
+            return (
+              bounds.width > 0 &&
+              bounds.width <= 20 &&
+              bounds.height > 0 &&
+              bounds.height <= 20 &&
+              bounds.left >= cell.left &&
+              bounds.right <= cell.right &&
+              bounds.top >= cell.top &&
+              bounds.bottom <= cell.bottom
+            )
+          })
+        })
+      )
+    )
+    .toBe(true)
+  await fullscreen.getByTitle('Download table', { exact: true }).click()
+  await expect(fullscreen.getByRole('button', { name: 'CSV', exact: true })).toBeVisible()
+  await fullscreen.getByTitle('Exit fullscreen', { exact: true }).click()
+  await expect(fullscreen).toHaveCount(0)
+})
+
 const persistedMemoryState = async (
   page: Page
 ): Promise<{

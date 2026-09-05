@@ -337,7 +337,7 @@ class ArtifactProvenanceFinalizationRecovery {
         artifactVersionIds: markerVersionIds,
         provenanceContext: markerContext
       })
-      await this.options.messageFinalizer.activateFinalizedRunWithDurableSession(
+      finalized = await this.options.messageFinalizer.activateFinalizedRunWithDurableSession(
         finalizationRequest,
         durableSession
       )

@@ -2141,6 +2141,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'specialist',
     ['specialist:update', ELECTRON]
   ),
+  'storage.acceptMissingDataRoot': callable<() => Promise<void>>()('storage', [
+    'storage:accept-missing-data-root',
+    LOCAL
+  ]),
   'storage.ackDataRootHandoffFlush': callable<
     (response: SessionPersistenceFlushResponse) => Promise<void>
   >()('storage', ['storage:ack-data-root-handoff-flush', LOCAL]),

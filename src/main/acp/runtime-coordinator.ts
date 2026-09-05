@@ -450,7 +450,7 @@ class AcpRuntimeCoordinator {
   shutdown(): void {
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
-    void this.delegatedWork?.stopAll().catch(() => undefined)
+    void this.delegatedWork?.shutdown().catch(() => undefined)
     for (const runtime of this.runtimes) runtime.shutdown()
     this.clearRuntimeOwnership()
     this.onDisconnected?.()
@@ -460,7 +460,10 @@ class AcpRuntimeCoordinator {
     this.providerShutdownStartedForQuit = true
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
-    return this.shutdownAll((runtime) => runtime.shutdownForQuit())
+    return this.shutdownAll(
+      (runtime) => runtime.shutdownForQuit(),
+      () => this.delegatedWork?.shutdown()
+    )
   }
 
   // Gives active agents a bounded chance to return their terminal stop response before process-tree
@@ -529,7 +532,10 @@ class AcpRuntimeCoordinator {
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
-    return this.shutdownAll((runtime) => runtime.shutdownForUpdateGate())
+    return this.shutdownAll(
+      (runtime) => runtime.shutdownForUpdateGate(),
+      () => this.delegatedWork?.stopAll()
+    )
   }
 
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
@@ -1974,11 +1980,12 @@ class AcpRuntimeCoordinator {
   }
 
   private async shutdownAll(
-    shutdown: (runtime: AcpRuntime) => Promise<{ reaped: boolean }>
+    shutdown: (runtime: AcpRuntime) => Promise<{ reaped: boolean }>,
+    stopDelegatedWork: () => Promise<void> | undefined
   ): Promise<{ reaped: boolean }> {
     const runtimes = Array.from(this.runtimes)
     const [delegatedOutcome, ...outcomes] = await Promise.allSettled([
-      this.delegatedWork?.stopAll() ?? Promise.resolve(),
+      stopDelegatedWork() ?? Promise.resolve(),
       ...runtimes.map(shutdown)
     ])
     const failure =

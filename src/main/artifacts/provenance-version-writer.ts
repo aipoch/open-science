@@ -88,6 +88,9 @@ type CompatibilityRoutingPublicationOptions = {
   signal?: AbortSignal
 }
 type PersistedVersionFileRecord = {
+  state: string
+  originKind: string
+  managedVisibleAt: Date | null
   id: string
   artifactId: string
   versionNumber: number

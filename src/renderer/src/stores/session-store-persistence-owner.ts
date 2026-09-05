@@ -18,6 +18,7 @@ import {
   sanitizePlanHistoryProjections,
   sessionRevision,
   sanitizeToolActivity,
+  type PersistedArtifact,
   type PersistedActiveRun,
   type PersistedActivityGroup,
   type PersistedChatMessage,
@@ -73,10 +74,13 @@ export type ToolActivity = {
   createdAt: number
   updatedAt: number
 }
+export type ChatArtifact = PersistedArtifact & { isPublished?: boolean }
+
 export type ChatSession = Omit<
   PersistedChatSession,
-  'messages' | 'activities' | 'permissionProfile'
+  'messages' | 'activities' | 'permissionProfile' | 'artifacts'
 > & {
+  artifacts?: ChatArtifact[]
   permissionProfile?: PermissionProfileId
   messages: ChatMessage[]
   activities?: ToolActivity[]
@@ -211,6 +215,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     presentedActivityAt,
     planHistoryProjections,
     runtimeContext,
+    artifacts,
     messages,
     ...persistedSession
   } = session
@@ -248,6 +253,14 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     .filter((group): group is PersistedActivityGroup => !!group)
 
   return materializeSessionConversationGraph({
+    ...(artifacts
+      ? {
+          artifacts: artifacts.map(({ isPublished, ...artifact }) => {
+            void isPublished
+            return artifact
+          })
+        }
+      : {}),
     ...persistedSession,
     messages: messages.map(stripTransientMessageState),
     ...(persistedPlanHistory ? { planHistoryProjections: persistedPlanHistory } : {}),
@@ -346,6 +359,24 @@ const projectRuntimePlanHistoryAuthority = (
   )
 }
 
+// A save acknowledgement contains durable descriptors only. Preserve a publication fact only for
+// the same immutable Version; a different Version must obtain its own authoritative descriptor.
+const retainArtifactPublication = (
+  artifacts: PersistedArtifact[] | undefined,
+  source: ChatSession
+): ChatArtifact[] | undefined => {
+  const currentById = new Map((source.artifacts ?? []).map((artifact) => [artifact.id, artifact]))
+  return artifacts?.map((artifact) => {
+    const current = currentById.get(artifact.id)
+    return current?.versionId &&
+      current.versionId === artifact.versionId &&
+      current.artifactId === artifact.artifactId &&
+      current.isPublished !== undefined
+      ? { ...artifact, isPublished: current.isPublished }
+      : artifact
+  })
+}
+
 const withTransientSessionState = (
   session: PersistedChatSession,
   source: ChatSession
@@ -354,6 +385,9 @@ const withTransientSessionState = (
   const hydrated = hydrateSession(session)
   return {
     ...hydrated,
+    ...(hydrated.artifacts
+      ? { artifacts: retainArtifactPublication(hydrated.artifacts, source) }
+      : {}),
     messages: hydrated.messages.map((message) => ({
       ...message,
       sortIndex: sourceMessages.get(message.id)?.sortIndex
@@ -547,10 +581,10 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         const withoutPreviousArchive = { ...existing }
         delete withoutPreviousArchive.archivedAt
         const artifactsById = new Map(
-          [...(existing.artifacts ?? []), ...(session.artifacts ?? [])].map((artifact) => [
-            artifact.id,
-            artifact
-          ])
+          [
+            ...(existing.artifacts ?? []),
+            ...(retainArtifactPublication(session.artifacts, existing) ?? [])
+          ].map((artifact) => [artifact.id, artifact])
         )
         const projected: ChatSession = {
           ...withoutPreviousArchive,

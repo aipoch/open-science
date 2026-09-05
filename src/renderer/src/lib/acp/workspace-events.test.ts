@@ -3717,6 +3717,7 @@ describe('workspace runtime events', () => {
       artifactId: 'native-artifact-1',
       versionId: 'native-version-1',
       versionNumber: 1,
+      isPublished: false,
       path: '/Users/example/.open-science/managed/native-version-1/result.txt'
     })
     useSessionStore.getState().attachRunArtifacts({
@@ -3751,6 +3752,7 @@ describe('workspace runtime events', () => {
     const messageId = useSessionStore.getState().sessions[0].messages[1].id
     const finalizedArtifact = {
       ...nativePendingArtifact,
+      isPublished: true,
       messageId
     }
     const operationOrder: string[] = []
@@ -3781,7 +3783,30 @@ describe('workspace runtime events', () => {
     expect(operationOrder).toEqual(['save', 'reconcile'])
     expect(reconcilePendingArtifacts).toHaveBeenCalledOnce()
     expect(finalizeRunArtifacts).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+    const publishedSession = useSessionStore.getState().sessions[0]
+    expect(publishedSession.error).toBeUndefined()
+    expect(
+      publishedSession.artifacts?.find(({ id }) => id === nativePendingArtifact.id)
+    ).toMatchObject({ isPublished: true })
+    expect(publishedSession.messages[1].artifactIds).toContain('unrelated-native-version')
+    const durable = toPersistedSession(publishedSession)
+    expect(durable.artifacts?.every((artifact) => !('isPublished' in artifact))).toBe(true)
+    useSessionStore.getState().upsertPersistedSession(durable)
+    expect(
+      useSessionStore
+        .getState()
+        .sessions[0].artifacts?.find(({ id }) => id === nativePendingArtifact.id)
+    ).toMatchObject({ isPublished: true })
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...durable, updatedAt: durable.updatedAt + 1 }
+    })
+    expect(
+      useSessionStore
+        .getState()
+        .sessions[0].artifacts?.find(({ id }) => id === nativePendingArtifact.id)
+    ).toMatchObject({ isPublished: true })
   })
 
   it('does not clear an artifact error owned by another event', async () => {

@@ -1592,6 +1592,28 @@ describe('App startup routing', () => {
     )
   })
 
+  it('exposes missing data-root recovery while saved conversations are still hydrating', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = false
+    mocks.sessionPersistence.isLoading = true
+    mocks.sessionPersistence.isReady = false
+    mocks.getStatus.mockResolvedValue({
+      dataRoot: '/Volumes/Science/OpenScience',
+      dataRootMissing: true,
+      legacyDataMovePrompt: false,
+      defaultParent: '/Users/example'
+    })
+
+    await render()
+
+    expect(container.querySelector('[data-testid="missing-root"]')?.textContent).toBe(
+      '/Volumes/Science/OpenScience'
+    )
+    expect(
+      container.querySelector('[data-testid="session-persistence-startup-loading"]')
+    ).toBeNull()
+  })
+
   it('retains a notification target until recovery completes', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isHydrated = false

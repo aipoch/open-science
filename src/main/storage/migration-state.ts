@@ -29,6 +29,136 @@ let activeDataRootWriters = 0
 const writerDrainWaiters = new Set<() => void>()
 const dataRootWriteContext = new AsyncLocalStorage<boolean>()
 
+type DataRootWriteAvailability = 'available' | 'missing' | 'recovering' | 'accepted-empty'
+type DataRootStartupRecovery = () => Promise<void>
+type DataRootStartupRecoveryOptions = Readonly<{
+  reportFailure: (error: unknown) => void
+}>
+
+let dataRootWriteAvailability: DataRootWriteAvailability = 'available'
+let dataRootRecoveryInFlight: Promise<void> | undefined
+const deferredDataRootRecoveries: DataRootStartupRecovery[] = []
+const dataRootAvailabilityWaiters = new Set<() => void>()
+
+const releaseDataRootAvailabilityWaiters = (): void => {
+  for (const resolve of dataRootAvailabilityWaiters) resolve()
+  dataRootAvailabilityWaiters.clear()
+}
+
+// Initializes the process-local availability gate before startup recovery is composed. The explicit
+// configured-root check happens in the application root; an absent default root remains a normal fresh
+// install and individual recovery owners must still avoid creating it merely to scan for old work.
+export const initializeDataRootWriteAvailability = (missing: boolean): void => {
+  deferredDataRootRecoveries.length = 0
+  dataRootRecoveryInFlight = undefined
+  dataRootWriteAvailability = missing ? 'missing' : 'available'
+  if (!missing) releaseDataRootAvailabilityWaiters()
+}
+
+// Preserves startup ordering when the root is present. When it is missing, remember the operation so a
+// reconnect can reconcile durable work before ordinary writers are released into the restored tree.
+export const runDataRootStartupRecovery = async (
+  recovery: DataRootStartupRecovery,
+  options?: DataRootStartupRecoveryOptions
+): Promise<void> => {
+  if (dataRootWriteAvailability === 'accepted-empty') return
+  const observedRecovery = async (): Promise<void> => {
+    try {
+      await recovery()
+    } catch (error) {
+      options?.reportFailure(error)
+      throw error
+    }
+  }
+  if (dataRootWriteAvailability === 'missing' || dataRootWriteAvailability === 'recovering') {
+    deferredDataRootRecoveries.push(observedRecovery)
+    return
+  }
+  try {
+    await observedRecovery()
+  } catch (error) {
+    // Present-root recovery has historically been best-effort so one damaged recovery item cannot
+    // prevent the app from opening. A deferred reconnect is different: observedRecovery remains in
+    // the queue and rejects to keep the missing-root gate closed until a later retry succeeds.
+    if (!options) throw error
+  }
+}
+
+const recoverReconnectedDataRoot = (): Promise<void> => {
+  if (dataRootRecoveryInFlight) return dataRootRecoveryInFlight
+
+  dataRootWriteAvailability = 'recovering'
+  const recovery = (async () => {
+    while (deferredDataRootRecoveries.length > 0) {
+      const next = deferredDataRootRecoveries.shift()
+      if (!next) continue
+      try {
+        // The gate itself owns exclusive startup recovery while ordinary writers remain blocked.
+        // Mark the chain as protected so recovery code that composes withDataRootWrite does not wait
+        // on the same gate it is responsible for reopening.
+        await dataRootWriteContext.run(true, next)
+      } catch (error) {
+        deferredDataRootRecoveries.unshift(next)
+        throw error
+      }
+    }
+    dataRootWriteAvailability = 'available'
+    releaseDataRootAvailabilityWaiters()
+  })()
+    .catch((error) => {
+      dataRootWriteAvailability = 'missing'
+      throw error
+    })
+    .finally(() => {
+      if (dataRootRecoveryInFlight === recovery) dataRootRecoveryInFlight = undefined
+    })
+
+  dataRootRecoveryInFlight = recovery
+  return recovery
+}
+
+// Reconciles the latest stat result with the process gate. An explicit empty-root acceptance suppresses
+// repeat prompts for this process; if the path later appears, it rejoins the ordinary available state.
+export const reconcileDataRootWriteAvailability = async (missing: boolean): Promise<boolean> => {
+  if (missing) {
+    if (dataRootWriteAvailability === 'accepted-empty') return false
+    if (dataRootWriteAvailability === 'available') dataRootWriteAvailability = 'missing'
+    return true
+  }
+
+  if (dataRootWriteAvailability === 'missing' || dataRootWriteAvailability === 'recovering') {
+    await recoverReconnectedDataRoot()
+  } else if (dataRootWriteAvailability === 'accepted-empty') {
+    dataRootWriteAvailability = 'available'
+  }
+  return false
+}
+
+// This is the main-process half of the existing “Continue with an empty folder” choice. Recovery work
+// that depended on the unavailable tree is deliberately not replayed into the newly accepted empty tree.
+export const acceptMissingDataRoot = async (): Promise<void> => {
+  if (dataRootWriteAvailability === 'recovering') await dataRootRecoveryInFlight
+  if (dataRootWriteAvailability !== 'missing') return
+  deferredDataRootRecoveries.length = 0
+  dataRootWriteAvailability = 'accepted-empty'
+  releaseDataRootAvailabilityWaiters()
+}
+
+const assertDataRootWriteAvailable = (): void => {
+  if (dataRootWriteAvailability === 'missing' || dataRootWriteAvailability === 'recovering') {
+    throw new Error(
+      'The configured data folder is unavailable. Reconnect it, choose another location, or continue with an empty folder.'
+    )
+  }
+}
+
+const waitForDataRootWriteAvailability = (): Promise<void> | undefined => {
+  if (dataRootWriteAvailability === 'available' || dataRootWriteAvailability === 'accepted-empty') {
+    return undefined
+  }
+  return new Promise((resolve) => dataRootAvailabilityWaiters.add(resolve))
+}
+
 // Reserves the lifecycle quit guard before the command's first asynchronous validation/preparation
 // boundary. This intentionally leaves `pending` false so ordinary writes remain available until the
 // copy is ready to start. The returned handle must be finished when the owning command settles.
@@ -135,6 +265,7 @@ export const assertNoMigrationPending = (): void => {
 // so migration cannot begin in a gap between individual IPC requests. Release is idempotent.
 export const acquireDataRootWriter = (): (() => void) => {
   assertNoMigrationPending()
+  assertDataRootWriteAvailable()
   activeDataRootWriters += 1
 
   let released = false
@@ -155,6 +286,8 @@ export const withDataRootWrite = async <Result>(write: () => Promise<Result>): P
   // already waits for the outer lease, and rejecting the inner call after `pending` rises would abort
   // the very in-flight operation that the drain protocol is designed to let finish.
   if (dataRootWriteContext.getStore()) return write()
+  const availability = waitForDataRootWriteAvailability()
+  if (availability) await availability
   const release = acquireDataRootWriter()
   try {
     return await dataRootWriteContext.run(true, write)

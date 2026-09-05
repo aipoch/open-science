@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { cn } from '@/lib/utils'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../shared/web-caller-location'
 
 type DataRootMissingDialogProps = {
   open: boolean
@@ -37,8 +38,11 @@ const DataRootMissingDialog = ({
   const [isRetrying, setIsRetrying] = useState(false)
   const [stillMissing, setStillMissing] = useState(false)
   const [isChoosing, setIsChoosing] = useState(false)
+  const [isAcceptingEmpty, setIsAcceptingEmpty] = useState(false)
   const [operationError, setOperationError] = useState<string | undefined>(undefined)
   const dialogDataRoot = useRetainedDialogValue(open ? dataRoot : undefined) ?? dataRoot
+  const isRemoteWebSurface =
+    document.documentElement.getAttribute(WEB_CALLER_LOCATION_ATTRIBUTE) === 'remote'
 
   const handleRetry = async (): Promise<void> => {
     setIsRetrying(true)
@@ -89,6 +93,24 @@ const DataRootMissingDialog = ({
     }
   }
 
+  const handleContinueWithEmpty = async (): Promise<void> => {
+    setIsAcceptingEmpty(true)
+    setOperationError(undefined)
+    try {
+      // Older protocol-v1 Main processes predate the explicit write gate and do not expose this
+      // RPC. Preserve their original renderer-only resolution path while requiring acceptance on
+      // every Main version that advertises the command.
+      if (typeof window.api.storage.acceptMissingDataRoot === 'function') {
+        await window.api.storage.acceptMissingDataRoot()
+      }
+      onResolved()
+    } catch {
+      setOperationError(t('Could not continue with an empty folder. Try again.'))
+    } finally {
+      setIsAcceptingEmpty(false)
+    }
+  }
+
   return (
     <AlertDialog.Root open={open}>
       <AlertDialog.Portal>
@@ -113,9 +135,11 @@ const DataRootMissingDialog = ({
 
             {stillMissing ? (
               <p className="mt-3 text-xs text-destructive" role="alert">
-                {t(
-                  'Still not found. Reconnect the drive and try again, or choose another location.'
-                )}
+                {isRemoteWebSurface
+                  ? t('Still not found. Reconnect the drive and try again.')
+                  : t(
+                      'Still not found. Reconnect the drive and try again, or choose another location.'
+                    )}
               </p>
             ) : null}
 
@@ -129,35 +153,43 @@ const DataRootMissingDialog = ({
           <div className={cn(dialogFooterClassName, 'flex-col items-stretch')}>
             <Button
               type="button"
-              disabled={isRetrying || isChoosing}
+              disabled={isRetrying || isChoosing || isAcceptingEmpty}
               onClick={() => void handleRetry()}
             >
               <RefreshCw aria-hidden="true" />
               {isRetrying ? t('Checking…') : t('Reconnect & retry')}
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={isRetrying || isChoosing}
-              onClick={() => void handleChooseAnotherLocation()}
-            >
-              <FolderInput aria-hidden="true" />
-              {isChoosing ? t('Switching…') : t('Choose another location')}
-            </Button>
-            <AlertDialog.Cancel asChild>
+            {!isRemoteWebSurface ? (
               <Button
                 type="button"
-                variant="ghost"
-                disabled={isRetrying || isChoosing}
-                onClick={onResolved}
+                variant="outline"
+                disabled={isRetrying || isChoosing || isAcceptingEmpty}
+                onClick={() => void handleChooseAnotherLocation()}
               >
-                {t('Continue with an empty folder')}
+                <FolderInput aria-hidden="true" />
+                {isChoosing ? t('Switching…') : t('Choose another location')}
               </Button>
-            </AlertDialog.Cancel>
+            ) : null}
+            {!isRemoteWebSurface ? (
+              <AlertDialog.Cancel asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={isRetrying || isChoosing || isAcceptingEmpty}
+                  onClick={() => void handleContinueWithEmpty()}
+                >
+                  {t('Continue with an empty folder')}
+                </Button>
+              </AlertDialog.Cancel>
+            ) : null}
             <p className="text-xs text-muted-foreground">
-              {t(
-                "Open Science will recreate the folder as you use it. Files from the old location won't be available until it's reconnected."
-              )}
+              {isRemoteWebSurface
+                ? t(
+                    'To choose another location or continue with an empty folder, use Open Science on the home computer.'
+                  )
+                : t(
+                    "Open Science will recreate the folder as you use it. Files from the old location won't be available until it's reconnected."
+                  )}
             </p>
           </div>
         </AlertDialog.Content>

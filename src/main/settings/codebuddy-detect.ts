@@ -22,14 +22,19 @@ const binaryNames = (platform: NodeJS.Platform): string[] => {
 }
 
 export const detectCodeBuddy = async (
-  deps: CodeBuddyDetectDeps = createDefaultDetectDeps()
+  deps: CodeBuddyDetectDeps = createDefaultDetectDeps(),
+  signal?: AbortSignal
 ): Promise<CodeBuddyDetectResult | undefined> => {
+  signal?.throwIfAborted()
   const pathApi = deps.platform === 'win32' ? path.win32 : path.posix
-  for (const dir of await collectCandidateDirs(deps)) {
+  for (const dir of await collectCandidateDirs(deps, signal)) {
     for (const name of binaryNames(deps.platform)) {
       const candidate = pathApi.join(dir, name)
-      if (!(await deps.isExecutable(candidate))) continue
-      const version = await deps.getVersion(candidate)
+      const executable = await deps.isExecutable(candidate)
+      signal?.throwIfAborted()
+      if (!executable) continue
+      const version = await deps.getVersion(candidate, signal)
+      signal?.throwIfAborted()
       if (isSupportedCodeBuddyVersion(version)) return { resolvedPath: candidate, version }
     }
   }

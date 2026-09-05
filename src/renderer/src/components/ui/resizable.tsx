@@ -34,6 +34,9 @@ function ResizableHandle({
 }): React.JSX.Element {
   return (
     <Separator
+      // The library caches keyboard panel associations at registration, excluding disabled edges.
+      // Re-register when enabled so an initially collapsed panel supports keyboard resizing.
+      key={props.disabled ? 'disabled' : 'enabled'}
       data-slot="resizable-handle"
       className={cn(
         // Wide after-hit area makes CSS :hover match the draggable edge; default tick is thin and centered.

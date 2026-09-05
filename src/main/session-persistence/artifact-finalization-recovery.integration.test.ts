@@ -90,6 +90,7 @@ describe('artifact finalization startup recovery', () => {
     expect(finalized).toEqual([
       expect.objectContaining({
         id: version.versionId,
+        isPublished: true,
         artifactId: version.artifactId,
         versionId: version.versionId,
         projectId: PROJECT_ID,

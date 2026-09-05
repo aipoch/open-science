@@ -355,10 +355,13 @@ import type {
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import {
+  initializeDataRootWriteAvailability,
   isMigrationInProgress,
   isMigrationPending,
+  runDataRootStartupRecovery,
   withDataRootWrite
 } from './storage/migration-state'
+import { isDataRootMissing } from './storage/path-presence'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import { DataRootCleanupJournal } from './storage/data-root-cleanup'
 import {
@@ -457,6 +460,8 @@ export type ApplicationRuntimeInterfaces = {
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   hasActiveReviewerWork: () => boolean
+  getActiveSettingsInstallId: () => string | undefined
+  holdSettingsInstallAdmission: () => () => void
   prepareForQuit: () => Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
   abortQuitPreparation: () => void
 }
@@ -622,8 +627,8 @@ const createApplicationModules = async (
       dispose: () => capability.dispose()
     }
   })
-  const settingsService = await modules.add(undefined, () => ({
-    capability: new SettingsService({
+  const settingsService = await modules.add(undefined, () => {
+    const capability = new SettingsService({
       repository: settingsRepository,
       skillRuntimeMcpEntryPath: mainEntryPath,
       openAlexFetch: netFetchStandard,
@@ -647,7 +652,14 @@ const createApplicationModules = async (
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
-  }))
+    return {
+      name: 'settings-service',
+      capability,
+      rollback: () => capability.dispose(),
+      dispose: () => capability.dispose(),
+      disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
+    }
+  })
   settingsServiceRef.current = settingsService
   const settingsSnapshotCommits = new SettingsSnapshotCommitOwner(
     settingsService,
@@ -670,26 +682,33 @@ const createApplicationModules = async (
   // Prime the data-root cache from settings before any data repository is constructed below. A change
   // to this value only takes effect after a restart, so reading it once here is sufficient.
   initDataRoot(storedSettings.dataRoot)
+  const configuredDataRootMissing =
+    Boolean(storedSettings.dataRoot?.trim()) && (await isDataRootMissing(resolveDataRoot()))
+  initializeDataRootWriteAvailability(configuredDataRootMissing)
   const dataRootCleanupJournal = new DataRootCleanupJournal(resolveConfigRoot())
-  try {
-    const cleanup = await dataRootCleanupJournal.recover(
-      resolveDataRoot(),
-      deleteSources,
-      (sourceRoot) => {
-        const runtimeRoot = join(sourceRoot, 'runtime')
-        const workloadRemoved = removeNotebookWorkloadCache(runtimeRoot)
-        const micromambaRemoved = removeMicromambaCacheForRoot(runtimeRoot)
-        return workloadRemoved && micromambaRemoved
+  await runDataRootStartupRecovery(
+    async () => {
+      const cleanup = await dataRootCleanupJournal.recover(
+        resolveDataRoot(),
+        deleteSources,
+        (sourceRoot) => {
+          const runtimeRoot = join(sourceRoot, 'runtime')
+          const workloadRemoved = removeNotebookWorkloadCache(runtimeRoot)
+          const micromambaRemoved = removeMicromambaCacheForRoot(runtimeRoot)
+          return workloadRemoved && micromambaRemoved
+        }
+      )
+      if (cleanup.pending) {
+        storageLog.warn('old data root cleanup remains pending', {
+          cleanupFailureCount: cleanup.failureCount
+        })
       }
-    )
-    if (cleanup.pending) {
-      storageLog.warn('old data root cleanup remains pending', {
-        cleanupFailureCount: cleanup.failureCount
-      })
+    },
+    {
+      reportFailure: (error) =>
+        storageLog.warn('old data root cleanup recovery failed', diagnosticErrorFields(error))
     }
-  } catch (error) {
-    storageLog.warn('old data root cleanup recovery failed', diagnosticErrorFields(error))
-  }
+  )
   const notificationInbox = createNotificationInboxController({
     headless,
     repository: new NotificationInboxDbRepository(() => getProjectDbClient(resolveConfigRoot())),
@@ -708,16 +727,16 @@ const createApplicationModules = async (
   // Constructed once here (rather than left to each register*IpcHandlers' own default) so the
   // one-time legacy-path normalization pass below can share the exact instances the IPC surface uses.
   const uploadRepository = createDefaultUploadRepository()
-  try {
-    await uploadRepository.recoverStagingUploads()
-  } catch (error) {
-    // Ready bytes remain fail-closed; keep startup available so Files can surface unaffected rows and
-    // the next launch can retry any recoverable staging Version.
-    storageLog.error(
-      'staging upload recovery incomplete; will retry next launch',
-      diagnosticErrorFields(error)
-    )
-  }
+  await runDataRootStartupRecovery(() => uploadRepository.recoverStagingUploads(), {
+    reportFailure: (error) => {
+      // Ready bytes remain fail-closed; keep startup available so Files can surface unaffected rows and
+      // the next launch can retry any recoverable staging Version.
+      storageLog.error(
+        'staging upload recovery incomplete; will retry next launch',
+        diagnosticErrorFields(error)
+      )
+    }
+  })
   const managedFileVersionService = new ManagedFileVersionService({
     storageRoot: resolveDataRoot(),
     getClient: () => getProjectDbClient(resolveConfigRoot())
@@ -784,25 +803,29 @@ const createApplicationModules = async (
   // startup on failure: an error is logged and the marker stays unset, so the pass simply retries on
   // the next launch.
   if (!storedSettings.pathsNormalizedAt) {
-    const normalizationOperation = startDiagnosticOperation(storageLog, {
-      operation: 'legacy-data-root-normalization',
-      fields: { mode: 'legacy-normalize' }
-    })
-    normalizationOperation.phase('rewrite-paths')
-    try {
-      await normalizeLegacyDataPaths({
-        sessionRepository,
-        sessionUploads: uploadRepository,
-        previewStateRepository,
-        projectRepository,
-        dataRoot: resolveDataRoot()
-      })
-      normalizationOperation.phase('persist-marker')
-      await settingsService.markPathsNormalized()
-      normalizationOperation.complete()
-    } catch (error) {
-      normalizationOperation.fail(error)
-    }
+    let normalizationOperation: DiagnosticOperation | undefined
+    await runDataRootStartupRecovery(
+      async () => {
+        normalizationOperation = startDiagnosticOperation(storageLog, {
+          operation: 'legacy-data-root-normalization',
+          fields: { mode: 'legacy-normalize' }
+        })
+        normalizationOperation.phase('rewrite-paths')
+        await normalizeLegacyDataPaths({
+          sessionRepository,
+          sessionUploads: uploadRepository,
+          previewStateRepository,
+          projectRepository,
+          dataRoot: resolveDataRoot()
+        })
+        normalizationOperation.phase('persist-marker')
+        await settingsService.markPathsNormalized()
+        normalizationOperation.complete()
+      },
+      {
+        reportFailure: (error) => normalizationOperation?.fail(error)
+      }
+    )
   }
 
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
@@ -1938,15 +1961,22 @@ const createApplicationModules = async (
   sessionEnabledComputeHostsOwnerRef.current = sessionEnabledComputeHostsOwner
   sessionCacheOwnerRef.current = sessionCacheOwner
   computeJobDeletionRef.current = withSessionCacheDeletion(jobDeletionOwner, sessionCacheOwner)
-  await projectDeletionCoordinator.restorePendingDeletionBarriers()
-  try {
-    await withDataRootWrite(() => managedFileVersionService.recoverPendingWrites())
-  } catch (error) {
-    storageLog.error(
-      'managed file version recovery incomplete; will retry next launch',
-      diagnosticErrorFields(error)
-    )
-  }
+  await runDataRootStartupRecovery(() =>
+    projectDeletionCoordinator.restorePendingDeletionBarriers()
+  )
+  await runDataRootStartupRecovery(
+    async () => {
+      await withDataRootWrite(() => managedFileVersionService.recoverPendingWrites())
+    },
+    {
+      reportFailure: (error) => {
+        storageLog.error(
+          'managed file version recovery incomplete; will retry next launch',
+          diagnosticErrorFields(error)
+        )
+      }
+    }
+  )
   void managedFileVersionService
     .auditActiveVersionIntegrity()
     .then((integrityErrors) => {
@@ -3151,6 +3181,7 @@ const createApplicationModules = async (
       notebook: notebookService
     }).map((session) => session.kind)
     if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
+    if (settingsService.hasActiveInstall()) blockers.push('settings-install')
     return blockers
   }
   const durableDataRootHandoffGate = (
@@ -3179,20 +3210,28 @@ const createApplicationModules = async (
   // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
+  let releaseSettingsInstallAdmission: (() => void) | undefined
   const abortUpdateHandoff = (): void => {
+    const releaseAdmission = releaseSettingsInstallAdmission
+    releaseSettingsInstallAdmission = undefined
+    releaseAdmission?.()
     try {
       sideChatRuntime.resumeAfterHandoff()
     } finally {
       notifyRendererDurabilityAborted()
     }
   }
+  const updateInstallGate = createActiveResearchSafeInstallGate(
+    detectResearchBlockers,
+    durableBackendHandoffGate,
+    () => isMigrationInProgress() || isMigrationPending()
+  )
   const updateStrategy = createUpdateStrategy(process.platform, {
     translate,
-    installGate: createActiveResearchSafeInstallGate(
-      detectResearchBlockers,
-      durableBackendHandoffGate,
-      () => isMigrationInProgress() || isMigrationPending()
-    ),
+    installGate: async () => {
+      releaseSettingsInstallAdmission = settingsService.holdInstallAdmission()
+      return updateInstallGate()
+    },
     releaseInstallHandoff: abortUpdateHandoff
   })
   const updateCommandOwner = createUpdateCommandOwner(updateStrategy)
@@ -3629,9 +3668,10 @@ const createApplicationModules = async (
   // create, on-demand materialize, install) can await it and never race recovery's cleanup/delete.
   // Fire-and-forget so a slow/failed recovery never blocks IPC registration; the barrier itself is what
   // actually orders the prefix work.
-  void notebookService
-    .recoverInterruptedOperations()
-    .catch((error) => notebookStartupLog.error('operation recovery failed', errorLogFields(error)))
+  void runDataRootStartupRecovery(() => notebookService.recoverInterruptedOperations(), {
+    reportFailure: (error) =>
+      notebookStartupLog.error('operation recovery failed', errorLogFields(error))
+  })
   const waitForRecovery = (): Promise<void> => notebookService.ensureRecovered()
   // Lets UI provision/repair refuse when recovery left the default env's prefix blocked (an
   // unknown-liveness orphan may still be writing it) — throws with an actionable message.
@@ -3676,6 +3716,12 @@ const createApplicationModules = async (
   composition.phase('notebook-provisioner')
 
   // Registered after the acp/notebook handlers exist: migration needs to interrupt both runtimes.
+  let releaseDataRootInstallAdmission: (() => void) | undefined
+  const abortDataRootInstallAdmission = (): void => {
+    const releaseAdmission = releaseDataRootInstallAdmission
+    releaseDataRootInstallAdmission = undefined
+    releaseAdmission?.()
+  }
   const storageCommandOwner = createStorageCommandOwner({
     runtime,
     notebook: notebookService,
@@ -3687,6 +3733,7 @@ const createApplicationModules = async (
     micromambaRunner,
     acknowledgeWebRendererFlush: webSessionPersistenceFlush.acknowledge,
     notifyDataRootHandoffAborted: () => {
+      abortDataRootInstallAdmission()
       try {
         sideChatRuntime.resumeAfterHandoff()
       } finally {
@@ -3699,12 +3746,16 @@ const createApplicationModules = async (
     },
     prepareDataRootHandoff: async (target, confirmedInterruption) => {
       let prepared = false
+      releaseDataRootInstallAdmission ??= settingsService.holdInstallAdmission()
       try {
         const readiness = await durableDataRootHandoffGate(target, confirmedInterruption)
         prepared = readiness.completed && readiness.reaped
         return prepared
       } finally {
-        if (!prepared) sideChatRuntime.resumeAfterHandoff()
+        if (!prepared) {
+          abortDataRootInstallAdmission()
+          sideChatRuntime.resumeAfterHandoff()
+        }
       }
     },
     cleanupJournal: dataRootCleanupJournal
@@ -4205,6 +4256,8 @@ const createApplicationModules = async (
         notebook: notebookService
       }),
     hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
+    getActiveSettingsInstallId: () => settingsService.getActiveInstallId(),
+    holdSettingsInstallAdmission: () => settingsService.holdInstallAdmission(),
     prepareForQuit: () => runtime.prepareForQuit(),
     abortQuitPreparation: () => runtime.abortQuitPreparation(),
     electronAdapters: {

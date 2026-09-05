@@ -10,7 +10,6 @@ import {
 import {
   sanitizeMessageImages,
   type MessagePdfContextSnapshot,
-  type PersistedArtifact,
   type PersistedUploadedAttachment
 } from '../../../shared/session-persistence'
 import {
@@ -19,7 +18,7 @@ import {
 } from './session-store-message-graph-helpers'
 import type { AppendMessageResult } from './session-store-message-graph-helpers'
 import { createSortIndex } from './session-store-message-graph-owner'
-import type { ChatMessage, ChatSession } from './session-store-persistence-owner'
+import type { ChatArtifact, ChatMessage, ChatSession } from './session-store-persistence-owner'
 
 // A Session can be projected by more than one renderer. Derive Agent identity from runtime-owned
 // stream identity so both projections choose the same Artifact owner instead of local sequence ids.
@@ -89,17 +88,15 @@ type SessionBatchProjectionResult = {
   shouldCommit: boolean
 }
 
-const createPersistedArtifact = (
-  artifact: ArtifactFile,
-  fallbackCreatedAt?: number
-): PersistedArtifact => {
+const createChatArtifact = (artifact: ArtifactFile, fallbackCreatedAt?: number): ChatArtifact => {
   const createdAt =
     artifactCreatedAtMs(artifact.createdAt) ??
     (fallbackCreatedAt !== undefined && Number.isFinite(fallbackCreatedAt) && fallbackCreatedAt >= 0
       ? fallbackCreatedAt
       : undefined)
-  const persisted: PersistedArtifact = {
+  const persisted: ChatArtifact = {
     id: artifact.id,
+    ...(artifact.isPublished === undefined ? {} : { isPublished: artifact.isPublished }),
     kind: 'managed-file',
     path: artifact.path,
     fileUrl: artifact.fileUrl,
@@ -138,9 +135,9 @@ const arePersistedUploadsEqual = (
   )
 }
 
-const arePersistedArtifactsEqual = (
-  left: PersistedArtifact[] | undefined,
-  right: PersistedArtifact[]
+const areChatArtifactsEqual = (
+  left: ChatArtifact[] | undefined,
+  right: ChatArtifact[]
 ): boolean => {
   const current = left ?? []
   return (
@@ -157,7 +154,8 @@ const arePersistedArtifactsEqual = (
         item.size === next.size &&
         item.createdAt === next.createdAt &&
         item.mtimeMs === next.mtimeMs &&
-        item.sha256 === next.sha256
+        item.sha256 === next.sha256 &&
+        item.isPublished === next.isPublished
       )
     })
   )
@@ -167,10 +165,10 @@ const areStringArraysEqual = (left: string[], right: string[]): boolean =>
   left.length === right.length && left.every((item, index) => item === right[index])
 
 const upsertArtifacts = (
-  existingArtifacts: PersistedArtifact[] | undefined,
-  incomingArtifacts: PersistedArtifact[]
-): PersistedArtifact[] => {
-  const artifactsById = new Map<string, PersistedArtifact>()
+  existingArtifacts: ChatArtifact[] | undefined,
+  incomingArtifacts: ChatArtifact[]
+): ChatArtifact[] => {
+  const artifactsById = new Map<string, ChatArtifact>()
   for (const artifact of existingArtifacts ?? []) artifactsById.set(artifact.id, artifact)
   for (const artifact of incomingArtifacts) artifactsById.set(artifact.id, artifact)
   return Array.from(artifactsById.values())
@@ -373,9 +371,7 @@ export const projectRunArtifacts = (
   input: AttachRunArtifactsInput
 ): SessionProjectionResult => {
   const now = Date.now()
-  const incomingArtifacts = input.artifacts.map((artifact) =>
-    createPersistedArtifact(artifact, now)
-  )
+  const incomingArtifacts = input.artifacts.map((artifact) => createChatArtifact(artifact, now))
   const incomingArtifactIds = incomingArtifacts.map((artifact) => artifact.id)
   const ownsArtifactPrompt = (message: ChatMessage): boolean =>
     !input.promptMessageId || message.responseToMessageId === input.promptMessageId
@@ -529,7 +525,7 @@ export const projectMessageArtifacts = (
   const artifactOwner = message ?? graphMessage
   const ownerTimestamp = artifactOwner?.completedAt ?? artifactOwner?.createdAt
   const incomingArtifacts = input.artifacts.map((artifact) =>
-    createPersistedArtifact(artifact, ownerTimestamp)
+    createChatArtifact(artifact, ownerTimestamp)
   )
   const preservedArtifactIds = (artifactOwner?.artifactIds ?? []).filter((artifactId) =>
     input.preserveArtifactIds?.includes(artifactId)
@@ -575,7 +571,7 @@ export const projectMessageArtifacts = (
   )
   const nextArtifacts = upsertArtifacts(preservedArtifacts, incomingArtifacts)
   if (
-    arePersistedArtifactsEqual(session.artifacts, nextArtifacts) &&
+    areChatArtifactsEqual(session.artifacts, nextArtifacts) &&
     areStringArraysEqual(message.artifactIds ?? [], incomingArtifactIds) &&
     areStringArraysEqual(graphMessage?.artifactIds ?? [], incomingArtifactIds)
   ) {

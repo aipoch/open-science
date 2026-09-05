@@ -4,13 +4,20 @@ import type {
   ExportNotebookAllResult,
   ExportNotebookResult,
   NotebookRunSummary,
-  NotebookSessionReference,
-  NotebookSessionState
+  NotebookSessionReference
 } from '../../shared/notebook'
-import { beginMigration, clearMigrationPending } from '../storage/migration-state'
+import {
+  acceptMissingDataRoot,
+  beginMigration,
+  clearMigrationPending,
+  initializeDataRootWriteAvailability
+} from '../storage/migration-state'
 import { createNotebookCommandWorkflows, type NotebookCommandRuntime } from './notebook-workflows'
 
-afterEach(() => clearMigrationPending())
+afterEach(() => {
+  clearMigrationPending()
+  initializeDataRootWriteAvailability(false)
+})
 
 const unavailable = (operation: string): (() => Promise<never>) =>
   vi.fn(() => Promise.reject(new Error(`Unexpected ${operation} call`)))
@@ -53,6 +60,32 @@ const runSummary = (runId: string): NotebookRunSummary => ({
 })
 
 describe('Notebook command workflows', () => {
+  it('waits for missing-root acceptance before state inspection can create a session', async () => {
+    const state = vi.fn<NotebookCommandRuntime['state']>().mockResolvedValue({} as never)
+    const inspectNamespace = vi
+      .fn<NotebookCommandRuntime['inspectNamespace']>()
+      .mockResolvedValue({ status: 'unavailable', reason: 'kernel-not-live' })
+    const workflows = createNotebookCommandWorkflows(createRuntime({ state, inspectNamespace }))
+    const session = { sessionId: 'session-1', workspaceCwd: '/workspace' }
+    initializeDataRootWriteAvailability(true)
+
+    const stateResult = workflows.state(session)
+    const namespaceResult = workflows.inspectNamespace({
+      ...session,
+      language: 'python',
+      environment: 'default-python'
+    })
+    await Promise.resolve()
+
+    expect(state).not.toHaveBeenCalled()
+    expect(inspectNamespace).not.toHaveBeenCalled()
+
+    await acceptMissingDataRoot()
+    await Promise.all([stateResult, namespaceResult])
+    expect(state).toHaveBeenCalledOnce()
+    expect(inspectNamespace).toHaveBeenCalledOnce()
+  })
+
   it('removes application-owned turn context from renderer execution requests', async () => {
     const runtime = createRuntime({
       inspectNamespace: vi
@@ -121,6 +154,8 @@ describe('Notebook command workflows', () => {
 
   it('blocks every state-changing command while a data-root migration is pending', async () => {
     const runtime = createRuntime({
+      state: vi.fn(),
+      inspectNamespace: vi.fn(),
       beginCodeCell: vi.fn(),
       appendCodeCell: vi.fn(),
       finishCodeCell: vi.fn(),
@@ -134,6 +169,12 @@ describe('Notebook command workflows', () => {
     beginMigration()
 
     const commands = [
+      workflows.state(session),
+      workflows.inspectNamespace({
+        ...session,
+        language: 'python',
+        environment: 'default-python'
+      }),
       workflows.beginCodeCell(session),
       workflows.appendCodeCell({
         ...session,
@@ -154,23 +195,7 @@ describe('Notebook command workflows', () => {
     for (const operation of Object.values(runtime)) expect(operation).not.toHaveBeenCalled()
   })
 
-  it('keeps read-only state, reference, and export commands available during migration', async () => {
-    const state: NotebookSessionState = {
-      id: 'session-1',
-      sessionId: 'session-1',
-      cwd: '/workspace',
-      notebookSessionRoot: '/data/notebooks/session-1',
-      dataRoot: '/data',
-      runtimeRoot: '/runtime',
-      kernelStatus: 'idle',
-      runJsonPath: '/data/notebooks/session-1/run.json',
-      cells: [],
-      runCount: 0,
-      latestRunEnvironments: {},
-      runs: [],
-      recentRuns: [],
-      environments: []
-    }
+  it('keeps genuinely read-only reference and export commands available during migration', async () => {
     const reference: NotebookSessionReference = {
       sessionId: 'session-1',
       projectId: 'Project',
@@ -193,7 +218,6 @@ describe('Notebook command workflows', () => {
       ]
     }
     const runtime = createRuntime({
-      state: vi.fn<NotebookCommandRuntime['state']>().mockResolvedValue(state),
       getSessionReference: vi
         .fn<NotebookCommandRuntime['getSessionReference']>()
         .mockResolvedValue(reference),
@@ -204,7 +228,6 @@ describe('Notebook command workflows', () => {
     const session = { sessionId: 'session-1', workspaceCwd: '/workspace' }
     beginMigration()
 
-    await expect(workflows.state(session)).resolves.toBe(state)
     await expect(workflows.reference(session)).resolves.toBe(reference)
     await expect(workflows.exportIpynb({ ...session, kernel: 'python' })).resolves.toBe(
       singleExport

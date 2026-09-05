@@ -51,9 +51,11 @@ const { createStorageCommandOwner } = await import('./command-owner')
 const { registerStorageIpcHandlers } = await import('./ipc')
 const {
   clearMigrationPending,
+  initializeDataRootWriteAvailability,
   installMigrationQuitGuard,
   isMigrationInProgress,
   isMigrationPending,
+  runDataRootStartupRecovery,
   waitForDataRootWriters,
   withDataRootWrite
 } = await import('./migration-state')
@@ -175,6 +177,7 @@ afterEach(async () => {
   initDataRoot(undefined)
   // migration-state is a module singleton; reset it so a pending write-gate can't leak between tests.
   clearMigrationPending()
+  initializeDataRootWriteAvailability(false)
   clearApplicationShutdownTrigger()
   await rm(currentParent, { recursive: true, force: true })
   await rm(targetParent, { recursive: true, force: true })
@@ -356,6 +359,7 @@ describe('storage IPC handlers', () => {
     registerStorageIpcHandlers(fakeDeps())
 
     for (const channel of [
+      'storage:accept-missing-data-root',
       'storage:get-status',
       'storage:get-info',
       'storage:reveal-app-storage',
@@ -705,6 +709,92 @@ describe('storage IPC handlers', () => {
     const info = (await invoke('storage:get-info')) as { dataRootMissing: boolean }
 
     expect(info.dataRootMissing).toBe(true)
+  })
+
+  it('get-info drains deferred startup recovery before reporting a reconnected root available', async () => {
+    initDataRoot(target)
+    initializeDataRootWriteAvailability(true)
+    const recovery = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+    await runDataRootStartupRecovery(recovery)
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot: vi.fn().mockResolvedValue(undefined),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({ dataRoot: target })
+      }
+    })
+    registerStorageIpcHandlers(deps)
+    await mkdir(target)
+
+    const info = (await invoke('storage:get-info')) as { dataRootMissing: boolean }
+
+    expect(recovery).toHaveBeenCalledOnce()
+    expect(info.dataRootMissing).toBe(false)
+  })
+
+  it('get-info keeps recovery visible and writers blocked when reconnect recovery fails', async () => {
+    initDataRoot(target)
+    initializeDataRootWriteAvailability(true)
+    const recovery = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('reconnect recovery failed'))
+      .mockResolvedValue(undefined)
+    await runDataRootStartupRecovery(recovery)
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot: vi.fn().mockResolvedValue(undefined),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({ dataRoot: target })
+      }
+    })
+    registerStorageIpcHandlers(deps)
+    await mkdir(target)
+    let writeStarted = false
+    const write = withDataRootWrite(async () => {
+      writeStarted = true
+    })
+
+    const blockedInfo = (await invoke('storage:get-info')) as { dataRootMissing: boolean }
+
+    expect(blockedInfo.dataRootMissing).toBe(true)
+    expect(writeStarted).toBe(false)
+
+    const info = (await invoke('storage:get-info')) as { dataRootMissing: boolean }
+    await write
+
+    expect(recovery).toHaveBeenCalledTimes(2)
+    expect(info.dataRootMissing).toBe(false)
+    expect(writeStarted).toBe(true)
+  })
+
+  it('accept-missing-data-root releases writers without replaying unavailable-root recovery', async () => {
+    initDataRoot(target)
+    initializeDataRootWriteAvailability(true)
+    const recovery = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+    await runDataRootStartupRecovery(recovery)
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot: vi.fn().mockResolvedValue(undefined),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({ dataRoot: target })
+      }
+    })
+    registerStorageIpcHandlers(deps)
+    let writeStarted = false
+    const write = withDataRootWrite(async () => {
+      writeStarted = true
+    })
+    await Promise.resolve()
+
+    expect(writeStarted).toBe(false)
+    await invoke('storage:accept-missing-data-root')
+    await write
+    const status = (await invoke('storage:get-status')) as { dataRootMissing: boolean }
+
+    expect(recovery).not.toHaveBeenCalled()
+    expect(writeStarted).toBe(true)
+    expect(status.dataRootMissing).toBe(false)
+    expect(existsSync(target)).toBe(false)
   })
 
   it('detect-active maps agent, Side Chat, delegated, and notebook sources', async () => {

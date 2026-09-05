@@ -3142,7 +3142,9 @@ describe('startWebHttpServer', () => {
     const remoteBootstrapBody = (await remoteBootstrap.json()) as {
       rpcChannels: string[]
       restrictedRpcChannels: string[]
+      webCallerLocation: string
     }
+    expect(remoteBootstrapBody.webCallerLocation).toBe('remote')
     expect(remoteBootstrapBody.rpcChannels).toEqual(remoteAllowedChannels)
     expect(remoteBootstrapBody.restrictedRpcChannels).toEqual(remoteDeniedComputeChannels)
 
@@ -3164,7 +3166,9 @@ describe('startWebHttpServer', () => {
     const localBootstrapBody = (await localBootstrap.json()) as {
       rpcChannels: string[]
       restrictedRpcChannels: string[]
+      webCallerLocation: string
     }
+    expect(localBootstrapBody.webCallerLocation).toBe('local')
     expect(localBootstrapBody.rpcChannels).toEqual([
       ...acpChannels,
       ...permissionChannels,
@@ -3713,6 +3717,73 @@ describe('startWebHttpServer', () => {
     expect(limited.status).toBe(503)
     expect(await limited.json()).toMatchObject({ error: { code: 'idempotency_unavailable' } })
     expect(otherPrincipal.status).toBe(201)
+  })
+
+  it('keeps bootstrap available while Task API requests wait for journal restoration', async () => {
+    let releaseTasks: (() => void) | undefined
+    const taskReadiness = new Promise<void>((resolve) => {
+      releaseTasks = resolve
+    })
+    let markRunLookup: (() => void) | undefined
+    const runLookup = new Promise<void>((resolve) => {
+      markRunLookup = resolve
+    })
+    const getRun = vi.fn(() => {
+      markRunLookup?.()
+      return {
+        id: 'run-restored',
+        sessionId: 'session-restored',
+        projectId: 'project-restored',
+        cwd: '/workspace/research',
+        status: 'failed' as const,
+        startedAt: 1,
+        completedAt: 2,
+        artifacts: [],
+        preferredComputeHostIds: []
+      }
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      waitUntilTasksReady: () => taskReadiness,
+      tasks: {
+        runWithCallerContext,
+        subscribeProgress: () => () => undefined,
+        getRun
+      } as never,
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const headers = { authorization: 'Bearer test-token' }
+
+    const taskRequest = fetch(`${base}/api/v1/runs/run-restored`, { headers })
+    try {
+      await expect(
+        Promise.race([
+          runLookup.then(() => 'looked-up'),
+          new Promise<'waiting'>((resolve) => setTimeout(() => resolve('waiting'), 100))
+        ])
+      ).resolves.toBe('waiting')
+      expect(getRun).not.toHaveBeenCalled()
+
+      const bootstrap = await fetch(`${base}/api/bootstrap`, { headers })
+      expect(bootstrap.status).toBe(200)
+    } finally {
+      releaseTasks?.()
+    }
+
+    expect((await taskRequest).status).toBe(200)
+    expect(getRun).toHaveBeenCalledOnce()
   })
 
   it('serves the versioned task API without exposing internal RPC channels', async () => {

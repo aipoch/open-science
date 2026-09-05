@@ -279,11 +279,16 @@ describe('artifact provenance allocation and write identity', () => {
         ...context,
         messageId: assistant.id
       }
-      await repository.finalizeRun(request)
-      if (activate) await repository.activateFinalizedRun(request)
+      const finalized = await repository.finalizeRun(request)
+      expect(finalized.every((artifact) => artifact.isPublished === false)).toBe(true)
+      if (activate) {
+        const published = await repository.activateFinalizedRun(request)
+        expect(published.every((artifact) => artifact.isPublished === true)).toBe(true)
+      }
     }
 
     const first = await writeVersion('artifact-run-public', 'write-markdown-1', '# First\n')
+    expect(first.isPublished).toBe(false)
     await finishRun('artifact-run-public', [first.versionId], true)
 
     const hidden = await writeVersion('artifact-run-hidden', 'write-markdown-2', '# Hidden\n')
