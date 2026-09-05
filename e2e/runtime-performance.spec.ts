@@ -1,4 +1,8 @@
 import { expect, test as playwrightTest } from '@playwright/test'
+import {
+  RUNTIME_PERFORMANCE_PROMPT_TIMEOUT_MS,
+  runtimePerformanceTestTimeoutMs
+} from '../scripts/performance/runtime-profile-timeout'
 import { createProject, openProjectSession, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
 
@@ -27,7 +31,7 @@ const stressCycles = positiveIntegerEnvironment('OPEN_SCIENCE_PERF_STRESS_CYCLES
 test('records isolated startup, ACP, Notebook, and recovery resource trends', async ({
   app
 }, testInfo) => {
-  playwrightTest.setTimeout(180_000 + stressCycles * 15_000)
+  playwrightTest.setTimeout(runtimePerformanceTestTimeoutMs(stressCycles))
   await app.completeOnboarding()
   await app.configureFakeAgent()
   await app.beginResourceProfile({
@@ -50,16 +54,21 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
     await app.sampleResourceProfileNow()
 
     await app.markResourceProfilePhase('acp-turn')
-    await sendPrompt(page, ACP_PROMPT, ACP_REPLY, 60_000)
+    await sendPrompt(page, ACP_PROMPT, ACP_REPLY, RUNTIME_PERFORMANCE_PROMPT_TIMEOUT_MS)
     await app.sampleResourceProfileNow()
 
     for (let cycle = 0; cycle < stressCycles; cycle += 1) {
       await app.markResourceProfilePhase('session-stress')
-      await sendPrompt(page, `${STRESS_PROMPT} Cycle ${cycle + 1}.`, STRESS_REPLY, 60_000)
+      await sendPrompt(
+        page,
+        `${STRESS_PROMPT} Cycle ${cycle + 1}.`,
+        STRESS_REPLY,
+        RUNTIME_PERFORMANCE_PROMPT_TIMEOUT_MS
+      )
       await app.sampleResourceProfileNow()
 
       await app.markResourceProfilePhase('notebook-tool')
-      await sendPrompt(page, NOTEBOOK_PROMPT, NOTEBOOK_REPLY, 60_000)
+      await sendPrompt(page, NOTEBOOK_PROMPT, NOTEBOOK_REPLY, RUNTIME_PERFORMANCE_PROMPT_TIMEOUT_MS)
       await app.sampleResourceProfileNow()
     }
 
@@ -67,12 +76,20 @@ test('records isolated startup, ACP, Notebook, and recovery resource trends', as
     await page.waitForTimeout(phaseDurationMs)
     await openProjectSession(page, PROFILE_PROJECT_NAME, ACP_PROMPT)
     await expect(page.getByText(STRESS_REPLY, { exact: false }).last()).toBeVisible({
-      timeout: 60_000
+      timeout: RUNTIME_PERFORMANCE_PROMPT_TIMEOUT_MS
     })
     await app.sampleResourceProfileNow()
   } finally {
-    result = await app.finishResourceProfile()
+    result = await app.finishResourceProfile().catch((error: unknown) => {
+      // Fixture teardown may abort the profiler first when Playwright times the test out.
+      if (error instanceof Error && error.message === 'Runtime resource profiling is not active.') {
+        return undefined
+      }
+      throw error
+    })
   }
+
+  if (!result) throw new Error('Runtime resource profile was not recorded.')
 
   await testInfo.attach('runtime-resource-summary', {
     path: result.summaryMarkdownPath,

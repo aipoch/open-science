@@ -114,6 +114,9 @@ await run(
     'e2e/runtime-performance.spec.ts',
     '--workers=1',
     `--repeat-each=${options.repeat}`,
+    // Independent samples already come from --repeat-each. CI retries would replay a 10+ minute
+    // soak after a timeout and exceed the workflow budget without extra evidence.
+    '--retries=0',
     '--reporter=list'
   ],
   environment
