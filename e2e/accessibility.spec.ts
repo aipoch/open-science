@@ -386,36 +386,51 @@ test('supports the core project journey with keyboard input only', async ({ app 
     return
 
   const settingsTrigger = page.getByRole('button', { name: 'Settings', exact: true })
-  if (!(await focusWithTab(page, settingsTrigger))) return
-  await page.keyboard.press('Enter')
-  const settings = page.getByRole('dialog', { name: 'Settings' })
-  if (
-    !(await expectKeyboardOutcome(page, 'Open settings with Enter', async () => {
-      await expect(settings).toBeVisible()
-    }))
-  )
-    return
-  const compute = settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'Compute', exact: true })
-  if (!(await focusWithTab(page, compute))) return
-  await page.keyboard.press('Enter')
-  if (
-    !(await expectKeyboardOutcome(page, 'Open Compute settings with Enter', async () => {
-      await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
-    }))
-  )
-    return
-  await page.keyboard.press('Escape')
-  if (
-    !(await expectKeyboardOutcome(page, 'Close settings with Escape', async () => {
-      await expect(settings).toBeHidden()
-    }))
-  )
-    return
-  await expectKeyboardOutcome(page, 'Keyboard focus restoration', async () => {
-    await expect(settingsTrigger).toBeFocused()
-  })
+  for (const delayedFocus of [false, true]) {
+    if (!(await focusWithTab(page, settingsTrigger))) return
+    if (delayedFocus) {
+      // Focus-scope cleanup can restore focus on a later task after the dialog is hidden.
+      await settingsTrigger.evaluate((element) => {
+        const focus = element.focus.bind(element)
+        element.focus = (options) => {
+          element.focus = focus
+          window.setTimeout(() => focus(options), 1_000)
+        }
+      })
+    }
+    await page.keyboard.press('Enter')
+    const settings = page.getByRole('dialog', { name: 'Settings' })
+    if (
+      !(await expectKeyboardOutcome(page, 'Open settings with Enter', async () => {
+        await expect(settings).toBeVisible()
+      }))
+    )
+      return
+    const compute = settings
+      .getByRole('navigation', { name: 'Settings' })
+      .getByRole('button', { name: 'Compute', exact: true })
+    if (!(await focusWithTab(page, compute))) return
+    await page.keyboard.press('Enter')
+    if (
+      !(await expectKeyboardOutcome(page, 'Open Compute settings with Enter', async () => {
+        await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
+      }))
+    )
+      return
+    await page.keyboard.press('Escape')
+    if (
+      !(await expectKeyboardOutcome(page, 'Close settings with Escape', async () => {
+        await expect(settings).toBeHidden()
+      }))
+    )
+      return
+    if (
+      !(await expectKeyboardOutcome(page, 'Keyboard focus restoration', async () => {
+        await expect(settingsTrigger).toBeFocused()
+      }))
+    )
+      return
+  }
 })
 
 for (const width of [375, 767] as const) {

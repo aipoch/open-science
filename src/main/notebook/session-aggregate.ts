@@ -198,7 +198,7 @@ export type NotebookSessionSnapshot = Readonly<{
 
 type BeginCellWrite = {
   cellId: string
-  language: NotebookLanguage
+  language?: NotebookLanguage
   writeId: string
   source: NotebookRunSource
   startedAt: number
@@ -319,10 +319,11 @@ export class NotebookSessionAggregate<
     const existing = this.cells.get(input.cellId)
     const cell: NotebookCell = existing ?? {
       id: input.cellId,
-      language: input.language,
+      language: input.language ?? 'python',
       code: '',
       status: 'receiving-code'
     }
+    cell.language = input.language ?? cell.language
     cell.status = 'receiving-code'
     cell.code = ''
     cell.writeId = input.writeId

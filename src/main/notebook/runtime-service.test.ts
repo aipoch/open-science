@@ -10,7 +10,7 @@ import type {
   NotebookExecutionResult,
   NotebookExecutorLifecycleCallbacks
 } from './runtime-service'
-import type { NotebookSessionExecutor } from './session-aggregate'
+import { NotebookSessionAggregate, type NotebookSessionExecutor } from './session-aggregate'
 import {
   NotebookRuntimeService,
   resolveDefaultExecutorOptions,
@@ -4471,6 +4471,132 @@ describe('notebook runtime service', () => {
       runCount: 1
     })
   })
+
+  it.each([
+    ['python', 'r', false],
+    ['r', 'python', false],
+    ['python', 'r', true],
+    ['r', 'python', true],
+    ['r', undefined, false],
+    ['r', undefined, true]
+  ] as const)(
+    'reuses a cell from %s with requested language %s and consistent execution and history (queued=%s)',
+    async (oldLanguage, requestedLanguage, queued) => {
+      const newLanguage = requestedLanguage ?? oldLanguage
+      const root = await createStorageRoot()
+      const blockerStarted = createDeferred<void>()
+      const releaseBlocker = createDeferred<void>()
+      const execute = vi.fn(
+        async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => {
+          if (request.code === '# blocker') {
+            blockerStarted.resolve()
+            await releaseBlocker.promise
+          }
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        }
+      )
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+      })
+      const request = { sessionId: 'session-1', workspaceCwd: root, cellId: 'cell-b' }
+      const code = { python: 'x = 42', r: 'x <- 42' }
+      const writeCell = async (language: NotebookLanguage): Promise<void> => {
+        const begin = await service.beginCodeCell({ ...request, language })
+        await service.appendCodeCell({ ...request, writeId: begin.writeId, delta: code[language] })
+        await service.finishCodeCell({ ...request, writeId: begin.writeId })
+      }
+      await writeCell(oldLanguage)
+
+      const pending: Array<Promise<unknown>> = []
+      let enqueue: ReturnType<typeof vi.spyOn> | undefined
+      try {
+        if (queued) {
+          pending.push(
+            service.execute({
+              ...request,
+              cellId: 'blocker',
+              language: oldLanguage,
+              code: '# blocker'
+            })
+          )
+          await blockerStarted.promise
+          // Data runs have no public queued-state projection. Observe the existing queue entry
+          // without replacing its behavior so rewriting happens strictly after admission.
+          enqueue = vi.spyOn(NotebookSessionAggregate.prototype, 'enqueueExecution')
+          pending.push(service.runCell(request))
+          await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1))
+          enqueue.mockRestore()
+          await expect(
+            service.beginCodeCell({ ...request, language: requestedLanguage })
+          ).rejects.toThrow('Notebook cell is queued or running: cell-b')
+          const rejected = await service.state(request)
+          expect(rejected.cells.find((cell) => cell.id === request.cellId)).toMatchObject({
+            language: oldLanguage,
+            code: code[oldLanguage]
+          })
+          releaseBlocker.resolve()
+          await Promise.all(pending)
+        }
+
+        const begin = await service.beginCodeCell({ ...request, language: requestedLanguage })
+        const receiving = await service.state(request)
+        await service.appendCodeCell({
+          ...request,
+          writeId: begin.writeId,
+          delta: code[newLanguage]
+        })
+        await service.finishCodeCell({ ...request, writeId: begin.writeId })
+        const written = await service.state(request)
+
+        const result = await service.runCell(request)
+        const state = await service.state(request)
+
+        expect.soft(execute.mock.calls.at(-1)?.[0]).toMatchObject({
+          language: newLanguage,
+          code: code[newLanguage]
+        })
+        expect.soft(receiving.cells.find((cell) => cell.id === request.cellId)).toMatchObject({
+          language: newLanguage,
+          code: '',
+          status: 'receiving-code'
+        })
+        expect.soft(written.cells.find((cell) => cell.id === request.cellId)).toMatchObject({
+          language: newLanguage,
+          code: code[newLanguage]
+        })
+        expect.soft(result.status).toBe('completed')
+        expect.soft(state.runs.find((run) => run.runId === result.runId)).toMatchObject({
+          kernelKind: newLanguage,
+          script: code[newLanguage]
+        })
+        if (queued) {
+          expect.soft(execute.mock.calls[1][0]).toMatchObject({
+            language: oldLanguage,
+            code: code[oldLanguage]
+          })
+          expect.soft(state.runs.filter((run) => run.cellId === request.cellId)).toMatchObject([
+            { kernelKind: oldLanguage, script: code[oldLanguage] },
+            { kernelKind: newLanguage, script: code[newLanguage] }
+          ])
+        }
+      } finally {
+        enqueue?.mockRestore()
+        releaseBlocker.resolve()
+        await Promise.allSettled(pending)
+      }
+    }
+  )
 
   it('serializes overlapping runs on the shared interpreter instead of failing the second', async () => {
     const root = await createStorageRoot()

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import {
   createDeletionRuntimeHarness,
@@ -22,16 +22,11 @@ describe('Compute Job deletion runtime drain boundary', () => {
       await (isPlanning ? harness.cleanupPlanningStarted : harness.cleanupStarted)
       if (!isPlanning) expect(harness.authorityCommitted()).toBe(true)
 
-      harness.runScheduledPoll()
-      await vi.waitFor(
-        async () => {
-          await expect(harness.survivorStatus()).resolves.toMatchObject({
-            status: 'success',
-            exit_code: 0
-          })
-        },
-        { timeout: 500, interval: 10 }
-      )
+      await harness.runScheduledPoll()
+      await expect(harness.survivorStatus()).resolves.toMatchObject({
+        status: 'success',
+        exit_code: 0
+      })
 
       if (isPlanning) harness.releaseCleanupPlanning()
       else harness.releaseRemoteCleanup()
