@@ -151,6 +151,9 @@ test('edits and navigates message revisions that persist after relaunch', async 
   await expect(revision).toHaveText(['2/2'])
   await expect(previousRevision).toBeEnabled()
   await expect(nextRevision).toBeDisabled()
+  // Editing sends a second Agent turn. Its revision label can render before Main finishes that
+  // turn, while branch activation still rejects changes to a running Session.
+  await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
 
   // The edit starts another Agent turn. Let it finish before switching branches or restarting,
   // otherwise application.close() can wait indefinitely on the native active-session quit dialog.
