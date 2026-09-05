@@ -509,6 +509,7 @@ const ConversationPanel = ({
       revise: onSendEditedMessage,
       branch: onBranchFromAgentMessage,
       sideChat: { start: onStartSideChat },
+      reportSessionSizeLimit: onSessionSizeLimit,
       resume: onResumeSession,
       cancel: onCancelRun
     },
@@ -905,7 +906,8 @@ const ConversationPanel = ({
         sessionId: activeSession.id,
         projection: pendingPlan
       },
-      response
+      response,
+      { onSessionSizeLimit }
     )
   }
 

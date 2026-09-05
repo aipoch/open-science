@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, readFile, rename, rm, truncate } from 'node:fs/promises'
+import { lstat, mkdtemp, readFile, rename, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -988,6 +988,42 @@ describe('Session projection', () => {
 
     const loaded = await repository.ensureSessionProjection(async () => {
       const scan = await repository.loadAllWithDiagnostics()
+      return {
+        ...scan.result,
+        diagnostics: { isComplete: scan.isComplete, warnings: scan.warnings ?? [] }
+      }
+    })
+
+    expect(loaded.result?.diagnostics).toMatchObject({
+      isComplete: false,
+      warnings: [
+        {
+          kind: 'too-large',
+          projectId: saved.projectId,
+          fileName: `${saved.id}.json`,
+          recovered: false
+        }
+      ]
+    })
+    expect(loaded.sessions).toEqual([])
+  })
+
+  it('reports an oversized recovery temp behind a ready projection', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-ready-temp-size-limit-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const maxSessionBytes = 64 * 1024
+    const repository = new SessionRepository(storageRoot, { maxSessionBytes }, projection)
+    const saved = await repository.saveSession(session('session-1'))
+    await repository.ensureSessionProjection(() => repository.loadAll())
+    const authorityPath = join(storageRoot, 'sessions', saved.projectId, `${saved.id}.json`)
+    await writeFile(`${authorityPath}.1700000000000-1.tmp`, '', 'utf8')
+    await truncate(`${authorityPath}.1700000000000-1.tmp`, maxSessionBytes + 1)
+
+    const loaded = await repository.ensureSessionProjection(async () => {
+      const scan = await repository.loadAllWithDiagnostics({ mode: 'read-only' })
       return {
         ...scan.result,
         diagnostics: { isComplete: scan.isComplete, warnings: scan.warnings ?? [] }

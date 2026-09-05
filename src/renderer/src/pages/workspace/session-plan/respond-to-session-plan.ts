@@ -2,6 +2,7 @@ import {
   parsePlanDocumentV1,
   type ActivePlanProjection
 } from '../../../../../shared/session-plan/contract'
+import { isSessionSizeLimitError } from '../../../../../shared/session-persistence'
 import { useSessionStore } from '@/stores/session-store'
 
 type SessionPlanResponseTarget = Readonly<{
@@ -174,7 +175,8 @@ const refreshSessionPlanProjection = async ({
 
 export const respondToSessionPlan = async (
   target: SessionPlanResponseTarget,
-  response: 'approved' | 'rejected' | { decision: 'approved' | 'rejected' } | { feedback: string }
+  response: 'approved' | 'rejected' | { decision: 'approved' | 'rejected' } | { feedback: string },
+  options: Readonly<{ onSessionSizeLimit?: (sessionId: string) => void }> = {}
 ): Promise<void> => {
   const payload = typeof response === 'string' ? { decision: response } : response
   let authoritativeProjection: ActivePlanProjection | undefined
@@ -207,6 +209,7 @@ export const respondToSessionPlan = async (
     }
     if ('feedback' in payload) return
   } catch (error) {
+    if (isSessionSizeLimitError(error)) options.onSessionSizeLimit?.(target.sessionId)
     try {
       await refreshSessionPlanProjection(target)
     } catch {

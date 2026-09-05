@@ -182,6 +182,7 @@ const options = (
     abortFixLoop: vi.fn(() => Promise.resolve()),
     getSession: (sessionId) => (sessionId === 'session-a' ? session() : undefined),
     subscribeSessionChanges: () => () => undefined,
+    onSessionSizeLimit: vi.fn(),
     ...overrides
   }
 }

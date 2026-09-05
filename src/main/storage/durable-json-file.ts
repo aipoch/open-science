@@ -213,6 +213,11 @@ const isProcessAlive = (pid: number): boolean => {
   }
 }
 
+export const isRecoverableDurableJsonTemporaryFile = (filePath: string, name: string): boolean => {
+  const recognized = recognizeTemporarySuffix(filePath, name)
+  return recognized !== undefined && !isProcessAlive(recognized.activeCreatorPid ?? 0)
+}
+
 const listTemporaryCandidates = async (
   filePath: string,
   dependencies: DurableJsonFileDependencies
@@ -233,8 +238,7 @@ const listTemporaryCandidates = async (
         if (!entry.isFile() || !entry.name.startsWith(prefix) || !entry.name.endsWith('.tmp')) {
           return false
         }
-        const recognized = recognizeTemporarySuffix(filePath, entry.name)
-        return recognized && !isProcessAlive(recognized.activeCreatorPid ?? 0)
+        return isRecoverableDurableJsonTemporaryFile(filePath, entry.name)
       })
       .map(async (entry) => {
         const path = join(directory, entry.name)

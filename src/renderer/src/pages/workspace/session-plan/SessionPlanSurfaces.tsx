@@ -48,6 +48,7 @@ type RestoredPlanResponder = Readonly<{
   sessionId: string
   enabled: boolean
   respond: (response: { decision: 'approved' | 'rejected' }) => Promise<void>
+  onSessionSizeLimit?: (sessionId: string) => void
 }>
 
 const lifecycleLabel = (projection: ActivePlanProjection, t: TFunction): string => {

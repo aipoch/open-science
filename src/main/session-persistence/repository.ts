@@ -32,6 +32,7 @@ import {
 import {
   DurableJsonRecoveryBarrierError,
   DurableJsonReadLimitError,
+  isRecoverableDurableJsonTemporaryFile,
   readFileWithinLimit,
   readDurableJsonFile,
   recoverDurableJsonDirectory,
@@ -637,7 +638,11 @@ class SessionRepository {
   private async hasOversizedProjectedSession(
     summaries: readonly SessionSummary[]
   ): Promise<boolean> {
+    const projectedFilesByProject = new Map<string, Set<string>>()
     for (const summary of summaries) {
+      const projectedFiles = projectedFilesByProject.get(summary.projectId) ?? new Set<string>()
+      projectedFiles.add(`${summary.id}.json`)
+      projectedFilesByProject.set(summary.projectId, projectedFiles)
       try {
         const metadata = await lstat(this.sessionFilePath(summary.projectId, summary.id))
         if (
@@ -649,6 +654,38 @@ class SessionRepository {
         }
       } catch (error) {
         if (!isMissingFileError(error)) throw error
+      }
+    }
+
+    for (const [projectId, projectedFiles] of projectedFilesByProject) {
+      const directory = this.projectDir(projectId)
+      let entries: SessionDirectoryEntry[]
+      try {
+        entries = await this.dependencies.readDirectoryEntries(directory)
+      } catch (error) {
+        if (isMissingFileError(error)) continue
+        throw error
+      }
+      for (const entry of entries) {
+        if (!entry.isFile()) continue
+        const sessionExtensionIndex = entry.name.lastIndexOf('.json.')
+        if (sessionExtensionIndex < 0) continue
+        const primaryName = entry.name.slice(0, sessionExtensionIndex + '.json'.length)
+        if (!projectedFiles.has(primaryName)) continue
+        const primaryPath = join(directory, primaryName)
+        if (!isRecoverableDurableJsonTemporaryFile(primaryPath, entry.name)) continue
+        try {
+          const metadata = await lstat(join(directory, entry.name))
+          if (
+            metadata.isFile() &&
+            !metadata.isSymbolicLink() &&
+            metadata.size > this.dependencies.maxSessionBytes
+          ) {
+            return true
+          }
+        } catch (error) {
+          if (!isMissingFileError(error)) throw error
+        }
       }
     }
     return false

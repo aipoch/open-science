@@ -225,6 +225,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
                 isSessionPersistenceHydrated={sessions.isHydrated}
                 isSessionPersistenceReady={sessions.isReady}
                 persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
+                onSessionSizeLimit={sessions.reportSessionSizeLimit}
                 canDeleteConversations={sessions.canDeleteSessionsAndProjects}
                 isPreviewPresentationActive={isBasePresentationActive}
               />

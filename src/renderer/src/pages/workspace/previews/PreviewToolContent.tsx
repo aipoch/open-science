@@ -179,7 +179,8 @@ const PlanPreviewToolContent = ({
     if (planSession?.activeRun) {
       await respondToSessionPlan(
         { projectId: item.projectId, sessionId: item.sessionId, projection: planProjection },
-        { decision }
+        { decision },
+        { onSessionSizeLimit: restoredPlanResponder?.onSessionSizeLimit }
       )
       return
     }

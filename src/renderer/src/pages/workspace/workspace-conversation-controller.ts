@@ -126,6 +126,7 @@ type WorkspaceConversationControllerOptions = {
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
   getSession: (sessionId: string) => ChatSession | undefined
   subscribeSessionChanges: (listener: () => void) => () => void
+  onSessionSizeLimit: (sessionId: string) => void
   planProjectionRecovery?: PlanProjectionRecoveryPorts
 }
 
@@ -152,6 +153,7 @@ type WorkspaceConversationController = {
     ) => Promise<EditedMessageSendResult>
     branch: (messageId: string) => void
     sideChat: { start: () => void }
+    reportSessionSizeLimit: (sessionId: string) => void
     resume: () => Promise<void>
     cancel: () => Promise<void>
     delete: () => void
@@ -585,7 +587,8 @@ const useWorkspaceConversationController = (
       await runtime.ensureSessionReady(session.id)
       await respondToSessionPlan(
         { projectId: session.projectId, sessionId: session.id, projection: plan },
-        response
+        response,
+        { onSessionSizeLimit: optionsRef.current.onSessionSizeLimit }
       )
     }
 
@@ -676,6 +679,7 @@ const useWorkspaceConversationController = (
             .catch((error: unknown) => current.composer.actions.setError(errorMessage(error)))
         }
       },
+      reportSessionSizeLimit: (sessionId): void => optionsRef.current.onSessionSizeLimit(sessionId),
       resume: async (): Promise<void> => {
         const current = optionsRef.current
         if (!current.isPersistenceReady || !current.activeSession || current.sideChatOpen) return

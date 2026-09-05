@@ -126,6 +126,13 @@ describe('session persistence startup', () => {
         </button>
         <button
           type="button"
+          data-testid="report-plan-size-limit"
+          onClick={() => persistence.reportSessionSizeLimit('session-plan')}
+        >
+          Report Plan size limit
+        </button>
+        <button
+          type="button"
           data-testid="dismiss-load-warning"
           onClick={persistence.dismissLoadWarning}
         >
@@ -382,6 +389,22 @@ describe('session persistence startup', () => {
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
     expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
       'changes saved'
+    )
+  })
+
+  it('accepts an external Plan size-limit report into the shared recovery state', async () => {
+    loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+    await act(async () => root.render(<Probe />))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="report-plan-size-limit"]')?.click()
+    )
+
+    const probe = container.querySelector('div')
+    expect(probe?.dataset.persistenceBlocked).toBe('session-plan')
+    expect(probe?.dataset.writeRetryable).toBe('false')
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+      'exceeded the 256 MiB storage limit'
     )
   })
 

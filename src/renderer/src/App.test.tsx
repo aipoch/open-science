@@ -111,6 +111,7 @@ const mocks = vi.hoisted(() => {
       writeError: undefined as string | undefined,
       writeErrorRetryable: true,
       persistenceBlockedSessionIds: [] as string[],
+      reportSessionSizeLimit: vi.fn(),
       dismissLoadWarning: vi.fn(),
       startNewConversationAfterSizeLimit: vi.fn(),
       retryLoad: vi.fn(),
@@ -146,6 +147,7 @@ const mocks = vi.hoisted(() => {
         | {
             isPreviewPresentationActive?: boolean
             persistenceBlockedSessionIds?: readonly string[]
+            onSessionSizeLimit?: (sessionId: string) => void
           }
         | undefined
     }
@@ -379,11 +381,13 @@ vi.mock('@/pages/workspace/WorkspacePage', () => ({
   WorkspacePage: ({
     isSessionPersistenceReady,
     persistenceBlockedSessionIds,
+    onSessionSizeLimit,
     canDeleteConversations,
     isPreviewPresentationActive
   }: {
     isSessionPersistenceReady: boolean
     persistenceBlockedSessionIds?: readonly string[]
+    onSessionSizeLimit?: (sessionId: string) => void
     canDeleteConversations: boolean
     isPreviewPresentationActive?: boolean
   }): React.JSX.Element => (
@@ -391,7 +395,8 @@ vi.mock('@/pages/workspace/WorkspacePage', () => ({
       ref={() => {
         mocks.presentationProps.workspace = {
           isPreviewPresentationActive,
-          persistenceBlockedSessionIds
+          persistenceBlockedSessionIds,
+          onSessionSizeLimit
         }
       }}
       data-testid="workspace-page"
@@ -463,6 +468,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.writeError = undefined
     mocks.sessionPersistence.writeErrorRetryable = true
     mocks.sessionPersistence.persistenceBlockedSessionIds = []
+    mocks.sessionPersistence.reportSessionSizeLimit.mockClear()
     mocks.update.isDialogOpen = false
     mocks.update.status.state = 'idle'
     mocks.update.closeDialog.mockClear()
@@ -1442,6 +1448,8 @@ describe('App startup routing', () => {
       ?.click()
     expect(mocks.sessionPersistence.startNewConversationAfterSizeLimit).toHaveBeenCalledOnce()
     expect(mocks.presentationProps.workspace?.persistenceBlockedSessionIds).toEqual(['session-1'])
+    mocks.presentationProps.workspace?.onSessionSizeLimit?.('session-plan')
+    expect(mocks.sessionPersistence.reportSessionSizeLimit).toHaveBeenCalledWith('session-plan')
   })
 
   it('stops a persistence-blocked active run while the Home page is visible', async () => {

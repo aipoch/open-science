@@ -20,6 +20,11 @@ import type {
   AcpStateUpdate
 } from '../../shared/acp'
 import { toAcpStateCommandResponse } from '../../shared/acp'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
+import {
+  isSessionSizeLimitError,
+  SESSION_SIZE_LIMIT_ERROR_CODE
+} from '../../shared/session-persistence'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
@@ -35,6 +40,22 @@ import {
 import { bindResumeRequestToProject } from './session-project-binding'
 import type { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
+
+const preserveSessionSizeLimitCode = async <Result>(
+  operation: () => Promise<Result>
+): Promise<Result> => {
+  try {
+    return await operation()
+  } catch (error) {
+    if (isSessionSizeLimitError(error)) {
+      throw new ApplicationCommandError(
+        SESSION_SIZE_LIMIT_ERROR_CODE,
+        error instanceof Error ? error.message : 'Session exceeds the persistence limit.'
+      )
+    }
+    throw error
+  }
+}
 
 const acpCommands = Object.freeze({
   getState: defineApplicationCommand<'acp:get-state', readonly [], AcpStateSnapshot>(
@@ -337,13 +358,15 @@ const registerAcpCommands = (
             'Only a current human or Task automation caller can respond to a Session Plan.'
           )
         }
-        return dependencies.archiveAvailability
-          ? dependencies.archiveAvailability.withSessionAvailable(
-              invocation.args[0].projectId,
-              invocation.args[0].sessionId,
-              () => dependencies.runtime.respondSessionPlan(invocation.args[0])
-            )
-          : dependencies.runtime.respondSessionPlan(invocation.args[0])
+        return preserveSessionSizeLimitCode(() =>
+          dependencies.archiveAvailability
+            ? dependencies.archiveAvailability.withSessionAvailable(
+                invocation.args[0].projectId,
+                invocation.args[0].sessionId,
+                () => dependencies.runtime.respondSessionPlan(invocation.args[0])
+              )
+            : dependencies.runtime.respondSessionPlan(invocation.args[0])
+        )
       }
     })
     return scope.complete()

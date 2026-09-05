@@ -88,6 +88,7 @@ type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
   isSessionPersistenceReady: boolean
   persistenceBlockedSessionIds?: readonly string[]
+  onSessionSizeLimit?: (sessionId: string) => void
   canDeleteConversations: boolean
   isPreviewPresentationActive?: boolean
 }
@@ -116,6 +117,7 @@ const WorkspacePage = ({
   isSessionPersistenceHydrated,
   isSessionPersistenceReady,
   persistenceBlockedSessionIds = [],
+  onSessionSizeLimit = () => undefined,
   canDeleteConversations,
   isPreviewPresentationActive = true
 }: WorkspacePageProps): React.JSX.Element => {
@@ -615,6 +617,7 @@ const WorkspacePage = ({
     getSession: (sessionId) =>
       useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId),
     subscribeSessionChanges: useSessionStore.subscribe,
+    onSessionSizeLimit,
     planProjectionRecovery:
       typeof window.api.acp?.getPlanProjection === 'function'
         ? planProjectionRecoveryPorts
@@ -1118,7 +1121,8 @@ const WorkspacePage = ({
             ? {
                 sessionId: activeSession.id,
                 enabled: conversation.availability.planResponse,
-                respond: conversation.actions.submit.restoredPlan
+                respond: conversation.actions.submit.restoredPlan,
+                onSessionSizeLimit: conversation.actions.reportSessionSizeLimit
               }
             : undefined
         }

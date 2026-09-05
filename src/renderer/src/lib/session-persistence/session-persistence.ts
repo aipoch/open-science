@@ -1182,6 +1182,7 @@ type SessionPersistenceState = {
   writeError: string | undefined
   writeErrorRetryable: boolean
   persistenceBlockedSessionIds: readonly string[]
+  reportSessionSizeLimit: (sessionId: string) => void
   dismissLoadWarning: () => void
   startNewConversationAfterSizeLimit: () => void
   retryLoad: () => void
@@ -1710,6 +1711,18 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setWriteError(undefined)
     setWriteErrorRetryable(true)
   }, [])
+  const reportSessionSizeLimit = useCallback(
+    (sessionId: string): void => {
+      const target = `session:${sessionId}`
+      failedWriteTargets.current.add(target)
+      sizeLimitTargets.current.add(target)
+      setPersistenceBlockedSessionIds(
+        [...sizeLimitTargets.current].map((candidate) => candidate.slice('session:'.length))
+      )
+      presentOutstandingWriteFailures()
+    },
+    [presentOutstandingWriteFailures]
+  )
   const dismissLoadWarning = useCallback(() => setLoadWarning(undefined), [])
   const startNewConversationAfterSizeLimit = useCallback(() => {
     useSessionStore.getState().clearSelection()
@@ -2031,6 +2044,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     writeError,
     writeErrorRetryable,
     persistenceBlockedSessionIds,
+    reportSessionSizeLimit,
     dismissLoadWarning,
     startNewConversationAfterSizeLimit,
     retryLoad,
