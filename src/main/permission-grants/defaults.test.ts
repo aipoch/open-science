@@ -49,7 +49,9 @@ describe('default permission grants', () => {
         key
       })),
       { kind: 'skill_operation', key: 'skill:invoke' },
-      { kind: 'mcp_tool', key: 'mcp:open-science-literature/read_document' }
+      { kind: 'mcp_tool', key: 'mcp:open-science-literature/read_document' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-notebook/list_notebook_runtimes' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-notebook/notebook_state' }
     ])
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.skill_operation).toContain('skill:invoke')
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toContain(
