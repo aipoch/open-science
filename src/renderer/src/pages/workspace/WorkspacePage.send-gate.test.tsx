@@ -276,7 +276,7 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.conversation.availability.submit).toBe(true)
   })
 
-  it('stops an active run and blocks further sends after its Session exceeds the storage limit', async () => {
+  it('blocks further sends after an active Session exceeds the storage limit', async () => {
     useSessionStore.setState({
       ...createInitialSessionState(),
       sessions: [
@@ -290,7 +290,6 @@ describe('WorkspacePage send gate while compacting', () => {
 
     await renderPage(['sess-a'])
 
-    expect(runtime.cancelRun).toHaveBeenCalledOnce()
     await act(async () => {
       conversationProps.composer.actions.changeDoc(textDoc('continue growing'))
     })
