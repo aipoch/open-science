@@ -49,7 +49,13 @@ describe('default permission grants', () => {
         key
       })),
       { kind: 'skill_operation', key: 'skill:invoke' },
-      { kind: 'mcp_tool', key: 'mcp:open-science-literature/read_document' }
+      { kind: 'mcp_tool', key: 'mcp:open-science-literature/read_document' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-notebook/list_notebook_runtimes' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-notebook/notebook_state' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-notebook/list_memory_categories' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-notebook/search_memories' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-notebook/inspect_packages' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-plan/update_step_status' }
     ])
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.skill_operation).toContain('skill:invoke')
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toContain(
@@ -84,6 +90,8 @@ describe('default permission grants', () => {
     await seedDefaultPermissionGrants(fixture.registry, fixture.client)
 
     await expect(fixture.registry.list()).resolves.toEqual([])
+    await expect(restoreDefaultPermissionGrants(fixture.registry)).resolves.toBe(16)
+    await expect(restoreDefaultPermissionGrants(fixture.registry)).resolves.toBe(0)
   })
 
   it('does not recreate a revoked default on a later startup', async () => {
