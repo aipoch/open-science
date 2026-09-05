@@ -1542,6 +1542,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     const fixture = await createFixture('upload')
     const collidingPaths: string[] = []
     const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const publishImmutable = versionFileOperator.publishImmutable.bind(versionFileOperator)
     const service = new ManagedFileVersionService({
       storageRoot,
       getClient: () => Promise.resolve(client),
@@ -1562,17 +1563,16 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       })
     })
 
-    await expect(
-      service.saveTextEdit({
-        source: 'upload',
-        projectId: 'project-1',
-        fileId: fixture.fileId,
-        basedOnVersionId: fixture.versionIds[1],
-        expectedHeadVersionId: fixture.versionIds[1],
-        content: 'never published\n',
-        operationId: 'exhausted-collision-operation'
-      })
-    ).rejects.toMatchObject({ code: 'STORAGE_COLLISION' })
+    const request = {
+      source: 'upload' as const,
+      projectId: 'project-1',
+      fileId: fixture.fileId,
+      basedOnVersionId: fixture.versionIds[1],
+      expectedHeadVersionId: fixture.versionIds[1],
+      content: 'never published\n',
+      operationId: 'exhausted-collision-operation'
+    }
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({ code: 'STORAGE_COLLISION' })
 
     expect(collidingPaths).toHaveLength(16)
     for (const collidingPath of collidingPaths) {
@@ -1583,6 +1583,53 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         where: { operationId: 'exhausted-collision-operation' }
       })
     ).resolves.toMatchObject({ state: 'failed', errorCode: 'STORAGE_COLLISION' })
+
+    versionFileOperator.publishImmutable = publishImmutable
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({
+      code: 'OPERATION_FAILED'
+    })
+    await expect(
+      service.saveTextEdit({ ...request, operationId: 'fresh-operation-after-collision' })
+    ).resolves.toMatchObject({ kind: 'created', replayed: false, version: { versionNumber: 3 } })
+    expect(await client.uploadVersion.count()).toBe(3)
+  })
+
+  it('distinguishes a failed integrity operation from an uncertain save result', async () => {
+    const fixture = await createFixture('upload')
+    const request = {
+      source: 'upload' as const,
+      projectId: 'project-1',
+      fileId: fixture.fileId,
+      basedOnVersionId: fixture.versionIds[1],
+      expectedHeadVersionId: fixture.versionIds[1],
+      content: 'retry intact draft\n',
+      operationId: 'failed-integrity-operation'
+    }
+    const crashing = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      testFaultAt: 'after-file-ready'
+    })
+    await expect(crashing.saveTextEdit(request)).rejects.toThrow('simulated managed version crash')
+    const operation = await client.managedFileVersionWriteOperation.findUniqueOrThrow({
+      where: { operationId: request.operationId }
+    })
+    await writeFile(join(storageRoot, ...operation.contentStorageKey.split('/')), 'corrupt bytes')
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+    await expect(
+      client.managedFileVersionWriteOperation.findUniqueOrThrow({
+        where: { operationId: request.operationId }
+      })
+    ).resolves.toMatchObject({ state: 'failed', errorCode: 'CONTENT_INTEGRITY_FAILED' })
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({ code: 'OPERATION_FAILED' })
+    await expect(
+      service.saveTextEdit({ ...request, operationId: 'fresh-operation-after-integrity-failure' })
+    ).resolves.toMatchObject({ kind: 'created', replayed: false, version: { versionNumber: 3 } })
+    expect(await client.uploadVersion.count()).toBe(3)
   })
 
   it('never writes temporary or final bytes outside the storage root through a symlinked ancestor', async () => {
@@ -1713,6 +1760,17 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       headVersionId: 'upload-v3',
       replayed: false
     })
+    // A lost response leaves the caller on its old baseline: only the original ID can replay it.
+    await expect(
+      service.saveTextEdit({ ...firstRequest, operationId: 'new-id-after-response-loss' })
+    ).resolves.toMatchObject({ kind: 'conflict', actualHead: { id: 'upload-v3' } })
+    await expect(service.saveTextEdit(firstRequest)).resolves.toMatchObject({
+      kind: 'created',
+      headVersionId: 'upload-v3',
+      replayed: true
+    })
+    expect(await client.uploadVersion.count()).toBe(3)
+
     await service.saveTextEdit({
       ...firstRequest,
       basedOnVersionId: 'upload-v3',

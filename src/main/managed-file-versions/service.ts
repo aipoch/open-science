@@ -1455,7 +1455,8 @@ class ManagedFileVersionService {
     if (operation.state === 'published') return this.publishedResult(client, logicalFile, operation)
     if (operation.state === 'conflict') return this.conflictResult(client, logicalFile, operation)
     if (operation.state === 'failed') {
-      operationError('CONTENT_INTEGRITY_FAILED', 'Managed file write operation failed recovery.')
+      // A confirmed terminal journal entry cannot replay; an uncertain integrity error still can.
+      operationError('OPERATION_FAILED', 'Managed file write operation failed recovery.')
     }
 
     return this.resumeVersionFileOperation(

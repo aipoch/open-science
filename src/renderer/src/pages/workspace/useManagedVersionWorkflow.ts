@@ -10,6 +10,7 @@ import {
   type SetStateAction
 } from 'react'
 
+import { errorDetail } from '@/lib/error-detail'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type {
   ManagedFileIdentity,
@@ -22,6 +23,8 @@ type ManagedVersionMode = 'view' | 'edit' | 'diff'
 type ManagedVersionWorkflow = {
   identity: ManagedFileIdentity | undefined
   inspect: ManagedFileVersionInspectResult | undefined
+  inspectLoading: boolean
+  inspectError: { code?: string; message?: string } | undefined
   navigationInspect: ManagedFileVersionInspectResult | undefined
   controlsInspect: ManagedFileVersionInspectResult | undefined
   diffResult: ManagedFileVersionDiffResult | undefined
@@ -59,6 +62,10 @@ const useManagedVersionWorkflow = ({
   const [storedInspect, setStoredInspect] = useState<
     { key: string; value: ManagedFileVersionInspectResult } | undefined
   >(undefined)
+  const [inspectFailure, setInspectFailure] = useState<{
+    key: string
+    error: { code?: string; message?: string }
+  }>()
   const [refresh, setRefresh] = useState(0)
   const [diff, setDiff] = useState<{
     result?: ManagedFileVersionDiffResult
@@ -78,6 +85,13 @@ const useManagedVersionWorkflow = ({
     : undefined
   const inspect =
     storedInspect && storedInspect.key === requestKey ? storedInspect.value : undefined
+  const inspectError = inspectFailure?.key === requestKey ? inspectFailure?.error : undefined
+  const inspectLoading = Boolean(
+    requestKey &&
+    typeof window.api.managedFileVersions?.inspect === 'function' &&
+    !inspect &&
+    !inspectError
+  )
   // Preserve the last confirmed Version while the same logical file is being re-inspected. Default
   // previews keep following the DB head without pinning selectedVersionId on the workbench item.
   const previousInspect =
@@ -161,13 +175,30 @@ const useManagedVersionWorkflow = ({
       })
       .then((result) => {
         if (!active) return
-        if (!result.ok) return leaveDiffMode()
+        if (!result.ok) {
+          setInspectFailure({ key: requestKey, error: result.error })
+          return leaveDiffMode()
+        }
+        setInspectFailure(undefined)
         setStoredInspect({ key: requestKey, value: result.value })
         if (!result.value.canDiff && !isSourceTextVersion(result.value)) leaveDiffMode()
         else if (!result.value.canDiff) setDiff({})
       })
-      .catch(() => {
-        if (active) leaveDiffMode()
+      .catch((error: unknown) => {
+        if (!active) return
+        setInspectFailure({
+          key: requestKey,
+          error: {
+            message: errorDetail(error),
+            ...(typeof error === 'object' &&
+            error !== null &&
+            'code' in error &&
+            typeof error.code === 'string'
+              ? { code: error.code }
+              : {})
+          }
+        })
+        leaveDiffMode()
       })
     return () => {
       active = false
@@ -201,6 +232,8 @@ const useManagedVersionWorkflow = ({
   return {
     identity,
     inspect,
+    inspectLoading,
+    inspectError,
     navigationInspect,
     controlsInspect,
     diffResult: diff.result,
@@ -218,8 +251,10 @@ const useManagedVersionWorkflow = ({
         : undefined,
     startDiff: () => resetDiff('diff'),
     stopDiff: () => resetDiff('view'),
-    resetForVersionSelection: (preserveDiffMode: boolean) =>
-      resetDiff(preserveDiffMode && mode === 'diff' ? 'diff' : 'view'),
+    resetForVersionSelection: (preserveDiffMode: boolean) => {
+      setInspectFailure(undefined)
+      resetDiff(preserveDiffMode && mode === 'diff' ? 'diff' : 'view')
+    },
     history,
     refreshInspect: () => setRefresh((value) => value + 1)
   }
