@@ -16,6 +16,7 @@ import {
 import type { PersistedChatMessage, PersistedChatSession } from '../../shared/session-persistence'
 import {
   OrphanLegacyUploadAuthorityMissingError,
+  readUploadPublicationLifecycle,
   runUploadTransaction,
   type PublicationOptions,
   type UploadVersionRecord
@@ -167,7 +168,7 @@ class LegacyRecoveryOwner {
           isProjectFilesSync ? upload.sessionId : session.id,
           [toRuntimeUploadedAttachment(upload, session.projectId)],
           session.projectId,
-          { preserveLegacySource: isLiveSave, requireExistingAuthority }
+          { preserveLegacySource: isLiveSave, requireExistingAuthority, legacySessionUpload: true }
         )
         if (!finalized) return undefined
         if (isTerminalDelete) {
@@ -357,7 +358,7 @@ class LegacyRecoveryOwner {
     sessionId: string,
     attachment: UploadedAttachment,
     version: UploadVersionRecord,
-    options: { preserveSource?: boolean } = {}
+    options: { preserveSource?: boolean; legacySessionUpload?: boolean } = {}
   ): Promise<UploadedAttachment> {
     const finalPath = resolve(this.storageRoot, ...version.contentStorageKey.split('/'))
     assertPathInsideRoot(
@@ -443,14 +444,34 @@ class LegacyRecoveryOwner {
     await rm(`${finalPath}${LIVE_COPY_TEMP_SUFFIX}`, { force: true })
     const client = await this.options.getClient!()
     const ready = await runUploadTransaction(client, async (tx) => {
-      const updated =
-        version.state === 'ready'
-          ? version
-          : await tx.uploadVersion.update({ where: { id: version.id }, data: { state: 'ready' } })
+      const current = await tx.uploadVersion.findUniqueOrThrow({ where: { id: version.id } })
       const file = await tx.uploadFile.findUniqueOrThrow({
         where: { id: version.uploadFileId },
         include: { currentVersion: true }
       })
+      const lifecycle = await readUploadPublicationLifecycle(
+        tx,
+        projectId,
+        sessionId,
+        version.uploadFileId
+      )
+      // Reusing immutable evidence grants no permission to advance a head or revive Files. Legacy
+      // path adoption is explicit; startup recovery cannot reinterpret a pending upload as history.
+      if (!lifecycle.writable) {
+        if (current.state === 'ready') return current
+        if (!(
+          options.legacySessionUpload &&
+          ((current.originKind === 'legacy' && lifecycle.projectExists) ||
+            file.currentVersionId === current.id)
+        )) {
+          throw new Error('Upload publication is blocked by the Project or origin lifecycle.')
+        }
+      }
+      const updated =
+        current.state === 'ready'
+          ? current
+          : await tx.uploadVersion.update({ where: { id: version.id }, data: { state: 'ready' } })
+      if (!lifecycle.writable) return updated
       const shouldAdvanceHead =
         !file.currentVersion || file.currentVersion.versionNumber < updated.versionNumber
       if (shouldAdvanceHead) {
@@ -492,9 +513,7 @@ class LegacyRecoveryOwner {
           mimeType: head.contentType,
           sizeBytes: head.sizeBytes,
           mtimeMs: BigInt(timestamp.getTime()),
-          sortAtMs: BigInt(timestamp.getTime()),
-          deletedAt: null,
-          deleteOperationId: null
+          sortAtMs: BigInt(timestamp.getTime())
         }
       })
       return updated

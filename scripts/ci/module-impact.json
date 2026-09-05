@@ -721,6 +721,7 @@
           "src/main/uploads/active-transfer-owner.test.ts",
           "src/main/uploads/repository.test.ts",
           "src/main/uploads/repository.characterization.test.ts",
+          "src/main/uploads/publication-lifecycle.integration.test.ts",
           "src/main/uploads/repository.architecture.test.ts"
         ],
         "contract": ["src/main/uploads/ipc.test.ts", "src/main/uploads/command-owner.test.ts"],
