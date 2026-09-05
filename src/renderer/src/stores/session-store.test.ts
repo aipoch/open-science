@@ -7282,11 +7282,38 @@ describe('truncateSessionFromMessage', () => {
   })
 
   it('retains an external branch-reset obligation in the next persisted snapshot', () => {
-    seedSession()
+    seedSession({
+      activities: [
+        {
+          ...createActivity('original-tool', baseTime + 250),
+          activityGroupId: 'original-group',
+          promptMessageId: 'user-2'
+        }
+      ],
+      activityGroups: [
+        {
+          id: 'original-group',
+          title: 'Original tools',
+          sortIndex: 1,
+          activityIds: ['original-tool'],
+          promptMessageId: 'user-2',
+          createdAt: baseTime + 250,
+          updatedAt: baseTime + 250,
+          completedAt: baseTime + 250
+        }
+      ]
+    })
     useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'edited user-2'
+    })
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'session-1',
+      toolCallId: 'edited-tool',
+      eventId: 'edited-tool-event',
+      title: 'Edited tools',
+      status: 'completed'
     })
     useSessionStore.getState().finishRun('session-1')
     useSessionStore.getState().clearBranchContextReset('session-1')
@@ -7306,6 +7333,8 @@ describe('truncateSessionFromMessage', () => {
 
     const synchronized = useSessionStore.getState().sessions[0]
     expect(synchronized.messages.map(({ id }) => id)).toEqual(stale.messages.map(({ id }) => id))
+    expect(synchronized.activities?.map(({ id }) => id)).toEqual(['edited-tool'])
+    expect(synchronized.activityGroups).toEqual(stale.activityGroups ?? [])
     expect(synchronized.branchContextResetRequired).toBe(true)
     expect(toPersistedSession(synchronized).branchContextResetRequired).toBe(true)
 

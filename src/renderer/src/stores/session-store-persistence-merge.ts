@@ -8,6 +8,7 @@ import type {
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import {
   projectConversationMessage,
+  resolveActiveConversationActivities,
   resolveActiveConversationMessages
 } from '../../../shared/conversation-graph'
 
@@ -463,6 +464,7 @@ export const mergeNewerPersistedSessionByIdentity = (
   return {
     ...structuredClone(incoming),
     // The graph retains every Branch; the flat list must contain only the selected path.
+    ...(mergedGraph ? resolveActiveConversationActivities(mergedGraph) : {}),
     messages: mergedGraph
       ? resolveActiveConversationMessages(mergedGraph).map(projectConversationMessage)
       : mergeCollectionByIdentity(
