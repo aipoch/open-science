@@ -794,6 +794,14 @@ describe('Settings backend ownership architecture', () => {
       'releaseSettingsInstallAdmission = settingsService.holdInstallAdmission()'
     )
     expect(updateInstallHandoff).toContain('releaseAdmission?.()')
+    const dataRootInstallHandoff = mainIpc.slice(
+      mainIpc.indexOf('let releaseDataRootInstallAdmission'),
+      mainIpc.indexOf("declareElectronAdapter('storage'")
+    )
+    expect(dataRootInstallHandoff).toContain(
+      'releaseDataRootInstallAdmission ??= settingsService.holdInstallAdmission()'
+    )
+    expect(dataRootInstallHandoff).toContain('abortDataRootInstallAdmission()')
     expect(mainIpc).toContain('permissionGrantRegistry,\n    settingsRepository')
   })
 

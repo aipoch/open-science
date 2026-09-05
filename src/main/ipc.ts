@@ -3693,6 +3693,12 @@ const createApplicationModules = async (
   composition.phase('notebook-provisioner')
 
   // Registered after the acp/notebook handlers exist: migration needs to interrupt both runtimes.
+  let releaseDataRootInstallAdmission: (() => void) | undefined
+  const abortDataRootInstallAdmission = (): void => {
+    const releaseAdmission = releaseDataRootInstallAdmission
+    releaseDataRootInstallAdmission = undefined
+    releaseAdmission?.()
+  }
   const storageCommandOwner = createStorageCommandOwner({
     runtime,
     notebook: notebookService,
@@ -3704,6 +3710,7 @@ const createApplicationModules = async (
     micromambaRunner,
     acknowledgeWebRendererFlush: webSessionPersistenceFlush.acknowledge,
     notifyDataRootHandoffAborted: () => {
+      abortDataRootInstallAdmission()
       try {
         sideChatRuntime.resumeAfterHandoff()
       } finally {
@@ -3716,12 +3723,16 @@ const createApplicationModules = async (
     },
     prepareDataRootHandoff: async (target, confirmedInterruption) => {
       let prepared = false
+      releaseDataRootInstallAdmission ??= settingsService.holdInstallAdmission()
       try {
         const readiness = await durableDataRootHandoffGate(target, confirmedInterruption)
         prepared = readiness.completed && readiness.reaped
         return prepared
       } finally {
-        if (!prepared) sideChatRuntime.resumeAfterHandoff()
+        if (!prepared) {
+          abortDataRootInstallAdmission()
+          sideChatRuntime.resumeAfterHandoff()
+        }
       }
     },
     cleanupJournal: dataRootCleanupJournal
