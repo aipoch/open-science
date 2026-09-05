@@ -2,6 +2,7 @@ import { realpath, writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
+import { sendPrompt } from './certification/helpers'
 
 const PROJECT_NAME = 'Project files journey'
 const FILE_NAME = 'research-notes.md'
@@ -244,9 +245,7 @@ test('shows structured text replacements with character-level highlights', async
     mimeType: 'text/x-shellscript',
     buffer: Buffer.from(SCRIPT_CONTENT)
   })
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Use the attached script.')
-  await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
+  await sendPrompt(page, 'Use the attached script.', 'Deterministic reply:')
 
   await page.getByRole('button', { name: 'Files', exact: true }).click()
   await page.getByRole('button', { name: `Preview uploaded file ${SCRIPT_NAME}` }).click()
@@ -312,9 +311,11 @@ test.describe('Workspace dividers', () => {
       .click()
     const browser = page.getByLabel('Local file browser')
     // Wait for the initial Home listing to finish populating the address bar before editing it.
-    await expect(browser.getByLabel('Directory path')).not.toHaveValue('')
-    await browser.getByLabel('Directory path').fill(directory)
-    await browser.getByLabel('Directory path').press('Enter')
+    const address = browser.getByLabel('Directory path')
+    await expect(address).not.toHaveValue('')
+    await address.fill(directory)
+    await expect(address).toHaveValue(directory)
+    await address.press('Enter')
     await browser
       .getByRole('list', { name: 'Directory contents' })
       .getByRole('button')
