@@ -862,7 +862,7 @@ describe('installPackages', () => {
     expect(result.attempts).toEqual([
       expect.objectContaining({
         installer: 'conda',
-        mutationRisk: 'unknown',
+        mutationRisk: 'none',
         reason: 'unknown'
       })
     ])

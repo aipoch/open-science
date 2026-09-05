@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NotebookLanguage } from '../../shared/notebook'
 import { createRootNotebookLane } from './lane-identity'
 import { NotebookPackageOperations } from './package-operations'
+import { installPackages } from './package-manager'
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import { NotebookSessionAggregate, type NotebookSessionRuntimeBinding } from './session-aggregate'
@@ -149,6 +150,55 @@ const harness = (
 }
 
 describe('NotebookPackageOperations', () => {
+  it.each(['install', 'uninstall'] as const)(
+    'E06 does not recommend restart after an unstructured R %s preflight failure',
+    async (operation) => {
+      const commands: string[][] = []
+      const { owner, options } = harness(
+        session('session-1', binding('r', 'analysis', 'managed', 'analysis')),
+        {
+          installPackages: (request, deps) =>
+            installPackages(request, {
+              ...deps,
+              micromamba: '/test/micromamba',
+              pathExists: () => true,
+              readCondaPackageIdentity: () => ({
+                name: 'r-base',
+                version: '4.4.3',
+                build: 'test_0',
+                buildNumber: 0
+              }),
+              spawn: async (_command, args) => {
+                if (args[0] === '--no-rc' && args[1] === 'clean') {
+                  return { code: 0, stdout: '', stderr: '' }
+                }
+                commands.push(args)
+                return { code: 1, stdout: '', stderr: 'unstructured preflight failure' }
+              }
+            })
+        }
+      )
+
+      const result = await owner.manage({
+        sessionId: 'session-1',
+        language: 'r',
+        environment: 'analysis',
+        packages: ['dplyr'],
+        operation
+      })
+
+      expect(commands, result.error).toHaveLength(1)
+      expect(commands[0]).toContain('--dry-run')
+      expect(result.ok).toBe(false)
+      expect(result.fallbackUsed).toBe(false)
+      expect(result.attempts).toEqual([
+        expect.objectContaining({ mutationRisk: 'none', reason: 'unknown' })
+      ])
+      expect.soft(result.needsRestart).toBe(false)
+      expect.soft(options.environmentOperations.recommendRestart).not.toHaveBeenCalled()
+    }
+  )
+
   it.each([
     {
       label: 'partially verified batch',
@@ -177,6 +227,13 @@ describe('NotebookPackageOperations', () => {
       needsRestart: false,
       changes: false,
       risk: 'possible'
+    },
+    {
+      label: 'installer failure with unknown mutation risk and no readable delta',
+      ok: false,
+      needsRestart: false,
+      changes: false,
+      risk: 'unknown'
     }
   ] as const)(
     'E06 recommends R restart after $label',
