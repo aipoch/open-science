@@ -2486,6 +2486,7 @@
     "The agent reads these findings and self-corrects in its next message.": "Агент анализирует эти результаты и сам корректирует в следующем сообщении.",
     "The agent requested an import from <name>{{source}}</name>. Review and choose exactly what Open Science may install.": "Агент запросил импорт из <name>{{source}}</name>. Проверьте и выберите именно то, что может установить Open Science.",
     "The agent session could not be reconfigured. Your draft has been preserved.": "Сессия агента не может быть переустановлена. Ваш черновик сохранён.",
+    "The Session was deleted, but some cleanup could not be completed.": "Сеанс удалён, но некоторые операции очистки не удалось завершить.",
     "The agent was stopped, but Open Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again.": "Агент был остановлен, но Open Science не смог удалить сохранённую сессию. Сессия, черновик и вложения были сохранены. Попробуйте снова.",
     "The agent wants to call a connector tool that sends data to an external service. Approve only if you trust this connector with the current request.": "Агент хочет вызвать коннектор, который передаёт данные внешнему сервису. Разрешайте только в случае доверия этому коннектору с текущим запросом.",
     "The base URL is invalid. Enter a full URL like https://gateway.example/v1.": "Базовый URL-адрес недействителен. Введите полный адрес, например https://gateway.example/v1.",

@@ -695,6 +695,13 @@ describe('Session projection', () => {
     })
     await repository.commitSave(owned)
 
+    await repository.markPending(owned.projectId, owned.id, 'save')
+    await expect(repository.markPending('project-1', owned.id, 'delete')).rejects.toThrow(
+      'another Project'
+    )
+    await expect(repository.pending()).resolves.toEqual([
+      { projectId: owned.projectId, sessionId: owned.id, operation: 'save' }
+    ])
     await expect(repository.commitDelete('project-1', owned.id)).rejects.toThrow('another Project')
     await expect(client.session.findUnique({ where: { id: owned.id } })).resolves.toMatchObject({
       projectId: 'project-2',
@@ -705,6 +712,11 @@ describe('Session projection', () => {
     await expect(client.sessionArtifactRef.count({ where: { sessionId: owned.id } })).resolves.toBe(
       1
     )
+    await repository.commitDelete(owned.projectId, owned.id)
+    await expect(repository.markPending('project-1', owned.id, 'delete')).rejects.toThrow(
+      'another Project'
+    )
+    await expect(repository.pending()).resolves.toEqual([])
   })
 
   it('retains Project metadata and Session Usage when the whole Project is deleted', async () => {

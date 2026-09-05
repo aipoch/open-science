@@ -2369,6 +2369,7 @@
     "The agent reads these findings and self-corrects in its next message.": "에이전트는 이러한 결과를 읽고 다음 메시지에서 자체 수정합니다.",
     "The agent requested an import from <name>{{source}}</name>. Review and choose exactly what Open Science may install.": "에이전트가 <name>{{source}}</name>에서 가져오기를 요청했습니다. Open Science가 설치할 수 있는 항목을 정확히 검토하고 선택하세요.",
     "The agent session could not be reconfigured. Your draft has been preserved.": "에이전트 세션을 재구성할 수 없습니다. 초안이 보존되었습니다.",
+    "The Session was deleted, but some cleanup could not be completed.": "세션이 삭제되었지만 일부 정리 작업을 완료하지 못했습니다.",
     "The agent was stopped, but Open Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again.": "에이전트가 중지되었지만 Open Science에서는 저장된 세션을 삭제할 수 없습니다. 세션, 초안, 첨부파일은 그대로 유지되었습니다. 다시 시도해 주세요.",
     "The agent wants to call a connector tool that sends data to an external service. Approve only if you trust this connector with the current request.": "에이전트가 외부 서비스로 데이터를 보내는 커넥터 도구를 호출하려고 합니다. 현재 요청의 데이터를 이 커넥터에 맡겨도 되는 경우에만 승인하세요.",
     "The base URL is invalid. Enter a full URL like https://gateway.example/v1.": "기본 URL이 올바르지 않습니다. https://gateway.example/v1 같은 전체 URL을 입력하세요.",

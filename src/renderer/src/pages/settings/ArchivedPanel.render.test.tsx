@@ -195,6 +195,33 @@ describe('ArchivedPanel', () => {
     expect(useArchiveUndoStore.getState().notices).toEqual([])
   })
 
+  it('reports unfinished cleanup after committed deletion and removes the Undo notice', async () => {
+    deleteSession.mockResolvedValue({
+      status: 'deleted',
+      runtimeDetached: true,
+      cleanupPending: true
+    })
+    useArchiveUndoStore.getState().enqueueSession(session)
+    await act(async () =>
+      root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    )
+    const openDelete = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Delete')
+    )
+    await act(async () => openDelete?.click())
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    const confirm = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent === 'Delete'
+    )
+    await act(async () => confirm?.click())
+
+    expect(useArchiveUndoStore.getState().notices).toEqual([])
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'The Session was deleted, but some cleanup could not be completed.'
+    )
+  })
+
   it('keeps the archived Session dialog open and retries the unified deletion command', async () => {
     deleteSession
       .mockResolvedValueOnce({

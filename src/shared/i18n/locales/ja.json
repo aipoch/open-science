@@ -2359,6 +2359,7 @@
     "The agent reads these findings and self-corrects in its next message.": "エージェントはこれらの検出結果を読み取り、次のメッセージで自己修正します。",
     "The agent requested an import from <name>{{source}}</name>. Review and choose exactly what Open Science may install.": "エージェントが <name>{{source}}</name> からのインポートをリクエストしました。Open Science がインストールしてよいものを正確に確認し、選択してください。",
     "The agent session could not be reconfigured. Your draft has been preserved.": "エージェントセッションを再構成できませんでした。下書きは保存されました。",
+    "The Session was deleted, but some cleanup could not be completed.": "セッションは削除されましたが、一部のクリーンアップを完了できませんでした。",
     "The agent was stopped, but Open Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again.": "エージェントは停止されましたが、Open Science は保存されたセッションを削除できませんでした。セッション、下書き、添付ファイルは保持されています。もう一度お試しください。",
     "The agent wants to call a connector tool that sends data to an external service. Approve only if you trust this connector with the current request.": "エージェントは、外部サービスにデータを送信するコネクタツールを呼び出そうとしています。現在のリクエストに対してこのコネクタを信頼する場合にのみ承認してください。",
     "The base URL is invalid. Enter a full URL like https://gateway.example/v1.": "ベース URL が無効です。https://gateway.example/v1 のような完全な URL を入力してください。",

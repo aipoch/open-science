@@ -2442,6 +2442,7 @@
     "The agent reads these findings and self-corrects in its next message.": "智能體會讀取這些發現，並在下一則訊息中自行修正。",
     "The agent requested an import from <name>{{source}}</name>. Review and choose exactly what Open Science may install.": "智能體請求從 <name>{{source}}</name> 匯入。請檢查並明確選擇允許 Open Science 安裝的內容。",
     "The agent session could not be reconfigured. Your draft has been preserved.": "無法重新設定智能體會話。你的草稿已保留。",
+    "The Session was deleted, but some cleanup could not be completed.": "工作階段已刪除，但部分清理工作未能完成。",
     "The agent was stopped, but Open Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again.": "智能體已停止，但 Open Science 無法刪除已儲存的會話。會話、草稿和附件均已保留，請重試。",
     "The agent wants to call a connector tool that sends data to an external service. Approve only if you trust this connector with the current request.": "智能體想要呼叫一個會把資料傳送到外部服務的連接器工具。僅在你信任該連接器處理目前請求時才批准。",
     "The base URL is invalid. Enter a full URL like https://gateway.example/v1.": "基礎 URL 無效。填寫完整 URL，例如 https://gateway.example/v1。",

@@ -5,6 +5,7 @@ import { MAX_ELICITATION_OPTIONS_PER_FIELD } from './elicitation'
 
 import {
   SESSION_FILE_VERSION,
+  sessionDeletionResultSchema,
   collectSessionReferences,
   createSessionFile,
   ConversationGraphMaterializationError,
@@ -4872,5 +4873,25 @@ describe('normalizeSessionFile with activities', () => {
     expect(restored?.messages[0].pdfContext).toMatchObject({
       readingPosition: { pageNumber: 7, pageCount: 14 }
     })
+  })
+})
+
+// The response extension is transient and valid only for a committed deletion.
+describe('Session deletion result', () => {
+  it('accepts a cleanup warning without changing the existing deletion result', () => {
+    for (const result of [
+      { status: 'deleted', runtimeDetached: true },
+      { status: 'deleted', runtimeDetached: true, cleanupPending: true },
+      { status: 'failed', reason: 'persistence', runtimeDetached: true }
+    ])
+      expect(sessionDeletionResultSchema.parse(result)).toEqual(result)
+    expect(
+      sessionDeletionResultSchema.safeParse({
+        status: 'failed',
+        reason: 'persistence',
+        runtimeDetached: true,
+        cleanupPending: true
+      }).success
+    ).toBe(false)
   })
 })

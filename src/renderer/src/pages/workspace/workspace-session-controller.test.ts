@@ -1274,6 +1274,29 @@ describe('workspace session controller', () => {
     expect(hook.result.current.view.dialogs.delete).toBeNull()
   })
 
+  it('settles committed deletion and reports unfinished cleanup without offering a live Session retry', async () => {
+    const active = session()
+    const settleSessionDeletion = vi.fn()
+    const hook = renderController({
+      activeSession: active,
+      settleSessionDeletion,
+      deleteSession: vi.fn().mockResolvedValue({
+        status: 'deleted',
+        runtimeDetached: true,
+        cleanupPending: true
+      })
+    })
+    mounted.push(hook)
+    act(() => hook.result.current.actions.openDelete(active))
+    await act(async () => hook.result.current.actions.confirmDelete())
+
+    expect(settleSessionDeletion).toHaveBeenCalledWith(active.id, true)
+    expect(hook.result.current.view.dialogs.delete).toBeNull()
+    expect(hook.result.current.view.exportError).toBe(
+      'The Session was deleted, but some cleanup could not be completed.'
+    )
+  })
+
   it('keeps a background Session dialog open with a retryable persistence error', async () => {
     const active = session({ id: 'session-active' })
     const background = session({ id: 'session-background' })

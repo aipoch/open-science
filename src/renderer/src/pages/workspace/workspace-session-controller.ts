@@ -296,6 +296,8 @@ const useWorkspaceSessionController = ({
         const deleted = result.status === 'deleted'
         settleSessionDeletion(sessionId, deleted)
         if (deleted) {
+          if (result.cleanupPending)
+            setExportError(t('The Session was deleted, but some cleanup could not be completed.'))
           if (clearIdleRetry(sessionId)) clearPending(sessionId)
           setDeleteDialog((current) => (current?.session.id === sessionId ? null : current))
           return

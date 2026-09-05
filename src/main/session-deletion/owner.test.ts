@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpStateSnapshot } from '../../shared/acp'
-import type { DeleteSessionRequest } from '../../shared/session-persistence'
+import {
+  SessionDeletionCommittedError,
+  type DeleteSessionRequest
+} from '../../shared/session-persistence'
 import { SessionDeletionOwner } from './owner'
 
 const snapshot = (sessionIds: string[]): AcpStateSnapshot =>
@@ -140,6 +143,19 @@ describe('SessionDeletionOwner', () => {
       status: 'failed',
       reason: 'persistence',
       runtimeDetached: true
+    })
+  })
+
+  it('reports committed persistence errors as deleted with unfinished cleanup', async () => {
+    const { owner } = createOwner({
+      deletePersisted: vi
+        .fn()
+        .mockRejectedValue(new SessionDeletionCommittedError(new Error('database locked')))
+    })
+    await expect(owner.delete(request)).resolves.toEqual({
+      status: 'deleted',
+      runtimeDetached: true,
+      cleanupPending: true
     })
   })
 

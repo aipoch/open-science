@@ -118,7 +118,7 @@ describe('release and scheduled workflow topology', () => {
       needs: 'plan',
       if: "needs.plan.outputs.should_test == 'true'",
       'runs-on': 'windows-latest',
-      'timeout-minutes': 40
+      'timeout-minutes': 70
     })
     expect(profile.run).toContain("'--stress-cycles=1'")
     expect(profile.run).toContain("'--stress-cycles=6'")

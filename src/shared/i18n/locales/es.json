@@ -2466,6 +2466,7 @@
     "The agent reads these findings and self-corrects in its next message.": "El agente lee estos hallazgos y los autocorrige en su siguiente mensaje.",
     "The agent requested an import from <name>{{source}}</name>. Review and choose exactly what Open Science may install.": "El agente solicitó una importación desde <name>{{source}}</name>. Revise y elija exactamente qué Open Science puede instalar.",
     "The agent session could not be reconfigured. Your draft has been preserved.": "No se pudo reconfigurar la sesión del agente. Su borrador se ha conservado.",
+    "The Session was deleted, but some cleanup could not be completed.": "La sesión se eliminó, pero no se pudieron completar algunas tareas de limpieza.",
     "The agent was stopped, but Open Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again.": "El agente se detuvo, pero Open Science no pudo eliminar la sesión guardada. Se conservaron la sesión, el borrador y los archivos adjuntos. Inténtelo de nuevo.",
     "The agent wants to call a connector tool that sends data to an external service. Approve only if you trust this connector with the current request.": "El agente desea llamar a una herramienta de conector que envía datos a un servicio externo. Apruebe solo si confía en que este conector trate los datos de la solicitud actual.",
     "The base URL is invalid. Enter a full URL like https://gateway.example/v1.": "La URL base no es válida. Introduzca una URL completa, como https://gateway.example/v1.",
