@@ -101,6 +101,7 @@ describe('release and scheduled workflow topology', () => {
     for (const file of [
       'vitest.config.test.ts',
       'scripts/ci/release-workflows.test.ts',
+      'scripts/windows-release-workflows.test.ts',
       'src/main/database/database-null-and-version-bounds.test.ts',
       'src/main/database/migration-service.test.ts',
       'src/main/notebook/runtime-service.test.ts',
