@@ -4671,11 +4671,13 @@ describe('installClaude (app-managed source)', () => {
 
     const install = service.installClaude({ source: 'managed' }, () => undefined)
     expect(service.hasActiveInstall()).toBe(true)
+    expect(service.getActiveInstallId()).toMatch(/^install-/)
 
     finishInstall({ result: { installId: 'completed', ok: false } })
     await install
 
     expect(service.hasActiveInstall()).toBe(false)
+    expect(service.getActiveInstallId()).toBeUndefined()
   })
 
   it('routes managed installs through the managed installer and persists the resolved path', async () => {

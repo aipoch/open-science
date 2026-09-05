@@ -252,6 +252,14 @@ class SettingsService {
     return this.runtimeManager.hasActiveInstall()
   }
 
+  getActiveInstallId(): string | undefined {
+    return this.runtimeManager.getActiveInstallId()
+  }
+
+  holdInstallAdmission(): () => void {
+    return this.runtimeManager.holdInstallAdmission()
+  }
+
   dispose(): Promise<void> {
     return this.providers.dispose()
   }

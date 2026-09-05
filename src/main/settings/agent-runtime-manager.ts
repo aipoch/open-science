@@ -328,6 +328,7 @@ export class AgentRuntimeManager {
   private readonly allocateOpenCodeUsagePort: () => Promise<number>
   private readonly executeClaudeProbe: ExecuteClaudeProbe
   private activeInstallId: string | undefined
+  private installAdmissionHeld = false
   private environmentCheckRuntimeProbe: ReusableRuntimeProbe | undefined
   private preflightRuntimeProbe: ReusableRuntimeProbe | undefined
   private readonly installManagedClaudeImpl: (
@@ -346,6 +347,20 @@ export class AgentRuntimeManager {
 
   hasActiveInstall(): boolean {
     return this.activeInstallId !== undefined
+  }
+
+  getActiveInstallId(): string | undefined {
+    return this.activeInstallId
+  }
+
+  holdInstallAdmission(): () => void {
+    this.installAdmissionHeld = true
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.installAdmissionHeld = false
+    }
   }
 
   constructor(options: AgentRuntimeManagerOptions) {
@@ -716,7 +731,7 @@ export class AgentRuntimeManager {
     installId: string,
     install: () => Promise<ClaudeInstallResult>
   ): Promise<ClaudeInstallResult> {
-    if (this.activeInstallId !== undefined) {
+    if (this.activeInstallId !== undefined || this.installAdmissionHeld) {
       return { installId, ok: false, error: 'Another install is already in progress.' }
     }
 

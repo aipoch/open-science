@@ -457,7 +457,7 @@ export type ApplicationRuntimeInterfaces = {
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   hasActiveReviewerWork: () => boolean
-  hasActiveSettingsWork: () => boolean
+  getActiveSettingsInstallId: () => string | undefined
   prepareForQuit: () => Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
   abortQuitPreparation: () => void
 }
@@ -3188,20 +3188,28 @@ const createApplicationModules = async (
   // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
+  let releaseSettingsInstallAdmission: (() => void) | undefined
   const abortUpdateHandoff = (): void => {
+    const releaseAdmission = releaseSettingsInstallAdmission
+    releaseSettingsInstallAdmission = undefined
+    releaseAdmission?.()
     try {
       sideChatRuntime.resumeAfterHandoff()
     } finally {
       notifyRendererDurabilityAborted()
     }
   }
+  const updateInstallGate = createActiveResearchSafeInstallGate(
+    detectResearchBlockers,
+    durableBackendHandoffGate,
+    () => isMigrationInProgress() || isMigrationPending()
+  )
   const updateStrategy = createUpdateStrategy(process.platform, {
     translate,
-    installGate: createActiveResearchSafeInstallGate(
-      detectResearchBlockers,
-      durableBackendHandoffGate,
-      () => isMigrationInProgress() || isMigrationPending()
-    ),
+    installGate: async () => {
+      releaseSettingsInstallAdmission = settingsService.holdInstallAdmission()
+      return updateInstallGate()
+    },
     releaseInstallHandoff: abortUpdateHandoff
   })
   const updateCommandOwner = createUpdateCommandOwner(updateStrategy)
@@ -4214,7 +4222,7 @@ const createApplicationModules = async (
         notebook: notebookService
       }),
     hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
-    hasActiveSettingsWork: () => settingsService.hasActiveInstall(),
+    getActiveSettingsInstallId: () => settingsService.getActiveInstallId(),
     prepareForQuit: () => runtime.prepareForQuit(),
     abortQuitPreparation: () => runtime.abortQuitPreparation(),
     electronAdapters: {

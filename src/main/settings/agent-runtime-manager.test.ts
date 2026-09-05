@@ -683,6 +683,29 @@ describe('AgentRuntimeManager', () => {
     expect(installManagedOpencodeImpl).toHaveBeenCalledOnce()
   })
 
+  it('rejects managed runtime installs while update handoff holds admission', async () => {
+    const installManagedClaudeImpl: NonNullable<ManagerOptions['installManagedClaudeImpl']> = vi.fn(
+      async ({ installId }) => ({
+        result: { installId, ok: false, error: 'installer was invoked' }
+      })
+    )
+    manager = createManager({ installManagedClaudeImpl })
+    const releaseAdmission = manager.holdInstallAdmission()
+
+    try {
+      await expect(manager.installClaude({ source: 'managed' }, vi.fn())).resolves.toMatchObject({
+        ok: false,
+        error: 'Another install is already in progress.'
+      })
+      expect(installManagedClaudeImpl).not.toHaveBeenCalled()
+    } finally {
+      releaseAdmission()
+    }
+
+    await manager.installClaude({ source: 'managed' }, vi.fn())
+    expect(installManagedClaudeImpl).toHaveBeenCalledOnce()
+  })
+
   it('keeps managed CodeBuddy installs behind the shared install lock', async () => {
     const installStarted = Promise.withResolvers<void>()
     const releaseInstall = Promise.withResolvers<void>()

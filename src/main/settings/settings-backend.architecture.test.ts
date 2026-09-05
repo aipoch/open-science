@@ -479,9 +479,9 @@ describe('Settings backend ownership architecture', () => {
         addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential buildCustomServerTemplateExport
         buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
         codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
-        detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference
+        detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getActiveInstallId getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getManualInterpreters getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
-        getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail hasActiveInstall
+        getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail hasActiveInstall holdInstallAdmission
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
         importSkillZipBatch installClaude installCodeBuddy installCodex installNotebookNetwork installOpencode isEncryptionAvailable
         isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
@@ -786,6 +786,14 @@ describe('Settings backend ownership architecture', () => {
     expect(updateBlockerDetector).toContain(
       "if (settingsService.hasActiveInstall()) blockers.push('settings-install')"
     )
+    const updateInstallHandoff = mainIpc.slice(
+      mainIpc.indexOf('let releaseSettingsInstallAdmission'),
+      mainIpc.indexOf('const updateCommandOwner')
+    )
+    expect(updateInstallHandoff).toContain(
+      'releaseSettingsInstallAdmission = settingsService.holdInstallAdmission()'
+    )
+    expect(updateInstallHandoff).toContain('releaseAdmission?.()')
     expect(mainIpc).toContain('permissionGrantRegistry,\n    settingsRepository')
   })
 

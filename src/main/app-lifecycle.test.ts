@@ -174,6 +174,7 @@ const setup = (
     detectActiveSessions?: () => ActiveSessionInfo[]
     hasActiveReviewerWork?: () => boolean
     hasActiveSettingsWork?: () => boolean
+    getActiveSettingsInstallId?: () => string | undefined
     confirmClose?: (
       variant: CloseConfirmVariant,
       sessions: ActiveSessionInfo[],
@@ -230,7 +231,9 @@ const setup = (
       platform: overrides.platform ?? 'linux',
       detectActiveSessions,
       hasActiveReviewerWork: overrides.hasActiveReviewerWork ?? (() => false),
-      hasActiveSettingsWork: overrides.hasActiveSettingsWork ?? (() => false),
+      getActiveSettingsInstallId:
+        overrides.getActiveSettingsInstallId ??
+        (() => (overrides.hasActiveSettingsWork?.() ? 'settings-install' : undefined)),
       createConfirmClose: () => confirmClose
     })
   return {
@@ -479,7 +482,7 @@ describe('installAppLifecycle', () => {
       platform: 'linux',
       detectActiveSessions: (): ActiveSessionInfo[] => [],
       hasActiveReviewerWork: () => false,
-      hasActiveSettingsWork: () => false,
+      getActiveSettingsInstallId: () => undefined,
       createConfirmClose: () => (): Promise<CloseConfirmChoice> => Promise.resolve('quit')
     })
 
@@ -1102,6 +1105,30 @@ describe('installAppLifecycle', () => {
     await flush()
 
     expect(confirmClose).toHaveBeenLastCalledWith('quit', [], true)
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it('requires confirmation when the active Settings install changes before reissued quit', async () => {
+    let activeInstallId = 'install-1'
+    const confirmClose = vi
+      .fn<() => Promise<CloseConfirmChoice>>()
+      .mockResolvedValueOnce('quit')
+      .mockResolvedValueOnce('cancel')
+    const { app, quit, shutdownBackends } = setup({
+      getActiveSettingsInstallId: () => activeInstallId,
+      confirmClose
+    })
+
+    app.emit('before-quit')
+    await flush()
+    expect(quit).toHaveBeenCalledOnce()
+
+    activeInstallId = 'install-2'
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledTimes(2)
     expect(shutdownBackends).not.toHaveBeenCalled()
     expect(app.exit).not.toHaveBeenCalled()
   })

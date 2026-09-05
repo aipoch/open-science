@@ -93,8 +93,9 @@ export type AppLifecycleDeps = {
   detectActiveSessions: () => ActiveSessionInfo[]
   // Reviewer activity has no ActiveSessionInfo row, but still requires the ordinary-quit warning.
   hasActiveReviewerWork: () => boolean
-  // Runtime installation has no Session row and cannot be safely interrupted midway.
-  hasActiveSettingsWork: () => boolean
+  // Runtime installation has no Session row and cannot be safely interrupted midway. Its stable ID
+  // keeps a confirmation scoped to the exact install that the user observed.
+  getActiveSettingsInstallId: () => string | undefined
   // Builds the close-confirm coordinator bound to the current main window (recreated on demand).
   createConfirmClose: (
     getWindow: () => BrowserWindow | undefined
@@ -136,7 +137,7 @@ export const installAppLifecycle = (
   // Set once the user has confirmed a quit (via the dialog or a prior 'confirm' close), so a re-issued
   // before-quit skips straight to teardown instead of asking again.
   let quitConfirmed = false
-  let settingsWorkConfirmed = false
+  let confirmedSettingsInstallId: string | undefined
   // A delegated confirmation authorizes only the Sessions visible in that dialog. The final
   // before-quit boundary rechecks this snapshot so work admitted between confirmation and the
   // re-issued quit cannot inherit an unrelated confirmation.
@@ -176,11 +177,12 @@ export const installAppLifecycle = (
   }
 
   const confirmClose = deps.createConfirmClose(() => mainWindow)
+  const activeSettingsInstallId = (): string | undefined => deps.getActiveSettingsInstallId()
   const confirmResearchClose = (
     variant: CloseConfirmVariant,
     sessions: ActiveSessionInfo[]
   ): Promise<CloseConfirmChoice> =>
-    deps.hasActiveReviewerWork() || deps.hasActiveSettingsWork()
+    deps.hasActiveReviewerWork() || activeSettingsInstallId() !== undefined
       ? confirmClose(variant, sessions, true)
       : confirmClose(variant, sessions)
   const detectDelegatedWork = (): ActiveSessionInfo[] =>
@@ -189,10 +191,10 @@ export const installAppLifecycle = (
     JSON.stringify([session.projectId, session.sessionId])
   const requestConfirmedQuit = (
     delegated: readonly ActiveSessionInfo[] = [],
-    confirmedSettingsWork = false
+    settingsInstallId?: string
   ): void => {
     quitConfirmed = true
-    settingsWorkConfirmed = confirmedSettingsWork
+    confirmedSettingsInstallId = settingsInstallId
     confirmedDelegatedSessionKeys = new Set(delegated.map(delegatedSessionKey))
     deps.quit()
   }
@@ -247,8 +249,8 @@ export const installAppLifecycle = (
       // A caller's earlier confirmation cannot authorize delegated work that is already live at the
       // final boundary. Leave that case unconfirmed so before-quit performs the delegated-work recheck.
       quitConfirmed =
-        confirmed && detectDelegatedWork().length === 0 && !deps.hasActiveSettingsWork()
-      settingsWorkConfirmed = false
+        confirmed && detectDelegatedWork().length === 0 && activeSettingsInstallId() === undefined
+      confirmedSettingsInstallId = undefined
       confirmedDelegatedSessionKeys = new Set()
       deps.quit()
     },
@@ -324,7 +326,7 @@ export const installAppLifecycle = (
         systemShutdownRequested = false
       }
       quitConfirmed = false
-      settingsWorkConfirmed = false
+      confirmedSettingsInstallId = undefined
       confirmedDelegatedSessionKeys = new Set()
       return
     }
@@ -336,8 +338,15 @@ export const installAppLifecycle = (
 
     // A Settings install can start after an earlier empty-work fast path resolved. Only a warning
     // that actually observed active installation work may authorize interrupting it.
-    if (ordinaryQuit && quitConfirmed && deps.hasActiveSettingsWork() && !settingsWorkConfirmed) {
+    const settingsInstallAtShutdownBoundary = activeSettingsInstallId()
+    if (
+      ordinaryQuit &&
+      quitConfirmed &&
+      settingsInstallAtShutdownBoundary !== undefined &&
+      settingsInstallAtShutdownBoundary !== confirmedSettingsInstallId
+    ) {
       quitConfirmed = false
+      confirmedSettingsInstallId = undefined
     }
 
     // Final synchronous delegated-work safety boundary. A delegated Attempt may start after an earlier
@@ -352,16 +361,19 @@ export const installAppLifecycle = (
     if (delegatedWorkBlocksShutdown && hasUnconfirmedDelegatedWork) {
       event.preventDefault()
       quitConfirmed = false
-      settingsWorkConfirmed = false
+      confirmedSettingsInstallId = undefined
       confirmedDelegatedSessionKeys = new Set()
       clearApplicationShutdownTrigger()
       if (confirmInFlight) return
       confirmInFlight = true
-      const settingsWorkAtDelegatedConfirmation = deps.hasActiveSettingsWork()
+      const settingsInstallAtDelegatedConfirmation = activeSettingsInstallId()
       void confirmResearchClose('quit', delegatedAtShutdownBoundary)
         .then((choice) => {
           if (choice === 'quit') {
-            requestConfirmedQuit(delegatedAtShutdownBoundary, settingsWorkAtDelegatedConfirmation)
+            requestConfirmedQuit(
+              delegatedAtShutdownBoundary,
+              settingsInstallAtDelegatedConfirmation
+            )
           }
         })
         .finally(() => {
@@ -376,22 +388,22 @@ export const installAppLifecycle = (
       event.preventDefault()
       if (confirmInFlight) return
       confirmInFlight = true
-      const settingsWorkAtConfirmation = deps.hasActiveSettingsWork()
+      const settingsInstallAtConfirmation = activeSettingsInstallId()
       void confirmResearchClose('quit', deps.detectActiveSessions())
         .then(async (choice) => {
           if (choice === 'quit') {
             const delegated = detectDelegatedWork()
             if (delegated.length > 0) {
               quitConfirmed = false
-              settingsWorkConfirmed = false
-              const settingsWorkAtDelegatedConfirmation = deps.hasActiveSettingsWork()
+              confirmedSettingsInstallId = undefined
+              const settingsInstallAtDelegatedConfirmation = activeSettingsInstallId()
               const delegatedChoice = await confirmResearchClose('quit', delegated)
               if (delegatedChoice === 'quit') {
-                requestConfirmedQuit(delegated, settingsWorkAtDelegatedConfirmation)
+                requestConfirmedQuit(delegated, settingsInstallAtDelegatedConfirmation)
               }
               return
             }
-            requestConfirmedQuit([], settingsWorkAtConfirmation)
+            requestConfirmedQuit([], settingsInstallAtConfirmation)
             return
           }
           // Cancel with no tray and no surviving window would strand the app with no UI (no-tray
@@ -556,7 +568,7 @@ export const installAppLifecycle = (
           }
           shutdownStarted = false
           quitConfirmed = false
-          settingsWorkConfirmed = false
+          confirmedSettingsInstallId = undefined
           if (systemShutdownRequested) {
             // A preventable OS shutdown arrived after this ordinary attempt began. Do not restore an
             // interactive app: replay it with the already-latched system trigger so persistence is
