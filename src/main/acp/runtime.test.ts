@@ -10048,6 +10048,7 @@ describe('ACP runtime session management', () => {
     const client = createProjectDbClient(root)
     temporaryDisconnections.push(() => client.$disconnect())
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'current-session' }
     })
