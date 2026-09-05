@@ -1503,18 +1503,11 @@ const ConversationPanel = ({
                         <ResizablePlanComposer key={activePendingPlanKey}>
                           <WorkspacePlanCard
                             embedded
+                            enabled={canRespondToPlan}
                             projection={pendingPlan}
                             onOpen={openPendingPlan}
-                            onRespond={
-                              canRespondToPlan
-                                ? (decision) => respondToPendingPlan({ decision })
-                                : undefined
-                            }
-                            onSubmitResponse={
-                              canRespondToPlan
-                                ? (text) => respondToPendingPlan({ feedback: text })
-                                : undefined
-                            }
+                            onRespond={(decision) => respondToPendingPlan({ decision })}
+                            onSubmitResponse={(text) => respondToPendingPlan({ feedback: text })}
                             onResolved={() => setResolvedPlanKey(activePendingPlanKey)}
                           />
                         </ResizablePlanComposer>

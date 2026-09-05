@@ -113,6 +113,7 @@ const STEP_STATUS_PRESENTATION: Record<
 const WorkspacePlanCard = ({
   projection,
   stale = false,
+  enabled = true,
   embedded = false,
   className = '',
   onOpen,
@@ -125,12 +126,13 @@ const WorkspacePlanCard = ({
     onRespond: (decision: 'approved' | 'rejected') => Promise<void>
     onSubmitResponse?: (text: string) => Promise<void>
     onResolved?: () => void
+    enabled?: boolean
     embedded?: boolean
     className?: string
   }>): React.JSX.Element => {
   const { t } = useTranslation()
 
-  const decisionPending = projection.approval === 'pending' && !stale
+  const decisionPending = projection.approval === 'pending' && !stale && enabled
   const [responseText, setResponseText] = useState('')
   const [decisionBusy, setDecisionBusy] = useState(false)
   const [decisionError, setDecisionError] = useState<string>()
