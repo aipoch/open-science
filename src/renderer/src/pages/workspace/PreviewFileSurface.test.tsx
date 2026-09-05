@@ -538,6 +538,64 @@ describe('PreviewFileSurface managed text versions', () => {
       if (change === 'baseline') expect(save.mock.calls[1][0].basedOnVersionId).toBe('upload-v1')
     }
   )
+  it.each(['upload', 'artifact'] as const)(
+    'links the confirmed %s PDF version after a head-only refresh',
+    async (source) => {
+      selectPdfContextSession()
+      const { linkPdfContext } = installPdfContextApi()
+      let notify!: Parameters<typeof window.api.projectFiles.onChanged>[0]
+      window.api.projectFiles = {
+        ...window.api.projectFiles,
+        onChanged: vi.fn((listener) => {
+          notify = listener
+          return vi.fn()
+        })
+      }
+      let head = 'upload-v2'
+      window.api.managedFileVersions.inspect = vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          ...managedInspect,
+          source,
+          headVersionId: head,
+          selectedVersionId: head,
+          versions: managedInspect.versions.map((version, index) => ({
+            ...version,
+            source,
+            id: index === 1 ? head : version.id,
+            versionNumber: index === 1 && head === 'upload-v3' ? 3 : version.versionNumber,
+            displayName: 'paper.pdf'
+          }))
+        }
+      }))
+      const pdfItem: PreviewFileItem = {
+        ...managedUploadItem,
+        source,
+        format: 'pdf',
+        name: 'paper.pdf',
+        title: 'paper.pdf',
+        selectedVersionId: undefined,
+        artifactId: source === 'artifact' ? 'upload-file-1' : undefined,
+        path: `${source === 'upload' ? 'upload-version' : 'artifact-version'}:project-1/session-1/upload-file-1/upload-v2`
+      }
+      await act(async () => root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />))
+      head = 'upload-v3'
+      await act(async () => notify({ projectId: 'project-1', sources: [source], kind: 'upsert' }))
+      await clickHeaderAction('Read with agent')
+      expect(linkPdfContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sources: [
+            {
+              sourceKind: `${source}-version`,
+              sourceFileId: 'upload-file-1',
+              sourceVersionId: 'upload-v3'
+            }
+          ]
+        })
+      )
+    }
+  )
+
   it('uses the refreshed head for editing and downloads after same-file metadata changes', async () => {
     const latestVersion = { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 }
     const currentItem = { ...managedUploadItem, selectedVersionId: undefined }
@@ -931,7 +989,7 @@ describe('PreviewFileSurface managed text versions', () => {
       expect.objectContaining({
         annotationVersionId: 'artifact-v2',
         item: expect.objectContaining({
-          path: '/stale/managed-file-projection.md',
+          path: 'artifact-version:project-1/session-1/artifact-1/artifact-v2',
           selectedVersionId: 'artifact-v2'
         })
       })

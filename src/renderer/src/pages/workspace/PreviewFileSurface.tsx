@@ -809,12 +809,22 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         : previewItem
     // Bind byte reads and shared renderer caches to the confirmed immutable selection without
     // pinning the workbench tab, which must keep following future head notifications.
+    const contentVersion =
+      managedNavigationInspect?.selectedVersion ??
+      managedNavigationInspect?.versions.find(
+        (version) => version.id === managedNavigationInspect.selectedVersionId
+      )
     const contentItem =
-      managedNavigationInspect && !previewItem.selectedVersionId
-        ? { ...resolvedPreviewItem, selectedVersionId: managedNavigationInspect.selectedVersionId }
+      managedNavigationInspect && contentVersion && !previewItem.selectedVersionId
+        ? createPreviewFileItemForManagedVersion({
+            item: resolvedPreviewItem,
+            version: contentVersion,
+            projectId: managedNavigationInspect.projectId,
+            sessionId: managedNavigationInspect.sessionId
+          })
         : resolvedPreviewItem
     const { action: pdfContextAction, readingContextBindingId } = usePdfContextAction(
-      resolvedPreviewItem,
+      contentItem,
       onPdfContextError,
       { link: onLinkReadingContext, unlink: onUnlinkReadingContext }
     )

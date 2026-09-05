@@ -153,6 +153,96 @@ describe.each(['upload', 'artifact'] as const)('%s real preview resource freshne
     }
   )
 
+  it('annotates the displayed image version after a head-only refresh', async () => {
+    const item: PreviewFileItem = {
+      id: 'image-file',
+      type: 'file',
+      source,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      managedFileId: 'file-1',
+      artifactId: source === 'artifact' ? 'file-1' : undefined,
+      path: `${source === 'upload' ? 'upload-version' : 'artifact-version'}:project-1/session-1/file-1/v2`,
+      title: 'figure.png',
+      name: 'figure.png',
+      mimeType: 'image/png',
+      format: 'image'
+    }
+    // The content format/name belong to the image in this scenario.
+    const originalInspect = window.api.managedFileVersions.inspect
+    window.api.managedFileVersions.inspect = vi.fn(async (request) => {
+      const result = await originalInspect(request)
+      return result.ok
+        ? {
+            ok: true as const,
+            value: {
+              ...result.value,
+              displayName: 'figure.png',
+              versions: result.value.versions.map((version) => ({
+                ...version,
+                displayName: 'figure.png',
+                contentType: 'image/png'
+              })),
+              text: undefined,
+              canEdit: false,
+              canDiff: false
+            }
+          }
+        : result
+    })
+    const onAddAnnotation = vi.fn()
+    await act(async () =>
+      root.render(
+        <PreviewFileSurface item={item} onClose={vi.fn()} onAddAnnotation={onAddAnnotation} />
+      )
+    )
+    head = 3
+    await act(async () => notify({ projectId: 'project-1', sources: [source], kind: 'upsert' }))
+    const surface = container.querySelector<HTMLElement>('[data-image-annotation-surface]')!
+    const image = container.querySelector<HTMLImageElement>('img')!
+    Object.defineProperties(image, {
+      naturalWidth: { value: 800, configurable: true },
+      naturalHeight: { value: 400, configurable: true }
+    })
+    surface.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 400, height: 400, right: 400, bottom: 400 }) as DOMRect
+    Object.defineProperties(surface, {
+      clientWidth: { value: 400, configurable: true },
+      clientHeight: { value: 400, configurable: true }
+    })
+    await act(async () => image.dispatchEvent(new Event('load', { bubbles: true })))
+    await act(async () => {
+      image.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 200, button: 0 })
+      )
+      image.dispatchEvent(
+        new MouseEvent('pointerup', { bubbles: true, clientX: 200, clientY: 200, button: 0 })
+      )
+    })
+    const note = document.querySelector<HTMLTextAreaElement>('[aria-label="Annotation note"]')
+    expect(note).not.toBeNull()
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(
+        note,
+        'Current image evidence'
+      )
+      note!.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () =>
+      Array.from(document.querySelectorAll('button'))
+        .find((button) => button.textContent === 'Annotate')
+        ?.click()
+    )
+    expect(onAddAnnotation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: expect.objectContaining({
+          versionId: 'v3',
+          path: `${source === 'upload' ? 'upload-version' : 'artifact-version'}:project-1/session-1/file-1/v3`
+        })
+      })
+    )
+  })
+
   it('keeps historical content and its lease while updating the head', async () => {
     const item: PreviewFileItem = {
       id: 'file-1',
