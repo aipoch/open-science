@@ -311,6 +311,7 @@ test.describe('Workspace dividers', () => {
       .last()
       .click()
     const browser = page.getByLabel('Local file browser')
+    await expect(browser.getByRole('list', { name: 'Directory contents' })).toBeVisible()
     await browser.getByLabel('Directory path').fill(directory)
     await browser.getByLabel('Directory path').press('Enter')
     await browser
