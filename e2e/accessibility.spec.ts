@@ -413,17 +413,9 @@ test('supports the core project journey with keyboard input only', async ({ app 
     }))
   )
     return
-  const settingsFocusRestored = await settingsTrigger.evaluate(
-    (element) => document.activeElement === element
-  )
-  if (ACCESSIBILITY_COLLECT_ALL && !settingsFocusRestored) {
-    await recordAccessibilityFinding(
-      'Keyboard focus restoration',
-      'Closing settings did not restore focus to the settings trigger.'
-    )
-    return
-  }
-  await expect(settingsTrigger).toBeFocused()
+  await expectKeyboardOutcome(page, 'Keyboard focus restoration', async () => {
+    await expect(settingsTrigger).toBeFocused()
+  })
 })
 
 for (const width of [375, 767] as const) {
