@@ -69,6 +69,7 @@ type ElectronCleanupTarget = {
 type ElectronCleanupOptions = {
   forcedTimeoutMs: number
   gracefulTimeoutMs: number
+  requireGraceful?: boolean
 }
 
 const settlesWithin = async (promise: Promise<void>, timeoutMs: number): Promise<boolean> =>
@@ -88,7 +89,7 @@ const settlesWithin = async (promise: Promise<void>, timeoutMs: number): Promise
 
 const closeElectronApplicationForCleanup = async (
   target: ElectronCleanupTarget,
-  { gracefulTimeoutMs, forcedTimeoutMs }: ElectronCleanupOptions
+  { gracefulTimeoutMs, forcedTimeoutMs, requireGraceful = false }: ElectronCleanupOptions
 ): Promise<void> => {
   const forceCloseWithinBudget = async (): Promise<void> => {
     if (await settlesWithin(target.forceClose(), forcedTimeoutMs)) return
@@ -107,6 +108,9 @@ const closeElectronApplicationForCleanup = async (
 
   await forceCloseWithinBudget()
   if (closeError !== undefined) throw closeError
+  if (requireGraceful) {
+    throw new Error(`Electron E2E graceful close did not finish within ${gracefulTimeoutMs}ms.`)
+  }
 }
 
 type ElectronApp = {
@@ -906,16 +910,10 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   private async close(): Promise<void> {
-    if (!this.application) return
-
-    const application = this.application
-    this.resourceProfiler?.detach(application)
-    this.application = undefined
-    this.currentPage = undefined
-    await application.close()
+    await this.closeForCleanup(true)
   }
 
-  private async closeForCleanup(): Promise<void> {
+  private async closeForCleanup(requireGraceful = false): Promise<void> {
     if (!this.application) return
 
     const application = this.application
@@ -931,7 +929,7 @@ class ElectronAppHarness implements ElectronApp {
             throw new Error('Electron E2E forced close did not reap the process tree.')
         }
       },
-      { gracefulTimeoutMs: 10_000, forcedTimeoutMs: 10_000 }
+      { gracefulTimeoutMs: 10_000, forcedTimeoutMs: 10_000, requireGraceful }
     )
   }
 }
