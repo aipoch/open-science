@@ -651,43 +651,61 @@ describe('PreviewFileSurface managed text versions', () => {
     )
   })
 
-  it('retains draft controls but disables saving during external reinspection and after deletion', async () => {
-    let notify!: Parameters<typeof window.api.projectFiles.onChanged>[0]
-    window.api.projectFiles = {
-      ...window.api.projectFiles,
-      onChanged: vi.fn((listener) => {
-        notify = listener
-        return vi.fn()
-      })
-    }
-    await act(async () =>
-      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
-    )
-    await click(container.querySelector('[aria-label="Edit README.md"]'))
-    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
-    type Result = Awaited<ReturnType<typeof window.api.managedFileVersions.inspect>>
-    let resolveInspect!: (value: Result) => void
-    window.api.managedFileVersions.inspect = vi.fn(
-      () =>
-        new Promise<Result>((resolve) => {
-          resolveInspect = resolve
+  it.each([true, false])(
+    'retains draft controls during reinspection and after deletion (text available: %s)',
+    async (hasText) => {
+      let notify!: Parameters<typeof window.api.projectFiles.onChanged>[0]
+      window.api.projectFiles = {
+        ...window.api.projectFiles,
+        onChanged: vi.fn((listener) => {
+          notify = listener
+          return vi.fn()
         })
-    )
-    await act(async () => notify?.({ projectId: 'project-1', sources: ['upload'], kind: 'delete' }))
-    const saveButton = (): HTMLButtonElement | null =>
-      container.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')
-    expect(saveButton()?.disabled).toBe(true)
-    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
-    await act(async () =>
-      resolveInspect({
-        ok: true,
-        value: { ...managedInspect, canEdit: false, unavailableReason: 'FILE_DELETED' }
-      })
-    )
-    expect(saveButton()?.disabled).toBe(true)
-    await click(saveButton())
-    expect(window.api.managedFileVersions.saveTextEdit).not.toHaveBeenCalled()
-  })
+      }
+      await act(async () =>
+        root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      )
+      await click(container.querySelector('[aria-label="Edit README.md"]'))
+      await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+      type Result = Awaited<ReturnType<typeof window.api.managedFileVersions.inspect>>
+      let resolveInspect!: (value: Result) => void
+      window.api.managedFileVersions.inspect = vi.fn(
+        () =>
+          new Promise<Result>((resolve) => {
+            resolveInspect = resolve
+          })
+      )
+      await act(async () =>
+        notify?.({ projectId: 'project-1', sources: ['upload'], kind: 'delete' })
+      )
+      const saveButton = (): HTMLButtonElement | null =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')
+      expect(saveButton()?.disabled).toBe(true)
+      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
+      await act(async () =>
+        resolveInspect({
+          ok: true,
+          value: {
+            ...managedInspect,
+            canEdit: false,
+            canDiff: false,
+            text: hasText ? managedInspect.text : undefined,
+            unavailableReason: 'FILE_DELETED'
+          }
+        })
+      )
+      expect(saveButton()?.disabled).toBe(true)
+      await click(saveButton())
+      expect(window.api.managedFileVersions.saveTextEdit).not.toHaveBeenCalled()
+      const cancel = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Cancel'
+      )
+      await click(cancel ?? null)
+      expect(
+        document.body.querySelector('[data-testid="discard-preview-changes-confirmation"]')
+      ).not.toBeNull()
+    }
+  )
 
   it.each(['plot.png', 'report.pdf', 'README.md'])(
     'offers older history for %s only alongside a version navigator',
@@ -914,7 +932,7 @@ describe('PreviewFileSurface managed text versions', () => {
         annotationVersionId: 'artifact-v2',
         item: expect.objectContaining({
           path: '/stale/managed-file-projection.md',
-          selectedVersionId: undefined
+          selectedVersionId: 'artifact-v2'
         })
       })
     )
