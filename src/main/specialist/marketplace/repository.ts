@@ -1,6 +1,11 @@
 import { join } from 'node:path'
+import { MARKETPLACE_DOCUMENT_INTEGRITY_CODE } from '../../../shared/specialist-marketplace'
 
-import { readDurableJsonFile, writeDurableJsonFile } from '../../storage/durable-json-file'
+import {
+  DurableJsonRecoveryBarrierError,
+  readDurableJsonFile,
+  writeDurableJsonFile
+} from '../../storage/durable-json-file'
 
 export type StoredMarketplaceSource = {
   id: string
@@ -189,6 +194,7 @@ const sanitizePendingInstallation = (
   if (!provenance?.installedArchiveDigest || !isStringArray(item.newlyDisabledSkillIds)) {
     return undefined
   }
+  if (Object.keys(item.provenance!).some((key) => !Object.hasOwn(provenance, key))) return undefined
   return { provenance, newlyDisabledSkillIds: item.newlyDisabledSkillIds }
 }
 
@@ -270,8 +276,34 @@ const boundReleaseCaches = (caches: MarketplaceReleaseCache[]): MarketplaceRelea
   return kept.sort((left, right) => left.index - right.index).map((entry) => entry.item)
 }
 
+export class MarketplaceDocumentIntegrityError extends DurableJsonRecoveryBarrierError {
+  constructor(readonly section: string) {
+    super(
+      `${MARKETPLACE_DOCUMENT_INTEGRITY_CODE}: Marketplace data contains unreadable ${section}. Repair specialist-marketplace.json before retrying; the original file has been preserved.`
+    )
+    this.name = 'MarketplaceDocumentIntegrityError'
+  }
+}
+
+const authoritativeRecords = <T extends object>(
+  value: unknown,
+  sanitize: (item: unknown) => T | undefined,
+  section: string
+): T[] => {
+  // Earlier version-1 documents may omit an entire optional collection.
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw new MarketplaceDocumentIntegrityError(section)
+  return value.map((item) => {
+    const record = sanitize(item)
+    if (!record || Object.keys(item).some((key) => !Object.hasOwn(record, key))) {
+      throw new MarketplaceDocumentIntegrityError(section)
+    }
+    return record
+  })
+}
+
 const sanitizeDocument = (value: unknown): MarketplaceDocument => {
-  if (!value || typeof value !== 'object') return emptyDocument()
+  if (!value || typeof value !== 'object') throw new MarketplaceDocumentIntegrityError('document')
   const document = value as {
     version?: unknown
     sources?: unknown
@@ -280,18 +312,20 @@ const sanitizeDocument = (value: unknown): MarketplaceDocument => {
     rootCaches?: unknown
     releaseCaches?: unknown
   }
-  if (document.version !== 1) return emptyDocument()
+  if (document.version !== 1) throw new MarketplaceDocumentIntegrityError('document version')
   return {
     version: 1,
-    sources: Array.isArray(document.sources)
-      ? document.sources.flatMap((source) => sanitizeSource(source) ?? [])
-      : [],
-    installations: Array.isArray(document.installations)
-      ? document.installations.flatMap((item) => sanitizeInstallation(item) ?? [])
-      : [],
-    pendingInstallations: Array.isArray(document.pendingInstallations)
-      ? document.pendingInstallations.flatMap((item) => sanitizePendingInstallation(item) ?? [])
-      : [],
+    sources: authoritativeRecords(document.sources, sanitizeSource, 'sources'),
+    installations: authoritativeRecords(
+      document.installations,
+      sanitizeInstallation,
+      'installations'
+    ),
+    pendingInstallations: authoritativeRecords(
+      document.pendingInstallations,
+      sanitizePendingInstallation,
+      'pending installations'
+    ),
     rootCaches: Array.isArray(document.rootCaches)
       ? document.rootCaches.flatMap((item) => sanitizeRootCache(item) ?? [])
       : [],
@@ -312,9 +346,15 @@ export class MarketplaceRepository {
   }
 
   async getAll(): Promise<MarketplaceDocument> {
-    const result = await readDurableJsonFile(this.filePath, (contents) =>
-      sanitizeDocument(JSON.parse(contents))
-    )
+    const result = await readDurableJsonFile(this.filePath, (contents) => {
+      let document: unknown
+      try {
+        document = JSON.parse(contents)
+      } catch {
+        throw new MarketplaceDocumentIntegrityError('JSON')
+      }
+      return sanitizeDocument(document)
+    })
     return result.status === 'found' ? result.value : emptyDocument()
   }
 

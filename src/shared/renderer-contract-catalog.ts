@@ -2133,7 +2133,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (request: { id: string }) => Promise<SpecialistDeletePreview>
   >()('specialist', ['specialist:delete-preview', ELECTRON]),
   'specialist.previewExport': callable<
-    (request: { specialistId: string }) => Promise<SpecialistExportPreview>
+    (request: {
+      specialistId: string
+      includedSkillIds?: readonly string[]
+    }) => Promise<SpecialistExportPreview>
   >()('specialist', ['specialist:export-preview', ELECTRON]),
   'specialist.removeMarketplaceSource': callable<
     (request: RemoveMarketplaceSourceRequest) => Promise<void>

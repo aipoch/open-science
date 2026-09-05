@@ -26,7 +26,7 @@ const plan = (id = 'analysis-tools'): SpecialistPackageSkillPlan => ({
   versionRange: '^1.2.0',
   disposition: 'install',
   files: ['SKILL.md', 'scripts/run.sh'],
-  contentHash: 'a'.repeat(64),
+  contentHash: '72541991850adc0678ab5319bc5d205fdde34af8065c913b92cae0bad4cab342',
   filesToInstall: [
     {
       path: 'SKILL.md',
@@ -81,7 +81,7 @@ describe('UserSkillSpecialistPackageAdapter', () => {
       JSON.stringify({
         id: 'analysis-tools',
         version: '1.2.3',
-        contentHash: 'a'.repeat(64),
+        contentHash: '72541991850adc0678ab5319bc5d205fdde34af8065c913b92cae0bad4cab342',
         standalone: true,
         ownerIds: ['research-synth']
       })
@@ -159,7 +159,7 @@ describe('UserSkillSpecialistPackageAdapter', () => {
       {
         id: 'personal-analysis-tools',
         version: '1.2.3',
-        contentHash: 'a'.repeat(64),
+        contentHash: '72541991850adc0678ab5319bc5d205fdde34af8065c913b92cae0bad4cab342',
         standalone: false,
         ownerIds: ['research-synth']
       }
@@ -182,7 +182,7 @@ describe('UserSkillSpecialistPackageAdapter', () => {
       JSON.stringify({
         id: 'imported-analysis-tools',
         version: '1.2.3',
-        contentHash: 'a'.repeat(64),
+        contentHash: '72541991850adc0678ab5319bc5d205fdde34af8065c913b92cae0bad4cab342',
         standalone: false,
         ownerIds: ['first-specialist']
       })

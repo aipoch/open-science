@@ -1,3 +1,6 @@
+// Stable error marker retained by Electron's serialized Error message.
+export const MARKETPLACE_DOCUMENT_INTEGRITY_CODE = 'MARKETPLACE_DOCUMENT_INTEGRITY'
+
 import type {
   SpecialistPackageCandidatePreview,
   SpecialistPackageInstallRequest,

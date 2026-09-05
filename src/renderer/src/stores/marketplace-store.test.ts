@@ -116,4 +116,14 @@ describe('marketplace store', () => {
     expect(state().snapshot).toEqual(snapshot('github-fresh'))
     expect(state().isRefreshing).toBe(false)
   })
+  it('reports preserved corrupt data separately from a network failure and clears it after repair', async () => {
+    setListMarketplaceApi(
+      vi.fn().mockRejectedValue(new Error('MARKETPLACE_DOCUMENT_INTEGRITY: pending installations'))
+    )
+    await state().refresh()
+    expect(state()).toMatchObject({ lastRefreshFailed: true, integrityFailed: true })
+    setListMarketplaceApi(vi.fn().mockResolvedValue(snapshot('repaired')))
+    await state().refresh()
+    expect(state()).toMatchObject({ lastRefreshFailed: false, integrityFailed: false })
+  })
 })
