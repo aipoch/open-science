@@ -4,7 +4,8 @@ import type {
   SpecialistDocumentIntegrity,
   SpecialistView,
   CreateSpecialistInput,
-  UpdateSpecialistInput
+  UpdateSpecialistInput,
+  ConnectorToolRule
 } from '../../../shared/specialist'
 import type {
   SpecialistPackageCandidatePreview,
@@ -34,11 +35,14 @@ export type SpecialistEditorFormDraft = {
   selectedSkillIds: string[]
   excludedConnectorIds: string[]
   connectorIds: string[]
+  fullConnectorTools: ConnectorToolRule[]
+  selectedConnectorTools: ConnectorToolRule[]
   baseRevision: number
 }
 
 export type SpecialistEditorDraft = {
   form: SpecialistEditorFormDraft
+  initialInput?: CreateSpecialistInput
   idTouched: boolean
   activeCapTab: 'skills' | 'connectors'
 }
@@ -54,7 +58,7 @@ type SpecialistStoreData = {
 }
 
 type SpecialistStoreActions = {
-  load: () => Promise<void>
+  load: (options?: { force?: boolean }) => Promise<void>
   create: (input: CreateSpecialistInput) => Promise<SpecialistView>
   update: (input: UpdateSpecialistInput) => Promise<SpecialistView>
   setEnabled: (id: string, enabled: boolean) => Promise<void>
@@ -113,6 +117,25 @@ const refreshCatalog = async (set: StoreApi<SpecialistStore>['setState']): Promi
   }
 }
 
+// Mutation receipts are authoritative even if the broader catalog cannot be enriched.
+const applySpecialistReceipt = (
+  set: StoreApi<SpecialistStore>['setState'],
+  view: SpecialistView
+): void => {
+  set((state) => {
+    const exists = state.items.some((item) => item.kind === 'custom' && item.id === view.id)
+    return {
+      items: exists
+        ? state.items.map((item) =>
+            item.kind === 'custom' && item.id === view.id
+              ? { ...item, ...view, kind: 'custom' as const }
+              : item
+          )
+        : [{ ...view, kind: 'custom' as const }, ...state.items]
+    }
+  })
+}
+
 const useSpecialistStore = create<SpecialistStore>((set) => ({
   items: [],
   isLoaded: false,
@@ -122,7 +145,7 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   exportPreview: undefined,
   editorDrafts: {},
 
-  load: () => {
+  load: (options) => {
     // Guard: specialist.list is Electron-only and unavailable in the web gateway.
     if (typeof window.api?.specialist?.list !== 'function') {
       latestCatalogRequest += 1
@@ -132,8 +155,10 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
     removeCatalogChangedListener ??= window.api.specialist.onCatalogChanged?.(() => {
       void refreshCatalog(set).catch(() => undefined)
     })
-    if (useSpecialistStore.getState().isLoaded) return Promise.resolve()
-    if (catalogLoadRequest) return catalogLoadRequest
+    if (!options?.force) {
+      if (useSpecialistStore.getState().isLoaded) return Promise.resolve()
+      if (catalogLoadRequest) return catalogLoadRequest
+    }
     const request = refreshCatalog(set)
     const trackedRequest = request.finally(() => {
       if (catalogLoadRequest === trackedRequest) catalogLoadRequest = undefined
@@ -150,8 +175,8 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
       throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
     }
     const view = await window.api.specialist.create(input)
-    // Reload the full list so Reviewer and ordering stay consistent.
-    await refreshCatalog(set)
+    applySpecialistReceipt(set, view)
+    void refreshCatalog(set).catch(() => undefined)
     return view
   },
 
@@ -160,13 +185,7 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
       throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
     }
     const view = await window.api.specialist.update(input)
-    // The mutation result is authoritative for this custom Specialist. Apply it immediately so a
-    // slow catalog enrichment cannot leave an already-saved appearance stuck in its loading state.
-    set((state) => ({
-      items: state.items.map((item) =>
-        item.kind === 'custom' && item.id === view.id ? { ...item, ...view, kind: 'custom' } : item
-      )
-    }))
+    applySpecialistReceipt(set, view)
     // Keep derived catalog fields and ordering synchronized without making mutation completion depend
     // on the broader catalog read. Catalog-change events may race this refresh; request IDs ensure
     // only the newest response is applied.
@@ -178,8 +197,9 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
     if (useSpecialistStore.getState().integrity.status === 'degraded') {
       throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
     }
-    await window.api.specialist.setEnabled({ id, enabled })
-    await refreshCatalog(set)
+    const view = await window.api.specialist.setEnabled({ id, enabled })
+    applySpecialistReceipt(set, view)
+    void refreshCatalog(set).catch(() => undefined)
   },
 
   previewDelete: async (id: string) => window.api.specialist.previewDelete({ id }),
@@ -190,7 +210,8 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
     }
     const result = await window.api.specialist.delete({ id, expectedRevision, deleteSkillIds })
     if (result.status === 'deleted') {
-      await refreshCatalog(set)
+      set((state) => ({ items: state.items.filter((item) => item.id !== id) }))
+      void refreshCatalog(set).catch(() => undefined)
     }
     return result
   },
@@ -217,8 +238,9 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
       ...options
     })
     if (result.status === 'installed') {
-      await refreshCatalog(set)
+      applySpecialistReceipt(set, result.specialist)
       set({ packagePreview: undefined })
+      void refreshCatalog(set).catch(() => undefined)
     }
     return result
   },

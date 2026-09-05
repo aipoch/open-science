@@ -113,7 +113,7 @@ describe('specialist store catalog', () => {
             }>((resolve) => (resolveInitial = resolve))
         )
         .mockResolvedValueOnce({ items: refreshedItems, integrity: { status: 'ok' } }),
-      setEnabled: vi.fn().mockResolvedValue(undefined)
+      setEnabled: vi.fn().mockResolvedValue({ id: 'researcher' })
     })
 
     const initialLoad = useSpecialistStore.getState().load()
@@ -380,8 +380,8 @@ describe('S04 and S05 catalog recovery regressions', () => {
       .getState()
       .update({ id: profile.id, revision: 1, description: 'Updated' })
     await vi.waitFor(() => expect(useSpecialistStore.getState().loadError).toBeDefined())
-    // This is the public action currently invoked by the Retry button.
-    await useSpecialistStore.getState().load()
+    // The explicit action wired to Retry bypasses the cached mount load.
+    await useSpecialistStore.getState().load({ force: true })
     expect(list).toHaveBeenCalledTimes(3)
     expect(useSpecialistStore.getState().loadError).toBeUndefined()
     expect(useSpecialistStore.getState().items).toEqual([{ kind: 'custom', ...profile }])
@@ -415,6 +415,12 @@ describe('S04 and S05 catalog recovery regressions', () => {
           installable: true
         }
       })
+      useSpecialistStore.setState({
+        items: [
+          { ...profile, enabled: false, kind: 'custom' },
+          { kind: 'reviewer', id: 'reviewer' }
+        ]
+      })
       const store = useSpecialistStore.getState()
       const result =
         operation === 'create'
@@ -438,6 +444,16 @@ describe('S04 and S05 catalog recovery regressions', () => {
       expect(
         { create, setEnabled, delete: remove, installPackage }[operation]
       ).toHaveBeenCalledOnce()
+      expect(useSpecialistStore.getState().items).toEqual(
+        operation === 'delete'
+          ? [{ kind: 'reviewer', id: 'reviewer' }]
+          : [
+              { ...profile, kind: 'custom' },
+              { kind: 'reviewer', id: 'reviewer' }
+            ]
+      )
+      if (operation === 'installPackage')
+        expect(useSpecialistStore.getState().packagePreview).toBeUndefined()
     }
   )
 })
@@ -468,4 +484,27 @@ it('S05 a committed create remains successful even when catalog enrichment fails
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+it('keeps the forced snapshot when an older initial load finishes last', async () => {
+  let finishInitial!: (value: unknown) => void
+  const fresh = { items: [{ kind: 'reviewer', id: 'reviewer' }], integrity: { status: 'ok' } }
+  const list = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishInitial = resolve
+        })
+    )
+    .mockResolvedValueOnce(fresh)
+  setSpecialistApi({ list })
+  const initial = useSpecialistStore.getState().load()
+  await useSpecialistStore.getState().load({ force: true })
+  finishInitial({ items: [], integrity: { status: 'ok' } })
+  await initial
+  expect(list).toHaveBeenCalledTimes(2)
+  expect(useSpecialistStore.getState().items).toEqual(fresh.items)
+  await useSpecialistStore.getState().load()
+  expect(list).toHaveBeenCalledTimes(2)
 })
