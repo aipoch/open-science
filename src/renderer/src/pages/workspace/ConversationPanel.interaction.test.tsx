@@ -4032,7 +4032,7 @@ describe('ConversationPanel + menu', () => {
     )
   })
 
-  it('reopens an actionable Plan card after restart without reviving the expired interaction', async () => {
+  it('reopens an actionable Plan card for explicit feedback retry after an uncertain delivery', async () => {
     const onRespondToRestoredPlan = vi.fn().mockResolvedValue(undefined)
     const session: ChatSession = {
       id: 'session-orphaned-plan',
@@ -4040,6 +4040,26 @@ describe('ConversationPanel + menu', () => {
       title: 'Orphaned pending Plan',
       cwd: '/workspace',
       status: 'waiting-plan-approval',
+      runtimeContext: {
+        version: 1,
+        revision: 3,
+        plan: {
+          artifactId: completedPlanProjection.artifactId,
+          artifactVersionId: completedPlanProjection.artifactVersionId,
+          artifactChecksum: completedPlanProjection.artifactChecksum,
+          originatingPromptMessageId: 'interaction-1',
+          approval: 'pending',
+          stepStatuses: {},
+          reviewFeedbackMessageId: 'previous-feedback',
+          delivery: {
+            commandId: 'previous-delivery',
+            kind: 'review-feedback',
+            state: 'delivering',
+            originatingPromptMessageId: 'previous-feedback',
+            createdAt: 1
+          }
+        }
+      },
       messages: planOriginMessages(),
       createdAt: 1,
       updatedAt: 2,

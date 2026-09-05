@@ -6,6 +6,7 @@ export const WEB_INVOKE_CHANNELS = {
   'acp.continueInterruptedTurn': 'acp:continue-interrupted-turn',
   'acp.createSession': 'acp:create-session',
   'acp.deleteSession': 'acp:delete-session',
+  'acp.discardUnavailablePlan': 'acp:discard-unavailable-plan',
   'acp.disconnect': 'acp:disconnect',
   'acp.getPlanProjection': 'acp:get-plan-projection',
   'acp.getState': 'acp:get-state',

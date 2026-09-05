@@ -8,6 +8,8 @@ import {
 } from '../../shared/session-persistence'
 import { createPlanDocumentV1 } from '../../shared/session-plan/contract'
 import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
+import { AcpSessionInteractionOwner } from '../acp/session-interaction-owner'
+import { composeAcpRuntimePlanWorkflow } from '../acp/runtime-plan-composition'
 import {
   createProductionPlanService,
   readManagedArtifactVersion,
@@ -69,9 +71,14 @@ describe('readManagedArtifactVersion', () => {
 })
 
 describe('production Plan feedback persistence', () => {
-  it.each([undefined, 'queued', 'delivering', 'accepted', 'interrupted'] as const)(
-    'P01 persists the returned feedback command when the previous receipt is %s',
-    async (previousState) => {
+  it.each([
+    ...([undefined, 'queued', 'delivering', 'accepted', 'interrupted'] as const).map(
+      (previousState) => ({ previousState, detached: false })
+    ),
+    { previousState: 'delivering' as const, detached: true }
+  ])(
+    'P01 persists feedback with previous receipt $previousState (detached: $detached)',
+    async ({ previousState, detached }) => {
       const document = createPlanDocumentV1({
         task_summary: 'Analyze one dataset',
         phases: [
@@ -142,11 +149,12 @@ describe('production Plan feedback persistence', () => {
         return message
       })
       const interactions = new SessionPlanInteractionOwner()
-      interactions.register({
-        sessionId: 'session-1',
-        artifactVersionId: 'version-1',
-        interactionId: 'prompt-1'
-      })
+      if (!detached)
+        interactions.register({
+          sessionId: 'session-1',
+          artifactVersionId: 'version-1',
+          interactionId: 'prompt-1'
+        })
       const service = createProductionPlanService({
         interactions,
         artifactTurns: { handleForExecution: vi.fn(), write: vi.fn() },
@@ -156,11 +164,27 @@ describe('production Plan feedback persistence', () => {
           appendUserMessageToInteraction: append
         } as unknown as ProductionPlanServiceDependencies['sessions']
       })
-      const result = await service.respond({
+      const response = {
         projectId: 'project-1',
         sessionId: 'session-1',
         feedback: 'Split the analysis by cohort.'
-      })
+      }
+      const result = detached
+        ? await composeAcpRuntimePlanWorkflow(
+            {
+              plan: { sessions: { containsMessageOnActiveBranch: vi.fn(async () => true) } }
+            } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[0],
+            {
+              planService: service,
+              planInteractions: interactions,
+              sessionInteractions: new AcpSessionInteractionOwner()
+            } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
+            {
+              publication: { pushEvent: vi.fn() },
+              sessionEnvironment: { projectId: () => 'project-1' }
+            } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2]
+          ).respond(response)
+        : await service.respond(response)
       if (!('kind' in result)) throw new Error('Expected feedback result')
       expect(messages).toHaveLength(1)
       expect(context.plan?.reviewFeedbackMessageId).toBe(result.message.id)

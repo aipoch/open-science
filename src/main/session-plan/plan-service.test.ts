@@ -2011,6 +2011,114 @@ describe('PlanService', () => {
     )
   })
 
+  describe('explicit unavailable Plan recovery', () => {
+    const unavailable = async () => {
+      const fixture = setup()
+      const generated = await fixture.service.generate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        executionId: 'execution-1',
+        interactionId: 'interaction-1',
+        content
+      })
+      const legacy = { ...fixture.context().plan! }
+      delete legacy.document
+      fixture.setContext({ ...fixture.context(), plan: legacy })
+      const read = vi.mocked(fixture.dependencies.readArtifactVersion)
+      const originalRead = read.getMockImplementation()!
+      read.mockRejectedValue(
+        Object.assign(new Error('artifact file does not exist'), { code: 'ENOENT' })
+      )
+      return {
+        ...fixture,
+        read,
+        originalRead,
+        identity: {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          artifactVersionId: generated.projection.artifactVersionId,
+          expectedRevision: fixture.context().revision
+        }
+      }
+    }
+
+    it('preserves failed rejection evidence, then permits explicit discard', async () => {
+      const fixture = await unavailable()
+      const before = fixture.context()
+      await expect(
+        fixture.service.respond({ ...fixture.identity, decision: 'rejected' })
+      ).rejects.toMatchObject({ code: 'artifact-unavailable' })
+      expect(fixture.context()).toEqual(before)
+      await expect(fixture.service.discardUnavailable(fixture.identity)).resolves.toEqual({
+        revision: before.revision + 1
+      })
+      expect(fixture.context().plan).toBeUndefined()
+      expect(fixture.status()).toBe('idle')
+      expect(
+        fixture.interactions.interactionIdFor('session-1', fixture.identity.artifactVersionId)
+      ).toBeUndefined()
+      await expect(fixture.service.getProjection('project-1', 'session-1')).resolves.toBeNull()
+      expect(fixture.dependencies.persistUserMessage).not.toHaveBeenCalled()
+      expect(fixture.dependencies.writeArtifactForExecution).toHaveBeenCalledTimes(1)
+    })
+
+    it('refuses to discard a Plan whose read has recovered', async () => {
+      const fixture = await unavailable()
+      fixture.read.mockImplementation(fixture.originalRead)
+      const before = fixture.context()
+      await expect(fixture.service.discardUnavailable(fixture.identity)).rejects.toMatchObject({
+        code: 'invalid-plan'
+      })
+      expect(fixture.context()).toEqual(before)
+      await expect(fixture.service.getProjection('project-1', 'session-1')).resolves.toMatchObject({
+        approval: 'pending'
+      })
+    })
+
+    it.each([
+      'stale-version',
+      'stale-revision',
+      'read-race',
+      'storage-failure',
+      'revoked'
+    ] as const)('preserves Plan authority on %s during explicit discard', async (mode) => {
+      const fixture = await unavailable()
+      const identity = { ...fixture.identity }
+      if (mode === 'stale-version') identity.artifactVersionId = 'old-version'
+      if (mode === 'stale-revision') identity.expectedRevision -= 1
+      if (mode === 'read-race')
+        fixture.read.mockImplementation(async () => {
+          fixture.setContext({
+            ...fixture.context(),
+            revision: fixture.context().revision + 1,
+            plan: { ...fixture.context().plan!, artifactVersionId: 'replacement' }
+          })
+          throw new Error('old artifact disappeared')
+        })
+      if (mode === 'storage-failure')
+        vi.mocked(fixture.dependencies.patchRuntimeContext).mockRejectedValue(new Error('ENOSPC'))
+      const before = fixture.context()
+      await expect(
+        fixture.service.discardUnavailable({
+          ...identity,
+          beforePersist: () => {
+            if (mode === 'revoked') throw new Error('authorization revoked')
+          }
+        })
+      ).rejects.toBeInstanceOf(Error)
+      expect(fixture.context()).toEqual(
+        mode === 'read-race'
+          ? {
+              ...before,
+              revision: before.revision + 1,
+              plan: { ...before.plan, artifactVersionId: 'replacement' }
+            }
+          : before
+      )
+      expect(fixture.dependencies.onApprovalSettled).not.toHaveBeenCalled()
+    })
+  })
+
   it('P05 preserves an unreadable embedded Plan document as recovery evidence', async () => {
     const { service, context, setContext, status } = setup()
     await service.generate({

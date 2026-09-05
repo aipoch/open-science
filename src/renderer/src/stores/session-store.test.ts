@@ -6150,6 +6150,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/session-action-menu.ts',
       'src/renderer/src/pages/workspace/session-message-artifact-reference.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
+      'src/renderer/src/pages/workspace/session-plan/UnavailablePlanNotice.tsx',
       'src/renderer/src/pages/workspace/session-plan/active-branch-plan.ts',
       'src/renderer/src/pages/workspace/session-plan/plan-file-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',

@@ -188,7 +188,7 @@ export type PlanCommandErrorCode = (typeof PLAN_COMMAND_ERROR_CODES)[number]
 export const isPlanCommandErrorCode = (value: unknown): value is PlanCommandErrorCode =>
   typeof value === 'string' && PLAN_COMMAND_ERROR_CODES.includes(value as PlanCommandErrorCode)
 
-type PlanResponseIdentity = Readonly<{
+export type PlanResponseIdentity = Readonly<{
   projectId: string
   sessionId: string
   artifactVersionId: string

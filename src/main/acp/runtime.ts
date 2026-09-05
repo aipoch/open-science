@@ -146,7 +146,11 @@ import {
 import type { PlanResponseResult, PlanServiceDependencies } from '../session-plan/plan-service'
 import { matchPlanDelivery } from '../session-plan/plan-delivery'
 import { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
-import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
+import type {
+  ActivePlanProjection,
+  PlanResponseCommand,
+  PlanResponseIdentity
+} from '../../shared/session-plan/contract'
 import type {
   SessionCatalog,
   SessionMutation,
@@ -784,6 +788,10 @@ class AcpRuntime {
     sessionId: string
   ): Promise<ActivePlanProjection | null> {
     return this.sessionPlanWorkflow.projection(projectId, sessionId)
+  }
+
+  discardUnavailableSessionPlan(input: PlanResponseIdentity): Promise<{ revision: number }> {
+    return this.sessionPlanWorkflow.discardUnavailable(input)
   }
 
   async respondSessionPlan(input: PlanResponseCommand): Promise<PlanResponseResult> {

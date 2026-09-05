@@ -488,7 +488,7 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.agentControls.canChange).toBe(false)
   })
 
-  it('unlocks a waiting Session after main drops unreadable Plan authority', async () => {
+  it('unlocks a waiting Session after main confirms there is no active Plan', async () => {
     useSessionStore.setState({
       sessions: [createSession({ status: 'waiting-plan-approval' })],
       selectedSessionId: 'sess-a'
@@ -519,7 +519,7 @@ describe('WorkspacePage send gate while compacting', () => {
       await firstProjection.catch(() => undefined)
     })
 
-    expect(conversationProps.view.actionError).toBe('Unable to restore plan state. Retrying…')
+    expect(conversationProps.conversation.planProjectionRecoveryError).toBe(true)
     expect(conversationProps.view.canEditDraft).toBe(false)
 
     await act(async () => {
@@ -527,6 +527,7 @@ describe('WorkspacePage send gate while compacting', () => {
     })
 
     expect(window.api.acp.getPlanProjection).toHaveBeenCalledTimes(2)
+    expect(conversationProps.conversation.planProjectionRecoveryError).toBe(false)
     expect(useSessionStore.getState().sessions[0]?.status).toBe('idle')
     expect(conversationProps.view.actionError).toBeNull()
     expect(conversationProps.view.canEditDraft).toBe(true)

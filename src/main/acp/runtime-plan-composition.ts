@@ -2,7 +2,8 @@ import type { AcpPromptRequest, AcpRuntimeEventInput } from '../../shared/acp'
 import type {
   ActivePlanProjection,
   GeneratePlanContent,
-  PlanResponseCommand
+  PlanResponseCommand,
+  PlanResponseIdentity
 } from '../../shared/session-plan/contract'
 import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { SessionPlanStepStatus } from '../../shared/session-persistence'
@@ -371,6 +372,46 @@ const composeAcpRuntimePlanWorkflow = (
   ): Promise<ActivePlanProjection | null> => {
     if (!service) return Promise.resolve(null)
     return service.getProjection(projectId, sessionId)
+  }
+  const discardUnavailable = async (input: PlanResponseIdentity): Promise<{ revision: number }> => {
+    if (!service) throw new Error('Session Plan capability is not configured.')
+    const interaction = sessionInteractions.current(input.sessionId)
+    const approvalToken = interactions.approvalTokenFor(input.sessionId)
+    const assertCurrent = (): void => {
+      if (
+        sessionInteractions.current(input.sessionId) !== interaction ||
+        interactions.approvalTokenFor(input.sessionId) !== approvalToken ||
+        (interaction && !approvalToken)
+      ) {
+        throw new PlanCommandError(
+          'interaction-mismatch',
+          'Stop the active turn before discarding the unavailable Plan.'
+        )
+      }
+    }
+    assertCurrent()
+    const result = await service.discardUnavailable({
+      ...input,
+      authorizeDiscard: async (plan) => {
+        if (
+          !(await containsDurableBranchMessage(
+            input.projectId,
+            input.sessionId,
+            plan.originatingPromptMessageId
+          ))
+        ) {
+          throw new PlanCommandError(
+            'interaction-mismatch',
+            'The Plan does not belong to the active Message Branch.'
+          )
+        }
+      },
+      beforePersist: assertCurrent
+    })
+    if (approvalToken && interactions.approvalTokenFor(input.sessionId) === approvalToken) {
+      interactions.rejectApproval(input.sessionId, 'The unavailable Session Plan was discarded.')
+    }
+    return result
   }
   const respond = async (input: PlanResponseCommand): Promise<PlanResponseResult> => {
     if (!service) throw new Error('Session Plan capability is not configured.')
@@ -767,6 +808,7 @@ const composeAcpRuntimePlanWorkflow = (
     call,
     projection,
     respond,
+    discardUnavailable,
     prompt,
     capturePromptCancellation,
     sessionDeleted
