@@ -143,6 +143,42 @@ describe('managed-file deletion integration', () => {
     await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('replays a failed projection deletion when authority was already missing without a pending intent', async () => {
+    const projection = new SessionProjectionRepository(() => Promise.resolve(client))
+    const repository = new SessionRepository(storageRoot, undefined, projection)
+    await repository.ensureSessionProjection(() => sessions.loadAll())
+    await rm(join(storageRoot, 'sessions', PROJECT_ID, `${SESSION_ID}.json`))
+    await expect(repository.loadSessionWithDiagnostics(PROJECT_ID, SESSION_ID)).resolves.toEqual({
+      status: 'missing'
+    })
+    await expect(projection.pending()).resolves.toEqual([])
+    await expect(client.session.findUnique({ where: { id: SESSION_ID } })).resolves.toMatchObject({
+      deletedAtMs: null
+    })
+    const commitProjection = vi
+      .spyOn(projection, 'commitDelete')
+      .mockRejectedValueOnce(new Error('injected projection deletion failure'))
+
+    await expect(repository.deleteSession(PROJECT_ID, SESSION_ID)).rejects.toBeInstanceOf(
+      SessionDeletionCommittedError
+    )
+    await expect
+      .soft(projection.pending())
+      .resolves.toEqual([{ projectId: PROJECT_ID, sessionId: SESSION_ID, operation: 'delete' }])
+    commitProjection.mockRestore()
+    const restartedRepository = new SessionRepository(
+      storageRoot,
+      undefined,
+      new SessionProjectionRepository(() => Promise.resolve(client))
+    )
+    await restartedRepository.reconcilePendingSessionProjection()
+
+    await expect(projection.pending()).resolves.toEqual([])
+    await expect(client.session.findUnique({ where: { id: SESSION_ID } })).resolves.toMatchObject({
+      deletedAtMs: expect.any(BigInt)
+    })
+  })
+
   it.each(['backup', 'json', 'projection', 'provenance', 'compute'] as const)(
     'compensates only before authority removal when %s deletion fails',
     async (failurePhase) => {

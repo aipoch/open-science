@@ -890,6 +890,7 @@ class SessionRepository {
           sessionId: safeSessionId
         })
       } else {
+        await this.projection?.markPending(safeProjectId, safeSessionId, 'delete')
         await this.projection
           ?.commitDelete(safeProjectId, safeSessionId)
           .catch((error: unknown) => {

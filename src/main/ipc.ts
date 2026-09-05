@@ -211,7 +211,8 @@ import {
   createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
   recoverProjectDeletionsForSessionRead,
-  registerSessionPersistenceIpcHandlers
+  registerSessionPersistenceIpcHandlers,
+  withSessionDeletionCleanup
 } from './session-persistence/ipc'
 import {
   createConversationExportService,
@@ -1351,11 +1352,11 @@ const createApplicationModules = async (
     updateArchive: async (request) => {
       return archiveCoordinator.updateSessionArchive(request)
     },
-    deleteSession: async (projectId, sessionId) => {
-      const result = await sessionPersistenceCoordinator.deleteSession(projectId, sessionId)
-      await permissionGrantRegistry.prune({ kind: 'session', projectId, sessionId })
-      return result
-    },
+    deleteSession: withSessionDeletionCleanup(
+      (projectId, sessionId) => sessionPersistenceCoordinator.deleteSession(projectId, sessionId),
+      (projectId, sessionId) =>
+        permissionGrantRegistry.prune({ kind: 'session', projectId, sessionId })
+    ),
     saveManifest: async (request) => {
       return sessionPersistenceCoordinator.saveManifest(request)
     }
@@ -3336,10 +3337,10 @@ const createApplicationModules = async (
   // binding in one place.
   const originalDeleteSession =
     sessionPersistenceBackend.deleteSession.bind(sessionPersistenceBackend)
-  sessionPersistenceBackend.deleteSession = async (projectId, sessionId) => {
-    await originalDeleteSession(projectId, sessionId)
-    sessionSpecialistReconfiguration.clearSession(sessionId)
-  }
+  sessionPersistenceBackend.deleteSession = withSessionDeletionCleanup(
+    originalDeleteSession,
+    (_projectId, sessionId) => sessionSpecialistReconfiguration.clearSession(sessionId)
+  )
   const sessionPersistenceHandlers = createSessionPersistenceHandlersWithAttributionAuthority(
     sessionPersistenceBackend,
     reviewRepository,
