@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -15,7 +15,8 @@ import {
   waitForDataRootWriters
 } from '../storage/migration-state'
 import { createUploadCommandOwner } from './command-owner'
-import type { UploadRepository } from './repository'
+import { UploadRepository } from './repository'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 
 type TestCaller = Readonly<{
   context: ReturnType<typeof createElectronCallerContext>
@@ -396,9 +397,18 @@ describe('upload command owner', () => {
       path: '/managed/.pending/notes.txt',
       size: 17
     }
+    const published = {
+      ...attachment,
+      sessionId: 'standalone-uploads',
+      path: join(root, 'versions', 'version-1', 'content'),
+      versionId: 'version-1',
+      versionNumber: 1,
+      checksum: 'published-checksum',
+      createdAt: '2026-09-05T00:00:00.000Z'
+    }
     const repository = {
       stageLocalFile: vi.fn(async () => attachment),
-      finalizePendingSessionUploads: vi.fn(async () => [attachment])
+      finalizePendingSessionUploads: vi.fn(async () => [published])
     } as unknown as UploadRepository
     const owner = createUploadCommandOwner(repository)
     const leases = new ApplicationCallerLeaseRegistry()
@@ -415,7 +425,7 @@ describe('upload command owner', () => {
           }
         ] as const)
       )
-    ).resolves.toEqual(attachment)
+    ).resolves.toEqual(published)
     expect(repository.stageLocalFile).toHaveBeenCalledWith(
       expect.objectContaining({ sourcePath, size: 17 }),
       expect.any(Function)
@@ -428,6 +438,77 @@ describe('upload command owner', () => {
 
     beginMigration()
     await waitForDataRootWriters()
+  })
+
+  it('returns readable durable content and version identity after standalone publication', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'upload-owner-'))
+    temporaryRoots.push(root)
+    const sourcePath = join(root, 'notes.txt')
+    await writeFile(sourcePath, 'standalone upload')
+    const client = createProjectDbClient(root)
+    try {
+      await migrateApplicationDatabase(client)
+      const repository = new UploadRepository(root, { getClient: async () => client })
+      const owner = createUploadCommandOwner(repository)
+      const caller = createCaller(new ApplicationCallerLeaseRegistry(), 16)
+      const attachment = await owner.stageLocalPath(
+        invocationFor(caller, [
+          { transferId: 'durable-transfer', sourcePath, name: 'notes.txt', projectId: 'project-1' }
+        ] as const)
+      )
+      const file = await client.uploadFile.findUniqueOrThrow({
+        where: { id: attachment.id },
+        include: { currentVersion: true }
+      })
+      const version = file.currentVersion!
+      const durablePath = join(root, ...version.contentStorageKey.split('/'))
+      expect(file.sessionId).toBe('standalone-uploads')
+      expect(version.state).toBe('ready')
+      await expect(readFile(durablePath, 'utf8')).resolves.toBe('standalone upload')
+      expect.soft(attachment).toMatchObject({
+        sessionId: file.sessionId,
+        path: durablePath,
+        versionId: version.id,
+        versionNumber: version.versionNumber,
+        checksum: version.checksum,
+        createdAt: version.createdAt?.toISOString()
+      })
+      await expect(stat(attachment.path)).resolves.toMatchObject({ size: 17 })
+    } finally {
+      await client.$disconnect()
+    }
+  })
+
+  it.each([0, 2])('rejects standalone publication returning %i attachments', async (count) => {
+    const root = await mkdtemp(join(tmpdir(), 'upload-owner-'))
+    temporaryRoots.push(root)
+    const sourcePath = join(root, 'notes.txt')
+    await writeFile(sourcePath, 'standalone upload')
+    const attachment = {
+      id: 'standalone-attachment',
+      sessionId: '.pending',
+      name: 'notes.txt',
+      originalName: 'notes.txt',
+      path: join(root, '.pending', 'notes.txt'),
+      size: 17
+    }
+    const repository = {
+      stageLocalFile: vi.fn(async () => attachment),
+      finalizePendingSessionUploads: vi.fn(async () =>
+        Array.from({ length: count }, () => attachment)
+      ),
+      deleteUpload: vi.fn(async () => undefined)
+    } as unknown as UploadRepository
+    const owner = createUploadCommandOwner(repository)
+    const caller = createCaller(new ApplicationCallerLeaseRegistry(), 17)
+
+    await expect(
+      owner.stageLocalPath(
+        invocationFor(caller, [
+          { transferId: 'invalid-count-transfer', sourcePath, name: 'notes.txt' }
+        ] as const)
+      )
+    ).rejects.toThrow(`Expected exactly one published standalone upload, received ${count}.`)
   })
 
   it('deletes the standalone copy when its durable publication fails', async () => {

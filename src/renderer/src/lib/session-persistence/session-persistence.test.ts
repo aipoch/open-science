@@ -1006,6 +1006,52 @@ describe('renderer session persistence bridge', () => {
     )
   })
 
+  it('persists in-flight streaming text that Session identity stability keeps out of Messages', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Stream a response',
+      cwd: '/workspace/project',
+      projectId: 'project-a'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-1',
+      eventId: 'event-1',
+      content: 'Hello'
+    })
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    // Pure text-growth ticks hold the new text in the streaming slice only; the Session object,
+    // its messages array, and the saver's identity diff all stay unchanged.
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-1',
+      eventId: 'event-2',
+      content: ' world'
+    })
+    const state = useSessionStore.getState()
+    expect(state.sessions[0].messages.at(-1)?.content).toBe('Hello')
+    await save(state)
+
+    expect(api.saveSession).toHaveBeenCalledTimes(1)
+    const persisted = vi.mocked(api.saveSession).mock.calls[0][0]
+    expect(persisted.messages.find((message) => message.role === 'agent')).toMatchObject({
+      content: 'Hello world',
+      eventIds: ['event-1', 'event-2']
+    })
+
+    // A crash after the turn ends must still find the complete terminal Message on disk.
+    useSessionStore.getState().finishRun('session-1')
+    await save(useSessionStore.getState())
+    const terminal = vi.mocked(api.saveSession).mock.calls.at(-1)![0]
+    expect(terminal.messages.find((message) => message.role === 'agent')).toMatchObject({
+      content: 'Hello world',
+      status: 'complete',
+      eventIds: ['event-1', 'event-2']
+    })
+  })
+
   it('reports only changed safe fields for stale-graph conflict rebasing', async () => {
     const persisted = materializeSessionConversationGraph(
       createPersistedSession({
@@ -1696,6 +1742,54 @@ describe('renderer session persistence bridge', () => {
     } finally {
       await vi.runAllTimersAsync()
       await flushing
+      vi.useRealTimers()
+    }
+  })
+
+  it('relaxes the flush cadence while streaming and flushes the terminal commit promptly', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const api = createApi()
+      const save = createStoreSaver(api)
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Hi',
+        cwd: '/workspace/project',
+        projectId: 'project-a'
+      })
+      await save(useSessionStore.getState())
+      expect(api.saveSession).toHaveBeenCalledTimes(1)
+
+      const baseState = useSessionStore.getState()
+      const streamingState = (content: string, updatedAt: number): Parameters<typeof save>[0] => ({
+        sessions: baseState.sessions,
+        selectedSessionId: baseState.selectedSessionId,
+        streamingMessages: {
+          'message-1': { sessionId: 'session-1', content, eventIds: [], updatedAt }
+        }
+      })
+
+      void save(streamingState('chunk-1', 1))
+      await vi.advanceTimersByTimeAsync(300)
+      void save(streamingState('chunk-2', 2))
+      await vi.advanceTimersByTimeAsync(300)
+
+      // The relaxed streaming cadence (2s) has not elapsed; the normal 500ms cadence would have
+      // flushed by now.
+      expect(api.saveSession).toHaveBeenCalledTimes(1)
+
+      const terminalSave = save({
+        sessions: baseState.sessions,
+        selectedSessionId: baseState.selectedSessionId,
+        streamingMessages: {}
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await terminalSave
+
+      expect(api.saveSession).toHaveBeenCalledTimes(2)
+    } finally {
+      await vi.runAllTimersAsync()
       vi.useRealTimers()
     }
   })

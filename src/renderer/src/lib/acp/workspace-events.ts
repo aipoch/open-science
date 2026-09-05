@@ -309,7 +309,10 @@ const finalizeArtifactEvent = async (
     if (!attachedSession) {
       throw new Error('Artifact finalization Session is no longer available.')
     }
-    const submittedSession = toPersistedSession(attachedSession)
+    const submittedSession = toPersistedSession(
+      attachedSession,
+      useSessionStore.getState().streamingMessages
+    )
     const durableSession = await (dependencies.saveSession ?? saveSessionInRuntimeOrder)(
       submittedSession
     )
@@ -618,7 +621,7 @@ const triggerAutoReview = async (
     // intentionally cadence-limited, so a fixed debounce can still expose the previous message graph.
     // This runs inside the fire-and-forget auto-review task: the main turn remains settled while only
     // Reviewer waits for this Session's terminal Message and stop metadata to become readable.
-    await saveSession(toPersistedSession(session))
+    await saveSession(toPersistedSession(session, useSessionStore.getState().streamingMessages))
 
     // Retry a started:false a bounded number of times, but ONLY for reasons a persistence race can
     // produce (the session may not be flushed to disk yet). Every other reason is terminal for the auto

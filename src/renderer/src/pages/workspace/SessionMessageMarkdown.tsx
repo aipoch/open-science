@@ -15,7 +15,7 @@ import { createPreviewResourceKey } from './previews/preview-resource-key'
 import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
 import { useNearViewport } from './previews/useNearViewport'
 import {
-  normalizeSessionArtifactReferences,
+  createSessionArtifactReferenceNormalizer,
   resolveMessageArtifactReference,
   type MessageArtifact
 } from './session-message-artifact-reference'
@@ -227,9 +227,11 @@ const SessionMessageMarkdown = memo(
     onPreviewArtifact,
     onPreviewArtifactModal
   }: SessionMessageMarkdownProps): React.JSX.Element => {
+    // Append-only streaming reprocesses just the trailing block instead of the full message.
+    const [normalizeArtifactReferences] = useState(() => createSessionArtifactReferenceNormalizer())
     const normalizedContent = useMemo(
-      () => normalizeSessionArtifactReferences(content, artifacts),
-      [artifacts, content]
+      () => normalizeArtifactReferences(content, artifacts),
+      [normalizeArtifactReferences, artifacts, content]
     )
     const components = useMemo<Components>(
       () => ({

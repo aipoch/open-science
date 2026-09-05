@@ -118,9 +118,25 @@ export type ChatSession = Omit<
   presentedActivityAt?: number
 }
 
+export type StreamingMessageContent = {
+  sessionId: string
+  // Full in-flight text (the base Message content plus every chunk appended since the Message
+  // last changed identity), held outside session.messages so pure text-growth ticks keep the
+  // Session object and messages array referentially stable.
+  content: string
+  // Full applied event id list (the base Message's eventIds plus in-flight ids) for replay dedup.
+  eventIds: string[]
+  updatedAt: number
+}
+
+// Keyed by message id. Agent message ids are deterministic per (session, stream, prompt), so the
+// key is known before the Message object exists and is unique across Sessions.
+export type StreamingMessageContentByMessageId = Record<string, StreamingMessageContent>
+
 export type SessionStoreData = {
   sessions: ChatSession[]
   selectedSessionId: string | undefined
+  streamingMessages: StreamingMessageContentByMessageId
 }
 
 export type SessionHydrationSelection = { sessionId: string | undefined }
@@ -166,8 +182,62 @@ const markExternallyHydratedSession = (
 
 export const createInitialSessionState = (): SessionStoreData => ({
   sessions: [],
-  selectedSessionId: undefined
+  selectedSessionId: undefined,
+  streamingMessages: {}
 })
+
+// Folds one Session's in-flight streaming entries back into its Message objects. Terminal
+// projections (finish/interrupt/fail) call this first so the final Message content, event ids,
+// and conversation-graph sync observe the complete turn exactly as if chunks had been committed
+// to the Message directly.
+export const materializeStreamingMessageContent = (
+  session: ChatSession,
+  streamingMessages: StreamingMessageContentByMessageId
+): ChatSession => {
+  let messages: ChatMessage[] | undefined
+  for (let index = 0; index < session.messages.length; index += 1) {
+    const message = session.messages[index]
+    const entry = streamingMessages[message.id]
+    if (!entry) continue
+    if (!messages) messages = session.messages.slice()
+    messages[index] = {
+      ...message,
+      content: entry.content,
+      eventIds: entry.eventIds,
+      updatedAt: Math.max(message.updatedAt, entry.updatedAt)
+    }
+  }
+  return messages ? { ...session, messages } : session
+}
+
+export const removeStreamingMessageContentForSession = (
+  streamingMessages: StreamingMessageContentByMessageId,
+  sessionId: string
+): StreamingMessageContentByMessageId => {
+  const keys = Object.keys(streamingMessages).filter(
+    (key) => streamingMessages[key].sessionId === sessionId
+  )
+  if (keys.length === 0) return streamingMessages
+  const next = { ...streamingMessages }
+  for (const key of keys) delete next[key]
+  return next
+}
+
+// Drops a Session's entries whose Message no longer exists (edit/truncate/branch activation), so a
+// later turn that reuses the deterministic Message id cannot resurrect superseded text.
+export const pruneStreamingMessageContent = (
+  streamingMessages: StreamingMessageContentByMessageId,
+  sessionId: string,
+  retainedMessageIds: ReadonlySet<string>
+): StreamingMessageContentByMessageId => {
+  const keys = Object.keys(streamingMessages).filter(
+    (key) => streamingMessages[key].sessionId === sessionId && !retainedMessageIds.has(key)
+  )
+  if (keys.length === 0) return streamingMessages
+  const next = { ...streamingMessages }
+  for (const key of keys) delete next[key]
+  return next
+}
 
 export const stripTransientMessageState = (message: ChatMessage): PersistedChatMessage => {
   const { sortIndex, ...persistedMessage } = message
@@ -178,7 +248,12 @@ export const stripTransientMessageState = (message: ChatMessage): PersistedChatM
 }
 
 // Serializes one in-memory session into the durable per-file projection saved by the main process.
-export const toPersistedSession = (session: ChatSession): PersistedChatSession => {
+// In-flight streaming text is folded into its Message first so a flush mid-stream never loses
+// chunks that have not been committed to session.messages yet.
+export const toPersistedSession = (
+  session: ChatSession,
+  streamingMessages?: StreamingMessageContentByMessageId
+): PersistedChatSession => {
   if (session.contentLoaded === false) {
     throw new Error('Session content must be loaded before persistence.')
   }
@@ -252,6 +327,20 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     ?.map(sanitizeActivityGroup)
     .filter((group): group is PersistedActivityGroup => !!group)
 
+  const persistedMessages = streamingMessages
+    ? messages.map((message) => {
+        const entry = streamingMessages[message.id]
+        return entry && entry.sessionId === session.id
+          ? {
+              ...message,
+              content: entry.content,
+              eventIds: entry.eventIds,
+              updatedAt: Math.max(message.updatedAt, entry.updatedAt)
+            }
+          : message
+      })
+    : messages
+
   return materializeSessionConversationGraph({
     ...(artifacts
       ? {
@@ -262,7 +351,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
         }
       : {}),
     ...persistedSession,
-    messages: messages.map(stripTransientMessageState),
+    messages: persistedMessages.map(stripTransientMessageState),
     ...(persistedPlanHistory ? { planHistoryProjections: persistedPlanHistory } : {}),
     ...(persistedActivities && persistedActivities.length > 0
       ? { activities: persistedActivities }
@@ -544,6 +633,11 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         return {
           sessions: state.sessions.map((candidate) =>
             candidate.id === session.id ? hydrated : candidate
+          ),
+          streamingMessages: pruneStreamingMessageContent(
+            state.streamingMessages,
+            session.id,
+            new Set(hydrated.messages.map((message) => message.id))
           )
         } as Partial<State>
       }
@@ -653,7 +747,14 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         ...state.sessions.filter((candidate) => candidate.id !== session.id)
       ].sort((left, right) => right.updatedAt - left.updatedAt)
 
-      return { sessions: nextSessions } as Partial<State>
+      return {
+        sessions: nextSessions,
+        streamingMessages: pruneStreamingMessageContent(
+          state.streamingMessages,
+          session.id,
+          new Set(hydratedWithTransientState.messages.map((message) => message.id))
+        )
+      } as Partial<State>
     })
   },
 

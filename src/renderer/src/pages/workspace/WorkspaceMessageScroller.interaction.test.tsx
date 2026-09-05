@@ -3397,6 +3397,149 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     ).toBe('true')
   })
 
+  it('coalesces resize-driven scroll eligibility updates into one deferred frame', async () => {
+    vi.useFakeTimers()
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe(): void {
+          /* no-op */
+        }
+        unobserve(): void {
+          /* no-op */
+        }
+        disconnect(): void {
+          /* no-op */
+        }
+      }
+    )
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = [
+      createMessage({ id: 'prompt-1' }),
+      createMessage({ id: 'reply-1', role: 'agent' }),
+      createMessage({ id: 'prompt-2' }),
+      createMessage({ id: 'reply-2', role: 'agent' })
+    ]
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )
+    let scrollHeightReads = 0
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: {
+        configurable: true,
+        get: () => {
+          scrollHeightReads += 1
+          return 10_000
+        }
+      },
+      scrollTop: { configurable: true, writable: true, value: 1_200 }
+    })
+    const notifyResize = async (): Promise<void> => {
+      await act(async () => {
+        for (const callback of resizeCallbacks) callback([], {} as ResizeObserver)
+      })
+    }
+
+    // Streaming resizes the content every frame; several notifications inside one frame must not
+    // trigger synchronous layout reads — they collapse into a single rAF-deferred evaluation.
+    scrollHeightReads = 0
+    await notifyResize()
+    await notifyResize()
+    await notifyResize()
+    expect(scrollHeightReads).toBe(0)
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
+
+    await act(async () => vi.advanceTimersByTimeAsync(16))
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
+    expect(scrollHeightReads).toBeLessThan(3)
+  })
+
+  it('cancels a pending resize-driven eligibility update on unmount', async () => {
+    vi.useFakeTimers()
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe(): void {
+          /* no-op */
+        }
+        unobserve(): void {
+          /* no-op */
+        }
+        disconnect(): void {
+          /* no-op */
+        }
+      }
+    )
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle' })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )
+    let scrollHeightReads = 0
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: {
+        configurable: true,
+        get: () => {
+          scrollHeightReads += 1
+          return 10_000
+        }
+      }
+    })
+    await act(async () => {
+      for (const callback of resizeCallbacks) callback([], {} as ResizeObserver)
+    })
+
+    await act(async () => {
+      root.unmount()
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(64))
+    expect(scrollHeightReads).toBe(0)
+    root = createRoot(container)
+  })
+
   it('does not write to the preview store for non-managed-file artifacts', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const session = createSession({
