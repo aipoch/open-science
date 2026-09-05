@@ -1743,6 +1743,79 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
   })
 
+  it('keeps a loaded Session body after selecting a different Session', () => {
+    const loadedMessages = Array.from({ length: 12 }, (_, index) => ({
+      id: `message-${index + 1}`,
+      role: 'user' as const,
+      content: `Turn ${index + 1}`,
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: index + 1,
+      updatedAt: index + 1
+    }))
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: 'session-loaded',
+          projectId: 'project-1',
+          title: 'Loaded session',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: loadedMessages.length,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 1,
+          updatedAt: 4,
+          needsStartupRecovery: false
+        },
+        {
+          number: 2,
+          id: 'session-summary',
+          projectId: 'project-1',
+          title: 'Summary session',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 2,
+          updatedAt: 3,
+          needsStartupRecovery: false
+        }
+      ],
+      {
+        id: 'session-loaded',
+        projectId: 'project-1',
+        title: 'Loaded session',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: loadedMessages,
+        createdAt: 1,
+        updatedAt: 4,
+        revision: 1
+      }
+    )
+
+    useSessionStore.getState().selectSession('session-summary')
+
+    const loaded = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === 'session-loaded')
+    const summary = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === 'session-summary')
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-summary')
+    expect(loaded?.contentLoaded).not.toBe(false)
+    expect(loaded?.messages).toHaveLength(12)
+    expect(summary?.contentLoaded).toBe(false)
+    expect(summary?.messages).toEqual([])
+  })
+
   it('applies archive state from an older durable Session update without losing newer local state', () => {
     useSessionStore.getState().hydrateSessions([
       {
@@ -2015,6 +2088,74 @@ describe('session store', () => {
     })
     expect(useSessionStore.getState().sessions[0].title).toBe('Remote later')
   })
+
+  it('keeps the new run reference when an old source acknowledges the same message and millisecond', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1710000000000)
+    try {
+      const input = {
+        sessionId: 'session-1',
+        messageId: 'retry-prompt',
+        content: 'Retry the same question'
+      }
+      useSessionStore.getState().appendUserMessage(input)
+      const source = useSessionStore.getState().sessions[0]
+      const durable = structuredClone(toPersistedSession(source))
+      durable.revision = (durable.revision ?? 0) + 1
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.getState().appendUserMessage({ ...input, rearmExisting: true })
+      const current = useSessionStore.getState().sessions[0]
+      expect(current).not.toBe(source)
+      expect(current.activeRun).toBeDefined()
+      expect(current.activeRun).toEqual(source.activeRun)
+      expect(current.activeRun).not.toBe(source.activeRun)
+
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: durable,
+        mode: 'replace-persisted-if-current'
+      })
+
+      const projected = useSessionStore.getState().sessions[0]
+      expect(projected.activeRun).toBe(current.activeRun)
+      expect(projected.activeRun).not.toBe(source.activeRun)
+      expect(projected.status).toBe('running')
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it.each(['promptMessageId', 'startedAt'] as const)(
+    'does not reuse the old run reference when the current save acknowledgement changes %s',
+    (field) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        messageId: 'earlier-prompt',
+        content: 'Earlier question'
+      })
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        messageId: 'current-prompt',
+        content: 'Current question'
+      })
+      const source = useSessionStore.getState().sessions[0]
+      const durable = structuredClone(toPersistedSession(source))
+      durable.revision = (durable.revision ?? 0) + 1
+      expect(durable.activeRun).toBeDefined()
+      if (field === 'promptMessageId') durable.activeRun!.promptMessageId = 'earlier-prompt'
+      else durable.activeRun!.startedAt += 1
+
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: durable,
+        mode: 'replace-persisted-if-current'
+      })
+
+      const projected = useSessionStore.getState().sessions[0]
+      expect(projected.activeRun).toEqual(durable.activeRun)
+      expect(projected.activeRun).not.toBe(source.activeRun)
+    }
+  )
 
   it('keeps a newer unsaved title when a durable save acknowledgement is for the previous title', () => {
     useSessionStore.getState().hydrateSessions([
@@ -6243,6 +6384,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/use-pdf-context-action.ts',
       'src/renderer/src/pages/workspace/use-side-chat-controller.ts',
       'src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts',
+      'src/renderer/src/pages/workspace/useManagedVersionWorkflow.ts',
       'src/renderer/src/pages/workspace/visible-project-sessions.ts',
       'src/renderer/src/pages/workspace/workspace-agent-control-availability.ts',
       'src/renderer/src/pages/workspace/workspace-compute-host-access-controller.ts',

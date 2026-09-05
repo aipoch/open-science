@@ -630,11 +630,31 @@ describe('ACP application commands', () => {
 
     const outcome = await router.dispatcher.invoke(
       acpCommands.steerFollowUp,
-      invocation([{ sessionId: 'session-1', text: 'focus on tests' }])
+      invocation([
+        {
+          sessionId: 'session-1',
+          text: 'focus on tests',
+          agentTarget: {
+            frameworkId: 'claude-code',
+            providerId: 'provider',
+            model: 'queued-model',
+            reasoningEffort: 'high'
+          }
+        }
+      ])
     )
 
     expect(outcome).toEqual({ injected: false, reason: 'prompt-required' })
-    expect(dependencies.runtime.steerFollowUp).toHaveBeenCalledOnce()
+    expect(dependencies.runtime.steerFollowUp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentTarget: {
+          frameworkId: 'claude-code',
+          providerId: 'provider',
+          model: 'queued-model',
+          reasoningEffort: 'high'
+        }
+      })
+    )
   })
 
   it('holds Session admission through ACP response mutations', async () => {

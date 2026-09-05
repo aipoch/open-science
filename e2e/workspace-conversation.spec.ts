@@ -151,6 +151,9 @@ test('edits and navigates message revisions that persist after relaunch', async 
   await expect(revision).toHaveText(['2/2'])
   await expect(previousRevision).toBeEnabled()
   await expect(nextRevision).toBeDisabled()
+  // Main can be idle while the renderer still drains the edited send. This existing control
+  // also waits for the active run, pending queue and branch-switch guard to clear.
+  await expect(conversation.getByRole('button', { name: 'Branch in new session' })).toBeEnabled()
 
   // The edit starts another Agent turn. Let it finish before switching branches or restarting,
   // otherwise application.close() can wait indefinitely on the native active-session quit dialog.

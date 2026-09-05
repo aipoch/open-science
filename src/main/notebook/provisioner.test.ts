@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -17,6 +17,7 @@ import {
   pkgsCache,
   pythonBin,
   rBin,
+  rLibraryDir,
   readRReadyMarker,
   readReadyMarker,
   readyMarkerPath,
@@ -30,6 +31,7 @@ import {
   DEFAULT_PYTHON_SPEC,
   DEFAULT_R_SPEC,
   DefaultRuntimeProvisioner,
+  createProductionProvisioner,
   type FetchedBundle,
   type ProvisionProgress,
   type ProvisionerDeps
@@ -37,6 +39,8 @@ import {
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import { envsLockDir } from './runtime-relocation'
 import { serializeProvisioner } from './environment-operation-foundation'
+import { EnvironmentLeaseManager } from './environment-lease-manager'
+import { createNotebookEnvironmentLifecycle } from './environment-lifecycle-workflows'
 import { withExclusiveCacheLock, withSharedCacheLock } from './pkgs-cache-lock'
 import { validateAndSeedPack } from './pack-content'
 import { micromambaCacheLockKey } from './micromamba-cache'
@@ -1379,6 +1383,63 @@ const makeNamedEnvDeps = (
 }
 
 describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
+  it.skipIf(process.platform === 'win32')(
+    'verifies a managed R environment with app-owned user state and only its prefix library',
+    async () => {
+      const root = makeRoot()
+      const prefix = envPrefix(root, 'r-stats')
+      const bin = rBin(prefix)
+      const expectedHome = join(root, 'home')
+      const expectedLibrary = rLibraryDir(prefix)
+      const inheritedKeys = ['HOME', 'R_USER', 'R_LIBS', 'R_LIBS_USER', 'R_LIBS_SITE'] as const
+      const inherited = Object.fromEntries(inheritedKeys.map((key) => [key, process.env[key]]))
+      process.env.HOME = join(root, 'host-home')
+      process.env.R_USER = join(root, 'host-r-user')
+      process.env.R_LIBS = join(root, 'host-r-libs')
+      process.env.R_LIBS_USER = join(root, 'host-r-user-library')
+      process.env.R_LIBS_SITE = join(root, 'host-r-site-library')
+      const provisioner = createProductionProvisioner(
+        { root, channel: 'https://conda.example/conda-forge' },
+        {
+          runner: { initialPath: '/fake/micromamba', resolve: async () => '/fake/micromamba' },
+          maintainCache: async () => undefined,
+          captureExplicitLock: async () => '@EXPLICIT\n',
+          runArgv: async () => {
+            mkdirSync(expectedLibrary, { recursive: true })
+            mkdirSync(dirname(bin), { recursive: true })
+            writeFileSync(
+              bin,
+              [
+                `#!${process.execPath}`,
+                `if (process.env.HOME !== ${JSON.stringify(expectedHome)}) process.exit(41)`,
+                `if (process.env.R_USER !== ${JSON.stringify(expectedHome)}) process.exit(42)`,
+                `if (process.env.R_LIBS_USER !== ${JSON.stringify(expectedLibrary)}) process.exit(43)`,
+                'if (process.env.R_LIBS || process.env.R_LIBS_SITE) process.exit(44)',
+                `const prefix = ${JSON.stringify(prefix)}`,
+                "process.stdout.write(['OPEN_SCIENCE_R_HOME=' + prefix + '/lib/R', 'OPEN_SCIENCE_R_BASE_LIBRARY=' + prefix + '/lib/R/library', 'OPEN_SCIENCE_R_LIBRARY=' + process.env.R_LIBS_USER].join('\\n') + '\\n')"
+              ].join('\n') + '\n'
+            )
+            chmodSync(bin, 0o755)
+          }
+        }
+      )
+
+      try {
+        await expect(provisioner.createNamedEnvironment('r-stats', 'r')).resolves.toMatchObject({
+          name: 'r-stats',
+          language: 'r',
+          ready: true
+        })
+      } finally {
+        for (const key of inheritedKeys) {
+          const value = inherited[key]
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        }
+      }
+    }
+  )
+
   it('uses the injected platform for the interpreter it verifies', async () => {
     const root = makeRoot()
     const platform: NodeJS.Platform = process.platform === 'win32' ? 'linux' : 'win32'
@@ -1392,6 +1453,19 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
       platform === 'win32' ? join(prefix, 'python.exe') : join(prefix, 'bin', 'python'),
       prefix
     )
+  })
+
+  it('completes a named create without capturing archive publications when no cache retainer exists', async () => {
+    const root = makeRoot()
+    const captureExplicitLock = vi.fn(
+      async () => `@EXPLICIT\nhttps://conda.example/osx-arm64/python-1.tar.bz2#${'a'.repeat(32)}\n`
+    )
+    const { deps } = makeNamedEnvDeps(root, { captureExplicitLock })
+
+    await new DefaultRuntimeProvisioner(deps).createNamedEnvironment('analysis', 'python')
+
+    expect(await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()).toEqual([])
+    expect(captureExplicitLock).not.toHaveBeenCalled()
   })
 
   it('publishes and releases the Windows working cache after a successful create', async () => {
@@ -2343,6 +2417,133 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     expect(order[0]).toBe(`lock:${DEFAULT_PY_ENV}`)
     expect(order.slice(-2)).toEqual(['repair:completed', 'unlock'])
     expect(runArgv).toHaveBeenCalled()
+  })
+
+  it.each(['provisioner', 'lifecycle'] as const)(
+    'E05 cancels an unprepared repair waiting for a package mutation lease through %s',
+    async (entry) => {
+      const root = makeRoot()
+      const interpreter = pythonBin(envPrefix(root, DEFAULT_PY_ENV))
+      mkdirSync(dirname(interpreter), { recursive: true })
+      writeFileSync(interpreter, 'original')
+      const leases = new EnvironmentLeaseManager()
+      const mutation = await leases.acquire(DEFAULT_PY_ENV, 'exclusive').granted
+      let waiting!: () => void
+      const queued = new Promise<void>((resolve) => {
+        waiting = resolve
+      })
+      const deps = makeDeps(root)
+      const rebuild = vi.fn(deps.runArgv)
+      const onVerified = vi.fn()
+      const provisioner = serializeProvisioner(
+        new DefaultRuntimeProvisioner({
+          ...deps,
+          runArgv: rebuild,
+          withPrefixLock: async (environment, operation) => {
+            const acquisition = leases.acquire(environment, 'exclusive')
+            waiting()
+            const lease = await acquisition.granted
+            try {
+              return await operation()
+            } finally {
+              lease.release()
+            }
+          }
+        })
+      )
+      const lifecycle = createNotebookEnvironmentLifecycle({
+        provisioner,
+        root,
+        projectProgress: () => undefined,
+        onRepairCompleted: onVerified
+      })
+      const result = (
+        entry === 'lifecycle'
+          ? lifecycle.repair('python', DEFAULT_PY_ENV)
+          : provisioner.repair('python', () => undefined, { onVerified })
+      ).catch((error) => error)
+      try {
+        await queued
+        expect(leases.snapshot().environments[0].waiters.exclusive).toBe(1)
+        provisioner.cancel('python')
+        mutation.release()
+
+        expect.soft(await result).toEqual(new Error('Runtime setup cancelled.'))
+        expect.soft(readFileSync(interpreter, 'utf8')).toBe('original')
+        expect.soft(rebuild).not.toHaveBeenCalled()
+        expect.soft(onVerified).not.toHaveBeenCalled()
+      } finally {
+        mutation.release()
+        leases.dispose()
+        await result
+      }
+    }
+  )
+
+  it('E05 stops active execution before taking the repair lease and ignores later cancellation', async () => {
+    const root = makeRoot()
+    const leases = new EnvironmentLeaseManager()
+    const execution = await leases.acquire(DEFAULT_PY_ENV, 'shared').granted
+    const onStarting = vi.fn(async () => {
+      execution.release()
+      provisioner.cancel('python')
+    })
+    const onVerified = vi.fn(() => {
+      expect(leases.snapshot().environments[0].holders).toEqual({ shared: 0, exclusive: 1 })
+    })
+    const provisioner = new DefaultRuntimeProvisioner(
+      makeDeps(root, {
+        withPrefixLock: async (environment, operation) => {
+          // Assert before waiting, so an inverted order fails rather than hanging on the live lease.
+          expect(onStarting).toHaveBeenCalledOnce()
+          const lease = await leases.acquire(environment, 'exclusive').granted
+          try {
+            return await operation()
+          } finally {
+            lease.release()
+          }
+        }
+      })
+    )
+    try {
+      await provisioner.repair('python', () => undefined, { onStarting, onVerified })
+      expect(onVerified).toHaveBeenCalledOnce()
+      expect(provisioner.status()).toMatchObject({ pythonReady: true, provisioning: false })
+      expect(leases.snapshot().environments).toEqual([])
+    } finally {
+      leases.dispose()
+    }
+  })
+
+  it('E05 preserves the original prefix and isolation when preparation fails', async () => {
+    const root = makeRoot()
+    const interpreter = pythonBin(envPrefix(root, DEFAULT_PY_ENV))
+    mkdirSync(dirname(interpreter), { recursive: true })
+    writeFileSync(interpreter, 'original')
+    const rebuild = vi.fn()
+    const onVerified = vi.fn()
+    const provisioner = new DefaultRuntimeProvisioner(makeDeps(root, { runArgv: rebuild }))
+
+    await expect(
+      provisioner.repair('python', () => undefined, {
+        force: true,
+        onStarting: () => {
+          addRepairRequired(root, DEFAULT_PY_ENV, 'protected-identity-change')
+          throw new Error('binding persist denied')
+        },
+        onVerified
+      })
+    ).rejects.toThrow('binding persist denied')
+
+    expect(readFileSync(interpreter, 'utf8')).toBe('original')
+    expect(rebuild).not.toHaveBeenCalled()
+    expect(onVerified).not.toHaveBeenCalled()
+    expect(provisioner.status()).toMatchObject({ pythonRecoveryBlocked: true, provisioning: false })
+    // A failed preparation must release the uninterruptible language guard.
+    provisioner.cancel('python')
+    await expect(provisioner.repair('python', () => undefined)).rejects.toThrow(
+      'Runtime setup cancelled.'
+    )
   })
 
   it.each([

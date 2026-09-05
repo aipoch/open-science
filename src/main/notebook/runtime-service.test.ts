@@ -10,7 +10,7 @@ import type {
   NotebookExecutionResult,
   NotebookExecutorLifecycleCallbacks
 } from './runtime-service'
-import type { NotebookSessionExecutor } from './session-aggregate'
+import { NotebookSessionAggregate, type NotebookSessionExecutor } from './session-aggregate'
 import {
   NotebookRuntimeService,
   resolveDefaultExecutorOptions,
@@ -987,6 +987,9 @@ describe('notebook runtime service', () => {
       projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: verifiedPackageMutationTracker(),
+      getPackageMirror: () => ({
+        condaChannel: 'https://mirror.invalid/conda-forge/'
+      }),
       installPackagesImpl
     })
 
@@ -4472,6 +4475,132 @@ describe('notebook runtime service', () => {
     })
   })
 
+  it.each([
+    ['python', 'r', false],
+    ['r', 'python', false],
+    ['python', 'r', true],
+    ['r', 'python', true],
+    ['r', undefined, false],
+    ['r', undefined, true]
+  ] as const)(
+    'reuses a cell from %s with requested language %s and consistent execution and history (queued=%s)',
+    async (oldLanguage, requestedLanguage, queued) => {
+      const newLanguage = requestedLanguage ?? oldLanguage
+      const root = await createStorageRoot()
+      const blockerStarted = createDeferred<void>()
+      const releaseBlocker = createDeferred<void>()
+      const execute = vi.fn(
+        async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => {
+          if (request.code === '# blocker') {
+            blockerStarted.resolve()
+            await releaseBlocker.promise
+          }
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        }
+      )
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+      })
+      const request = { sessionId: 'session-1', workspaceCwd: root, cellId: 'cell-b' }
+      const code = { python: 'x = 42', r: 'x <- 42' }
+      const writeCell = async (language: NotebookLanguage): Promise<void> => {
+        const begin = await service.beginCodeCell({ ...request, language })
+        await service.appendCodeCell({ ...request, writeId: begin.writeId, delta: code[language] })
+        await service.finishCodeCell({ ...request, writeId: begin.writeId })
+      }
+      await writeCell(oldLanguage)
+
+      const pending: Array<Promise<unknown>> = []
+      let enqueue: ReturnType<typeof vi.spyOn> | undefined
+      try {
+        if (queued) {
+          pending.push(
+            service.execute({
+              ...request,
+              cellId: 'blocker',
+              language: oldLanguage,
+              code: '# blocker'
+            })
+          )
+          await blockerStarted.promise
+          // Data runs have no public queued-state projection. Observe the existing queue entry
+          // without replacing its behavior so rewriting happens strictly after admission.
+          enqueue = vi.spyOn(NotebookSessionAggregate.prototype, 'enqueueExecution')
+          pending.push(service.runCell(request))
+          await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1))
+          enqueue.mockRestore()
+          await expect(
+            service.beginCodeCell({ ...request, language: requestedLanguage })
+          ).rejects.toThrow('Notebook cell is queued or running: cell-b')
+          const rejected = await service.state(request)
+          expect(rejected.cells.find((cell) => cell.id === request.cellId)).toMatchObject({
+            language: oldLanguage,
+            code: code[oldLanguage]
+          })
+          releaseBlocker.resolve()
+          await Promise.all(pending)
+        }
+
+        const begin = await service.beginCodeCell({ ...request, language: requestedLanguage })
+        const receiving = await service.state(request)
+        await service.appendCodeCell({
+          ...request,
+          writeId: begin.writeId,
+          delta: code[newLanguage]
+        })
+        await service.finishCodeCell({ ...request, writeId: begin.writeId })
+        const written = await service.state(request)
+
+        const result = await service.runCell(request)
+        const state = await service.state(request)
+
+        expect.soft(execute.mock.calls.at(-1)?.[0]).toMatchObject({
+          language: newLanguage,
+          code: code[newLanguage]
+        })
+        expect.soft(receiving.cells.find((cell) => cell.id === request.cellId)).toMatchObject({
+          language: newLanguage,
+          code: '',
+          status: 'receiving-code'
+        })
+        expect.soft(written.cells.find((cell) => cell.id === request.cellId)).toMatchObject({
+          language: newLanguage,
+          code: code[newLanguage]
+        })
+        expect.soft(result.status).toBe('completed')
+        expect.soft(state.runs.find((run) => run.runId === result.runId)).toMatchObject({
+          kernelKind: newLanguage,
+          script: code[newLanguage]
+        })
+        if (queued) {
+          expect.soft(execute.mock.calls[1][0]).toMatchObject({
+            language: oldLanguage,
+            code: code[oldLanguage]
+          })
+          expect.soft(state.runs.filter((run) => run.cellId === request.cellId)).toMatchObject([
+            { kernelKind: oldLanguage, script: code[oldLanguage] },
+            { kernelKind: newLanguage, script: code[newLanguage] }
+          ])
+        }
+      } finally {
+        enqueue?.mockRestore()
+        releaseBlocker.resolve()
+        await Promise.allSettled(pending)
+      }
+    }
+  )
+
   it('serializes overlapping runs on the shared interpreter instead of failing the second', async () => {
     const root = await createStorageRoot()
     let active = 0
@@ -7375,7 +7504,7 @@ describe('notebook runtime service', () => {
 
       expect(result).toMatchObject({
         ok: false,
-        needsRestart: false,
+        needsRestart: true,
         method: 'conda'
       })
       expect(result.error).toContain('dplyr')
@@ -7415,7 +7544,7 @@ describe('notebook runtime service', () => {
 
       const result = await service.managePackages({ language: 'python', packages: ['numpy'] })
 
-      expect(result).toMatchObject({ ok: false, needsRestart: false, method: 'conda' })
+      expect(result).toMatchObject({ ok: false, needsRestart: true, method: 'conda' })
       expect(result.error).toMatch(/inventory refresh failed/i)
       expect(info).not.toHaveBeenCalledWith('package installer completed', expect.anything())
       expect(warn).toHaveBeenCalledWith(
@@ -7566,7 +7695,7 @@ describe('notebook runtime service', () => {
       expect(result.target).toEqual({ language: 'python', selection: 'unresolved' })
     })
 
-    it('falls back to the region default mirror when nothing is configured', async () => {
+    it('falls back to public indexes when no configured or probed mirror is reachable', async () => {
       const root = await createStorageRoot()
       const calls: Array<Partial<InstallDepsForTest> | undefined> = []
       const service = new NotebookRuntimeService({
@@ -7583,9 +7712,8 @@ describe('notebook runtime service', () => {
         }),
         getPackageMirror: () => undefined,
         locale: 'zh-CN',
-        // Force the latency probe to find nothing reachable so the resolver takes the deterministic
-        // locale fallback (zh-CN -> CN mirror) instead of racing real network from the CI runner,
-        // where the public mirror wins and leaves condaChannel unset.
+        // Force the latency probe to find nothing reachable. The resolver must use public indexes
+        // rather than reviving an unverified locale mirror that the probe just rejected.
         mirrorProbe: {
           probe: async () => {
             throw new Error('probe unreachable (test)')
@@ -7601,8 +7729,9 @@ describe('notebook runtime service', () => {
       resetAutoMirrorCache()
       await service.managePackages({ language: 'r', packages: ['ggplot2'] })
 
-      expect(calls[0]?.condaChannel).toMatch(/tuna|ustc|aliyun/i)
-      expect(calls[0]?.cranMirror).toMatch(/tuna|ustc/i)
+      expect(calls[0]?.condaChannel).toBeUndefined()
+      expect(calls[0]?.pypiIndex).toBeUndefined()
+      expect(calls[0]?.cranMirror).toBeUndefined()
     })
 
     it('never spawns real installs when installPackagesImpl is injected (no getPackageMirror wired)', async () => {
@@ -8287,55 +8416,58 @@ describe('notebook runtime service', () => {
       })
     })
 
-    it('flags restartRecommended on the R env after an R install and clears it on restart', async () => {
-      const root = await createStorageRoot()
-      const service = new NotebookRuntimeService({
-        configRoot: root,
-        dataRoot: root,
-        projectId: 'default-project',
-        repository: new NotebookRunRepository(root),
-        environmentStateTracker: {
-          prepareRun: vi.fn(),
-          captureCompletedRun: vi.fn(),
-          inspectPackages: vi.fn(),
-          markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
-          refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
-        },
-        executorFactory: () => ({
-          execute: async (request): Promise<NotebookExecutionResult> => ({
-            status: 'completed',
-            stdout: '',
-            stderr: '',
-            traceback: '',
-            cwdAfter: request.cwd,
-            outputs: []
+    it.each([true, false])(
+      'flags restartRecommended on the R env after an install (ok: %s) and clears it on restart',
+      async (ok) => {
+        const root = await createStorageRoot()
+        const service = new NotebookRuntimeService({
+          configRoot: root,
+          dataRoot: root,
+          projectId: 'default-project',
+          repository: new NotebookRunRepository(root),
+          environmentStateTracker: {
+            prepareRun: vi.fn(),
+            captureCompletedRun: vi.fn(),
+            inspectPackages: vi.fn(),
+            markPackageMutationDirty: vi.fn().mockResolvedValue(undefined),
+            refreshAfterPackageMutation: vi.fn().mockResolvedValue({ result: 'success' })
+          },
+          executorFactory: () => ({
+            execute: async (request): Promise<NotebookExecutionResult> => ({
+              status: 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: request.cwd,
+              outputs: []
+            }),
+            shutdown: async () => ({ reaped: true })
           }),
-          shutdown: async () => ({ reaped: true })
-        }),
-        // An R install reports needsRestart; a Python install would not (asserted below).
-        installPackagesImpl: async (request) => ({
-          ok: true,
-          needsRestart: request.language === 'r',
-          log: 'done'
+          // An R install reports needsRestart; a Python install would not (asserted below).
+          installPackagesImpl: async (request) => ({
+            ok,
+            needsRestart: request.language === 'r',
+            log: 'done'
+          })
         })
-      })
 
-      // Spawn the R kernel status entry so the env view has something to flag.
-      await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'r' })
+        // Spawn the R kernel status entry so the env view has something to flag.
+        await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'r' })
 
-      const rEntry = (
-        s: Awaited<ReturnType<typeof service.state>>
-      ): NotebookEnvironmentStatus | undefined =>
-        s.environments.find((entry) => entry.processKey === 'r:default-r')
+        const rEntry = (
+          s: Awaited<ReturnType<typeof service.state>>
+        ): NotebookEnvironmentStatus | undefined =>
+          s.environments.find((entry) => entry.processKey === 'r:default-r')
 
-      await service.managePackages({ language: 'r', packages: ['ggplot2'] })
-      const afterInstall = await service.state({ sessionId: 's', workspaceCwd: root })
-      expect(rEntry(afterInstall)?.restartRecommended).toBe(true)
+        await service.managePackages({ language: 'r', packages: ['ggplot2'] })
+        const afterInstall = await service.state({ sessionId: 's', workspaceCwd: root })
+        expect(rEntry(afterInstall)?.restartRecommended).toBe(true)
 
-      await service.restart({ sessionId: 's', workspaceCwd: root })
-      const afterRestart = await service.state({ sessionId: 's', workspaceCwd: root })
-      expect(rEntry(afterRestart)?.restartRecommended).toBe(false)
-    })
+        await service.restart({ sessionId: 's', workspaceCwd: root })
+        const afterRestart = await service.state({ sessionId: 's', workspaceCwd: root })
+        expect(rEntry(afterRestart)?.restartRecommended).toBe(false)
+      }
+    )
 
     it('does not flag restartRecommended for a Python install', async () => {
       const root = await createStorageRoot()
@@ -11036,6 +11168,48 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(rAfterRepair.status).toBe('completed')
   })
 
+  it('E06 does not leave restart advice after repairing a protected R identity', async () => {
+    const root = await createStorageRoot()
+    const service = bindingService(root, {
+      discovered: [managedR],
+      installPackagesImpl: async () => ({
+        ok: false,
+        needsRestart: false,
+        repairRequired: true,
+        log: 'r-base changed',
+        attempts: [
+          {
+            groupOrdinal: 0,
+            installer: 'conda',
+            packages: ['dplyr'],
+            status: 'succeeded',
+            mutationRisk: 'confirmed'
+          }
+        ]
+      })
+    })
+    const target = { sessionId: 's', workspaceCwd: root, language: 'r' as const }
+    await service.bindRuntime({ ...target, runtimeId: managedR.envId })
+    const result = await service.managePackages({ ...target, packages: ['dplyr'] })
+    expect(result.repairRequired).toBe(true)
+    expect(isProtectedIdentityRepairRequired(getRuntimeRoot(root), DEFAULT_R_ENV)).toBe(true)
+    expect.soft(result.needsRestart).toBe(false)
+
+    // Use the same service: an app restart would discard the process-local recommendation.
+    // The completion callback represents a verified rebuild, as in the other repair tests.
+    await service.completeRuntimeRepair('r')
+    expect((await service.execute({ ...target, code: 'R.version.string' })).status).toBe(
+      'completed'
+    )
+    const state = await service.state(target)
+    expect(state.runtimeBindings.r?.status).toBe('active')
+    expect
+      .soft(
+        state.environments.find((entry) => entry.processKey === 'r:default-r')?.restartRecommended
+      )
+      .toBe(false)
+  })
+
   it('does not let an ordinary package install clear a protected R identity quarantine', async () => {
     const root = await createStorageRoot()
     const runtimeRoot = getRuntimeRoot(root)
@@ -12594,10 +12768,10 @@ describe('v4 runtime bindings & agent tools', () => {
       }
     })
 
-    // A versioned app-managed env slips past assertSafeEnvName but is refused by the provenance guard.
+    // Versioned defaults share the same reserved-name guard on creation and removal.
     await expect(
       service.manageEnvironments({ action: 'remove', name: 'default-python-3.13' })
-    ).rejects.toThrow(/app-managed and cannot be removed/)
+    ).rejects.toThrow(/reserved environment name/)
     expect(removed).toEqual([])
 
     // An agent-created env is removable.

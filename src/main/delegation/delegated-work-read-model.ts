@@ -22,11 +22,7 @@ class DelegatedWorkReadModel {
     private readonly records: DelegatedWorkDurableRecords,
     private readonly projections: DelegatedWorkProjectionOwner,
     private readonly collectPollIntervalMs: number,
-    private readonly monotonicNow: () => number = () => performance.now(),
-    private readonly isAwaitingUser: (
-      snapshot: DurableSnapshot,
-      child: DurableChild
-    ) => boolean = () => false
+    private readonly monotonicNow: () => number = () => performance.now()
   ) {}
 
   async children(
@@ -45,7 +41,9 @@ class DelegatedWorkReadModel {
           attempt.resolvedAgent.kind === 'specialist'
             ? attempt.resolvedAgent.displayName
             : 'Main Agent',
-        status: this.isAwaitingUser(snapshot, child) ? ('awaiting_user' as const) : attempt.status
+        status: this.projections.isAwaitingUser(snapshot, child, attempt)
+          ? ('awaiting_user' as const)
+          : attempt.status
       }
     })
   }

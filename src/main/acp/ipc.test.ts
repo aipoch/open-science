@@ -1143,7 +1143,16 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
       }))
     )
     installAcpIpcHandlers({ steerFollowUp } as never, {} as never, archiveAvailability)
-    const request: AcpSteerFollowUpRequest = { sessionId: 's-1', text: 'focus on tests' }
+    const request: AcpSteerFollowUpRequest = {
+      sessionId: 's-1',
+      text: 'focus on tests',
+      agentTarget: {
+        frameworkId: 'claude-code',
+        providerId: 'provider',
+        model: 'queued-model',
+        reasoningEffort: 'high'
+      }
+    }
 
     const outcome = await handlers.get('acp:steer-follow-up')?.({}, request)
 

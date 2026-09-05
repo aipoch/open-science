@@ -1,6 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { installChildProcessGoneLogging, startLocalCrashReporting } from './crash-diagnostics'
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 describe('startLocalCrashReporting', () => {
   it.each<NodeJS.Platform>(['win32', 'darwin', 'linux'])(
@@ -40,6 +45,25 @@ describe('startLocalCrashReporting', () => {
 
     expect(status).toEqual({ enabled: false })
     expect(start).not.toHaveBeenCalled()
+  })
+
+  it('does not schedule crash-dump cleanup when Crashpad starts', () => {
+    vi.useFakeTimers()
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    const start = vi.fn()
+
+    startLocalCrashReporting({
+      platform: 'darwin',
+      productName: 'Open Science',
+      companyName: 'aipoch',
+      appVersion: '0.25.1',
+      start
+    })
+
+    expect(start).toHaveBeenCalledOnce()
+    expect(setIntervalSpy).not.toHaveBeenCalled()
+    expect(setTimeoutSpy).not.toHaveBeenCalled()
   })
 })
 

@@ -1349,9 +1349,12 @@ class AcpRuntime {
   }
 
   // Side-band follow-up into the live prompt. Does not open a second prompt interaction.
-  async steerFollowUp(request: AcpSteerFollowUpRequest): Promise<AcpSteerFollowUpResult> {
+  async steerFollowUp(
+    request: AcpSteerFollowUpRequest,
+    isCurrent: () => boolean = () => true
+  ): Promise<AcpSteerFollowUpResult> {
     return this.withOperationLease(() =>
-      withDataRootWrite(() => this.nativeFollowUp.steerFollowUp(request))
+      withDataRootWrite(() => this.nativeFollowUp.steerFollowUp(request, isCurrent))
     )
   }
 

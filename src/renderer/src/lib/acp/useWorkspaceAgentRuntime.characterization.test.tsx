@@ -292,6 +292,123 @@ describe('workspace Agent Runtime hook contract', () => {
     })
   })
 
+  it('Q03 validates captured configurations and forwards their target through the real runtime hook', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'provider',
+      activeModel: 'model-a',
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'provider',
+          type: 'custom',
+          name: 'Provider',
+          apiEndpoints: ['anthropic'],
+          baseUrl: 'https://example.test/v1',
+          model: 'model-a',
+          models: ['model-a', 'model-b'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    const pending = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Original',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentConfiguration: { providerId: 'provider', model: 'model-a', reasoningEffort: 'default' }
+    })
+    if (!pending) throw new Error('Expected the original message fixture')
+    useSessionStore.getState().finishRun('session-1')
+    const runtime = createRuntime(createSnapshot({ sessionIds: ['session-1'] }))
+    runtimeMock.current = runtime
+    await render()
+    const captured = {
+      providerId: 'provider',
+      model: 'model-b',
+      reasoningEffort: 'default' as const
+    }
+    await act(async () => {
+      await latest.steerFollowUp({
+        sessionId: 'session-1',
+        text: 'Queued',
+        agentConfiguration: captured
+      })
+    })
+    expect(runtime.steerFollowUp).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      text: 'Queued',
+      agentTarget: { frameworkId: 'claude-code', ...captured }
+    })
+    runtime.steerFollowUp.mockClear()
+    await act(async () => {
+      expect(
+        await latest.steerFollowUp({
+          sessionId: 'session-1',
+          text: 'Queued',
+          agentConfiguration: { ...captured, model: 'removed' }
+        })
+      ).toMatchObject({ injected: false })
+      expect(
+        await latest.resendEditedMessage('session-1', pending.messageId, {
+          text: 'Revision',
+          agentConfiguration: { ...captured, model: 'removed' }
+        })
+      ).toBe(false)
+    })
+    expect(runtime.steerFollowUp).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    await act(async () => {
+      expect(
+        await latest.sendMessage({
+          sessionId: 'session-1',
+          text: 'Queued',
+          agentConfiguration: captured,
+          expectedFrameworkId: 'opencode'
+        })
+      ).toBeUndefined()
+      expect(
+        await latest.resendEditedMessage('session-1', pending.messageId, {
+          text: 'Revision',
+          agentConfiguration: captured,
+          expectedFrameworkId: 'opencode'
+        })
+      ).toBe(false)
+      expect(
+        await latest.steerFollowUp({
+          sessionId: 'session-1',
+          text: 'Queued',
+          agentConfiguration: captured,
+          expectedFrameworkId: 'opencode'
+        })
+      ).toMatchObject({ injected: false })
+    })
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.steerFollowUp).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe('Original')
+    await act(async () => {
+      await latest.resendEditedMessage('session-1', pending.messageId, {
+        text: 'Revision',
+        agentConfiguration: captured
+      })
+    })
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(runtime.resumeSession.mock.calls[0]?.[10]).toEqual({
+      frameworkId: 'claude-code',
+      ...captured
+    })
+  })
+
   it('resolves image input support from the Session-selected official model', async () => {
     useSettingsStore.setState({
       activeProviderId: 'deepseek',

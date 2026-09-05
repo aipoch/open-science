@@ -6,7 +6,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import { NotebookEnvironmentOperations } from './environment-operations'
-import { createRootNotebookLane, type NotebookLaneIdentity } from './lane-identity'
+import {
+  createFrameNotebookLane,
+  createRootNotebookLane,
+  notebookLaneKey,
+  notebookLaneScope,
+  type NotebookLaneIdentity
+} from './lane-identity'
+import { NotebookSessionRegistry, type NotebookSessionRegistryMember } from './session-registry'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
 
 let storageRoot: string | undefined
@@ -39,7 +46,8 @@ type TestSession = {
 }
 
 const createOwner = async (
-  sessions: TestSession[] = []
+  sessions: TestSession[] | (() => Iterable<TestSession>) = [],
+  beforeWrites: (keys: string[]) => Promise<void> | void = () => undefined
 ): Promise<{
   owner: NotebookEnvironmentOperations
   notifyChanged: ReturnType<typeof vi.fn>
@@ -49,8 +57,10 @@ const createOwner = async (
   const notifyChanged = vi.fn()
   const clearKernelTermination = vi.fn(async () => undefined)
   const bindings = {
-    runWrites: async <T>(_sessionIds: Iterable<string>, operation: () => Promise<T>): Promise<T> =>
-      operation(),
+    runWrites: async <T>(keys: Iterable<string>, operation: () => Promise<T>): Promise<T> => {
+      await beforeWrites([...keys])
+      return operation()
+    },
     revoke: async <Context>(
       session: TestSession,
       language: NotebookLanguage,
@@ -73,7 +83,7 @@ const createOwner = async (
   const owner = new NotebookEnvironmentOperations({
     recovery,
     bindings,
-    sessions: () => sessions,
+    sessions: typeof sessions === 'function' ? sessions : () => sessions,
     clearKernelTermination,
     notifyChanged,
     now: () => 123
@@ -82,6 +92,77 @@ const createOwner = async (
 }
 
 describe('NotebookEnvironmentOperations', () => {
+  it.each([false, true])('E04 revokes all current lane owners (force: %s)', async (force) => {
+    const makeSession = (
+      lane: NotebookLaneIdentity
+    ): TestSession & NotebookSessionRegistryMember => ({
+      ...notebookLaneScope(lane),
+      lane,
+      bindings: {
+        python: {
+          language: 'python' as const,
+          runtimeId: '/env/python',
+          source: 'external' as const,
+          provenance: 'user-own' as const,
+          interpreterPath: '/env/python',
+          label: 'Python',
+          status: 'active' as const
+        }
+      } as TestSession['bindings'],
+      statuses: new Map<string, 'running'>([['python:default-python', 'running']]),
+      runtimeBinding(language: NotebookLanguage) {
+        return this.bindings[language]
+      },
+      setRuntimeBinding(language: NotebookLanguage, value: NotebookSessionRuntimeBinding) {
+        this.bindings[language] = value
+      },
+      kernelStatus(key: string) {
+        return this.statuses.get(key)
+      },
+      markForceStopped: vi.fn(),
+      drainExecution: vi.fn().mockResolvedValue(undefined),
+      terminateExecutor: vi.fn().mockResolvedValue(undefined),
+      clearProcessState: vi.fn(),
+      shutdownExecutor: vi.fn().mockResolvedValue({ reaped: true }),
+      releaseMcpRpcConnection: vi.fn()
+    })
+    const lanes = [
+      createRootNotebookLane('project', 'shared-session', 'root-frame-shared-session'),
+      createFrameNotebookLane('project', 'shared-session', 'child-a', 'attempt-1'),
+      createFrameNotebookLane('project', 'shared-session', 'child-a', 'attempt-2'),
+      createFrameNotebookLane('project', 'shared-session', 'child-b'),
+      createRootNotebookLane('other-project', 'shared-session', 'root-frame-shared-session')
+    ]
+    const registry = new NotebookSessionRegistry<ReturnType<typeof makeSession>>()
+    const current = await Promise.all(
+      lanes.map((lane) => registry.getOrCreate(lane, async () => makeSession(lane)))
+    )
+    const staleLane = createFrameNotebookLane('project', 'shared-session', 'replaced-child')
+    const stale = await registry.getOrCreate(staleLane, async () => makeSession(staleLane))
+    let replacement: ReturnType<typeof makeSession> | undefined
+    const writes = vi.fn(async () => {
+      await registry.remove(staleLane)
+      replacement = await registry.getOrCreate(staleLane, async () => makeSession(staleLane))
+    })
+    const { owner } = await createOwner(() => registry.values(), writes)
+
+    await owner.revokeRuntime('python', '/env/python', { force })
+    await owner.waitForRevocationDrains()
+
+    for (const candidate of current) {
+      expect
+        .soft(candidate.runtimeBinding('python'))
+        .toMatchObject({ status: 'unavailable', reason: 'disabled' })
+      expect.soft(candidate.terminateExecutor).toHaveBeenCalledWith('python', 'default-python')
+      expect.soft(candidate.markForceStopped).toHaveBeenCalledTimes(force ? 1 : 0)
+      expect.soft(candidate.drainExecution).toHaveBeenCalledTimes(force ? 0 : 1)
+    }
+    expect(stale.runtimeBinding('python')?.status).toBe('active')
+    expect(stale.terminateExecutor).not.toHaveBeenCalled()
+    expect(replacement?.runtimeBinding('python')?.status).toBe('active')
+    expect(writes).toHaveBeenCalledWith([...lanes, staleLane].map(notebookLaneKey))
+  })
+
   it('owns operation admission and releases a failed mutation before the next waiter', async () => {
     const { owner } = await createOwner()
     let releaseFirst!: () => void

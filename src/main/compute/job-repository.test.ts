@@ -1733,4 +1733,32 @@ describe('ComputeJob repository (SQLite integration)', () => {
       remote_cleanup_disposition: 'abandoned'
     })
   })
+
+  it('returns every Session job without a list limit', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-session-list-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+    const jobCount = 20
+
+    for (let index = 0; index < jobCount; index += 1) {
+      await repo.create({
+        id: `session-list-job-${index}`,
+        providerId: 'ssh:list-host',
+        shape: 'direct_ssh',
+        sessionId: 'session-list',
+        projectId: 'project-list',
+        intent: `job ${index}`,
+        command: `echo ${index}`,
+        commandHash: `session-list-hash-${index}`
+      })
+    }
+
+    const jobs = await repo.findBySession('session-list')
+    expect(jobs).toHaveLength(jobCount)
+    expect(new Set(jobs.map((job) => job.job_id))).toEqual(
+      new Set(Array.from({ length: jobCount }, (_, index) => `session-list-job-${index}`))
+    )
+  })
 })

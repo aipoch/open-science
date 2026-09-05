@@ -104,7 +104,8 @@ export type SessionRunProjectionActions = {
       | 'providerSessionId'
       | 'providerContinuityToken'
       | 'pendingHistoryReplay'
-    >
+    >,
+    options?: { preserveCompaction?: boolean }
   ) => void
   prepareInterruptedTurnContinuation: (
     sessionId: string,
@@ -426,7 +427,7 @@ export const createSessionRunProjectionOwner = <
     },
 
     // Clears the interrupted/error state after a successful resume so the composer is usable again.
-    markResumed: (sessionId, update) => {
+    markResumed: (sessionId, update, options) => {
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) => ({
           ...session,
@@ -442,7 +443,7 @@ export const createSessionRunProjectionOwner = <
           providerContinuityToken:
             update === undefined ? session.providerContinuityToken : update.providerContinuityToken,
           pendingHistoryReplay: update?.pendingHistoryReplay ?? session.pendingHistoryReplay,
-          compacting: undefined,
+          compacting: options?.preserveCompaction ? session.compacting : undefined,
           updatedAt: Date.now()
         }))
       }))

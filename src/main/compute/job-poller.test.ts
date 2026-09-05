@@ -13,7 +13,7 @@ import {
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
 } from './connection-broker'
-import { JobPoller } from './job-poller'
+import { JobPoller, POLL_INTERVAL_MS } from './job-poller'
 import { DispatchTracker } from './dispatch-tracker'
 import type { HarvestFn } from './job-poller'
 
@@ -1558,6 +1558,32 @@ describe('JobPoller', () => {
 
     // runner.run should not be called when there are no jobs.
     expect((runner.run as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0)
+  })
+
+  it('starts a 15s interval even when the job list is empty', () => {
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([]))
+    } as unknown as ComputeJobRepository
+    const hostRepo = { get: vi.fn() } as unknown as ComputeHostRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const setIntervalMock = vi.fn(() => 1 as unknown as ReturnType<typeof setInterval>)
+
+    const poller = new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      setInterval: setIntervalMock,
+      clearInterval: vi.fn()
+    })
+    poller.start()
+
+    expect(setIntervalMock).toHaveBeenCalledWith(expect.any(Function), POLL_INTERVAL_MS)
   })
 
   it('start/stop manage the interval', () => {

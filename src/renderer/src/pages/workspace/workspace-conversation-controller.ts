@@ -1,3 +1,4 @@
+import { i18next } from '@/i18n'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
@@ -67,7 +68,7 @@ type PlanProjectionRecoveryPorts = {
 type ConversationComposer = {
   view: Pick<
     WorkspaceComposerController['view'],
-    'doc' | 'annotations' | 'attachments' | 'transfers' | 'readingContext'
+    'doc' | 'annotations' | 'attachments' | 'transfers' | 'readingContext' | 'queuedEdit'
   >
   actions: Pick<WorkspaceComposerController['actions'], 'setError'>
   lifecycle: Pick<
@@ -436,7 +437,20 @@ const useWorkspaceConversationController = (
         composer.actions.setError(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
         return
       }
-      if (queueDraft && activeSession) {
+      const restored = composer.view.queuedEdit
+      if (restored?.revisionMessageId && composer.view.attachments.length > 0) {
+        composer.actions.setError(
+          i18next.t('Remove attachments before submitting a historical revision.')
+        )
+        return
+      }
+      if (restored && mode !== 'continue') {
+        composer.actions.setError(
+          i18next.t('Exit queued editing before choosing another send mode.')
+        )
+        return
+      }
+      if ((queueDraft || restored) && activeSession) {
         const { hasPendingSwitch } = session.lifecycle.captureSendIntent(false)
         if (hasPendingSwitch) return
         const snapshot = composer.lifecycle.captureSend()

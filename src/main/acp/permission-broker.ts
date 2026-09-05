@@ -736,6 +736,7 @@ const projectRegistrySessionGrants = (
 // Tracks permission requests until the renderer chooses an outcome.
 class AcpPermissionBroker {
   private pendingRequests = new Map<string, PendingPermission>()
+  private readonly respondingRequests = new Map<string, PendingPermission>()
   private readonly restoredAllowOnceBySession = new Map<string, string>()
   private readonly durableRequestQueues = new Map<string, string[]>()
   private readonly activeDurableRequestBySession = new Map<string, string>()
@@ -1261,99 +1262,113 @@ class AcpPermissionBroker {
 
     this.pendingRequests.delete(response.requestId)
 
-    if (response.cancelled || !response.optionId) {
-      const persistence = this.persistLiveSettlement(pending)
-      if (persistence) await persistence
-      this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
-      return true
-    }
-
-    // Only options projected to the renderer are valid responses. This keeps provider-specific
-    // persistent policy actions hidden at the protocol boundary as well as in the UI.
-    if (!pending.request.options.some((option) => option.optionId === response.optionId)) {
-      const persistence = this.persistLiveSettlement(pending)
-      if (persistence) await persistence
-      this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
-      return true
-    }
-
-    const selected = pending.request.options.find((option) => option.optionId === response.optionId)
-    const settlementState: AcpPermissionSettlementState = selected?.kind
-      .toLowerCase()
-      .startsWith('reject')
-      ? 'rejected'
-      : 'resolved'
-    const rememberedScope =
-      selected?.scope === 'session' || selected?.scope === 'project' || selected?.scope === 'global'
-    // App-owned requests use the shared scope UI but keep their decision semantics in the caller;
-    // only provider requests translate remembered scopes back to a provider-native one-shot option.
-    const providerOptionId =
-      rememberedScope && !pending.appOwned ? pending.providerAllowOnceOptionId : response.optionId
-
-    if (!providerOptionId) {
-      const persistence = this.persistLiveSettlement(pending)
-      if (persistence) await persistence
-      this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
-      return true
-    }
-
-    if (
-      rememberedScope &&
-      !pending.appOwned &&
-      selected?.scope &&
-      pending.capability &&
-      pending.projectId &&
-      this.permissionGrantRegistry
-    ) {
-      const scope: PermissionGrantScope =
-        selected.scope === 'global'
-          ? { kind: 'global' }
-          : selected.scope === 'project'
-            ? { kind: 'project', projectId: pending.projectId }
-            : {
-                kind: 'session',
-                projectId: pending.projectId,
-                sessionId:
-                  pending.policyContext?.permissionGrantSessionId ?? pending.request.sessionId
-              }
-      try {
+    // Keep the claimed request cancellable until its provider decision is released.
+    this.respondingRequests.set(response.requestId, pending)
+    try {
+      if (response.cancelled || !response.optionId) {
         const persistence = this.persistLiveSettlement(pending)
         if (persistence) await persistence
-        await this.permissionGrantRegistry.remember({ capability: pending.capability, scope })
-        this.settlePending(
-          pending,
-          { outcome: { outcome: 'selected', optionId: providerOptionId } },
-          settlementState
-        )
-      } catch (error) {
         this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
-        throw new Error('Permission approval could not be saved; the tool call was cancelled.', {
-          cause: error
-        })
+        return true
       }
-      return true
-    }
 
-    // Legacy Session grants are owned by Open Science. The Agent receives only its one-shot option.
-    if (pending.categoryKey) {
-      this.rememberSessionGrant(pending.request, pending.categoryKey, response.optionId)
-    }
+      // Only options projected to the renderer are valid responses. This keeps provider-specific
+      // persistent policy actions hidden at the protocol boundary as well as in the UI.
+      if (!pending.request.options.some((option) => option.optionId === response.optionId)) {
+        const persistence = this.persistLiveSettlement(pending)
+        if (persistence) await persistence
+        this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
+        return true
+      }
 
-    const persistence = this.persistLiveSettlement(pending)
-    if (persistence) await persistence
+      const selected = pending.request.options.find(
+        (option) => option.optionId === response.optionId
+      )
+      const settlementState: AcpPermissionSettlementState = selected?.kind
+        .toLowerCase()
+        .startsWith('reject')
+        ? 'rejected'
+        : 'resolved'
+      const rememberedScope =
+        selected?.scope === 'session' ||
+        selected?.scope === 'project' ||
+        selected?.scope === 'global'
+      // App-owned requests use the shared scope UI but keep their decision semantics in the caller;
+      // only provider requests translate remembered scopes back to a provider-native one-shot option.
+      const providerOptionId =
+        rememberedScope && !pending.appOwned ? pending.providerAllowOnceOptionId : response.optionId
 
-    this.settlePending(
-      pending,
-      {
-        outcome: {
-          outcome: 'selected',
-          optionId: providerOptionId
+      if (!providerOptionId) {
+        const persistence = this.persistLiveSettlement(pending)
+        if (persistence) await persistence
+        this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
+        return true
+      }
+
+      if (
+        rememberedScope &&
+        !pending.appOwned &&
+        selected?.scope &&
+        pending.capability &&
+        pending.projectId &&
+        this.permissionGrantRegistry
+      ) {
+        const scope: PermissionGrantScope =
+          selected.scope === 'global'
+            ? { kind: 'global' }
+            : selected.scope === 'project'
+              ? { kind: 'project', projectId: pending.projectId }
+              : {
+                  kind: 'session',
+                  projectId: pending.projectId,
+                  sessionId:
+                    pending.policyContext?.permissionGrantSessionId ?? pending.request.sessionId
+                }
+        try {
+          const persistence = this.persistLiveSettlement(pending)
+          if (persistence) await persistence
+          if (pending.settled) return true
+          await this.permissionGrantRegistry.remember({ capability: pending.capability, scope })
+          if (pending.settled) return true
+          this.settlePending(
+            pending,
+            { outcome: { outcome: 'selected', optionId: providerOptionId } },
+            settlementState
+          )
+        } catch (error) {
+          this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
+          throw new Error('Permission approval could not be saved; the tool call was cancelled.', {
+            cause: error
+          })
         }
-      },
-      settlementState
-    )
+        return true
+      }
 
-    return true
+      // Legacy Session grants are owned by Open Science. The Agent receives only its one-shot option.
+      if (pending.categoryKey) {
+        this.rememberSessionGrant(pending.request, pending.categoryKey, response.optionId)
+      }
+
+      const persistence = this.persistLiveSettlement(pending)
+      if (persistence) await persistence
+
+      this.settlePending(
+        pending,
+        {
+          outcome: {
+            outcome: 'selected',
+            optionId: providerOptionId
+          }
+        },
+        settlementState
+      )
+
+      return true
+    } finally {
+      if (this.respondingRequests.get(response.requestId) === pending) {
+        this.respondingRequests.delete(response.requestId)
+      }
+    }
   }
 
   private persistLiveSettlement(pending: PendingPermission): Promise<void> | undefined {
@@ -1372,8 +1387,16 @@ class AcpPermissionBroker {
         await hooks.settleLive(candidate)
         this.releaseDurablePermissionSlot(pending)
       } catch (error) {
-        this.cancelQueuedDurablePermissions(pending.request.sessionId)
-        this.activeDurableRequestBySession.delete(pending.request.sessionId)
+        const sessionId = pending.request.sessionId
+        if (pending.settled) {
+          // Cancellation already removed the old queue; later requests belong to new work.
+          this.releaseDurablePermissionSlot(pending)
+        } else if (
+          this.activeDurableRequestBySession.get(sessionId) === pending.request.requestId
+        ) {
+          this.cancelQueuedDurablePermissions(sessionId)
+          this.activeDurableRequestBySession.delete(sessionId)
+        }
         this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
         throw new Error(
           'Permission decision could not be persisted; the tool call was cancelled.',
@@ -1489,8 +1512,9 @@ class AcpPermissionBroker {
     this.restoredAllowOnceBySession.clear()
     this.durableRequestQueues.clear()
     this.activeDurableRequestBySession.clear()
-    const pending = Array.from(this.pendingRequests.values())
+    const pending = [...this.pendingRequests.values(), ...this.respondingRequests.values()]
     this.pendingRequests.clear()
+    this.respondingRequests.clear()
     for (const request of pending) {
       if (request.settled) continue
       if (
@@ -1512,6 +1536,9 @@ class AcpPermissionBroker {
     this.livePermissionProfiles.clear()
     this.restoredAllowOnceBySession.clear()
     const pendingRequests = Array.from(this.pendingRequests.keys())
+    for (const pending of Array.from(this.respondingRequests.values())) {
+      this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
+    }
 
     for (const requestId of pendingRequests) {
       void this.respond({ requestId, cancelled: true }).catch(() => undefined)
@@ -1525,6 +1552,11 @@ class AcpPermissionBroker {
     for (const token of cancellationTokens ?? []) token.cancelled = true
     this.restoredAllowOnceBySession.delete(sessionId)
     const pendingRequests = Array.from(this.pendingRequests.values())
+    for (const pending of Array.from(this.respondingRequests.values())) {
+      if (pending.request.sessionId === sessionId) {
+        this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
+      }
+    }
 
     for (const { request } of pendingRequests) {
       if (request.sessionId === sessionId) {

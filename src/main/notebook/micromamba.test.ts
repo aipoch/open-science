@@ -316,17 +316,42 @@ describe('micromambaSpawnEnv', () => {
       CURL_CA_BUNDLE: '/ca.pem'
     })
     expect(env.conda_prefix).toBeUndefined()
-    expect(env.MAMBA_ROOT_PREFIX).toBeUndefined()
+    expect(env.MAMBA_ROOT_PREFIX).toBe('D:\\OpenScience\\runtime')
   })
 
-  it.each(['darwin', 'linux'] as const)('pins the managed package cache on %s', (platform) => {
-    const env = micromambaSpawnEnv('/runtime', '/ca.pem', {
-      platform,
-      env: { CONDA_PKGS_DIRS: '/existing', MAMBA_ROOT_PREFIX: '/existing-root' }
-    })
+  it.each(['darwin', 'linux', 'win32'] as const)(
+    'confines all managed Micromamba state to the runtime on %s',
+    (platform) => {
+      const root = platform === 'win32' ? 'D:\\OpenScience\\runtime' : '/runtime'
+      const runtimePath = platform === 'win32' ? win32 : { join }
+      const cache = runtimePath.join(root, 'pkgs')
+      const home = runtimePath.join(root, 'home')
+      const env = micromambaSpawnEnv(root, '/ca.pem', {
+        platform,
+        env: {
+          HOME: '/host-home',
+          USERPROFILE: 'C:\\Users\\host-user',
+          CONDA_PKGS_DIRS: '/existing',
+          CONDA_ENVS_PATH: '/existing-envs',
+          MAMBA_ROOT_PREFIX: '/existing-root',
+          R_USER: '/host-r-user',
+          R_LIBS: '/host-r-libs',
+          R_LIBS_USER: '/host-r-user-library',
+          R_LIBS_SITE: '/host-r-site-library'
+        },
+        selectCache: () => ({ path: cache, lockKey: cache.toLowerCase() })
+      })
 
-    expect(env.CONDA_PKGS_DIRS).toBe('/runtime/pkgs')
-    expect(env.MAMBA_ROOT_PREFIX).toBe('/existing-root')
-    expect(env.CONDA_SSL_VERIFY).toBe('/ca.pem')
-  })
+      expect(env.HOME).toBe(home)
+      expect(env.USERPROFILE).toBe(home)
+      expect(env.MAMBA_ROOT_PREFIX).toBe(root)
+      expect(env.CONDA_PKGS_DIRS).toBe(cache)
+      expect(env.CONDA_ENVS_PATH).toBe(runtimePath.join(root, 'envs'))
+      expect(env.CONDA_SSL_VERIFY).toBe('/ca.pem')
+      expect(env.R_USER).toBeUndefined()
+      expect(env.R_LIBS).toBeUndefined()
+      expect(env.R_LIBS_USER).toBeUndefined()
+      expect(env.R_LIBS_SITE).toBeUndefined()
+    }
+  )
 })

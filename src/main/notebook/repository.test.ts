@@ -1314,4 +1314,93 @@ describe('notebook run repository', () => {
     const again = await repository.reconcileInterruptedRuns('default-project', 'session-1', lane)
     expect(again.runs[0].status).toBe('interrupted')
   })
+
+  it('rewrites the complete lane document and materializes every run before applying a window', async () => {
+    const root = await createStorageRoot()
+    const writer = new NotebookRunRepository(root)
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    await writer.loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      lane
+    })
+    const runCount = 8
+    for (let index = 0; index < runCount; index += 1) {
+      await writer.appendRun({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        lane,
+        run: {
+          runId: `run-${index}`,
+          cellId: `cell-${index}`,
+          source: 'agent',
+          kernelKind: 'python',
+          script: `print(${index})`,
+          status: 'completed',
+          startedAt: index + 1,
+          text: { stdout: `out-${index}`, stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          artifacts: [],
+          workingFiles: []
+        }
+      })
+    }
+
+    const runJsonPath = join(
+      getNotebookSessionRoot(root, 'default-project', 'session-1'),
+      'run.json'
+    )
+    const persisted = JSON.parse(await readFile(runJsonPath, 'utf8')) as {
+      runs: Array<{ runId: string }>
+    }
+    expect(persisted.runs.map((run) => run.runId)).toEqual(
+      Array.from({ length: runCount }, (_, index) => `run-${index}`)
+    )
+
+    const reader = new NotebookRunRepository(root)
+    const window = await reader.readSessionRunWindow('default-project', 'session-1', 2)
+    expect(window.runs.map((run) => run.runId)).toEqual(['run-6', 'run-7'])
+    expect(window.total).toBe(runCount)
+
+    const cache = reader as unknown as {
+      documentCache: Map<string, { document: { runs: Array<{ runId: string }> } }>
+    }
+    expect([...cache.documentCache.values()][0]?.document.runs).toHaveLength(runCount)
+  })
+
+  it('leaves Session workspace output files in place when another run is appended', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    const document = await repository.loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      lane
+    })
+    const leftoverPath = join(document.notebookSessionRoot, 'outputs', 'keep.bin')
+    await writeFile(leftoverPath, Buffer.alloc(4096, 7))
+
+    await repository.appendRun({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      run: {
+        runId: 'run-keep-outputs',
+        cellId: 'cell-keep-outputs',
+        source: 'agent',
+        kernelKind: 'python',
+        script: '1',
+        status: 'completed',
+        startedAt: 1,
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: []
+      }
+    })
+
+    await expect(stat(leftoverPath)).resolves.toMatchObject({ size: 4096 })
+  })
 })

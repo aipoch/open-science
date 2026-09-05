@@ -50,6 +50,7 @@ describe('sandboxedPackageSpawn', () => {
     const result = await spawn(process.execPath, ['-e', 'process.stderr.write("installer")'], {
       PATH: process.env.PATH,
       PIP_CERT: '/trusted/bundle.pem',
+      PYTHONNOUSERSITE: '1',
       CONDA_PKGS_DIRS: packageCache,
       MPLCONFIGDIR: matplotlibCache,
       OPENAI_API_KEY: 'must-not-cross'
@@ -68,7 +69,8 @@ describe('sandboxedPackageSpawn', () => {
     expect(vi.mocked(processSandbox.wrap).mock.calls[0]?.[0].env).toMatchObject({
       PATH: process.env.PATH,
       PIP_CERT: '/trusted/bundle.pem',
-      MPLCONFIGDIR: matplotlibCache
+      MPLCONFIGDIR: matplotlibCache,
+      PYTHONNOUSERSITE: '1'
     })
     expect(vi.mocked(processSandbox.wrap).mock.calls[0]?.[0].env).not.toHaveProperty(
       'OPENAI_API_KEY'

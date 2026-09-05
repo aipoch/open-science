@@ -7032,18 +7032,20 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
   })
 
   it('discards an older probe when a newer setup-token login wins', async () => {
-    const finishProbes: Array<() => void> = []
-    const notifyProbeStarted: Array<() => void> = []
-    const probeStarted = [0, 1].map(
-      () => new Promise<void>((resolve) => notifyProbeStarted.push(resolve))
-    )
-    const probe = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishProbes.push(resolve)
-          notifyProbeStarted[finishProbes.length - 1]()
-        })
-    )
+    const olderProbeStarted = Promise.withResolvers<void>()
+    const newerProbeStarted = Promise.withResolvers<void>()
+    const finishOlderProbe = Promise.withResolvers<void>()
+    const finishNewerProbe = Promise.withResolvers<void>()
+    const probe = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        olderProbeStarted.resolve()
+        return finishOlderProbe.promise
+      })
+      .mockImplementationOnce(() => {
+        newerProbeStarted.resolve()
+        return finishNewerProbe.promise
+      })
     const service = createService(undefined, { executeClaudeProbe: probe })
     const { encryptKey } = await import('./crypto.js')
     await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
@@ -7054,20 +7056,30 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
     })
 
     const olderLogin = service.loginIsolatedClaude('sk-ant-older')
-    await probeStarted[0]
-    const newerLogin = service.loginIsolatedClaude('sk-ant-newer')
-    await probeStarted[1]
+    let newerLogin: ReturnType<typeof service.loginIsolatedClaude> | undefined
+    try {
+      // Runtime preparation performs real filesystem work before entering the probe. Synchronize
+      // on that boundary instead of requiring it to finish within vi.waitFor's one-second default.
+      await olderProbeStarted.promise
+      newerLogin = service.loginIsolatedClaude('sk-ant-newer')
+      await newerProbeStarted.promise
+      expect(probe).toHaveBeenCalledTimes(2)
 
-    finishProbes[1]?.()
-    expect(await newerLogin).toMatchObject({ ok: true, applied: true })
-    finishProbes[0]?.()
-    expect(await olderLogin).toMatchObject({ ok: true, applied: false })
+      finishNewerProbe.resolve()
+      expect(await newerLogin).toMatchObject({ ok: true, applied: true })
+      finishOlderProbe.resolve()
+      expect(await olderLogin).toMatchObject({ ok: true, applied: false })
 
-    const stored = (await repository.getSettings()).providers.find(
-      (provider) => provider.id === 'builtin-claude-isolated'
-    )
-    expect(stored?.keyRef).toBe(encryptKey('sk-ant-newer'))
-    expect(stored?.lastValidatedAt).toBeGreaterThan(0)
+      const stored = (await repository.getSettings()).providers.find(
+        (provider) => provider.id === 'builtin-claude-isolated'
+      )
+      expect(stored?.keyRef).toBe(encryptKey('sk-ant-newer'))
+      expect(stored?.lastValidatedAt).toBeGreaterThan(0)
+    } finally {
+      finishOlderProbe.resolve()
+      finishNewerProbe.resolve()
+      await Promise.allSettled([olderLogin, newerLogin])
+    }
   })
 
   it('records expiresAt and a verified timestamp after a successful token probe', async () => {

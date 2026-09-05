@@ -356,6 +356,36 @@ const delegatedQuestionSession = (): ChatSession => ({
 })
 
 describe('ConversationPanel annotation composer integration', () => {
+  it('Q01 identifies a restored historical revision and exposes the exit action', () => {
+    const cancelQueuedEdit = vi.fn()
+    renderPanel({
+      composer: {
+        view: {
+          queuedEdit: {
+            kind: 'user',
+            revisionMessageId: 'message-1',
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            cwd: undefined,
+            agentFrameId: 'frame-1',
+            messageBranchId: 'branch-1',
+            permissionProfile: 'full',
+            agentConfiguration: { providerId: 'provider', model: 'model', reasoningEffort: 'high' },
+            specialistId: undefined
+          }
+        },
+        actions: { cancelQueuedEdit }
+      }
+    })
+    expect(container.textContent).toContain('Editing a historical revision')
+    const exit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Exit queued editing'
+    )
+    expect(exit).toBeDefined()
+    act(() => exit!.click())
+    expect(cancelQueuedEdit).toHaveBeenCalledOnce()
+  })
+
   it('renders a compact annotation chip, reveals its source, returns focus on Esc, and removes it', async () => {
     const removeAnnotation = vi.fn()
     renderPanel({

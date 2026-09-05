@@ -474,6 +474,96 @@ describe('AcpProviderPromptExecutor', () => {
     expect(acceptedThenStale.probe.cancel).toHaveBeenCalledOnce()
   })
 
+  it.each(['text', 'tool', 'stop'] as const)(
+    'drops a first %s superseded during acceptance without disturbing the new interaction',
+    async (firstKind) => {
+      const response: PromptResponse = { stopReason: 'cancelled' }
+      const toolNotification: SessionNotification = {
+        sessionId: 'provider-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'old-tool',
+          status: 'in_progress'
+        }
+      }
+      const first: NextUpdate =
+        firstKind === 'stop'
+          ? stop(response)
+          : firstKind === 'text'
+            ? update()
+            : {
+                kind: 'session_update',
+                notification: toolNotification,
+                update: toolNotification.update
+              }
+      const old = setup(firstKind === 'stop' ? [first] : [first, update(), stop(response)])
+      const oldOwner = Symbol('old interaction')
+      const newOwner = Symbol('new interaction')
+      let owner = oldOwner
+      const acceptedEntered = deferred<void>()
+      const acceptedGate = deferred<void>()
+      old.accepted.mockImplementationOnce(() => {
+        acceptedEntered.resolve()
+        return acceptedGate.promise
+      })
+      old.captureStop.mockImplementation(() => owner === oldOwner)
+      const pendingOld = old.executor.execute({
+        ...old.input,
+        isCurrent: () => owner === oldOwner
+      })
+      await acceptedEntered.promise
+      expect(old.routeNotification).not.toHaveBeenCalled()
+      expect(old.captureStop).not.toHaveBeenCalled()
+
+      // Replace ownership while acceptance is suspended, not before dispatch or after routing.
+      owner = newOwner
+      const nextResponse: PromptResponse = { stopReason: 'end_turn' }
+      const next = setup([update(), stop(nextResponse)])
+      const nextAcceptedEntered = deferred<void>()
+      const nextAcceptedGate = deferred<void>()
+      next.accepted.mockImplementationOnce(() => {
+        nextAcceptedEntered.resolve()
+        return nextAcceptedGate.promise
+      })
+      next.captureStop.mockImplementation(() => owner === newOwner)
+      // Same executor and provider id exercise token-scoped cleanup, with a new session queue.
+      const pendingNext = old.executor.execute({
+        ...next.input,
+        isCurrent: () => owner === newOwner
+      })
+      await nextAcceptedEntered.promise
+
+      acceptedGate.resolve()
+      const oldOutcome = await pendingOld
+      const providerMessage = { sessionId: 'provider-1', message: { type: 'result' } }
+      old.executor.observeProviderMessage(providerMessage)
+      nextAcceptedGate.resolve()
+      const nextOutcome = await pendingNext
+
+      expect(oldOutcome).toEqual({ kind: 'superseded', response })
+      expect(old.accepted).toHaveBeenCalledOnce()
+      expect.soft(old.routeNotification).not.toHaveBeenCalled()
+      expect.soft(old.probe.observe).not.toHaveBeenCalled()
+      // Stop already has a second ownership boundary in captureStop; retain it as a control.
+      if (firstKind !== 'stop') expect(old.captureStop).not.toHaveBeenCalled()
+      expect(old.probe.finalize).not.toHaveBeenCalled()
+      expect(old.probe.cancel).toHaveBeenCalledOnce()
+      expect(old.report).not.toHaveBeenCalled()
+      expect(old.session.nextUpdate).toHaveBeenCalledTimes(firstKind === 'stop' ? 1 : 3)
+
+      expect(nextOutcome).toMatchObject({ kind: 'stopped', response: nextResponse })
+      expect(next.accepted).toHaveBeenCalledOnce()
+      expect(next.probe.observe.mock.calls).toEqual([[providerMessage], [notification]])
+      expect(next.routeNotification.mock.calls).toEqual([[notification]])
+      expect(next.captureStop).toHaveBeenCalledOnce()
+      expect(next.probe.finalize).toHaveBeenCalledWith({ response: nextResponse })
+      expect(next.probe.cancel).not.toHaveBeenCalled()
+      expect(next.report).not.toHaveBeenCalled()
+      old.executor.observeProviderMessage(providerMessage)
+      expect(next.probe.observe).toHaveBeenCalledTimes(2)
+    }
+  )
+
   it('treats a lost terminal capture race as superseded', async () => {
     const response: PromptResponse = { stopReason: 'end_turn' }
     const fixture = setup([stop(response)])

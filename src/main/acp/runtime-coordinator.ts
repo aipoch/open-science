@@ -1174,8 +1174,24 @@ class AcpRuntimeCoordinator {
     this.assertPromptAdmissionOpen()
     await this.promptAdmissionGuard?.(request.sessionId)
     this.assertPromptAdmissionOpen()
-    const dispatch = (): Promise<AcpSteerFollowUpResult> =>
-      this.runtimeForSession(request.sessionId).steerFollowUp(request)
+    const dispatch = (): Promise<AcpSteerFollowUpResult> => {
+      const runtime = this.runtimeForSession(request.sessionId)
+      const isCurrent = (): boolean => {
+        if (this.findRuntimeForSession(request.sessionId) !== runtime) return false
+        const expected = request.agentTarget
+        if (!expected) return true
+        const actual = this.runtimeTargets.get(runtime)
+        return (
+          actual !== undefined &&
+          actual.frameworkId === expected.frameworkId &&
+          actual.providerId === expected.providerId &&
+          actual.model === expected.model &&
+          actual.reasoningEffort === expected.reasoningEffort
+        )
+      }
+      if (!isCurrent()) return Promise.resolve({ injected: false, reason: 'prompt-required' })
+      return runtime.steerFollowUp(request, isCurrent)
+    }
     return this.promptDispatchAdmissionGuard
       ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
       : dispatch()

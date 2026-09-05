@@ -80,6 +80,44 @@ const harness = (
 }
 
 describe('NotebookEnvironmentManagementOwner', () => {
+  it.each(['default-python-analysis', 'default-r-analysis', 'default-python', 'default-r'])(
+    'E07 rejects reserved create name %s before any environment side effect',
+    async (name) => {
+      const { owner, options, manager: configured } = harness()
+      await expect(owner.manage({ action: 'create', name, language: 'python' })).rejects.toThrow(
+        /reserved|app-managed/
+      )
+      expect(options.ensureRecovered).not.toHaveBeenCalled()
+      expect(configured?.createNamedEnvironment).not.toHaveBeenCalled()
+    }
+  )
+
+  it('E07 permits creation and removal of an ordinary user environment', async () => {
+    const { owner, manager: configured } = harness()
+    await expect(
+      owner.manage({ action: 'create', name: 'analysis', language: 'python' })
+    ).resolves.toHaveProperty('created.name', 'analysis')
+    await owner.manage({ action: 'remove', name: 'analysis' })
+    expect(configured?.removeEnvironment).toHaveBeenCalledWith('analysis')
+  })
+
+  it.each(['default-python-analysis', 'default-r-analysis'])(
+    'E07 preserves an existing conflicting environment %s without proven ownership',
+    async (name) => {
+      const configured = manager()
+      vi.mocked(configured.listEnvironments).mockReturnValue([
+        { name, language: 'python', ready: true, isDefault: false }
+      ])
+      const { owner } = harness({ manager: configured })
+      await expect(owner.manage({ action: 'list' })).resolves.toHaveProperty(
+        'environments.0.name',
+        name
+      )
+      await expect(owner.manage({ action: 'remove', name })).rejects.toThrow(/app-managed|reserved/)
+      expect(configured.removeEnvironment).not.toHaveBeenCalled()
+    }
+  )
+
   it('keeps manager configuration inside the owner', async () => {
     const configuredHarness = harness()
     const owner = new NotebookEnvironmentManagementOwner({
@@ -218,7 +256,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
     })
 
     await expect(owner.manage({ action: 'remove', name: 'default-python-3.13' })).rejects.toThrow(
-      /app-managed and cannot be removed/
+      /reserved environment name/
     )
     await expect(owner.manage({ action: 'remove', name: 'analysis' })).rejects.toThrow(
       /in use by a running kernel/

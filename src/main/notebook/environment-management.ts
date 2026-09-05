@@ -5,7 +5,7 @@ import type {
   ManageEnvironmentsResult
 } from '../../shared/notebook-env'
 import type { NotebookEnvironmentOperations } from './environment-operations'
-import { assertSafeEnvName, DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix } from './runtime-paths'
+import { assertSafeEnvName, envPrefix } from './runtime-paths'
 import type { NotebookRuntimeRepairOwner } from './runtime-repair'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import { managedRuntimeIdentity } from './runtime-target'
@@ -37,12 +37,6 @@ type NotebookEnvironmentManagementOptions = {
   runtimeRepair: Pick<NotebookRuntimeRepairOwner, 'completeRemovedManagedEnvironment'>
   isAgentEnvironmentCreationEnabled: () => Promise<boolean>
 }
-
-const isAppManagedEnvironment = (name: string): boolean =>
-  name === DEFAULT_PY_ENV ||
-  name === DEFAULT_R_ENV ||
-  name.startsWith(`${DEFAULT_PY_ENV}-`) ||
-  name.startsWith(`${DEFAULT_R_ENV}-`)
 
 /** Owns named-environment validation, lifecycle ordering, and live-use protection. */
 class NotebookEnvironmentManagementOwner {
@@ -102,12 +96,6 @@ class NotebookEnvironmentManagementOwner {
         return { environments: manager.listEnvironments() }
       case 'remove': {
         const name = assertSafeEnvName(request.name)
-        if (isAppManagedEnvironment(name)) {
-          throw new Error(
-            `Environment "${name}" is app-managed and cannot be removed. Only environments you ` +
-              'created with manage_environments(action:"create") can be removed.'
-          )
-        }
         if (this.isLive(name)) {
           throw new Error(
             `Environment "${name}" is in use by a running kernel — restart the notebook or ` +

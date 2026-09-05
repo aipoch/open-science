@@ -1,3 +1,4 @@
+import { i18next } from '@/i18n'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import type { ChatSession } from '@/stores/session-store'
 
@@ -9,6 +10,7 @@ import {
   type MessageQueueAdmission,
   type MessageQueueError,
   type MessageQueueItem,
+  type MessageQueueEditIntent,
   type WorkspaceMessageQueueControllerOptions
 } from './workspace-message-queue-owner'
 
@@ -23,7 +25,7 @@ const activeBranchIdentity = (
   return frame ? { agentFrameId: frame.id, messageBranchId: frame.activeBranchId } : undefined
 }
 
-const queueBranchMatches = (session: ChatSession, item: MessageQueueItem): boolean => {
+const queueBranchMatches = (session: ChatSession, item: MessageQueueEditIntent): boolean => {
   const identity = activeBranchIdentity(session)
   return (
     identity?.agentFrameId === item.agentFrameId &&
@@ -33,7 +35,7 @@ const queueBranchMatches = (session: ChatSession, item: MessageQueueItem): boole
 
 const queueItemContextError = (
   session: ChatSession,
-  item: MessageQueueItem
+  item: MessageQueueEditIntent
 ): MessageQueueError | undefined => {
   if (!queueBranchMatches(session, item)) return { kind: 'branch' }
   if ((session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE) !== item.permissionProfile) {
@@ -138,8 +140,18 @@ const enqueueQueuedMessage = (
     setComposerError('Wait for the active message branch to finish loading, then try again.')
     return false
   }
+  const restored = snapshot.queuedEdit
+  if (restored && (restored.sessionId !== session.id || queueItemContextError(session, restored))) {
+    setComposerError(
+      i18next.t(
+        'The queued message no longer matches this Session. Exit queued editing to send it as a new message.'
+      )
+    )
+    return false
+  }
   const item: MessageQueueItem = {
     kind: 'user',
+    agentFrameworkId: session.agentFrameworkId,
     id: owner.createQueueItemId(),
     sessionId: session.id,
     ...identity,
@@ -148,7 +160,8 @@ const enqueueQueuedMessage = (
     projectId: session.projectId,
     cwd: session.cwd,
     phase: 'queued',
-    ...intent
+    ...intent,
+    ...restored
   }
   owner.queues.set(session.id, [...owner.itemsFor(session.id), item])
   owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.added)

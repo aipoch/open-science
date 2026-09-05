@@ -39,6 +39,7 @@ type HistoryReplayContext = {
 }
 
 type PrepareExistingWorkspacePromptRequest = {
+  isCurrent?: () => boolean
   sessionId: string
   requireExistingSession?: boolean
   cwd?: string
@@ -220,6 +221,7 @@ const prepareExistingWorkspacePrompt = async (
   request: PrepareExistingWorkspacePromptRequest
 ): Promise<PreparedExistingWorkspacePrompt | undefined> => {
   const { sessionId } = request
+  if (request.isCurrent?.() === false) return undefined
   const currentSession = useSessionStore
     .getState()
     .sessions.find((session) => session.id === sessionId)
@@ -281,6 +283,7 @@ const prepareExistingWorkspacePrompt = async (
       }
 
       await shutdownNotebookForBranchChange(sessionId, resetCwd, request.projectId)
+      if (request.isCurrent?.() === false) return undefined
       if (!runtimeMustAdoptSession) {
         const reset = await runtime.resetSessionContext(
           sessionId,
@@ -289,13 +292,18 @@ const prepareExistingWorkspacePrompt = async (
           currentSession?.permissionProfile ?? request.permissionProfile,
           currentSession?.memoryEnabled !== false
         )
-        useSessionStore.getState().markResumed(sessionId, {
-          agentFrameworkId: reset?.frameworkId,
-          agentBackendId: reset?.backendId,
-          providerSessionId: reset?.providerSessionId,
-          providerContinuityToken: reset?.providerContinuityToken,
-          pendingHistoryReplay: currentSession?.pendingHistoryReplay ?? { kind: 'all' }
-        })
+        if (request.isCurrent?.() === false) return undefined
+        useSessionStore.getState().markResumed(
+          sessionId,
+          {
+            agentFrameworkId: reset?.frameworkId,
+            agentBackendId: reset?.backendId,
+            providerSessionId: reset?.providerSessionId,
+            providerContinuityToken: reset?.providerContinuityToken,
+            pendingHistoryReplay: currentSession?.pendingHistoryReplay ?? { kind: 'all' }
+          },
+          { preserveCompaction: Boolean(request.isCurrent && currentSession?.compacting) }
+        )
         agentContextResetPerformed = true
       }
       branchContextResetPerformed = true
@@ -333,6 +341,7 @@ const prepareExistingWorkspacePrompt = async (
         target,
         currentSession?.memoryEnabled !== false
       )
+      if (request.isCurrent?.() === false) return undefined
       contextResetFromResume = Boolean(resumeResult?.contextReset)
       useSessionStore.getState().markResumed(
         sessionId,
@@ -349,7 +358,8 @@ const prepareExistingWorkspacePrompt = async (
                   }
                 : {})
             }
-          : undefined
+          : undefined,
+        { preserveCompaction: Boolean(request.isCurrent && currentSession?.compacting) }
       )
 
       if ((branchContextResetPerformed || resumeNeedsImageFiltering) && !contextResetFromResume) {
@@ -360,13 +370,18 @@ const prepareExistingWorkspacePrompt = async (
           currentSession?.permissionProfile ?? request.permissionProfile,
           currentSession?.memoryEnabled !== false
         )
-        useSessionStore.getState().markResumed(sessionId, {
-          agentFrameworkId: reset?.frameworkId,
-          agentBackendId: reset?.backendId,
-          providerSessionId: reset?.providerSessionId,
-          providerContinuityToken: reset?.providerContinuityToken,
-          pendingHistoryReplay: currentSession?.pendingHistoryReplay ?? { kind: 'all' }
-        })
+        if (request.isCurrent?.() === false) return undefined
+        useSessionStore.getState().markResumed(
+          sessionId,
+          {
+            agentFrameworkId: reset?.frameworkId,
+            agentBackendId: reset?.backendId,
+            providerSessionId: reset?.providerSessionId,
+            providerContinuityToken: reset?.providerContinuityToken,
+            pendingHistoryReplay: currentSession?.pendingHistoryReplay ?? { kind: 'all' }
+          },
+          { preserveCompaction: Boolean(request.isCurrent && currentSession?.compacting) }
+        )
         contextResetFromResume = true
       }
 
@@ -374,12 +389,14 @@ const prepareExistingWorkspacePrompt = async (
       await request.drainRuntimeEvents?.(sessionId)
     }
   } catch (error) {
+    if (request.isCurrent?.() === false) return undefined
     useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
     return undefined
   } finally {
     releasePreparation?.()
   }
 
+  if (request.isCurrent?.() === false) return undefined
   const preparedSession = useSessionStore
     .getState()
     .sessions.find((session) => session.id === sessionId)

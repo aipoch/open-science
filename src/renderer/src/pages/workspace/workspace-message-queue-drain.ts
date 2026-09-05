@@ -95,6 +95,8 @@ const dispatchQueuedSession = (
       const result = item.revisionMessageId
         ? await current.runtime.resendEditedMessage!(sessionId, item.revisionMessageId, {
             text: item.text,
+            ...(item.agentFrameworkId ? { expectedFrameworkId: item.agentFrameworkId } : {}),
+            agentConfiguration: item.agentConfiguration,
             annotations: item.snapshot?.annotations,
             referencedArtifacts: item.snapshot ? docToArtifactRefs(item.snapshot.doc) : undefined,
             parts: item.snapshot ? docToMessageParts(item.snapshot.doc) : undefined,
@@ -114,6 +116,7 @@ const dispatchQueuedSession = (
             cwd: item.cwd,
             projectId: item.projectId,
             permissionProfile: item.permissionProfile,
+            ...(item.agentFrameworkId ? { expectedFrameworkId: item.agentFrameworkId } : {}),
             agentConfiguration: item.agentConfiguration,
             forcedSkillIds: item.forcedSkillIds,
             specialistId: item.specialistId,
@@ -279,6 +282,8 @@ const sendQueuedItemNow = async (
       try {
         const steered = await current.runtime.steerFollowUp({
           sessionId,
+          ...(item.agentFrameworkId ? { expectedFrameworkId: item.agentFrameworkId } : {}),
+          agentConfiguration: item.agentConfiguration,
           text: item.text,
           ...(item.snapshot.attachments.length > 0
             ? { attachments: item.snapshot.attachments }
