@@ -11,10 +11,15 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { ArrowDownIcon } from 'lucide-react'
 
+const SCROLL_EDGE_THRESHOLD_PX = 0.5
+
 function MessageScrollerProvider(
   props: React.ComponentProps<typeof MessageScrollerPrimitive.Provider>
 ) {
-  return <MessageScrollerPrimitive.Provider scrollEdgeThreshold={0} {...props} />
+  // Ignore Chromium's subpixel layout residue without swallowing deliberate scrollbar movement.
+  return (
+    <MessageScrollerPrimitive.Provider scrollEdgeThreshold={SCROLL_EDGE_THRESHOLD_PX} {...props} />
+  )
 }
 
 function MessageScroller({

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../../../shared/acp'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
+import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
 import {
   refreshDelegatedWorkSessions,
   resetWorkspaceRuntimeEventOwnerForTests,
@@ -200,5 +201,232 @@ describe('live runtime event ingest', () => {
     )
     unmount()
     expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  it('restores prompt ownership after a live stop and continuation tool arrive together', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Original request'
+    })
+    let publish:
+      ((events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void) | undefined
+    const ownedSnapshot = createSnapshot({
+      sessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1'],
+      agentPromptInFlightSessionIds: ['session-1']
+    })
+    const { unmount } = renderHook(() =>
+      useWorkspaceRuntimeEventIngest(
+        {
+          state: ownedSnapshot,
+          subscribeRuntimeEvents: (
+            listener: (events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void
+          ) => {
+            publish = listener
+            return () => undefined
+          }
+        },
+        () => undefined,
+        true,
+        () => undefined,
+        () => true,
+        () => ({ target: 'codex-bridge' })
+      )
+    )
+    const promptMessageId = useSessionStore.getState().sessions[0].messages[0].id
+    const events: AcpRuntimeEvent[] = [
+      {
+        id: 'choice-provider-stop',
+        timestamp: 1,
+        kind: 'stop',
+        level: 'info',
+        sessionId: 'session-1',
+        promptMessageId,
+        text: 'end_turn'
+      },
+      {
+        id: 'choice-continuation-tool',
+        timestamp: 2,
+        kind: 'tool',
+        level: 'info',
+        sessionId: 'session-1',
+        promptMessageId,
+        toolCallId: 'continuation-tool-1',
+        title: 'Continue after answer',
+        status: 'in_progress'
+      }
+    ]
+
+    await act(async () => {
+      publish?.(events, { ...ownedSnapshot, events })
+      await vi.waitFor(() => {
+        expect(useSessionStore.getState().sessions[0].activities).toHaveLength(1)
+      })
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      activeRun: undefined,
+      agentPromptInFlight: true,
+      awaitingFirstAgentOutput: undefined
+    })
+    unmount()
+  })
+
+  it('does not restore ownership from a drained batch after a newer snapshot releases it', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Original request'
+    })
+    let publish:
+      ((events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void) | undefined
+    const ownedSnapshot = createSnapshot({
+      sessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1'],
+      agentPromptInFlightSessionIds: ['session-1']
+    })
+    const { unmount } = renderHook(() =>
+      useWorkspaceRuntimeEventIngest(
+        {
+          state: ownedSnapshot,
+          subscribeRuntimeEvents: (
+            listener: (events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void
+          ) => {
+            publish = listener
+            return () => undefined
+          }
+        },
+        () => undefined,
+        true,
+        () => undefined,
+        () => true,
+        () => ({ target: 'codex-bridge' })
+      )
+    )
+    const promptMessageId = useSessionStore.getState().sessions[0].messages[0].id
+    const events: AcpRuntimeEvent[] = [
+      {
+        id: 'stale-choice-provider-stop',
+        timestamp: 1,
+        kind: 'stop',
+        level: 'info',
+        sessionId: 'session-1',
+        promptMessageId,
+        text: 'end_turn'
+      },
+      {
+        id: 'stale-choice-continuation-tool',
+        timestamp: 2,
+        kind: 'tool',
+        level: 'info',
+        sessionId: 'session-1',
+        promptMessageId,
+        toolCallId: 'stale-continuation-tool-1',
+        title: 'Continue after answer',
+        status: 'in_progress'
+      }
+    ]
+    const releaseEvent: AcpRuntimeEvent = {
+      id: 'ownership-release-stop',
+      timestamp: 3,
+      kind: 'stop',
+      level: 'info',
+      sessionId: 'session-1',
+      promptMessageId,
+      text: 'end_turn'
+    }
+
+    await act(async () => {
+      publish?.(events, { ...ownedSnapshot, events })
+      publish?.(
+        [releaseEvent],
+        createSnapshot({ sessionIds: ['session-1'], events: [...events, releaseEvent] })
+      )
+      await vi.waitFor(() => {
+        expect(useSessionStore.getState().sessions[0].activities).toHaveLength(1)
+      })
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      activeRun: undefined,
+      agentPromptInFlight: undefined,
+      awaitingFirstAgentOutput: undefined
+    })
+    unmount()
+  })
+
+  it('does not revive prompt ownership from a stale initial snapshot', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Original request'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    let publish:
+      ((events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void) | undefined
+    const currentSnapshot = createSnapshot({
+      revision: 2,
+      sessionIds: ['session-1']
+    })
+    const processLifecycleEvents = vi.fn()
+
+    expect(acceptAcpRuntimeSnapshotRevision(currentSnapshot)).toBe(true)
+    const { unmount } = renderHook(() =>
+      useWorkspaceRuntimeEventIngest(
+        {
+          state: currentSnapshot,
+          subscribeRuntimeEvents: (
+            listener: (events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void
+          ) => {
+            publish = listener
+            return () => undefined
+          }
+        },
+        processLifecycleEvents,
+        true,
+        () => undefined,
+        () => true,
+        () => ({ target: 'codex-bridge' })
+      )
+    )
+    const staleEvent: AcpRuntimeEvent = {
+      id: 'stale-initial-message',
+      timestamp: 1,
+      kind: 'message',
+      level: 'info',
+      role: 'assistant',
+      sessionId: 'session-1',
+      text: 'Queued before the initial snapshot resolved'
+    }
+    const staleSnapshot = createSnapshot({
+      revision: 1,
+      sessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1'],
+      agentPromptInFlightSessionIds: ['session-1'],
+      events: [staleEvent]
+    })
+
+    await act(async () => {
+      publish?.([staleEvent], staleSnapshot)
+      await vi.waitFor(() => {
+        expect(useSessionStore.getState().sessions[0].messages).toHaveLength(2)
+      })
+    })
+
+    expect(processLifecycleEvents).toHaveBeenCalledWith(
+      expect.objectContaining({ state: currentSnapshot }),
+      [staleEvent],
+      expect.any(Object)
+    )
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      activeRun: undefined,
+      agentPromptInFlight: undefined,
+      awaitingFirstAgentOutput: undefined
+    })
+    unmount()
   })
 })

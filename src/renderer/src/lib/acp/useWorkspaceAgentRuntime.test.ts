@@ -46,8 +46,10 @@ import {
   sendWorkspaceMessage
 } from './workspace-runtime-command-owner'
 import { respondToWorkspaceElicitation } from './workspace-elicitation-runtime'
+import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
 import {
   resetWorkspaceRuntimeEventOwnerForTests,
+  syncWorkspaceAgentFirstOutputState,
   syncWorkspaceElicitationState,
   syncWorkspacePermissionState
 } from './workspace-runtime-event-owner'
@@ -1294,6 +1296,62 @@ describe('workspace durable elicitation', () => {
       status: 'running',
       agentPromptInFlight: true,
       awaitingFirstAgentOutput: true
+    })
+  })
+
+  it('does not revive prompt ownership from a stale elicitation response', async () => {
+    const request = {
+      requestId: 'choice-1',
+      sessionId: 'session-choice-1',
+      toolCallId: 'tool-choice-1',
+      message: 'Choose an approach',
+      fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }]
+    }
+    const initialSnapshot = {
+      ...createSnapshot(['session-choice-1']),
+      revision: 1,
+      pendingElicitations: [request]
+    }
+    const responseSnapshot = {
+      ...createSnapshot(['session-choice-1']),
+      revision: 2,
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-choice-1'],
+      agentPromptInFlightSessionIds: ['session-choice-1']
+    }
+    const terminalSnapshot = {
+      ...createSnapshot(['session-choice-1']),
+      revision: 3
+    }
+    const responseDeferred = createDeferred<AcpStateSnapshot>()
+    const respondToElicitation = vi.fn(() => responseDeferred.promise)
+
+    expect(acceptAcpRuntimeSnapshotRevision(initialSnapshot)).toBe(true)
+    syncWorkspaceElicitationState([request])
+    const responsePromise = respondToWorkspaceElicitation(
+      {
+        state: initialSnapshot,
+        resumeSession: vi.fn(),
+        respondToElicitation
+      },
+      {
+        requestId: request.requestId,
+        action: 'accept',
+        answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+        request
+      }
+    )
+    await vi.waitFor(() => expect(respondToElicitation).toHaveBeenCalledOnce())
+
+    expect(acceptAcpRuntimeSnapshotRevision(terminalSnapshot)).toBe(true)
+    syncWorkspaceAgentFirstOutputState([])
+    syncWorkspaceElicitationState([])
+    responseDeferred.resolve(responseSnapshot)
+    await responsePromise
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      agentPromptInFlight: undefined,
+      awaitingFirstAgentOutput: undefined
     })
   })
 

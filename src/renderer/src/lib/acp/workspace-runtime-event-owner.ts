@@ -34,6 +34,8 @@ import {
 const pendingPermissionSessionIds = new Set<string>()
 const pendingElicitationSessionIds = new Set<string>()
 const firstOutputWaitingSessionIds = new Set<string>()
+let agentPromptOwnershipSessionIds = new Set<string>()
+let agentPromptOwnershipGeneration = 0
 
 type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
 type RuntimeEventBatchApplier = (events: AcpRuntimeEvent[]) => Promise<boolean>
@@ -453,16 +455,50 @@ const liveWorkspaceRuntimeEventProcessor = createWorkspaceRuntimeEventProcessor(
   }
 )
 
+// Tracks authority changes so an older asynchronous event drain cannot revive a released prompt.
+const captureWorkspaceAgentPromptOwnership = (sessionIds: readonly string[]): number => {
+  const nextSessionIds = new Set(sessionIds)
+  const unchanged =
+    nextSessionIds.size === agentPromptOwnershipSessionIds.size &&
+    [...nextSessionIds].every((sessionId) => agentPromptOwnershipSessionIds.has(sessionId))
+  if (!unchanged) {
+    agentPromptOwnershipSessionIds = nextSessionIds
+    agentPromptOwnershipGeneration += 1
+  }
+  return agentPromptOwnershipGeneration
+}
+
+// Reasserts Main-owned prompt authority after terminal events clear the renderer's transient run.
+const restoreWorkspaceAgentPromptOwnership = (sessionIds: readonly string[]): void => {
+  if (sessionIds.length === 0) return
+  const store = useSessionStore.getState()
+  const workspaceSessions = new Map(store.sessions.map((session) => [session.id, session]))
+
+  for (const sessionId of sessionIds) {
+    const workspaceSession = workspaceSessions.get(sessionId)
+    if (!workspaceSession) continue
+    if (!workspaceSession.agentPromptInFlight) store.setAgentPromptInFlight(sessionId, true)
+  }
+}
+
+const restoreWorkspaceAgentPromptOwnershipIfCurrent = (generation: number): void => {
+  if (generation !== agentPromptOwnershipGeneration) return
+  restoreWorkspaceAgentPromptOwnership([...agentPromptOwnershipSessionIds])
+}
+
 // Projects runtime foreground ownership and its initial silent gap into renderer-only state. Unknown
 // ids belong to background/runtime-only sessions; repeated snapshots must not restart the gap timer.
-const syncWorkspaceAgentFirstOutputState = (sessionIds: string[]): void => {
+const syncWorkspaceAgentFirstOutputState = (sessionIds: string[]): number => {
+  const generation = captureWorkspaceAgentPromptOwnership(sessionIds)
+  restoreWorkspaceAgentPromptOwnership(sessionIds)
   const nextSessionIds = new Set(sessionIds)
   const store = useSessionStore.getState()
   const workspaceSessionIds = new Set(store.sessions.map((session) => session.id))
 
   for (const sessionId of nextSessionIds) {
-    if (!workspaceSessionIds.has(sessionId) || firstOutputWaitingSessionIds.has(sessionId)) continue
-    store.setAgentPromptInFlight(sessionId, true)
+    if (!workspaceSessionIds.has(sessionId)) continue
+    if (firstOutputWaitingSessionIds.has(sessionId)) continue
+
     store.setAwaitingFirstAgentOutput(sessionId, true)
     firstOutputWaitingSessionIds.add(sessionId)
   }
@@ -473,6 +509,7 @@ const syncWorkspaceAgentFirstOutputState = (sessionIds: string[]): void => {
     store.setAwaitingFirstAgentOutput(sessionId, false)
     firstOutputWaitingSessionIds.delete(sessionId)
   }
+  return generation
 }
 
 // Keeps store permission state aligned with the runtime's current pending request set.
@@ -547,6 +584,8 @@ const resetWorkspaceRuntimeEventOwnerForTests = (): void => {
   pendingPermissionSessionIds.clear()
   pendingElicitationSessionIds.clear()
   firstOutputWaitingSessionIds.clear()
+  agentPromptOwnershipSessionIds = new Set()
+  agentPromptOwnershipGeneration += 1
   resetAcpRuntimeSnapshotRevisionForTests()
 }
 
@@ -556,20 +595,34 @@ const acceptWorkspaceRuntimeSnapshot = (snapshot: Pick<AcpStateSnapshot, 'revisi
   return acceptAcpRuntimeSnapshotRevision(snapshot)
 }
 
+const syncWorkspaceInteractionStateFromSnapshot = (
+  snapshot: Parameters<typeof syncWorkspaceInteractionState>[0] & Pick<AcpStateSnapshot, 'revision'>
+): boolean => {
+  if (!acceptWorkspaceRuntimeSnapshot(snapshot)) return false
+  syncWorkspaceInteractionState(snapshot)
+  return true
+}
+
 const ingestWorkspaceRuntimeSnapshot = async (
   snapshot: WorkspaceRuntimeEventSnapshot,
   syncFirstOutput: boolean
 ): Promise<boolean> => {
   if (!acceptWorkspaceRuntimeSnapshot(snapshot)) return false
+  let ownershipGeneration: number | undefined
   if (syncFirstOutput) {
-    syncWorkspaceAgentFirstOutputState(snapshot.agentPromptInFlightSessionIds ?? [])
+    ownershipGeneration = syncWorkspaceAgentFirstOutputState(
+      snapshot.agentPromptInFlightSessionIds ?? []
+    )
   }
   await liveWorkspaceRuntimeEventProcessor.process(snapshot.events)
+  if (ownershipGeneration !== undefined) {
+    restoreWorkspaceAgentPromptOwnershipIfCurrent(ownershipGeneration)
+  }
   return true
 }
 
-// Publishes prompt ownership before applying the same snapshot's events so first output can only
-// clear, never re-arm, the renderer waiting state.
+// Publishes prompt ownership before applying events, then restores only that ownership afterward.
+// First output can clear the waiting edge without a same-batch stop stranding a continuation.
 const processWorkspaceRuntimeEvents = (snapshot: WorkspaceRuntimeEventSnapshot): Promise<boolean> =>
   ingestWorkspaceRuntimeSnapshot(snapshot, true)
 
@@ -639,11 +692,18 @@ const useWorkspaceRuntimeEventIngest = <Runtime extends WorkspaceRuntimeEventIng
     if (!subscribeRuntimeEvents) return
     return subscribeRuntimeEvents((events, snapshot) => {
       const currentRuntime = runtimeRef.current
-      const eventRuntime = snapshot ? { ...currentRuntime, state: snapshot } : currentRuntime
+      const acceptedSnapshot = snapshot && acceptWorkspaceRuntimeSnapshot(snapshot)
+      const eventRuntime = acceptedSnapshot
+        ? { ...currentRuntime, state: snapshot }
+        : currentRuntime
       const acceptedEvents = [...events]
-      syncWorkspaceAgentFirstOutputState(eventRuntime.state.agentPromptInFlightSessionIds ?? [])
+      const ownershipGeneration = syncWorkspaceAgentFirstOutputState(
+        eventRuntime.state.agentPromptInFlightSessionIds ?? []
+      )
       processLifecycleEvents(eventRuntime, acceptedEvents, optionsRef.current)
-      void processIncrementalWorkspaceRuntimeEvents(acceptedEvents)
+      void processIncrementalWorkspaceRuntimeEvents(acceptedEvents).then(() => {
+        restoreWorkspaceAgentPromptOwnershipIfCurrent(ownershipGeneration)
+      })
     })
   }, [processLifecycleEvents, subscribeRuntimeEvents])
 
@@ -757,6 +817,7 @@ export {
   syncWorkspaceContextUsage,
   syncWorkspaceElicitationState,
   syncWorkspaceInteractionState,
+  syncWorkspaceInteractionStateFromSnapshot,
   syncWorkspacePermissionState,
   useWorkspaceRuntimeEventDrain,
   useWorkspaceRuntimeEventIngest
