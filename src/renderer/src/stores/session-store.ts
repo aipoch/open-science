@@ -92,6 +92,18 @@ type SessionStore = SessionStoreData &
     removeSessionsForProject: (projectId: string) => void
   }
 
+// Navigation and deletion use the same visible, project-scoped fallback, regardless of list order.
+export const findMostRecentSessionId = (
+  sessions: ChatSession[],
+  projectId: string
+): string | undefined =>
+  sessions
+    .filter(
+      (session) =>
+        session.projectId === projectId && !session.isPending && session.archivedAt === undefined
+    )
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0]?.id
+
 // Stores all transient workspace conversation state for the renderer process.
 const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, get) => ({
   ...createInitialSessionState(),
@@ -270,29 +282,13 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
   },
 
   updateSessionArchive: async (request) => {
+    const source = get().sessions.find((session) => session.id === request.sessionId)
     const persisted = await window.api.sessions.updateArchive(request)
-    let updated: ChatSession | undefined
-
-    set((state) => {
-      const existing = state.sessions.find((session) => session.id === persisted.id)
-      if (existing) {
-        const withoutPreviousArchive = { ...existing }
-        delete withoutPreviousArchive.archivedAt
-        updated =
-          persisted.archivedAt === undefined
-            ? withoutPreviousArchive
-            : { ...withoutPreviousArchive, archivedAt: persisted.archivedAt }
-      } else {
-        updated = hydrateSession(persisted)
-      }
-      return {
-        sessions: state.sessions.map((session) =>
-          session.id === persisted.id ? updated! : session
-        )
-      }
-    })
-
-    return updated ?? hydrateSession(persisted)
+    if (source)
+      get().applyDurableSessionProjection({ source, session: persisted, mode: 'archive-authority' })
+    return (
+      get().sessions.find((session) => session.id === persisted.id) ?? hydrateSession(persisted)
+    )
   },
 
   // Sets or clears the per-session fix loop active flag. The flag is transient (never persisted)
@@ -348,16 +344,9 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
         }
       }
 
-      // Fall back within the deleted session's own project. `sessions` is newest-first, so this picks the
-      // most recent sibling. Using the global sessions[0] could select another project's conversation,
-      // which the project-scoped workspace then filters out — leaving a blank center panel.
-      const fallbackSession = deletedSession
-        ? sessions.find((session) => session.projectId === deletedSession.projectId)
-        : undefined
-
       return {
         sessions,
-        selectedSessionId: fallbackSession?.id
+        selectedSessionId: findMostRecentSessionId(sessions, deletedSession.projectId)
       }
     })
   },

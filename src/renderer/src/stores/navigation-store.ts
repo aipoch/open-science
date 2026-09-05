@@ -10,7 +10,10 @@ import {
   workbenchPreviewGuardScope
 } from './preview-leave-guard'
 import { usePreviewWorkbenchStore } from './preview-workbench-store'
-import { useSessionStore } from './session-store'
+import {
+  findMostRecentSessionId as findMostRecentProjectSessionId,
+  useSessionStore
+} from './session-store'
 import type { ProjectFileItem } from '../../../shared/project-files'
 
 export type NavigationView = 'home' | 'workspace'
@@ -99,13 +102,7 @@ const navigationState = (
 // Picks the most recently updated non-pending session in a project so opening a project lands on its
 // latest conversation instead of a blank workspace.
 const findMostRecentSessionId = (projectId: string): string | undefined =>
-  useSessionStore
-    .getState()
-    .sessions.filter(
-      (session) =>
-        session.projectId === projectId && !session.isPending && session.archivedAt === undefined
-    )
-    .sort((left, right) => right.updatedAt - left.updatedAt)[0]?.id
+  findMostRecentProjectSessionId(useSessionStore.getState().sessions, projectId)
 
 const isActiveProject = (projectId: string): boolean =>
   useProjectStore

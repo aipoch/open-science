@@ -106,6 +106,7 @@ const publicStoreTarget = modulePath(facadePath)
 const publicValueExports = [
   'createInitialSessionState',
   'createSessionStore',
+  'findMostRecentSessionId',
   'getExternallyHydratedSessionAuthority',
   'isArtifactFinalizationError',
   'isRetryableArtifactFinalizationError',
@@ -1038,6 +1039,7 @@ describe('Session Store architecture', () => {
       testFiles: {
         owner: [
           'src/renderer/src/stores/session-store.test.ts',
+          'src/renderer/src/stores/session-store.archive-order.test.ts',
           'src/renderer/src/stores/session-store.architecture.test.ts',
           'src/renderer/src/stores/session-job-store.test.ts'
         ],

@@ -256,18 +256,28 @@ const useLifecycleSync = ({
           originClientId !== lifecycleClientIdRef.current
         ) {
           useSessionStore.getState().upsertPersistedSession(session)
+        } else {
+          // Same-client echoes still carry archive authority, but must not replace local content.
+          const store = useSessionStore.getState()
+          const source = store.sessions.find((candidate) => candidate.id === session.id)
+          if (source)
+            store.applyDurableSessionProjection({ source, session, mode: 'archive-authority' })
         }
         if (coalescedCreationOriginClientId !== undefined) {
           showExternalSessionNotice(session, coalescedCreationOriginClientId)
         }
-        useArchiveUndoStore.getState().reconcileSession(session)
+        const current = useSessionStore
+          .getState()
+          .sessions.find((candidate) => candidate.id === session.id)
+        if (!current) return
+        useArchiveUndoStore.getState().reconcileSession(current)
         if (
-          session.archivedAt !== undefined &&
+          current.archivedAt !== undefined &&
           useSessionStore.getState().selectedSessionId === session.id
         ) {
           useSessionStore.getState().clearSelection()
         }
-        if (session.archivedAt !== undefined) {
+        if (current.archivedAt !== undefined) {
           usePreviewWorkbenchStore.getState().removeSessionItems(session.id)
           setNotice((current) => (current?.sessionId === session.id ? undefined : current))
         }

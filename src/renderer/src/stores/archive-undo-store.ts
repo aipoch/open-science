@@ -157,20 +157,18 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
     set({ restoringKey: key })
     try {
       if (notice.kind === 'project') {
-        const project = await window.api.projects.updateArchive({
+        await useProjectStore.getState().updateProjectArchive({
           id: notice.projectId,
           archived: false,
           expectedArchivedAt: notice.archivedAt
         })
-        useProjectStore.getState().upsertProject(project)
       } else {
-        const session = await window.api.sessions.updateArchive({
+        await useSessionStore.getState().updateSessionArchive({
           projectId: notice.projectId,
           sessionId: notice.sessionId,
           archived: false,
           expectedArchivedAt: notice.archivedAt
         })
-        useSessionStore.getState().upsertPersistedSession(session)
       }
       set((state) => ({
         notices: state.notices.filter((item) => item.key !== key),

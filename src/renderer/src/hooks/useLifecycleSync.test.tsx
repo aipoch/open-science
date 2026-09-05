@@ -162,6 +162,120 @@ describe('useLifecycleSync', () => {
     container.remove()
   })
 
+  it.each(['web:external', 'electron:7'])(
+    'ignores obsolete archive event effects from %s',
+    async (originClientId) => {
+      useSessionStore.getState().hydrateSessions([{ ...session, revision: 5 }])
+      useSessionStore.getState().selectSession(session.id)
+      const removeItems = vi.spyOn(usePreviewWorkbenchStore.getState(), 'removeSessionItems')
+      removeItems.mockClear()
+      await act(async () => {
+        listeners.sessionUpdated?.({
+          session: { ...session, revision: 4, archivedAt: 20 },
+          originClientId
+        })
+      })
+      expect(useSessionStore.getState().selectedSessionId).toBe(session.id)
+      expect(useSessionStore.getState().sessions[0]).toMatchObject({ revision: 5 })
+      expect(useSessionStore.getState().sessions[0].archivedAt).toBeUndefined()
+      expect(removeItems).not.toHaveBeenCalled()
+      removeItems.mockRestore()
+    }
+  )
+
+  it('keeps a cross-window restore when an older archive RPC finishes later', async () => {
+    useSessionStore.getState().hydrateSessions([{ ...session, revision: 3 }])
+    let resolve!: (value: typeof session) => void
+    window.api.sessions.updateArchive = vi.fn(
+      () =>
+        new Promise<typeof session>((done) => {
+          resolve = done
+        })
+    )
+    const archiving = useSessionStore.getState().updateSessionArchive({
+      projectId: project.id,
+      sessionId: session.id,
+      archived: true,
+      expectedArchivedAt: null
+    })
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: { ...session, revision: 5 },
+        originClientId: 'web:external'
+      })
+      resolve({ ...session, revision: 4, archivedAt: 20 })
+      await archiving
+    })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({ revision: 5 })
+    expect(useSessionStore.getState().sessions[0].archivedAt).toBeUndefined()
+  })
+
+  it.each(['cleanup-pending', 'deleted', 'archived'] as const)(
+    'does not revive a project after %s supersedes an in-flight undo',
+    async (status) => {
+      useProjectStore.getState().upsertProject({ ...project, archivedAt: 2 })
+      useArchiveUndoStore.getState().enqueueProject({ ...project, archivedAt: 2 })
+      let resolve!: (value: Project) => void
+      window.api.projects.updateArchive = vi.fn(
+        () =>
+          new Promise<Project>((done) => {
+            resolve = done
+          })
+      )
+      const key = useArchiveUndoStore.getState().notices[0].key
+      const undo = useArchiveUndoStore.getState().undo(key)
+      await act(async () => {
+        if (status === 'archived') listeners.projectUpdated?.({ ...project, archivedAt: 30 })
+        else listeners.projectDeleted?.({ projectId: project.id, status })
+        useArchiveUndoStore.getState().dismiss(key)
+        resolve(project)
+        await undo
+      })
+      expect(useProjectStore.getState().projects).toEqual(
+        status === 'archived' ? [{ ...project, archivedAt: 30 }] : []
+      )
+      expect(useArchiveUndoStore.getState()).toMatchObject({ notices: [], restoringKey: undefined })
+    }
+  )
+
+  it.each(['cleanup-pending', 'deleted', 'session-deleted', 'archived'] as const)(
+    'does not revive a session after %s supersedes an in-flight undo',
+    async (status) => {
+      const archived = { ...session, revision: 3, archivedAt: 2 }
+      useSessionStore.getState().hydrateSessions([archived])
+      useArchiveUndoStore.getState().enqueueSession(archived)
+      let resolve!: (value: typeof session) => void
+      window.api.sessions.updateArchive = vi.fn(
+        () =>
+          new Promise<typeof session>((done) => {
+            resolve = done
+          })
+      )
+      const key = useArchiveUndoStore.getState().notices[0].key
+      const undo = useArchiveUndoStore.getState().undo(key)
+      await act(async () => {
+        if (status === 'archived')
+          listeners.sessionUpdated?.({
+            session: { ...session, revision: 5, archivedAt: 30 },
+            originClientId: 'web:external'
+          })
+        else if (status === 'session-deleted')
+          listeners.sessionDeleted?.({ projectId: project.id, sessionId: session.id })
+        else listeners.projectDeleted?.({ projectId: project.id, status })
+        useArchiveUndoStore.getState().dismiss(key)
+        resolve({ ...session, revision: 4 })
+        await undo
+      })
+      if (status === 'archived')
+        expect(useSessionStore.getState().sessions[0]).toMatchObject({
+          revision: 5,
+          archivedAt: 30
+        })
+      else expect(useSessionStore.getState().sessions).toEqual([])
+      expect(useArchiveUndoStore.getState()).toMatchObject({ notices: [], restoringKey: undefined })
+    }
+  )
+
   it('upserts external projects and sessions and opens the toast target', async () => {
     await act(async () => {
       listeners.projectCreated?.(project)
@@ -1338,7 +1452,7 @@ describe('useLifecycleSync', () => {
     })
 
     expect(useSessionStore.getState().sessions[0]?.title).toBe('Live title')
-    expect(useSessionStore.getState().sessions[0]?.archivedAt).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0]?.archivedAt).toBe(2)
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
     expect(removeSessionItems).toHaveBeenCalledWith(session.id)
   })
