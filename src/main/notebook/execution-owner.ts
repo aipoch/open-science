@@ -309,9 +309,10 @@ class NotebookExecutionOwner {
     )
     const { environment, processKey } = admission.route
     const { binding, resolvedInterpreter } = admission
+    const kernelStatusBefore = session.kernelStatus(processKey)
     const kernelWasTerminated =
       session.isKernelTerminated(processKey) ||
-      session.kernelStatus(processKey) === 'terminated' ||
+      kernelStatusBefore === 'terminated' ||
       session.hasDurableKernelTermination(processKey)
     const kernelEpoch = session.kernelEpoch(
       processKey,
@@ -475,16 +476,33 @@ class NotebookExecutionOwner {
         }),
       settleLive: (result) => {
         session.completeCellRun(cell.id, result.status, result.cwdAfter ?? cwdBefore)
+        // Live activity ends even if either Run write fails. Only settle this process epoch's
+        // running state; lifecycle transitions (termination, restart, error) own their own status.
+        if (
+          kernelMarkedRunning &&
+          session.currentKernelEpochId(processKey) === kernelEpochId &&
+          session.kernelStatus(processKey) === 'running' &&
+          !session.isKernelTerminated(processKey) &&
+          (executedOnLiveKernel || !reachedExecutor)
+        ) {
+          if (!reachedExecutor && kernelWasTerminated) {
+            session.markKernelTerminated(processKey)
+            session.setKernelStatus(processKey, 'terminated')
+          } else if (!reachedExecutor && kernelStatusBefore === 'error') {
+            session.setKernelStatus(processKey, 'error')
+          } else {
+            this.options.setKernelStatus(session, 'idle', processKey)
+          }
+        }
       }
     })
     if (
-      !session.isKernelTerminated(processKey) &&
-      (executedOnLiveKernel || (kernelMarkedRunning && !reachedExecutor))
+      kernelWasTerminated &&
+      session.currentKernelEpochId(processKey) === kernelEpochId &&
+      session.kernelStatus(processKey) === 'idle' &&
+      !session.isKernelTerminated(processKey)
     ) {
-      this.options.setKernelStatus(session, 'idle', processKey)
-      if (kernelWasTerminated) {
-        await this.options.persistRecoveredKernelIdle(session, processKey)
-      }
+      await this.options.persistRecoveredKernelIdle(session, processKey)
     }
     const dependencyProjection = await this.options
       .projectDependencies(session, run, resolvedInterpreter)
@@ -595,15 +613,20 @@ class NotebookExecutionOwner {
       cwd: session.cwd,
       platform: this.options.platform
     })
+    const replStatusBefore = session.kernelStatus('repl')
     const replWasTerminated =
       !blockedMutation &&
-      (session.kernelStatus('repl') === 'terminated' || session.hasDurableKernelTermination('repl'))
+      (replStatusBefore === 'terminated' || session.hasDurableKernelTermination('repl'))
+    const replEpochId = blockedMutation
+      ? undefined
+      : session.kernelEpochId('repl', replWasTerminated)
     if (!blockedMutation) {
       session.clearKernelTerminated('repl')
       this.setReplStatus(session, 'running')
     }
 
     let executedOnLiveKernel = !blockedMutation
+    let reachedExecutor = false
     const { result } = await this.options.runTerminalization.run({
       session,
       runningRun,
@@ -637,6 +660,7 @@ class NotebookExecutionOwner {
                     ?.filter((input) => input.sourceKind === 'artifact-version')
                     .map((input) => input.sourceFileId) ?? []
               })
+              reachedExecutor = true
               return session
                 .execute({
                   runId,
@@ -664,16 +688,34 @@ class NotebookExecutionOwner {
         ).catch((error: unknown) => {
           executedOnLiveKernel = false
           return errorToExecutionResult(error, session.cwd)
-        })
+        }),
+      settleLive: () => {
+        if (
+          executedOnLiveKernel &&
+          session.currentKernelEpochId('repl') === replEpochId &&
+          session.kernelStatus('repl') === 'running' &&
+          !session.isKernelTerminated('repl')
+        ) {
+          if (!reachedExecutor && replWasTerminated) {
+            session.markKernelTerminated('repl')
+            session.setKernelStatus('repl', 'terminated')
+          } else if (!reachedExecutor && replStatusBefore === 'error') {
+            session.setKernelStatus('repl', 'error')
+          } else {
+            this.setReplStatus(session, 'idle')
+          }
+        }
+      }
     })
 
-    if (executedOnLiveKernel && !session.isKernelTerminated('repl')) {
-      this.setReplStatus(session, 'idle')
-      // A terminated status is durable; clear it once, while ordinary running/idle transitions stay
-      // in memory and do not rewrite the whole run.json document.
-      if (replWasTerminated) {
-        await this.options.persistRecoveredKernelIdle(session, 'repl')
-      }
+    // Clear durable termination only after the recovered Run commits; ordinary activity is volatile.
+    if (
+      replWasTerminated &&
+      session.currentKernelEpochId('repl') === replEpochId &&
+      session.kernelStatus('repl') === 'idle' &&
+      !session.isKernelTerminated('repl')
+    ) {
+      await this.options.persistRecoveredKernelIdle(session, 'repl')
     }
 
     return {
