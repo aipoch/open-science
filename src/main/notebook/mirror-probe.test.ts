@@ -226,7 +226,7 @@ describe('effectiveMirrorAsync', () => {
     expect(result.condaChannel).toBe('https://tuna/conda-forge/')
   })
 
-  it('falls back to the locale default when no complete channel pair responds', async () => {
+  it('falls back to public indexes instead of reviving a rejected locale mirror', async () => {
     const result = await effectiveMirrorAsync(undefined, 'zh-CN', {
       candidates,
       probe: probeFrom({
@@ -235,8 +235,26 @@ describe('effectiveMirrorAsync', () => {
         'https://aliyun/conda-forge/repodata.json': 120
       })
     })
-    // No candidate has a reachable bioconda channel -> zh-CN locale default (TUNA).
-    expect(result.condaChannel).toContain('tuna')
+    expect(result).toEqual({})
+  })
+
+  it('retries automatic selection after a transient probe failure', async () => {
+    await expect(
+      effectiveMirrorAsync(undefined, 'zh-CN', {
+        candidates,
+        probe: probeFrom({})
+      })
+    ).resolves.toEqual({})
+
+    await expect(
+      effectiveMirrorAsync(undefined, 'zh-CN', {
+        candidates,
+        probe: probeFrom(reachableLatencies)
+      })
+    ).resolves.toEqual({
+      condaChannel: 'https://tuna/conda-forge/',
+      pypiIndex: 'https://tuna/pypi'
+    })
   })
 
   it('preserves a caBundle-only config while still using the fastest-probed channel', async () => {

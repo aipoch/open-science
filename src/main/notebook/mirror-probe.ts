@@ -4,7 +4,6 @@ import {
   type PackageMirror
 } from '../../shared/mirror'
 import { netFetchStandard } from '../skills/net-fetch'
-import { effectiveMirror } from './mirror'
 
 // A candidate mirror bundle + cheap URLs to measure both required conda channels. Public endpoints
 // only (no secrets). The repodata URLs are HEAD-ed so no body is downloaded.
@@ -41,7 +40,7 @@ export type ProbeDeps = {
 
 // Probes every candidate's conda-forge and bioconda channels in parallel. A candidate is reachable only
 // when both respond; its score is the slower response because both channels are required for installs.
-// Returns undefined when no complete candidate responds (caller then falls back to the locale default).
+// Returns undefined when no complete candidate responds (caller then uses the public indexes).
 export const pickFastestMirror = async (
   deps: ProbeDeps = {}
 ): Promise<PackageMirror | undefined> => {
@@ -70,33 +69,44 @@ export const pickFastestMirror = async (
   return { ...reachable[0].candidate.mirror }
 }
 
-// Memoized once-per-process probe: the winning mirror is measured on first need and reused, so an
-// install/provision never re-probes. Reset between tests via resetAutoMirrorCache.
+// Memoize a successful once-per-process probe while still coalescing concurrent attempts. A failed
+// attempt is not sticky: startup can race network readiness, so the next install must be able to
+// probe again after connectivity recovers. Reset between tests via resetAutoMirrorCache.
 let cached: Promise<PackageMirror | undefined> | undefined
 export const resetAutoMirrorCache = (): void => {
   cached = undefined
 }
 const resolveAutoMirror = (deps?: ProbeDeps): Promise<PackageMirror | undefined> => {
-  if (!cached) cached = pickFastestMirror(deps)
+  if (!cached) {
+    const attempt = pickFastestMirror(deps)
+    cached = attempt
+    void attempt.then(
+      (result) => {
+        if (result === undefined && cached === attempt) cached = undefined
+      },
+      () => {
+        if (cached === attempt) cached = undefined
+      }
+    )
+  }
   return cached
 }
 
 // Effective mirror WITH the speed probe: a user-configured override always wins (no probe); otherwise
-// use the fastest-probed mirror; if the probe finds nothing reachable, fall back to the sync locale
-// default (effectiveMirror). Kept separate from the sync effectiveMirror so non-probing callers and
-// existing tests are unaffected.
+// use the fastest-probed mirror; if the probe finds nothing reachable, use the public indexes rather
+// than reviving a locale mirror that the probe just rejected.
 export const effectiveMirrorAsync = async (
   configured: PackageMirror | undefined,
-  locale: string,
+  _locale: string,
   deps?: ProbeDeps
 ): Promise<PackageMirror> => {
   const hasAny =
     configured && (configured.condaChannel || configured.pypiIndex || configured.cranMirror)
   // Configured channel override already carries any caBundle it was given.
   if (hasAny) return configured!
-  // Otherwise use the probed/locale mirror, but always preserve a configured caBundle (e.g. a
+  // Otherwise use the probed/public mirror, but always preserve a configured caBundle (e.g. a
   // caBundle-only config behind an enterprise TLS proxy still gets the fastest-probed channel).
   const probed = await resolveAutoMirror(deps)
-  const base = probed ?? effectiveMirror(undefined, locale)
+  const base = probed ?? {}
   return configured?.caBundle ? { ...base, caBundle: configured.caBundle } : base
 }
