@@ -4381,6 +4381,26 @@
     "Exit queued editing": "Quitter la modification de la file",
     "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "Le message en attente ne correspond plus à cette session. Quittez la modification de la file pour l’envoyer comme nouveau message.",
     "Remove attachments before submitting a historical revision.": "Retirez les pièces jointes avant d’envoyer la modification d’un ancien message.",
-    "Exit queued editing before choosing another send mode.": "Quittez la modification de la file avant de choisir un autre mode d’envoi."
+    "Exit queued editing before choosing another send mode.": "Quittez la modification de la file avant de choisir un autre mode d’envoi.",
+    "Bind notebook runtime": "Associer un environnement Notebook",
+    "Bound": "Associé",
+    "Cells": "Cellules",
+    "Clears in-memory variables. Run history is preserved.": "Efface les variables en mémoire. L’historique des exécutions est conservé.",
+    "Environments": "Environnements",
+    "External": "Externe",
+    "In-memory variables cleared. Run history preserved.": "Variables en mémoire effacées. Historique des exécutions conservé.",
+    "Kernel": "Noyau",
+    "Limit": "Limite",
+    "Managed": "Géré",
+    "More runtimes are available. See details for pagination.": "D’autres environnements sont disponibles. Consultez les détails pour la pagination.",
+    "No runtimes returned.": "Aucun environnement renvoyé.",
+    "Offset": "Position de départ",
+    "Path": "Chemin",
+    "Recent runs only. Full history is available in the Notebook preview.": "Exécutions récentes uniquement. L’historique complet est disponible dans l’aperçu Notebook.",
+    "Restart notebook": "Redémarrer le Notebook",
+    "Restarted": "Redémarré",
+    "The runtime binding changed despite the error.": "L’association de l’environnement a été modifiée malgré l’erreur.",
+    "Runtime source": "Origine de l’environnement",
+    "File content omitted": "Contenu du fichier omis"
   }
 }

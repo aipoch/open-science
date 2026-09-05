@@ -184,7 +184,7 @@ describe('WorkspaceToolDetailsRow', () => {
     })
     const details = buildToolActivityDetails(activity)
 
-    expect(details?.sections[0]?.kind).toBe('code')
+    expect(details?.sections[0]?.kind).toBe('summary')
 
     root = createRoot(container)
     await act(async () => {

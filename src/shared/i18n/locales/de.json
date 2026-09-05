@@ -4226,6 +4226,26 @@
     "Exit queued editing": "Warteschlangenbearbeitung beenden",
     "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "Die Nachricht in der Warteschlange passt nicht mehr zu dieser Sitzung. Beenden Sie die Warteschlangenbearbeitung, um sie als neue Nachricht zu senden.",
     "Remove attachments before submitting a historical revision.": "Entfernen Sie die Anhänge, bevor Sie die Überarbeitung einer früheren Nachricht senden.",
-    "Exit queued editing before choosing another send mode.": "Beenden Sie die Warteschlangenbearbeitung, bevor Sie einen anderen Sendemodus wählen."
+    "Exit queued editing before choosing another send mode.": "Beenden Sie die Warteschlangenbearbeitung, bevor Sie einen anderen Sendemodus wählen.",
+    "Bind notebook runtime": "Notebook-Laufzeit zuordnen",
+    "Bound": "Zugeordnet",
+    "Cells": "Zellen",
+    "Clears in-memory variables. Run history is preserved.": "Löscht Variablen im Arbeitsspeicher. Der Ausführungsverlauf bleibt erhalten.",
+    "Environments": "Umgebungen",
+    "External": "Extern",
+    "In-memory variables cleared. Run history preserved.": "Variablen im Arbeitsspeicher gelöscht. Ausführungsverlauf beibehalten.",
+    "Kernel": "Kernel",
+    "Limit": "Limit",
+    "Managed": "Verwaltet",
+    "More runtimes are available. See details for pagination.": "Weitere Laufzeiten sind verfügbar. Informationen zur Seiteneinteilung stehen in den Details.",
+    "No runtimes returned.": "Keine Laufzeiten zurückgegeben.",
+    "Offset": "Startposition",
+    "Path": "Pfad",
+    "Recent runs only. Full history is available in the Notebook preview.": "Nur letzte Ausführungen. Der vollständige Verlauf ist in der Notebook-Vorschau verfügbar.",
+    "Restart notebook": "Notebook neu starten",
+    "Restarted": "Neu gestartet",
+    "The runtime binding changed despite the error.": "Die Laufzeitzuordnung wurde trotz des Fehlers geändert.",
+    "Runtime source": "Laufzeitquelle",
+    "File content omitted": "Dateiinhalt ausgelassen"
   }
 }

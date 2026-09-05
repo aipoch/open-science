@@ -4071,6 +4071,26 @@
     "Exit queued editing": "キューの編集を終了",
     "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "キュー内のメッセージは、このセッションと一致しなくなりました。キューの編集を終了して、新しいメッセージとして送信してください。",
     "Remove attachments before submitting a historical revision.": "過去のメッセージの修正を送信する前に、添付ファイルを削除してください。",
-    "Exit queued editing before choosing another send mode.": "別の送信モードを選択する前に、キューの編集を終了してください。"
+    "Exit queued editing before choosing another send mode.": "別の送信モードを選択する前に、キューの編集を終了してください。",
+    "Bind notebook runtime": "Notebook ランタイムを関連付け",
+    "Bound": "関連付け済み",
+    "Cells": "セル",
+    "Clears in-memory variables. Run history is preserved.": "メモリ内の変数を消去します。実行履歴は保持されます。",
+    "Environments": "環境",
+    "External": "外部",
+    "In-memory variables cleared. Run history preserved.": "メモリ内の変数を消去しました。実行履歴は保持されています。",
+    "Kernel": "カーネル",
+    "Limit": "上限",
+    "Managed": "アプリ管理",
+    "More runtimes are available. See details for pagination.": "ほかにもランタイムがあります。ページ情報は詳細をご覧ください。",
+    "No runtimes returned.": "ランタイムは返されませんでした。",
+    "Offset": "開始位置",
+    "Path": "パス",
+    "Recent runs only. Full history is available in the Notebook preview.": "最近の実行のみ表示しています。全履歴は Notebook プレビューで確認できます。",
+    "Restart notebook": "Notebook を再起動",
+    "Restarted": "再起動済み",
+    "The runtime binding changed despite the error.": "エラーが発生しましたが、ランタイムの関連付けは変更されました。",
+    "Runtime source": "ランタイムの提供元",
+    "File content omitted": "ファイル内容は省略されています"
   }
 }
