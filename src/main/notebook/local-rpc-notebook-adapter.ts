@@ -7,6 +7,7 @@ import {
   type ExecuteNotebookCodeRequest,
   type ExecuteNotebookControlRequest,
   type ExecuteShellRequest,
+  type AbortNotebookCodeCellRequest,
   type FinishNotebookCodeCellRequest,
   type NotebookLanguage,
   type NotebookRestartRequest,
@@ -79,6 +80,10 @@ const notebookLocalRpcRequestSchemas = {
     writeId: z.string(),
     cellId: z.string(),
     delta: z.string()
+  }),
+  abortCodeCell: notebookSessionRequestSchema.extend({
+    writeId: z.string(),
+    cellId: z.string()
   }),
   finishCodeCell: notebookSessionRequestSchema.extend({
     writeId: z.string(),
@@ -194,8 +199,9 @@ type NotebookRuntimeBindingRequest = NotebookSessionRequest & {
 }
 
 type NotebookLocalRpcCapability = {
-  beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<unknown>
+  beginCodeCell(request: BeginNotebookCodeCellRequest, signal?: AbortSignal): Promise<unknown>
   appendCodeCell(request: AppendNotebookCodeCellRequest): Promise<unknown>
+  abortCodeCell(request: AbortNotebookCodeCellRequest): Promise<unknown>
   finishCodeCell(request: FinishNotebookCodeCellRequest): Promise<unknown>
   runCell(request: RunNotebookCellRequest, signal?: AbortSignal): Promise<unknown>
   execute(request: ExecuteNotebookCodeRequest, signal?: AbortSignal): Promise<unknown>
@@ -219,6 +225,7 @@ type NotebookLocalRpcCapability = {
 const NOTEBOOK_LOCAL_RPC_METHODS = [
   'beginCodeCell',
   'appendCodeCell',
+  'abortCodeCell',
   'finishCodeCell',
   'runCell',
   'execute',
@@ -286,11 +293,14 @@ const resolveNotebookLocalRpcHandler = (
 
   switch (method) {
     case 'beginCodeCell':
-      return (request) =>
-        capability.beginCodeCell(parseNotebookLocalRpcRequest('beginCodeCell', request))
+      return (request, signal) =>
+        capability.beginCodeCell(parseNotebookLocalRpcRequest('beginCodeCell', request), signal)
     case 'appendCodeCell':
       return (request) =>
         capability.appendCodeCell(parseNotebookLocalRpcRequest('appendCodeCell', request))
+    case 'abortCodeCell':
+      return (request) =>
+        capability.abortCodeCell(parseNotebookLocalRpcRequest('abortCodeCell', request))
     case 'finishCodeCell':
       return (request) =>
         capability.finishCodeCell(parseNotebookLocalRpcRequest('finishCodeCell', request))

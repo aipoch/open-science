@@ -165,6 +165,7 @@ import type {
   ExportNotebookAllResult,
   ExportNotebookKernelRequest,
   ExportNotebookResult,
+  AbortNotebookCodeCellRequest,
   FinishNotebookCodeCellRequest,
   NotebookLanguage,
   NotebookNamespaceRequest,
@@ -1155,6 +1156,14 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'notebook.exportIpynbAll': callable<
     (request: ExportNotebookAllRequest) => Promise<ExportNotebookAllResult>
   >()('notebook', ['notebook:export-ipynb-all', LOCAL]),
+  'notebook.abortCodeCell': callable<
+    (request: AbortNotebookCodeCellRequest) => Promise<{
+      sessionId: string
+      cellId: string
+      code: string
+      status: string
+    }>
+  >()('notebook', ['notebook:abort-code-cell']),
   'notebook.finishCodeCell': callable<
     (request: FinishNotebookCodeCellRequest) => Promise<{
       sessionId: string

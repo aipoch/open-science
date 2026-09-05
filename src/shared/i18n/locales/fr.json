@@ -101,6 +101,8 @@
     "Import Connector configuration": "Importer la configuration du connecteur"
   },
   "renderer": {
+    "Receiving code. Cancelling discards the unfinished code.": "Réception du code en cours. L’annulation supprime le code incomplet.",
+    "Cancel code reception": "Annuler la réception du code",
     "First row is used as column headers": "La première ligne sert d’en-têtes de colonnes",
     "Notebook network access": "Accès réseau du Notebook",
     "Control which internet domains Notebook Python, R, REPL, and Bash can reach.": "Contrôlez les domaines Internet accessibles par les environnements Python, R, REPL et Bash de Notebook.",

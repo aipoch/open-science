@@ -99,6 +99,8 @@
     "Import Connector configuration": "导入连接器配置"
   },
   "renderer": {
+    "Receiving code. Cancelling discards the unfinished code.": "正在接收代码。取消将丢弃未完成的代码。",
+    "Cancel code reception": "取消代码接收",
     "First row is used as column headers": "首行用作列标题",
     "Notebook network access": "Notebook 网络访问",
     "Control which internet domains Notebook Python, R, REPL, and Bash can reach.": "控制 Notebook Python、R、REPL 和 Bash 可以访问哪些互联网域名。",

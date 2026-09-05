@@ -228,6 +228,7 @@ export class NotebookSessionAggregate<
 
   private cwdValue: string
   private readonly cells = new Map<string, NotebookCell>()
+  private writeCancellationCleanup: (() => void) | undefined
   private activeWriteValue: NotebookWriteLock | undefined
   private readonly activeRunIds = new Set<string>()
   private activeRunIdValue: string | undefined
@@ -302,7 +303,11 @@ export class NotebookSessionAggregate<
     }
   }
 
-  beginCellWrite(input: BeginCellWrite): Readonly<NotebookCell> {
+  beginCellWrite(
+    input: BeginCellWrite,
+    cancellation?: { signal: AbortSignal; onAbort: () => void }
+  ): Readonly<NotebookCell> {
+    cancellation?.signal.throwIfAborted()
     if (this.activeWriteValue) {
       throw new Error(`Notebook cell is already receiving code: ${this.activeWriteValue.cellId}`)
     }
@@ -324,6 +329,14 @@ export class NotebookSessionAggregate<
       source: input.source,
       startedAt: input.startedAt
     }
+    if (cancellation) {
+      const abort = (): void => {
+        this.abortCellWrite(input.cellId, input.writeId)
+        cancellation.onAbort()
+      }
+      cancellation.signal.addEventListener('abort', abort, { once: true })
+      this.writeCancellationCleanup = () => cancellation.signal.removeEventListener('abort', abort)
+    }
     return cloneCell(cell)
   }
 
@@ -337,6 +350,8 @@ export class NotebookSessionAggregate<
   abortCellWrite(cellId: string, writeId: string): Readonly<NotebookCell> {
     const cell = this.requireCell(cellId)
     this.assertActiveWrite(writeId, cellId)
+    this.writeCancellationCleanup?.()
+    this.writeCancellationCleanup = undefined
     this.activeWriteValue = undefined
     cell.writeId = undefined
     cell.code = ''
@@ -347,6 +362,8 @@ export class NotebookSessionAggregate<
   finishCellWrite(cellId: string, writeId: string): Readonly<NotebookCell> {
     const cell = this.requireCell(cellId)
     this.assertActiveWrite(writeId, cellId)
+    this.writeCancellationCleanup?.()
+    this.writeCancellationCleanup = undefined
     this.activeWriteValue = undefined
     cell.writeId = undefined
     cell.status = 'idle'
@@ -649,6 +666,9 @@ export class NotebookSessionAggregate<
   }
 
   shutdownExecutor(): Promise<{ reaped: boolean }> {
+    if (this.activeWriteValue) {
+      this.abortCellWrite(this.activeWriteValue.cellId, this.activeWriteValue.writeId)
+    }
     const executor = this.executorValue
     this.executorGenerationActive = false
     const lifecycleDrain = this.executorLifecycleQueue

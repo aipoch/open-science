@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import type {
   NotebookCell,
+  AbortNotebookCodeCellRequest,
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
   ExecuteNotebookCodeRequest,
@@ -838,7 +839,10 @@ class NotebookRuntimeService {
   }
 
   // Starts an exclusive agent/user write stream into a cell and locks notebook editing.
-  async beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<{
+  async beginCodeCell(
+    request: BeginNotebookCodeCellRequest,
+    signal?: AbortSignal
+  ): Promise<{
     sessionId: string
     cellId: string
     writeId: string
@@ -849,13 +853,16 @@ class NotebookRuntimeService {
       const cellId = request.cellId ?? `cell-${randomUUID()}`
       const writeId = `write-${randomUUID()}`
       const source = request.source ?? 'agent'
-      const cell = session.beginCellWrite({
-        cellId,
-        language: request.language ?? 'python',
-        writeId,
-        source,
-        startedAt: Date.now()
-      })
+      const cell = session.beginCellWrite(
+        {
+          cellId,
+          language: request.language ?? 'python',
+          writeId,
+          source,
+          startedAt: Date.now()
+        },
+        signal ? { signal, onAbort: () => this.sessionLifecycle.notifyChanged(session) } : undefined
+      )
 
       this.sessionLifecycle.notifyAvailable(session, source)
       this.sessionLifecycle.notifyChanged(session)
@@ -909,6 +916,21 @@ class NotebookRuntimeService {
     })
   }
 
+  // Explicit recovery uses the same lane lookup and exact write identity as append/finish.
+  async abortCodeCell(request: AbortNotebookCodeCellRequest): Promise<{
+    sessionId: string
+    cellId: string
+    code: string
+    status: NotebookCell['status']
+  }> {
+    return this.sessionLifecycle.runProjectOperation(request, async () => {
+      const session = await this.sessionLifecycle.ensure(request)
+      const cell = session.abortCellWrite(request.cellId, request.writeId)
+      this.sessionLifecycle.notifyChanged(session)
+      return { sessionId: session.sessionId, cellId: cell.id, code: cell.code, status: cell.status }
+    })
+  }
+
   // Compatibility facade: Session lookup and public summary projection stay here; lifecycle is owned.
   async runCell(
     request: RunNotebookCellRequest,
@@ -933,7 +955,7 @@ class NotebookRuntimeService {
     signal?: AbortSignal
   ): Promise<NotebookRunSummary> {
     assertNotebookCodeWithinLimit(request.code)
-    const begin = await this.beginCodeCell(request)
+    const begin = await this.beginCodeCell(request, signal)
 
     await this.appendCodeCell({
       ...request,
@@ -1104,6 +1126,14 @@ class NotebookRuntimeService {
       }
 
       const session = await this.sessionLifecycle.ensure(request)
+
+      if (!target) {
+        const write = session.snapshot().activeWrite
+        if (write) {
+          session.abortCellWrite(write.cellId, write.writeId)
+          this.sessionLifecycle.notifyChanged(session)
+        }
+      }
 
       if (target) {
         const { language, environment } = target

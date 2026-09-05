@@ -14,6 +14,7 @@ import {
   notebookExecuteCommand,
   notebookExportIpynbAllCommand,
   notebookExportIpynbCommand,
+  notebookAbortCodeCellCommand,
   notebookFinishCodeCellCommand,
   notebookInspectNamespaceCommand,
   notebookReadInputPreviewCommand,
@@ -73,7 +74,7 @@ const invocation = <Args extends readonly unknown[]>(
 })
 
 describe('Notebook application commands', () => {
-  it('owns exactly the 17 renderer-callable Notebook and Environment commands', () => {
+  it('owns exactly the 18 renderer-callable Notebook and Environment commands', () => {
     expect([
       ...notebookApplicationCommands.commands,
       ...notebookEnvironmentApplicationCommands.commands
@@ -83,6 +84,7 @@ describe('Notebook application commands', () => {
       expect.objectContaining({ name: 'notebook:reference' }),
       expect.objectContaining({ name: 'notebook:begin-code-cell' }),
       expect.objectContaining({ name: 'notebook:append-code-cell' }),
+      expect.objectContaining({ name: 'notebook:abort-code-cell' }),
       expect.objectContaining({ name: 'notebook:finish-code-cell' }),
       expect.objectContaining({ name: 'notebook:run-cell' }),
       expect.objectContaining({ name: 'notebook:execute' }),
@@ -105,6 +107,7 @@ describe('Notebook application commands', () => {
       'reference',
       'beginCodeCell',
       'appendCodeCell',
+      'abortCodeCell',
       'finishCodeCell',
       'runCell',
       'execute',
@@ -146,6 +149,11 @@ describe('Notebook application commands', () => {
         notebookFinishCodeCellCommand,
         [{ ...session, cellId: 'cell-1', writeId: 'write-1' }],
         'finishCodeCell'
+      ],
+      [
+        notebookAbortCodeCellCommand,
+        [{ ...session, cellId: 'cell-1', writeId: 'write-1' }],
+        'abortCodeCell'
       ],
       [notebookRunCellCommand, [{ ...session, cellId: 'cell-1' }], 'runCell'],
       [notebookExecuteCommand, [{ ...session, code: 'print(1)' }], 'execute'],

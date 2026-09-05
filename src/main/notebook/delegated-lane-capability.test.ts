@@ -34,6 +34,53 @@ afterEach(async () => {
 })
 
 describe('delegated Notebook lane capability', () => {
+  it('keeps child code reception alive until its own capability is revoked', async () => {
+    const beginCodeCell = vi.fn(async (_request: unknown, signal?: AbortSignal) => ({
+      cancelled: signal?.aborted
+    }))
+    const server = new NotebookLocalRpcServer({
+      beginCodeCell,
+      shutdown: vi.fn(async () => undefined)
+    } as never)
+    const child = await server.issueDelegatedNotebookConnection({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      rootFrameId: 'root-frame',
+      agentFrameId: 'child-frame',
+      attemptId: 'child-attempt',
+      messageBranchId: 'child-branch',
+      runtimeSegmentId: 'child-runtime',
+      promptMessageId: 'child-prompt',
+      workspaceCwd: '/workspace/child',
+      isAttemptWritable: () => true
+    })
+    server.setArtifactTurnBinding('session-1', {
+      projectId: 'project-1',
+      ownerExecutionId: 'main-turn',
+      provenanceContext: {
+        rootFrameId: 'root-frame',
+        agentFrameId: 'root-frame',
+        messageBranchId: 'main-branch',
+        runtimeSegmentId: 'main-runtime',
+        promptMessageId: 'main-prompt'
+      }
+    })
+    try {
+      const response = await request(child, 'beginCodeCell', {})
+      expect(response.status).toBe(200)
+      await response.json()
+      const signal = beginCodeCell.mock.calls[0]?.[1]
+      expect(signal?.aborted).toBe(false)
+      server.clearArtifactTurnBinding('session-1', 'main-turn')
+      server.releaseSessionCapabilities('session-1')
+      expect(signal?.aborted).toBe(false)
+      await child.revoke()
+      expect(signal?.aborted).toBe(true)
+    } finally {
+      await server.close()
+    }
+  })
+
   it('binds child Help and parent messaging to the issued production capability identity', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'delegated-discovery-capability-'))
     const sendMessage = vi.fn(async () => ({

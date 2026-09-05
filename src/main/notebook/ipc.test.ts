@@ -61,6 +61,7 @@ describe('notebook IPC handlers', () => {
       exportIpynb: vi.fn().mockResolvedValue({ saved: true, filePath: '/tmp/session.ipynb' }),
       beginCodeCell: vi.fn().mockResolvedValue({ cellId: 'cell-1', writeId: 'write-1' }),
       appendCodeCell: vi.fn().mockResolvedValue({ receivedBytes: 5 }),
+      abortCodeCell: vi.fn().mockResolvedValue({ status: 'idle' }),
       finishCodeCell: vi.fn().mockResolvedValue({ status: 'idle' }),
       restart: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
       shutdown: vi.fn().mockResolvedValue({ sessionId: 'session-1', status: 'shutdown' })
@@ -137,6 +138,7 @@ describe('notebook IPC handlers', () => {
       getSessionReference: vi.fn().mockResolvedValue(null),
       beginCodeCell: vi.fn().mockResolvedValue({ cellId: 'cell-1', writeId: 'write-1' }),
       appendCodeCell: vi.fn().mockResolvedValue({ receivedBytes: 5 }),
+      abortCodeCell: vi.fn().mockResolvedValue({ status: 'idle' }),
       finishCodeCell: vi.fn().mockResolvedValue({ status: 'idle' }),
       runCell: vi.fn().mockResolvedValue({ runId: 'run-1', status: 'completed' }),
       execute: vi.fn().mockResolvedValue({ runId: 'run-2', status: 'completed' }),
@@ -153,6 +155,7 @@ describe('notebook IPC handlers', () => {
       'notebook:reference',
       'notebook:begin-code-cell',
       'notebook:append-code-cell',
+      'notebook:abort-code-cell',
       'notebook:finish-code-cell',
       'notebook:run-cell',
       'notebook:execute',

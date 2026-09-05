@@ -30,6 +30,7 @@ const createRuntime = (
   getSessionReference: unavailable('getSessionReference'),
   beginCodeCell: unavailable('beginCodeCell'),
   appendCodeCell: unavailable('appendCodeCell'),
+  abortCodeCell: unavailable('abortCodeCell'),
   finishCodeCell: unavailable('finishCodeCell'),
   runCell: unavailable('runCell'),
   execute: unavailable('execute'),
@@ -158,6 +159,7 @@ describe('Notebook command workflows', () => {
       inspectNamespace: vi.fn(),
       beginCodeCell: vi.fn(),
       appendCodeCell: vi.fn(),
+      abortCodeCell: vi.fn(),
       finishCodeCell: vi.fn(),
       runCell: vi.fn(),
       execute: vi.fn(),
@@ -182,6 +184,7 @@ describe('Notebook command workflows', () => {
         writeId: 'write-1',
         delta: 'print(1)'
       }),
+      workflows.abortCodeCell({ ...session, cellId: 'cell-1', writeId: 'write-1' }),
       workflows.finishCodeCell({ ...session, cellId: 'cell-1', writeId: 'write-1' }),
       workflows.runCell({ ...session, cellId: 'cell-1', source: 'user' }),
       workflows.execute({ ...session, code: 'print(1)', source: 'user' }),

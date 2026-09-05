@@ -3006,6 +3006,7 @@ describe('startWebHttpServer', () => {
     expect(
       notebookChannels.filter((channel) => !localOnly(notebookChannels).includes(channel))
     ).toEqual([
+      'notebook:abort-code-cell',
       'notebook:append-code-cell',
       'notebook:begin-code-cell',
       'notebook:execute',

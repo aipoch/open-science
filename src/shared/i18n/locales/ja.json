@@ -99,6 +99,8 @@
     "Import Connector configuration": "コネクタ構成のインポート"
   },
   "renderer": {
+    "Receiving code. Cancelling discards the unfinished code.": "コードを受信しています。キャンセルすると未完成のコードは破棄されます。",
+    "Cancel code reception": "コードの受信をキャンセル",
     "First row is used as column headers": "先頭行を列見出しとして使用します",
     "Notebook network access": "Notebook のネットワークアクセス",
     "Control which internet domains Notebook Python, R, REPL, and Bash can reach.": "Notebook の Python、R、REPL、Bash がアクセスできるインターネットドメインを制御します。",
