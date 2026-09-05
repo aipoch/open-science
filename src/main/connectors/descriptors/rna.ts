@@ -436,8 +436,10 @@ export const RNA_TOOLS: ToolDescriptor[] = [
   {
     id: 'search_sequence',
     connector: 'rna',
+    // Preserve the default 300s polling window with headroom for submission and network waits.
+    totalTimeoutMs: 600_000,
     description:
-      'Search a single RNA/DNA sequence against all Rfam covariance models (async cmscan): submit to rfam.org and poll until done. Known upstream limitation: the job backend may be down (valid submissions return "SearchUnavailable … come back later"; invalid sequences still get a 400) — the error is surfaced as-is.',
+      'Search a single RNA/DNA sequence against all Rfam covariance models (async cmscan): submit to rfam.org and poll until done. The whole call is capped at 600 seconds, including submission and polling. Known upstream limitation: the job backend may be down (valid submissions return "SearchUnavailable … come back later"; invalid sequences still get a 400) — the error is surfaced as-is.',
     input: {
       type: 'object',
       properties: {
