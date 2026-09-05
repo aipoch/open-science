@@ -1658,6 +1658,79 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
   })
 
+  it('keeps a loaded Session body after selecting a different Session', () => {
+    const loadedMessages = Array.from({ length: 12 }, (_, index) => ({
+      id: `message-${index + 1}`,
+      role: 'user' as const,
+      content: `Turn ${index + 1}`,
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: index + 1,
+      updatedAt: index + 1
+    }))
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: 'session-loaded',
+          projectId: 'project-1',
+          title: 'Loaded session',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: loadedMessages.length,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 1,
+          updatedAt: 4,
+          needsStartupRecovery: false
+        },
+        {
+          number: 2,
+          id: 'session-summary',
+          projectId: 'project-1',
+          title: 'Summary session',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 2,
+          updatedAt: 3,
+          needsStartupRecovery: false
+        }
+      ],
+      {
+        id: 'session-loaded',
+        projectId: 'project-1',
+        title: 'Loaded session',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: loadedMessages,
+        createdAt: 1,
+        updatedAt: 4,
+        revision: 1
+      }
+    )
+
+    useSessionStore.getState().selectSession('session-summary')
+
+    const loaded = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === 'session-loaded')
+    const summary = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === 'session-summary')
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-summary')
+    expect(loaded?.contentLoaded).not.toBe(false)
+    expect(loaded?.messages).toHaveLength(12)
+    expect(summary?.contentLoaded).toBe(false)
+    expect(summary?.messages).toEqual([])
+  })
+
   it('applies archive state from an older durable Session update without losing newer local state', () => {
     useSessionStore.getState().hydrateSessions([
       {

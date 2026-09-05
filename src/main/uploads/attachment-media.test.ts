@@ -167,7 +167,9 @@ const getDocument = vi.fn(() => ({
   })
 }))
 
-vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({ getDocument: () => getDocument() }))
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
+  getDocument: (options?: unknown) => getDocument(options)
+}))
 
 let root: string
 
@@ -653,6 +655,22 @@ describe('extractPdfText', () => {
     await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
 
     await expect(inspectPdfPageCount(filePath)).resolves.toBe(2)
+  })
+
+  it('loads an admitted PDF into pdfjs as a complete in-memory buffer', async () => {
+    const filePath = join(root, 'admitted.pdf')
+    const bytes = Buffer.alloc(32 * 1024, 0x25)
+    await writeFile(filePath, bytes)
+
+    await extractPdfText(filePath)
+
+    expect(getDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.any(Uint8Array)
+      })
+    )
+    const options = getDocument.mock.calls[0]?.[0] as { data: Uint8Array }
+    expect(options.data.byteLength).toBe(bytes.byteLength)
   })
 
   it('does not inspect or read PDF sources above the automatic extraction limit', async () => {
