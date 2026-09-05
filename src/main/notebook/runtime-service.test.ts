@@ -4476,10 +4476,13 @@ describe('notebook runtime service', () => {
     ['python', 'r', false],
     ['r', 'python', false],
     ['python', 'r', true],
-    ['r', 'python', true]
+    ['r', 'python', true],
+    ['r', undefined, false],
+    ['r', undefined, true]
   ] as const)(
-    'reuses a cell from %s to %s with consistent execution and history (queued=%s)',
-    async (oldLanguage, newLanguage, queued) => {
+    'reuses a cell from %s with requested language %s and consistent execution and history (queued=%s)',
+    async (oldLanguage, requestedLanguage, queued) => {
+      const newLanguage = requestedLanguage ?? oldLanguage
       const root = await createStorageRoot()
       const blockerStarted = createDeferred<void>()
       const releaseBlocker = createDeferred<void>()
@@ -4535,7 +4538,7 @@ describe('notebook runtime service', () => {
           await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1))
           enqueue.mockRestore()
           await expect(
-            service.beginCodeCell({ ...request, language: newLanguage })
+            service.beginCodeCell({ ...request, language: requestedLanguage })
           ).rejects.toThrow('Notebook cell is queued or running: cell-b')
           const rejected = await service.state(request)
           expect(rejected.cells.find((cell) => cell.id === request.cellId)).toMatchObject({
@@ -4546,7 +4549,7 @@ describe('notebook runtime service', () => {
           await Promise.all(pending)
         }
 
-        const begin = await service.beginCodeCell({ ...request, language: newLanguage })
+        const begin = await service.beginCodeCell({ ...request, language: requestedLanguage })
         const receiving = await service.state(request)
         await service.appendCodeCell({
           ...request,
