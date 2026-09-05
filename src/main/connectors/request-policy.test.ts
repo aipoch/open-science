@@ -19,9 +19,9 @@ describe('Connector request policy', () => {
     expect(boundedExponentialBackoff(4)).toBe(4_000)
   })
 
-  it('honors capped numeric Retry-After before falling back to jittered backoff', () => {
+  it('honors numeric Retry-After before falling back to jittered backoff', () => {
     expect(connectorRetryDelay(0, '2')).toBe(2_000)
-    expect(connectorRetryDelay(0, '30')).toBe(5_000)
+    expect(connectorRetryDelay(0, '30')).toBe(30_000)
     vi.spyOn(Math, 'random').mockReturnValue(0.5)
     expect(connectorRetryDelay(2, null, 200)).toBe(900)
   })
