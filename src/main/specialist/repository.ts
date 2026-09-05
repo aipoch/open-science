@@ -10,13 +10,15 @@ import {
   type StoredSpecialist,
   type StoredSpecialists
 } from './types'
-import type {
-  SpecialistCapabilityMode,
-  SpecialistDocumentIntegrity,
-  SpecialistDocumentIntegrityIssue,
-  SpecialistFullAccessConfig,
-  SpecialistSelectedConfig,
-  ConnectorToolRule
+import {
+  CONNECTOR_TOOL_PATTERN_MAX_LENGTH,
+  CONNECTOR_TOOL_RULE_MAX_COUNT,
+  type SpecialistCapabilityMode,
+  type SpecialistDocumentIntegrity,
+  type SpecialistDocumentIntegrityIssue,
+  type SpecialistFullAccessConfig,
+  type SpecialistSelectedConfig,
+  type ConnectorToolRule
 } from '../../shared/specialist'
 
 const SPECIALISTS_FILE = 'specialists.json'
@@ -77,10 +79,13 @@ const connectorToolRuleWouldLoseData = (value: unknown): boolean => {
   if (typeof value.connectorId !== 'string' || !value.connectorId) return true
   if (value.includedMethods !== undefined && !isExactStringArray(value.includedMethods)) return true
   if (value.excludedMethods !== undefined && !isExactStringArray(value.excludedMethods)) return true
-  if (value.includeToolsPattern !== undefined && typeof value.includeToolsPattern !== 'string') {
-    return true
-  }
-  return value.excludeToolsPattern !== undefined && typeof value.excludeToolsPattern !== 'string'
+  return ['includeToolsPattern', 'excludeToolsPattern'].some(
+    (key) =>
+      value[key] !== undefined &&
+      (typeof value[key] !== 'string' ||
+        value[key].length === 0 ||
+        value[key].length > CONNECTOR_TOOL_PATTERN_MAX_LENGTH)
+  )
 }
 
 const FULL_ACCESS_KEYS = new Set(['excludedSkillIds', 'excludedConnectorIds', 'connectorTools'])
@@ -99,9 +104,20 @@ const capabilityConfigWouldLoseData = (
   return (
     value.connectorTools !== undefined &&
     (!Array.isArray(value.connectorTools) ||
+      value.connectorTools.length > CONNECTOR_TOOL_RULE_MAX_COUNT ||
       value.connectorTools.some(connectorToolRuleWouldLoseData))
   )
 }
+
+const capabilitiesWouldLoseData = (value: Record<string, unknown>): boolean =>
+  capabilityConfigWouldLoseData(value.fullAccess, FULL_ACCESS_KEYS, [
+    'excludedSkillIds',
+    'excludedConnectorIds'
+  ]) ||
+  capabilityConfigWouldLoseData(value.selectedCapabilities, SELECTED_KEYS, [
+    'skillIds',
+    'connectorIds'
+  ])
 
 const IMPORT_BASELINE_KEYS = new Set([
   'importedAt',
@@ -146,18 +162,7 @@ const storedSpecialistWouldLoseData = (value: Record<string, unknown>): boolean 
     return true
   }
   if (value.ownedSkillIds !== undefined && !isExactStringArray(value.ownedSkillIds)) return true
-  if (
-    capabilityConfigWouldLoseData(value.fullAccess, FULL_ACCESS_KEYS, [
-      'excludedSkillIds',
-      'excludedConnectorIds'
-    ]) ||
-    capabilityConfigWouldLoseData(value.selectedCapabilities, SELECTED_KEYS, [
-      'skillIds',
-      'connectorIds'
-    ])
-  ) {
-    return true
-  }
+  if (capabilitiesWouldLoseData(value)) return true
   if (value.importBaseline !== undefined) {
     if (!isRecord(value.importBaseline)) return true
     if (
@@ -295,16 +300,20 @@ export const sanitizeStoredSpecialist = (v: unknown): StoredSpecialist | undefin
   return specialist
 }
 
-const sanitizeSpecialistsWithIntegrity = (
-  v: unknown
-): {
+type SpecialistReadSnapshot = {
   document: StoredSpecialists
   integrity: SpecialistDocumentIntegrity
-} => {
+  // Read-time metadata only: never serialize sanitized permissions as runnable.
+  invalidCapabilityIds: ReadonlySet<string>
+}
+
+const sanitizeSpecialistsWithIntegrity = (v: unknown): SpecialistReadSnapshot => {
+  const invalidCapabilityIds = new Set<string>()
   const issues: SpecialistDocumentIntegrityIssue[] = []
   if (!isRecord(v)) {
     return {
       document: createEmptySpecialists(),
+      invalidCapabilityIds,
       integrity: { status: 'degraded', issues: [{ code: 'document-invalid' }] }
     }
   }
@@ -321,6 +330,7 @@ const sanitizeSpecialistsWithIntegrity = (
       log.warn('ignoring old experimental specialist schema (kebab-case agentId detected)')
       return {
         document: createEmptySpecialists(),
+        invalidCapabilityIds,
         integrity: { status: 'degraded', issues: [{ code: 'legacy-schema-unsupported' }] }
       }
     }
@@ -333,6 +343,9 @@ const sanitizeSpecialistsWithIntegrity = (
         issues.push({ code: 'record-invalid', recordIndex })
         return
       }
+      if (isRecord(candidate) && capabilitiesWouldLoseData(candidate)) {
+        invalidCapabilityIds.add(sanitized.id)
+      }
       specialists.push(sanitized)
       if (isRecord(candidate) && storedSpecialistWouldLoseData(candidate)) {
         issues.push({ code: 'record-sanitized', recordIndex })
@@ -341,6 +354,7 @@ const sanitizeSpecialistsWithIntegrity = (
   }
   return {
     document: { version: SPECIALISTS_FILE_VERSION, specialists },
+    invalidCapabilityIds,
     integrity: issues.length > 0 ? { status: 'degraded', issues } : { status: 'ok' }
   }
 }
@@ -367,17 +381,18 @@ export class SpecialistRepository {
     return (await this.getAllWithIntegrity()).document
   }
 
-  async getAllWithIntegrity(): Promise<{
-    document: StoredSpecialists
-    integrity: SpecialistDocumentIntegrity
-  }> {
+  async getAllWithIntegrity(): Promise<SpecialistReadSnapshot> {
     try {
       const result = await readDurableJsonFile(this.filePath, (contents) =>
         sanitizeSpecialistsWithIntegrity(JSON.parse(contents) as unknown)
       )
       return result.status === 'found'
         ? result.value
-        : { document: createEmptySpecialists(), integrity: { status: 'ok' } }
+        : {
+            document: createEmptySpecialists(),
+            integrity: { status: 'ok' },
+            invalidCapabilityIds: new Set()
+          }
     } catch (err) {
       const parseFailure = err instanceof SyntaxError
       log.error(

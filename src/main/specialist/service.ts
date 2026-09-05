@@ -309,8 +309,15 @@ export class SpecialistService {
     return { items, integrity: snapshot.integrity }
   }
 
+  private async listRunnableCustom(): Promise<SpecialistView[]> {
+    const snapshot = await this.repo.getAllWithIntegrity()
+    return snapshot.document.specialists
+      .filter((profile) => !snapshot.invalidCapabilityIds.has(profile.id))
+      .map(toView)
+  }
+
   async resolveRunnableById(id: string): Promise<SpecialistView> {
-    const custom = await this.list()
+    const custom = await this.listRunnableCustom()
     const customMatch = custom.find((profile) => profile.id === id)
     if (customMatch) return customMatch
     const builtin = (await this.builtinEntries()).find((entry) => entry.id === id)
@@ -319,7 +326,7 @@ export class SpecialistService {
   }
 
   async resolveRunnableByName(name: string): Promise<SpecialistView> {
-    const custom = await this.list()
+    const custom = await this.listRunnableCustom()
     const customMatch = custom.find((profile) => profile.name === name)
     if (customMatch) return customMatch
     const builtin = (await this.builtinEntries()).find((entry) => entry.name === name)
@@ -329,7 +336,7 @@ export class SpecialistService {
 
   async resolveRunnableByReference(reference: string): Promise<SpecialistView> {
     const profiles = [
-      ...(await this.list()),
+      ...(await this.listRunnableCustom()),
       ...(await this.builtinEntries()).map((entry) => this.toBuiltinView(entry))
     ]
     const byId = profiles.find((profile) => profile.id === reference)
