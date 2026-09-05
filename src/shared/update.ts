@@ -16,7 +16,7 @@ export type UpdateManifest = {
 export type UpdateState =
   'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'applying' | 'error'
 
-export type UpdateBlocker = 'agent' | 'delegated' | 'notebook' | 'reviewer'
+export type UpdateBlocker = 'agent' | 'delegated' | 'notebook' | 'reviewer' | 'settings-install'
 
 // Call intent stays transient and transport-neutral. Desktop callers omit these options; headless
 // callers use them to avoid native dialogs and desktop relaunches.

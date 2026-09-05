@@ -212,6 +212,15 @@ class ProviderAuthLifecycleOwner {
     this.claudeSharedAuth.cancelLogin()
   }
 
+  async dispose(): Promise<void> {
+    this.codexIsolatedLoginGeneration += 1
+    await Promise.all([
+      Promise.resolve().then(() => this.codexAuth.cancelLogin()),
+      Promise.resolve().then(() => this.claudeIsolatedAuth.cancelLogin()),
+      Promise.resolve().then(() => this.claudeSharedAuth.cancelLogin())
+    ])
+  }
+
   async loginIsolatedCodex(): Promise<ValidateProviderResult> {
     const loginGeneration = ++this.codexIsolatedLoginGeneration
     const result = this.codexAuthValidationResult(await this.codexAuth.loginIsolated())

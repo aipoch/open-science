@@ -322,6 +322,76 @@ describe('claude-install: run', () => {
     }
   })
 
+  it.each(['degraded', 'rejected', 'timeout'] as const)(
+    'reports %s cancellation cleanup without extending the cleanup budget',
+    async (outcome) => {
+      vi.useFakeTimers()
+      const child = new FakeChild()
+      const controller = new AbortController()
+      const onCleanupFailure = vi.fn()
+      if (outcome === 'degraded') terminateProcessTree.mockResolvedValue({ reaped: false })
+      if (outcome === 'rejected') terminateProcessTree.mockRejectedValue(new Error('kill failed'))
+      if (outcome === 'timeout')
+        terminateProcessTree.mockImplementation(() => new Promise(() => undefined))
+      try {
+        const pending = runInstallWithFallback({
+          source: 'npm',
+          installId: 'failed-cleanup',
+          onEvent: vi.fn(),
+          onCleanupFailure,
+          signal: controller.signal,
+          spawnImpl: () => child as never,
+          npmPrefixWritable: async () => true
+        })
+        await Promise.resolve()
+        await Promise.resolve()
+        controller.abort()
+        await vi.advanceTimersByTimeAsync(8_000)
+        await expect(pending).resolves.toMatchObject({
+          ok: false,
+          error: 'Installation cancelled.'
+        })
+        expect(onCleanupFailure).toHaveBeenCalledExactlyOnceWith(expect.any(Error))
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('terminates and drains the install process tree when aborted', async () => {
+    const child = new FakeChild()
+    const controller = new AbortController()
+    const cleanup = Promise.withResolvers<{ reaped: true }>()
+    terminateProcessTree.mockReturnValue(cleanup.promise)
+    const pending = runInstall({
+      source: 'npm',
+      installId: 'install-abort',
+      onEvent: () => undefined,
+      signal: controller.signal,
+      spawnImpl: () => child as never,
+      npmPrefixWritable: () => Promise.resolve(true)
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    controller.abort()
+    expect(terminateProcessTree).toHaveBeenCalledWith(child)
+    let settled = false
+    void pending.then(() => {
+      settled = true
+    })
+    child.emit('exit', null)
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    cleanup.resolve({ reaped: true })
+    await expect(pending).resolves.toEqual({
+      installId: 'install-abort',
+      ok: false,
+      error: 'Installation cancelled.'
+    })
+  })
+
   it('marks an official-script failure region-blocked when it pipes HTML', async () => {
     const child = new FakeChild()
     const promise = runInstall({

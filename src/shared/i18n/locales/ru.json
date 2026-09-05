@@ -163,6 +163,7 @@
     "Add context for the Agent": "Добавить контекст для Агента",
     "Agent Message": "Сообщение Агента",
     "An annotated image is no longer available. Restore access to its fixed version or remove the annotation, then try again.": "Аннотированное изображение больше недоступно. Восстановите доступ к зафиксированной версии или удалите аннотацию и повторите попытку.",
+    "An Agent Runtime is still installing. Wait for it to finish before restarting to update.": "Среда выполнения агента всё ещё устанавливается. Дождитесь завершения установки, прежде чем перезапускать приложение для обновления.",
     "Annotated for Agent": "Аннотировано для Агента",
     "Annotate": "Аннотировать",
     "Historical versions cannot be annotated. Switch to the latest version to annotate.": "Исторические версии нельзя аннотировать. Переключитесь на последнюю версию, чтобы добавить аннотацию.",

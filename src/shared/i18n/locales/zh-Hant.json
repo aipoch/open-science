@@ -154,6 +154,7 @@
     "Add context for the Agent": "為智能體新增上下文",
     "Agent Message": "智能體訊息",
     "An annotated image is no longer available. Restore access to its fixed version or remove the annotation, then try again.": "某個已標註的圖片已無法使用。請恢復其固定版本的存取權限，或移除該標註，然後再試一次。",
+    "An Agent Runtime is still installing. Wait for it to finish before restarting to update.": "智能體執行環境仍在安裝。請等待安裝完成後再重新啟動以更新。",
     "Annotated for Agent": "已為智能體標註",
     "Annotate": "標註",
     "Historical versions cannot be annotated. Switch to the latest version to annotate.": "無法標註歷史版本。請切換到最新版本後再進行標註。",

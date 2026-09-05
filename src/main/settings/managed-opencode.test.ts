@@ -125,6 +125,8 @@ describe('installManagedOpencode', () => {
       totalBytes: tgz.length
     })
 
+    const controller = new AbortController()
+    const verifyBinary = vi.fn(() => ({ ok: true }) as const)
     const outcome = await installManagedOpencode({
       installId: 'i1',
       onEvent: () => undefined,
@@ -134,7 +136,8 @@ describe('installManagedOpencode', () => {
       fetchJson,
       fetchTarball,
       // Injected pass keeps the test offline and host-independent (no real spawn of the extracted file).
-      verifyBinary: () => ({ ok: true }),
+      verifyBinary,
+      signal: controller.signal,
       tmpDir: root
     })
 
@@ -142,6 +145,7 @@ describe('installManagedOpencode', () => {
     expect(outcome.version).toBe('1.18.3')
     expect(outcome.resolvedPath).toBe(join(managedOpencodeDir(root), 'opencode'))
     expect(await readFile(outcome.resolvedPath!, 'utf8')).toContain('echo opencode')
+    expect(verifyBinary).toHaveBeenCalledWith(expect.any(String), controller.signal)
   })
 
   it('reports a structured failure (never throws) when the integrity check fails', async () => {
@@ -990,6 +994,23 @@ describe('runVersionProbe', () => {
       timeout: 15000
     })
   })
+
+  it.skipIf(process.platform === 'win32')('aborts a running version probe', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'opencode-version-abort-'))
+    const script = join(root, 'slow-version')
+    await writeFile(script, `#!${process.execPath}\nsetTimeout(() => {}, 1000)\n`)
+    await chmod(script, 0o755)
+    const controller = new AbortController()
+
+    try {
+      setTimeout(() => controller.abort(), 25)
+      const probe = await runVersionProbe(script, undefined, controller.signal)
+
+      expect(probe.error?.name).toBe('AbortError')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('classifyVerifyResult', () => {
@@ -1070,13 +1091,13 @@ describe('defaultVerifyBinary', () => {
     }
   })
 
-  it('reports ok for a binary that runs `--version` and exits zero', () => {
-    // node itself answers `--version` with exit 0 — the real spawnSync path, host-independent.
-    expect(defaultVerifyBinary(process.execPath)).toEqual({ ok: true })
+  it('reports ok for a binary that runs `--version` and exits zero', async () => {
+    // node itself answers `--version` with exit 0 — the real async process path, host-independent.
+    await expect(defaultVerifyBinary(process.execPath)).resolves.toEqual({ ok: true })
   })
 
-  it('reports a spawn error (unrunnable) when the binary path does not exist', () => {
-    const result = defaultVerifyBinary(join(tmpdir(), 'no-such-opencode-binary-xyz'))
+  it('reports a spawn error (unrunnable) when the binary path does not exist', async () => {
+    const result = await defaultVerifyBinary(join(tmpdir(), 'no-such-opencode-binary-xyz'))
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toMatch(/spawn error/)
   })
@@ -1091,7 +1112,7 @@ describe('defaultVerifyBinary', () => {
       await writeFile(script, '#!/bin/sh\nexit 3\n')
       await chmod(script, 0o755)
 
-      const result = defaultVerifyBinary(script)
+      const result = await defaultVerifyBinary(script)
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.reason).toMatch(/exited with code 3/)
     }

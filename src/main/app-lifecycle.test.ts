@@ -170,13 +170,16 @@ const setup = (
       | 'configureMainWindow'
     >
   > & {
+    holdSettingsInstallAdmission?: () => () => void
     trayHost?: boolean
     detectActiveSessions?: () => ActiveSessionInfo[]
     hasActiveReviewerWork?: () => boolean
+    hasActiveSettingsWork?: () => boolean
+    getActiveSettingsInstallId?: () => string | undefined
     confirmClose?: (
       variant: CloseConfirmVariant,
       sessions: ActiveSessionInfo[],
-      reviewerActive?: boolean
+      unlistedWorkActive?: boolean
     ) => Promise<CloseConfirmChoice>
   } = {}
 ): Harness => {
@@ -214,6 +217,8 @@ const setup = (
       },
       shutdownBackends,
       prepareForQuit,
+      holdSettingsInstallAdmission:
+        overrides.holdSettingsInstallAdmission ?? (() => () => undefined),
       abortQuitPreparation,
       flushSessionPersistence,
       log: overrides.log,
@@ -229,6 +234,9 @@ const setup = (
       platform: overrides.platform ?? 'linux',
       detectActiveSessions,
       hasActiveReviewerWork: overrides.hasActiveReviewerWork ?? (() => false),
+      getActiveSettingsInstallId:
+        overrides.getActiveSettingsInstallId ??
+        (() => (overrides.hasActiveSettingsWork?.() ? 'settings-install' : undefined)),
       createConfirmClose: () => confirmClose
     })
   return {
@@ -477,6 +485,8 @@ describe('installAppLifecycle', () => {
       platform: 'linux',
       detectActiveSessions: (): ActiveSessionInfo[] => [],
       hasActiveReviewerWork: () => false,
+      getActiveSettingsInstallId: () => undefined,
+      holdSettingsInstallAdmission: () => () => undefined,
       createConfirmClose: () => (): Promise<CloseConfirmChoice> => Promise.resolve('quit')
     })
 
@@ -713,6 +723,47 @@ describe('installAppLifecycle', () => {
       })
     )
   })
+
+  it.each(['completed', 'conflict'] as const)(
+    'holds installation admission during quit preparation and handles %s persistence',
+    async (outcome) => {
+      let held = false
+      const release = vi.fn(() => {
+        held = false
+      })
+      const hold = vi.fn(() => {
+        held = true
+        return release
+      })
+      const persistence = Promise.withResolvers<RendererSessionPersistenceFlushOutcome>()
+      const { app, closeOpts } = setup({
+        holdSettingsInstallAdmission: hold,
+        flushSessionPersistence: () => persistence.promise,
+        // A failed rollback must still restore Settings admission.
+        abortQuitPreparation: async () => {
+          throw new Error('rollback failed')
+        }
+      })
+      closeOpts[0].requestQuit()
+      app.emit('before-quit')
+      const admissionClosedBeforePersistence = held
+      app.emit('before-quit')
+      persistence.resolve(outcome)
+      await flush()
+
+      expect(admissionClosedBeforePersistence).toBe(true)
+      expect(hold).toHaveBeenCalledOnce()
+      if (outcome === 'conflict') {
+        expect(release).toHaveBeenCalledOnce()
+        expect(held).toBe(false)
+        expect(app.exit).not.toHaveBeenCalled()
+      } else {
+        expect(release).not.toHaveBeenCalled()
+        expect(held).toBe(true)
+        expect(app.exit).toHaveBeenCalledWith(0)
+      }
+    }
+  )
 
   it('keeps the app open when the renderer reports an unresolved Session revision conflict', async () => {
     const flushSessionPersistence = vi.fn(async () => 'conflict' as const)
@@ -1061,6 +1112,72 @@ describe('installAppLifecycle', () => {
     expect(confirmClose).toHaveBeenCalledWith('quit', sessions)
   })
 
+  it('rechecks an active Settings install after a pre-confirmed window close', async () => {
+    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'cancel')
+    const { app, closeOpts, shutdownBackends } = setup({
+      hasActiveSettingsWork: () => true,
+      confirmClose
+    })
+
+    closeOpts[0].requestQuit()
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledWith('quit', [], true)
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it('rechecks a Settings install admitted after an empty-work quit fast path', async () => {
+    let settingsWorkActive = false
+    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => {
+      if (confirmClose.mock.calls.length === 1) {
+        settingsWorkActive = true
+        return 'quit'
+      }
+      return 'cancel'
+    })
+    const { app, quit, shutdownBackends } = setup({
+      hasActiveSettingsWork: () => settingsWorkActive,
+      confirmClose
+    })
+
+    app.emit('before-quit')
+    await flush()
+    expect(quit).toHaveBeenCalledOnce()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenLastCalledWith('quit', [], true)
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it('requires confirmation when the active Settings install changes before reissued quit', async () => {
+    let activeInstallId = 'install-1'
+    const confirmClose = vi
+      .fn<() => Promise<CloseConfirmChoice>>()
+      .mockResolvedValueOnce('quit')
+      .mockResolvedValueOnce('cancel')
+    const { app, quit, shutdownBackends } = setup({
+      getActiveSettingsInstallId: () => activeInstallId,
+      confirmClose
+    })
+
+    app.emit('before-quit')
+    await flush()
+    expect(quit).toHaveBeenCalledOnce()
+
+    activeInstallId = 'install-2'
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledTimes(2)
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
   it('before-quit with no active work proceeds to shutdown (confirmClose resolves quit)', async () => {
     const confirmClose = vi.fn(
       (_variant: CloseConfirmVariant, sessions: ActiveSessionInfo[]): Promise<CloseConfirmChoice> =>
@@ -1095,6 +1212,29 @@ describe('installAppLifecycle', () => {
     )
     const { app, quit, shutdownBackends } = setup({
       hasActiveReviewerWork: () => true,
+      confirmClose
+    })
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(confirmClose).toHaveBeenCalledWith('quit', [], true)
+    expect(quit).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it('warns before ordinary quit when only a Settings install is active', async () => {
+    const confirmClose = vi.fn(
+      (
+        _variant: CloseConfirmVariant,
+        sessions: ActiveSessionInfo[],
+        unlistedWorkActive = false
+      ): Promise<CloseConfirmChoice> =>
+        Promise.resolve(sessions.length === 0 && !unlistedWorkActive ? 'quit' : 'cancel')
+    )
+    const { app, quit, shutdownBackends } = setup({
+      hasActiveSettingsWork: () => true,
       confirmClose
     })
 
@@ -1312,7 +1452,7 @@ describe('installAppLifecycle', () => {
     expect(app.exit).not.toHaveBeenCalled()
   })
 
-  it('reissues quit when the delegated work recheck is confirmed', async () => {
+  it('reissues quit when delegated and Settings work are confirmed', async () => {
     let active: ActiveSessionInfo[] = []
     let resolveFirst: ((choice: CloseConfirmChoice) => void) | undefined
     const confirmClose = vi.fn(() => {
@@ -1325,6 +1465,7 @@ describe('installAppLifecycle', () => {
     })
     const { app, quit, shutdownBackends } = setup({
       detectActiveSessions: () => active,
+      hasActiveSettingsWork: () => true,
       confirmClose
     })
 
@@ -1435,7 +1576,7 @@ describe('installAppLifecycle', () => {
     expect(app.exit).not.toHaveBeenCalled()
   })
 
-  it('reissues a confirmed Windows titlebar quit after delegated work is confirmed', async () => {
+  it('reissues a confirmed Windows titlebar quit after delegated and Settings work are confirmed', async () => {
     const delegated: ActiveSessionInfo[] = [
       { projectId: 'demo', sessionId: 'child-live', kind: 'delegated' }
     ]
@@ -1443,6 +1584,7 @@ describe('installAppLifecycle', () => {
     const { app, closeOpts, quit, shutdownBackends } = setup({
       platform: 'win32',
       detectActiveSessions: () => delegated,
+      hasActiveSettingsWork: () => true,
       confirmClose
     })
 
@@ -1450,7 +1592,7 @@ describe('installAppLifecycle', () => {
     app.emit('before-quit')
     await flush()
 
-    expect(confirmClose).toHaveBeenCalledWith('quit', delegated)
+    expect(confirmClose).toHaveBeenCalledWith('quit', delegated, true)
     expect(quit).toHaveBeenCalledTimes(2)
 
     app.emit('before-quit')

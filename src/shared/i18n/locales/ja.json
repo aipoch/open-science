@@ -154,6 +154,7 @@
     "Add context for the Agent": "エージェント向けの補足を追加",
     "Agent Message": "エージェントのメッセージ",
     "An annotated image is no longer available. Restore access to its fixed version or remove the annotation, then try again.": "注釈付き画像を利用できなくなりました。固定バージョンへのアクセスを復元するか、注釈を削除してから再試行してください。",
+    "An Agent Runtime is still installing. Wait for it to finish before restarting to update.": "エージェントランタイムをインストール中です。完了するまで待ってから、更新のために再起動してください。",
     "Annotated for Agent": "エージェント向けに注釈済み",
     "Annotate": "注釈を付ける",
     "Historical versions cannot be annotated. Switch to the latest version to annotate.": "履歴バージョンには注釈を付けられません。注釈を付けるには最新バージョンに切り替えてください。",

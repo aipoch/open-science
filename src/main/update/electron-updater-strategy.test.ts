@@ -802,6 +802,32 @@ describe('ElectronUpdaterStrategy', () => {
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
   })
 
+  it('blocks restart while an Agent Runtime installation is active', async () => {
+    const updater = new FakeUpdater()
+    const backendTeardownGate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      installGate: createActiveResearchSafeInstallGate(
+        () => ['settings-install'],
+        backendTeardownGate
+      )
+    })
+    markUpdateReady(updater)
+
+    const status = await strategy.apply()
+
+    expect(status).toMatchObject({
+      state: 'error',
+      error:
+        'An Agent Runtime is still installing. Wait for it to finish before restarting to update.',
+      blockedBy: ['settings-install']
+    })
+    expect(backendTeardownGate).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
   it('blocks restart for root-agent, notebook, and reviewer work without tearing them down', async () => {
     const updater = new FakeUpdater()
     const backendTeardownGate = vi.fn(async () => ({ completed: true, reaped: true }))
