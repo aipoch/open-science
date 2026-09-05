@@ -386,3 +386,39 @@ it.each(['error', 'reject'] as const)(
     expect(workflow.navigationInspect?.selectedVersionId).toBe('v1')
   }
 )
+
+it.each(['error', 'reject'] as const)(
+  'ignores an obsolete inspection %s arriving with a notification before React commits',
+  async (failure) => {
+    window.api.managedFileVersions.diffText = vi.fn().mockReturnValue(new Promise(() => undefined))
+    window.api.managedFileVersions.cancelDiff = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: { cancelled: true } })
+    inspect.mockResolvedValueOnce({ ok: true, value: snapshot('upload', 2) })
+    let resolveOld!: (value: InspectResult) => void
+    let rejectOld!: (error: Error) => void
+    inspect.mockReturnValueOnce(
+      new Promise((resolve, reject) => {
+        resolveOld = resolve
+        rejectOld = reject
+      })
+    )
+    inspect.mockReturnValue(new Promise(() => undefined))
+    await render(itemFor('upload'))
+    await act(async () => workflow.startDiff())
+    await act(async () => workflow.refreshInspect())
+    expect(workflow.controlsInspect?.headVersionId).toBe('v2')
+    await act(async () => {
+      for (const listener of changedListeners) {
+        listener({ projectId: 'project-1', sources: ['upload'], kind: 'upsert' })
+      }
+      if (failure === 'error')
+        resolveOld({ ok: false, error: { code: 'STORAGE_UNAVAILABLE', message: 'obsolete error' } })
+      else rejectOld(new Error('obsolete error'))
+      await Promise.resolve()
+    })
+    expect(workflow.inspect).toBeUndefined()
+    // The pending refresh must retain Stop comparing; an obsolete failure must not leave diff mode.
+    expect(workflow.controlsInspect?.headVersionId).toBe('v2')
+  }
+)

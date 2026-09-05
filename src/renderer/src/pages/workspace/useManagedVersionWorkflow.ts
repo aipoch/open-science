@@ -71,6 +71,12 @@ const useManagedVersionWorkflow = ({
     error: { code?: string; message?: string }
   }>()
   const [refresh, setRefresh] = useState(0)
+  const refreshGeneration = useRef(0)
+  const refreshInspect = useCallback(() => {
+    // Notifications invalidate responses synchronously, before React commits the next effect.
+    refreshGeneration.current += 1
+    setRefresh(refreshGeneration.current)
+  }, [])
   const [diff, setDiff] = useState<{
     result?: ManagedFileVersionDiffResult
     error?: string
@@ -209,9 +215,9 @@ const useManagedVersionWorkflow = ({
           (event.sessionId !== undefined && event.sessionId !== item.sessionId))
       )
         return
-      setRefresh((value) => value + 1)
+      refreshInspect()
     })
-  }, [identity, item.sessionId])
+  }, [identity, item.sessionId, refreshInspect])
 
   useEffect(() => {
     let active = true
@@ -225,7 +231,7 @@ const useManagedVersionWorkflow = ({
         ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {})
       })
       .then((result) => {
-        if (!active) return
+        if (!active || refresh !== refreshGeneration.current) return
         if (!result.ok) {
           setInspectFailure({ key: requestKey, error: result.error })
           return leaveDiffMode()
@@ -236,7 +242,7 @@ const useManagedVersionWorkflow = ({
         else if (!result.value.canDiff) setDiff({})
       })
       .catch((error: unknown) => {
-        if (!active) return
+        if (!active || refresh !== refreshGeneration.current) return
         setInspectFailure({
           key: requestKey,
           error: {
@@ -254,7 +260,7 @@ const useManagedVersionWorkflow = ({
     return () => {
       active = false
     }
-  }, [identity, item.selectedVersionId, requestKey, resetDiff])
+  }, [identity, item.selectedVersionId, requestKey, refresh, resetDiff])
 
   useEffect(() => {
     if (mode !== 'diff' || !identity || !inspect?.canDiff) return
@@ -307,7 +313,7 @@ const useManagedVersionWorkflow = ({
       resetDiff(preserveDiffMode && mode === 'diff' ? 'diff' : 'view')
     },
     history,
-    refreshInspect: () => setRefresh((value) => value + 1)
+    refreshInspect
   }
 }
 
