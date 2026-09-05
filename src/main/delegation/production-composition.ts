@@ -123,7 +123,9 @@ type RootDelegatedWorkControl = Readonly<{
     }>
   ): Promise<void>
   settlementPromptEnded?(sessionId: string, promptId: string): Promise<void>
+  // Cancel current work and notifications while retaining the ability to observe future turns.
   stopAll(): Promise<void>
+  shutdown(): Promise<void>
   deleteSession(sessionId: string): Promise<void>
   deleteProject(projectId: string): Promise<void>
 }>
@@ -456,6 +458,11 @@ const createProductionDelegatedWorkComposition = (
     }
   })
 
+  const stopScopedWork = async (): Promise<void> => {
+    const scoped = await Promise.all([...works.values()])
+    await Promise.all(scoped.map(({ key, work }) => work.stopSession(key)))
+  }
+
   const root: RootDelegatedWorkControl = Object.freeze({
     pendingPermissions: () =>
       Object.freeze(
@@ -581,9 +588,12 @@ const createProductionDelegatedWorkComposition = (
       await settlementWake?.onWakePromptEnded(sessionId, promptId)
     },
     async stopAll() {
+      settlementWake?.invalidateAll()
+      await stopScopedWork()
+    },
+    async shutdown() {
       settlementWake?.shutdown()
-      const scoped = await Promise.all([...works.values()])
-      await Promise.all(scoped.map(({ key, work }) => work.stopSession(key)))
+      await stopScopedWork()
     },
     async deleteSession(sessionId) {
       settlementWake?.invalidateSession(sessionId)

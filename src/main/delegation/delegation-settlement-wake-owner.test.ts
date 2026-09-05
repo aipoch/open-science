@@ -626,33 +626,51 @@ describe('DelegationSettlementWakeOwner', () => {
     vi.useRealTimers()
   })
 
-  it('clears a pending settlement timer on shutdown', async () => {
-    vi.useFakeTimers()
-    let current = snapshot([])
-    const dispatch = vi.fn(acceptDispatch)
-    const owner = new DelegationSettlementWakeOwner({
-      readSnapshot: async () => current,
-      dispatch
-    })
-    await endRootTurn(
-      owner,
-      { sessionId: 'session-1', originatingPromptId: 'root-prompt', clean: true },
-      () => {
-        current = snapshot([child('alpha', 'running')])
-      }
-    )
-    current = snapshot([child('alpha', 'completed')])
-    await owner.onRecordsChanged('session-1')
+  it.each(['shutdown', 'invalidateAll'] as const)(
+    'clears a pending settlement timer on %s',
+    async (cleanup) => {
+      vi.useFakeTimers()
+      let current = snapshot([])
+      const dispatch = vi.fn(acceptDispatch)
+      const owner = new DelegationSettlementWakeOwner({
+        readSnapshot: async () => current,
+        dispatch
+      })
+      await endRootTurn(
+        owner,
+        { sessionId: 'session-1', originatingPromptId: 'root-prompt', clean: true },
+        () => {
+          current = snapshot([child('alpha', 'running')])
+        }
+      )
+      current = snapshot([child('alpha', 'completed')])
+      await owner.onRecordsChanged('session-1')
 
-    owner.shutdown()
-    await vi.advanceTimersByTimeAsync(200)
+      owner[cleanup]()
+      owner[cleanup]()
+      await vi.advanceTimersByTimeAsync(200)
 
-    expect(dispatch).not.toHaveBeenCalled()
-    expect(vi.getTimerCount()).toBe(0)
-    vi.useRealTimers()
-  })
+      expect(dispatch).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+      const nextLease = await owner.onRootTurnStarted({
+        sessionId: 'session-1',
+        originatingPromptId: 'root-prompt'
+      })
+      if (cleanup === 'shutdown') expect(nextLease).toBeUndefined()
+      else expect(nextLease).toEqual(expect.any(String))
+      owner.shutdown()
+      owner.invalidateAll()
+      await expect(
+        owner.onRootTurnStarted({
+          sessionId: 'session-1',
+          originatingPromptId: 'root-prompt'
+        })
+      ).resolves.toBeUndefined()
+      vi.useRealTimers()
+    }
+  )
 
-  it.each(['session', 'project', 'shutdown', 'branch'] as const)(
+  it.each(['session', 'project', 'shutdown', 'branch', 'all'] as const)(
     'rejects a prior root-turn lease whose terminal callback arrives after %s invalidation',
     async (scope) => {
       vi.useFakeTimers()
@@ -670,6 +688,7 @@ describe('DelegationSettlementWakeOwner', () => {
       if (scope === 'session') owner.invalidateSession('session-1')
       else if (scope === 'project') await owner.invalidateProject('project-1')
       else if (scope === 'shutdown') owner.shutdown()
+      else if (scope === 'all') owner.invalidateAll()
       else await owner.invalidateBranch('session-1', 'root-prompt')
 
       if (scope === 'shutdown') {
@@ -697,58 +716,127 @@ describe('DelegationSettlementWakeOwner', () => {
     }
   )
 
-  it('does not let a rejected stale turn-start snapshot delete a replacement Session state', async () => {
+  it.each(['session', 'all'] as const)(
+    'does not let a rejected stale turn-start snapshot delete a replacement Session state after %s invalidation',
+    async (scope) => {
+      vi.useFakeTimers()
+      let rejectOldSnapshot!: (error: Error) => void
+      const oldSnapshot = new Promise<DelegationSettlementSnapshot | undefined>(
+        (_resolve, reject) => {
+          rejectOldSnapshot = reject
+        }
+      )
+      let reads = 0
+      let current = snapshot([], { activeRootPromptIds: ['new-prompt'] })
+      const dispatch = vi.fn(acceptDispatch)
+      const owner = new DelegationSettlementWakeOwner({
+        readSnapshot: async () => {
+          reads += 1
+          return reads === 1 ? oldSnapshot : current
+        },
+        dispatch,
+        createPromptId: () => 'new-wake'
+      })
+
+      const oldStart = owner.onRootTurnStarted({
+        sessionId: 'session-1',
+        originatingPromptId: 'old-prompt'
+      })
+      if (scope === 'session') owner.invalidateSession('session-1')
+      else owner.invalidateAll()
+      const newLease = await owner.onRootTurnStarted({
+        sessionId: 'session-1',
+        originatingPromptId: 'new-prompt'
+      })
+      current = snapshot([child('new-child', 'running', { originatingPromptId: 'new-prompt' })], {
+        activeRootPromptIds: ['new-prompt']
+      })
+      await owner.onRootTurnEnded({
+        sessionId: 'session-1',
+        originatingPromptId: 'new-prompt',
+        clean: true,
+        leaseId: newLease
+      })
+
+      rejectOldSnapshot(new Error('stale snapshot failed'))
+      await expect(oldStart).rejects.toThrow('stale snapshot failed')
+      current = snapshot([child('new-child', 'completed', { originatingPromptId: 'new-prompt' })], {
+        activeRootPromptIds: ['new-prompt']
+      })
+      await owner.onRecordsChanged('session-1')
+      await vi.advanceTimersByTimeAsync(100)
+
+      expect(dispatch).toHaveBeenCalledOnce()
+      expect(dispatch.mock.calls[0]?.[0]).toMatchObject({
+        originatingPromptId: 'new-prompt',
+        promptId: 'new-wake'
+      })
+      vi.useRealTimers()
+    }
+  )
+
+  it('ignores an old dispatch failure and terminal callback after reusable cleanup', async () => {
     vi.useFakeTimers()
-    let rejectOldSnapshot!: (error: Error) => void
-    const oldSnapshot = new Promise<DelegationSettlementSnapshot | undefined>(
-      (_resolve, reject) => {
-        rejectOldSnapshot = reject
-      }
+    let current = snapshot([])
+    let rejectOldDispatch!: (reason: Error) => void
+    const oldDispatch = new Promise<void>((_resolve, reject) => {
+      rejectOldDispatch = reject
+    })
+    let prompt = 0
+    const dispatch = vi.fn((request: DelegationSettlementDispatch) =>
+      request.promptId === 'wake-1' ? oldDispatch : Promise.resolve()
     )
-    let reads = 0
-    let current = snapshot([], { activeRootPromptIds: ['new-prompt'] })
-    const dispatch = vi.fn(acceptDispatch)
     const owner = new DelegationSettlementWakeOwner({
-      readSnapshot: async () => {
-        reads += 1
-        return reads === 1 ? oldSnapshot : current
-      },
+      readSnapshot: async () => current,
       dispatch,
-      createPromptId: () => 'new-wake'
+      createPromptId: () => `wake-${++prompt}`
     })
-
-    const oldStart = owner.onRootTurnStarted({
-      sessionId: 'session-1',
-      originatingPromptId: 'old-prompt'
+    const turn = { sessionId: 'session-1', originatingPromptId: 'root-prompt', clean: true }
+    await endRootTurn(owner, turn, () => {
+      current = snapshot([child('old', 'running')])
     })
-    owner.invalidateSession('session-1')
-    const newLease = await owner.onRootTurnStarted({
-      sessionId: 'session-1',
-      originatingPromptId: 'new-prompt'
-    })
-    current = snapshot([child('new-child', 'running', { originatingPromptId: 'new-prompt' })], {
-      activeRootPromptIds: ['new-prompt']
-    })
-    await owner.onRootTurnEnded({
-      sessionId: 'session-1',
-      originatingPromptId: 'new-prompt',
-      clean: true,
-      leaseId: newLease
-    })
-
-    rejectOldSnapshot(new Error('stale snapshot failed'))
-    await expect(oldStart).rejects.toThrow('stale snapshot failed')
-    current = snapshot([child('new-child', 'completed', { originatingPromptId: 'new-prompt' })], {
-      activeRootPromptIds: ['new-prompt']
-    })
+    current = snapshot([child('old', 'completed')])
     await owner.onRecordsChanged('session-1')
     await vi.advanceTimersByTimeAsync(100)
-
     expect(dispatch).toHaveBeenCalledOnce()
-    expect(dispatch.mock.calls[0]?.[0]).toMatchObject({
-      originatingPromptId: 'new-prompt',
-      promptId: 'new-wake'
+
+    owner.invalidateAll()
+    await endRootTurn(owner, turn, () => {
+      current = snapshot([
+        child('old', 'completed'),
+        child('new', 'running'),
+        child('later', 'running')
+      ])
     })
+    current = snapshot([
+      child('old', 'completed'),
+      child('new', 'completed'),
+      child('later', 'running')
+    ])
+    await owner.onRecordsChanged('session-1')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(dispatch).toHaveBeenCalledTimes(2)
+    expect(dispatch.mock.calls[1][0].text).toContain('attempt-new')
+    expect(dispatch.mock.calls[1][0].text).not.toContain('attempt-old')
+
+    current = snapshot([
+      child('old', 'completed'),
+      child('new', 'completed'),
+      child('later', 'completed')
+    ])
+    await owner.onRecordsChanged('session-1')
+    rejectOldDispatch(new Error('late old failure'))
+    await owner.onWakePromptEnded('session-1', 'wake-1')
+    await vi.advanceTimersByTimeAsync(500)
+    // The new flight is still held; the old callbacks cannot release it or retry its old batch.
+    expect(dispatch).toHaveBeenCalledTimes(2)
+    await owner.onWakePromptEnded('session-1', 'wake-2')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(dispatch).toHaveBeenCalledTimes(3)
+    expect(dispatch.mock.calls[2][0].text).toContain('attempt-later')
+    expect(dispatch.mock.calls[2][0].text).not.toContain('attempt-old')
+    expect(dispatch.mock.calls[2][0].text).not.toContain('attempt-new')
+    owner.shutdown()
     vi.useRealTimers()
   })
 
