@@ -154,14 +154,18 @@ export const micromambaSpawnEnv = (
 ): NodeJS.ProcessEnv => {
   const platform = deps.platform ?? process.platform
   const inherited = deps.env ?? process.env
-  if (platform !== 'win32') return { ...inherited, ...caBundleEnv(caBundle) }
+  const selected = deps.selectCache
+    ? deps.selectCache(root, maxCacheRelativePath)
+    : selectMicromambaCache(root, maxCacheRelativePath, deps)
+  // Pin every platform to the cache covered by our locks and filesystem grant. Otherwise libmamba
+  // also probes its user-home cache, which is deliberately inaccessible inside the Notebook sandbox.
+  if (platform !== 'win32') {
+    return { ...inherited, ...caBundleEnv(caBundle), CONDA_PKGS_DIRS: selected.path }
+  }
 
   const cleaned = Object.fromEntries(
     Object.entries(inherited).filter(([key]) => !/^(CONDA|MAMBA)_/i.test(key))
   )
-  const selected = deps.selectCache
-    ? deps.selectCache(root, maxCacheRelativePath)
-    : selectMicromambaCache(root, maxCacheRelativePath, deps)
   return {
     ...cleaned,
     ...caBundleEnv(caBundle),

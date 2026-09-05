@@ -319,13 +319,13 @@ describe('micromambaSpawnEnv', () => {
     expect(env.MAMBA_ROOT_PREFIX).toBeUndefined()
   })
 
-  it('leaves inherited non-Windows environment behavior unchanged apart from CA injection', () => {
+  it.each(['darwin', 'linux'] as const)('pins the managed package cache on %s', (platform) => {
     const env = micromambaSpawnEnv('/runtime', '/ca.pem', {
-      platform: 'darwin',
+      platform,
       env: { CONDA_PKGS_DIRS: '/existing', MAMBA_ROOT_PREFIX: '/existing-root' }
     })
 
-    expect(env.CONDA_PKGS_DIRS).toBe('/existing')
+    expect(env.CONDA_PKGS_DIRS).toBe('/runtime/pkgs')
     expect(env.MAMBA_ROOT_PREFIX).toBe('/existing-root')
     expect(env.CONDA_SSL_VERIFY).toBe('/ca.pem')
   })
