@@ -4730,10 +4730,25 @@ export const editSessionDetailsRequestSchema = z.union([
 
 export type DeleteSessionRequest = z.infer<typeof deleteSessionRequestSchema>
 
+// Main-process deletion failures must preserve the irreversible JSON commit boundary. Only the
+// plain SessionDeletionResult is sent across IPC; this error and its cause stay in main.
+export class SessionDeletionCommittedError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause })
+    this.name = 'SessionDeletionCommittedError'
+  }
+}
+
 // zod v4 requires unique discriminator values, and both failure branches share status 'failed',
 // so this stays a plain union over the exact owner-produced shapes.
 export const sessionDeletionResultSchema = z.union([
-  z.object({ status: z.literal('deleted'), runtimeDetached: z.literal(true) }).strict(),
+  z
+    .object({
+      status: z.literal('deleted'),
+      runtimeDetached: z.literal(true),
+      cleanupPending: z.literal(true).optional()
+    })
+    .strict(),
   z
     .object({
       status: z.literal('failed'),

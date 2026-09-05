@@ -2,6 +2,7 @@ import { ProjectFilesReconciliationError } from '../project-files/repository'
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
 import type { ReconcilePendingArtifactsRequest } from '../../shared/artifacts'
 import {
+  SessionDeletionCommittedError,
   type DelegationPolicy,
   type LoadAllSessionsResult,
   type PersistedChatMessage,
@@ -1027,31 +1028,41 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       async () => {
         const key = sessionKey(projectId, sessionId)
         this.deletedSessions.add(key)
-        try {
-          const receiptKind = await this.deletionOwner.deleteSession(projectId, sessionId)
-          if (
-            this.stateOwner.metadataSnapshot().isComplete &&
-            (await this.deletionOwner.reconcileProjectSessionDeletion(
-              projectId,
-              sessionId,
-              receiptKind
-            ))
-          ) {
-            return undefined
-          }
-          return receiptKind
-        } catch (error) {
-          try {
-            const authority = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
-            if (authority.status === 'found') this.deletedSessions.delete(key)
-          } catch {
-            // Authority cannot be proven live, so retain the tombstone fail-closed.
-          }
-          throw error
+        const deletion = await this.deletionOwner
+          .deleteSession(projectId, sessionId)
+          .catch(async (error: unknown) => {
+            try {
+              const authority = await this.repository.loadSessionWithDiagnostics(
+                projectId,
+                sessionId
+              )
+              if (authority.status === 'found') this.deletedSessions.delete(key)
+            } catch {
+              // Authority cannot be proven live, so retain the tombstone fail-closed.
+            }
+            throw error
+          })
+        const reconciled =
+          this.stateOwner.metadataSnapshot().isComplete &&
+          (await this.deletionOwner
+            .reconcileProjectSessionDeletion(projectId, sessionId, deletion.receiptKind)
+            .catch((error: unknown) => {
+              throw new SessionDeletionCommittedError(error)
+            }))
+        if (reconciled) {
+          if (deletion.cleanupError) throw deletion.cleanupError
+          return undefined
         }
+        return deletion
       },
-      (receiptKind) =>
-        this.deletionOwner.reconcileSessionDeletion(projectId, sessionId, receiptKind)
+      async ({ receiptKind, cleanupError }) => {
+        await this.deletionOwner
+          .reconcileSessionDeletion(projectId, sessionId, receiptKind)
+          .catch((error: unknown) => {
+            throw new SessionDeletionCommittedError(error)
+          })
+        if (cleanupError) throw cleanupError
+      }
     )
   }
 
