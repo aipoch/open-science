@@ -141,7 +141,6 @@ test('edits and navigates message revisions that persist after relaunch', async 
   await conversation.getByRole('button', { name: 'Edit message' }).click()
   await conversation.getByRole('textbox', { name: 'Edit message' }).fill(EDITED_USER_MESSAGE)
   await conversation.getByRole('button', { name: 'Send', exact: true }).click()
-  await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
 
   const revision = conversation.getByLabel('Message revision', { exact: true })
   const previousRevision = conversation.getByRole('button', {
@@ -149,22 +148,27 @@ test('edits and navigates message revisions that persist after relaunch', async 
   })
   const nextRevision = conversation.getByRole('button', { name: 'Next message revision' })
   await expect(conversation.getByText(EDITED_USER_MESSAGE, { exact: true })).toBeVisible()
-  await expect(revision).toHaveText('2/2')
+  await expect(revision).toHaveText(['2/2'])
   await expect(previousRevision).toBeEnabled()
   await expect(nextRevision).toBeDisabled()
 
+  // The edit starts another Agent turn. Let it finish before switching branches or restarting,
+  // otherwise application.close() can wait indefinitely on the native active-session quit dialog.
+  await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
+
   await previousRevision.click()
   await expect(conversation.getByText(USER_MESSAGE, { exact: true })).toBeVisible()
-  await expect(revision).toHaveText('1/2')
+  await expect(revision).toHaveText(['1/2'])
   await expect(previousRevision).toBeDisabled()
   await expect(nextRevision).toBeEnabled()
 
   await nextRevision.click()
   await expect(conversation.getByText(EDITED_USER_MESSAGE, { exact: true })).toBeVisible()
-  await expect(revision).toHaveText('2/2')
+  await expect(revision).toHaveText(['2/2'])
   await previousRevision.click()
   await expect(conversation.getByText(USER_MESSAGE, { exact: true })).toBeVisible()
-  await expect(revision).toHaveText('1/2')
+  await expect(revision).toHaveText(['1/2'])
 
   page = await app.restart()
   await page
@@ -174,7 +178,7 @@ test('edits and navigates message revisions that persist after relaunch', async 
   conversation = page.getByRole('region', { name: 'Conversation' })
   await expect(conversation.getByText(USER_MESSAGE, { exact: true })).toBeVisible()
   await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
-  await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText('1/2')
+  await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText(['1/2'])
   await expect(
     conversation.getByRole('button', { name: 'Previous message revision' })
   ).toBeDisabled()
@@ -182,8 +186,7 @@ test('edits and navigates message revisions that persist after relaunch', async 
 
   await conversation.getByRole('button', { name: 'Next message revision' }).click()
   await expect(conversation.getByText(EDITED_USER_MESSAGE, { exact: true })).toBeVisible()
-  await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveCount(1)
-  await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText('2/2')
+  await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText(['2/2'])
 })
 
 test('keeps Memory reversible while the replacement session awaits history replay', async ({
