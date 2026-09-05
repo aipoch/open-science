@@ -519,6 +519,154 @@ describe('ACP runtime event normalization', () => {
     expect(event.rawOutput).toBeUndefined()
   })
 
+  it.each(['native-result', 'mcp-result', 'json-result', 'acp-text', 'acp-array'])(
+    'preserves Library read metadata through the %s transport before truncation',
+    (transport) => {
+      const presentation = {
+        openScienceLiteraturePresentation: {
+          libraryAction: 'read',
+          libraryScope: 'project',
+          itemTitles: ['Paper A'],
+          resultCount: 5
+        }
+      }
+      const result = {
+        content: [
+          { type: 'text', text: JSON.stringify(presentation) },
+          { type: 'text', text: JSON.stringify({ abstract: 'private abstract '.repeat(4000) }) }
+        ]
+      }
+      const rawOutput =
+        transport === 'native-result'
+          ? { result }
+          : transport === 'mcp-result'
+            ? result
+            : transport === 'json-result'
+              ? JSON.stringify(result)
+              : undefined
+      const event = new AcpRuntimeSnapshotOwner('/workspace').appendEvent(
+        toAcpRuntimeEvent(
+          {
+            sessionId: 'session-1',
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'library-read',
+              status: 'completed',
+              rawOutput,
+              ...(transport.startsWith('acp-')
+                ? {
+                    content: [
+                      {
+                        type: 'content' as const,
+                        content: {
+                          type: 'text' as const,
+                          text: JSON.stringify(transport === 'acp-array' ? result.content : result)
+                        }
+                      }
+                    ]
+                  }
+                : {})
+            }
+          },
+          'event-library-read'
+        )
+      )
+      expect(event.toolContent?.[0]).toEqual({
+        type: 'content',
+        content: { type: 'text', text: JSON.stringify(presentation) }
+      })
+      expect(event.rawOutput).toBeUndefined()
+      expect(JSON.stringify(event.toolContent?.[0])).not.toContain('private abstract')
+    }
+  )
+
+  it('preserves a bounded Library presentation across sanitized ACP tool identities', () => {
+    const presentation = JSON.stringify({
+      openScienceLiteraturePresentation: {
+        libraryAction: 'search',
+        libraryScope: 'collection',
+        itemTitles: ['Paper A', 'Paper B'],
+        resultCount: 2,
+        totalCount: 27,
+        offset: 20,
+        limit: 5,
+        nextOffset: 25,
+        hasMore: false
+      }
+    })
+    const event = toAcpRuntimeEvent(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'library-search',
+          title: 'open_science_library_search_library',
+          status: 'completed',
+          content: [
+            { type: 'content', content: { type: 'text', text: presentation } },
+            {
+              type: 'content',
+              content: {
+                type: 'text',
+                text: JSON.stringify({
+                  items: [{ id: 'private-item-id', rawMetadata: 'a'.repeat(40_000) }]
+                })
+              }
+            }
+          ]
+        }
+      },
+      'event-library-search'
+    )
+
+    const projected = event.toolContent?.[0]
+    expect(projected).toMatchObject({ type: 'content', content: { type: 'text' } })
+    expect(
+      projected?.type === 'content' && projected.content.type === 'text'
+        ? JSON.parse(projected.content.text)
+        : undefined
+    ).toEqual(JSON.parse(presentation))
+    expect(JSON.stringify(event.toolContent?.[0])).not.toContain('private-item-id')
+  })
+
+  it('preserves format_references presentation ahead of its raw citation payload', () => {
+    const presentation = JSON.stringify({
+      openScienceLiteraturePresentation: {
+        libraryAction: 'format',
+        resultCount: 2
+      }
+    })
+    const event = new AcpRuntimeSnapshotOwner('/workspace').appendEvent(
+      toAcpRuntimeEvent(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'library-format',
+            title: 'mcp__open-science-library__format_references',
+            status: 'completed',
+            content: [
+              {
+                type: 'content',
+                content: {
+                  type: 'text',
+                  text: JSON.stringify({ references: [{ reference: 'a'.repeat(40_000) }] })
+                }
+              },
+              { type: 'content', content: { type: 'text', text: presentation } }
+            ]
+          }
+        },
+        'event-library-format'
+      )
+    )
+
+    expect(event.toolContent?.[0]).toEqual({
+      type: 'content',
+      content: { type: 'text', text: presentation }
+    })
+  })
+
   it.each([
     'mcp__open-science-literature__read_document',
     'open_science_literature_read_document',

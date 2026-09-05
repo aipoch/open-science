@@ -47,6 +47,11 @@ import { memoryGlobalContentUniqueMigration } from './migrations/0022-memory-glo
 import { computeJobOperationMigration } from './migrations/0023-compute-job-operation'
 import { computeJobFileEvidenceMigration } from './migrations/0024-compute-job-file-evidence'
 import {
+  artifactLiteratureManifestReferenceRepairStatements,
+  literatureFoundationMigration
+} from './migrations/0029-literature-foundation'
+import { literatureExplicitDuplicatesMigration } from './migrations/0030-literature-explicit-duplicates'
+import {
   managedFileVersionFoundationCurrentSchemaAdoptionStatements,
   managedFileVersionFoundationMigration
 } from './migrations/0025-managed-file-version-foundation'
@@ -99,6 +104,7 @@ type MigrationVerifierDescriptor =
       version: 1
       indexes: readonly { name: string; sql: string }[]
     }
+  | { kind: 'indexes-absent'; version: 1; names: readonly string[] }
   | { kind: 'foreign-key-integrity'; version: 1 }
   | { kind: 'managed-file-version-domain'; version: 1 }
   | {
@@ -128,6 +134,8 @@ const lengthPrefixedChecksumText = (value: string): string => {
 
 const serializeMigrationVerifier = (verifier: MigrationVerifierDescriptor): string => {
   switch (verifier.kind) {
+    case 'indexes-absent':
+      return `indexes-absent:v${verifier.version}:${verifier.names.map(lengthPrefixedChecksumText).join('')}`
     case 'runtime-schema-baseline':
       return `runtime-schema-baseline:v${verifier.version}:${verifier.contract
         .map(lengthPrefixedChecksumText)
@@ -362,11 +370,17 @@ const NUMERIC_AND_NULL_CONSTRAINTS_CHECKSUM = checksumMigrationPayload(
   numericAndNullConstraintsMigration.verifiers,
   numericAndNullConstraintsMigration.operations
 )
-const COMPUTE_HOST_EXECUTION_MODE_CHECKSUM = checksumMigrationPayload(
-  computeHostExecutionModeMigration.id,
-  computeHostExecutionModeMigration.statements,
-  computeHostExecutionModeMigration.verifiers,
-  computeHostExecutionModeMigration.operations
+const LITERATURE_FOUNDATION_CHECKSUM = checksumMigrationPayload(
+  literatureFoundationMigration.id,
+  literatureFoundationMigration.statements,
+  literatureFoundationMigration.verifiers,
+  literatureFoundationMigration.operations
+)
+const LITERATURE_EXPLICIT_DUPLICATES_CHECKSUM = checksumMigrationPayload(
+  literatureExplicitDuplicatesMigration.id,
+  literatureExplicitDuplicatesMigration.statements,
+  literatureExplicitDuplicatesMigration.verifiers,
+  literatureExplicitDuplicatesMigration.operations
 )
 const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
   computeJobSensitiveDataEncryptionMigration.id,
@@ -652,8 +666,14 @@ const MIGRATION_MANIFEST = [
     foreignKeysDuringApply: 'disabled'
   },
   {
-    ...computeHostExecutionModeMigration,
-    checksum: COMPUTE_HOST_EXECUTION_MODE_CHECKSUM,
+    ...literatureFoundationMigration,
+    checksum: LITERATURE_FOUNDATION_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literatureExplicitDuplicatesMigration,
+    checksum: LITERATURE_EXPLICIT_DUPLICATES_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -924,6 +944,18 @@ const runMigrationVerifiers = async (
         }
         break
       }
+      case 'indexes-absent': {
+        for (const name of verifier.names) {
+          const rows = await migrationSqlExecutor.query<Array<{ name: string }>>(
+            client,
+            `SELECT "name" FROM "sqlite_schema" WHERE "type" = 'index' AND "name" = ?`,
+            name
+          )
+          if (rows.length > 0)
+            throw new Error(`Migration verification found unexpected index ${name}.`)
+        }
+        break
+      }
       case 'indexes-exist': {
         const normalizeIndexSql = (value: string): string =>
           value
@@ -1000,14 +1032,36 @@ const runMigrationVerifiers = async (
   }
 }
 
-const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<void> => {
-  const memoryTriggerNames = MEMORY_AUXILIARY_SCHEMA_OBJECTS.flatMap(({ type, name }) =>
+const currentApplicationSchemaExtensions = {
+  tableNames: [
+    ...MEMORY_AUXILIARY_TABLE_NAMES,
+    'ComputeJobOperation',
+    'ContentBlob',
+    'LiteratureItem',
+    'LiteratureAttachment',
+    'LiteratureAttachmentVersion',
+    'LiteratureCreator',
+    'LiteratureItemCreator',
+    'LiteratureIdentifier',
+    'LiteratureInboxCandidate',
+    'LiteratureSourceRecord',
+    'LiteratureCollection',
+    'LiteratureCollectionItem',
+    'ProjectLiterature',
+    'ArtifactLiteratureManifest'
+  ],
+  indexNames: [
+    'ComputeJobOperation_jobId_kind_key',
+    'ComputeJobOperation_kind_phase_eligibleAt_createdAt_idx',
+    'ComputeJobOperation_kind_phase_claimExpiresAt_idx'
+  ],
+  triggerNames: MEMORY_AUXILIARY_SCHEMA_OBJECTS.flatMap(({ type, name }) =>
     type === 'trigger' ? [name] : []
   )
-  await verifyCurrentRuntimeSchema(client, {
-    tableNames: MEMORY_AUXILIARY_TABLE_NAMES,
-    triggerNames: memoryTriggerNames
-  })
+} as const
+
+const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<void> => {
+  await verifyCurrentRuntimeSchema(client, currentApplicationSchemaExtensions)
   // The generated schema enforces the latest checks; frozen auxiliary verifiers also accept
   // the exact stronger expressions from the immutable suffix.
   await runMigrationVerifiers(
@@ -1024,7 +1078,25 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   await runMigrationVerifiers(client, computeJobAnalysisStateMigration.verifiers)
   await runMigrationVerifiers(client, computeJobAnalysisConstraintsMigration.verifiers)
   await runMigrationVerifiers(client, memoryGlobalContentUniqueMigration.verifiers)
+  await runMigrationVerifiers(
+    client,
+    computeJobOperationMigration.verifiers,
+    NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
+  )
   await runMigrationVerifiers(client, computeJobFileEvidenceMigration.verifiers)
+  for (const verifier of literatureFoundationMigration.verifiers) {
+    await runMigrationVerifiers(client, [
+      verifier.kind === 'indexes-exist'
+        ? {
+            ...verifier,
+            indexes: verifier.indexes.filter(
+              ({ name }) => name !== 'LiteratureIdentifier_identity_key'
+            )
+          }
+        : verifier
+    ])
+  }
+  await runMigrationVerifiers(client, literatureExplicitDuplicatesMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
@@ -1536,13 +1608,15 @@ const applyManifestMigration = async (
   migration: MigrationManifestEntry,
   options: {
     repairVisionEvidenceReference?: boolean
+    repairLiteratureManifestReference?: boolean
   } = {}
 ): Promise<void> => {
   const preserveCurrentSchema = await hasCurrentManagedFileVersionFoundation(client)
   const canAdaptCurrentSchema =
     preserveCurrentSchema &&
     migration.id !== managedFileVersionFoundationMigration.id &&
-    migration.id < managedFileVersionFoundationMigration.id &&
+    (migration.id < managedFileVersionFoundationMigration.id ||
+      migration.id === numericAndNullConstraintsMigration.id) &&
     MIGRATION_MANIFEST.some(
       (candidate) => candidate.id === migration.id && candidate.checksum === migration.checksum
     )
@@ -1625,6 +1699,24 @@ const applyManifestMigration = async (
         // The upstream history created VisionEvidence before this immutable migration. Rebuild it
         // after UploadVersion so SQLite does not retain the temporary rename as its FK target.
         await applySqliteMigrationOperations(transactionClient, visionEvidenceMigration.operations)
+      }
+      if (options.repairLiteratureManifestReference) {
+        const manifestTables = await migrationSqlExecutor.query<Array<{ name: string }>>(
+          transactionClient,
+          `SELECT "name" FROM "sqlite_schema"
+           WHERE "type" = 'table' AND "name" = 'ArtifactLiteratureManifest'`
+        )
+        if (manifestTables.length > 0) {
+          const manifestForeignKeys = await migrationSqlExecutor.query<Array<{ table: string }>>(
+            transactionClient,
+            `PRAGMA foreign_key_list("ArtifactLiteratureManifest")`
+          )
+          if (manifestForeignKeys.some((foreignKey) => foreignKey.table !== 'ArtifactVersion')) {
+            for (const statement of artifactLiteratureManifestReferenceRepairStatements) {
+              await migrationSqlExecutor.execute(transaction, statement)
+            }
+          }
+        }
       }
       try {
         await verifyMigrationTarget(transactionClient)
@@ -1828,6 +1920,11 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === computeJobFileEvidenceMigration.id &&
       candidate.checksum === COMPUTE_JOB_FILE_EVIDENCE_CHECKSUM
   )
+  const adoptsLiteratureFoundation = manifest.some(
+    (candidate) =>
+      candidate.id === literatureFoundationMigration.id &&
+      candidate.checksum === LITERATURE_FOUNDATION_CHECKSUM
+  )
   const adoptedLegacy = appliedCount === 0 && hasExistingApplicationTables
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
     adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {},
@@ -1863,7 +1960,8 @@ const migrateApplicationDatabaseWithManifest = async (
           : {}),
         ...(adoptsComputeJobFileEvidence
           ? { columns: { ComputeJob: ['producerRunId', 'fileEvidence'] } }
-          : {})
+          : {}),
+        ...(adoptsLiteratureFoundation ? { indexNames: ['LiteratureIdentifier_identity_key'] } : {})
       }
     )
     applied.push(baseline.id)
@@ -1875,6 +1973,10 @@ const migrateApplicationDatabaseWithManifest = async (
     await ensureBackupBeforeMigration(migration)
     await applyManifestMigration(client, migration, {
       repairVisionEvidenceReference:
+        migration.id === managedFileVersionFoundationMigration.id &&
+        migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM,
+      repairLiteratureManifestReference:
+        adoptsLiteratureFoundation &&
         migration.id === managedFileVersionFoundationMigration.id &&
         migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
     })

@@ -13,6 +13,7 @@ type HandoffPromptContext = Pick<
   | 'attachments'
   | 'referencedArtifacts'
   | 'referencedSessions'
+  | 'parts'
   | 'historyAttachments'
   | 'historyImages'
   | 'memoryEnabled'
@@ -42,6 +43,7 @@ const copyPromptContext = (source: HandoffPromptContext): HandoffPromptContext =
   ...(source.referencedSessions
     ? { referencedSessions: source.referencedSessions.map((session) => ({ ...session })) }
     : {}),
+  ...(source.parts ? { parts: structuredClone(source.parts) } : {}),
   ...(source.historyAttachments
     ? { historyAttachments: source.historyAttachments.map((attachment) => ({ ...attachment })) }
     : {}),

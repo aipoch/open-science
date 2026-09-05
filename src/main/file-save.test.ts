@@ -492,6 +492,33 @@ describe('file save IPC handlers', () => {
     expect(handlers.has('file:save-managed')).toBe(true)
   })
 
+  it('exports a Literature attachment through its authorized resolver and closes the handle', async () => {
+    const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/article.pdf')
+    const copyTo = vi.fn().mockResolvedValue(undefined)
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openManagedFile = vi.fn().mockResolvedValue({ copyTo, close })
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: join(downloadsPath, 'article.pdf')
+    })
+    registerFileSaveHandlers({ resolveManagedFilePath, openManagedFile })
+    await expect(
+      handlers.get('file:save-managed')!(
+        { sender: {} },
+        {
+          source: 'literature',
+          path: 'literature-attachment-version:version-1',
+          suggestedName: 'article.pdf'
+        }
+      )
+    ).resolves.toEqual({ saved: true, filePath: join(downloadsPath, 'article.pdf') })
+    expect(resolveManagedFilePath).toHaveBeenCalledWith('literature', {
+      path: 'literature-attachment-version:version-1'
+    })
+    expect(copyTo).toHaveBeenCalledWith(join(downloadsPath, 'article.pdf'))
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it('opens a trusted logical-file lease after Save As without reopening its resolved path', async () => {
     const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/path-must-not-be-used.csv')
     const copyTo = vi.fn().mockResolvedValue(undefined)

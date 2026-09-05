@@ -23,6 +23,7 @@ import type {
 } from '../../shared/artifact-provenance'
 import {
   MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS,
+  type ArtifactWriteEncoding,
   type ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
 import {
@@ -73,6 +74,12 @@ import {
 } from '../managed-file-versions/version-file-operator'
 import { bindArtifactReconstructionEvidence } from './provenance-reconstruction-evidence'
 import { ReviewerTurnFileEvidenceReader } from './reviewer-turn-file-evidence-reader'
+import { ContentRepository, type OpenedContent } from '../storage/content-repository'
+import {
+  ArtifactLiteratureManifestOwner,
+  type RecordArtifactLiteraturePdfReadRequest,
+  type RecordArtifactLiteratureSearchRequest
+} from './literature-manifest'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -118,6 +125,7 @@ export type WriteAppGeneratedArtifactVersionRequest = Omit<
 > & {
   filename: string
   content: string
+  encoding?: ArtifactWriteEncoding
   contentType?: string
   kind?: 'plan'
   producer?: AppGeneratedArtifactProducer
@@ -211,11 +219,13 @@ const journalRecoveryPlan = (
 
 class ArtifactProvenanceRepository {
   private readonly compatibilityRepository: ArtifactRepository
+  private readonly contentRepository: ContentRepository
   private readonly createId: () => string
   private readonly now: () => Date
   private readonly durability: ArtifactDurability
   private readonly dependencyReader: ArtifactProvenanceDependencyReader
   private readonly finalizationRecovery: ArtifactProvenanceFinalizationRecovery
+  private readonly literatureManifestOwner: ArtifactLiteratureManifestOwner
   private readonly messageFinalizer: ArtifactProvenanceMessageFinalizer
   private readonly notebookRepository: Pick<NotebookRunRepository, 'readSessionDocuments'>
   private readonly producerCapture: ArtifactProvenanceProducerCapture
@@ -228,6 +238,10 @@ class ArtifactProvenanceRepository {
   private readonly versionFileOperator: VersionFileOperator & VersionFileRecovery
 
   constructor(private readonly options: ArtifactProvenanceRepositoryOptions) {
+    this.contentRepository = new ContentRepository({
+      storageRoot: options.storageRoot,
+      getClient: options.getClient
+    })
     this.compatibilityRepository =
       options.compatibilityRepository ?? new ArtifactRepository(options.storageRoot)
     this.notebookRepository =
@@ -245,6 +259,7 @@ class ArtifactProvenanceRepository {
       resourceBudgets: options.resourceBudgets,
       now: () => this.now().getTime()
     })
+    this.literatureManifestOwner = new ArtifactLiteratureManifestOwner(options.getClient)
     const inputAuthority =
       options.inputAuthority ??
       new ImmutableInputAuthority({
@@ -301,7 +316,8 @@ class ArtifactProvenanceRepository {
           }
         : undefined,
       resolveVersionDerivedPath: (request, filename) =>
-        this.resolveVersionDerivedPath(request, filename)
+        this.resolveVersionDerivedPath(request, filename),
+      inspectVersionContent: (version) => this.inspectVersionContent(version)
     })
     bindArtifactReconstructionEvidence(this, (request) =>
       this.readModel.getVersionProvenance(
@@ -489,6 +505,8 @@ class ArtifactProvenanceRepository {
       captureProducer: (request, createdAt, checksum, appGeneratedProducer) =>
         this.producerCapture.captureProducer(request, createdAt, checksum, appGeneratedProducer),
       prepareVersionPersistence: (input) => this.producerCapture.prepareVersionPersistence(input),
+      prepareLiteratureManifest: (request, context) =>
+        this.literatureManifestOwner.prepare(request, context),
       recoverStagingVersion: (version, projectId, appSessionId, filename, publish) =>
         this.stagingRecovery.recoverVersion(version, projectId, appSessionId, filename, publish),
       projectVersionFile: (version, projectId, appSessionId) =>
@@ -502,7 +520,7 @@ class ArtifactProvenanceRepository {
   async writeAppGeneratedVersion(
     request: WriteAppGeneratedArtifactVersionRequest
   ): Promise<ArtifactVersionFile> {
-    const { content, kind, producer, ...versionRequest } = request
+    const { content, encoding = 'utf8', kind, producer, ...versionRequest } = request
     const writeOperationId = `artifact-app-write-${this.createId()}`
     const reservationScope = {
       projectId: request.projectId,
@@ -520,7 +538,7 @@ class ArtifactProvenanceRepository {
           filename: request.filename,
           mimeType: request.contentType,
           kind,
-          source: { kind: 'inline', content, encoding: 'utf8' }
+          source: { kind: 'inline', content, encoding }
         },
         {
           reserveFile: (fileBytes) =>
@@ -546,7 +564,9 @@ class ArtifactProvenanceRepository {
             canonicalJson({
               contentChecksum,
               contentType: request.contentType ?? null,
+              encoding,
               filename: request.filename,
+              literature: request.literature ?? null,
               producerRunId: null,
               sourceKind: 'inline',
               sourceFileObservation: null
@@ -581,6 +601,14 @@ class ArtifactProvenanceRepository {
         }
       )
     )
+  }
+
+  recordLiteratureSearch(request: RecordArtifactLiteratureSearchRequest): void {
+    this.literatureManifestOwner.recordSearch(request)
+  }
+
+  recordLiteraturePdfRead(request: RecordArtifactLiteraturePdfReadRequest): void {
+    this.literatureManifestOwner.recordPdfRead(request)
   }
 
   async createVersion(
@@ -882,6 +910,12 @@ class ArtifactProvenanceRepository {
     )
   }
 
+  async getVersionLiterature(
+    request: GetArtifactVersionProvenanceRequest
+  ): ReturnType<ArtifactProvenanceReadModel['getVersionLiterature']> {
+    return this.readModel.getVersionLiterature(request)
+  }
+
   async getVersionCore(
     request: GetArtifactVersionProvenanceRequest
   ): Promise<ArtifactVersionProvenance> {
@@ -958,13 +992,86 @@ class ArtifactProvenanceRepository {
         state: { in: ['pending', 'finalized'] },
         artifact: { is: { projectId, sessionId: appSessionId } }
       },
-      select: { contentStorageKey: true }
+      select: {
+        id: true,
+        filename: true,
+        contentStorageKey: true,
+        contentType: true,
+        sizeBytes: true,
+        checksum: true,
+        contentBlobId: true
+      }
     })
     if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
-    return join(
-      dirname(resolveStorageKey(this.options.storageRoot, version.contentStorageKey)),
-      filename
-    )
+    const content = await this.openVersionContent(version)
+    return join(dirname(content.path), filename)
+  }
+
+  private async inspectVersionContent(version: {
+    id: string
+    contentBlobId: string | null
+    contentStorageKey: string
+    sizeBytes: bigint
+    checksum: string
+  }): Promise<ArtifactVersionProvenance['contentStatus']> {
+    if (version.contentBlobId) {
+      const verification = await this.contentRepository.verify(version.contentBlobId)
+      if (verification.state === 'available') return { state: 'available' }
+      return {
+        state: 'unavailable',
+        reason:
+          verification.reason === 'checksum-mismatch' ||
+          verification.reason === 'size-mismatch' ||
+          verification.reason === 'changed-during-verification'
+            ? 'checksum-mismatch'
+            : 'missing'
+      }
+    }
+
+    try {
+      const content = await readFile(
+        resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
+      )
+      return BigInt(content.byteLength) === version.sizeBytes &&
+        sha256(content) === version.checksum
+        ? { state: 'available' }
+        : { state: 'unavailable', reason: 'checksum-mismatch' }
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      ) {
+        return { state: 'unavailable', reason: 'missing' }
+      }
+      throw error
+    }
+  }
+
+  private async openVersionContent(version: {
+    id: string
+    contentBlobId: string | null
+    contentStorageKey: string
+    contentType: string | null
+    sizeBytes: bigint
+    checksum: string
+  }): Promise<OpenedContent> {
+    if (version.contentBlobId) return this.contentRepository.open(version.contentBlobId)
+
+    const path = resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
+    const content = await readFile(path)
+    if (BigInt(content.byteLength) !== version.sizeBytes || sha256(content) !== version.checksum) {
+      throw new Error(`Artifact Version content is corrupt: ${version.id}`)
+    }
+    return {
+      id: `artifact-version:${version.id}`,
+      path,
+      storageKey: version.contentStorageKey,
+      checksum: version.checksum,
+      sizeBytes: version.sizeBytes,
+      ...(version.contentType ? { contentType: version.contentType } : {})
+    }
   }
 
   // Project deletion is the terminal provenance boundary. Session deletion intentionally keeps this
@@ -1160,6 +1267,8 @@ class ArtifactProvenanceRepository {
     projectId: string,
     appSessionId: string
   ): Promise<ArtifactVersionFile> {
+    // Descriptors remain readable when immutable bytes are missing so Provenance can report the
+    // unavailable content state instead of hiding the surviving evidence and metadata.
     const filePath = resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
     const fileMtimeMs = await stat(filePath)
       .then((fileStat) => fileStat.mtimeMs)

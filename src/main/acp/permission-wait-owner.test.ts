@@ -181,6 +181,61 @@ describe('ACP durable permission wait owner', () => {
     expect(fixture.patches).not.toHaveBeenCalled()
   })
 
+  it('persists a bounded preview for a large Literature Inbox save', async () => {
+    const fixture = createSessions()
+    const owner = new AcpPermissionWaitOwner(fixture.sessions)
+    const candidate = createCandidate()
+
+    await expect(
+      owner.persist({
+        ...candidate,
+        request: {
+          ...candidate.request,
+          isMcp: true,
+          mcpIdentity: 'open-science-library/save_to_inbox',
+          rawInput: {
+            candidates: [
+              {
+                item: { title: 'Paper one', abstract: 'a'.repeat(12_000) },
+                source: { provider: 'pubmed', rawMetadata: { secret: 'omitted' } }
+              }
+            ]
+          }
+        }
+      })
+    ).resolves.toBe(true)
+
+    expect(fixture.context().permission).toMatchObject({
+      fingerprint: 'a'.repeat(64),
+      request: {
+        rawInput: { candidates: [{ item: { title: 'Paper one' } }] }
+      }
+    })
+    expect(JSON.stringify(fixture.context().permission)).not.toContain('omitted')
+  })
+
+  it('persists other permission waits without an oversized optional input preview', async () => {
+    const fixture = createSessions()
+    const owner = new AcpPermissionWaitOwner(fixture.sessions)
+    const candidate = createCandidate()
+
+    await expect(
+      owner.persist({
+        ...candidate,
+        request: {
+          ...candidate.request,
+          rawInput: { code: 'x'.repeat(12_000) }
+        }
+      })
+    ).resolves.toBe(true)
+
+    expect(fixture.context().permission).toMatchObject({
+      fingerprint: 'a'.repeat(64),
+      request: { requestId: 'permission-1' }
+    })
+    expect(fixture.context().permission?.request.rawInput).toBeUndefined()
+  })
+
   it('does not let a new durable wait replace an active continuation', async () => {
     const fixture = createSessions()
     const owner = new AcpPermissionWaitOwner(fixture.sessions)

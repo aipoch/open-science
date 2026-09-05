@@ -37,6 +37,13 @@ const PRE_REGISTERED_PERMISSION_IDENTITIES: Readonly<
     'mcp:open-science-skills/request_skill_import',
     'mcp:open-science-plan/generate_plan',
     'mcp:open-science-plan/update_step_status',
+    'mcp:open-science-library/search_library',
+    'mcp:open-science-library/read_library_abstract',
+    'mcp:open-science-library/read_library_pdf',
+    'mcp:open-science-library/format_references',
+    'mcp:open-science-library/format_citation_document',
+    'mcp:open-science-library/prepare_latex_bundle',
+    'mcp:open-science-library/save_to_inbox',
     'mcp:open-science-literature/read_document'
   ],
   execution: ['exec:local/python', 'exec:local/bash'],

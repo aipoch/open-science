@@ -23,7 +23,7 @@ import type {
   AcpStateUpdate
 } from '../../shared/acp'
 import { toAcpStateCommandResponse } from '../../shared/acp'
-import { sanitizeSessionReferences } from '../../shared/session-persistence'
+import { sanitizeMessageParts, sanitizeSessionReferences } from '../../shared/session-persistence'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpHandlerWorkflows } from './handler-workflows'
 import { bindResumeRequestToProject } from './session-project-binding'
@@ -104,11 +104,13 @@ const registerAcpIpcHandlerSet = (
     }
     void _untrustedAttribution
     const referencedSessions = sanitizeSessionReferences(untrustedSessionReferences)
+    const parts = sanitizeMessageParts(request.parts)
     const rendererRequest: AcpPromptRequest = {
       ...untrustedRequest,
       memoryEnabled: request.memoryEnabled !== false,
       turnIntent: request.turnIntent === 'plan-first' ? 'plan-first' : undefined,
       ...(referencedSessions.length > 0 ? { referencedSessions } : {}),
+      ...(parts.length > 0 ? { parts } : {}),
       continuation: undefined,
       suppressUserMessage: undefined
     }
@@ -124,7 +126,10 @@ const registerAcpIpcHandlerSet = (
         ? { referencedArtifacts: request.referencedArtifacts }
         : {}),
       ...(Array.isArray(request.forcedSkillIds) ? { forcedSkillIds: request.forcedSkillIds } : {}),
-      ...(Array.isArray(request.parts) ? { parts: request.parts } : {})
+      ...(() => {
+        const parts = sanitizeMessageParts(request.parts)
+        return parts.length > 0 ? { parts } : {}
+      })()
     })
   )
   ipcMainHandle('acp:save-as-skill', (_event, request: AcpSaveAsSkillRequest) =>

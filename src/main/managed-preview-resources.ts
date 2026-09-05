@@ -67,8 +67,8 @@ const inferMimeType = (filePath: string, fallback?: string): string =>
 
 type ManagedPreviewResourcesOptions = {
   resolvePath: (
-    source: 'local',
-    request: Extract<AcquireManagedPreviewRequest, { source: 'local' }>
+    source: 'literature' | 'local',
+    request: Extract<AcquireManagedPreviewRequest, { source: 'literature' | 'local' }>
   ) => Promise<string>
   openLatestManagedFile?: (
     source: 'artifact' | 'upload',
@@ -198,9 +198,11 @@ class ManagedPreviewResources {
     if (request.source === 'artifact' || request.source === 'upload') {
       throw new Error('Managed preview Version lease is unavailable.')
     }
-    if (request.source !== 'local') throw new Error('Managed preview lease is unavailable.')
+    if (request.source !== 'literature' && request.source !== 'local') {
+      throw new Error('Managed preview lease is unavailable.')
+    }
     // Path-backed sources still resolve through their source-specific trust boundary.
-    const filePath = await this.options.resolvePath('local', request)
+    const filePath = await this.options.resolvePath(request.source, request)
     const fileStat = await stat(filePath, { bigint: true })
     if (!fileStat.isFile()) throw new Error('Managed preview path is not a file.')
 
@@ -222,8 +224,8 @@ class ManagedPreviewResources {
           ? (() => {
               throw new Error('Managed preview Version lease is unavailable.')
             })()
-          : request.source === 'local'
-            ? await this.options.resolvePath('local', request)
+          : request.source === 'literature' || request.source === 'local'
+            ? await this.options.resolvePath(request.source, request)
             : (() => {
                 throw new Error('Managed preview lease is unavailable.')
               })()

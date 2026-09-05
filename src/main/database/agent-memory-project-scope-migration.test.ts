@@ -17,7 +17,7 @@ const COMPUTE_ANALYSIS_CONSTRAINTS_MIGRATION_ID = '0021_compute_job_analysis_con
 const MEMORY_GLOBAL_CONTENT_UNIQUE_MIGRATION_ID = '0022_memory_global_content_unique'
 const COMPUTE_JOB_OPERATION_MIGRATION_ID = '0023_compute_job_operation'
 const COMPUTE_JOB_FILE_EVIDENCE_MIGRATION_ID = '0024_compute_job_file_evidence'
-const CURRENT_MIGRATION_ID = '0029_compute_host_execution_mode'
+const CURRENT_MIGRATION_ID = '0029_literature_foundation'
 const MEMORY_AUXILIARY_SCHEMA_NAMES = [
   'MemoryEntryFts',
   'MemoryEntry_fts_insert',

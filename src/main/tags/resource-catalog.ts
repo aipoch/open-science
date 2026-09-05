@@ -10,6 +10,7 @@ type TagResourceCatalogDependencies = Readonly<{
   listSkills(): Promise<readonly CatalogEntry[]>
   listConnectors(): Promise<ConnectorCatalog>
   listSpecialists(): Promise<readonly CatalogEntry[]>
+  listLiteratureItems(): Promise<readonly CatalogEntry[]>
 }>
 
 type TagResourceCatalogSnapshot = Readonly<Record<TagResourceType, ReadonlySet<string>>>
@@ -18,10 +19,11 @@ class TagResourceCatalog {
   constructor(private readonly dependencies: TagResourceCatalogDependencies) {}
 
   async snapshot(): Promise<TagResourceCatalogSnapshot> {
-    const [skills, connectors, specialists] = await Promise.all([
+    const [skills, connectors, specialists, literatureItems] = await Promise.all([
       this.dependencies.listSkills(),
       this.dependencies.listConnectors(),
-      this.dependencies.listSpecialists()
+      this.dependencies.listSpecialists(),
+      this.dependencies.listLiteratureItems()
     ])
     return Object.freeze({
       'catalog.skill': new Set(
@@ -31,7 +33,8 @@ class TagResourceCatalog {
         ...connectors.connectors.map(({ id }) => id),
         ...connectors.customServers.map(({ id }) => id)
       ]),
-      'catalog.specialist': new Set(specialists.map(({ id }) => id))
+      'catalog.specialist': new Set(specialists.map(({ id }) => id)),
+      'literature.item': new Set(literatureItems.map(({ id }) => id))
     })
   }
 

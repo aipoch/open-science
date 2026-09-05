@@ -58,6 +58,18 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
     tools: ['read_document']
   },
   {
+    canonicalName: 'open-science-library',
+    openCodeName: 'open_science_library',
+    tools: [
+      'search_library',
+      'read_library_abstract',
+      'read_library_pdf',
+      'format_references',
+      'format_citation_document',
+      'save_to_inbox'
+    ]
+  },
+  {
     canonicalName: 'open-science-host-message',
     openCodeName: 'open_science_host_message',
     tools: ['send_message'],

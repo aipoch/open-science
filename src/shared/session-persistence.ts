@@ -8,6 +8,7 @@ import {
 import type { PersistedUploadedAttachment } from './uploads'
 import type { FileReference } from './artifacts'
 import { sanitizeAnnotations, type Annotation } from './annotations'
+import { literatureItemInputSchema, type LiteratureItemInput } from './literature'
 import {
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
@@ -123,19 +124,32 @@ export type SessionRuntimeContextOwner =
 
 export const MAX_SESSION_PDF_CONTEXTS = 3
 
-export type SessionPdfBinding = Readonly<{
+export type SessionPdfSourceKind =
+  'artifact-version' | 'upload-version' | 'literature-attachment-version'
+
+type SessionPdfBindingBase = Readonly<{
   version: 1
   bindingId: string
-  sourceKind: 'artifact-version' | 'upload-version'
   sourceFileId: string
   sourceVersionId: string
-  sourceSessionId: string
   name: string
   mimeType: 'application/pdf'
   sizeBytes: number
   checksum: string
   linkedAt: number
 }>
+
+export type SessionPdfBinding = SessionPdfBindingBase &
+  (
+    | Readonly<{
+        sourceKind: 'artifact-version' | 'upload-version'
+        sourceSessionId: string
+      }>
+    | Readonly<{
+        sourceKind: 'literature-attachment-version'
+        sourceSessionId?: never
+      }>
+  )
 
 export type SessionPdfContext = Readonly<{
   version: 1
@@ -155,7 +169,7 @@ export type MessagePdfContextSnapshot = SessionPdfContext &
 
 export type SessionPdfContextSource = Readonly<{
   sourceKind: SessionPdfBinding['sourceKind']
-  sourceFileId: string
+  sourceFileId?: string
   sourceVersionId: string
 }>
 
@@ -452,6 +466,25 @@ export const MAX_SESSION_REFERENCES_PER_MESSAGE = 5
 const MAX_SESSION_REFERENCE_ID_LENGTH = 512
 const MAX_SESSION_REFERENCE_TITLE_LENGTH = 4096
 
+// Immutable bibliographic snapshot captured when the user picks a Library item. The optional PDF
+// Version is only a Reading candidate; the reference itself remains useful without an attachment.
+export type LiteratureReference = {
+  type: 'literature'
+  itemId: string
+  metadataRevision: number
+  item: LiteratureItemInput
+  attachmentVersionId?: string
+}
+
+// A retrieval scope selected in the Composer. It carries no catalog records or file bytes; the Agent
+// uses it to page through search_library deliberately instead of treating a whole corpus as context.
+export type LiteratureScopeReference =
+  | { type: 'literature-scope'; scope: 'project' }
+  | { type: 'literature-scope'; scope: 'collection'; collectionId: string; name: string }
+
+const MAX_LITERATURE_SCOPE_ID_LENGTH = 512
+const MAX_LITERATURE_SCOPE_NAME_LENGTH = 4096
+
 // Ordered structural segments of a user message, letting the bubble re-render skill/artifact/session
 // mentions as styled pills instead of plain text. Structurally mirrors the renderer ComposerNode
 // (shared cannot import renderer code). Absent on older messages, which fall back to plain content.
@@ -459,6 +492,8 @@ export type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'skill'; id: string; name: string }
   | ({ type: 'artifact' } & FileReference)
+  | LiteratureReference
+  | LiteratureScopeReference
   | SessionReference
 
 export const collectSessionReferences = (
@@ -2361,16 +2396,18 @@ const sanitizeSessionPdfBinding = (value: unknown): SessionPdfBinding | undefine
   const sizeBytes = asNumber(value.sizeBytes)
   const checksum = asString(value.checksum)
   const linkedAt = asNumber(value.linkedAt)
+  const sourceSessionIdRequired =
+    sourceKind === 'artifact-version' || sourceKind === 'upload-version'
   if (
     !bindingId ||
     bindingId.length > 512 ||
-    (sourceKind !== 'artifact-version' && sourceKind !== 'upload-version') ||
+    (!sourceSessionIdRequired && sourceKind !== 'literature-attachment-version') ||
     !sourceFileId ||
     sourceFileId.length > 512 ||
     !sourceVersionId ||
     sourceVersionId.length > 512 ||
-    !sourceSessionId ||
-    sourceSessionId.length > 512 ||
+    (sourceSessionIdRequired && (!sourceSessionId || sourceSessionId.length > 512)) ||
+    (!sourceSessionIdRequired && sourceSessionId !== undefined) ||
     !name ||
     name.length > 4096 ||
     value.mimeType !== 'application/pdf' ||
@@ -2385,19 +2422,22 @@ const sanitizeSessionPdfBinding = (value: unknown): SessionPdfBinding | undefine
   ) {
     return undefined
   }
-  return {
-    version: 1,
+  const binding = {
+    version: 1 as const,
     bindingId,
-    sourceKind,
     sourceFileId,
     sourceVersionId,
-    sourceSessionId,
     name,
-    mimeType: 'application/pdf',
+    mimeType: 'application/pdf' as const,
     sizeBytes,
     checksum,
     linkedAt
   }
+  if (sourceKind === 'literature-attachment-version') {
+    return { ...binding, sourceKind }
+  }
+  if (!sourceSessionId) return undefined
+  return { ...binding, sourceKind, sourceSessionId }
 }
 
 export const sanitizeSessionPdfContext = (value: unknown): SessionPdfContext | undefined => {
@@ -2508,7 +2548,7 @@ const sanitizePermissionRequest = (value: unknown): AcpPermissionRequest | undef
   const requestId = boundedPermissionString(value.requestId)
   const sessionId = boundedPermissionString(value.sessionId)
   const toolCallId = boundedPermissionString(value.toolCallId)
-  const rawTitle = boundedPermissionString(value.title)
+  const rawTitle = asString(value.title)
   const title = rawTitle ? sanitizeToolDetailText(rawTitle) : undefined
   if (!requestId || !sessionId || !toolCallId || !title || !Array.isArray(value.options)) {
     return undefined
@@ -2569,8 +2609,9 @@ const sanitizePermissionRequest = (value: unknown): AcpPermissionRequest | undef
         return [{ path, ...(line === undefined ? {} : { line }) }]
       })
     : undefined
+  // rawInput is an optional UI preview. The full request fingerprint remains the replay boundary,
+  // so an oversized preview must not discard the permission wait itself.
   const rawInput = sanitizePermissionRawInput(value.rawInput)
-  if (value.rawInput !== undefined && rawInput === undefined) return undefined
   if (
     value.toolLocations !== undefined &&
     (!Array.isArray(value.toolLocations) ||
@@ -3370,6 +3411,42 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
 
       return sessionId && title ? { type: 'session', sessionId, title } : undefined
     }
+    case 'literature': {
+      const itemId = asString(part.itemId)
+      const metadataRevision = asNumber(part.metadataRevision)
+      const item = literatureItemInputSchema.safeParse(part.item)
+      const attachmentVersionId = asString(part.attachmentVersionId)
+
+      if (
+        !itemId ||
+        typeof metadataRevision !== 'number' ||
+        !Number.isInteger(metadataRevision) ||
+        metadataRevision < 1 ||
+        !item.success
+      ) {
+        return undefined
+      }
+      return {
+        type: 'literature',
+        itemId,
+        metadataRevision,
+        item: item.data,
+        ...(attachmentVersionId ? { attachmentVersionId } : {})
+      }
+    }
+    case 'literature-scope': {
+      const scope = asString(part.scope)
+      if (scope === 'project') return { type: 'literature-scope', scope }
+      if (scope !== 'collection') return undefined
+      const collectionId = asString(part.collectionId)
+      const name = asString(part.name)
+      return collectionId &&
+        collectionId.length <= MAX_LITERATURE_SCOPE_ID_LENGTH &&
+        name &&
+        name.length <= MAX_LITERATURE_SCOPE_NAME_LENGTH
+        ? { type: 'literature-scope', scope, collectionId, name }
+        : undefined
+    }
     case 'artifact': {
       const id = asString(part.id)
       const name = asString(part.name)
@@ -3395,7 +3472,9 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
       }
 
       const path = asString(part.path)
-      if (!path || (source !== 'upload' && source !== 'artifact')) return undefined
+      if (!path || (source !== 'upload' && source !== 'artifact' && source !== 'literature')) {
+        return undefined
+      }
 
       const sanitized: MessagePart = { type: 'artifact', id, name, path, source }
       const versionId = asString(part.versionId)
@@ -3412,6 +3491,11 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
       return undefined
   }
 }
+
+export const sanitizeMessageParts = (value: unknown): MessagePart[] =>
+  Array.isArray(value)
+    ? value.map(sanitizeMessagePart).filter((part): part is MessagePart => part !== undefined)
+    : []
 
 export const sanitizeSessionReferences = (value: unknown): SessionReference[] => {
   if (!Array.isArray(value)) return []
@@ -3670,9 +3754,7 @@ const sanitizeMessage = (
         )
         .filter((item): item is PersistedUploadedAttachment => !!item)
     : []
-  const parts = Array.isArray(message.parts)
-    ? message.parts.map(sanitizeMessagePart).filter((item): item is MessagePart => !!item)
-    : []
+  const parts = sanitizeMessageParts(message.parts)
   const annotations = role === 'user' ? sanitizeAnnotations(message.annotations) : []
   const pdfContext =
     role === 'user' ? sanitizeMessagePdfContextSnapshot(message.pdfContext) : undefined
@@ -4719,13 +4801,22 @@ export type OpenSessionRecoveryFolderRequest = {
   projectId: string
 }
 
-const sessionPdfContextSourceSchema = z
-  .object({
-    sourceKind: z.enum(['artifact-version', 'upload-version']),
-    sourceFileId: z.string().min(1),
-    sourceVersionId: z.string().min(1)
-  })
-  .strict()
+const sessionPdfContextSourceSchema = z.union([
+  z
+    .object({
+      sourceKind: z.enum(['artifact-version', 'upload-version']),
+      sourceFileId: z.string().min(1),
+      sourceVersionId: z.string().min(1)
+    })
+    .strict(),
+  z
+    .object({
+      sourceKind: z.literal('literature-attachment-version'),
+      sourceFileId: z.string().min(1).optional(),
+      sourceVersionId: z.string().min(1)
+    })
+    .strict()
+])
 
 const pendingSessionPdfContextCandidateSchema = z
   .object({

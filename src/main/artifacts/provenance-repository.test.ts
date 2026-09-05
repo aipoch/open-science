@@ -102,7 +102,31 @@ describe('artifact provenance repository', () => {
       artifactId: 'history-file',
       versionId: 'history-v1'
     }
+    const manifestJson = JSON.stringify({
+      schemaVersion: 1,
+      styleId: 'apa',
+      locale: 'en-US',
+      references: [],
+      citations: []
+    })
+    await client.artifactLiteratureManifest.createMany({
+      data: ['history-v1', 'history-v102'].map((artifactVersionId) => ({
+        artifactVersionId,
+        schemaVersion: 1,
+        styleId: 'apa',
+        locale: 'en-US',
+        manifestJson,
+        checksum: createHash('sha256').update(manifestJson).digest('hex')
+      }))
+    })
+    const manifestReads = vi.spyOn(client.artifactLiteratureManifest, 'findMany')
+    const manifestCounts = vi.spyOn(client.artifactLiteratureManifest, 'count')
     const first = await repository.getLineage(request)
+    expect(manifestReads).toHaveBeenCalledTimes(1)
+    expect(manifestCounts).not.toHaveBeenCalled()
+    expect(first?.selectedVersion?.hasLiterature).toBe(true)
+    expect(first?.headVersion?.hasLiterature).toBe(true)
+    expect(first?.nextVersion?.hasLiterature).toBe(false)
     expect(first?.versions).toHaveLength(50)
     expect(first?.selectedVersion?.versionId).toBe('history-v1')
     expect(first?.headVersion?.versionId).toBe('history-v102')
@@ -111,6 +135,8 @@ describe('artifact provenance repository', () => {
     expect(second?.versions).toHaveLength(50)
     expect(last?.versions.map((version) => version.versionNumber)).toEqual([1, 2])
     expect(last?.nextCursor).toBeUndefined()
+    expect(manifestReads).toHaveBeenCalledTimes(3)
+    expect(last?.versions.map((version) => version.hasLiterature)).toEqual([true, false])
     expect(
       new Set(
         [...first!.versions, ...second!.versions, ...last!.versions].map(
@@ -182,6 +208,15 @@ describe('artifact provenance repository', () => {
         createdAt: new Date('2026-08-14T00:00:00.000Z')
       }
     })
+    await client.artifactLiteratureManifest.create({
+      data: {
+        artifactVersionId: 'version-2',
+        styleId: 'apa',
+        locale: 'en-US',
+        manifestJson: '{}',
+        checksum: 'd'.repeat(64)
+      }
+    })
 
     await expect(
       repository.getLineage({
@@ -191,11 +226,12 @@ describe('artifact provenance repository', () => {
       })
     ).resolves.toMatchObject({
       versions: [
-        { versionId: 'version-1', originKind: 'legacy' },
+        { versionId: 'version-1', originKind: 'legacy', hasLiterature: false },
         {
           versionId: 'version-2',
           originKind: 'user_edit',
-          basedOnVersionId: 'version-1'
+          basedOnVersionId: 'version-1',
+          hasLiterature: true
         }
       ]
     })
@@ -229,7 +265,9 @@ describe('artifact provenance repository', () => {
     const contentStorageKey = 'artifacts/project-1/session-1/.provenance/versions/version-1/content'
     const contentPath = join(storageRoot, ...contentStorageKey.split('/'))
     await mkdir(dirname(contentPath), { recursive: true })
-    await writeFile(contentPath, 'artifact bytes')
+    const content = 'artifact bytes'
+    const contentChecksum = createHash('sha256').update(content).digest('hex')
+    await writeFile(contentPath, content)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
@@ -260,7 +298,7 @@ describe('artifact provenance repository', () => {
           'artifacts/project-1/session-1/.provenance/versions/version-1/evidence.json',
         evidenceSchemaVersion: 1,
         sizeBytes: BigInt(14),
-        checksum: 'a'.repeat(64),
+        checksum: contentChecksum,
         evidenceJson: '{}',
         evidenceChecksum: 'b'.repeat(64)
       }
@@ -793,6 +831,7 @@ describe('artifact provenance repository', () => {
       compatibilityRepository
     })
 
+    const content = Buffer.from([0, 255, 1, 254, 2, 253])
     const version = await repository.writeAppGeneratedVersion({
       projectId: 'project-1',
       appSessionId: 'session-1',
@@ -804,12 +843,13 @@ describe('artifact provenance repository', () => {
       runtimeSegmentId: 'runtime-segment-1',
       promptMessageId: 'prompt-1',
       agentName: 'OpenCode',
-      filename: 'caffeine.mol',
-      content: 'generated molecule bytes',
-      contentType: 'chemical/x-mdl-molfile'
+      filename: 'generated.bin',
+      content: content.toString('base64'),
+      encoding: 'base64',
+      contentType: 'application/octet-stream'
     })
 
-    await expect(readFile(version.path, 'utf8')).resolves.toBe('generated molecule bytes')
+    await expect(readFile(version.path)).resolves.toEqual(content)
     await expect(
       repository.listRunVersions({
         projectId: 'project-1',

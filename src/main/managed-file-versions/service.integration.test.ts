@@ -20,8 +20,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { MANAGED_TEXT_EDIT_MAX_BYTES } from '../../shared/managed-file-versions'
-import { ManagedFileVersionError, ManagedFileVersionService } from './service'
+import {
+  ManagedFileVersionError,
+  ManagedFileVersionService,
+  type ManagedFileVersionSaveDerivedEditRequest
+} from './service'
 import { NodeVersionFileOperator, VersionFileOperatorError } from './version-file-operator'
+import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 
 const checksum = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 type SourceFixture = {
@@ -484,6 +489,120 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     })
     expect(operation.contentStorageKey).toBe(expectedPlan.storageRef)
     expect(operation.storedFilename).toBe(expectedPlan.storedFilename)
+  })
+
+  it('publishes a derived Artifact version with its updated Literature manifest', async () => {
+    const fixture = await createFixture('artifact')
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const request: ManagedFileVersionSaveDerivedEditRequest = {
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: fixture.fileId,
+      basedOnVersionId: fixture.versionIds[1],
+      expectedHeadVersionId: fixture.versionIds[1],
+      operationId: 'citation-format-operation',
+      content: Buffer.from('formatted citation document'),
+      literature: {
+        schemaVersion: 1,
+        styleId: 'vancouver',
+        locale: 'en-US',
+        references: [
+          {
+            itemId: 'item-1',
+            metadataRevision: 1,
+            item: {
+              itemType: 'journalArticle',
+              title: 'A useful paper',
+              abstract: '',
+              issuedText: '2024',
+              issuedYear: 2024,
+              containerTitle: 'Journal of Tests',
+              shortTitle: '',
+              language: 'en',
+              rights: '',
+              url: '',
+              extra: '',
+              typeFields: {},
+              creators: [],
+              identifiers: []
+            }
+          }
+        ],
+        citations: [{ citationId: 'citation-1', itemId: 'item-1', metadataRevision: 1 }]
+      }
+    }
+    const result = await service.saveDerivedArtifactEdit(request)
+
+    expect(result.kind).toBe('created')
+    if (result.kind !== 'created') throw new Error('Expected a created version.')
+    const saved = await client.artifactVersion.findUniqueOrThrow({
+      where: { id: result.version.id },
+      include: { literatureManifest: true }
+    })
+    expect(saved).toMatchObject({
+      originKind: 'user_edit',
+      basedOnVersionId: fixture.versionIds[1],
+      literatureManifest: { styleId: 'vancouver', locale: 'en-US' }
+    })
+    expect(JSON.parse(saved.literatureManifest!.manifestJson)).toMatchObject({
+      styleId: 'vancouver',
+      references: [{ itemId: 'item-1' }]
+    })
+    await expect(service.saveDerivedArtifactEdit(request)).resolves.toMatchObject({
+      kind: 'created',
+      replayed: true,
+      version: { id: result.version.id }
+    })
+    await expect(
+      client.artifactLiteratureManifest.count({
+        where: { artifactVersion: { artifactId: fixture.fileId } }
+      })
+    ).resolves.toBe(1)
+
+    const provenance = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: async () => client
+    })
+    const locator = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: fixture.fileId,
+      versionId: result.version.id
+    }
+    const literature = await provenance.getVersionLiterature(locator)
+    expect(literature).toEqual(request.literature)
+    for (const field of ['projectId', 'appSessionId', 'artifactId', 'versionId'] as const) {
+      await expect(
+        provenance.getVersionLiterature({ ...locator, [field]: 'another-owner' })
+      ).rejects.toThrow('Artifact Version not found')
+    }
+    await expect(provenance.getVersionCore(locator)).rejects.toThrow('Artifact Version not found')
+
+    const nextLiterature = { ...literature!, styleId: 'apa' }
+    const next = await service.saveDerivedArtifactEdit({
+      ...request,
+      basedOnVersionId: result.version.id,
+      expectedHeadVersionId: result.version.id,
+      operationId: 'citation-format-again',
+      content: Buffer.from('reformatted citation document'),
+      literature: nextLiterature
+    })
+    if (next.kind !== 'created') throw new Error('Expected another created version.')
+    await expect(
+      provenance.getVersionLiterature({ ...locator, versionId: next.version.id })
+    ).resolves.toEqual(nextLiterature)
+    await expect(provenance.getVersionLiterature(locator)).resolves.toEqual(request.literature)
+
+    await client.artifactLiteratureManifest.update({
+      where: { artifactVersionId: next.version.id },
+      data: { checksum: '0'.repeat(64) }
+    })
+    await expect(
+      provenance.getVersionLiterature({ ...locator, versionId: next.version.id })
+    ).rejects.toThrow('Artifact Literature manifest is corrupt')
   })
 
   it('creates a Node version file operator by default without a platform capability gate', async () => {

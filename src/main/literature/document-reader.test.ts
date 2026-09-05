@@ -10,13 +10,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { extractPdfText } from '../uploads/attachment-media'
+import { extractPdfText, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 import { LiteratureDocumentReader } from './document-reader'
 import { LiteratureFullTextIndex, literatureIndexPath } from './full-text-index'
+import type { SessionPdfSourceResolver } from './session-pdf-source-resolver'
 
 import { createLiteratureMcpServer, LITERATURE_READ_DOCUMENT_TOOL_NAME } from './mcp-server'
 
-vi.mock('../uploads/attachment-media', () => ({ extractPdfText: vi.fn() }))
+vi.mock('../uploads/attachment-media', () => ({
+  extractPdfText: vi.fn(),
+  MAX_AUTO_EXTRACT_PDF_BYTES: 50 * 1024 * 1024
+}))
 
 const checksum = 'a'.repeat(64)
 const secondChecksum = 'b'.repeat(64)
@@ -42,6 +46,43 @@ const secondInput = {
   checksum: secondChecksum,
   storageKey: 'uploads/version-2.pdf'
 } satisfies NotebookRunInputFile
+
+const sessionPdfSources = (inputs: {
+  resolveVersion: (request: {
+    projectId: string
+    sourceKind: 'artifact-version' | 'upload-version'
+    inputFileVersionId: string
+    expectedSourceFileId?: string
+  }) => Promise<NotebookRunInputFile | undefined>
+  resolveContent: (input: NotebookRunInputFile) => Promise<string>
+}): Pick<SessionPdfSourceResolver, 'resolveVersion'> => ({
+  resolveVersion: async (request: {
+    projectId: string
+    sourceKind: 'artifact-version' | 'upload-version' | 'literature-attachment-version'
+    sourceVersionId: string
+    expectedSourceFileId?: string
+  }) => {
+    if (request.sourceKind === 'literature-attachment-version') return undefined
+    const input = await inputs.resolveVersion({
+      projectId: request.projectId,
+      sourceKind: request.sourceKind,
+      inputFileVersionId: request.sourceVersionId,
+      expectedSourceFileId: request.expectedSourceFileId
+    })
+    if (!input) return undefined
+    return {
+      sourceKind: input.sourceKind,
+      sourceFileId: input.sourceFileId,
+      sourceVersionId: input.inputFileVersionId,
+      sourceSessionId: input.sourceSessionId,
+      filename: input.filename,
+      contentType: input.contentType,
+      sizeBytes: input.sizeBytes,
+      checksum: input.checksum,
+      path: await inputs.resolveContent(input)
+    }
+  }
+})
 
 const session = (
   withContext = true,
@@ -223,7 +264,7 @@ describe('LiteratureDocumentReader', () => {
     const reader = new LiteratureDocumentReader({
       storageRoot: root,
       sessions: { loadSessionForContinuation },
-      inputs: { resolveVersion, resolveContent }
+      sources: sessionPdfSources({ resolveVersion, resolveContent })
     })
 
     const result = await reader.readCurrent({
@@ -256,14 +297,14 @@ describe('LiteratureDocumentReader', () => {
     const reader = new LiteratureDocumentReader({
       storageRoot: root,
       sessions: { loadSessionForContinuation: vi.fn(async () => session(true, checksum)) },
-      inputs: {
+      sources: sessionPdfSources({
         resolveVersion: vi.fn(async ({ inputFileVersionId }) =>
           inputFileVersionId === 'version-2' ? duplicateInput : input
         ),
         resolveContent: vi.fn(async (resolved) =>
           join(root, resolved.inputFileVersionId === 'version-2' ? 'second.pdf' : 'paper.pdf')
         )
-      }
+      })
     })
 
     const result = await reader.readCurrent({
@@ -283,15 +324,57 @@ describe('LiteratureDocumentReader', () => {
     ).toEqual(new Set(['binding-1', 'binding-2']))
   })
 
+  it('searches one Library attachment version on demand and reuses its extraction', async () => {
+    const resolveVersion = vi.fn(async () => ({
+      sourceKind: 'literature-attachment-version' as const,
+      sourceFileId: 'attachment-1',
+      sourceVersionId: 'attachment-version-1',
+      filename: 'library-paper.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: 42,
+      checksum,
+      path: join(root, 'library-paper.pdf')
+    }))
+    const reader = new LiteratureDocumentReader({
+      storageRoot: root,
+      sessions: { loadSessionForContinuation: vi.fn() },
+      sources: { resolveVersion }
+    })
+    const request = {
+      projectId: 'project-1',
+      attachmentId: 'attachment-1',
+      attachmentVersionId: 'attachment-version-1',
+      filename: 'library-paper.pdf',
+      sizeBytes: 42,
+      checksum,
+      query: 'retrieval evaluator'
+    }
+
+    const first = await reader.searchAttachment(request)
+    const second = await reader.searchAttachment(request)
+
+    expect(first).toMatchObject({
+      scope: 'relevant-passages',
+      documents: [{ id: 'attachment-version-1', name: 'library-paper.pdf' }]
+    })
+    expect(second).toMatchObject({ scope: 'relevant-passages' })
+    expect(resolveVersion).toHaveBeenCalledTimes(2)
+    expect(extractPdfText).toHaveBeenCalledTimes(1)
+    await expect(
+      reader.searchAttachment({ ...request, sizeBytes: MAX_AUTO_EXTRACT_PDF_BYTES + 1 })
+    ).rejects.toThrow('PDF_SIZE_LIMIT_EXCEEDED')
+    expect(resolveVersion).toHaveBeenCalledTimes(2)
+  })
+
   it('falls back to bounded in-memory retrieval when the BM25 sidecar is unavailable', async () => {
     vi.spyOn(LiteratureFullTextIndex, 'open').mockRejectedValueOnce(new Error('sqlite unavailable'))
     const reader = new LiteratureDocumentReader({
       storageRoot: root,
       sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
-      inputs: {
+      sources: sessionPdfSources({
         resolveVersion: vi.fn(async () => input),
         resolveContent: vi.fn(async () => join(root, 'paper.pdf'))
-      }
+      })
     })
 
     const result = await reader.readCurrent({
@@ -324,10 +407,10 @@ describe('LiteratureDocumentReader', () => {
     const reader = new LiteratureDocumentReader({
       storageRoot: root,
       sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
-      inputs: {
+      sources: sessionPdfSources({
         resolveVersion: vi.fn(async () => input),
         resolveContent: vi.fn(async () => join(root, 'paper.pdf'))
-      }
+      })
     })
 
     const result = await reader.readCurrent({
@@ -348,10 +431,10 @@ describe('LiteratureDocumentReader', () => {
     const reader = new LiteratureDocumentReader({
       storageRoot: root,
       sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
-      inputs: {
+      sources: sessionPdfSources({
         resolveVersion: vi.fn(async () => input),
         resolveContent: vi.fn(async () => join(root, 'paper.pdf'))
-      }
+      })
     })
     const request = {
       projectId: 'project-1',
@@ -397,10 +480,10 @@ describe('LiteratureDocumentReader', () => {
     const reader = new LiteratureDocumentReader({
       storageRoot: root,
       sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
-      inputs: {
+      sources: sessionPdfSources({
         resolveVersion: vi.fn(async () => input),
         resolveContent: vi.fn(async () => join(root, 'paper.pdf'))
-      }
+      })
     })
     const request = {
       projectId: 'project-1',
@@ -427,10 +510,10 @@ describe('LiteratureDocumentReader', () => {
     const reader = new LiteratureDocumentReader({
       storageRoot: root,
       sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
-      inputs: {
+      sources: sessionPdfSources({
         resolveVersion,
         resolveContent: vi.fn(async () => join(root, 'paper.pdf'))
-      }
+      })
     })
     const request = {
       projectId: 'project-1',
@@ -449,10 +532,10 @@ describe('LiteratureDocumentReader', () => {
     const reader = new LiteratureDocumentReader({
       storageRoot: root,
       sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
-      inputs: {
+      sources: sessionPdfSources({
         resolveVersion: vi.fn(async () => input),
         resolveContent: vi.fn(async () => join(root, 'paper.pdf'))
-      }
+      })
     })
 
     await reader.readCurrent({
@@ -476,10 +559,10 @@ describe('LiteratureDocumentReader', () => {
     const reader = new LiteratureDocumentReader({
       storageRoot: root,
       sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
-      inputs: {
+      sources: sessionPdfSources({
         resolveVersion: vi.fn(async () => input),
         resolveContent: vi.fn(async () => join(root, 'paper.pdf'))
-      }
+      })
     })
 
     await expect(
@@ -502,10 +585,10 @@ describe('LiteratureDocumentReader', () => {
     const reader = new LiteratureDocumentReader({
       storageRoot: root,
       sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
-      inputs: {
+      sources: sessionPdfSources({
         resolveVersion: vi.fn(async () => input),
         resolveContent: vi.fn(async () => join(root, 'paper.pdf'))
-      }
+      })
     })
 
     await reader.readCurrent({
@@ -531,12 +614,12 @@ describe('LiteratureDocumentReader', () => {
     const reader = new LiteratureDocumentReader({
       storageRoot: root,
       sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
-      inputs: {
+      sources: sessionPdfSources({
         resolveVersion: vi.fn(async ({ inputFileVersionId }) =>
           inputFileVersionId === 'version-2' ? secondInput : input
         ),
         resolveContent: vi.fn(async () => join(root, 'paper.pdf'))
-      }
+      })
     })
 
     const first = (await reader.readCurrent({
@@ -569,11 +652,75 @@ describe('LiteratureDocumentReader', () => {
     ).rejects.toThrow('cursor is invalid')
   })
 
+  it('reads a Literature Attachment Version from the immutable message snapshot', async () => {
+    const literatureSession = session()
+    const message = literatureSession.messages[0]!
+    const snapshot = message.pdfContext!
+    const sourceBinding = snapshot.bindings[0]!
+    const literatureBinding = {
+      version: sourceBinding.version,
+      bindingId: sourceBinding.bindingId,
+      sourceKind: 'literature-attachment-version' as const,
+      sourceFileId: 'attachment-1',
+      sourceVersionId: 'attachment-version-1',
+      name: 'library-paper.pdf',
+      mimeType: sourceBinding.mimeType,
+      sizeBytes: sourceBinding.sizeBytes,
+      checksum: sourceBinding.checksum,
+      linkedAt: sourceBinding.linkedAt
+    }
+    const reader = new LiteratureDocumentReader({
+      storageRoot: root,
+      sessions: {
+        loadSessionForContinuation: vi.fn(async () => ({
+          ...literatureSession,
+          messages: [
+            {
+              ...message,
+              pdfContext: {
+                ...snapshot,
+                bindings: [literatureBinding],
+                activeBindingId: literatureBinding.bindingId
+              }
+            }
+          ]
+        }))
+      },
+      sources: {
+        resolveVersion: vi.fn(async () => ({
+          sourceKind: 'literature-attachment-version' as const,
+          sourceFileId: 'attachment-1',
+          sourceVersionId: 'attachment-version-1',
+          filename: 'library-paper.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 42,
+          checksum,
+          path: join(root, 'library-paper.pdf')
+        }))
+      }
+    })
+
+    await expect(
+      reader.readCurrent({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        promptMessageId: 'message-1',
+        input: { documentId: literatureBinding.bindingId }
+      })
+    ).resolves.toMatchObject({
+      scope: 'full-document',
+      document: { name: 'library-paper.pdf' }
+    })
+    expect(extractPdfText).toHaveBeenCalledWith(join(root, 'library-paper.pdf'), undefined, {
+      maxChars: 24 * 1024 * 1024
+    })
+  })
+
   it('fails closed when the active message has no linked PDF snapshot', async () => {
     const reader = new LiteratureDocumentReader({
       storageRoot: root,
       sessions: { loadSessionForContinuation: vi.fn(async () => session(false)) },
-      inputs: { resolveVersion: vi.fn(), resolveContent: vi.fn() }
+      sources: sessionPdfSources({ resolveVersion: vi.fn(), resolveContent: vi.fn() })
     })
 
     await expect(

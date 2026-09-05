@@ -202,6 +202,10 @@ const dataContentApplicationCommands = Object.freeze({
     'getCodeReconstruction'
   ),
   artifactGetLineage: artifactCommand('artifacts:get-lineage', 'getLineage'),
+  artifactGetVersionLiterature: artifactCommand(
+    'artifacts:get-version-literature',
+    'getVersionLiterature'
+  ),
   artifactGetVersionExecution: artifactCommand(
     'artifacts:get-version-execution',
     'getVersionExecution'
@@ -409,6 +413,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.artifactGetCodeReconstruction,
     dataContentApplicationCommands.artifactGetLineage,
     dataContentApplicationCommands.artifactGetVersionExecution,
+    dataContentApplicationCommands.artifactGetVersionLiterature,
     dataContentApplicationCommands.artifactGetVersionMessages,
     dataContentApplicationCommands.artifactGetVersionProvenance,
     dataContentApplicationCommands.artifactGetVersionReview,
@@ -573,6 +578,8 @@ const registerDataContentApplicationCommands = (
       'artifacts:get-code-reconstruction': ({ args }) =>
         dependencies.artifacts.getCodeReconstruction(args[0]),
       'artifacts:get-lineage': ({ args }) => dependencies.artifacts.getLineage(args[0]),
+      'artifacts:get-version-literature': ({ args }) =>
+        dependencies.artifacts.getVersionLiterature(args[0]),
       'artifacts:get-version-execution': ({ args }) =>
         dependencies.artifacts.getVersionExecution(args[0]),
       'artifacts:get-version-messages': ({ args }) =>

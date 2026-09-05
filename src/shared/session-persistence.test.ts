@@ -1192,6 +1192,119 @@ describe('message part persistence', () => {
       }
     ])
   })
+
+  it('preserves a validated immutable Literature snapshot and drops unknown fields', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: '@A cited paper',
+          parts: [
+            {
+              type: 'literature',
+              itemId: 'item-1',
+              metadataRevision: 2,
+              attachmentVersionId: 'version-1',
+              localPath: '/must/not/persist.pdf',
+              item: {
+                itemType: 'journalArticle',
+                title: 'A cited paper',
+                abstract: '',
+                issuedText: '2025',
+                containerTitle: 'Research Journal',
+                shortTitle: '',
+                language: 'en',
+                rights: '',
+                url: '',
+                extra: '',
+                typeFields: {},
+                creators: [],
+                identifiers: []
+              }
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.messages[0].parts).toEqual([
+      {
+        type: 'literature',
+        itemId: 'item-1',
+        metadataRevision: 2,
+        attachmentVersionId: 'version-1',
+        item: {
+          itemType: 'journalArticle',
+          title: 'A cited paper',
+          abstract: '',
+          issuedText: '2025',
+          containerTitle: 'Research Journal',
+          shortTitle: '',
+          language: 'en',
+          rights: '',
+          url: '',
+          extra: '',
+          typeFields: {},
+          creators: [],
+          identifiers: []
+        }
+      }
+    ])
+  })
+
+  it('preserves valid Library retrieval scopes and rejects incomplete Collection scopes', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: '@Library @Evidence set',
+          parts: [
+            { type: 'literature-scope', scope: 'project', ignored: 'value' },
+            { type: 'literature-scope', scope: 'library' },
+            {
+              type: 'literature-scope',
+              scope: 'collection',
+              collectionId: 'collection-1',
+              name: 'Evidence set'
+            },
+            { type: 'literature-scope', scope: 'collection', name: 'Missing ID' },
+            {
+              type: 'literature-scope',
+              scope: 'collection',
+              collectionId: 'c'.repeat(513),
+              name: 'Oversized ID'
+            },
+            {
+              type: 'literature-scope',
+              scope: 'collection',
+              collectionId: 'collection-2',
+              name: 'n'.repeat(4097)
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.messages[0].parts).toEqual([
+      { type: 'literature-scope', scope: 'project' },
+      {
+        type: 'literature-scope',
+        scope: 'collection',
+        collectionId: 'collection-1',
+        name: 'Evidence set'
+      }
+    ])
+  })
 })
 
 describe('interrupted turn intent persistence', () => {
@@ -3098,6 +3211,80 @@ describe('normalizeSessionFile with activities', () => {
     )
   })
 
+  it('keeps a permission request when its optional tool input is too large to persist', () => {
+    const restored = normalizeSessionFile(
+      {
+        ...createSessionWithActivity(undefined),
+        activities: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-large-input',
+              sessionId: 'session-1',
+              toolCallId: 'tool-large-input',
+              title: 'Write generated content',
+              options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }],
+              rawInput: { content: 'x'.repeat(9_000) }
+            },
+            originatingPromptMessageId: 'prompt-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      },
+      { preserveRuntimeState: true }
+    )
+
+    expect(restored?.runtimeContext?.permission).toMatchObject({
+      state: 'pending',
+      request: {
+        requestId: 'permission-large-input',
+        toolCallId: 'tool-large-input'
+      },
+      fingerprint: 'a'.repeat(64)
+    })
+    expect(restored?.runtimeContext?.permission?.request.rawInput).toBeUndefined()
+  })
+
+  it('keeps a permission request with a bounded preview when its command title is very long', () => {
+    const longTitle = `python -c "${'x'.repeat(20_000)}"`
+    const restored = normalizeSessionFile(
+      {
+        ...createSessionWithActivity(undefined),
+        activities: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-long-title',
+              sessionId: 'session-1',
+              toolCallId: 'tool-long-title',
+              title: longTitle,
+              options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }]
+            },
+            originatingPromptMessageId: 'prompt-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      },
+      { preserveRuntimeState: true }
+    )
+
+    expect(restored?.runtimeContext?.permission?.request).toMatchObject({
+      requestId: 'permission-long-title',
+      toolCallId: 'tool-long-title'
+    })
+    expect(restored?.runtimeContext?.permission?.request.title.length).toBeLessThan(
+      longTitle.length
+    )
+  })
+
   it.each(['pending', 'in_progress'] as const)(
     'rearms a prompt-bound continuing MCP permission without failing its %s tool activity',
     (status) => {
@@ -4847,8 +5034,30 @@ describe('normalizeSessionFile with activities', () => {
       linkedAt: 10
     }
     const snapshot = { version: 1, bindings: [binding] }
+    const literatureBinding = {
+      ...binding,
+      sourceKind: 'literature-attachment-version',
+      sourceFileId: 'attachment-1',
+      sourceVersionId: 'attachment-version-1',
+      sourceSessionId: undefined
+    }
 
     expect(sanitizeSessionPdfContext(snapshot)).toEqual(snapshot)
+    expect(sanitizeSessionPdfContext({ version: 1, bindings: [literatureBinding] })).toEqual({
+      version: 1,
+      bindings: [
+        expect.objectContaining({
+          sourceKind: 'literature-attachment-version',
+          sourceVersionId: 'attachment-version-1'
+        })
+      ]
+    })
+    expect(
+      sanitizeSessionPdfContext({
+        version: 1,
+        bindings: [{ ...literatureBinding, sourceSessionId: 'not-allowed' }]
+      })
+    ).toBeUndefined()
     expect(
       sanitizeSessionPdfContext({ version: 1, bindings: [{ ...binding, sourceKind: 'local' }] })
     ).toBeUndefined()

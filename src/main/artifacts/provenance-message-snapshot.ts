@@ -108,6 +108,10 @@ const projectParts = (node: PersistedMessageNode): ProvenanceMessagePart[] | und
     if (part.type === 'text') return [{ type: 'text', text: part.text }]
     if (part.type === 'skill') return [{ type: 'skill', name: part.name }]
     if (part.type === 'session') return [{ type: 'text', text: `#${part.title}` }]
+    if (part.type === 'literature') return [{ type: 'text', text: `@${part.item.title}` }]
+    if (part.type === 'literature-scope') {
+      return [{ type: 'text', text: `@${part.scope === 'collection' ? part.name : 'Library'}` }]
+    }
     return [
       {
         type: 'artifact',
