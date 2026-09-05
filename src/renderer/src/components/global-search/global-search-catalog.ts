@@ -61,6 +61,11 @@ export const searchSessionTitles = ({
 }): SessionSearchGroups => {
   const foldedQuery = normalizeSearchText(query).trim()
   const numericQuery = /^\d+$/.test(foldedQuery) ? foldedQuery : undefined
+  // A literal substring must include trailing marks (e.g. the dot added when İ lowercases).
+  const titlePattern = new RegExp(
+    `${foldedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!\\p{M})`,
+    'u'
+  )
   const matches = sessions
     .filter(
       (session) =>
@@ -68,7 +73,7 @@ export const searchSessionTitles = ({
         projectNames.has(session.projectId) &&
         (numericQuery
           ? String(validSessionNumber(session.number) ?? '').startsWith(numericQuery)
-          : normalizeSearchText(session.title).includes(foldedQuery))
+          : titlePattern.test(normalizeSearchText(session.title)))
     )
     .sort((left, right) => {
       if (numericQuery) {

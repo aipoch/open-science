@@ -757,7 +757,8 @@ colors communicate a successful or failed probe/migration result.
   title-only so global search does not expand into message-body or metadata search.
 - Session title search compares NFKC-normalized, lowercase text while preserving the original title
   for display. Compatibility forms (including full-width input) and composed/decomposed accents
-  match; accents remain significant, and `ß` is not expanded to `ss`. Full-width numeric queries
+  match; accents remain significant, so substring matches must include any trailing combining marks
+  (including the dot produced by lowercasing `İ`). `ß` is not expanded to `ss`. Full-width numeric queries
   follow the same Session-number lookup as ASCII digits. This policy applies to the local Session
   title catalog, not the separate Artifact filename search.
 - List row: `h-10 rounded-lg px-3 hover:bg-accent hover:text-accent-foreground`.

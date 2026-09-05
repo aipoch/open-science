@@ -28,7 +28,12 @@ describe('global search catalog', () => {
     ['ＡＮＡＬＹＳＩＳ', 'analysis'],
     ['E\u0301tude', 'étude'],
     ['ﬀ analysis', 'ff'],
-    ['Ⓓ analysis', 'd']
+    ['Ⓓ analysis', 'd'],
+    ['İstanbul', 'İ'],
+    ['İstanbul', 'i\u0307'],
+    ['İstanbul in summer', 'i'],
+    ['Literal [.*+?^${}()|\\] query', '[.*+?^${}()|\\]'],
+    ['İstanbul', '']
   ])('finds title %s using query %s', (title, query) => {
     const result = searchSessionTitles({
       sessions: [{ ...sessions(1)[0], title }],
@@ -46,7 +51,11 @@ describe('global search catalog', () => {
   it.each([
     ['Étude', 'etude'],
     ['Übersicht', 'ubersicht'],
-    ['Straße', 'strasse']
+    ['Straße', 'strasse'],
+    ['İstanbul', 'i'],
+    ['i\u0307stanbul', 'i'],
+    ['i\u0307\u0301stanbul', 'i\u0307'],
+    ['No wildcard match', '.*']
   ])('keeps title %s distinct from query %s', (title, query) => {
     const result = searchSessionTitles({
       sessions: [{ ...sessions(1)[0], title }],
