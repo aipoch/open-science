@@ -958,6 +958,8 @@ describe('production delegated-work composition', () => {
             shutdownBackends,
             prepareForQuit,
             abortQuitPreparation,
+            holdSettingsInstallAdmission: () => () => undefined,
+            getActiveSettingsInstallId: () => undefined,
             flushSessionPersistence,
             isMigrationInProgress: () => false,
             quit,
