@@ -4356,6 +4356,10 @@
     "Managed runtime pack unavailable": "Le paquet d’environnement d’exécution géré est indisponible",
     "Environment setup progress": "Progression de la configuration de l’environnement",
     "Download progress": "Progression du téléchargement",
-    "Notebook environment ready": "L’environnement Notebook est prêt"
+    "Notebook environment ready": "L’environnement Notebook est prêt",
+    "unsupported": "non pris en charge",
+    "No model from {{provider}} is supported over the Codex Chat Completions bridge.": "Aucun modèle de {{provider}} n’est pris en charge via la passerelle Chat Completions de Codex.",
+    "CSV parsing encountered a problem. The preview may be incomplete.": "Un problème est survenu lors de l’analyse du CSV. L’aperçu peut être incomplet.",
+    "{{percent}}% of {{size}}": "{{percent}} % de {{size}}"
   }
 }

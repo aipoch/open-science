@@ -1821,7 +1821,10 @@ const ConversationPanel = ({
                                   ? t('Cancelling…')
                                   : transfer.status === 'error'
                                     ? transfer.error || t('Upload failed')
-                                    : `${percent}% of ${formatAttachmentSize(transfer.totalBytes)}`
+                                    : t('{{percent}}% of {{size}}', {
+                                        percent,
+                                        size: formatAttachmentSize(transfer.totalBytes)
+                                      })
                             const pastedText = transfer.pastedTextId
                               ? pastedTextById.get(transfer.pastedTextId)
                               : undefined

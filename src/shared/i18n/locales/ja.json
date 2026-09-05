@@ -4046,6 +4046,10 @@
     "Managed runtime pack unavailable": "管理対象ランタイムパックを利用できません",
     "Environment setup progress": "環境セットアップの進行状況",
     "Download progress": "ダウンロードの進行状況",
-    "Notebook environment ready": "Notebook 環境の準備ができました"
+    "Notebook environment ready": "Notebook 環境の準備ができました",
+    "unsupported": "非対応",
+    "No model from {{provider}} is supported over the Codex Chat Completions bridge.": "{{provider}} のモデルは、いずれも Codex Chat Completions ブリッジではサポートされていません。",
+    "CSV parsing encountered a problem. The preview may be incomplete.": "CSV の解析中に問題が発生しました。プレビューが不完全な可能性があります。",
+    "{{percent}}% of {{size}}": "{{size}} の {{percent}}%"
   }
 }

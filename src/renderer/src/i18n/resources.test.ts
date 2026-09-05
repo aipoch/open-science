@@ -4892,9 +4892,10 @@ const isProse = (text: string): boolean => {
   if (!/[A-Za-z]{2}/.test(text)) return false
   // Units and bare measurements: 12px, 1.5 s.
   if (/^\d+(?:\.\d+)?\s*[a-z%]*$/.test(text)) return false
-  // A single lowercase token is an identifier or a fragment, not a sentence. Multi-word copy and
-  // anything that starts capitalised, numeric or quoted is fair game.
-  if (!/^[A-Z0-9“"']/.test(text) && !text.includes(' ')) return false
+  // Plain lowercase words can be UI copy (for example, unsupported). Exempt only explicit
+  // technical labels and identifier syntax, rather than every lowercase word.
+  if (text === 'abc') return false // Spreadsheet text-column type marker.
+  if (!/^[A-Z0-9“"']/.test(text) && !text.includes(' ') && !/^[a-z]+$/.test(text)) return false
   return true
 }
 
@@ -5006,6 +5007,17 @@ const bareJsxExpressionValues = (source: string): BareCopy[] => {
     ts.ScriptKind.TSX
   )
   const found: BareCopy[] = []
+  // Reuse TypeScript's lexical binding so shadowed parameters and same-named local variables
+  // cannot borrow each other's copy. This program reads only the current source, not its imports.
+  const options: ts.CompilerOptions = { noLib: true, noResolve: true }
+  const program = ts.createProgram([sourceFile.fileName], options, {
+    ...ts.createCompilerHost(options),
+    getSourceFile: (name) => (name === sourceFile.fileName ? sourceFile : undefined),
+    fileExists: (name) => name === sourceFile.fileName,
+    readFile: () => undefined
+  })
+  const checker = program.getTypeChecker()
+  const visited = new Set<ts.Expression>()
 
   const record = (node: ts.Node, text: string): void => {
     const normalized = text.replace(/\s+/g, ' ').trim()
@@ -5017,6 +5029,21 @@ const bareJsxExpressionValues = (source: string): BareCopy[] => {
   }
 
   const inspect = (expression: ts.Expression): void => {
+    if (visited.has(expression)) return
+    visited.add(expression)
+    if (ts.isIdentifier(expression)) {
+      const declaration = checker.getSymbolAtLocation(expression)?.valueDeclaration
+      if (
+        declaration &&
+        ts.isVariableDeclaration(declaration) &&
+        ts.isIdentifier(declaration.name) &&
+        declaration.initializer &&
+        ts.isVariableDeclarationList(declaration.parent) &&
+        (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+      )
+        inspect(declaration.initializer)
+      return
+    }
     if (
       ts.isParenthesizedExpression(expression) ||
       ts.isAsExpression(expression) ||
@@ -5080,6 +5107,10 @@ const NOT_TRANSLATABLE = new Set([
   'Discord',
   'GitHub',
   'SKILL.md',
+  'claude setup-token',
+  'argocd',
+  'API_TOKEN=',
+  'Authorization: X-Api-Key:',
   'openid profile',
   'Python',
   'Enter',
@@ -5112,7 +5143,10 @@ const CODE_LOOKALIKE = /^(?:default|case|return|break|const|let|await)\b/
 const KNOWN_BARE = new Set<string>()
 
 describe('bare copy', () => {
-  const components = SCAN_ROOTS.flatMap(sourceFiles).filter((path) => path.endsWith('.tsx'))
+  // Design-state fixtures are development-only; production renderer components remain scanned.
+  const components = SCAN_ROOTS.flatMap(sourceFiles).filter(
+    (path) => path.endsWith('.tsx') && !path.endsWith('.preview.tsx')
+  )
 
   const offenders = components.flatMap((path) => {
     const source = readFileSync(path, 'utf8')
@@ -5156,6 +5190,39 @@ describe('bare copy', () => {
 // over-eager match reports copy that is already handled. These pin the shapes that actually caused
 // trouble while the migration ran.
 describe('bare copy detection', () => {
+  it('finds lowercase user-facing words instead of treating every word as an identifier', () => {
+    expect(bareJsxAstText('<span>unsupported</span>')).toEqual([{ text: 'unsupported', line: 1 }])
+    expect(bareJsxExpressionValues("<span>{ready ? 'available' : 'unavailable'}</span>")).toEqual([
+      { text: 'available', line: 1 },
+      { text: 'unavailable', line: 1 }
+    ])
+  })
+
+  it('follows local const templates and conditional reasons into visible JSX', () => {
+    expect(
+      bareJsxExpressionValues(
+        'const label = `${rows} rows · ${columns} columns`; const reason = ready ? undefined : `No model from ${name} is supported.`; const view = <><span>{label}</span><button aria-label={reason} /></>'
+      )
+    ).toEqual([
+      { text: 'rows · columns', line: 1 },
+      { text: 'No model from is supported.', line: 1 }
+    ])
+  })
+
+  it('respects local binding scope and accepts translated templates and technical content', () => {
+    expect(
+      bareJsxExpressionValues(
+        "const label = 'Not rendered'; function View({ label }: Props) { return <span>{label}</span> }; const other = () => { const label = t('{{rows}} rows', { rows }); return <span>{label}</span> }"
+      )
+    ).toEqual([])
+    expect(bareJsxAstText('<span>abc</span><code>ssh-agent</code><span>12px</span>')).toEqual([])
+    expect(
+      bareJsxExpressionValues(
+        "const command = 'claude setup-token'; const view = <code>{command}</code>"
+      ).filter(({ text }) => !NOT_TRANSLATABLE.has(text))
+    ).toEqual([])
+  })
+
   it('finds text in an element', () => {
     expect(bareJsxText('<span>Needs repair</span>')).toEqual([{ text: 'Needs repair', line: 1 }])
   })

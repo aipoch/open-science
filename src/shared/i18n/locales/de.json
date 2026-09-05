@@ -4201,6 +4201,10 @@
     "Managed runtime pack unavailable": "Verwaltetes Laufzeitpaket ist nicht verfügbar",
     "Environment setup progress": "Fortschritt der Umgebungseinrichtung",
     "Download progress": "Downloadfortschritt",
-    "Notebook environment ready": "Notebook-Umgebung ist bereit"
+    "Notebook environment ready": "Notebook-Umgebung ist bereit",
+    "unsupported": "nicht unterstützt",
+    "No model from {{provider}} is supported over the Codex Chat Completions bridge.": "Kein Modell von {{provider}} wird über die Codex Chat Completions-Brücke unterstützt.",
+    "CSV parsing encountered a problem. The preview may be incomplete.": "Beim Lesen der CSV-Daten ist ein Problem aufgetreten. Die Vorschau ist möglicherweise unvollständig.",
+    "{{percent}}% of {{size}}": "{{percent}} % von {{size}}"
   }
 }

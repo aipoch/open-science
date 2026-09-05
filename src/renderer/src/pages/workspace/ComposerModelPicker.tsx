@@ -84,8 +84,6 @@ const ComposerModelPicker = ({
   includeAllClaudeSubscriptions = false,
   onChange
 }: ComposerModelPickerProps): React.JSX.Element | null => {
-  // Only the shared incompatibility copy is translated here; the rest of this picker's strings belong
-  // to the workspace surface and are converted with it.
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
@@ -366,7 +364,10 @@ const ComposerModelPicker = ({
               const reason = compatible
                 ? undefined
                 : endpointCompatible && agentFrameworkId === 'codex'
-                  ? `No model from ${group.provider.name} is supported over the Codex Chat Completions bridge.`
+                  ? t(
+                      'No model from {{provider}} is supported over the Codex Chat Completions bridge.',
+                      { provider: group.provider.name }
+                    )
                   : incompatibilityReason(
                       {
                         apiEndpoints: group.provider.apiEndpoints,
@@ -412,7 +413,7 @@ const ComposerModelPicker = ({
                                   <span className="min-w-0 flex-1 truncate">
                                     {optionLabel(option)}
                                   </span>
-                                  <span className="text-xs">unsupported</span>
+                                  <span className="text-xs">{t('unsupported')}</span>
                                 </DropdownMenuItem>
                               </TooltipTrigger>
                               <TooltipContent side="right" className="max-w-72 leading-5">

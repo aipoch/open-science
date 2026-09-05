@@ -200,7 +200,10 @@ const DownloadSessionArtifactsDialog = ({
               </div>
               {status === 'ready' ? (
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                  {selectedArtifacts.length} of {artifacts.length} selected
+                  {t('{{selected}} of {{total}} selected', {
+                    selected: selectedArtifacts.length,
+                    total: artifacts.length
+                  })}
                 </span>
               ) : null}
             </div>

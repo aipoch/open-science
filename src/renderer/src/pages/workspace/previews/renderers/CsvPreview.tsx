@@ -46,9 +46,15 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
   const dataRows = rows.slice(1, VISIBLE_ROWS + 1)
   const visibleHeaders = headers.slice(0, VISIBLE_COLUMNS)
   const hiddenColumnCount = Math.max(headers.length - visibleHeaders.length, 0)
-  const rowCountLabel = `${Math.max(rows.length - 1, 0)}${state.preview.truncated ? '+' : ''} rows · ${
-    headers.length
-  } columns`
+  const rowCountLabel = state.preview.truncated
+    ? t('{{rows}}+ rows · {{columns}} columns', {
+        rows: Math.max(rows.length - 1, 0),
+        columns: headers.length
+      })
+    : t('{{rows}} rows · {{columns}} columns', {
+        rows: Math.max(rows.length - 1, 0),
+        columns: headers.length
+      })
 
   return (
     <div className="flex size-full flex-col overflow-hidden bg-bg-10">
@@ -60,7 +66,12 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
             columns: visibleHeaders.length
           })}
         </span>
-        {errors[0] ? <span className="text-danger-000"> · {errors[0]}</span> : null}
+        {errors[0] ? (
+          <span className="text-danger-000">
+            {' '}
+            · {t('CSV parsing encountered a problem. The preview may be incomplete.')}
+          </span>
+        ) : null}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         <table className="min-w-full border-separate border-spacing-0 text-left text-[12px]">

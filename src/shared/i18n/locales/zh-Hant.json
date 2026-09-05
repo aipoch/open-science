@@ -4046,6 +4046,10 @@
     "Managed runtime pack unavailable": "托管執行環境包無法使用",
     "Environment setup progress": "環境設定進度",
     "Download progress": "下載進度",
-    "Notebook environment ready": "Notebook 環境已就緒"
+    "Notebook environment ready": "Notebook 環境已就緒",
+    "unsupported": "不支援",
+    "No model from {{provider}} is supported over the Codex Chat Completions bridge.": "{{provider}} 的所有模型均不支援透過 Codex Chat Completions 橋接使用。",
+    "CSV parsing encountered a problem. The preview may be incomplete.": "CSV 剖析發生問題，預覽可能不完整。",
+    "{{percent}}% of {{size}}": "{{size}} 的 {{percent}}%"
   }
 }

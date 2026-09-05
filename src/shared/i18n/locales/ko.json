@@ -4044,6 +4044,10 @@
     "Managed runtime pack unavailable": "관리되는 런타임 팩을 사용할 수 없습니다",
     "Environment setup progress": "환경 설정 진행률",
     "Download progress": "다운로드 진행률",
-    "Notebook environment ready": "Notebook 환경 준비 완료"
+    "Notebook environment ready": "Notebook 환경 준비 완료",
+    "unsupported": "지원되지 않음",
+    "No model from {{provider}} is supported over the Codex Chat Completions bridge.": "{{provider}}의 모델은 모두 Codex Chat Completions 브리지에서 지원되지 않습니다.",
+    "CSV parsing encountered a problem. The preview may be incomplete.": "CSV를 분석하는 중 문제가 발생했습니다. 미리보기가 불완전할 수 있습니다.",
+    "{{percent}}% of {{size}}": "{{size}} 중 {{percent}}%"
   }
 }

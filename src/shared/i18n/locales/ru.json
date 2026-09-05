@@ -4486,6 +4486,10 @@
     "Managed runtime pack unavailable": "Пакет управляемой среды выполнения недоступен",
     "Environment setup progress": "Ход настройки среды",
     "Download progress": "Ход загрузки",
-    "Notebook environment ready": "Среда Notebook готова"
+    "Notebook environment ready": "Среда Notebook готова",
+    "unsupported": "не поддерживается",
+    "No model from {{provider}} is supported over the Codex Chat Completions bridge.": "Ни одна модель {{provider}} не поддерживается через мост Codex Chat Completions.",
+    "CSV parsing encountered a problem. The preview may be incomplete.": "При разборе CSV возникла проблема. Предпросмотр может быть неполным.",
+    "{{percent}}% of {{size}}": "{{percent}}% из {{size}}"
   }
 }
