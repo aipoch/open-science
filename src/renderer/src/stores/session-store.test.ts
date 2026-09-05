@@ -7281,6 +7281,47 @@ describe('truncateSessionFromMessage', () => {
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
   })
 
+  it('retains an external branch-reset obligation in the next persisted snapshot', () => {
+    seedSession()
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'edited user-2'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().clearBranchContextReset('session-1')
+    const stale = toPersistedSession(useSessionStore.getState().sessions[0])
+    useSessionStore
+      .getState()
+      .activateMessageBranch('session-1', stale.conversationGraph!.branches[0].id)
+    const incoming = {
+      ...toPersistedSession(useSessionStore.getState().sessions[0]),
+      revision: (stale.revision ?? 0) + 1
+    }
+    expect(incoming.branchContextResetRequired).toBe(true)
+    expect(stale.branchContextResetRequired).toBeUndefined()
+
+    useSessionStore.getState().hydrateSessions([stale])
+    useSessionStore.getState().upsertPersistedSession(incoming)
+
+    const synchronized = useSessionStore.getState().sessions[0]
+    expect(synchronized.messages.map(({ id }) => id)).toEqual(stale.messages.map(({ id }) => id))
+    expect(synchronized.branchContextResetRequired).toBe(true)
+    expect(toPersistedSession(synchronized).branchContextResetRequired).toBe(true)
+
+    // Another renderer cannot discharge this renderer's pending reset obligation.
+    useSessionStore.getState().upsertPersistedSession({
+      ...incoming,
+      revision: incoming.revision + 1,
+      branchContextResetRequired: undefined
+    })
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+    useSessionStore.getState().clearBranchContextReset('session-1')
+    expect(
+      toPersistedSession(useSessionStore.getState().sessions[0]).branchContextResetRequired
+    ).toBeUndefined()
+  })
+
   it('does not activate another Message Branch while a Plan awaits approval', () => {
     seedSession()
     useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')

@@ -509,7 +509,8 @@ const withTransientSessionState = (
     awaitingFirstAgentOutput: source.awaitingFirstAgentOutput,
     agentPromptInFlight: source.agentPromptInFlight,
     activeRunRuntimeSegmentId: source.activeRunRuntimeSegmentId,
-    branchContextResetRequired: source.branchContextResetRequired,
+    branchContextResetRequired:
+      source.branchContextResetRequired || hydrated.branchContextResetRequired,
     specialistSwitchResetRequired: source.specialistSwitchResetRequired,
     elicitationHistoryReplayRequestId: source.elicitationHistoryReplayRequestId,
     branchSwitchBlocked: source.branchSwitchBlocked,

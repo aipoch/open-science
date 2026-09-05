@@ -1902,6 +1902,7 @@ describe('workspace durable elicitation', () => {
     expect(revised.agentBackendId).toBe('codex:provider-2')
     expect(revised.agentModel).toBe('new-model')
     expect(revised.conversationGraph?.runtimeSegments.at(-1)?.model).toBe('new-model')
+    expect(toPersistedSession(revised).branchContextResetRequired).toBeUndefined()
   })
 
   it('restores the transcript and forces replay when a revised answer cannot be submitted', async () => {

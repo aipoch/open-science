@@ -6,6 +6,10 @@ import type {
   SessionRuntimeContext
 } from '../../../shared/session-persistence'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
+import {
+  projectConversationMessage,
+  resolveActiveConversationMessages
+} from '../../../shared/conversation-graph'
 
 const collectDirectDelegateFrameIds = (
   graph: NonNullable<PersistedChatSession['conversationGraph']>
@@ -449,31 +453,38 @@ export const mergeDelegatedWorkAuthorityProjection = (
 export const mergeNewerPersistedSessionByIdentity = (
   current: PersistedIdentityState,
   incoming: PersistedChatSession
-): PersistedChatSession => ({
-  ...structuredClone(incoming),
-  messages: mergeCollectionByIdentity(
-    current.messages,
-    incoming.messages,
-    ({ id }) => id,
-    (_currentMessage, incomingMessage) => incomingMessage
-  ),
-  runtimeContext: mergeRuntimeContextByOwner(current.runtimeContext, incoming.runtimeContext),
-  ...(current.conversationGraph && incoming.conversationGraph
-    ? {
-        conversationGraph: mergeConversationGraphByIdentity(
-          current.conversationGraph,
-          incoming.conversationGraph,
-          { incomingWinsConflicts: true }
-        )
-      }
-    : current.conversationGraph && !incoming.conversationGraph
-      ? { conversationGraph: structuredClone(current.conversationGraph) }
-      : {}),
-  artifacts: mergeCollectionByIdentity(
-    current.artifacts ?? [],
-    incoming.artifacts ?? [],
-    ({ id }) => id,
-    (_currentArtifact, incomingArtifact) => incomingArtifact
-  ),
-  filesRevision: Math.max(current.filesRevision ?? 0, incoming.filesRevision ?? 0)
-})
+): PersistedChatSession => {
+  const mergedGraph =
+    current.conversationGraph && incoming.conversationGraph
+      ? mergeConversationGraphByIdentity(current.conversationGraph, incoming.conversationGraph, {
+          incomingWinsConflicts: true
+        })
+      : undefined
+  return {
+    ...structuredClone(incoming),
+    // The graph retains every Branch; the flat list must contain only the selected path.
+    messages: mergedGraph
+      ? resolveActiveConversationMessages(mergedGraph).map(projectConversationMessage)
+      : mergeCollectionByIdentity(
+          current.messages,
+          incoming.messages,
+          ({ id }) => id,
+          (_currentMessage, incomingMessage) => incomingMessage
+        ),
+    runtimeContext: mergeRuntimeContextByOwner(current.runtimeContext, incoming.runtimeContext),
+    ...(mergedGraph
+      ? {
+          conversationGraph: mergedGraph
+        }
+      : current.conversationGraph && !incoming.conversationGraph
+        ? { conversationGraph: structuredClone(current.conversationGraph) }
+        : {}),
+    artifacts: mergeCollectionByIdentity(
+      current.artifacts ?? [],
+      incoming.artifacts ?? [],
+      ({ id }) => id,
+      (_currentArtifact, incomingArtifact) => incomingArtifact
+    ),
+    filesRevision: Math.max(current.filesRevision ?? 0, incoming.filesRevision ?? 0)
+  }
+}
