@@ -435,113 +435,131 @@ export class AgentRuntimeManager {
   }
 
   async getPreflight(providers: ProviderPreflightAccess): Promise<Preflight> {
-    const settings = await this.repository.getSettings()
-    const reusableProbe = this.takeReusableRuntimeProbe('preflightRuntimeProbe', settings)
-    const runtimeProbe = reusableProbe ?? (await this.probeConfiguredRuntimes(settings))
-    // A fresh Preflight probe is the hand-off to the immediately following full environment check.
-    // A consumed environment result is intentionally not re-published after the trailing refresh.
-    if (!reusableProbe) this.storeReusableRuntimeProbe('environmentCheckRuntimeProbe', runtimeProbe)
+    return this.trackDetection(async (signal) => {
+      const settings = await this.repository.getSettings()
+      signal.throwIfAborted()
+      const reusableProbe = this.takeReusableRuntimeProbe('preflightRuntimeProbe', settings)
+      const runtimeProbe = reusableProbe ?? (await this.probeConfiguredRuntimes(settings, signal))
+      signal.throwIfAborted()
+      // A fresh Preflight probe is the hand-off to the immediately following full environment check.
+      // A consumed environment result is intentionally not re-published after the trailing refresh.
+      if (!reusableProbe)
+        this.storeReusableRuntimeProbe('environmentCheckRuntimeProbe', runtimeProbe)
 
-    const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
-    const framework = getAgentFramework(agentFrameworkId)
-    const activeProvider = settings.activeProviderId
-      ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
-      : undefined
-    const activeModel = activeProvider
-      ? providers.resolveActiveModel(activeProvider, settings.activeModel)
-      : undefined
-    const configuredModelAvailable =
-      settings.activeModel === undefined || activeModel === settings.activeModel
-    const activeEndpoints = activeProvider
-      ? providers.resolveProviderApiEndpoints(activeProvider, activeModel)
-      : undefined
-    const activeProviderCompatible =
-      activeProvider && configuredModelAvailable
-        ? isProviderUsableByFramework(
-            { apiEndpoints: activeEndpoints, type: activeProvider.type },
-            framework
-          ) &&
-          (framework.id !== 'codex' || isModelBridgeSupported(activeProvider, activeModel))
-        : false
-    const activeProviderKeyUsable =
-      activeProvider && activeProvider.lastValidatedAt !== undefined
-        ? await providers.isProviderKeyUsable(activeProvider)
-        : false
-    const activeValidationTarget = activeProvider
-      ? {
-          model: activeModel,
-          endpoint: preferredEndpoint(
-            activeEndpoints ?? [],
-            activeProvider.type === 'xai-subscription'
-              ? (['responses'] as const)
-              : framework.id === 'codex'
-                ? (['anthropic', 'openai', 'responses'] as const)
-                : requiresChatCompletionsBridge({ apiEndpoints: activeEndpoints }, framework)
-                  ? (activeEndpoints ?? [])
-                  : framework.supportedApiTypes
-          )
-        }
-      : undefined
+      const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+      const framework = getAgentFramework(agentFrameworkId)
+      const activeProvider = settings.activeProviderId
+        ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
+        : undefined
+      const activeModel = activeProvider
+        ? providers.resolveActiveModel(activeProvider, settings.activeModel)
+        : undefined
+      const configuredModelAvailable =
+        settings.activeModel === undefined || activeModel === settings.activeModel
+      const activeEndpoints = activeProvider
+        ? providers.resolveProviderApiEndpoints(activeProvider, activeModel)
+        : undefined
+      const activeProviderCompatible =
+        activeProvider && configuredModelAvailable
+          ? isProviderUsableByFramework(
+              { apiEndpoints: activeEndpoints, type: activeProvider.type },
+              framework
+            ) &&
+            (framework.id !== 'codex' || isModelBridgeSupported(activeProvider, activeModel))
+          : false
+      const activeProviderKeyUsable =
+        activeProvider && activeProvider.lastValidatedAt !== undefined
+          ? await providers.isProviderKeyUsable(activeProvider)
+          : false
+      const activeValidationTarget = activeProvider
+        ? {
+            model: activeModel,
+            endpoint: preferredEndpoint(
+              activeEndpoints ?? [],
+              activeProvider.type === 'xai-subscription'
+                ? (['responses'] as const)
+                : framework.id === 'codex'
+                  ? (['anthropic', 'openai', 'responses'] as const)
+                  : requiresChatCompletionsBridge({ apiEndpoints: activeEndpoints }, framework)
+                    ? (activeEndpoints ?? [])
+                    : framework.supportedApiTypes
+            )
+          }
+        : undefined
 
-    return computePreflight({
-      settings,
-      claudePathExists: runtimeProbe.claudeVersion !== null,
-      opencodePathExists: runtimeProbe.opencodeVersion !== null,
-      codebuddyPathExists: isSupportedCodeBuddyVersion(runtimeProbe.codebuddyVersion),
-      codexPathExists: codexVersionsFromProbe(runtimeProbe.codex) !== undefined,
-      agentFrameworkId,
-      isProviderKeyUsable: (provider) =>
-        provider.id === activeProvider?.id && activeProviderKeyUsable,
-      activeProviderCompatible,
-      activeValidationTarget
+      signal.throwIfAborted()
+      return computePreflight({
+        settings,
+        claudePathExists: runtimeProbe.claudeVersion !== null,
+        opencodePathExists: runtimeProbe.opencodeVersion !== null,
+        codebuddyPathExists: isSupportedCodeBuddyVersion(runtimeProbe.codebuddyVersion),
+        codexPathExists: codexVersionsFromProbe(runtimeProbe.codex) !== undefined,
+        agentFrameworkId,
+        isProviderKeyUsable: (provider) =>
+          provider.id === activeProvider?.id && activeProviderKeyUsable,
+        activeProviderCompatible,
+        activeValidationTarget
+      })
     })
   }
 
   async checkEnvironment(): Promise<EnvironmentCheckResult> {
-    const settings = await this.repository.getSettings()
-    const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
-    const runtimeProbe = this.takeReusableRuntimeProbe('environmentCheckRuntimeProbe', settings)
-    const [claudeRuntime, opencodeRuntime, codebuddyRuntime, codexRuntime] = await Promise.all([
-      this.resolveClaudeRuntime(settings, runtimeProbe?.claudeVersion),
-      this.resolveOpencodeRuntime(settings, runtimeProbe?.opencodeVersion),
-      this.resolveCodeBuddyRuntime(settings, runtimeProbe?.codebuddyVersion),
-      this.resolveCodexRuntime(settings, runtimeProbe?.codex)
-    ])
+    return this.trackDetection(async (signal) => {
+      const settings = await this.repository.getSettings()
+      signal.throwIfAborted()
+      const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+      const runtimeProbe = this.takeReusableRuntimeProbe('environmentCheckRuntimeProbe', settings)
+      const [claudeRuntime, opencodeRuntime, codebuddyRuntime, codexRuntime] = await Promise.all([
+        this.trackDetection(() =>
+          this.resolveClaudeRuntime(settings, runtimeProbe?.claudeVersion, signal)
+        ),
+        this.trackDetection(() =>
+          this.resolveOpencodeRuntime(settings, runtimeProbe?.opencodeVersion, signal)
+        ),
+        this.trackDetection(() =>
+          this.resolveCodeBuddyRuntime(settings, runtimeProbe?.codebuddyVersion, signal)
+        ),
+        this.trackDetection(() => this.resolveCodexRuntime(settings, runtimeProbe?.codex, signal))
+      ])
 
-    this.storeResolvedRuntimeProbe(
-      settings,
-      claudeRuntime,
-      opencodeRuntime,
-      codebuddyRuntime,
-      codexRuntime
-    )
+      signal.throwIfAborted()
+      this.storeResolvedRuntimeProbe(
+        settings,
+        claudeRuntime,
+        opencodeRuntime,
+        codebuddyRuntime,
+        codexRuntime
+      )
 
-    return runEnvironmentCheck({
-      storageRoot: this.configRoot,
-      agentFrameworkId,
-      frameworks: [
-        {
-          id: 'claude-code',
-          label: getAgentFramework('claude-code').displayName,
-          runtime: claudeRuntime
-        },
-        {
-          id: 'opencode',
-          label: getAgentFramework('opencode').displayName,
-          runtime: opencodeRuntime
-        },
-        {
-          id: 'codex',
-          label: getAgentFramework('codex').displayName,
-          runtime: codexRuntime
-        },
-        {
-          id: 'codebuddy',
-          label: getAgentFramework('codebuddy').displayName,
-          runtime: codebuddyRuntime
-        }
-      ],
-      encryptionAvailable: isEncryptionAvailable()
+      const result = await runEnvironmentCheck({
+        storageRoot: this.configRoot,
+        agentFrameworkId,
+        frameworks: [
+          {
+            id: 'claude-code',
+            label: getAgentFramework('claude-code').displayName,
+            runtime: claudeRuntime
+          },
+          {
+            id: 'opencode',
+            label: getAgentFramework('opencode').displayName,
+            runtime: opencodeRuntime
+          },
+          {
+            id: 'codex',
+            label: getAgentFramework('codex').displayName,
+            runtime: codexRuntime
+          },
+          {
+            id: 'codebuddy',
+            label: getAgentFramework('codebuddy').displayName,
+            runtime: codebuddyRuntime
+          }
+        ],
+        encryptionAvailable: isEncryptionAvailable()
+      })
+      signal.throwIfAborted()
+      return result
     })
   }
 
@@ -1111,14 +1129,16 @@ export class AgentRuntimeManager {
 
   private async resolveClaudeRuntime(
     settings: StoredSettings,
-    probedVersion?: string | null
+    probedVersion: string | null | undefined,
+    signal: AbortSignal
   ): Promise<ClaudeDetectResult> {
     const cached = settings.claude
     if (cached?.resolvedPath) {
       const version =
         probedVersion === undefined
-          ? await this.detectDeps.getVersion(cached.resolvedPath)
+          ? await this.detectDeps.getVersion(cached.resolvedPath, signal)
           : (probedVersion ?? undefined)
+      signal.throwIfAborted()
       if (version) {
         if (version !== cached.version) {
           await this.repository.setClaudeInfo({ resolvedPath: cached.resolvedPath, version })
@@ -1126,19 +1146,21 @@ export class AgentRuntimeManager {
         return { found: true, path: cached.resolvedPath, version }
       }
     }
-    return this.detectClaude()
+    return this.detectClaude(signal)
   }
 
   private async resolveOpencodeRuntime(
     settings: StoredSettings,
-    probedVersion?: string | null
+    probedVersion: string | null | undefined,
+    signal: AbortSignal
   ): Promise<ClaudeDetectResult> {
     const cachedPath = settings.opencodePath
     if (cachedPath) {
       const version =
         probedVersion === undefined
-          ? await this.opencodeDetectDeps.getVersion(cachedPath)
+          ? await this.opencodeDetectDeps.getVersion(cachedPath, signal)
           : (probedVersion ?? undefined)
+      signal.throwIfAborted()
       if (version) {
         if (version !== settings.opencodeVersion) {
           await this.repository.setOpencodeInfo(cachedPath, version)
@@ -1147,26 +1169,31 @@ export class AgentRuntimeManager {
       }
     }
 
-    const detected = await detectOpencode(this.opencodeDetectDeps)
+    const detected = await detectOpencode(this.opencodeDetectDeps, signal)
+    signal.throwIfAborted()
     if (detected) {
       await this.repository.setOpencodeInfo(detected.resolvedPath, detected.version)
       return { found: true, path: detected.resolvedPath, version: detected.version }
     }
-    if (cachedPath && !(await this.pathExists(cachedPath)))
+    if (cachedPath && !(await this.pathExists(cachedPath))) {
+      signal.throwIfAborted()
       await this.repository.clearOpencodeInfo()
+    }
     return { found: false }
   }
 
   private async resolveCodeBuddyRuntime(
     settings: StoredSettings,
-    probedVersion?: string | null
+    probedVersion: string | null | undefined,
+    signal: AbortSignal
   ): Promise<ClaudeDetectResult> {
     const cachedPath = settings.codebuddyPath
     if (cachedPath) {
       const version =
         probedVersion === undefined
-          ? await this.codebuddyDetectDeps.getVersion(cachedPath)
+          ? await this.codebuddyDetectDeps.getVersion(cachedPath, signal)
           : (probedVersion ?? undefined)
+      signal.throwIfAborted()
       if (isSupportedCodeBuddyVersion(version)) {
         if (version !== settings.codebuddyVersion) {
           await this.repository.setCodeBuddyInfo(cachedPath, version)
@@ -1174,7 +1201,8 @@ export class AgentRuntimeManager {
         return { found: true, path: cachedPath, version }
       }
     }
-    const detected = await detectCodeBuddy(this.codebuddyDetectDeps)
+    const detected = await detectCodeBuddy(this.codebuddyDetectDeps, signal)
+    signal.throwIfAborted()
     if (detected) {
       await this.repository.setCodeBuddyInfo(detected.resolvedPath, detected.version)
       return { found: true, path: detected.resolvedPath, version: detected.version }
@@ -1185,10 +1213,13 @@ export class AgentRuntimeManager {
 
   private async resolveCodexRuntime(
     settings: StoredSettings,
-    probedRuntime?: ConfiguredCodexRuntimeProbe
+    probedRuntime: ConfiguredCodexRuntimeProbe | undefined,
+    signal: AbortSignal
   ): Promise<ClaudeDetectResult> {
     const cached = settings.codex
-    const configuredProbe = probedRuntime ?? (await this.probeConfiguredCodexRuntime(cached))
+    const configuredProbe =
+      probedRuntime ?? (await this.probeConfiguredCodexRuntime(cached, signal))
+    signal.throwIfAborted()
     const cachedVersions = codexVersionsFromProbe(configuredProbe)
     const detectDeps = this.memoizedCodexDetectDeps(configuredProbe)
     if (cached?.resolvedPath && cachedVersions) {
@@ -1200,7 +1231,7 @@ export class AgentRuntimeManager {
       if (!cached.nativePath) {
         nativeCliFound = true
         const { detectNativeCodex } = await import('./codex-detect')
-        const nativeCodex = await detectNativeCodex(detectDeps)
+        const nativeCodex = await detectNativeCodex(detectDeps, signal)
         if (nativeCodex) {
           nativeCliPath = nativeCodex.path
           nativeCliVersion = nativeCodex.version
@@ -1222,7 +1253,8 @@ export class AgentRuntimeManager {
       }
     }
 
-    const detected = await detectCodex(detectDeps)
+    const detected = await detectCodex(detectDeps, signal)
+    signal.throwIfAborted()
     if (detected) {
       await this.repository.setCodexInfo({
         resolvedPath: detected.adapterPath,
@@ -1237,7 +1269,7 @@ export class AgentRuntimeManager {
       if (!detected.nativeCodexPath) {
         nativeCliFound = true
         const { detectNativeCodex } = await import('./codex-detect')
-        const nativeCodex = await detectNativeCodex(detectDeps)
+        const nativeCodex = await detectNativeCodex(detectDeps, signal)
         if (nativeCodex) {
           nativeCliPath = nativeCodex.path
           nativeCliVersion = nativeCodex.version
@@ -1260,11 +1292,12 @@ export class AgentRuntimeManager {
     }
 
     if (cached?.resolvedPath && !(await this.pathExists(cached.resolvedPath))) {
+      signal.throwIfAborted()
       await this.repository.clearCodexInfo()
     }
 
     const { detectCodexComponents } = await import('./codex-detect')
-    const components = await detectCodexComponents(detectDeps)
+    const components = await detectCodexComponents(detectDeps, signal)
     let diagnostic: string | undefined
     if (components.nativeCliFound && !components.adapterFound) {
       diagnostic = `Native Codex ${components.nativeCliVersion} is installed at ${components.nativeCliPath}, but the Codex ACP adapter required by Open Science is missing.`
@@ -1301,7 +1334,8 @@ export class AgentRuntimeManager {
   }
 
   private async probeConfiguredCodexRuntime(
-    codex: StoredCodexInfo | undefined
+    codex: StoredCodexInfo | undefined,
+    signal: AbortSignal
   ): Promise<ConfiguredCodexRuntimeProbe> {
     if (!codex?.resolvedPath) return {}
     const controlledAdapterPath =
@@ -1309,8 +1343,12 @@ export class AgentRuntimeManager {
     if (codex.resolvedPath !== controlledAdapterPath) return {}
 
     const [adapterOutput, nativeOutput] = await Promise.all([
-      this.codexDetectDeps.getAdapterVersion(codex.resolvedPath),
-      codex.nativePath ? this.codexDetectDeps.getCodexVersion(codex.nativePath) : undefined
+      this.trackDetection(() =>
+        this.codexDetectDeps.getAdapterVersion(codex.resolvedPath!, signal)
+      ),
+      codex.nativePath
+        ? this.trackDetection(() => this.codexDetectDeps.getCodexVersion(codex.nativePath!, signal))
+        : undefined
     ])
     return {
       adapter: { path: codex.resolvedPath, output: adapterOutput ?? null },
@@ -1346,32 +1384,45 @@ export class AgentRuntimeManager {
 
     return {
       ...deps,
-      getAdapterVersion: (path) => memoizedVersion(adapterVersions, path, deps.getAdapterVersion),
-      getCodexVersion: (path) => memoizedVersion(nativeVersions, path, deps.getCodexVersion),
-      smokeInitialize: (path, options) => {
+      getAdapterVersion: (path, signal) =>
+        memoizedVersion(adapterVersions, path, (path) => deps.getAdapterVersion(path, signal)),
+      getCodexVersion: (path, signal) =>
+        memoizedVersion(nativeVersions, path, (path) => deps.getCodexVersion(path, signal)),
+      smokeInitialize: (path, options, signal) => {
         const key = runtimeProbeFingerprint({
           codexAdapterPath: path,
           codexNativePath: options?.codexPath
         })
         const existing = smokeResults.get(key)
         if (existing) return existing
-        const pending = deps.smokeInitialize(path, options)
+        const pending = deps.smokeInitialize(path, options, signal)
         smokeResults.set(key, pending)
         return pending
       }
     }
   }
 
-  private async probeConfiguredRuntimes(settings: StoredSettings): Promise<ConfiguredRuntimeProbe> {
+  private async probeConfiguredRuntimes(
+    settings: StoredSettings,
+    signal: AbortSignal
+  ): Promise<ConfiguredRuntimeProbe> {
     const [claudeVersion, opencodeVersion, codebuddyVersion, codex] = await Promise.all([
       settings.claude?.resolvedPath
-        ? this.detectDeps.getVersion(settings.claude.resolvedPath)
+        ? this.trackDetection(() =>
+            this.detectDeps.getVersion(settings.claude!.resolvedPath!, signal)
+          )
         : undefined,
-      settings.opencodePath ? this.opencodeDetectDeps.getVersion(settings.opencodePath) : undefined,
+      settings.opencodePath
+        ? this.trackDetection(() =>
+            this.opencodeDetectDeps.getVersion(settings.opencodePath!, signal)
+          )
+        : undefined,
       settings.codebuddyPath
-        ? this.codebuddyDetectDeps.getVersion(settings.codebuddyPath)
+        ? this.trackDetection(() =>
+            this.codebuddyDetectDeps.getVersion(settings.codebuddyPath!, signal)
+          )
         : undefined,
-      this.probeConfiguredCodexRuntime(settings.codex)
+      this.probeConfiguredCodexRuntime(settings.codex, signal)
     ])
     return {
       fingerprint: storedRuntimeProbeFingerprint(settings),

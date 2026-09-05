@@ -308,6 +308,72 @@ describe('AgentRuntimeManager', () => {
     expect(detectionOutcome).toBe('AbortError')
   })
 
+  it.each(['getPreflight', 'checkEnvironment'] as const)(
+    'aborts and drains all %s runtime probes before disposal completes',
+    async (operation) => {
+      const claudePath = join(storageRoot, 'claude')
+      const opencodePath = join(storageRoot, 'opencode')
+      await repository.setClaudeInfo({ resolvedPath: claudePath, version: 'old' })
+      await repository.setOpencodeInfo(opencodePath, 'old')
+      const claudeEntered = Promise.withResolvers<AbortSignal | undefined>()
+      const opencodeEntered = Promise.withResolvers<AbortSignal | undefined>()
+      const releaseClaude = Promise.withResolvers<void>()
+      const releaseOpencode = Promise.withResolvers<void>()
+      manager = createManager({
+        detectDeps: {
+          ...createClaudeDeps(inventory),
+          getVersion: async (_path, signal) => {
+            claudeEntered.resolve(signal)
+            await releaseClaude.promise
+            signal?.throwIfAborted()
+            return '2.1.0'
+          }
+        },
+        opencodeDetectDeps: {
+          ...createOpencodeDeps(inventory),
+          getVersion: async (_path, signal) => {
+            opencodeEntered.resolve(signal)
+            await releaseOpencode.promise
+            // Even a probe that resolves after cancellation must not publish its result.
+            return '1.19.0'
+          }
+        }
+      })
+      const providers: ProviderPreflightAccess = {
+        resolveProviderApiEndpoints: () => [],
+        resolveActiveModel: () => undefined,
+        isProviderKeyUsable: async () => false
+      }
+      const pending =
+        operation === 'getPreflight' ? manager.getPreflight(providers) : manager.checkEnvironment()
+      const outcome = pending.then(
+        () => 'resolved',
+        (error: Error) => error.name
+      )
+      const signals = await Promise.all([claudeEntered.promise, opencodeEntered.promise])
+      let disposed = false
+      const disposal = manager.dispose().then(() => {
+        disposed = true
+      })
+      releaseClaude.resolve()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const waitedForSibling = !disposed
+      releaseOpencode.resolve()
+      await disposal
+
+      expect(signals.map((signal) => signal?.aborted)).toEqual([true, true])
+      expect(waitedForSibling).toBe(true)
+      expect(await outcome).toBe('AbortError')
+      expect(await repository.getSettings()).toMatchObject({
+        claude: { version: 'old' },
+        opencodeVersion: 'old'
+      })
+      await expect(
+        operation === 'getPreflight' ? manager.getPreflight(providers) : manager.checkEnvironment()
+      ).rejects.toMatchObject({ name: 'AbortError' })
+    }
+  )
+
   it('rejects new detection and install work after disposal starts', async () => {
     await manager.dispose()
 

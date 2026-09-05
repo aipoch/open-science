@@ -152,7 +152,8 @@ const detectCodex = async (
 // independently. Returns diagnostic information even when full pairing fails, so the UI can
 // distinguish "adapter missing" from "native Codex missing" from "both present but incompatible".
 const detectCodexComponents = async (
-  deps: CodexDetectDeps = createDefaultDetectDeps()
+  deps: CodexDetectDeps = createDefaultDetectDeps(),
+  signal?: AbortSignal
 ): Promise<{
   nativeCliFound: boolean
   nativeCliPath?: string
@@ -162,10 +163,11 @@ const detectCodexComponents = async (
   adapterVersion?: string
   adapterFailureReason?: 'version-probe-failed' | 'unsupported-version' | 'smoke-test-failed'
 }> => {
+  signal?.throwIfAborted()
   const p = pathFor(deps.platform)
 
   // Check for adapter first
-  const dirs = await collectCandidateDirs(deps)
+  const dirs = await collectCandidateDirs(deps, signal)
   const adapterNames =
     deps.platform === 'win32'
       ? ['codex-acp.cmd', 'codex-acp.exe', 'codex-acp.bat', 'codex-acp']
@@ -178,12 +180,13 @@ const detectCodexComponents = async (
     : discoveredAdapterCandidates
 
   const managedNativeOutput = deps.managedCodexPath
-    ? await deps.getCodexVersion(deps.managedCodexPath)
+    ? await deps.getCodexVersion(deps.managedCodexPath, signal)
     : undefined
+  signal?.throwIfAborted()
   const managedNativeVersion = managedNativeOutput ? parseVersion(managedNativeOutput) : undefined
   const nativeCodex = managedNativeVersion
     ? { path: deps.managedCodexPath!, version: managedNativeVersion }
-    : await detectNativeCodex(deps)
+    : await detectNativeCodex(deps, signal)
 
   let adapterFound = false
   let adapterPath: string | undefined
@@ -192,9 +195,11 @@ const detectCodexComponents = async (
     'version-probe-failed' | 'unsupported-version' | 'smoke-test-failed' | undefined
 
   for (const candidate of Array.from(new Set(adapterCandidates))) {
+    signal?.throwIfAborted()
     if (!(await deps.isRunnable(candidate))) continue
 
-    const versionOutput = await deps.getAdapterVersion(candidate)
+    const versionOutput = await deps.getAdapterVersion(candidate, signal)
+    signal?.throwIfAborted()
     const version = versionOutput ? parseVersion(versionOutput) : undefined
 
     if (!version) {
@@ -219,8 +224,10 @@ const detectCodexComponents = async (
     // Version probe succeeded - now check if smoke test passes
     const smokeOk = await deps.smokeInitialize(
       candidate,
-      deps.managedAdapterPath && nativeCodex ? { codexPath: nativeCodex.path } : undefined
+      deps.managedAdapterPath && nativeCodex ? { codexPath: nativeCodex.path } : undefined,
+      signal
     )
+    signal?.throwIfAborted()
     if (smokeOk) {
       adapterFound = true
       adapterPath = candidate
