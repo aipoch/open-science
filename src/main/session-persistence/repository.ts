@@ -924,10 +924,14 @@ class SessionRepository {
   ): Promise<PersistedChatSession> {
     const key = `${session.projectId}:${session.id}`
     let actualRevision = Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0)
+    if (
+      expectedRevision !== undefined &&
+      (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
+    ) {
+      throw new Error('Session expected revision must be a non-negative integer.')
+    }
+    await this.assertExistingSessionWithinLimit(this.sessionFilePath(session.projectId, session.id))
     if (expectedRevision !== undefined) {
-      if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-        throw new Error('Session expected revision must be a non-negative integer.')
-      }
       const current = await loadSessionMutationAuthority(this, session.projectId, session.id)
       if (current.status === 'unreadable') {
         throw new Error('Cannot compare Session revision because durable JSON is unreadable.')
@@ -954,7 +958,6 @@ class SessionRepository {
         ? { ...unprojectedDurableSession, number: Number.MAX_SAFE_INTEGER }
         : unprojectedDurableSession
     )
-    await this.assertExistingSessionWithinLimit(this.sessionFilePath(session.projectId, session.id))
 
     if (this.projection && this.projectionWritesSuspended) {
       assertSessionProjectionStorageShape(session)
@@ -1267,6 +1270,21 @@ class SessionRepository {
     }
   }
 
+  private async readSessionFileForBackup(filePath: string): Promise<string | undefined> {
+    try {
+      return await this.dependencies.readSessionFileWithinLimit(
+        filePath,
+        this.dependencies.maxSessionBytes
+      )
+    } catch (error) {
+      if (isMissingFileError(error)) return undefined
+      if (error instanceof DurableJsonReadLimitError) {
+        throw new SessionSizeLimitError(this.dependencies.maxSessionBytes)
+      }
+      throw error
+    }
+  }
+
   private async preservePreS2Backup(
     filePath: string,
     nextSession: PersistedChatSession
@@ -1276,13 +1294,8 @@ class SessionRepository {
     )
     if (!writesS2Attempt) return
 
-    let currentRaw: string
-    try {
-      currentRaw = await this.dependencies.readSessionFile(filePath)
-    } catch (error) {
-      if (isMissingFileError(error)) return
-      throw error
-    }
+    const currentRaw = await this.readSessionFileForBackup(filePath)
+    if (currentRaw === undefined) return
     let current: unknown
     try {
       current = JSON.parse(currentRaw) as unknown
@@ -1327,13 +1340,8 @@ class SessionRepository {
       record.attempts.some((attempt) => attempt.executionModel !== undefined)
     )
     if (!writesModelSnapshot) return
-    let currentRaw: string
-    try {
-      currentRaw = await this.dependencies.readSessionFile(filePath)
-    } catch (error) {
-      if (isMissingFileError(error)) return
-      throw error
-    }
+    const currentRaw = await this.readSessionFileForBackup(filePath)
+    if (currentRaw === undefined) return
     let current: unknown
     try {
       current = JSON.parse(currentRaw) as unknown

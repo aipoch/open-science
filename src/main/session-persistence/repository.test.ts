@@ -27,6 +27,7 @@ import {
   type PersistedChatSession,
   type PersistedToolActivity
 } from '../../shared/session-persistence'
+import { DurableJsonReadLimitError } from '../storage/durable-json-file'
 import {
   DEV_SESSION_DIR_NAME,
   SessionRepository,
@@ -1384,6 +1385,69 @@ describe('session persistence repository (per-session files)', () => {
       })
     ).rejects.toMatchObject({ code: SESSION_SIZE_LIMIT_ERROR_CODE })
     expect(readSessionFile).not.toHaveBeenCalled()
+    await expect(lstat(`${filePath}.pre-s2-backup`)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('reports oversized existing authority before revision comparison', async () => {
+    const root = await createStorageRoot()
+    const session = await new SessionRepository(root).saveSession(createSession())
+    const filePath = join(root, 'sessions', session.projectId, `${session.id}.json`)
+    const maxSessionBytes = 4096
+    await truncate(filePath, maxSessionBytes + 1)
+    const repository = new SessionRepository(root, { maxSessionBytes })
+
+    await expect(repository.saveSession(session, session.revision)).rejects.toMatchObject({
+      code: SESSION_SIZE_LIMIT_ERROR_CODE
+    })
+    await expect(lstat(filePath)).resolves.toMatchObject({ size: maxSessionBytes + 1 })
+  })
+
+  it('keeps migration backup reads bounded after existing-authority admission', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    await new SessionRepository(root).saveSession(session)
+    const filePath = join(root, 'sessions', session.projectId, `${session.id}.json`)
+    const maxSessionBytes = 4096
+    const readSessionFile = vi.fn().mockRejectedValue(new Error('unbounded read must not run'))
+    const readSessionFileWithinLimit = vi
+      .fn()
+      .mockRejectedValue(new DurableJsonReadLimitError(`${session.id}.json`, maxSessionBytes))
+    const repository = new SessionRepository(root, {
+      maxSessionBytes,
+      readSessionFile,
+      readSessionFileWithinLimit
+    })
+
+    await expect(
+      repository.saveSession({
+        ...session,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          delegatedWork: {
+            records: [
+              {
+                agentFrameId: 'child-frame',
+                attempts: [
+                  {
+                    id: 'attempt-1',
+                    initiatingTurnMessageId: 'message-1',
+                    status: 'cancelled',
+                    resolvedAgent: { kind: 'main' },
+                    runtimeSegmentIds: [],
+                    startedAt: 1710000000001,
+                    endedAt: 1710000000002,
+                    cancellationReason: 'main_agent_stop'
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      })
+    ).rejects.toMatchObject({ code: SESSION_SIZE_LIMIT_ERROR_CODE })
+    expect(readSessionFile).not.toHaveBeenCalled()
+    expect(readSessionFileWithinLimit).toHaveBeenCalledWith(filePath, maxSessionBytes)
     await expect(lstat(`${filePath}.pre-s2-backup`)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
