@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { SessionPersistenceStateOwner } from '../../../../main/session-persistence/state-owner'
 import { ARTIFACT_FINALIZATION_INVALID_PROOF } from '../../../../shared/artifacts'
 import {
   activateConversationBranch,
@@ -994,6 +995,75 @@ describe('renderer session persistence bridge', () => {
     expect(useSessionStore.getState().sessions).toHaveLength(1)
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
     expect(observedSelections).toEqual([undefined])
+  })
+
+  it('keeps a newer durable pin through lazy hydration and an unrelated title save', async () => {
+    const authority = createPersistedSession({
+      title: 'Remote title',
+      pinned: true,
+      archivedAt: 3,
+      revision: 2,
+      createdAt: 1,
+      updatedAt: 3
+    })
+    const write = vi.fn(async (candidate: PersistedChatSession, expectedRevision?: number) => ({
+      ...candidate,
+      revision: (expectedRevision ?? 0) + 1
+    }))
+    const main = new SessionPersistenceStateOwner({
+      repository: {
+        loadSessionWithDiagnostics: async () => ({ status: 'found', session: authority }),
+        saveSession: write
+      },
+      fileIndex: { syncSession: async () => [] },
+      assertMutable: () => undefined,
+      notifyFilesChanged: () => undefined,
+      notifyRuntimeContextSessionUpdated: () => undefined,
+      log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    })
+    const saveSession = vi.fn<SessionPersistenceApi['saveSession']>((session, options) =>
+      main.saveSession(session, options)
+    )
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: authority.id,
+          projectId: authority.projectId,
+          title: 'Old summary title',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: authority.createdAt,
+          updatedAt: 2,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined
+    )
+    const save = createStoreSaver(createApi({ saveSession }), useSessionStore.getState())
+
+    // This is the full-snapshot boundary used by another window's Session update event.
+    useSessionStore.getState().upsertPersistedSession(authority)
+    await save(useSessionStore.getState())
+    expect(saveSession).not.toHaveBeenCalled()
+    useSessionStore.getState().renameSession(authority.id, 'Local title edit')
+    await save(useSessionStore.getState())
+
+    expect(saveSession).toHaveBeenCalledOnce()
+    expect(saveSession.mock.calls[0][0].revision).toBe(2)
+    expect(write).toHaveBeenCalledOnce()
+    expect(write.mock.calls[0][1]).toBe(2)
+    const durable = await saveSession.mock.results[0].value
+    expect(durable.archivedAt).toBe(3)
+    expect(durable.title).toBe('Local title edit')
+    expect(durable.pinned, 'An unrelated title save must not undo the newer durable pin.').toBe(
+      true
+    )
   })
 
   it('does not echo an externally hydrated session back to persistence', async () => {

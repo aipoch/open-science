@@ -1529,6 +1529,72 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
   })
 
+  it.each(['none', 'title', 'pin'] as const)(
+    'adopts newer durable metadata when a summary has only %s locally edited',
+    (editedField) => {
+      useSessionStore.getState().hydrateSessionSummaries(
+        [
+          {
+            number: 1,
+            id: 'session-1',
+            projectId: 'project-1',
+            title: 'Old summary title',
+            status: 'idle',
+            presentedStatus: 'idle',
+            pinned: false,
+            revision: 1,
+            activeMessageCount: 1,
+            artifactCount: 0,
+            filesRevision: 0,
+            createdAt: 1,
+            updatedAt: 2,
+            needsStartupRecovery: false
+          }
+        ],
+        undefined
+      )
+      expect(useSessionStore.getState().sessions[0].unsavedTitle).toBeUndefined()
+      if (editedField === 'title')
+        useSessionStore.getState().renameSession('session-1', 'Local title')
+      if (editedField === 'pin') useSessionStore.getState().togglePinned('session-1')
+
+      useSessionStore.getState().upsertPersistedSession({
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'New durable title',
+        cwd: '/workspace',
+        status: 'idle',
+        pinned: editedField !== 'pin',
+        archivedAt: 3,
+        revision: 2,
+        messages: [
+          {
+            id: 'message-1',
+            role: 'user',
+            content: 'New durable body',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 3
+      })
+
+      const current = useSessionStore.getState().sessions[0]
+      expect(current.contentLoaded).not.toBe(false)
+      expect(current.revision).toBe(2)
+      expect(current.messages[0].content).toBe('New durable body')
+      expect(current).toMatchObject({
+        title: editedField === 'title' ? 'Local title' : 'New durable title',
+        pinned: editedField !== 'pin',
+        archivedAt: 3
+      })
+      expect(current.unsavedTitle).toBe(editedField === 'title' ? true : undefined)
+    }
+  )
+
   it('preserves pending summary metadata edits when lazy hydration finishes', () => {
     useSessionStore.getState().hydrateSessionSummaries(
       [
