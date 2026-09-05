@@ -67,6 +67,7 @@ describe('pickFastestMirror', () => {
       ]
         .filter((url): url is string => Boolean(url))
         .map((url) => new URL(url).hostname)
+        .concat(candidate.trustedRedirectDomains ?? [])
     )
 
     expect(
@@ -75,6 +76,9 @@ describe('pickFastestMirror', () => {
           !policy.allowedDomains.some((pattern) => domainPatternMatches(pattern, hostname))
       )
     ).toEqual([])
+    expect(
+      MIRROR_CANDIDATES.find((candidate) => candidate.name === 'ustc')?.trustedRedirectDomains
+    ).toEqual(['mirrors.nju.edu.cn'])
   })
 
   it('returns the fastest candidate whose conda-forge and bioconda channels respond', async () => {

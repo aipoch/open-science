@@ -16,6 +16,10 @@ const MEMORY_RECALL_ENTRY = 'Keep every response concise and welcoming.'
 const PROVIDER_BRIDGE_PROMPT = 'Verify the provider bridge.'
 const NOTEBOOK_LIFECYCLE_PROMPT = 'Verify the notebook lifecycle.'
 const PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT = 'Profile the notebook lifecycle.'
+const NOTEBOOK_MUTATION_CANCELLATION_PROMPT = 'Verify Notebook mutation cancellation.'
+const NOTEBOOK_LONG_MUTATION_PROMPT = 'Verify a long Notebook mutation.'
+const NOTEBOOK_REAL_ENVIRONMENT_PROMPT = 'Verify a real Notebook environment.'
+const NOTEBOOK_PACKAGE_CANCELLATION_PROMPT = 'Verify Notebook package cancellation.'
 const ARTIFACT_PROVENANCE_PROMPT = 'Create a provenance artifact.'
 const PREVIEW_CONTEXT_MENU_ARTIFACTS_PROMPT = 'Create preview context menu artifacts.'
 const PREVIEW_CONTEXT_MENU_DOCX_BASE64 =
@@ -421,6 +425,347 @@ const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
       throw new Error('The Notebook lifecycle did not preserve its session and output.')
     }
     return `Notebook lifecycle verified for ${initial.sessionId}.`
+  })
+
+const readMicromambaEvents = async (path) =>
+  readFile(path, 'utf8')
+    .catch(() => '')
+    .then((content) =>
+      content
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const [kind, prefix, pid, descendantPid] = line.split('\t')
+          return {
+            kind,
+            prefix,
+            pid: Number(pid),
+            descendantPid: descendantPid ? Number(descendantPid) : undefined
+          }
+        })
+    )
+
+const waitForMicromambaEvent = async (path, predicate, timeoutMs = 10_000) => {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const match = (await readMicromambaEvents(path)).find(predicate)
+    if (match) return match
+    await delay(50)
+  }
+  throw new Error('Timed out waiting for the fake micromamba process event.')
+}
+
+const processIsAlive = (pid) => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const waitForProcessesToExit = async (pids, timeoutMs = 10_000) => {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (pids.every((pid) => !processIsAlive(pid))) return
+    await delay(50)
+  }
+  throw new Error(
+    `Fake micromamba processes remained alive: ${pids.filter(processIsAlive).join(', ')}`
+  )
+}
+
+const verifyNotebookMutationCancellation = async (sessionId) =>
+  withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    const warmup = toolResult(
+      'manage_environments',
+      await client.callTool(
+        {
+          name: 'manage_environments',
+          arguments: { action: 'create', language: 'python', name: 'e2e-warm' }
+        },
+        undefined,
+        { timeout: 60_000, resetTimeoutOnProgress: true, onprogress: () => undefined }
+      )
+    )
+    if (warmup.created?.runnable !== true) {
+      throw new Error(`Mutation warm-up did not succeed: ${JSON.stringify(warmup)}`)
+    }
+    const state = toolResult(
+      'notebook_state',
+      await client.callTool({ name: 'notebook_state', arguments: {} })
+    )
+    const eventPath = join(
+      state.dataRoot,
+      '..',
+      '..',
+      '..',
+      '..',
+      'runtime',
+      'envs',
+      'e2e-cxl',
+      '.fake-micromamba-events.tsv'
+    )
+    const request = {
+      name: 'manage_environments',
+      arguments: {
+        action: 'create',
+        language: 'python',
+        name: 'e2e-cxl',
+        packages: ['e2e-hang']
+      }
+    }
+    const first = client.callTool(request, undefined, { timeout: 30_000 }).then(
+      (result) => {
+        try {
+          toolResult('manage_environments', result)
+          return new Error('The timed Notebook mutation unexpectedly completed.')
+        } catch (error) {
+          return error
+        }
+      },
+      (error) => error
+    )
+    const started = await Promise.race([
+      waitForMicromambaEvent(
+        eventPath,
+        (event) => event.kind === 'start' && event.prefix.includes('e2e-cxl'),
+        35_000
+      ),
+      first.then((error) => {
+        throw new Error(`Mutation settled before micromamba started: ${String(error)}`)
+      })
+    ])
+    if (!started.descendantPid) throw new Error('Fake micromamba did not start its descendant.')
+
+    let duplicateError
+    try {
+      toolResult(
+        'manage_environments',
+        await client.callTool(request, undefined, { timeout: 5_000 })
+      )
+    } catch (error) {
+      duplicateError = error
+    }
+    if (!String(duplicateError).includes('ENVIRONMENT_MUTATION_ALREADY_PENDING')) {
+      throw new Error(`Duplicate mutation was not rejected: ${String(duplicateError)}`)
+    }
+
+    const timeoutError = await first
+    if (!String(timeoutError).toLowerCase().includes('timed out')) {
+      throw new Error(`First mutation did not reach its MCP deadline: ${String(timeoutError)}`)
+    }
+    await waitForProcessesToExit([started.pid, started.descendantPid])
+
+    const retryRequest = { ...request, arguments: { ...request.arguments, packages: [] } }
+    const retry = toolResult(
+      'manage_environments',
+      await client.callTool(retryRequest, undefined, { timeout: 15_000 })
+    )
+    if (retry.created?.name !== 'e2e-cxl' || retry.created?.runnable !== true) {
+      throw new Error(`Mutation retry did not succeed: ${JSON.stringify(retry)}`)
+    }
+    return `Notebook mutation cancellation verified; stopped PIDs ${started.pid} and ${started.descendantPid}.`
+  })
+
+const verifyLongNotebookMutation = async (sessionId) =>
+  withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    let heartbeats = 0
+    const startedAt = Date.now()
+    const result = toolResult(
+      'manage_environments',
+      await client.callTool(
+        {
+          name: 'manage_environments',
+          arguments: { action: 'create', language: 'python', name: 'e2e-lng' }
+        },
+        undefined,
+        {
+          timeout: 60_000,
+          resetTimeoutOnProgress: true,
+          onprogress: () => {
+            heartbeats += 1
+          }
+        }
+      )
+    )
+    const elapsedMs = Date.now() - startedAt
+    if (elapsedMs < 60_000 || heartbeats < 2 || result.created?.runnable !== true) {
+      throw new Error(
+        `Long mutation verification failed: ${JSON.stringify({ elapsedMs, heartbeats, result })}`
+      )
+    }
+    return `Long Notebook mutation verified after ${elapsedMs}ms with ${heartbeats} heartbeats.`
+  })
+
+const verifyRealNotebookEnvironment = async (sessionId) =>
+  withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    let heartbeats = 0
+    const startedAt = Date.now()
+    const created = toolResult(
+      'manage_environments',
+      await client.callTool(
+        {
+          name: 'manage_environments',
+          arguments: { action: 'create', language: 'python', name: 'e2e-real' }
+        },
+        undefined,
+        {
+          timeout: 60_000,
+          resetTimeoutOnProgress: true,
+          onprogress: () => {
+            heartbeats += 1
+          }
+        }
+      )
+    ).created
+    if (created?.runnable !== true || !created.runtimeId) {
+      throw new Error(`Real environment creation failed: ${JSON.stringify(created)}`)
+    }
+    const createdAt = Date.now()
+    toolResult(
+      'notebook_bind_runtime',
+      await client.callTool({
+        name: 'notebook_bind_runtime',
+        arguments: { language: 'python', runtimeId: created.runtimeId }
+      })
+    )
+    const installed = toolResult(
+      'manage_packages',
+      await client.callTool(
+        {
+          name: 'manage_packages',
+          arguments: { language: 'python', packages: ['python-docx'] }
+        },
+        undefined,
+        {
+          timeout: 900_000,
+          resetTimeoutOnProgress: true,
+          onprogress: () => {
+            heartbeats += 1
+          }
+        }
+      )
+    )
+    if (installed?.ok !== true) {
+      throw new Error(`Real package installation failed: ${JSON.stringify(installed)}`)
+    }
+    const installedAt = Date.now()
+    const execution = toolResult(
+      'notebook_execute',
+      await client.callTool(
+        {
+          name: 'notebook_execute',
+          arguments: {
+            language: 'python',
+            code: "import sys, docx\nprint('real-micromamba-python', sys.version_info[:3], 'python-docx', docx.__version__, docx.__file__, 'no-user-site', sys.flags.no_user_site)"
+          }
+        },
+        undefined,
+        { timeout: 120_000, resetTimeoutOnProgress: true, onprogress: () => undefined }
+      )
+    )
+    if (
+      !execution.stdout?.includes('real-micromamba-python') ||
+      !execution.stdout?.includes('python-docx') ||
+      !execution.stdout?.includes('e2e-real')
+    ) {
+      throw new Error(`Real environment execution failed: ${JSON.stringify(execution)}`)
+    }
+    const executedAt = Date.now()
+    return (
+      `Real Notebook environment verified after ${executedAt - startedAt}ms with ${heartbeats} heartbeats; ` +
+      `create ${createdAt - startedAt}ms, install ${installedAt - createdAt}ms, ` +
+      `execute ${executedAt - installedAt}ms; ${execution.stdout.trim()}`
+    )
+  })
+
+const verifyNotebookPackageCancellation = async (sessionId) =>
+  withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    const created = toolResult(
+      'manage_environments',
+      await client.callTool({
+        name: 'manage_environments',
+        arguments: { action: 'create', language: 'python', name: 'e2e-pkg' }
+      })
+    ).created
+    if (created?.runnable !== true || !created.runtimeId) {
+      throw new Error(`Package environment creation failed: ${JSON.stringify(created)}`)
+    }
+    toolResult(
+      'notebook_bind_runtime',
+      await client.callTool({
+        name: 'notebook_bind_runtime',
+        arguments: { language: 'python', runtimeId: created.runtimeId }
+      })
+    )
+
+    const state = toolResult(
+      'notebook_state',
+      await client.callTool({ name: 'notebook_state', arguments: {} })
+    )
+    const eventPath = join(
+      state.dataRoot,
+      '..',
+      '..',
+      '..',
+      '..',
+      'runtime',
+      'envs',
+      'e2e-pkg',
+      '.fake-micromamba-events.tsv'
+    )
+    const request = {
+      name: 'manage_packages',
+      arguments: { language: 'python', packages: ['e2e-hang'], usePip: true }
+    }
+    const first = client.callTool(request, undefined, { timeout: 20_000 }).then(
+      (result) => {
+        try {
+          toolResult('manage_packages', result)
+          return new Error('The timed package mutation unexpectedly completed.')
+        } catch (error) {
+          return error
+        }
+      },
+      (error) => error
+    )
+    const started = await Promise.race([
+      waitForMicromambaEvent(eventPath, (event) => event.kind === 'package-start', 15_000),
+      first.then((error) => {
+        throw new Error(`Package mutation settled before its worker started: ${String(error)}`)
+      })
+    ])
+    if (!started.descendantPid) throw new Error('Fake package worker did not start its descendant.')
+
+    const timeoutError = await first
+    if (!String(timeoutError).toLowerCase().includes('timed out')) {
+      throw new Error(`Package mutation did not reach its MCP deadline: ${String(timeoutError)}`)
+    }
+    await waitForProcessesToExit([started.pid, started.descendantPid])
+
+    const retryDeadline = Date.now() + 15_000
+    let retry
+    while (Date.now() < retryDeadline) {
+      retry = toolResult(
+        'manage_packages',
+        await client.callTool(
+          {
+            name: 'manage_packages',
+            arguments: { language: 'python', packages: ['e2e-ok'], usePip: true }
+          },
+          undefined,
+          { timeout: 5_000 }
+        )
+      )
+      if (retry.ok === true) break
+      if (!String(retry.error).includes('ENVIRONMENT_MUTATION_ALREADY_PENDING')) break
+      await delay(100)
+    }
+    if (retry?.ok !== true) {
+      throw new Error(`Package mutation retry did not succeed: ${JSON.stringify(retry)}`)
+    }
+    return `Notebook package cancellation verified; stopped PIDs ${started.pid} and ${started.descendantPid}.`
   })
 
 const createProvenanceArtifact = async (sessionId) => {
@@ -924,6 +1269,14 @@ if (process.argv.includes('--version')) {
           reply = await verifyNotebookLifecycle(context.params.sessionId)
         } else if (prompt.includes(PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT)) {
           reply = await verifyNotebookLifecycle(context.params.sessionId, 1_500)
+        } else if (prompt.includes(NOTEBOOK_MUTATION_CANCELLATION_PROMPT)) {
+          reply = await verifyNotebookMutationCancellation(context.params.sessionId)
+        } else if (prompt.includes(NOTEBOOK_LONG_MUTATION_PROMPT)) {
+          reply = await verifyLongNotebookMutation(context.params.sessionId)
+        } else if (prompt.includes(NOTEBOOK_REAL_ENVIRONMENT_PROMPT)) {
+          reply = await verifyRealNotebookEnvironment(context.params.sessionId)
+        } else if (prompt.includes(NOTEBOOK_PACKAGE_CANCELLATION_PROMPT)) {
+          reply = await verifyNotebookPackageCancellation(context.params.sessionId)
         } else if (prompt.includes(ARTIFACT_PROVENANCE_PROMPT)) {
           reply = await createProvenanceArtifact(context.params.sessionId)
         } else if (prompt.includes(PREVIEW_CONTEXT_MENU_ARTIFACTS_PROMPT)) {

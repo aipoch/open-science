@@ -1,6 +1,6 @@
 import { expect, test as base } from '@playwright/test'
 import { spawn } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
@@ -116,6 +116,7 @@ const closeElectronApplicationForCleanup = async (
 type ElectronApp = {
   readonly page: Page
   allowRendererConsoleError: (text: string) => void
+  captureMainLog: (name: string) => Promise<string>
   armDelegatedHandoffCleanupSabotage: (childName: string) => Promise<void>
   beginResourceProfile: (options?: RuntimeResourceProfilerOptions) => Promise<void>
   capturePersistedLocaleNativeQuitDialog: () => Promise<{
@@ -167,6 +168,11 @@ const launchEnvironment = (
   environment.OPEN_SCIENCE_E2E_STORAGE_ROOT = storageRoot
   environment.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT = join(storageRoot, 'e2e-handoff-captures')
   environment.OPEN_SCIENCE_E2E_WINDOW_MODE = windowMode
+  if (process.platform === 'win32' && environment.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS) {
+    // The production runner caches resolved tools under LocalAppData. Keep the controlled process
+    // fixture isolated from any micromamba selected by an ordinary Open Science session.
+    environment.LOCALAPPDATA = join(storageRoot, 'local-app-data')
+  }
   if (sessionPerformanceTrace) environment.OPEN_SCIENCE_PERF_SESSION_TRACE = '1'
   if (fakeRemoteItRoot) {
     environment.OPEN_SCIENCE_FAKE_REMOTEIT_STATE = join(storageRoot, 'fake-remoteit-state.json')
@@ -362,6 +368,15 @@ class ElectronAppHarness implements ElectronApp {
 
   allowRendererConsoleError(text: string): void {
     this.rendererFailures.allowConsoleError(text)
+  }
+
+  async captureMainLog(name: string): Promise<string> {
+    if (!/^[a-z0-9-]+\.log$/u.test(name)) throw new Error(`Invalid E2E log name: ${name}`)
+    const evidenceRoot = resolve('.scratch', 'notebook-lifecycle-e2e', 'evidence')
+    await mkdir(evidenceRoot, { recursive: true })
+    const destination = join(evidenceRoot, name)
+    await copyFile(join(this.roots.userDataRoot, 'logs', 'main.log'), destination)
+    return destination
   }
 
   async beginResourceProfile(options: RuntimeResourceProfilerOptions = {}): Promise<void> {
@@ -586,6 +601,18 @@ class ElectronAppHarness implements ElectronApp {
       process.platform === 'win32' ? 'opencode.cmd' : 'opencode'
     )
     settings.opencodeVersion = '1.0.0'
+    if (
+      process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS ||
+      process.env.OPEN_SCIENCE_E2E_REAL_MICROMAMBA
+    ) {
+      // Keep lifecycle checks on the mutation path itself. Without an explicit channel,
+      // named-environment creation first performs an unrelated live mirror probe.
+      settings.packageMirror = {
+        condaChannel: process.env.OPEN_SCIENCE_E2E_REAL_MICROMAMBA
+          ? 'https://mirrors.ustc.edu.cn/anaconda/cloud/conda-forge/'
+          : 'conda-forge'
+      }
+    }
     // Specs assert English copy. Pin the locale so the host language can't leak in — Main
     // resolves a 'system' preference from the OS language list, ignoring Chromium's --lang.
     settings.localePreference = 'en'

@@ -97,6 +97,24 @@ const pending = (runtimeRoot: string): ReturnType<RuntimeOperationJournal['pendi
   RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot)).pending()
 
 describe('NotebookPackageMutationOwner', () => {
+  it('passes caller cancellation to the package installer', async () => {
+    const installPackages = vi.fn().mockResolvedValue({
+      ok: true,
+      needsRestart: false,
+      log: 'installed',
+      method: 'conda'
+    })
+    const { owner, target } = ownerHarness({ installPackages })
+    const cancellation = new AbortController()
+
+    await owner.mutate({ target, mirror: {} }, cancellation.signal)
+
+    expect(installPackages).toHaveBeenCalledWith(
+      target.request,
+      expect.objectContaining({ signal: cancellation.signal })
+    )
+  })
+
   it('rechecks repair policy after acquiring the mutation lock', async () => {
     const refusal = {
       status: 'refused' as const,
@@ -675,6 +693,7 @@ describe('NotebookPackageMutationOwner', () => {
     await expect(owner.mutate({ target, mirror: {} })).rejects.toBe(childFailure)
 
     expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target)
+    expect(options.environmentStateTracker.refreshAfterPackageMutation).not.toHaveBeenCalled()
     expect(release).toHaveBeenCalledWith({
       archivePublications: [],
       completedOperationId: operationId,

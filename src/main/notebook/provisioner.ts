@@ -452,12 +452,13 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   private async runWithMaxPathRecovery(
     run: () => Promise<void>,
     onRecovery?: () => void,
-    cache: MicromambaCache = this.cache
+    cache: MicromambaCache = this.cache,
+    signal?: AbortSignal
   ): Promise<void> {
     try {
       await run()
     } catch (original) {
-      if (this.abort?.signal.aborted) throw original
+      if (signal?.aborted || this.abort?.signal.aborted) throw original
       const recovered = await withExclusiveCacheLocks(this.cacheLockKeys(cache), () =>
         Promise.resolve(
           recoverWindowsMaxPathPackage(original, this.cacheRoots(cache), {
@@ -1273,8 +1274,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     name: string,
     language: NotebookLanguage,
     packages: string[] = [],
-    request?: Pick<InstallRequest, 'projectId' | 'sessionId' | 'workspaceCwd'>
+    request?: Pick<InstallRequest, 'projectId' | 'sessionId' | 'workspaceCwd'>,
+    signal?: AbortSignal
   ): Promise<EnvironmentInfo> {
+    signal?.throwIfAborted()
     const flagLike = packages.find((pkg) => pkg.trim().startsWith('-'))
     if (flagLike) {
       throw new Error(
@@ -1301,6 +1304,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // Named environments are the only online-solving path. Resolve/probe the channel here so normal
     // application startup and offline default-runtime provisioning never wait for mirror selection.
     const channel = await this.resolveChannel()
+    signal?.throwIfAborted()
     // Journal the create (child PID + prefix) so a crash mid-create is recovered like any other prefix
     // write: a survivor is killed and, if unconfirmed, the prefix is blocked so a later create/remove
     // can't race it. Take the shared pkgs cache lock (+ MAX_PATH recovery) for the whole prefix cleanup
@@ -1314,37 +1318,43 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       prefix,
       `create-${language}`,
       async (onBeforeSpawn, onChild, onCacheMaintenanceSettled) => {
+        signal?.throwIfAborted()
         await this.maintainCacheBeforeMutation(
           this.cache,
           onBeforeSpawn,
           onChild,
-          onCacheMaintenanceSettled
+          onCacheMaintenanceSettled,
+          signal
         )
-        await this.runWithMaxPathRecovery(() =>
-          withSharedCacheLocks(this.cacheLockKeys(this.cache), async () => {
-            // Clear a half-built prefix from an interrupted prior create (incl. conda-meta-but-no-
-            // interpreter) so micromamba doesn't abort on it.
-            this.clearIncompletePrefix(prefix, bin)
-            // NO abort signal: this.abort belongs to the currently-running default provision (python/r),
-            // and a named create runs on the RAW provisioner concurrently with the serialized default one
-            // (ipc.ts wires them separately). Passing this.abort here would let a cancel of the default env
-            // abort this unrelated named-env child. Named create has no per-language cancel path of its own.
-            await this.deps.runArgv(
-              createFromPackagesArgv(this.deps.mm, this.deps.root, prefix, [channel], pkgs),
-              undefined,
-              onChild,
-              onBeforeSpawn,
-              this.cache,
-              DEFAULT_MAX_CACHE_RELATIVE_PATH,
-              {
-                language,
-                packages,
-                ...request
-              }
-            )
-          })
+        await this.runWithMaxPathRecovery(
+          () =>
+            withSharedCacheLocks(this.cacheLockKeys(this.cache), async () => {
+              signal?.throwIfAborted()
+              // Clear a half-built prefix from an interrupted prior create (incl. conda-meta-but-no-
+              // interpreter) so micromamba doesn't abort on it.
+              this.clearIncompletePrefix(prefix, bin)
+              // Named creates use their own caller signal. Never substitute this.abort here: that controller
+              // belongs to a concurrently running default provision and would cross-cancel unrelated work.
+              await this.deps.runArgv(
+                createFromPackagesArgv(this.deps.mm, this.deps.root, prefix, [channel], pkgs),
+                signal,
+                onChild,
+                onBeforeSpawn,
+                this.cache,
+                DEFAULT_MAX_CACHE_RELATIVE_PATH,
+                {
+                  language,
+                  packages,
+                  ...request
+                }
+              )
+            }),
+          undefined,
+          this.cache,
+          signal
         )
         await this.deps.verify(bin, prefix)
+        signal?.throwIfAborted()
         const explicitLock = await this.deps.captureExplicitLock?.(prefix)
         return explicitLock
           ? [
@@ -1357,6 +1367,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       }
     )
     await this.deps.verify(bin, prefix)
+    signal?.throwIfAborted()
     return {
       name,
       language,
@@ -1962,7 +1973,16 @@ export const createProductionProvisioner = (
           request: sandboxRequest,
           runtimeRoot: opts.root,
           storageRoot: dirname(opts.root)
-        })(selectedArgv[0]!, selectedArgv.slice(1), env, onChild, onBeforeSpawn)
+        })(
+          selectedArgv[0]!,
+          selectedArgv.slice(1),
+          env,
+          onChild,
+          onBeforeSpawn,
+          undefined,
+          undefined,
+          { signal }
+        )
         if (result.code !== 0) throw new Error(result.stderr || 'micromamba exited unsuccessfully')
         return
       }

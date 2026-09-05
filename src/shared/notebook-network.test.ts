@@ -39,6 +39,13 @@ describe('notebook network policy', () => {
     expect(buildNotebookNetworkPolicy(settings).allowedDomains).toContain('pypi.org')
   })
 
+  it('allows only catalogued package-mirror redirect hosts', () => {
+    const policy = buildNotebookNetworkPolicy(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
+
+    expect(policy.allowedDomains).toContain('mirrors.nju.edu.cn')
+    expect(policy.allowedDomains).not.toContain('redirect.example')
+  })
+
   it('rejects URLs, wildcards, local targets, IP literals, and single-label domains', () => {
     expect(validateCustomAllowedDomain('https://example.com')).toEqual({
       ok: false,

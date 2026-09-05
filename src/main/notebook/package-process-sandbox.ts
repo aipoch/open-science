@@ -82,7 +82,8 @@ const packageWriteRoots = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform): s
 /** Routes manage_packages workers through the same network/filesystem boundary as Notebook code. */
 export const sandboxedPackageSpawn =
   (options: PackageProcessSandboxOptions): InstallSpawn =>
-  async (command, args, env, onChild, onBeforeSpawn) => {
+  async (command, args, env, onChild, onBeforeSpawn, captureCondaJson, _cwd, spawnOptions) => {
+    spawnOptions?.signal?.throwIfAborted()
     const { processSandbox, request, runtimeRoot, storageRoot } = options
     const platform = options.platform ?? process.platform
     const projectedEnv = packageEnvironment(env ?? {}, platform)
@@ -97,6 +98,7 @@ export const sandboxedPackageSpawn =
       sessionId: request.sessionId ?? 'notebook-package-manager',
       projectId: request.projectId ?? 'notebook-package-manager',
       runtime: request.language,
+      signal: spawnOptions?.signal,
       filesystem: {
         readOnlyRoots: [...absolutePath(dirname(command)), ...absolutePath(request.workspaceCwd)],
         readWriteRoots: [
@@ -108,17 +110,20 @@ export const sandboxedPackageSpawn =
         deniedWriteRoots: []
       }
     })
-    const endExecution = sandboxed.beginExecution?.()
+    let endExecution: (() => void) | undefined
     let ended = false
     try {
+      spawnOptions?.signal?.throwIfAborted()
+      endExecution = sandboxed.beginExecution?.()
       const result = await defaultSpawn(
         sandboxed.executable,
         [...sandboxed.args],
         sandboxed.env,
         onChild,
         onBeforeSpawn,
-        args.includes('--json'),
-        cwd
+        captureCondaJson ?? args.includes('--json'),
+        cwd,
+        spawnOptions
       )
       endExecution?.()
       ended = true

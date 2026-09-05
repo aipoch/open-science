@@ -152,9 +152,6 @@ const isInsideOrEqual = (root: string, candidate: string): boolean => {
 
 const archiveFiles = async (root: string, validateRoot?: () => boolean): Promise<string[]> => {
   const files: string[] = []
-  if (validateRoot && !validateRoot()) {
-    throw new Error('Micromamba working cache changed before archive traversal.')
-  }
   const physicalRoot = await realpath(root)
   const visit = async (dir: string): Promise<void> => {
     const before = await lstat(dir)
@@ -171,9 +168,6 @@ const archiveFiles = async (root: string, validateRoot?: () => boolean): Promise
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
       throw error
-    }
-    if (validateRoot && !validateRoot()) {
-      throw new Error('Micromamba working cache changed during archive traversal.')
     }
     if ((await realpath(dir)) !== physicalDir) {
       throw new Error('Micromamba working cache directory identity changed during traversal.')
@@ -193,6 +187,12 @@ const archiveFiles = async (root: string, validateRoot?: () => boolean): Promise
     }
   }
   await visit(root)
+  // The caller checks ownership before traversal. Check again before returning any sources;
+  // on Windows this launches ACL probes and must not scale with extracted-package directories.
+  // Per-entry identity/link checks above and authorized content digests remain independent guards.
+  if (validateRoot && !validateRoot()) {
+    throw new Error('Micromamba working cache changed during archive traversal.')
+  }
   return files
 }
 

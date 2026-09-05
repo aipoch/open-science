@@ -66,6 +66,15 @@ export class EnvironmentLeaseManager {
     return acquisition
   }
 
+  hasExclusive(environment: string): boolean {
+    const state = this.states.get(environment)
+    return Boolean(
+      state &&
+      (Array.from(state.holders.values()).includes('exclusive') ||
+        state.waiters.some((waiter) => waiter.mode === 'exclusive'))
+    )
+  }
+
   dispose(): void {
     if (this.disposed) return
     this.disposed = true

@@ -204,6 +204,55 @@ describe('NotebookEnvironmentOperations', () => {
     expect(owner.snapshot()).toMatchObject({ active: [], leases: { environments: [] } })
   })
 
+  it('removes an aborted mutation from the environment queue before it can run', async () => {
+    const { owner } = await createOwner()
+    let releaseFirst!: () => void
+    const first = owner.runShared(
+      'execution',
+      'analysis',
+      () =>
+        new Promise<void>((resolve) => {
+          releaseFirst = resolve
+        })
+    )
+    await vi.waitFor(() => expect(releaseFirst).toBeTypeOf('function'))
+    const cancellation = new AbortController()
+    const operation = vi.fn(async () => 'cancelled operation ran')
+    const queued = owner.runMutation('analysis', operation, cancellation.signal)
+    const rejection = expect(queued).rejects.toThrow(/cancel/i)
+
+    cancellation.abort(new Error('MCP request cancelled.'))
+
+    await rejection
+    expect(operation).not.toHaveBeenCalled()
+    expect(owner.snapshot().leases.environments[0]?.waiters.exclusive).toBe(0)
+    releaseFirst()
+    await first
+    expect(operation).not.toHaveBeenCalled()
+  })
+
+  it('rejects a duplicate caller-owned mutation instead of adding another waiter', async () => {
+    const { owner } = await createOwner()
+    let releaseFirst!: () => void
+    const first = owner.runMutation(
+      'analysis',
+      () =>
+        new Promise<void>((resolve) => {
+          releaseFirst = resolve
+        }),
+      new AbortController().signal
+    )
+    await vi.waitFor(() => expect(releaseFirst).toBeTypeOf('function'))
+
+    await expect(
+      owner.runMutation('analysis', async () => undefined, new AbortController().signal)
+    ).rejects.toThrow(/ENVIRONMENT_MUTATION_ALREADY_PENDING/)
+    expect(owner.snapshot().leases.environments[0]?.waiters.exclusive).toBe(0)
+
+    releaseFirst()
+    await first
+  })
+
   it('retains scoped provisioning progress and the terminal diagnostic after failure', async () => {
     const { owner } = await createOwner()
     const forwarded: unknown[] = []

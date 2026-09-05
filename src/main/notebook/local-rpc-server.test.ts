@@ -1507,6 +1507,60 @@ describe('notebook local RPC server', () => {
     }
   )
 
+  it.each([
+    ['managePackages', { language: 'python', packages: ['numpy'] }],
+    ['manageEnvironments', { action: 'create', language: 'python', name: 'analysis' }]
+  ] as const)(
+    'aborts an in-flight %s operation when its client disconnects',
+    async (method, methodParams) => {
+      const callStarted = createDeferred<AbortSignal | undefined>()
+      const pendingCall = createDeferred<unknown>()
+      const operation = vi.fn(async (_request: unknown, signal?: AbortSignal) => {
+        callStarted.resolve(signal)
+        return pendingCall.promise
+      })
+      const server = new NotebookLocalRpcServer({ [method]: operation } as never, {
+        transport: 'tcp'
+      })
+      const connection = await server.ensureStarted()
+      const disconnect = new AbortController()
+
+      try {
+        const request = fetchLocalRpc(
+          connection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method,
+              params: {
+                sessionId: 'session-1',
+                workspaceCwd: '/workspace',
+                ...methodParams
+              }
+            }),
+            signal: disconnect.signal
+          },
+          `Notebook ${method} RPC`
+        )
+        const signal = await callStarted.promise
+        expect(signal).toBeInstanceOf(AbortSignal)
+        expect(signal?.aborted).toBe(false)
+
+        disconnect.abort()
+
+        await expect(request).rejects.toMatchObject({ cause: expect.any(Error) })
+        await vi.waitFor(() => expect(signal?.aborted).toBe(true))
+      } finally {
+        pendingCall.resolve(undefined)
+        await server.close()
+      }
+    }
+  )
+
   it('aborts an in-flight Plan call before promptly closing the server', async () => {
     const root = await createStorageRoot()
     const callStarted = createDeferred<AbortSignal>()
