@@ -99,6 +99,7 @@
     "Import Connector configuration": "导入连接器配置"
   },
   "renderer": {
+    "First row is used as column headers": "首行用作列标题",
     "Notebook network access": "Notebook 网络访问",
     "Control which internet domains Notebook Python, R, REPL, and Bash can reach.": "控制 Notebook Python、R、REPL 和 Bash 可以访问哪些互联网域名。",
     "Open Science domains": "Open Science 域名",

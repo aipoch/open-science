@@ -687,6 +687,10 @@ colors communicate a successful or failed probe/migration result.
 - Viewer toolbar buttons: `Button variant="ghost" size="icon"`, `size-7 rounded-md`.
 - Image / document preview area: `flex-1 min-h-0 overflow-auto bg-card`.
 - Empty preview panel shell and scroll body use `bg-bg-10`.
+- CSV/TSV previews use the first record as column headers and explicitly disclose that convention,
+  including for files without headers. Byte-limited reads and parser row limits independently make
+  the total unknown; show only the previewed row/column range in that case. Show an exact total only
+  when neither limit truncated the content. Keep parsing and rendering bounded.
 - File library search: `Input` or `CommandInput`, with focus using `ring-ring`.
 - File library view switch: `ToggleGroup type="single"`; inactive hover uses `bg-muted`, and the selected item uses `bg-bg-400 text-text-000`. Keep these states neutral rather than using `accent`.
 - File row: `h-9 rounded-md px-2 hover:bg-bg-200`; keep the text color unchanged on hover.
@@ -751,6 +755,11 @@ colors communicate a successful or failed probe/migration result.
   quiet monospaced tabular text. Do not render a redundant Session type badge. A pure numeric query
   matches positive Session-number prefixes and ranks an exact number first; nonnumeric queries remain
   title-only so global search does not expand into message-body or metadata search.
+- Session title search compares NFKC-normalized, lowercase text while preserving the original title
+  for display. Compatibility forms (including full-width input) and composed/decomposed accents
+  match; accents remain significant, and `ß` is not expanded to `ss`. Full-width numeric queries
+  follow the same Session-number lookup as ASCII digits. This policy applies to the local Session
+  title catalog, not the separate Artifact filename search.
 - List row: `h-10 rounded-lg px-3 hover:bg-accent hover:text-accent-foreground`.
 - Inline more actions: default `opacity-0`, then `opacity-100` on hover or focus-visible.
 

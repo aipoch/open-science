@@ -99,6 +99,7 @@
     "Import Connector configuration": "커넥터 구성 가져오기"
   },
   "renderer": {
+    "First row is used as column headers": "첫 번째 행을 열 머리글로 사용합니다",
     "Notebook network access": "Notebook 네트워크 액세스",
     "Control which internet domains Notebook Python, R, REPL, and Bash can reach.": "Notebook의 Python, R, REPL 및 Bash가 액세스할 수 있는 인터넷 도메인을 제어합니다.",
     "Open Science domains": "Open Science 도메인",

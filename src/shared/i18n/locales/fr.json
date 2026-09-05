@@ -101,6 +101,7 @@
     "Import Connector configuration": "Importer la configuration du connecteur"
   },
   "renderer": {
+    "First row is used as column headers": "La première ligne sert d’en-têtes de colonnes",
     "Notebook network access": "Accès réseau du Notebook",
     "Control which internet domains Notebook Python, R, REPL, and Bash can reach.": "Contrôlez les domaines Internet accessibles par les environnements Python, R, REPL et Bash de Notebook.",
     "Open Science domains": "Domaines Open Science",
