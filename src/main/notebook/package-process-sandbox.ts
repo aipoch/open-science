@@ -1,5 +1,15 @@
-import { existsSync } from 'node:fs'
-import { delimiter, dirname, isAbsolute, win32 } from 'node:path'
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fchmodSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  realpathSync
+} from 'node:fs'
+import { delimiter, dirname, isAbsolute, join, relative, resolve, win32 } from 'node:path'
 
 import { defaultSpawn, type InstallRequest, type InstallSpawn } from './package-manager'
 import { buildNotebookKernelEnvironment } from './process-environment'
@@ -16,7 +26,17 @@ type PackageProcessSandboxOptions = Readonly<{
 
 const PACKAGE_ENV_KEYS = [
   'CONDA_PKGS_DIRS',
+  'CONDA_ENVS_PATH',
   'MAMBA_ROOT_PREFIX',
+  'HOME',
+  'USERPROFILE',
+  'XDG_CACHE_HOME',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'XDG_STATE_HOME',
+  'R_USER',
+  'R_LIBS_USER',
+  'PYTHONNOUSERSITE',
   'CONDA_SSL_VERIFY',
   'SSL_CERT_FILE',
   'REQUESTS_CA_BUNDLE',
@@ -79,6 +99,64 @@ const packageWriteRoots = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform): s
   )
 }
 
+const normalizeDarwinRepodataCachePermissions = (
+  env: NodeJS.ProcessEnv,
+  runtimeRoot: string,
+  platform: NodeJS.Platform
+): void => {
+  if (platform !== 'darwin') return
+  const managedRoot = resolve(runtimeRoot)
+  for (const packageRoot of (env.CONDA_PKGS_DIRS ?? '').split(delimiter)) {
+    if (!isAbsolute(packageRoot)) continue
+    const fromManagedRoot = relative(managedRoot, resolve(packageRoot))
+    if (fromManagedRoot.startsWith('..') || isAbsolute(fromManagedRoot)) continue
+    // The configured storage path may itself contain a symlink. Resolve that trusted
+    // anchor once; links beneath it must never redirect this unsandboxed preparation.
+    mkdirSync(managedRoot, { recursive: true })
+    const physicalRoot = join(realpathSync(managedRoot), fromManagedRoot)
+    const cache = join(physicalRoot, 'cache')
+    // Node has no mkdirat: validate each parent before creation and recheck the
+    // resulting physical path. Permission changes below are descriptor-bound.
+    const ensureDirectory = (path: string): void => {
+      try {
+        const state = lstatSync(path)
+        if (!state.isDirectory() || state.isSymbolicLink() || realpathSync(path) !== path) {
+          throw new Error(`Managed Micromamba repodata cache is not a trusted directory: ${path}`)
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        ensureDirectory(dirname(path))
+        mkdirSync(path, { mode: 0o755 })
+        ensureDirectory(path)
+      }
+    }
+    ensureDirectory(cache)
+    const fd = openSync(cache, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+    try {
+      const state = fstatSync(fd)
+      const current = lstatSync(cache)
+      if (
+        !state.isDirectory() ||
+        state.dev !== current.dev ||
+        state.ino !== current.ino ||
+        realpathSync(cache) !== cache
+      ) {
+        throw new Error(`Managed Micromamba repodata cache is not a trusted directory: ${cache}`)
+      }
+      // Micromamba can leave cache/ setgid. Seatbelt denies clearing that bit even
+      // with file-write-mode, so repair it before entering the production sandbox.
+      // Operate on the validated descriptor, never on a path that can be replaced.
+      if ((state.mode & 0o2000) !== 0) fchmodSync(fd, state.mode & 0o5777)
+      const after = lstatSync(cache)
+      if (after.dev !== state.dev || after.ino !== state.ino || realpathSync(cache) !== cache) {
+        throw new Error(`Managed Micromamba repodata cache changed during preparation: ${cache}`)
+      }
+    } finally {
+      closeSync(fd)
+    }
+  }
+}
+
 /** Routes manage_packages workers through the same network/filesystem boundary as Notebook code. */
 export const sandboxedPackageSpawn =
   (options: PackageProcessSandboxOptions): InstallSpawn =>
@@ -86,6 +164,7 @@ export const sandboxedPackageSpawn =
     const { processSandbox, request, runtimeRoot, storageRoot } = options
     const platform = options.platform ?? process.platform
     const projectedEnv = packageEnvironment(env ?? {}, platform)
+    normalizeDarwinRepodataCachePermissions(projectedEnv, runtimeRoot, platform)
     const cwd =
       request.workspaceCwd && isAbsolute(request.workspaceCwd) ? request.workspaceCwd : storageRoot
     const sandboxed = await processSandbox.wrap({

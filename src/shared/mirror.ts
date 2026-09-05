@@ -14,12 +14,13 @@ export type AutomaticPackageMirrorCandidate = Readonly<{
   mirror: PackageMirror
   probeUrl: string
   biocondaProbeUrl: string
+  trustedDomains: readonly string[]
 }>
 
 const condaRepodata = (base: string): string =>
-  `${base}anaconda/cloud/conda-forge/noarch/repodata.json`
+  `${base}anaconda/cloud/conda-forge/noarch/current_repodata.json`
 const biocondaRepodata = (base: string): string =>
-  `${base}anaconda/cloud/bioconda/noarch/repodata.json`
+  `${base}anaconda/cloud/bioconda/noarch/current_repodata.json`
 
 export const CURATED_MIRRORS = {
   cn: {
@@ -35,14 +36,16 @@ export const AUTOMATIC_PACKAGE_MIRROR_CANDIDATES: readonly AutomaticPackageMirro
   {
     name: 'public',
     mirror: {},
-    probeUrl: 'https://conda.anaconda.org/conda-forge/noarch/repodata.json',
-    biocondaProbeUrl: 'https://conda.anaconda.org/bioconda/noarch/repodata.json'
+    probeUrl: 'https://conda.anaconda.org/conda-forge/noarch/current_repodata.json',
+    biocondaProbeUrl: 'https://conda.anaconda.org/bioconda/noarch/current_repodata.json',
+    trustedDomains: ['conda.anaconda.org']
   },
   {
     name: 'tuna',
     mirror: { ...CURATED_MIRRORS.cn },
     probeUrl: condaRepodata('https://mirrors.tuna.tsinghua.edu.cn/'),
-    biocondaProbeUrl: biocondaRepodata('https://mirrors.tuna.tsinghua.edu.cn/')
+    biocondaProbeUrl: biocondaRepodata('https://mirrors.tuna.tsinghua.edu.cn/'),
+    trustedDomains: ['mirrors.tuna.tsinghua.edu.cn', 'pypi.tuna.tsinghua.edu.cn']
   },
   {
     name: 'ustc',
@@ -52,7 +55,8 @@ export const AUTOMATIC_PACKAGE_MIRROR_CANDIDATES: readonly AutomaticPackageMirro
       cranMirror: 'https://mirrors.ustc.edu.cn/CRAN/'
     },
     probeUrl: condaRepodata('https://mirrors.ustc.edu.cn/'),
-    biocondaProbeUrl: biocondaRepodata('https://mirrors.ustc.edu.cn/')
+    biocondaProbeUrl: biocondaRepodata('https://mirrors.ustc.edu.cn/'),
+    trustedDomains: ['mirrors.ustc.edu.cn', 'mirrors.nju.edu.cn']
   },
   {
     name: 'aliyun',
@@ -62,24 +66,13 @@ export const AUTOMATIC_PACKAGE_MIRROR_CANDIDATES: readonly AutomaticPackageMirro
       cranMirror: 'https://mirrors.aliyun.com/CRAN/'
     },
     probeUrl: condaRepodata('https://mirrors.aliyun.com/'),
-    biocondaProbeUrl: biocondaRepodata('https://mirrors.aliyun.com/')
+    biocondaProbeUrl: biocondaRepodata('https://mirrors.aliyun.com/'),
+    trustedDomains: ['mirrors.aliyun.com']
   }
 ]
 
 export const AUTOMATIC_PACKAGE_MIRROR_DOMAINS = [
-  ...new Set(
-    AUTOMATIC_PACKAGE_MIRROR_CANDIDATES.flatMap((candidate) =>
-      [
-        candidate.probeUrl,
-        candidate.biocondaProbeUrl,
-        candidate.mirror.condaChannel,
-        candidate.mirror.pypiIndex,
-        candidate.mirror.cranMirror
-      ]
-        .filter((url): url is string => Boolean(url))
-        .map((url) => new URL(url).hostname)
-    )
-  )
+  ...new Set(AUTOMATIC_PACKAGE_MIRROR_CANDIDATES.flatMap((candidate) => candidate.trustedDomains))
 ]
 
 // "View available mirrors" help link target: the TUNA Anaconda mirror help page, which lists the

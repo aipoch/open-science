@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { netFetchStandard } from '../skills/net-fetch'
+
 import {
   DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
   buildNotebookNetworkPolicy,
@@ -13,24 +15,29 @@ import {
   resetAutoMirrorCache
 } from './mirror-probe'
 
+vi.mock('../skills/net-fetch', () => ({ netFetchStandard: vi.fn() }))
+
 const candidates: MirrorCandidate[] = [
   {
     name: 'public',
     mirror: {},
     probeUrl: 'https://public/conda-forge/repodata.json',
-    biocondaProbeUrl: 'https://public/bioconda/repodata.json'
+    biocondaProbeUrl: 'https://public/bioconda/repodata.json',
+    trustedDomains: ['public']
   },
   {
     name: 'tuna',
     mirror: { condaChannel: 'https://tuna/conda-forge/', pypiIndex: 'https://tuna/pypi' },
     probeUrl: 'https://tuna/conda-forge/repodata.json',
-    biocondaProbeUrl: 'https://tuna/bioconda/repodata.json'
+    biocondaProbeUrl: 'https://tuna/bioconda/repodata.json',
+    trustedDomains: ['tuna']
   },
   {
     name: 'aliyun',
     mirror: { condaChannel: 'https://aliyun/conda-forge/' },
     probeUrl: 'https://aliyun/conda-forge/repodata.json',
-    biocondaProbeUrl: 'https://aliyun/bioconda/repodata.json'
+    biocondaProbeUrl: 'https://aliyun/bioconda/repodata.json',
+    trustedDomains: ['aliyun']
   }
 ]
 
@@ -59,6 +66,7 @@ describe('pickFastestMirror', () => {
     const policy = buildNotebookNetworkPolicy(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
     const automaticMirrorHosts = MIRROR_CANDIDATES.flatMap((candidate) =>
       [
+        ...candidate.trustedDomains,
         candidate.probeUrl,
         candidate.biocondaProbeUrl,
         candidate.mirror.condaChannel,
@@ -66,7 +74,7 @@ describe('pickFastestMirror', () => {
         candidate.mirror.cranMirror
       ]
         .filter((url): url is string => Boolean(url))
-        .map((url) => new URL(url).hostname)
+        .map((url) => (url.includes('://') ? new URL(url).hostname : url))
     )
 
     expect(
@@ -75,6 +83,20 @@ describe('pickFastestMirror', () => {
           !policy.allowedDomains.some((pattern) => domainPatternMatches(pattern, hostname))
       )
     ).toEqual([])
+    expect(
+      MIRROR_CANDIDATES.every((candidate) => candidate.probeUrl.endsWith('current_repodata.json'))
+    ).toBe(true)
+    expect(
+      MIRROR_CANDIDATES.every((candidate) =>
+        candidate.biocondaProbeUrl.endsWith('current_repodata.json')
+      )
+    ).toBe(true)
+    expect(
+      MIRROR_CANDIDATES.find((candidate) => candidate.name === 'ustc')?.trustedDomains
+    ).toContain('mirrors.nju.edu.cn')
+    expect(
+      policy.allowedDomains.some((pattern) => domainPatternMatches(pattern, 'redirect.invalid'))
+    ).toBe(false)
   })
 
   it('returns the fastest candidate whose conda-forge and bioconda channels respond', async () => {
@@ -86,6 +108,50 @@ describe('pickFastestMirror', () => {
       condaChannel: 'https://tuna/conda-forge/',
       pypiIndex: 'https://tuna/pypi'
     })
+  })
+
+  it('accepts the USTC to NJU redirect only when NJU is explicitly trusted', async () => {
+    const ustc = {
+      name: 'ustc',
+      mirror: { condaChannel: 'https://mirrors.ustc.edu.cn/anaconda/cloud/conda-forge/' },
+      probeUrl:
+        'https://mirrors.ustc.edu.cn/anaconda/cloud/conda-forge/noarch/current_repodata.json',
+      biocondaProbeUrl:
+        'https://mirrors.ustc.edu.cn/anaconda/cloud/bioconda/noarch/current_repodata.json',
+      trustedDomains: ['mirrors.ustc.edu.cn']
+    }
+    const official = {
+      name: 'public',
+      mirror: { condaChannel: 'https://conda.anaconda.org/conda-forge/' },
+      probeUrl: 'https://conda.anaconda.org/conda-forge/noarch/current_repodata.json',
+      biocondaProbeUrl: 'https://conda.anaconda.org/bioconda/noarch/current_repodata.json',
+      trustedDomains: ['conda.anaconda.org']
+    }
+    vi.mocked(netFetchStandard).mockImplementation(async (url) => {
+      const requested = String(url)
+      const finalUrl = requested.includes('mirrors.ustc.edu.cn')
+        ? requested.replace('mirrors.ustc.edu.cn', 'mirrors.nju.edu.cn')
+        : requested
+      return { ok: true, status: 200, url: finalUrl } as Response
+    })
+
+    await expect(pickFastestMirror({ candidates: [ustc, official] })).resolves.toEqual(
+      official.mirror
+    )
+    await expect(
+      pickFastestMirror({
+        candidates: [
+          { ...ustc, trustedDomains: [...ustc.trustedDomains, 'mirrors.nju.edu.cn'] },
+          official
+        ]
+      })
+    ).resolves.toEqual(ustc.mirror)
+    expect(vi.mocked(netFetchStandard).mock.calls.map(([url]) => String(url))).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('/conda-forge/noarch/current_repodata.json'),
+        expect.stringContaining('/bioconda/noarch/current_repodata.json')
+      ])
+    )
   })
 
   it('skips a candidate when its bioconda channel is unreachable', async () => {
@@ -160,7 +226,7 @@ describe('effectiveMirrorAsync', () => {
     expect(result.condaChannel).toBe('https://tuna/conda-forge/')
   })
 
-  it('falls back to the locale default when no complete channel pair responds', async () => {
+  it('falls back to public indexes instead of reviving a rejected locale mirror', async () => {
     const result = await effectiveMirrorAsync(undefined, 'zh-CN', {
       candidates,
       probe: probeFrom({
@@ -169,8 +235,26 @@ describe('effectiveMirrorAsync', () => {
         'https://aliyun/conda-forge/repodata.json': 120
       })
     })
-    // No candidate has a reachable bioconda channel -> zh-CN locale default (TUNA).
-    expect(result.condaChannel).toContain('tuna')
+    expect(result).toEqual({})
+  })
+
+  it('retries automatic selection after a transient probe failure', async () => {
+    await expect(
+      effectiveMirrorAsync(undefined, 'zh-CN', {
+        candidates,
+        probe: probeFrom({})
+      })
+    ).resolves.toEqual({})
+
+    await expect(
+      effectiveMirrorAsync(undefined, 'zh-CN', {
+        candidates,
+        probe: probeFrom(reachableLatencies)
+      })
+    ).resolves.toEqual({
+      condaChannel: 'https://tuna/conda-forge/',
+      pypiIndex: 'https://tuna/pypi'
+    })
   })
 
   it('preserves a caBundle-only config while still using the fastest-probed channel', async () => {

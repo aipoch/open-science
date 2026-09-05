@@ -67,6 +67,7 @@ import { defaultOperationChildLiveness, readProcessStartToken } from './operatio
 import { sandboxedPackageSpawn } from './package-process-sandbox'
 import type { InstallRequest } from './package-manager'
 import type { NotebookProcessSandbox } from './process-sandbox'
+import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 import {
   isChildUnconfirmedError,
   captureMicromamba,
@@ -1345,6 +1346,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           })
         )
         await this.deps.verify(bin, prefix)
+        if (!this.deps.retainWorkingCache) return []
         const explicitLock = await this.deps.captureExplicitLock?.(prefix)
         return explicitLock
           ? [
@@ -2007,10 +2009,27 @@ export const createProductionProvisioner = (
             const selected = await runner.resolve()
             return captureMicromamba(
               [selected, '--no-rc', 'list', '--prefix', prefix, '--explicit', '--md5'],
-              caEnv
+              micromambaSpawnEnv(opts.root, opts.caBundle)
             )
           }),
-    verify: deps.verify ?? ((bin, prefix) => verifyExecutable(bin, { prefix, env: caEnv })),
+    verify:
+      deps.verify ??
+      ((bin, prefix) => {
+        const language: NotebookLanguage = ['r', 'r.exe'].includes(basename(bin).toLowerCase())
+          ? 'r'
+          : 'python'
+        return verifyExecutable(bin, {
+          prefix,
+          env: buildManagedRuntimeProcessEnvironment(opts.root, {
+            language,
+            prefix,
+            platform: opts.micromamba?.platform,
+            sourceEnv: { ...process.env, ...caEnv }
+          }),
+          platform: opts.micromamba?.platform,
+          completeEnv: true
+        })
+      }),
     isPrefixBlocked: opts.isPrefixBlocked,
     clearPrefixBlock: opts.clearPrefixBlock,
     clearRuntimeBlock: opts.clearRuntimeBlock,

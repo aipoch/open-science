@@ -987,6 +987,9 @@ describe('notebook runtime service', () => {
       projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: verifiedPackageMutationTracker(),
+      getPackageMirror: () => ({
+        condaChannel: 'https://mirror.invalid/conda-forge/'
+      }),
       installPackagesImpl
     })
 
@@ -7692,7 +7695,7 @@ describe('notebook runtime service', () => {
       expect(result.target).toEqual({ language: 'python', selection: 'unresolved' })
     })
 
-    it('falls back to the region default mirror when nothing is configured', async () => {
+    it('falls back to public indexes when no configured or probed mirror is reachable', async () => {
       const root = await createStorageRoot()
       const calls: Array<Partial<InstallDepsForTest> | undefined> = []
       const service = new NotebookRuntimeService({
@@ -7709,9 +7712,8 @@ describe('notebook runtime service', () => {
         }),
         getPackageMirror: () => undefined,
         locale: 'zh-CN',
-        // Force the latency probe to find nothing reachable so the resolver takes the deterministic
-        // locale fallback (zh-CN -> CN mirror) instead of racing real network from the CI runner,
-        // where the public mirror wins and leaves condaChannel unset.
+        // Force the latency probe to find nothing reachable. The resolver must use public indexes
+        // rather than reviving an unverified locale mirror that the probe just rejected.
         mirrorProbe: {
           probe: async () => {
             throw new Error('probe unreachable (test)')
@@ -7727,8 +7729,9 @@ describe('notebook runtime service', () => {
       resetAutoMirrorCache()
       await service.managePackages({ language: 'r', packages: ['ggplot2'] })
 
-      expect(calls[0]?.condaChannel).toMatch(/tuna|ustc|aliyun/i)
-      expect(calls[0]?.cranMirror).toMatch(/tuna|ustc/i)
+      expect(calls[0]?.condaChannel).toBeUndefined()
+      expect(calls[0]?.pypiIndex).toBeUndefined()
+      expect(calls[0]?.cranMirror).toBeUndefined()
     })
 
     it('never spawns real installs when installPackagesImpl is injected (no getPackageMirror wired)', async () => {
