@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { JobSummary } from '../../../shared/compute'
+import type { ComputeJobsListFilter, JobSummary } from '../../../shared/compute'
 import { createInitialSessionJobState, useSessionJobStore } from './session-job-store'
 import { makeJob as makeComputeJob } from '@/test-utils/compute-job'
 
@@ -54,6 +54,26 @@ describe('session job store — hydrate', () => {
     expect(state.jobsById.has('old')).toBe(true)
     expect(state.jobsById.has('new')).toBe(true)
     expect(state.hydratedSessionId).toBe('sess-2')
+  })
+
+  it('accumulates job rows from every visited Session', async () => {
+    setJobsApi({
+      jobsList: vi.fn(async (filter: ComputeJobsListFilter) => {
+        if (!('sessionId' in filter)) return []
+        return Array.from({ length: 3 }, (_, index) =>
+          makeJob({
+            job_id: `${filter.sessionId}-job-${index}`,
+            session_id: filter.sessionId
+          })
+        )
+      })
+    })
+
+    for (let index = 0; index < 6; index += 1) {
+      await useSessionJobStore.getState().hydrate(`sess-${index}`)
+    }
+
+    expect(useSessionJobStore.getState().jobsById.size).toBe(18)
   })
 
   it('does not let an older Session hydrate completion switch the active Session back', async () => {

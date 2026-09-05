@@ -149,7 +149,17 @@ type FakePdfTextItem =
       dir?: string
     }>
 let fakePdf: { numPages: number; pages: FakePdfTextItem[][] }
-const getDocument = vi.fn(() => ({
+type FakePdfDocument = {
+  promise: Promise<{
+    numPages: number
+    getPage: (pageNumber: number) => Promise<{
+      getTextContent: () => Promise<{ items: unknown[] }>
+      cleanup: () => void
+    }>
+    destroy: () => Promise<void>
+  }>
+}
+const getDocument = vi.fn<(options?: { data?: Uint8Array }) => FakePdfDocument>(() => ({
   promise: Promise.resolve({
     numPages: fakePdf.numPages,
     getPage: async (pageNumber: number) => ({
@@ -167,7 +177,9 @@ const getDocument = vi.fn(() => ({
   })
 }))
 
-vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({ getDocument: () => getDocument() }))
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
+  getDocument: (options?: unknown) => getDocument(options as { data?: Uint8Array } | undefined)
+}))
 
 let root: string
 
@@ -653,6 +665,21 @@ describe('extractPdfText', () => {
     await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
 
     await expect(inspectPdfPageCount(filePath)).resolves.toBe(2)
+  })
+
+  it('loads an admitted PDF into pdfjs as a complete in-memory buffer', async () => {
+    const filePath = join(root, 'admitted.pdf')
+    const bytes = Buffer.alloc(32 * 1024, 0x25)
+    await writeFile(filePath, bytes)
+
+    await extractPdfText(filePath)
+
+    expect(getDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.any(Uint8Array)
+      })
+    )
+    expect(getDocument.mock.calls[0]?.[0]?.data?.byteLength).toBe(bytes.byteLength)
   })
 
   it('does not inspect or read PDF sources above the automatic extraction limit', async () => {

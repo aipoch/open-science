@@ -90,6 +90,20 @@ describe('MemoryService', () => {
     expect((await service.snapshot()).categories[0]?.entries).toHaveLength(1)
   })
 
+  it('loads every Memory entry into the settings snapshot', async () => {
+    const service = createService()
+    const entryCount = 25
+    for (let index = 0; index < entryCount; index += 1) {
+      await service.createEntry({
+        categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
+        content: `Durable note ${index}.`
+      })
+    }
+
+    const snapshot = await service.snapshot()
+    expect(snapshot.categories[0]?.entries).toHaveLength(entryCount)
+  })
+
   it('rejects duplicate global Memory content within the same scope', async () => {
     const service = createService()
     const request = {
