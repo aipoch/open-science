@@ -61,6 +61,7 @@ import {
   runtimeRoot
 } from './runtime-paths'
 import { toErrorMessage } from '../error-message'
+import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 
 export type InstallRequest = OptionalProjectIdScope & {
   language: NotebookLanguage
@@ -1169,10 +1170,14 @@ export async function installPackages(
   req: InstallRequest,
   deps: Partial<InstallDeps> = {}
 ): Promise<InstallResult> {
-  // Every install subprocess inherits the parent env plus the CA-bundle vars (no-op when unset), so a
-  // custom corporate CA is trusted by conda/pip/R. Wrapping here keeps every run() call site 2-arg.
+  // Start from the parent env plus the CA-bundle vars; managed runtimes sanitize host Python/R/user
+  // state below while external runtimes keep the caller environment. Wrapping here keeps every run()
+  // call site 2-arg.
   const baseSpawn = deps.spawn ?? defaultSpawn
-  const spawnEnv: NodeJS.ProcessEnv = { ...process.env, ...caBundleEnv(deps.caBundle) }
+  let spawnEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...caBundleEnv(deps.caBundle)
+  }
   const run: InstallSpawn = (command, args) =>
     baseSpawn(command, args, spawnEnv, deps.onChild, deps.onBeforeSpawn)
 
@@ -1222,9 +1227,23 @@ export async function installPackages(
     process.env.OPEN_SCIENCE_STORAGE_ROOT ??
     join(homedir(), PROD_SESSION_DIR_NAME)
   const root = runtimeRoot(storageRoot)
-  Object.assign(spawnEnv, notebookWorkloadCacheEnv(root))
+  const workloadCacheEnv = notebookWorkloadCacheEnv(root)
+  Object.assign(spawnEnv, workloadCacheEnv)
   const channels = condaInstallChannels(deps.condaChannel ?? DEFAULT_CONDA_CHANNEL, req.channels)
   const prefix = envPrefix(root, envName)
+  if (!deps.interpreter) {
+    const platform = deps.micromambaEnv?.platform ?? process.platform
+    spawnEnv = {
+      ...buildManagedRuntimeProcessEnvironment(root, {
+        language: req.language,
+        prefix,
+        platform,
+        sourceEnv: spawnEnv
+      }),
+      ...workloadCacheEnv,
+      ...caBundleEnv(deps.caBundle)
+    }
+  }
   // micromamba install/remove extract into and mutate the SHARED pkgs cache (<root>/runtime/pkgs), so
   // they must hold the shared cache lock — otherwise a concurrent corrupt-cache repair (which takes the
   // cache EXCLUSIVE and removes incomplete extractions) could delete a package dir mid-install. pip and
@@ -1237,13 +1256,22 @@ export async function installPackages(
       ? deps.micromambaEnv.selectCache(root, DEFAULT_MAX_CACHE_RELATIVE_PATH)
       : selectMicromambaCache(root, DEFAULT_MAX_CACHE_RELATIVE_PATH, deps.micromambaEnv)
     const env = {
-      ...micromambaSpawnEnv(
-        root,
-        deps.caBundle,
-        { ...deps.micromambaEnv, selectCache: () => cache },
-        DEFAULT_MAX_CACHE_RELATIVE_PATH
-      ),
-      ...notebookWorkloadCacheEnv(root)
+      ...buildManagedRuntimeProcessEnvironment(root, {
+        language: req.language,
+        prefix,
+        platform: deps.micromambaEnv?.platform,
+        sourceEnv: {
+          ...micromambaSpawnEnv(
+            root,
+            deps.caBundle,
+            { ...deps.micromambaEnv, selectCache: () => cache },
+            DEFAULT_MAX_CACHE_RELATIVE_PATH
+          ),
+          ...workloadCacheEnv
+        }
+      }),
+      ...workloadCacheEnv,
+      ...caBundleEnv(deps.caBundle)
     }
     condaContext = { cache, env }
     return condaContext
@@ -1720,7 +1748,7 @@ export async function installPackages(
     const script =
       `dir.create(${JSON.stringify(rLib)}, recursive=TRUE, showWarnings=FALSE); ` +
       `install.packages(c(${vector}), lib=${JSON.stringify(rLib)}, repos=${JSON.stringify(cran)})`
-    const fallback = await run(rScriptBin(prefix), ['-e', script])
+    const fallback = await run(rScriptBin(prefix), ['--vanilla', '--slave', '-e', script])
     const ok = fallback.code === 0
     return {
       ok,
@@ -2058,7 +2086,7 @@ async function uninstallPackages(
     const vector = req.packages.map((pkg) => JSON.stringify(pkg)).join(', ')
     const rLib = envRLibrary(prefix)
     const script = `remove.packages(c(${vector}), lib=${JSON.stringify(rLib)})`
-    const fallback = await run(rScriptBin(prefix), ['-e', script])
+    const fallback = await run(rScriptBin(prefix), ['--vanilla', '--slave', '-e', script])
     const ok = fallback.code === 0
     return {
       ok,

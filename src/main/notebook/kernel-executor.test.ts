@@ -1,4 +1,4 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -352,6 +352,116 @@ afterEach(async () => {
     await rm(cwdDir, { recursive: true, force: true })
     cwdDir = undefined
   }
+})
+
+describe.skipIf(process.platform === 'win32')('managed R kernel isolation', () => {
+  it('ignores user startup files and uses only the managed environment library', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-r-kernel-home-'))
+    const request = baseRequest(cwdDir)
+    const prefix = envPrefix(request.runtimeRoot, DEFAULT_R_ENV)
+    const managedHome = join(request.runtimeRoot, 'home')
+    const managedLibrary = join(prefix, 'lib', 'R', 'library')
+    const hostHome = join(cwdDir, 'host-home')
+    const hostLibrary = join(hostHome, 'R', 'library')
+    const rscript = rScriptBin(prefix)
+    const inheritedKeys = ['HOME', 'R_USER', 'R_LIBS_USER'] as const
+    const inherited = Object.fromEntries(inheritedKeys.map((key) => [key, process.env[key]]))
+    await mkdir(dirname(rscript), { recursive: true })
+    await mkdir(hostLibrary, { recursive: true })
+    await writeFile(rBin(prefix), '')
+    await writeFile(join(hostHome, '.Rprofile'), 'stop("host .Rprofile loaded")\n')
+    await writeFile(join(hostHome, '.Renviron'), 'OPEN_SCIENCE_HOST_RENVIRON=loaded\n')
+    await writeFile(join(hostLibrary, 'host-package'), 'private\n')
+    await writeFile(
+      rscript,
+      [
+        `#!${process.execPath}`,
+        "const fs = require('node:fs')",
+        `const hostHome = ${JSON.stringify(hostHome)}`,
+        `const expectedHome = ${JSON.stringify(managedHome)}`,
+        `const expectedLibrary = ${JSON.stringify(managedLibrary)}`,
+        "if (!process.argv.includes('--vanilla') && (fs.existsSync(hostHome + '/.Rprofile') || fs.existsSync(hostHome + '/.Renviron'))) process.exit(41)",
+        'if (process.env.HOME !== expectedHome || process.env.R_USER !== expectedHome) process.exit(42)',
+        'if (process.env.R_LIBS_USER !== expectedLibrary) process.exit(43)',
+        'let input = Buffer.alloc(0)',
+        "process.stdin.on('data', (chunk) => {",
+        '  input = Buffer.concat([input, chunk])',
+        '  for (;;) {',
+        '    const newline = input.indexOf(10)',
+        '    if (newline < 0) return',
+        "    const [reqId, rawLength] = input.subarray(0, newline).toString('utf8').split(' ')",
+        '    const length = Number(rawLength)',
+        '    if (input.length < newline + 1 + length) return',
+        '    input = input.subarray(newline + 1 + length)',
+        '    process.stdout.write(JSON.stringify({',
+        '      req_id: reqId, stdout: "isolated managed R kernel", stderr: "",',
+        '      error: null, error_line: null, result: null, cwd: process.cwd(), figures: []',
+        '    }) + "\\n")',
+        '  }',
+        '})'
+      ].join('\n') + '\n'
+    )
+    await chmod(rscript, 0o755)
+    process.env.HOME = hostHome
+    process.env.R_USER = hostHome
+    process.env.R_LIBS_USER = hostLibrary
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: join(cwdDir, 'ignored-r-loop.R'),
+      platform: 'linux'
+    })
+    try {
+      await expect(
+        executor.execute({ ...request, code: '1 + 1', language: 'r' })
+      ).resolves.toMatchObject({
+        status: 'completed',
+        stdout: 'isolated managed R kernel'
+      })
+    } finally {
+      await executor.shutdown()
+      for (const key of inheritedKeys) {
+        const value = inherited[key]
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+  })
+})
+
+describe.skipIf(process.platform === 'win32' || !python3)('managed Python kernel isolation', () => {
+  it('cannot import a package that exists only in the host user site through public execute', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-python-kernel-home-'))
+    const request = baseRequest(cwdDir)
+    const hostHome = join(cwdDir, 'host-home')
+    await mkdir(hostHome, { recursive: true })
+    const discovered = spawnSync(
+      python3 as string,
+      ['-c', 'import site; print(site.getusersitepackages())'],
+      { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: hostHome } }
+    )
+    expect(discovered.status, discovered.stderr).toBe(0)
+    const userSite = discovered.stdout.trim()
+    await mkdir(userSite, { recursive: true })
+    await writeFile(join(userSite, 'open_science_managed_sentinel.py'), 'VALUE = "private"\n')
+    await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
+    const previousHome = process.env.HOME
+    process.env.HOME = hostHome
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    try {
+      const result = await executor.execute({
+        ...request,
+        code: 'import open_science_managed_sentinel'
+      })
+      expect(result.status).toBe('failed')
+      expect(JSON.stringify(result)).toMatch(/open_science_managed_sentinel/u)
+    } finally {
+      await executor.shutdown()
+      if (previousHome === undefined) delete process.env.HOME
+      else process.env.HOME = previousHome
+    }
+  })
 })
 
 gate('NotebookKernelExecutor (fake loop)', () => {
@@ -877,6 +987,43 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       await executor.shutdown()
     }
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'keeps the external Python user site available through the public execute path',
+    async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-external-user-site-'))
+      const hostHome = join(cwdDir, 'host-home')
+      await mkdir(hostHome, { recursive: true })
+      const discovered = spawnSync(
+        python3 as string,
+        ['-c', 'import site; print(site.getusersitepackages())'],
+        { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: hostHome } }
+      )
+      expect(discovered.status, discovered.stderr).toBe(0)
+      const userSite = discovered.stdout.trim()
+      await mkdir(userSite, { recursive: true })
+      await writeFile(join(userSite, 'open_science_external_sentinel.py'), 'VALUE = "available"\n')
+      const previousHome = process.env.HOME
+      process.env.HOME = hostHome
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+        platform: 'linux'
+      })
+      try {
+        await expect(
+          executor.execute({
+            ...baseRequest(cwdDir),
+            code: 'import open_science_external_sentinel; print(open_science_external_sentinel.VALUE)',
+            resolvedInterpreter: { command: python3 as string }
+          })
+        ).resolves.toMatchObject({ status: 'completed', stdout: 'available\n' })
+      } finally {
+        await executor.shutdown()
+        if (previousHome === undefined) delete process.env.HOME
+        else process.env.HOME = previousHome
+      }
+    }
+  )
 
   it('reuses the same loop process across executes of the same language', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-reuse-')
