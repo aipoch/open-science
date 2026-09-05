@@ -73,6 +73,26 @@ const createDurableDelegatedWork = (
   const createId = options.createId ?? ((kind: string) => `${kind}-${randomUUID()}`)
   const invocationOutcomes = new Map<string, Promise<DurableDelegateOutcome>>()
   const stoppingSessions = new Set<string>()
+  // A completed Stop also invalidates requests that have not committed their admission yet.
+  let stopGeneration = 0
+  const sessionStops = new Map<string, number>()
+  const branchStops = new Map<string, number>()
+  const sessionIdentityOf = (session: SessionKey): string =>
+    `${session.projectId}\u0000${session.sessionId}`
+  const assertAdmissionNotStopped = (
+    session: SessionKey,
+    branchId: string,
+    generation: number
+  ): void => {
+    const identity = sessionIdentityOf(session)
+    if (
+      stoppingSessions.has(identity) ||
+      (sessionStops.get(identity) ?? 0) > generation ||
+      (branchStops.get(`${identity}\u0000${branchId}`) ?? 0) > generation
+    ) {
+      throw new DurableDelegatedWorkError('conflict', 'delegated admission was invalidated by Stop')
+    }
+  }
   const cancelledTurns = new Set<string>()
   const withAdmissionLock = createAdmissionGate()
   const turnIdentity = (session: SessionKey, messageId: string): string =>
@@ -99,11 +119,7 @@ const createDurableDelegatedWork = (
     options.records,
     projectionOwner,
     options.collectPollIntervalMs ?? 10,
-    options.collectMonotonicNow,
-    (snapshot, child) =>
-      snapshot.questionRequests.some(
-        (request) => request.sourceFrameId === child.frameId && request.status === 'pending'
-      )
+    options.collectMonotonicNow
   )
   const admissionPolicy = new DelegatedWorkAdmissionPolicy(
     options.resolveSpecialist,
@@ -379,7 +395,7 @@ const createDurableDelegatedWork = (
   ): Promise<
     Readonly<{
       start(): Readonly<{ accepted: Promise<DelegateMessageAcceptanceEvidence> }>
-      abort(): Promise<void>
+      abort(error?: unknown): Promise<void>
     }>
   > => {
     const previous = currentAttempt(child)
@@ -413,6 +429,34 @@ const createDurableDelegatedWork = (
     }
     const attemptId = createId('attempt')
     const command: DurableMessageCommand = { ...draft, continuationAttemptId: attemptId }
+    let committed = false
+    const abort = async (
+      error: unknown = new Error('continuation was not handed to runtime')
+    ): Promise<void> => {
+      try {
+        if (committed) {
+          await Promise.all([
+            terminalizeUnsuccessfulAttempt(options.records, async () => undefined, {
+              frameId: child.frameId,
+              attemptId,
+              endedAt: now(),
+              error
+            }),
+            options.records.settleMessage(command.messageId, {
+              status: 'failed',
+              failedAt: now(),
+              error: {
+                code: 'continuation_start_failed',
+                message: toErrorMessage(error),
+                retryable: true
+              }
+            })
+          ])
+        }
+      } finally {
+        await reservation.releaseAll()
+      }
+    }
     try {
       await assertTurnOpen(caller.session, caller.originMessageId)
       await options.records.continueChild({
@@ -431,8 +475,28 @@ const createDurableDelegatedWork = (
         initiatingTurnMessageId: caller.originMessageId,
         messageCommand: command
       })
+      committed = true
+      const continued = await snapshotChild(child.frameId)
+      if (!continued || currentAttempt(continued).id !== attemptId) {
+        throw new DurableDelegatedWorkError(
+          'conflict',
+          'delegated continuation changed before launch'
+        )
+      }
+      return {
+        start: () =>
+          launch(
+            continued,
+            caller.session,
+            reservation,
+            reservation.slotIds[0],
+            command.text.trim(),
+            true
+          ),
+        abort
+      }
     } catch (error) {
-      await reservation.releaseAll()
+      await abort(error)
       if (
         error &&
         typeof error === 'object' &&
@@ -445,19 +509,6 @@ const createDurableDelegatedWork = (
         )
       }
       throw error
-    }
-    const continued = (await snapshotChild(child.frameId))!
-    return {
-      start: () =>
-        launch(
-          continued,
-          caller.session,
-          reservation,
-          reservation.slotIds[0],
-          command.text.trim(),
-          true
-        ),
-      abort: () => reservation.releaseAll()
     }
   }
 
@@ -549,16 +600,19 @@ const createDurableDelegatedWork = (
       throw new DurableDelegatedWorkError('conflict', 'the Session is already stopping')
     }
     stoppingSessions.add(sessionIdentity)
+    sessionStops.set(sessionIdentity, ++stopGeneration)
     try {
-      const snapshot = await options.records.snapshot()
-      if (!sameSession(snapshot.session, session)) return []
-      const runningSnapshot = snapshot.records.filter(
-        (child) =>
-          currentAttempt(child as DurableChild).status === 'running' ||
-          snapshot.questionRequests.some(
-            (request) => request.sourceFrameId === child.frameId && request.status === 'pending'
-          )
-      ) as readonly DurableChild[]
+      const runningSnapshot = await withAdmissionLock(async () => {
+        const snapshot = await options.records.snapshot()
+        if (!sameSession(snapshot.session, session)) return []
+        return snapshot.records.filter(
+          (child) =>
+            currentAttempt(child as DurableChild).status === 'running' ||
+            snapshot.questionRequests.some(
+              (request) => request.sourceFrameId === child.frameId && request.status === 'pending'
+            )
+        ) as readonly DurableChild[]
+      })
       const settled = await Promise.allSettled(
         runningSnapshot.map((child) => stopChild(child, 'session_stop'))
       )
@@ -636,6 +690,7 @@ const createDurableDelegatedWork = (
     requestOrRequests: DurableDelegateRequest | readonly DurableDelegateRequest[],
     delegateOptions: Readonly<{ wait?: boolean; timeoutSeconds?: number }>
   ): Promise<DurableDelegateOutcome> => {
+    const admissionGeneration = stopGeneration
     if (
       delegateOptions.timeoutSeconds !== undefined &&
       (typeof delegateOptions.timeoutSeconds !== 'number' ||
@@ -720,6 +775,7 @@ const createDurableDelegatedWork = (
     try {
       await withAdmissionLock(async () => {
         await assertTurnOpen(caller.session, caller.originMessageId)
+        assertAdmissionNotStopped(caller.session, admission.rootBranchId, admissionGeneration)
         const committed = await options.records.admitChildren({
           caller,
           children: admissions
@@ -800,19 +856,12 @@ const createDurableDelegatedWork = (
       return { kind: 'observations', children: observations }
     }
     await Promise.all(completions)
-    const frameSummaries = await readModel.children(
+    const results = await readModel.collect(
       caller,
-      admissions.map(({ frameId }) => frameId)
+      admissions.map(({ frameId, attemptId }) => ({ frameId, attemptId })),
+      { timeoutSeconds: 0 }
     )
-    const results = await Promise.all(
-      admissions.map(({ frameId }) => {
-        const summary = frameSummaries.find((candidate) => candidate.frameId === frameId)
-        return summary?.status === 'awaiting_user'
-          ? summary
-          : projectionOwner.projectResult(frameId)
-      })
-    )
-    if (results.some((result) => !result)) {
+    if (results.some((result) => result.status === 'running')) {
       throw new DurableDelegatedWorkError(
         'durability_failure',
         'delegated work did not reach a durable terminal state'
@@ -821,7 +870,9 @@ const createDurableDelegatedWork = (
     if (results.some((result) => result?.status === 'awaiting_user')) {
       return {
         kind: 'observations',
-        children: results as DurableDelegateObservation[]
+        children: results.map((result) =>
+          result.status === 'awaiting_user' ? { ...result, title: result.name } : result
+        )
       }
     }
     return { kind: 'results', children: results as DurableDelegateResult[] }
@@ -961,19 +1012,25 @@ const createDurableDelegatedWork = (
       return stopPinnedChildren(targets, 'main_agent_stop', true)
     },
     async stopActiveBranch(session) {
-      const snapshot = await options.records.snapshot()
-      if (!sameSession(snapshot.session, session)) return []
-      const targets = snapshot.records.filter((child) => {
-        const attempt = currentAttempt(child as DurableChild)
-        const awaitingUser = snapshot.questionRequests.some(
-          (request) => request.sourceFrameId === child.frameId && request.status === 'pending'
+      const targets = await withAdmissionLock(async () => {
+        const snapshot = await options.records.snapshot()
+        if (!sameSession(snapshot.session, session)) return []
+        branchStops.set(
+          `${sessionIdentityOf(session)}\u0000${snapshot.rootBranchId}`,
+          ++stopGeneration
         )
-        return (
-          child.originBindingState === 'validated' &&
-          snapshot.originMessageIds.includes(child.originMessageId) &&
-          (attempt.status === 'running' || awaitingUser)
-        )
-      }) as readonly DurableChild[]
+        return snapshot.records.filter((child) => {
+          const attempt = currentAttempt(child as DurableChild)
+          const awaitingUser = snapshot.questionRequests.some(
+            (request) => request.sourceFrameId === child.frameId && request.status === 'pending'
+          )
+          return (
+            child.originBindingState === 'validated' &&
+            snapshot.originMessageIds.includes(child.originMessageId) &&
+            (attempt.status === 'running' || awaitingUser)
+          )
+        }) as readonly DurableChild[]
+      })
       return stopPinnedChildren(targets, 'main_agent_stop')
     },
     stopSession,

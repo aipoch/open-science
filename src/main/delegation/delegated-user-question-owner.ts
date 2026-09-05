@@ -11,6 +11,7 @@ import type {
   DurableResolvedAgent
 } from './delegated-work-record-types'
 import { DurableDelegatedWorkError } from './durable-delegated-work-error'
+import { terminalizeUnsuccessfulAttempt } from './attempt-runtime-transcript'
 import type { DelegateCapacityReservation } from './execution-port'
 import type { SessionKey } from './session-records'
 
@@ -257,6 +258,7 @@ class DelegatedUserQuestionOwner {
     const reservation = await this.options.reserve()
     const attemptId = this.options.createId('attempt')
     const message = questionContinuationMessage(request, input.answers)
+    let committed = false
     try {
       await this.options.admission(() =>
         this.options.records.confirmQuestion({
@@ -273,19 +275,37 @@ class DelegatedUserQuestionOwner {
           initiatingTurnMessageId: request.rootOriginMessageId
         })
       )
+      committed = true
+      const committedSnapshot = await this.options.records.snapshot()
+      const continued = committedSnapshot.records.find(
+        (candidate) => candidate.frameId === latest.frameId
+      ) as DurableChild | undefined
+      if (!continued || currentAttempt(continued).id !== attemptId) {
+        throw new DurableDelegatedWorkError(
+          'conflict',
+          'delegated continuation changed before launch'
+        )
+      }
+      this.options.launchContinuation({ child: continued, session, reservation, message })
     } catch (error) {
-      await reservation.releaseAll()
-      if (error instanceof DurableDelegatedWorkError) throw error
+      try {
+        if (committed) {
+          await terminalizeUnsuccessfulAttempt(this.options.records, async () => undefined, {
+            frameId: latest.frameId,
+            attemptId,
+            endedAt: this.options.now(),
+            error
+          })
+        }
+      } finally {
+        await reservation.releaseAll()
+      }
+      if (committed || error instanceof DurableDelegatedWorkError) throw error
       throw new DurableDelegatedWorkError(
         'conflict',
         'delegated question changed while confirmation was committed'
       )
     }
-    const committedSnapshot = await this.options.records.snapshot()
-    const continued = committedSnapshot.records.find(
-      (candidate) => candidate.frameId === latest.frameId
-    ) as DurableChild
-    this.options.launchContinuation({ child: continued, session, reservation, message })
     return { requestId: request.requestId, continuationAttemptId: attemptId }
   }
 }

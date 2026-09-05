@@ -6,7 +6,10 @@ import { join } from 'node:path'
 import type { ArtifactFile } from '../../shared/artifacts'
 import type { ReviewWithChecks } from '../../shared/reviewer'
 import { createSpecialistService } from '../specialist/service'
-import { createDeterministicDelegateExecution } from './deterministic-execution'
+import {
+  createDeterministicDelegateExecution,
+  type ExecutionControl
+} from './deterministic-execution'
 import { DelegateMessagePreAcceptanceError } from './execution-port'
 import {
   createInMemoryDelegatedWorkRecords,
@@ -14,7 +17,10 @@ import {
   type DelegatedArtifactEvidence,
   type DelegatedReviewEvidence
 } from './durable-delegated-work'
-import { createTestDurableDelegatedWork as createDurableDelegatedWork } from './durable-delegated-work-test-fixture'
+import {
+  TEST_EXECUTION_MODEL,
+  createTestDurableDelegatedWork as createDurableDelegatedWork
+} from './durable-delegated-work-test-fixture'
 
 const caller: AuthenticatedDelegateCaller = {
   session: { projectId: 'project-1', sessionId: 'session-1' },
@@ -266,8 +272,10 @@ describe('durable delegated work', () => {
       ]
     })
     await expect(
-      work.collect(caller, [{ frameId: 'child-waiting', attemptId: 'attempt-waiting' }])
-    ).resolves.toMatchObject([{ status: 'completed' }])
+      work.collect(caller, [{ frameId: 'child-waiting', attemptId: 'attempt-waiting' }], {
+        timeoutSeconds: 0
+      })
+    ).resolves.toMatchObject([{ status: 'awaiting_user' }])
   })
 
   it('requires an explicit name for every request before model resolution, reservation, or persistence', async () => {
@@ -4424,4 +4432,473 @@ describe('durable delegated work', () => {
       'Retry after workspace recovery'
     ])
   })
+})
+
+describe('reported delegation regressions', () => {
+  const gate = (): { promise: Promise<void>; release(): void } => {
+    let release!: () => void
+    const promise = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    return { promise, release }
+  }
+  const fixture = (
+    capacity = 3
+  ): {
+    execution: ReturnType<typeof createDeterministicDelegateExecution>
+    records: ReturnType<typeof createInMemoryDelegatedWorkRecords>
+  } => {
+    const execution = createDeterministicDelegateExecution(capacity)
+    const records = createInMemoryDelegatedWorkRecords({
+      session: caller.session,
+      rootFrameId: caller.frameId,
+      originMessageId: caller.originMessageId
+    })
+    return { execution, records }
+  }
+  const ask = async (
+    work: ReturnType<typeof createDurableDelegatedWork>,
+    control: ExecutionControl
+  ): Promise<void> => {
+    await work.requestUserInput(
+      {
+        ...caller,
+        role: 'delegate',
+        frameId: control.input.frameId,
+        attemptId: control.input.attemptId,
+        originMessageId: control.input.turn!.promptMessageId,
+        toolInvocationId: 'ask-choice'
+      },
+      {
+        sessionId: caller.session.sessionId,
+        questions: [
+          { question: 'Which cohort?', options: [{ label: 'Strict' }, { label: 'Broad' }] }
+        ]
+      },
+      'reported-question'
+    )
+  }
+
+  it.each(['running', 'completed', 'awaiting_user'] as const)(
+    'D05 keeps original batch results when A2 is %s before B1 completes',
+    async (followupStatus) => {
+      const { execution, records } = fixture()
+      const work = createDurableDelegatedWork({ execution, records })
+      const outcome = work
+        .delegate(caller, [
+          { task: 'Original A', name: 'A' },
+          { task: 'Original B', name: 'B' }
+        ])
+        .then(
+          (value) => ({ value }),
+          (error) => ({ error })
+        )
+      await expect.poll(() => execution.controls()).toHaveLength(2)
+      const [a1, b1] = execution.controls()
+      a1.complete('ORIGINAL RESULT A1')
+      await expect.poll(() => execution.releasedFrames()).toContain(a1.input.frameId)
+      await work.sendMessage(
+        { ...caller, toolInvocationId: 'followup-a' },
+        a1.input.frameId,
+        'Unrelated follow-up'
+      )
+      await expect.poll(() => execution.controls()).toHaveLength(3)
+      const a2 = execution.controls()[2]
+      a2.accept()
+      if (followupStatus === 'awaiting_user') await ask(work, a2)
+      if (followupStatus !== 'running') {
+        a2.complete('UNRELATED FOLLOW-UP RESULT A2')
+        await expect
+          .poll(async () => (await records.snapshot()).records[0].attempts[1].status)
+          .toBe('completed')
+      }
+      b1.complete('ORIGINAL RESULT B1')
+      const result = await outcome
+      await work.stopSession(caller.session)
+      expect(
+        result,
+        JSON.stringify(result, (_key, value) => (value instanceof Error ? value.message : value))
+      ).toMatchObject({
+        value: {
+          kind: 'results',
+          children: [
+            {
+              frameId: a1.input.frameId,
+              attemptId: a1.input.attemptId,
+              status: 'completed',
+              response: 'ORIGINAL RESULT A1'
+            },
+            {
+              frameId: b1.input.frameId,
+              attemptId: b1.input.attemptId,
+              status: 'completed',
+              response: 'ORIGINAL RESULT B1'
+            }
+          ]
+        }
+      })
+    }
+  )
+
+  it.each([
+    ['all', 0],
+    ['any', 0],
+    ['all', 1],
+    ['any', 1]
+  ] as const)(
+    'D03 collect %s with timeout %s agrees with children for a pending question',
+    async (returnWhen, timeoutSeconds) => {
+      const { execution, records } = fixture()
+      const work = createDurableDelegatedWork({ execution, records })
+      const admitted = await work.delegate(
+        caller,
+        { task: 'Ask a question', name: 'Question' },
+        { wait: false }
+      )
+      await expect.poll(() => execution.controls()).toHaveLength(1)
+      await ask(work, execution.controls()[0])
+      execution.controls()[0].complete('Waiting for your answer')
+      await expect.poll(() => execution.releasedFrames()).toHaveLength(1)
+      await expect(work.children(caller)).resolves.toMatchObject([{ status: 'awaiting_user' }])
+      const observed = await work.collect(caller, [admitted.children[0]], {
+        timeoutSeconds,
+        returnWhen
+      })
+      await work.stopSession(caller.session)
+      expect(observed).toMatchObject([
+        { attemptId: admitted.children[0].attemptId, status: 'awaiting_user' }
+      ])
+    }
+  )
+
+  it.each([
+    ['stopSession', 'model'],
+    ['stopActiveBranch', 'model'],
+    ['stopSession', 'reservation'],
+    ['stopActiveBranch', 'reservation']
+  ] as const)('D01 %s invalidates a request paused in %s', async (stop, boundary) => {
+    const { execution, records } = fixture(1)
+    const release = vi.fn(async () => undefined)
+    const claim = vi.fn()
+    const entered = gate()
+    const resume = gate()
+    const pause = async (): Promise<void> => {
+      entered.release()
+      await resume.promise
+    }
+    const work = createDurableDelegatedWork({
+      execution: {
+        ...execution,
+        async reserve(count) {
+          const reservation = await execution.reserve(count)
+          if (boundary === 'reservation') await pause()
+          return reservation
+        }
+      },
+      records,
+      resolveExecutionModel: async () => {
+        if (boundary === 'model') await pause()
+        return { snapshot: TEST_EXECUTION_MODEL, backendLease: { claim, release } }
+      }
+    })
+    const admission = work
+      .delegate(caller, { task: 'Late task', name: 'Late' }, { wait: false })
+      .then(
+        (value) => ({ value }),
+        (error) => ({ error })
+      )
+    await entered.promise
+    expect(await work[stop](caller.session)).toEqual([])
+    resume.release()
+    const result = await admission
+    if ('value' in result) await expect.poll(() => execution.controls()).toHaveLength(1)
+    const executionCount = execution.controls().length
+    // Stop again to drain any incorrectly admitted launch before asserting the failure.
+    const admitted = (await records.snapshot()).records
+    await work.stopSession(caller.session)
+    expect.soft(result).toMatchObject({ error: { code: 'conflict' } })
+    expect.soft(admitted).toHaveLength(0)
+    expect.soft(executionCount, 'execution must not start after Stop returns').toBe(0)
+    expect(release).toHaveBeenCalledOnce()
+    expect(claim).not.toHaveBeenCalled()
+    const next = await work.delegate(
+      { ...caller, toolInvocationId: 'after-stop' },
+      { task: 'New task', name: 'New' },
+      { wait: false }
+    )
+    expect(next.kind).toBe('receipts')
+    await work.stopSession(caller.session)
+  })
+
+  it.each(['question', 'message', 'message-delivery'] as const)(
+    'D04 releases capacity and terminalizes a %s continuation after a post-commit read failure',
+    async (path) => {
+      const { execution, records } = fixture(1)
+      let snapshotsUntilFailure = 0
+      const snapshot = records.snapshot.bind(records)
+      const faultyRecords = {
+        ...records,
+        async snapshot() {
+          if (snapshotsUntilFailure > 0 && --snapshotsUntilFailure === 0) {
+            throw new Error('post-commit snapshot unavailable')
+          }
+          return snapshot()
+        },
+        async confirmQuestion(input: Parameters<typeof records.confirmQuestion>[0]) {
+          const result = await records.confirmQuestion(input)
+          snapshotsUntilFailure = path === 'message-delivery' ? 2 : 1
+          return result
+        },
+        async continueChild(input: Parameters<typeof records.continueChild>[0]) {
+          const result = await records.continueChild(input)
+          snapshotsUntilFailure = path === 'message-delivery' ? 2 : 1
+          return result
+        }
+      }
+      const work = createDurableDelegatedWork({ execution, records: faultyRecords })
+      await work.delegate(caller, { task: 'Original task', name: 'Original' }, { wait: false })
+      await expect.poll(() => execution.controls()).toHaveLength(1)
+      if (path === 'question') await ask(work, execution.controls()[0])
+      execution.controls()[0].complete('Waiting for your answer')
+      await expect.poll(() => execution.releasedFrames()).toHaveLength(1)
+      const result = await (
+        path === 'question'
+          ? work.confirmQuestion(caller.session, {
+              requestId: 'reported-question',
+              answers: [{ questionIndex: 0, value: 'Strict' }]
+            })
+          : work.sendMessage(
+              { ...caller, toolInvocationId: 'continue-message' },
+              execution.controls()[0].input.frameId,
+              'Strict'
+            )
+      ).then(
+        (value) => ({ value }),
+        (error) => ({ error })
+      )
+      expect(result).toMatchObject({ error: { message: 'post-commit snapshot unavailable' } })
+      const saved = await records.snapshot()
+      expect(saved.records[0].attempts).toHaveLength(2)
+      expect(execution.controls()).toHaveLength(1)
+      if (path === 'question')
+        expect(saved.questionRequests[0]).toMatchObject({
+          status: 'confirmed',
+          answers: [{ questionIndex: 0, value: 'Strict' }]
+        })
+      expect.soft(saved.records[0].attempts[1].status).toBe('error')
+      if (path !== 'question')
+        expect.soft(saved.messageCommands[0].receipt).toMatchObject({ status: 'failed' })
+      const reserved = await execution.reserve(1).then(
+        async (reservation) => {
+          await reservation.releaseAll()
+          return true
+        },
+        () => false
+      )
+      expect.soft(reserved, 'the unlaunched continuation must release its capacity').toBe(true)
+      await work.recoverInterrupted()
+      await work.recoverInterrupted()
+      expect(execution.controls()).toHaveLength(1)
+    }
+  )
+  it('D03 timed delegate reports the pending question at its deadline', async () => {
+    const { execution, records } = fixture()
+    let expired = false
+    const work = createDurableDelegatedWork({
+      execution,
+      records,
+      collectMonotonicNow: () => (expired ? 1001 : 0)
+    })
+    const outcome = work.delegate(caller, { task: 'Ask', name: 'Question' }, { timeoutSeconds: 1 })
+    await expect.poll(() => execution.controls()).toHaveLength(1)
+    await ask(work, execution.controls()[0])
+    execution.controls()[0].complete('Waiting for your answer')
+    await expect.poll(() => execution.releasedFrames()).toHaveLength(1)
+    expired = true
+    await expect(outcome).resolves.toMatchObject({
+      kind: 'observations',
+      children: [{ status: 'awaiting_user' }]
+    })
+    await work.stopSession(caller.session)
+  })
+
+  it('D03 rechecks pending questions in the final deadline snapshot', async () => {
+    const { execution, records } = fixture()
+    let firstSnapshot: Awaited<ReturnType<typeof records.snapshot>> | undefined
+    let ticks = 0
+    const work = createDurableDelegatedWork({
+      execution,
+      records: {
+        ...records,
+        async snapshot() {
+          if (firstSnapshot) {
+            const snapshot = firstSnapshot
+            firstSnapshot = undefined
+            return snapshot
+          }
+          return records.snapshot()
+        }
+      },
+      collectMonotonicNow: () => ticks++ * 1000
+    })
+    const admitted = await work.delegate(caller, { task: 'Ask', name: 'Question' }, { wait: false })
+    await expect.poll(() => execution.controls()).toHaveLength(1)
+    const running = await records.snapshot()
+    await ask(work, execution.controls()[0])
+    execution.controls()[0].complete('Waiting for your answer')
+    await expect.poll(() => execution.releasedFrames()).toHaveLength(1)
+    firstSnapshot = running
+    const observed = await work.collect(caller, [admitted.children[0]], { timeoutSeconds: 1 })
+    await work.stopSession(caller.session)
+    expect(observed).toMatchObject([{ status: 'awaiting_user' }])
+  })
+
+  it('D05 keeps A1 after its question is confirmed and A2 has started', async () => {
+    const { execution, records } = fixture()
+    const work = createDurableDelegatedWork({ execution, records })
+    const outcome = work
+      .delegate(caller, [
+        { task: 'A', name: 'A' },
+        { task: 'B', name: 'B' }
+      ])
+      .then(
+        (value) => ({ value }),
+        (error) => ({ error })
+      )
+    await expect.poll(() => execution.controls()).toHaveLength(2)
+    const [a1, b1] = execution.controls()
+    await ask(work, a1)
+    a1.complete('ORIGINAL QUESTION A1')
+    await expect.poll(() => execution.releasedFrames()).toHaveLength(1)
+    await work.confirmQuestion(caller.session, {
+      requestId: 'reported-question',
+      answers: [{ questionIndex: 0, value: 'Strict' }]
+    })
+    await expect.poll(() => execution.controls()).toHaveLength(3)
+    b1.complete('ORIGINAL RESULT B1')
+    const result = await outcome
+    await work.stopSession(caller.session)
+    expect(result).toMatchObject({
+      value: {
+        kind: 'results',
+        children: [
+          { attemptId: a1.input.attemptId, response: 'ORIGINAL QUESTION A1' },
+          { attemptId: b1.input.attemptId, response: 'ORIGINAL RESULT B1' }
+        ]
+      }
+    })
+  })
+
+  it.each(['stopSession', 'stopActiveBranch'] as const)(
+    'D01 %s fences a request paused at the final admission check',
+    async (stop) => {
+      const { execution, records } = fixture(1)
+      const entered = gate()
+      const resume = gate()
+      let checks = 0
+      const work = createDurableDelegatedWork({
+        execution,
+        records,
+        async assertTurnOpen() {
+          if (++checks === 2) {
+            entered.release()
+            await resume.promise
+          }
+        }
+      })
+      const admission = work
+        .delegate(caller, { task: 'Late', name: 'Late' }, { wait: false })
+        .catch((error) => error)
+      await entered.promise
+      const stopping = work[stop](caller.session)
+      resume.release()
+      await stopping
+      await admission
+      const stopped = await records.snapshot()
+      const controls = execution.controls().length
+      await work.stopSession(caller.session)
+      expect(controls).toBe(0)
+      expect(stopped.records.every((child) => child.attempts.at(-1)?.status !== 'running')).toBe(
+        true
+      )
+      const reservation = await execution.reserve(1)
+      await reservation.releaseAll()
+    }
+  )
+
+  it.each(['question', 'message'] as const)(
+    'D04 %s releases capacity on precommit and runtime start failures',
+    async (path) => {
+      const { execution, records } = fixture(1)
+      let failCommit = true
+      let failRun = false
+      const work = createDurableDelegatedWork({
+        execution: {
+          ...execution,
+          run(input, slotId) {
+            if (failRun) throw new Error('runtime start failed')
+            return execution.run(input, slotId)
+          }
+        },
+        records: {
+          ...records,
+          async confirmQuestion(input) {
+            if (failCommit) throw new Error('commit failed')
+            return records.confirmQuestion(input)
+          },
+          async continueChild(input) {
+            if (failCommit) throw new Error('commit failed')
+            return records.continueChild(input)
+          }
+        }
+      })
+      await work.delegate(caller, { task: 'Source', name: 'Source' }, { wait: false })
+      await expect.poll(() => execution.controls()).toHaveLength(1)
+      if (path === 'question') await ask(work, execution.controls()[0])
+      execution.controls()[0].complete('Source response')
+      await expect.poll(() => execution.releasedFrames()).toHaveLength(1)
+      const continueWork = (): Promise<unknown> =>
+        path === 'question'
+          ? work.confirmQuestion(caller.session, {
+              requestId: 'reported-question',
+              answers: [{ questionIndex: 0, value: 'Strict' }]
+            })
+          : work.sendMessage(
+              { ...caller, toolInvocationId: 'fault-continuation' },
+              execution.controls()[0].input.frameId,
+              'Strict'
+            )
+      await expect(continueWork()).rejects.toThrow()
+      expect((await records.snapshot()).records[0].attempts).toHaveLength(1)
+      if (path === 'question')
+        expect((await records.snapshot()).questionRequests[0].status).toBe('pending')
+      const reservation = await execution.reserve(1)
+      await reservation.releaseAll()
+      failCommit = false
+      failRun = true
+      await continueWork()
+      await expect
+        .poll(async () => (await records.snapshot()).records[0].attempts[1].status)
+        .toBe('error')
+      await expect
+        .poll(async () =>
+          execution.reserve(1).then(
+            async (slot) => {
+              await slot.releaseAll()
+              return true
+            },
+            () => false
+          )
+        )
+        .toBe(true)
+      if (path === 'question')
+        expect((await records.snapshot()).questionRequests[0]).toMatchObject({
+          status: 'confirmed',
+          answers: [{ questionIndex: 0, value: 'Strict' }]
+        })
+      await work.recoverInterrupted()
+      await work.recoverInterrupted()
+      expect(execution.controls()).toHaveLength(1)
+    }
+  )
 })

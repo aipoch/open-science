@@ -3710,3 +3710,105 @@ describe('production delegated-work composition', () => {
     expect(receipt.children).toHaveLength(2)
   })
 })
+
+describe('reported production admission Stop regression', () => {
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'D01 production %s stops admission before a resolved model can launch',
+    async (frameworkId) => {
+      root = await mkdtemp(join(tmpdir(), 'delegated-stop-admission-'))
+      let release!: () => void
+      let entered!: () => void
+      const paused = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const resume = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const harness = await createCompositionHarness(
+        root,
+        frameworkId,
+        undefined,
+        undefined,
+        {},
+        [],
+        async () => {
+          entered()
+          await resume
+          return testExecutionModel(frameworkId)
+        }
+      )
+      const admission = harness.composition.host
+        .delegate(harness.caller, { task: 'Late task', name: 'Late task' }, { wait: false })
+        .then(
+          (value) => ({ value }),
+          (error) => ({ error })
+        )
+      await paused
+      await harness.composition.root.stopSession(harness.session.id)
+      release()
+      const result = await admission
+      if ('value' in result) await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+      const controls = harness.execution.controls().length
+      await harness.composition.root.stopSession(harness.session.id)
+      expect.soft(result).toMatchObject({ error: { code: 'conflict' } })
+      expect(controls).toBe(0)
+    }
+  )
+
+  it('D01 stopping another active branch does not invalidate admission from the restored branch', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-stop-other-branch-'))
+    let release!: () => void
+    let entered!: () => void
+    const paused = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const resume = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const harness = await createCompositionHarness(
+      root,
+      'codex',
+      undefined,
+      undefined,
+      {},
+      [],
+      async () => {
+        entered()
+        await resume
+        return testExecutionModel('codex')
+      }
+    )
+    const admission = harness.composition.host.delegate(
+      harness.caller,
+      { task: 'Original branch', name: 'Original' },
+      { wait: false }
+    )
+    await paused
+    const original = structuredClone(harness.durable())
+    const switched = structuredClone(original)
+    const forked = forkEditedConversationMessage(
+      switched.conversationGraph!,
+      harness.caller.originMessageId,
+      'other-root-branch',
+      50
+    )
+    const message = {
+      id: 'other-origin',
+      role: 'user' as const,
+      content: 'Other branch',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 50,
+      updatedAt: 50
+    }
+    switched.conversationGraph = synchronizeActiveConversationMessages(forked, [message], 50)
+    switched.messages = [message]
+    harness.replaceDurable(switched)
+    await harness.composition.root.stopActiveBranch!(harness.session.id)
+    harness.replaceDurable(original)
+    release()
+    await expect(admission).resolves.toMatchObject({ kind: 'receipts' })
+    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    await harness.composition.root.stopSession(harness.session.id)
+  })
+})
