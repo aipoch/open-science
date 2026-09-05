@@ -156,7 +156,9 @@ test('reports accessibility violations in startup and home surfaces', async ({ a
   const locationStep = app.page.getByRole('region', { name: 'Choose data location' })
   await expect(locationStep).toBeVisible()
   await expectKeyboardOutcome(app.page, 'Onboarding step focus', async () => {
-    await expect(locationStep.getByRole('heading', { level: 2 })).toBeFocused()
+    await expect(
+      app.page.getByRole('heading', { name: 'Where should Open Science store your data?' })
+    ).toBeFocused()
   })
   await scanAccessibility(app.page, 'Onboarding step focus')
 
@@ -303,10 +305,14 @@ test('reports accessibility violations across representative state combinations'
   })
   await removeBookmark.click({ timeout: 5_000 })
   await expect(fileBrowser).toBeVisible()
+  await expect(locations).toBeHidden()
+  await expect(goTo).toBeFocused()
   await goTo.press('Enter')
   await expect(removeBookmark).toHaveCount(0)
   await locations.getByRole('menuitem', { name: 'Home /home/fixture', exact: true }).click()
   await expect(fileBrowser).toBeVisible()
+  await expect(locations).toBeHidden()
+  await expect(goTo).toBeFocused()
   await goTo.press('Enter')
   await page.keyboard.press('Escape')
   await expectKeyboardOutcome(page, 'Go-to Escape focus return', async () => {

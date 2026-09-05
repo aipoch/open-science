@@ -702,7 +702,6 @@ const HomePage = ({
               variant="outline"
               size="sm"
               className="h-8 gap-1 rounded-md px-3 text-xs"
-              aria-label={t('New project')}
               onClick={openCreateDialog}
               aria-label={t('New project')}
             >
