@@ -11173,6 +11173,7 @@ describe('v4 runtime bindings & agent tools', () => {
 
   it('managed reinstall aborts an executing default-runtime cell before prefix mutation', async () => {
     const root = await createStorageRoot()
+    const executionStarted = createDeferred<void>()
     let resolveRun: ((result: NotebookExecutionResult) => void) | undefined
     const service = new NotebookRuntimeService({
       configRoot: root,
@@ -11192,6 +11193,7 @@ describe('v4 runtime bindings & agent tools', () => {
         execute: () =>
           new Promise<NotebookExecutionResult>((resolve) => {
             resolveRun = resolve
+            executionStarted.resolve()
           }),
         shutdown: async () => ({ reaped: true }),
         terminate: async () => {
@@ -11216,7 +11218,7 @@ describe('v4 runtime bindings & agent tools', () => {
       code: 'long_running()',
       language: 'python'
     })
-    await vi.waitFor(() => expect(resolveRun).toBeDefined())
+    await executionStarted.promise
 
     await service.prepareRuntimeRepair('python', { kind: 'runtime', runtimeId: managedPy.envId })
 

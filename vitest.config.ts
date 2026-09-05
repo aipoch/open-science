@@ -33,6 +33,7 @@ export const VITEST_PROCESS_TEST_GLOBS = [
 const BASE_VITEST_EXCLUDE_PATTERNS = [
   ...configDefaults.exclude,
   'e2e/**',
+  'docs/internal/**',
   '**/.claude/**',
   '**/.codex/**',
   '**/.pnpm-store/**',

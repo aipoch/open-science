@@ -6945,10 +6945,15 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
 
   it('discards an older probe when a newer setup-token login wins', async () => {
     const finishProbes: Array<() => void> = []
+    const notifyProbeStarted: Array<() => void> = []
+    const probeStarted = [0, 1].map(
+      () => new Promise<void>((resolve) => notifyProbeStarted.push(resolve))
+    )
     const probe = vi.fn(
       () =>
         new Promise<void>((resolve) => {
           finishProbes.push(resolve)
+          notifyProbeStarted[finishProbes.length - 1]()
         })
     )
     const service = createService(undefined, { executeClaudeProbe: probe })
@@ -6961,9 +6966,9 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
     })
 
     const olderLogin = service.loginIsolatedClaude('sk-ant-older')
-    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1))
+    await probeStarted[0]
     const newerLogin = service.loginIsolatedClaude('sk-ant-newer')
-    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2))
+    await probeStarted[1]
 
     finishProbes[1]?.()
     expect(await newerLogin).toMatchObject({ ok: true, applied: true })

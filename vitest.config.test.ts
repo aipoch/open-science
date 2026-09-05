@@ -19,12 +19,15 @@ import vitestConfig, {
 } from './vitest.config'
 
 describe('Vitest discovery boundaries', () => {
-  it.each(['**/.pnpm-store/**', '**/tmp/**', '**/.worktrees/**', '**/.worktree/**'])(
-    'excludes %s from recursive test discovery',
-    (pattern) => {
-      expect(VITEST_EXCLUDE_PATTERNS).toContain(pattern)
-    }
-  )
+  it.each([
+    '**/.pnpm-store/**',
+    '**/tmp/**',
+    '**/.worktrees/**',
+    '**/.worktree/**',
+    'docs/internal/**'
+  ])('excludes %s from recursive test discovery', (pattern) => {
+    expect(VITEST_EXCLUDE_PATTERNS).toContain(pattern)
+  })
 
   it('excludes duplicated platform checks only from portable CI shards', () => {
     expect(vitestExcludePatternsFor({})).not.toEqual(
