@@ -45,6 +45,8 @@ const PROJECT_DELETION_COMMIT_MARKER = '.project-deletion-committed'
 const MANIFEST_FILE = 'manifest.json'
 const PRE_S2_BACKUP_SUFFIX = '.pre-s2-backup'
 const PRE_SUBAGENT_MODEL_BACKUP_SUFFIX = '.pre-subagent-model-backup'
+const RECOVERABLE_TEMPORARY_FILE_PATTERN =
+  /^(.+\.json)\.(?:\d{13}-\d+|\d+|\d+-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.tmp$/iu
 
 const nextSessionRevision = (revision: number): number => {
   if (!Number.isSafeInteger(revision) || revision < 0 || revision >= Number.MAX_SAFE_INTEGER) {
@@ -493,6 +495,7 @@ class SessionRepository {
         const freshResult = await this.refreshProjectionBuildAuthority(result)
         const numbers = new Map(summaries.map((session) => [session.id, session.number]))
         if (freshResult.diagnostics?.isComplete === false) {
+          await this.retainOversizedProjectionRecovery(freshResult.diagnostics.warnings)
           return {
             result: freshResult,
             sessions: projectIncompleteSummaries(freshResult, numbers)
@@ -689,6 +692,33 @@ class SessionRepository {
       }
     }
     return false
+  }
+
+  private async retainOversizedProjectionRecovery(
+    warnings: readonly SessionLoadWarning[] | undefined
+  ): Promise<void> {
+    if (!this.projection) return
+    for (const warning of warnings ?? []) {
+      if (
+        warning.kind !== 'too-large' ||
+        !warning.fileName.endsWith('.json') ||
+        warning.fileName.length === '.json'.length
+      ) {
+        continue
+      }
+      const sessionId = warning.fileName.slice(0, -'.json'.length)
+      let projectId: string
+      let safeSessionId: string
+      try {
+        projectId = assertSafeSegment(warning.projectId)
+        safeSessionId = assertSafeSegment(sessionId)
+      } catch {
+        // Unsafe warning identities already keep the scan incomplete; they cannot become a safe
+        // projection reconciliation target.
+        continue
+      }
+      await this.projection.markPending(projectId, safeSessionId)
+    }
   }
 
   async loadSessionUsageProjection(): Promise<SessionUsageProjection> {
@@ -1521,8 +1551,19 @@ class SessionRepository {
         },
         { maxBytes: this.dependencies.maxSessionBytes }
       )
-    } catch {
+    } catch (error) {
       recoveryComplete = false
+      if (error instanceof DurableJsonReadLimitError) {
+        const primaryFileName = RECOVERABLE_TEMPORARY_FILE_PATTERN.exec(error.fileName)?.[1]
+        if (primaryFileName) {
+          options.warnings?.push({
+            kind: 'too-large',
+            projectId,
+            fileName: primaryFileName,
+            recovered: false
+          })
+        }
+      }
     }
     const sessionFiles = await this.listSessionFileNames(projectDir, {
       missingIsIncomplete: options.missingDirectoryIsIncomplete,

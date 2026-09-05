@@ -1307,6 +1307,30 @@ describe('session persistence repository (per-session files)', () => {
     await expect(lstat(filePath)).resolves.toMatchObject({ size: MAX_PERSISTED_SESSION_BYTES + 1 })
   })
 
+  it('classifies an oversized recovery temp when no primary Session exists', async () => {
+    const root = await createStorageRoot()
+    const projectDir = join(root, 'sessions', 'project-a')
+    await mkdir(projectDir, { recursive: true })
+    const maxSessionBytes = 4096
+    const temporaryPath = join(projectDir, 'session-1.json.1700000000000-1.tmp')
+    await writeFile(temporaryPath, '', 'utf8')
+    await truncate(temporaryPath, maxSessionBytes + 1)
+    const repository = new SessionRepository(root, { maxSessionBytes })
+
+    await expect(repository.loadAllWithDiagnostics({ mode: 'read-only' })).resolves.toMatchObject({
+      isComplete: false,
+      warnings: [
+        {
+          kind: 'too-large',
+          projectId: 'project-a',
+          fileName: 'session-1.json',
+          recovered: false
+        }
+      ]
+    })
+    await expect(lstat(temporaryPath)).resolves.toMatchObject({ size: maxSessionBytes + 1 })
+  })
+
   it('rejects an oversized Session before publishing another durable file', async () => {
     const root = await createStorageRoot()
     const repository = new SessionRepository(root, { maxSessionBytes: 512 })

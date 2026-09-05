@@ -12,6 +12,7 @@ vi.mock('electron', () => ({
 import {
   MAX_PERSISTED_SESSION_BYTES,
   SESSION_SIZE_LIMIT_ERROR_CODE,
+  type LoadAllSessionsResult,
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import {
@@ -1006,6 +1007,36 @@ describe('Session projection', () => {
       ]
     })
     expect(loaded.sessions).toEqual([])
+  })
+
+  it('removes a stale ready projection after oversized authority is moved out', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-size-recovery-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const saved = await repository.saveSession(session('session-1'))
+    await repository.ensureSessionProjection(() => repository.loadAll())
+    const authorityPath = join(storageRoot, 'sessions', saved.projectId, `${saved.id}.json`)
+    await truncate(authorityPath, MAX_PERSISTED_SESSION_BYTES + 1)
+
+    const loadAuthority = async (): Promise<LoadAllSessionsResult> => {
+      const scan = await repository.loadAllWithDiagnostics({ mode: 'read-only' })
+      return {
+        ...scan.result,
+        diagnostics: { isComplete: scan.isComplete, warnings: scan.warnings ?? [] }
+      }
+    }
+    await expect(repository.ensureSessionProjection(loadAuthority)).resolves.toMatchObject({
+      sessions: []
+    })
+    await rename(authorityPath, join(storageRoot, 'removed-session.json'))
+
+    await expect(repository.ensureSessionProjection(loadAuthority)).resolves.toMatchObject({
+      sessions: []
+    })
+    await expect(projection.list()).resolves.toEqual([])
   })
 
   it('reports an oversized recovery temp behind a ready projection', async () => {
