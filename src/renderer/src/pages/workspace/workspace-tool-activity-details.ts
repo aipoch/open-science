@@ -1235,7 +1235,9 @@ const buildToolActivityDetails = (
   )
   if (notebookSummary) {
     if (activity.status === 'failed' && !notebookSummary.error)
-      notebookSummary.error = getOutputText(activity)?.code ?? t('Failed')
+      notebookSummary.error = notebookResult
+        ? t('Failed')
+        : (getOutputText(activity)?.code ?? t('Failed'))
     const fallback = buildGenericDetails(activity)
     return {
       displayName: notebookSummary.title,

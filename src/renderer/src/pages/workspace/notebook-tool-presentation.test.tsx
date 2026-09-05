@@ -41,14 +41,20 @@ it('does not confirm a restart when the final activity failed', () => {
     activity({
       title: 'open-science-notebook/notebook_restart',
       status: 'failed',
-      rawOutput: restart
+      rawOutput: {
+        ...restart,
+        note: 'Kernel restarted; in-memory variables cleared. Run history is preserved.'
+      }
     })
   )!
   const section = details.sections[0]
   if (section.kind !== 'summary') throw new Error('Expected a summary')
   expect(section.summary.note).toBeUndefined()
   expect(section.summary.fields).not.toContainEqual({ label: 'Status', value: 'Restarted' })
-  expect(section.summary.error).toBeTruthy()
+  expect(section.summary.error).toBe('Failed')
+  const html = renderToStaticMarkup(<WorkspaceToolSummaryCard summary={section.summary} />)
+  expect(html).not.toContain('Kernel restarted')
+  expect(html).not.toContain('variables cleared')
 })
 
 it('bounds visible error previews and marks truncation', () => {
