@@ -934,8 +934,9 @@ colors communicate a successful or failed probe/migration result.
 
 ## Error notices
 
-Use the shared `ErrorNotice` for error summaries. Keep the decorative flask mark compact (`size-10`),
-use one bounded column (`max-w-md`, `min-w-0`), and left-align headings, descriptions, codes, and help.
+Use the shared `ErrorNotice` for error summaries. Center the decorative flask mark (`size-14`) above
+the summary with a 24px gap to distinguish it from the smaller status icon. Use one bounded column
+(`max-w-md`, `min-w-0`), and left-align headings, descriptions, codes, and help.
 Pair the status icon with the first text line. Long error text and identifiers must wrap inside the
 column. Group primary and secondary actions at the trailing edge with `flex-wrap` and a consistent
 small gap; wrap whole controls instead of splitting their labels. Preserve semantic status tones,
