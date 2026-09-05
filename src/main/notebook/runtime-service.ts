@@ -452,7 +452,8 @@ class NotebookRuntimeService {
       defaultProjectId,
       repository: this.repository,
       dependencyAnalyzer: this.dependencyAnalyzer,
-      findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
+      findSession: (projectId, sessionId) =>
+        this.sessions.get(this.sessionLifecycle.rootLane(sessionId, projectId)),
       runtimeBindings: (session) => this.runtimeBindingOwner.snapshot(session),
       runtimeEnvironment: (session, language) => this.resolveRunEnv(session, language),
       isRestartRecommended: (processKey) =>

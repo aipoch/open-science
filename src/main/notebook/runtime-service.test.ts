@@ -4041,6 +4041,82 @@ describe('notebook runtime service', () => {
     expect(reference).toBeNull()
   })
 
+  describe('N05 project-scoped session references', () => {
+    const states = ['live', 'persisted', 'absent'] as const
+
+    it.each(states.flatMap((p) => states.map((q) => ({ p, q }))))(
+      'keeps a shared session ID scoped to its project (P=$p, Q=$q)',
+      async ({ p, q }) => {
+        const root = await createStorageRoot()
+        const makeService = (): NotebookRuntimeService =>
+          new NotebookRuntimeService({
+            configRoot: root,
+            dataRoot: root,
+            projectId: 'project-p',
+            repository: new NotebookRunRepository(root)
+          })
+        const projects = [
+          { projectId: 'project-p', state: p },
+          { projectId: 'project-q', state: q }
+        ]
+        const writer = makeService()
+        const service = makeService()
+        try {
+          for (const { projectId, state } of projects) {
+            if (state === 'absent') continue
+            const workspaceCwd = join(root, projectId)
+            await mkdir(workspaceCwd)
+            await writer.state({ projectId, sessionId: 'shared-session', workspaceCwd })
+          }
+          await writer.shutdownAll()
+          for (const { projectId, state } of projects) {
+            if (state !== 'live') continue
+            await service.state({
+              projectId,
+              sessionId: 'shared-session',
+              workspaceCwd: join(root, projectId)
+            })
+          }
+
+          // Include the omitted project ID: it must still resolve to the configured default.
+          for (const requestedProjectId of [undefined, 'project-p', 'project-q']) {
+            const projectId = requestedProjectId ?? 'project-p'
+            const state = projectId === 'project-p' ? p : q
+            const reference = await service.getSessionReference({
+              projectId: requestedProjectId,
+              sessionId: 'shared-session',
+              workspaceCwd: join(root, projectId)
+            })
+            const notebookSessionRoot = join(root, 'notebooks', projectId, 'shared-session')
+            expect.soft(reference).toEqual(
+              state === 'absent'
+                ? null
+                : {
+                    projectId,
+                    sessionId: 'shared-session',
+                    workspaceCwd: expect.any(String),
+                    notebookSessionRoot,
+                    dataRoot: join(notebookSessionRoot, 'data'),
+                    runtimeRoot: getRuntimeRoot(root),
+                    runJsonPath: join(notebookSessionRoot, 'run.json')
+                  }
+            )
+            if (reference && state !== 'absent') {
+              // Live references expose the execution cwd; persisted references expose workspaceCwd.
+              // Both must belong to the requested project, regardless of the selected read source.
+              expect
+                .soft([join(root, projectId), join(notebookSessionRoot, 'data')])
+                .toContain(reference.workspaceCwd)
+            }
+          }
+        } finally {
+          await writer.dispose()
+          await service.dispose()
+        }
+      }
+    )
+  })
+
   it('rebuilds a session reference from persisted run.json without a live runtime session', async () => {
     const root = await createStorageRoot()
 
