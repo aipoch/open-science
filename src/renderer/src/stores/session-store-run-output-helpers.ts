@@ -18,7 +18,12 @@ import {
 } from './session-store-message-graph-helpers'
 import type { AppendMessageResult } from './session-store-message-graph-helpers'
 import { createSortIndex } from './session-store-message-graph-owner'
-import type { ChatArtifact, ChatMessage, ChatSession } from './session-store-persistence-owner'
+import type {
+  ChatArtifact,
+  ChatMessage,
+  ChatSession,
+  StreamingMessageContentByMessageId
+} from './session-store-persistence-owner'
 
 // A Session can be projected by more than one renderer. Derive Agent identity from runtime-owned
 // stream identity so both projections choose the same Artifact owner instead of local sequence ids.
@@ -86,6 +91,7 @@ type SessionBatchProjectionResult = {
   session: ChatSession
   results: Array<AppendMessageResult | undefined>
   shouldCommit: boolean
+  streamingMessages: StreamingMessageContentByMessageId
 }
 
 const createChatArtifact = (artifact: ArtifactFile, fallbackCreatedAt?: number): ChatArtifact => {
@@ -181,9 +187,16 @@ const appendUniqueStrings = (
 
 // A presentation tick can contain several deltas for one stream. Index durable replay and current
 // messages once, then advance the batch locally so long Session history is not rescanned per delta.
+//
+// Pure text growth for an already-projected Message is committed to the streaming slice (keyed by
+// Message id) instead of the Message object, so per-tick appends keep the Session object and the
+// messages array referentially stable; only the streaming Message's own store subscriber re-renders.
+// Message creation, image deltas, and one-time run metadata (first visible output, running status)
+// still change Session identity, as does turn-end materialization.
 export const projectAgentMessageChunks = (
   session: ChatSession,
-  inputs: AppendAgentMessageChunkInput[]
+  inputs: AppendAgentMessageChunkInput[],
+  streamingMessages: StreamingMessageContentByMessageId
 ): SessionBatchProjectionResult => {
   const preparedInputs = inputs.map((input) => ({
     input,
@@ -201,7 +214,12 @@ export const projectAgentMessageChunks = (
     )
   )
   if (streamIds.size === 0) {
-    return { session, results: inputs.map(() => undefined), shouldCommit: false }
+    return {
+      session,
+      results: inputs.map(() => undefined),
+      shouldCommit: false,
+      streamingMessages
+    }
   }
   const replayedGraphMessages = new Map<string, ChatMessage[]>()
   const graphMessagesById = new Map<string, ChatMessage>()
@@ -243,8 +261,24 @@ export const projectAgentMessageChunks = (
   let messages = session.messages
   let changed = false
   let shouldCommit = false
+  let streaming = streamingMessages
   let awaitingFirstAgentOutput = session.awaitingFirstAgentOutput
+  let status = session.status
   let updatedAt = session.updatedAt
+  const setStreamingEntry = (
+    messageId: string,
+    content: string,
+    eventIds: string[],
+    now: number
+  ): void => {
+    if (streaming === streamingMessages) streaming = { ...streamingMessages }
+    streaming[messageId] = { sessionId: session.id, content, eventIds, updatedAt: now }
+  }
+  const clearStreamingEntry = (messageId: string): void => {
+    if (!streaming[messageId]) return
+    if (streaming === streamingMessages) streaming = { ...streamingMessages }
+    delete streaming[messageId]
+  }
 
   for (const prepared of preparedInputs) {
     const { input, content } = prepared
@@ -280,7 +314,10 @@ export const projectAgentMessageChunks = (
     const result = { sessionId: input.sessionId, messageId }
     results.push(result)
 
-    if (existing?.message.eventIds.includes(input.eventId)) {
+    // In-flight event ids live in the streaming slice once text growth moved there; consult both.
+    const streamingEntry = streaming[messageId]
+    const appliedEventIds = streamingEntry?.eventIds ?? existing?.message.eventIds
+    if (appliedEventIds?.includes(input.eventId)) {
       shouldCommit = true
       continue
     }
@@ -297,32 +334,51 @@ export const projectAgentMessageChunks = (
         ? normalizeClaudeCodeRefusalText(text)
         : text
     }
+
+    if (existing && !sanitizedImage) {
+      // Pure text growth: append into the streaming slice and leave Session identity untouched.
+      setStreamingEntry(
+        messageId,
+        mergeContent(streamingEntry?.content ?? existing.message.content),
+        [...(streamingEntry?.eventIds ?? existing.message.eventIds), input.eventId],
+        now
+      )
+      if (hasVisibleOutput) awaitingFirstAgentOutput = undefined
+      if (status !== 'waiting-for-user' && status !== 'waiting-permission') status = 'running'
+      shouldCommit = true
+      continue
+    }
+
+    // Message creation or an image delta commits to the Message object; any in-flight slice entry
+    // is folded back in so the Message owns the full text again.
+    const baseEventIds = streamingEntry?.eventIds ?? existing?.message.eventIds ?? []
     const nextMessage: ChatMessage = existing
       ? {
           ...existing.message,
-          content: mergeContent(existing.message.content),
+          content: mergeContent(streamingEntry?.content ?? existing.message.content),
           images: sanitizedImage
             ? sanitizeMessageImages([
                 ...(existing.message.images ?? []),
                 { id: input.eventId, ...sanitizedImage }
               ])
             : existing.message.images,
-          eventIds: [...existing.message.eventIds, input.eventId],
+          eventIds: [...baseEventIds, input.eventId],
           updatedAt: now
         }
       : {
           id: messageId,
           role: 'agent',
-          content: mergeContent(),
+          content: mergeContent(streamingEntry?.content ?? ''),
           status: 'streaming',
           streamId: input.streamId,
           responseToMessageId,
-          eventIds: [input.eventId],
+          eventIds: [...baseEventIds, input.eventId],
           images: sanitizedImage ? [{ id: input.eventId, ...sanitizedImage }] : undefined,
           sortIndex: createSortIndex(),
           createdAt: now,
           updatedAt: now
         }
+    clearStreamingEntry(messageId)
 
     if (!changed) messages = session.messages.slice()
     if (existing) messages[existing.index] = nextMessage
@@ -348,19 +404,25 @@ export const projectAgentMessageChunks = (
     shouldCommit = true
   }
 
+  if (status !== 'waiting-for-user' && status !== 'waiting-permission' && changed) {
+    status = 'running'
+  }
+  const sessionChanged =
+    changed ||
+    awaitingFirstAgentOutput !== session.awaitingFirstAgentOutput ||
+    status !== session.status
+
   return {
     results,
     shouldCommit,
-    session: changed
+    streamingMessages: streaming,
+    session: sessionChanged
       ? {
           ...session,
-          status:
-            session.status === 'waiting-for-user' || session.status === 'waiting-permission'
-              ? session.status
-              : 'running',
+          status,
           awaitingFirstAgentOutput,
-          messages,
-          updatedAt
+          ...(changed ? { messages } : {}),
+          updatedAt: changed ? updatedAt : Date.now()
         }
       : session
   }

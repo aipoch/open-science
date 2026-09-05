@@ -50,6 +50,10 @@ import {
   type RunTerminalContextWindowSample
 } from './session-store-run-terminal-helpers'
 import type { ChatSession, SessionStoreData } from './session-store-persistence-owner'
+import {
+  materializeStreamingMessageContent,
+  removeStreamingMessageContentForSession
+} from './session-store-persistence-owner'
 
 type SessionStateSetter = StoreApi<SessionStoreData>['setState']
 
@@ -171,24 +175,59 @@ export const createSessionRunProjectionOwner = <
       if (indexes) indexes.push(index)
       else inputIndexesBySessionId.set(input.sessionId, [index])
     })
-    let shouldCommit = false
+    let sessionsChanged = false
+    let streamingMessages = state.streamingMessages
     const indexedResults: Array<AppendMessageResult | undefined> = []
     const sessions = state.sessions.map((session) => {
       const indexes = inputIndexesBySessionId.get(session.id)
       if (!indexes) return session
       const projection = projectAgentMessageChunks(
         session,
-        indexes.map((index) => inputs[index])
+        indexes.map((index) => inputs[index]),
+        streamingMessages
       )
+      streamingMessages = projection.streamingMessages
       indexes.forEach((inputIndex, resultIndex) => {
         indexedResults[inputIndex] = projection.results[resultIndex]
       })
-      shouldCommit ||= projection.shouldCommit
+      sessionsChanged ||= projection.session !== session
       return projection.session
     })
 
-    if (shouldCommit) setSessionState({ sessions } as Partial<State>)
+    // Commit only what changed: pure text-growth ticks touch the streaming slice alone, leaving
+    // the sessions array (and every Session object) referentially stable.
+    const streamingChanged = streamingMessages !== state.streamingMessages
+    if (sessionsChanged || streamingChanged) {
+      setSessionState({
+        ...(sessionsChanged ? { sessions } : {}),
+        ...(streamingChanged ? { streamingMessages } : {})
+      } as Partial<State>)
+    }
     return indexedResults.filter((result): result is AppendMessageResult => Boolean(result))
+  }
+
+  // Folds in-flight streaming text into the Session before a terminal projection rebuilds its
+  // Messages, then drops the Session's slice entries. A projection that bails out (e.g. compaction
+  // refused during an active run) leaves both the Session and the slice untouched.
+  const projectTerminalRun = (
+    state: SessionStoreData,
+    sessionId: string,
+    projector: (session: ChatSession) => ChatSession
+  ): Partial<SessionStoreData> => {
+    let projected = false
+    const sessions = projectSession(state.sessions, sessionId, (session) => {
+      const materialized = materializeStreamingMessageContent(session, state.streamingMessages)
+      const next = projector(materialized)
+      // A projector that declines (returns its input) keeps the original Session and slice.
+      if (next === materialized) return session
+      projected = true
+      return next
+    })
+    if (!projected) return {}
+    return {
+      sessions,
+      streamingMessages: removeStreamingMessageContentForSession(state.streamingMessages, sessionId)
+    }
   }
 
   return {
@@ -349,8 +388,8 @@ export const createSessionRunProjectionOwner = <
     },
 
     finishRun: (sessionId, turnUsage, promptMessageId, contextWindowSample, modelCallUsage) => {
-      setSessionState((state) => ({
-        sessions: projectSession(state.sessions, sessionId, (session) =>
+      setSessionState((state) =>
+        projectTerminalRun(state, sessionId, (session) =>
           projectFinishedRun(
             session,
             turnUsage,
@@ -359,7 +398,7 @@ export const createSessionRunProjectionOwner = <
             modelCallUsage
           )
         )
-      }))
+      )
     },
 
     interruptRun: (
@@ -371,8 +410,8 @@ export const createSessionRunProjectionOwner = <
       turnUsage,
       modelCallUsage
     ) => {
-      setSessionState((state) => ({
-        sessions: projectSession(state.sessions, sessionId, (session) =>
+      setSessionState((state) =>
+        projectTerminalRun(state, sessionId, (session) =>
           projectInterruptedRun(
             session,
             cause,
@@ -383,7 +422,7 @@ export const createSessionRunProjectionOwner = <
             modelCallUsage
           )
         )
-      }))
+      )
     },
 
     // Clears the interrupted/error state after a successful resume so the composer is usable again.
@@ -507,8 +546,8 @@ export const createSessionRunProjectionOwner = <
     failRun: (sessionId, error, opts) => {
       const message = error.trim()
       if (!message) return
-      setSessionState((state) => ({
-        sessions: projectSession(state.sessions, sessionId, (session) =>
+      setSessionState((state) =>
+        projectTerminalRun(state, sessionId, (session) =>
           projectFailedRun(
             session,
             message,
@@ -517,7 +556,7 @@ export const createSessionRunProjectionOwner = <
             opts?.contextWindowSample
           )
         )
-      }))
+      )
     },
 
     setAgentStatus: (sessionId, text) => {
@@ -531,11 +570,11 @@ export const createSessionRunProjectionOwner = <
     },
 
     beginCompaction: (sessionId, options) => {
-      setSessionState((state) => ({
-        sessions: projectSession(state.sessions, sessionId, (session) =>
+      setSessionState((state) =>
+        projectTerminalRun(state, sessionId, (session) =>
           projectCompactionStarted(session, options?.supersedeActiveRun)
         )
-      }))
+      )
     },
 
     finishCompaction: (sessionId) => {

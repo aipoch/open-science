@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
@@ -1315,9 +1316,15 @@ const WorkspaceMessageItemImpl = ({
     message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
   const presentsAssistantMessage = !isUserMessage && !isSideChatAdvisory
   const shouldAnimateAssistant = presentsAssistantMessage && message.status === 'streaming'
+  // In-flight text lives outside the Message object during streaming so sibling transcript rows
+  // keep stable props; only this row subscribes to its own per-tick content.
+  const streamingContent = useSessionStore((state) =>
+    shouldAnimateAssistant ? state.streamingMessages[message.id]?.content : undefined
+  )
+  const liveMessageContent = streamingContent ?? message.content
   const assistantSourceOpen = shouldAnimateAssistant && (presentationSourceOpen ?? true)
   const assistantPresentation = useSmoothStreamingContent(
-    presentsAssistantMessage ? message.content : '',
+    presentsAssistantMessage ? liveMessageContent : '',
     assistantSourceOpen,
     shouldAnimateAssistant && assistantSourceOpen && presentationAnimateOnMount
   )
@@ -1398,7 +1405,7 @@ const WorkspaceMessageItemImpl = ({
 
   // Copies the message text and briefly swaps the icon to confirm the clipboard write succeeded.
   const handleCopyMessage = (): void => {
-    void navigator.clipboard.writeText(message.content).then(() => {
+    void navigator.clipboard.writeText(liveMessageContent).then(() => {
       setCopied(true)
       if (copyResetTimeoutRef.current !== null) window.clearTimeout(copyResetTimeoutRef.current)
       copyResetTimeoutRef.current = window.setTimeout(() => setCopied(false), 2000)
@@ -1801,7 +1808,7 @@ const WorkspaceMessageItemImpl = ({
               isAssistantPresenting && (reserveLoadingRowHeight ? 'min-h-14' : 'min-h-5')
             )}
           >
-            {message.content ? (
+            {liveMessageContent ? (
               annotationPort ? (
                 <TextAnnotationSurface
                   source={{
@@ -1813,6 +1820,7 @@ const WorkspaceMessageItemImpl = ({
                   onAdd={annotationPort.onAdd}
                   onUpdateNote={annotationPort.onUpdateNote}
                   onError={annotationPort.onError}
+                  isAnimating={isAssistantPresenting}
                 >
                   <SessionMessageMarkdown
                     content={assistantPresentation.content}

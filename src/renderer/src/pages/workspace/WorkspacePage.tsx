@@ -281,7 +281,8 @@ const WorkspacePage = ({
 
   // The selected session is the only conversation rendered in the center panel. Selecting it by
   // id (instead of deriving it from the full list) keeps chunk commits for other sessions from
-  // re-rendering the page; the active session's own per-chunk identity changes still do.
+  // re-rendering the page. In-flight streaming text lives in the store's streaming slice, so pure
+  // text-growth ticks keep even the active session's identity stable and this selector bails out.
   const storedActiveSession = useSessionStore((state) => {
     if (activeProject?.archivedAt !== undefined) return undefined
     const selected = state.sessions.find((session) => session.id === selectedSessionId)

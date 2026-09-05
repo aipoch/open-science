@@ -868,12 +868,19 @@ const WorkspaceMessageScrollerImpl = ({
   useEffect(() => clearScrollToFirstMessageHideTimeout, [clearScrollToFirstMessageHideTimeout])
   useEffect(() => {
     if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(updateScrollToFirstMessageEligibility)
+    let eligibilityFrame = 0
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(eligibilityFrame)
+      eligibilityFrame = window.requestAnimationFrame(updateScrollToFirstMessageEligibility)
+    })
     const viewport = messageScrollerViewportRef.current
     const content = messageScrollerContentRef.current
     if (viewport) observer.observe(viewport)
     if (content) observer.observe(content)
-    return () => observer.disconnect()
+    return () => {
+      window.cancelAnimationFrame(eligibilityFrame)
+      observer.disconnect()
+    }
   }, [currentSessionId, updateScrollToFirstMessageEligibility])
   const showScrollToFirstMessage =
     statusAllowsScrollToFirstMessage && scrollThresholdAllowsFirstMessage

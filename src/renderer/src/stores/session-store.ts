@@ -16,6 +16,8 @@ import {
   createInitialSessionState,
   createSessionPersistenceOwner,
   hydrateSession,
+  materializeStreamingMessageContent,
+  removeStreamingMessageContentForSession,
   type ChatSession,
   type SessionPersistenceActions,
   type SessionStoreData
@@ -33,6 +35,8 @@ export {
   type ChatSession,
   type SessionHydrationSelection,
   type SessionStatus,
+  type StreamingMessageContent,
+  type StreamingMessageContentByMessageId,
   type ToolActivity,
   type ToolActivityStatus
 } from './session-store-persistence-owner'
@@ -137,9 +141,14 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
     set((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === sessionId
-          ? projectInterruptedRun(session, 'connection-lost', error)
+          ? projectInterruptedRun(
+              materializeStreamingMessageContent(session, state.streamingMessages),
+              'connection-lost',
+              error
+            )
           : session
-      )
+      ),
+      streamingMessages: removeStreamingMessageContentForSession(state.streamingMessages, sessionId)
     }))
   },
 
@@ -336,16 +345,22 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
       if (!deletedSession) return state
 
       const sessions = state.sessions.filter((session) => session.id !== sessionId)
+      const streamingMessages = removeStreamingMessageContentForSession(
+        state.streamingMessages,
+        sessionId
+      )
 
       if (state.selectedSessionId !== sessionId) {
         return {
           sessions,
+          streamingMessages,
           selectedSessionId: state.selectedSessionId
         }
       }
 
       return {
         sessions,
+        streamingMessages,
         selectedSessionId: findMostRecentSessionId(sessions, deletedSession.projectId)
       }
     })
@@ -354,13 +369,21 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
   // Drops every session belonging to a deleted project; the persistence bridge removes their files.
   removeSessionsForProject: (projectId) => {
     set((state) => {
+      const removedSessionIds = new Set(
+        state.sessions.flatMap((session) => (session.projectId === projectId ? [session.id] : []))
+      )
       const sessions = state.sessions.filter((session) => session.projectId !== projectId)
       if (sessions.length === state.sessions.length) return state
 
       const selectedRemoved = !sessions.some((session) => session.id === state.selectedSessionId)
+      let streamingMessages = state.streamingMessages
+      for (const sessionId of removedSessionIds) {
+        streamingMessages = removeStreamingMessageContentForSession(streamingMessages, sessionId)
+      }
 
       return {
         sessions,
+        streamingMessages,
         selectedSessionId: selectedRemoved ? sessions[0]?.id : state.selectedSessionId
       }
     })

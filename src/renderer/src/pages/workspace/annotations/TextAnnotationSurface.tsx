@@ -62,7 +62,8 @@ const TextAnnotationSurface = ({
   activeAnnotations,
   onAdd,
   onUpdateNote,
-  onError
+  onError,
+  isAnimating = false
 }: {
   children: React.ReactNode
   source: SessionTextAnnotationSource
@@ -70,6 +71,7 @@ const TextAnnotationSurface = ({
   onAdd: (annotation: TextAnnotation) => AnnotationValidationError | undefined
   onUpdateNote?: (id: string, note: string) => AnnotationValidationError | undefined
   onError: (error: AnnotationValidationError) => void
+  isAnimating?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const surfaceRef = useRef<HTMLDivElement | null>(null)
@@ -249,10 +251,20 @@ const TextAnnotationSurface = ({
     setNote('')
   }, [])
 
+  const isAnimatingRef = useRef(isAnimating)
   useLayoutEffect(() => {
-    reconcileAnnotationHighlights()
+    isAnimatingRef.current = isAnimating
+  }, [isAnimating])
+
+  useLayoutEffect(() => {
+    // While the message streams in, this surface re-renders every frame; the
+    // highlight reconcile re-anchors ranges against a tree the next frame
+    // replaces anyway, so it waits for the frame after streaming ends (this
+    // effect re-runs when isAnimating flips back). The draft retarget still
+    // runs so an in-progress manual selection keeps tracking the text.
+    if (!isAnimating) reconcileAnnotationHighlights()
     retargetDraftSelection()
-  }, [children, reconcileAnnotationHighlights, retargetDraftSelection])
+  }, [children, isAnimating, reconcileAnnotationHighlights, retargetDraftSelection])
 
   useLayoutEffect(() => {
     const content = contentRef.current
@@ -265,7 +277,7 @@ const TextAnnotationSurface = ({
       queueMicrotask(() => {
         scheduled = false
         if (disconnected) return
-        reconcileAnnotationHighlights()
+        if (!isAnimatingRef.current) reconcileAnnotationHighlights()
         retargetDraftSelection()
       })
     })
