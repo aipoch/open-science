@@ -959,13 +959,13 @@ describe('production delegated-work composition', () => {
             prepareForQuit,
             holdSettingsInstallAdmission: () => () => undefined,
             abortQuitPreparation,
+            getActiveSettingsInstallId: () => undefined,
             flushSessionPersistence,
             isMigrationInProgress: () => false,
             quit,
             countWindows: () => 1,
             detectActiveSessions: () => [],
             hasActiveReviewerWork: () => false,
-            getActiveSettingsInstallId: () => undefined,
             createConfirmClose: () => confirmClose
           })
           quit()
