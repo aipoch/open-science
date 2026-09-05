@@ -887,6 +887,9 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(CITATION_PREVIEW_PROMPT)) {
           reply =
             'The fixture evidence supports this claim ([Torre et al. 2026](https://citation.example/paper "Fixture study")), with an independent replication ([Chen et al. 2026](https://citation.example/replication "Replication study")).'
+        } else if (prompt.includes('Expand a table with source links.')) {
+          reply =
+            '| PMID | Journal |\n| --- | --- |\n| [42668673](https://citation.example/paper) | Bioact Mater |\n| [42537459](https://unadmitted.example/paper) | Biomaterials |'
         } else if (
           await submitReviewerPass(sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [])
         ) {
