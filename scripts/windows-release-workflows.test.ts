@@ -100,7 +100,7 @@ describe('post-merge Windows validation', () => {
     expect(workflow.on?.schedule).toEqual([{ cron: '47 * * * *' }])
     expect(dispatch?.inputs?.mode).toMatchObject({
       default: 'full',
-      options: ['full', 'notebook-sandbox']
+      options: ['full', 'notebook-sandbox', 'regressions']
     })
     expect(workflow.on).not.toHaveProperty('workflow_call')
     expect(findStep(plan, 'Check for untested main changes').run).toContain(
@@ -108,18 +108,30 @@ describe('post-merge Windows validation', () => {
     )
     expect(job).toMatchObject({
       needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'notebook-sandbox') }}",
+      env: { VITEST_WINDOWS_FULL_TEST: '1' },
       'runs-on': 'windows-latest',
       'timeout-minutes': 35
     })
     expect(job['continue-on-error']).toBeUndefined()
-    expect(job.strategy?.matrix?.shard).toEqual([1, 2, 3])
+    expect(job.strategy?.matrix).toEqual({
+      shard: "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3]') }}"
+    })
     expect(findStep(job, 'Test complete suite shard').run).toBe(
       'npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000'
     )
+    expect(findStep(job, 'Test complete suite shard').if).toBe(
+      "${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}"
+    )
+    const regressions = findStep(job, 'Test recent Windows regressions')
+    expect(regressions.if).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}"
+    )
+    expect(regressions.run).toContain('scripts/windows-release-workflows.test.ts')
+    expect(regressions.run).not.toContain('--shard')
     expect(sandbox).toMatchObject({
       needs: 'plan',
-      if: "needs.plan.outputs.should_test == 'true'",
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'regressions') }}",
       'runs-on': 'windows-latest',
       'timeout-minutes': 20
     })
