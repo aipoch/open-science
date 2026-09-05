@@ -141,6 +141,7 @@ type ManagedInstallImpl = (options: {
   onEvent: (event: { kind: string; installId: string }) => void
   dataRoot: string
   registries?: string[]
+  signal?: AbortSignal
 }) => Promise<{
   result: { installId: string; ok: boolean; error?: string }
   resolvedPath?: string
@@ -4678,6 +4679,37 @@ describe('installClaude (app-managed source)', () => {
 
     expect(service.hasActiveInstall()).toBe(false)
     expect(service.getActiveInstallId()).toBeUndefined()
+  })
+
+  it('aborts and drains an active runtime install during dispose', async () => {
+    const installStarted = Promise.withResolvers<void>()
+    const releaseCleanup = Promise.withResolvers<void>()
+    let installSignal: AbortSignal | undefined
+    const service = createService(undefined, {
+      installManagedClaudeImpl: async ({ installId, signal }) => {
+        installSignal = signal
+        installStarted.resolve()
+        await releaseCleanup.promise
+        return { result: { installId, ok: false, error: 'Installation cancelled.' } }
+      }
+    })
+    const install = service.installClaude({ source: 'managed' }, () => undefined)
+    await installStarted.promise
+
+    let disposed = false
+    const dispose = service.dispose().then(() => {
+      disposed = true
+    })
+    try {
+      await Promise.resolve()
+      expect(installSignal?.aborted).toBe(true)
+      expect(disposed).toBe(false)
+    } finally {
+      releaseCleanup.resolve()
+      await install
+      await dispose
+    }
+    expect(disposed).toBe(true)
   })
 
   it('routes managed installs through the managed installer and persists the resolved path', async () => {

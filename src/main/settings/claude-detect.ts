@@ -25,7 +25,7 @@ export type ClaudeDetectDeps = {
   // Resolves whether a candidate file exists and is executable.
   isExecutable: (path: string) => Promise<boolean>
   // Runs `<path> --version` and returns the trimmed version string, or undefined on failure.
-  getVersion: (path: string) => Promise<string | undefined>
+  getVersion: (path: string, signal?: AbortSignal) => Promise<string | undefined>
   // Extra bin directories to probe (e.g. `npm prefix -g`); resolved lazily and tolerant of failure.
   resolveNpmBinDirs: () => Promise<string[]>
   // Extra fixed directories to probe (e.g. the app-managed install dir), searched after PATH/home.
@@ -154,16 +154,17 @@ const parseVersion = (output: string): string | undefined => {
 // the shell with the path quoted to survive spaces; native `.exe`/Unix binaries run without a shell.
 const runClaudeVersion =
   (platform: NodeJS.Platform) =>
-  async (path: string): Promise<string | undefined> => {
+  async (path: string, signal?: AbortSignal): Promise<string | undefined> => {
     try {
       const { stdout } =
         platform === 'win32'
           ? await execFileAsync(`"${path}"`, ['--version'], {
               timeout: 10_000,
               shell: true,
-              windowsHide: true
+              windowsHide: true,
+              signal
             })
-          : await execFileAsync(path, ['--version'], { timeout: 10_000 })
+          : await execFileAsync(path, ['--version'], { timeout: 10_000, signal })
 
       return parseVersion(stdout)
     } catch {

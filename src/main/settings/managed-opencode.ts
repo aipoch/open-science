@@ -281,12 +281,13 @@ const resolveNative = async (
   registry: string,
   key: string,
   version: string | undefined,
-  fetchJson: FetchJson
+  fetchJson: FetchJson,
+  signal?: AbortSignal
 ): Promise<{ version: string; tarball: string; integrity: string }> => {
   let resolvedVersion = version
 
   if (!resolvedVersion) {
-    const wrapper = asRecord(await fetchJson(`${registry}/${OPENCODE_WRAPPER}`))
+    const wrapper = asRecord(await fetchJson(`${registry}/${OPENCODE_WRAPPER}`, signal))
     const latest = asRecord(wrapper['dist-tags']).latest
     if (typeof latest !== 'string' || latest.length === 0) {
       throw new Error('Registry did not report a latest opencode version')
@@ -295,7 +296,7 @@ const resolveNative = async (
   }
 
   const meta = asRecord(
-    await fetchJson(`${registry}/${OPENCODE_PLATFORM_PREFIX}-${key}/${resolvedVersion}`)
+    await fetchJson(`${registry}/${OPENCODE_PLATFORM_PREFIX}-${key}/${resolvedVersion}`, signal)
   )
   const dist = asRecord(meta.dist)
   const tarball = dist.tarball
@@ -384,6 +385,7 @@ export type InstallManagedOpencodeOptions = {
   fetchTarball?: FetchTarball
   verifyBinary?: VerifyBinary
   detectAvx2?: () => boolean
+  signal?: AbortSignal
   renamePath?: typeof rename
   tmpDir?: string
 }
@@ -459,6 +461,7 @@ export const installManagedOpencode = async ({
   fetchTarball = defaultFetchTarball,
   verifyBinary = defaultVerifyBinary,
   detectAvx2: detectAvx2Dep = detectAvx2,
+  signal,
   renamePath = rename,
   tmpDir
 }: InstallManagedOpencodeOptions): Promise<ManagedInstallOutcome> => {
@@ -489,7 +492,7 @@ export const installManagedOpencode = async ({
         stream: 'system',
         chunk: `Resolving ${OPENCODE_PLATFORM_PREFIX}-${packageKey} from ${registry} …\n`
       })
-      const resolution = await resolveNative(registry, packageKey, pinnedVersion, fetchJson)
+      const resolution = await resolveNative(registry, packageKey, pinnedVersion, fetchJson, signal)
 
       await downloadAndVerify({
         url: resolution.tarball,
@@ -497,14 +500,16 @@ export const installManagedOpencode = async ({
         destPath: tgzPath,
         installId,
         onEvent,
-        fetchTarball
+        fetchTarball,
+        signal
       })
 
       onEvent({ kind: 'progress', installId, phase: 'extracting' })
       const found = await extractFileFromTgz({
         tgzPath,
         entryName: `package/bin/${platform.binName}`,
-        destPath: stagedPath
+        destPath: stagedPath,
+        signal
       })
 
       if (!found) throw new Error(`Native package did not contain bin/${platform.binName}`)
@@ -526,6 +531,7 @@ export const installManagedOpencode = async ({
         }
       }
       await ensureOpencodeRuntimeOwnerMarker(stagedRoot)
+      signal?.throwIfAborted()
 
       return { ok: true, version: resolution.version }
     } finally {
@@ -599,6 +605,7 @@ export const installManagedOpencode = async ({
               first.resolvedVersion
             )
           } catch {
+            signal?.throwIfAborted()
             // Baseline unavailable (e.g. 404): fall through to the illegal-instruction/AVX2 error below.
           }
           if (baseline?.ok) {
@@ -627,6 +634,7 @@ export const installManagedOpencode = async ({
           stream: 'system',
           chunk: `${registry} failed: ${lastError}\n`
         })
+        if (signal?.aborted) return { result: { installId, ok: false, error: lastError } }
         if (reachedPublication) return { result: { installId, ok: false, error: lastError } }
       }
     }

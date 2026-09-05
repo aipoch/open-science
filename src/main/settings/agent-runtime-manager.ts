@@ -328,6 +328,8 @@ export class AgentRuntimeManager {
   private readonly allocateOpenCodeUsagePort: () => Promise<number>
   private readonly executeClaudeProbe: ExecuteClaudeProbe
   private activeInstallId: string | undefined
+  private activeInstallAbort: AbortController | undefined
+  private activeInstallCompletion: Promise<void> | undefined
   private installAdmissionHolders = 0
   private environmentCheckRuntimeProbe: ReusableRuntimeProbe | undefined
   private preflightRuntimeProbe: ReusableRuntimeProbe | undefined
@@ -361,6 +363,12 @@ export class AgentRuntimeManager {
       released = true
       this.installAdmissionHolders -= 1
     }
+  }
+
+  async dispose(): Promise<void> {
+    const completion = this.activeInstallCompletion
+    this.activeInstallAbort?.abort()
+    await completion
   }
 
   constructor(options: AgentRuntimeManagerOptions) {
@@ -587,7 +595,7 @@ export class AgentRuntimeManager {
   ): Promise<ClaudeInstallResult> {
     const installId = `install-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
-    return this.runExclusiveInstall(installId, async () => {
+    return this.runExclusiveInstall(installId, async (signal) => {
       if (request.source === 'managed') {
         const registries =
           request.managedRegistry === 'npmmirror'
@@ -598,7 +606,8 @@ export class AgentRuntimeManager {
           onEvent,
           dataRoot: this.storageRoot,
           registries,
-          verifyBinary: this.detectDeps.getVersion
+          verifyBinary: this.detectDeps.getVersion,
+          signal
         })
 
         if (outcome.result.ok && outcome.resolvedPath) {
@@ -619,7 +628,12 @@ export class AgentRuntimeManager {
         return outcome.result
       }
 
-      const result = await runInstallWithFallback({ source: request.source, installId, onEvent })
+      const result = await runInstallWithFallback({
+        source: request.source,
+        installId,
+        onEvent,
+        signal
+      })
       if (result.ok) await this.detectClaude()
       return result
     })
@@ -631,12 +645,13 @@ export class AgentRuntimeManager {
   ): Promise<ClaudeInstallResult> {
     const installId = `install-opencode-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
-    return this.runExclusiveInstall(installId, async () => {
+    return this.runExclusiveInstall(installId, async (signal) => {
       if (request.source === 'managed') {
         const outcome = await this.installManagedOpencodeImpl({
           installId,
           onEvent,
-          dataRoot: this.storageRoot
+          dataRoot: this.storageRoot,
+          signal
         })
         if (outcome.result.ok && outcome.resolvedPath) {
           await this.repository.setOpencodeInfo(outcome.resolvedPath, outcome.version)
@@ -648,7 +663,8 @@ export class AgentRuntimeManager {
         source: request.source,
         installId,
         onEvent,
-        installTarget: OPENCODE_INSTALL_TARGET
+        installTarget: OPENCODE_INSTALL_TARGET,
+        signal
       })
       if (result.ok) await this.detectOpencode()
       return result
@@ -660,11 +676,12 @@ export class AgentRuntimeManager {
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
     const installId = `install-codebuddy-${Date.now()}-${this.allocateSettingsIdSequence()}`
-    return this.runExclusiveInstall(installId, async () => {
+    return this.runExclusiveInstall(installId, async (signal) => {
       const outcome = await this.installManagedCodeBuddyImpl({
         installId,
         onEvent,
-        dataRoot: this.storageRoot
+        dataRoot: this.storageRoot,
+        signal
       })
       if (outcome.result.ok && outcome.resolvedPath) {
         await this.repository.setCodeBuddyInfo(outcome.resolvedPath, outcome.version)
@@ -679,7 +696,7 @@ export class AgentRuntimeManager {
   ): Promise<ClaudeInstallResult> {
     const installId = `install-codex-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
-    return this.runExclusiveInstall(installId, async () => {
+    return this.runExclusiveInstall(installId, async (signal) => {
       if (request.source === 'managed') {
         const settings = await this.repository.getSettings()
         const configuredCodexPath = settings.codex?.nativePath
@@ -697,6 +714,7 @@ export class AgentRuntimeManager {
           installId,
           onEvent,
           dataRoot: this.storageRoot,
+          signal,
           ...(existingCodexPath ? { existingCodexPath } : {})
         })
         if (
@@ -720,7 +738,8 @@ export class AgentRuntimeManager {
         source: request.source,
         installId,
         onEvent,
-        installTarget: CODEX_INSTALL_TARGET
+        installTarget: CODEX_INSTALL_TARGET,
+        signal
       })
       if (result.ok) await this.detectCodex()
       return result
@@ -729,17 +748,26 @@ export class AgentRuntimeManager {
 
   private async runExclusiveInstall(
     installId: string,
-    install: () => Promise<ClaudeInstallResult>
+    install: (signal: AbortSignal) => Promise<ClaudeInstallResult>
   ): Promise<ClaudeInstallResult> {
     if (this.activeInstallId !== undefined || this.installAdmissionHolders > 0) {
       return { installId, ok: false, error: 'Another install is already in progress.' }
     }
 
+    const controller = new AbortController()
+    const completion = Promise.withResolvers<void>()
     this.activeInstallId = installId
+    this.activeInstallAbort = controller
+    this.activeInstallCompletion = completion.promise
     try {
-      return await install()
+      return await install(controller.signal)
     } finally {
-      if (this.activeInstallId === installId) this.activeInstallId = undefined
+      if (this.activeInstallId === installId) {
+        this.activeInstallId = undefined
+        this.activeInstallAbort = undefined
+        this.activeInstallCompletion = undefined
+      }
+      completion.resolve()
     }
   }
 

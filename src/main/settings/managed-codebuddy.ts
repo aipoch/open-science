@@ -75,10 +75,11 @@ export const uninstallManagedCodeBuddy = async (dataRoot: string): Promise<void>
 const resolvePackage = async (
   registry: string,
   version: string | undefined,
-  fetchJson: FetchJson
+  fetchJson: FetchJson,
+  signal?: AbortSignal
 ): Promise<{ version: string; tarball: string; integrity: string }> => {
   const encodedName = '@tencent-ai%2Fcodebuddy-code'
-  const packageMeta = asRecord(await fetchJson(`${registry}/${encodedName}`))
+  const packageMeta = asRecord(await fetchJson(`${registry}/${encodedName}`, signal))
   const resolvedVersion =
     version ??
     (typeof asRecord(packageMeta['dist-tags']).latest === 'string'
@@ -87,7 +88,7 @@ const resolvePackage = async (
   const versionMeta = asRecord(
     packageMeta.versions && asRecord(packageMeta.versions)[resolvedVersion]
       ? asRecord(packageMeta.versions)[resolvedVersion]
-      : await fetchJson(`${registry}/${encodedName}/${resolvedVersion}`)
+      : await fetchJson(`${registry}/${encodedName}/${resolvedVersion}`, signal)
   )
   const dist = asRecord(versionMeta.dist)
   const tarball = dist.tarball
@@ -303,9 +304,13 @@ const writeShim = async ({
   return binPath
 }
 
-const extractPackage = async (tgzPath: string, destination: string): Promise<void> => {
+const extractPackage = async (
+  tgzPath: string,
+  destination: string,
+  signal?: AbortSignal
+): Promise<void> => {
   const extractor = new TarPackageExtractor(destination)
-  await pipeline(createReadStream(tgzPath), createGunzip(), extractor)
+  await pipeline(createReadStream(tgzPath), createGunzip(), extractor, { signal })
   if (!extractor.foundEntries()) {
     throw new Error(`CodeBuddy package did not contain package/`)
   }
@@ -314,20 +319,22 @@ const extractPackage = async (tgzPath: string, destination: string): Promise<voi
 type VersionCommandRunner = (
   file: string,
   args: string[],
-  options: { timeout: number; windowsHide: boolean; shell?: boolean }
+  options: { timeout: number; windowsHide: boolean; shell?: boolean; signal?: AbortSignal }
 ) => Promise<{ stdout: string }>
 
 export const verifyCodeBuddyVersion = async (
   binPath: string,
   platform: NodeJS.Platform = process.platform,
-  run: VersionCommandRunner = execFileAsync as VersionCommandRunner
+  run: VersionCommandRunner = execFileAsync as VersionCommandRunner,
+  signal?: AbortSignal
 ): Promise<string | undefined> => {
   try {
     const useShell = platform === 'win32' && /\.(cmd|bat)$/i.test(binPath)
     const { stdout } = await run(useShell ? `"${binPath}"` : binPath, ['--version'], {
       timeout: 15_000,
       windowsHide: true,
-      ...(useShell ? { shell: true } : {})
+      ...(useShell ? { shell: true } : {}),
+      ...(signal ? { signal } : {})
     })
     const parsed = stdout.match(/\d+\.\d+\.[\w.-]+/)?.[0] ?? stdout.trim()
     return parsed || undefined
@@ -346,7 +353,8 @@ export type InstallManagedCodeBuddyOptions = {
   execPath?: string
   fetchJson?: FetchJson
   fetchTarball?: FetchTarball
-  verify?: (binPath: string) => Promise<string | undefined>
+  verify?: (binPath: string, signal?: AbortSignal) => Promise<string | undefined>
+  signal?: AbortSignal
   renamePath?: typeof rename
 }
 
@@ -361,6 +369,7 @@ export const installManagedCodeBuddy = async ({
   fetchJson = defaultFetchJson,
   fetchTarball = defaultFetchTarball,
   verify,
+  signal,
   renamePath = rename
 }: InstallManagedCodeBuddyOptions): Promise<ManagedInstallOutcome> => {
   const root = managedCodeBuddyRoot(dataRoot)
@@ -383,26 +392,29 @@ export const installManagedCodeBuddy = async ({
         stream: 'system',
         chunk: `Resolving CodeBuddy from ${registry} …\n`
       })
-      const resolution = await resolvePackage(registry, version, fetchJson)
+      const resolution = await resolvePackage(registry, version, fetchJson, signal)
       await downloadAndVerify({
         url: resolution.tarball,
         integrity: resolution.integrity,
         destPath: tgzPath,
         installId,
         onEvent,
-        fetchTarball
+        fetchTarball,
+        signal
       })
 
       onEvent({ kind: 'progress', installId, phase: 'extracting' })
       await rm(packageStage, { recursive: true, force: true })
       await mkdir(packageStage, { recursive: true })
-      await extractPackage(tgzPath, packageStage)
+      await extractPackage(tgzPath, packageStage, signal)
 
       const stagedBinPath = await writeShim({ root: scratch, platform, execPath })
 
       const verifiedVersion = await (verify
-        ? verify(stagedBinPath)
-        : verifyCodeBuddyVersion(stagedBinPath, platform))
+        ? signal
+          ? verify(stagedBinPath, signal)
+          : verify(stagedBinPath)
+        : verifyCodeBuddyVersion(stagedBinPath, platform, undefined, signal))
       if (verifiedVersion !== CODEBUDDY_VERSION) {
         throw new Error(
           verifiedVersion
@@ -412,6 +424,7 @@ export const installManagedCodeBuddy = async ({
       }
 
       await writeShim({ root: scratch, packageRoot: root, platform, execPath })
+      signal?.throwIfAborted()
 
       let backedUp = false
       try {
@@ -461,6 +474,7 @@ export const installManagedCodeBuddy = async ({
         stream: 'system',
         chunk: `${registry} failed: ${lastError}\n`
       })
+      if (signal?.aborted) break
     } finally {
       await rm(tgzPath, { force: true }).catch(() => undefined)
     }

@@ -261,7 +261,9 @@ class SettingsService {
   }
 
   dispose(): Promise<void> {
-    return this.providers.dispose()
+    return Promise.all([this.providers.dispose(), this.runtimeManager.dispose()]).then(
+      () => undefined
+    )
   }
 
   constructor(options: SettingsServiceOptions = {}) {
