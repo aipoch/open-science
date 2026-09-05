@@ -221,9 +221,11 @@ class NotebookPackageMutationOwner {
               )
             }
           }
-          if (installResult && request.language === 'r') {
+          if (installResult && request.language === 'r' && !installResult.repairRequired) {
             // Batch satisfaction and a live R namespace's freshness are independent. A failed
             // installer may already have changed packages even when inventory cannot prove a delta.
+            // Protected-identity failures require repair and terminate the kernel; retain the
+            // installer's repair-only guidance rather than inferring advice for that dead kernel.
             installResult = {
               ...installResult,
               needsRestart:

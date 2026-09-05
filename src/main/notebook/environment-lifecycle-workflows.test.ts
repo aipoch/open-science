@@ -160,7 +160,7 @@ describe('createNotebookEnvironmentLifecycle', () => {
     // UI repair is the user's Reset: it force-clears the quarantine (force: true).
     expect(provisioner.repair).toHaveBeenCalledWith('r', expect.any(Function), {
       force: true,
-      onStarting: expect.any(Function),
+      onStarting: undefined,
       onVerified: expect.any(Function)
     })
   })
@@ -422,7 +422,7 @@ describe('createNotebookEnvironmentLifecycle', () => {
     await lifecycle.repair('python', 'default-python')
     expect(provisioner.repair).toHaveBeenCalledWith('python', expect.any(Function), {
       force: true,
-      onStarting: expect.any(Function),
+      onStarting: undefined,
       onVerified: expect.any(Function)
     })
 

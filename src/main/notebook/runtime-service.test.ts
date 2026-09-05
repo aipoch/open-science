@@ -11039,6 +11039,48 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(rAfterRepair.status).toBe('completed')
   })
 
+  it('E06 does not leave restart advice after repairing a protected R identity', async () => {
+    const root = await createStorageRoot()
+    const service = bindingService(root, {
+      discovered: [managedR],
+      installPackagesImpl: async () => ({
+        ok: false,
+        needsRestart: false,
+        repairRequired: true,
+        log: 'r-base changed',
+        attempts: [
+          {
+            groupOrdinal: 0,
+            installer: 'conda',
+            packages: ['dplyr'],
+            status: 'succeeded',
+            mutationRisk: 'confirmed'
+          }
+        ]
+      })
+    })
+    const target = { sessionId: 's', workspaceCwd: root, language: 'r' as const }
+    await service.bindRuntime({ ...target, runtimeId: managedR.envId })
+    const result = await service.managePackages({ ...target, packages: ['dplyr'] })
+    expect(result.repairRequired).toBe(true)
+    expect(isProtectedIdentityRepairRequired(getRuntimeRoot(root), DEFAULT_R_ENV)).toBe(true)
+    expect.soft(result.needsRestart).toBe(false)
+
+    // Use the same service: an app restart would discard the process-local recommendation.
+    // The completion callback represents a verified rebuild, as in the other repair tests.
+    await service.completeRuntimeRepair('r')
+    expect((await service.execute({ ...target, code: 'R.version.string' })).status).toBe(
+      'completed'
+    )
+    const state = await service.state(target)
+    expect(state.runtimeBindings.r?.status).toBe('active')
+    expect
+      .soft(
+        state.environments.find((entry) => entry.processKey === 'r:default-r')?.restartRecommended
+      )
+      .toBe(false)
+  })
+
   it('does not let an ordinary package install clear a protected R identity quarantine', async () => {
     const root = await createStorageRoot()
     const runtimeRoot = getRuntimeRoot(root)

@@ -148,11 +148,13 @@ const createNotebookEnvironmentLifecycle = (
           if (deps.waitForRecovery) await deps.waitForRecovery()
           await provisioner.repair(parsedLanguage, report, {
             force: true,
-            onStarting: () =>
-              deps.onRepairStarting?.(
-                parsedLanguage,
-                explicitRuntimeRepairTarget(parsedLanguage, runtimeIdentity)
-              ),
+            onStarting: deps.onRepairStarting
+              ? () =>
+                  deps.onRepairStarting?.(
+                    parsedLanguage,
+                    explicitRuntimeRepairTarget(parsedLanguage, runtimeIdentity)
+                  )
+              : undefined,
             onVerified: () => deps.onRepairCompleted?.(parsedLanguage)
           })
         }),

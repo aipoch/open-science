@@ -1047,12 +1047,18 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // provision*), which would otherwise re-acquire this same exclusive lock and deadlock.
     // Consume queued cancellation before preparation can invalidate bindings or persist isolation.
     return this.runLanguage(lang, async () => {
-      // Preparation itself has side effects; per-language cancellation is no longer safe from here.
-      // Global/quit cancellation remains available for app shutdown.
-      this.uninterruptible.add(lang)
       try {
-        await opts?.onStarting?.()
+        if (opts?.onStarting) {
+          // Preparation invalidates bindings and stops kernels that may hold shared leases.
+          // It must precede the exclusive lease, and per-language cancellation is unsafe from here.
+          this.uninterruptible.add(lang)
+          await opts.onStarting()
+        }
         await this.withEnvPrefixLock(spec.name, async () => {
+          // An unprepared repair can still be cancelled while waiting for another prefix writer.
+          // Check before any destructive work; global/quit cancellation also remains effective.
+          this.abort?.signal.throwIfAborted()
+          this.uninterruptible.add(lang)
           if (opts?.force) {
             // EXPLICIT user recovery: clear the quarantine (in-memory block + retained journal record +
             // sidecar) so the rebuild below — and its inner materialize — aren't refused by the block

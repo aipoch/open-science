@@ -38,6 +38,7 @@ import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import { envsLockDir } from './runtime-relocation'
 import { serializeProvisioner } from './environment-operation-foundation'
 import { EnvironmentLeaseManager } from './environment-lease-manager'
+import { createNotebookEnvironmentLifecycle } from './environment-lifecycle-workflows'
 import { withExclusiveCacheLock, withSharedCacheLock } from './pkgs-cache-lock'
 import { validateAndSeedPack } from './pack-content'
 import { micromambaCacheLockKey } from './micromamba-cache'
@@ -2345,6 +2346,67 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     expect(order.slice(-2)).toEqual(['repair:completed', 'unlock'])
     expect(runArgv).toHaveBeenCalled()
   })
+
+  it.each(['provisioner', 'lifecycle'] as const)(
+    'E05 cancels an unprepared repair waiting for a package mutation lease through %s',
+    async (entry) => {
+      const root = makeRoot()
+      const interpreter = pythonBin(envPrefix(root, DEFAULT_PY_ENV))
+      mkdirSync(dirname(interpreter), { recursive: true })
+      writeFileSync(interpreter, 'original')
+      const leases = new EnvironmentLeaseManager()
+      const mutation = await leases.acquire(DEFAULT_PY_ENV, 'exclusive').granted
+      let waiting!: () => void
+      const queued = new Promise<void>((resolve) => {
+        waiting = resolve
+      })
+      const deps = makeDeps(root)
+      const rebuild = vi.fn(deps.runArgv)
+      const onVerified = vi.fn()
+      const provisioner = serializeProvisioner(
+        new DefaultRuntimeProvisioner({
+          ...deps,
+          runArgv: rebuild,
+          withPrefixLock: async (environment, operation) => {
+            const acquisition = leases.acquire(environment, 'exclusive')
+            waiting()
+            const lease = await acquisition.granted
+            try {
+              return await operation()
+            } finally {
+              lease.release()
+            }
+          }
+        })
+      )
+      const lifecycle = createNotebookEnvironmentLifecycle({
+        provisioner,
+        root,
+        projectProgress: () => undefined,
+        onRepairCompleted: onVerified
+      })
+      const result = (
+        entry === 'lifecycle'
+          ? lifecycle.repair('python', DEFAULT_PY_ENV)
+          : provisioner.repair('python', () => undefined, { onVerified })
+      ).catch((error) => error)
+      try {
+        await queued
+        expect(leases.snapshot().environments[0].waiters.exclusive).toBe(1)
+        provisioner.cancel('python')
+        mutation.release()
+
+        expect.soft(await result).toEqual(new Error('Runtime setup cancelled.'))
+        expect.soft(readFileSync(interpreter, 'utf8')).toBe('original')
+        expect.soft(rebuild).not.toHaveBeenCalled()
+        expect.soft(onVerified).not.toHaveBeenCalled()
+      } finally {
+        mutation.release()
+        leases.dispose()
+        await result
+      }
+    }
+  )
 
   it('E05 stops active execution before taking the repair lease and ignores later cancellation', async () => {
     const root = makeRoot()
