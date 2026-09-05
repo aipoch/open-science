@@ -444,6 +444,7 @@ describe('ACP module transport seam', () => {
       .sort()
 
     const runtimeValidatedChannels = [
+      'acp:discard-unavailable-plan',
       'acp:respond-elicitation',
       'acp:respond-permission',
       'acp:respond-plan'

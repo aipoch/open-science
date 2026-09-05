@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type MockedFunction } from 'vitest'
 
 import {
   sanitizeSessionRuntimeContext,
   type SessionRuntimeContext
 } from '../../shared/session-persistence'
-import type { ActivePlanProjection } from '../../shared/session-plan/contract'
+import type { ActivePlanProjection, PlanResponseIdentity } from '../../shared/session-plan/contract'
 import { PlanService, type PlanServiceDependencies } from './plan-service'
 import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
 
@@ -2012,7 +2012,13 @@ describe('PlanService', () => {
   })
 
   describe('explicit unavailable Plan recovery', () => {
-    const unavailable = async () => {
+    const unavailable = async (): Promise<
+      PlanServiceHarness & {
+        read: MockedFunction<PlanServiceDependencies['readArtifactVersion']>
+        originalRead: PlanServiceDependencies['readArtifactVersion']
+        identity: PlanResponseIdentity
+      }
+    > => {
       const fixture = setup()
       const generated = await fixture.service.generate({
         projectId: 'project-1',

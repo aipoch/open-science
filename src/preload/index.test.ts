@@ -262,6 +262,7 @@ describe('preload bridge — public surface inventory', () => {
       'acp.continueInterruptedTurn',
       'acp.createSession',
       'acp.deleteSession',
+      'acp.discardUnavailablePlan',
       'acp.disconnect',
       'acp.getPlanProjection',
       'acp.getState',
