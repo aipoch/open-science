@@ -8638,6 +8638,99 @@ describe('v4 runtime bindings & agent tools', () => {
     }
   )
 
+  it.each(
+    (['bindRuntime', 'switchRuntime'] as const).flatMap((operation) =>
+      [false, true].flatMap((writeFails) =>
+        [false, true].map((childLane) => ({ operation, writeFails, childLane }))
+      )
+    )
+  )(
+    'N06 waits for $operation before dispatch (write fails: $writeFails, child lane: $childLane)',
+    async ({ operation, writeFails, childLane }) => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const executions: NotebookExecutionRequest[] = []
+      const terminations: string[] = []
+      const service = bindingService(root, {
+        repository,
+        executions,
+        terminations,
+        enablement: {
+          enabled: { [userPyA.envId]: true, [userPyB.envId]: true },
+          installAuthorized: {}
+        }
+      })
+      const request = {
+        projectId: 'project-q',
+        sessionId: 'same-session',
+        workspaceCwd: root,
+        ...(childLane
+          ? {
+              provenanceContext: {
+                rootFrameId: 'root-frame-same-session',
+                agentFrameId: 'child',
+                messageBranchId: 'branch',
+                runtimeSegmentId: 'segment',
+                promptMessageId: 'message'
+              }
+            }
+          : {})
+      }
+      const started = createDeferred<void>()
+      const gate = createDeferred<void>()
+      let changing: Promise<unknown> | undefined
+      let executing: Promise<unknown> | undefined
+      try {
+        if (operation === 'switchRuntime') {
+          await service.bindRuntime({ ...request, language: 'python', runtimeId: userPyA.envId })
+        }
+        const cell = await service.execute({ ...request, code: '1' })
+        executions.length = 0
+        const persist = repository.setRuntimeBindings.bind(repository)
+        vi.spyOn(repository, 'setRuntimeBindings').mockImplementationOnce(async (...args) => {
+          started.resolve()
+          await gate.promise
+          if (writeFails) throw new Error('binding commit failed')
+          return persist(...args)
+        })
+        changing = service[operation]({
+          ...request,
+          language: 'python',
+          runtimeId: userPyB.envId
+        })
+        await started.promise
+        expect(terminations).toEqual(['python:default-python'])
+        executing = service.runCell({ ...request, cellId: cell.cellId })
+        // Another project's identical session ID remains executable while this lane is held.
+        await expect(
+          service.execute({
+            projectId: 'other-project',
+            sessionId: request.sessionId,
+            workspaceCwd: root,
+            code: '2'
+          })
+        ).resolves.toHaveProperty('status', 'completed')
+        expect.soft(executions.filter((run) => run.projectId === request.projectId)).toEqual([])
+        gate.resolve()
+        await changing
+        await expect(executing).resolves.toHaveProperty('status', 'completed')
+        const dispatched = executions.filter((run) => run.projectId === request.projectId)
+        expect(dispatched).toHaveLength(1)
+        expect(dispatched[0].resolvedInterpreter?.command).toBe(
+          writeFails
+            ? operation === 'switchRuntime'
+              ? userPyA.interpreterPath
+              : undefined
+            : userPyB.interpreterPath
+        )
+      } finally {
+        gate.resolve()
+        await Promise.allSettled([changing, executing])
+        await service.dispose()
+      }
+    }
+  )
+
   it('reconciles a failed binding write against its project and child lane, not the root binding', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

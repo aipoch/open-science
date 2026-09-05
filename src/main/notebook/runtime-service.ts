@@ -947,6 +947,9 @@ class NotebookRuntimeService {
   ): Promise<NotebookRunSummary> {
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       const session = await this.sessionLifecycle.ensure(request)
+      // Select the execution route only after an admitted binding transition has committed or
+      // reconciled its failure; the old interpreter must not restart during stop/persist.
+      await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))
       const { run, dependencyProjection } = await this.executionOwner.executeDataCell(
         session,
         request,
