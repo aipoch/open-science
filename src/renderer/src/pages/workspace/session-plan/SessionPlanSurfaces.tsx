@@ -45,9 +45,10 @@ const PlanNoticeBanner = ({
 )
 
 type RestoredPlanResponder = Readonly<{
-  sessionId: string
+  sessionId?: string
   enabled: boolean
   respond: (response: { decision: 'approved' | 'rejected' }) => Promise<void>
+  canRespondToSession?: (sessionId: string) => boolean
   onSessionSizeLimit?: (sessionId: string) => void
 }>
 

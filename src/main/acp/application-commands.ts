@@ -220,8 +220,8 @@ const withResponseAdmission = <Result>(
     ? archiveAvailability.withSessionAvailableById(sessionId, operation)
     : operation()
 
-const stateCommand = async (operation: Promise<AcpStateUpdate>): Promise<AcpStateCommandResponse> =>
-  toAcpStateCommandResponse(await operation)
+const stateCommand = (operation: Promise<AcpStateUpdate>): Promise<AcpStateCommandResponse> =>
+  preserveSessionSizeLimitCode(async () => toAcpStateCommandResponse(await operation))
 
 const registerAcpCommands = (
   registrar: ApplicationCommandRegistrar,
@@ -234,9 +234,13 @@ const registerAcpCommands = (
       'acp:connect': (invocation) => stateCommand(dependencies.runtime.connect(invocation.args[0])),
       'acp:disconnect': () => stateCommand(dependencies.runtime.disconnect()),
       'acp:create-session': (invocation) =>
-        dependencies.workflows.createSession(invocation.args[0]),
+        preserveSessionSizeLimitCode(() =>
+          dependencies.workflows.createSession(invocation.args[0])
+        ),
       'acp:resume-session': (invocation) =>
-        dependencies.workflows.resumeSession(invocation.args[0]),
+        preserveSessionSizeLimitCode(() =>
+          dependencies.workflows.resumeSession(invocation.args[0])
+        ),
       'acp:continue-interrupted-turn': (invocation) => {
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can continue an interrupted turn.')
@@ -244,15 +248,17 @@ const registerAcpCommands = (
         return stateCommand(dependencies.workflows.continueInterruptedTurn(invocation.args[0]))
       },
       'acp:reset-session-context': (invocation) =>
-        dependencies.archiveAvailability
-          ? dependencies.archiveAvailability.withSessionAvailableById(
-              invocation.args[0].sessionId,
-              (projectId) =>
-                dependencies.runtime.resetSessionContext(
-                  bindResumeRequestToProject(invocation.args[0], projectId)
-                )
-            )
-          : dependencies.runtime.resetSessionContext(invocation.args[0]),
+        preserveSessionSizeLimitCode(() =>
+          dependencies.archiveAvailability
+            ? dependencies.archiveAvailability.withSessionAvailableById(
+                invocation.args[0].sessionId,
+                (projectId) =>
+                  dependencies.runtime.resetSessionContext(
+                    bindResumeRequestToProject(invocation.args[0], projectId)
+                  )
+              )
+            : dependencies.runtime.resetSessionContext(invocation.args[0])
+        ),
       'acp:compact-session': (invocation) =>
         stateCommand(
           dependencies.archiveAvailability
@@ -278,7 +284,8 @@ const registerAcpCommands = (
           })
         )
       },
-      'acp:steer-follow-up': (invocation) => dependencies.runtime.steerFollowUp(invocation.args[0]),
+      'acp:steer-follow-up': (invocation) =>
+        preserveSessionSizeLimitCode(() => dependencies.runtime.steerFollowUp(invocation.args[0])),
       'acp:save-as-skill': (invocation) => {
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can save a Session as a Skill.')

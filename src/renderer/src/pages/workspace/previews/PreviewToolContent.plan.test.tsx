@@ -156,6 +156,12 @@ describe('Plan Preview workbench integration', () => {
           toolKind: 'plan',
           title: 'Session Plan'
         }}
+        restoredPlanResponder={{
+          sessionId: 'background-session',
+          enabled: true,
+          respond: vi.fn(),
+          canRespondToSession: () => true
+        }}
       />
     )
 
@@ -198,6 +204,30 @@ describe('Plan Preview workbench integration', () => {
     )
     expect(useSessionStore.getState().sessions[0].status).toBe('running')
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+  })
+
+  it('makes a background active Plan read-only when its Session is persistence-blocked', () => {
+    render(
+      <PreviewToolContent
+        item={{
+          id: 'tool:session-1:plan',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          type: 'tool',
+          toolKind: 'plan',
+          title: 'Session Plan'
+        }}
+        restoredPlanResponder={{
+          sessionId: 'selected-session',
+          enabled: true,
+          respond: vi.fn(),
+          canRespondToSession: () => false
+        }}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
   })
 
   it('makes an orphaned pending Plan read-only instead of offering ineffective controls', () => {

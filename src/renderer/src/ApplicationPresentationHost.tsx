@@ -207,7 +207,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
         {sessions.catalogRecovery.kind !== 'ready' && !startup.quitPersistence.notice
           ? writeErrorAlert
           : null}
-        <WorkspaceAgentRuntimeProvider>
+        <WorkspaceAgentRuntimeProvider onSessionSizeLimit={sessions.reportSessionSizeLimit}>
           <WorkspaceMessageQueueProvider>
             <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
             <WorkspaceMessageQueueRuntimeBridge

@@ -253,7 +253,10 @@ const WorkspacePage = ({
     setPermissionProfile,
     revokePermissionGrant
   } = runtime
-  const { respondToElicitation } = useWorkspaceElicitation(runtime.resolveSessionRuntimeSelection)
+  const { respondToElicitation } = useWorkspaceElicitation(
+    runtime.resolveSessionRuntimeSelection,
+    onSessionSizeLimit
+  )
 
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
     useState<PermissionProfileId>(defaultPermissionProfile)
@@ -1116,16 +1119,14 @@ const WorkspacePage = ({
         hasPreviewItems={previewItems.length > 0}
         isPreviewPresentationActive={isPreviewPresentationActive}
         onPdfContextError={setAttachmentError}
-        restoredPlanResponder={
-          activeSession
-            ? {
-                sessionId: activeSession.id,
-                enabled: conversation.availability.planResponse,
-                respond: conversation.actions.submit.restoredPlan,
-                onSessionSizeLimit: conversation.actions.reportSessionSizeLimit
-              }
-            : undefined
-        }
+        restoredPlanResponder={{
+          sessionId: activeSession?.id,
+          enabled: activeSession !== undefined && conversation.availability.planResponse,
+          respond: conversation.actions.submit.restoredPlan,
+          canRespondToSession: (sessionId) =>
+            isSessionPersistenceReady && !persistenceBlockedSessionIds.includes(sessionId),
+          onSessionSizeLimit: conversation.actions.reportSessionSizeLimit
+        }}
         preview={{
           state: previewPanelState,
           openRequestVersion: previewOpenRequestVersion,

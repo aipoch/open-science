@@ -511,6 +511,31 @@ describe('ACP application commands', () => {
     })
   })
 
+  it('preserves the Session size-limit code for permission and elicitation responses', async () => {
+    const dependencies = createDependencies()
+    vi.mocked(dependencies.runtime.respondToPermission).mockRejectedValue(
+      new SessionSizeLimitError(1024)
+    )
+    vi.mocked(dependencies.runtime.respondToElicitation).mockRejectedValue(
+      new SessionSizeLimitError(1024)
+    )
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPermission,
+        invocation([{ requestId: 'permission-1', optionId: 'allow-once' }])
+      )
+    ).rejects.toMatchObject({ name: 'ApplicationCommandError', code: 'session-size-limit' })
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondElicitation,
+        invocation([{ requestId: 'question-1', action: 'decline' }])
+      )
+    ).rejects.toMatchObject({ name: 'ApplicationCommandError', code: 'session-size-limit' })
+  })
+
   it('checks archive availability before resetting Session context or compacting', async () => {
     const admittedById = vi.fn()
     const dependencies: AcpApplicationCommandDependencies = {
