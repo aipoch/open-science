@@ -83,7 +83,8 @@ const runLoggedRuntimeOperation = async (
     logRuntimeInfo('runtime operation progress', {
       ...context,
       phase: progress.phase,
-      message: progress.message,
+      event: progress.event,
+      diagnostic: progress.diagnostic,
       progress: progress.progress,
       ...(progress.download ? { download: progress.download } : {})
     })
@@ -101,7 +102,7 @@ const runLoggedRuntimeOperation = async (
       try {
         report({
           phase: 'error',
-          message: redactRuntimeLogText(error instanceof Error ? error.message : String(error)),
+          diagnostic: redactRuntimeLogText(error instanceof Error ? error.message : String(error)),
           progress: 0,
           language
         })

@@ -1,3 +1,4 @@
+import { ProvenanceIntegrityError } from '../../shared/provenance-read-result'
 import type {
   ArtifactVersionEnvironmentEvidence,
   ArtifactVersionEvidence,
@@ -582,7 +583,7 @@ const validateArtifactExecutionSnapshot = (
     terminalRun?.runId !== expected.producerRunId ||
     terminalRun.runIndex !== expected.producerRunIndex
   ) {
-    throw new Error('Artifact Version execution snapshot metadata mismatch.')
+    throw new ProvenanceIntegrityError('Artifact Version execution snapshot metadata mismatch.')
   }
 }
 

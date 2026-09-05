@@ -5,17 +5,16 @@ import {
   type SessionPermissionRuntimeContext,
   type SessionRuntimeContext
 } from '../../shared/session-persistence'
-import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type {
+  SessionCatalog,
+  SessionMutation,
+  SessionRuntimeContextCommands
+} from '../session-persistence/coordinator'
 import type { DurablePermissionWaitCandidate } from './permission-broker'
 
-type PermissionWaitSessions = Pick<
-  SessionPersistenceCoordinator,
-  | 'readSessionRuntimeContext'
-  | 'patchSessionRuntimeContext'
-  | 'containsMessageOnActiveBranch'
-  | 'loadSessionForContinuation'
-> &
-  Partial<Pick<SessionPersistenceCoordinator, 'sessionProjectId'>>
+type PermissionWaitSessions = SessionRuntimeContextCommands &
+  Pick<SessionCatalog, 'containsMessageOnActiveBranch' | 'loadSessionForContinuation'> &
+  Partial<Pick<SessionCatalog, 'sessionProjectId'> & SessionMutation>
 
 type RestoredPermissionDecision = Readonly<{
   permission: SessionPermissionRuntimeContext

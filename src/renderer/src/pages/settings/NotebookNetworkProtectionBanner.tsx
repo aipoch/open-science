@@ -98,12 +98,13 @@ const NotebookNetworkProtectionBanner = ({
       case 'setupRequired':
         return {
           Icon: ShieldAlert,
-          title: t('Notebook network protection needs setup before notebooks can run.'),
+          title:
+            status.platform === 'win32'
+              ? t('Notebook network protection is not set up.')
+              : t('Notebook network protection needs setup before notebooks can run.'),
           description:
             status.platform === 'win32'
-              ? t(
-                  'Securely route Notebook Python, R, REPL, Bash, and package downloads through your approved domains. Until set up, Notebook continues using standard execution.'
-                )
+              ? t('Notebook continues using standard execution. No protected mode is active.')
               : t('Open Network settings to review the required setup.'),
           tone: 'warning'
         }

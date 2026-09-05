@@ -15,7 +15,7 @@ import type { NotebookRunInputFile } from '../../shared/notebook'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
 import { createLogger, errorLogFields } from '../logger'
 import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
-import type { SessionPersistenceCoordinator } from './coordinator'
+import type { SessionRuntimeContextCommands } from './coordinator'
 
 const log = createLogger('literature-reading-context')
 
@@ -28,10 +28,7 @@ type SessionPdfContextOwnerOptions = Readonly<{
   pendingUploads?: Readonly<{
     resolveContent: (request: { projectId: string; path: string }) => Promise<string>
   }>
-  sessions: Pick<
-    SessionPersistenceCoordinator,
-    'readSessionRuntimeContext' | 'patchSessionRuntimeContext'
-  >
+  sessions: SessionRuntimeContextCommands
 }>
 
 type SessionPdfContextLinkResult = Readonly<{

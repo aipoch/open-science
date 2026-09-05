@@ -338,7 +338,6 @@ const recoverContextOverflowWorkspaceSession = async (
   supportsImageInput?: boolean,
   cancelledSessionIds?: Set<string>,
   historyReplayDescriptor?: HistoryReplayDescriptor,
-  planContinuation?: SendWorkspaceMessageIntent['planContinuation'],
   agentTarget?: AcpSessionAgentTarget,
   supportsImageRelay?: boolean
 ): Promise<boolean> => {
@@ -430,21 +429,6 @@ const recoverContextOverflowWorkspaceSession = async (
   // replayed as a text preamble via forceHistoryReplay (session.messages was captured before removal).
   useSessionStore.getState().removeMessage(sessionId, interruptedTurn.id)
 
-  // Captured provenance proves that the interrupted turn was explicitly authorized. Durable status
-  // updates may have advanced the revision since admission, so refresh only the matching approved
-  // Artifact Version and strip the one-shot pending decision before retrying.
-  const activePlan = workspaceSession(sessionId)?.activePlanProjection
-  const retryPlanContinuation =
-    planContinuation &&
-    activePlan?.artifactVersionId === planContinuation.artifactVersionId &&
-    activePlan.approval === 'approved' &&
-    !['completed', 'rejected'].includes(activePlan.lifecycle)
-      ? {
-          artifactVersionId: activePlan.artifactVersionId,
-          revision: activePlan.revision
-        }
-      : planContinuation
-
   const retried = await sendWorkspaceMessage(retryRuntime, {
     sessionId,
     text: interruptedTurn.content,
@@ -475,8 +459,7 @@ const recoverContextOverflowWorkspaceSession = async (
           reasoningEffort: agentTarget.reasoningEffort
         }
       : session.agentConfiguration,
-    historyReplayDescriptor,
-    ...(retryPlanContinuation ? { planContinuation: retryPlanContinuation } : {})
+    historyReplayDescriptor
   })
 
   if (!retried) restoreRemovedTurnProjection(session)
@@ -557,17 +540,13 @@ const processContextOverflowRecovery = (
   }
 }
 
-// Own retry dedup, cooldown, cancellation and human-authorized Plan provenance across React renders.
+// Own retry dedup, cooldown, cancellation and admitted Agent targets across React renders.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- the object is the seam.
 const createWorkspaceRuntimeSessionLifecycleOwner = () => {
   const handledOverflowEventIds = new Set<string>()
   const overflowRecoveryCooldownSessionIds = new Set<string>()
   const activeOverflowRecoverySessionIds = new Set<string>()
   const cancelledOverflowRecoverySessionIds = new Set<string>()
-  const planContinuationBySessionId = new Map<
-    string,
-    NonNullable<SendWorkspaceMessageIntent['planContinuation']>
-  >()
   const memoryReconfigurationTails = new Map<string, Promise<void>>()
   const admittedAgentTargetBySessionId = new Map<string, AcpSessionAgentTarget>()
   const pruneAdmittedAgentTargets = (): void => {
@@ -578,18 +557,13 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
   }
 
   return {
-    recordPromptPlanAuthority(
-      input: Pick<SendWorkspaceMessageIntent, 'sessionId' | 'planContinuation'> & {
+    recordPromptAdmission(
+      input: Pick<SendWorkspaceMessageIntent, 'sessionId'> & {
         agentTarget?: AcpSessionAgentTarget
       }
     ): void {
       if (!input.sessionId) return
       pruneAdmittedAgentTargets()
-      if (input.planContinuation) {
-        planContinuationBySessionId.set(input.sessionId, input.planContinuation)
-      } else {
-        planContinuationBySessionId.delete(input.sessionId)
-      }
       if (input.agentTarget) {
         admittedAgentTargetBySessionId.set(input.sessionId, input.agentTarget)
       }
@@ -613,17 +587,15 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
         activeOverflowRecoverySessionIds,
         (recoveryRuntime, sessionId) => {
           cancelledOverflowRecoverySessionIds.delete(sessionId)
-          const planContinuation = planContinuationBySessionId.get(sessionId)
           return recoverContextOverflowWorkspaceSession(
             recoveryRuntime,
             sessionId,
             options.getSupportsImageInput(sessionId),
             cancelledOverflowRecoverySessionIds,
             options.getHistoryReplayDescriptor(sessionId),
-            planContinuation,
             admittedAgentTargetBySessionId.get(sessionId) ?? options.getAgentTarget(sessionId),
             options.supportsImageRelay
-          ).finally(() => planContinuationBySessionId.delete(sessionId))
+          )
         }
       )
     },

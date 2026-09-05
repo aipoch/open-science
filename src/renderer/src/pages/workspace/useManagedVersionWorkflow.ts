@@ -1,3 +1,4 @@
+import { useVersionHistoryPages } from './use-version-history-pages'
 import type { TFunction } from 'i18next'
 import {
   useCallback,
@@ -31,11 +32,14 @@ type ManagedVersionWorkflow = {
   startDiff: () => void
   stopDiff: () => void
   resetForVersionSelection: (preserveDiffMode: boolean) => void
+  history: ReturnType<typeof useVersionHistoryPages>
   refreshInspect: () => void
 }
 
 const isSourceTextVersion = (inspect: ManagedFileVersionInspectResult): boolean => {
-  const selected = inspect.versions.find((version) => version.id === inspect.selectedVersionId)
+  const selected =
+    inspect.selectedVersion ??
+    inspect.versions.find((version) => version.id === inspect.selectedVersionId)
   return selected !== undefined && !selected.basedOnVersionId && inspect.text !== undefined
 }
 
@@ -83,22 +87,55 @@ const useManagedVersionWorkflow = ({
     storedInspect.value.fileId === identity.fileId
       ? storedInspect.value
       : undefined
-  const navigationInspect =
+  const history = useVersionHistoryPages({
+    historyKey:
+      source + ':' + projectId + ':' + identity?.fileId + ':' + previousInspect?.headVersionId,
+    initial: inspect ?? previousInspect,
+    loadPage: async (cursor) => {
+      const result = await window.api.managedFileVersions.inspect({
+        ...identity!,
+        versionId: item.selectedVersionId ?? previousInspect?.selectedVersionId,
+        cursor
+      })
+      if (!result.ok) throw new Error(result.error.message)
+      return result.value
+    }
+  })
+  const pendingSelectedVersion = previousInspect
+    ? [
+        previousInspect.selectedVersion,
+        previousInspect.headVersion,
+        previousInspect.previousVersion,
+        previousInspect.nextVersion,
+        ...history.versions
+      ].find((version) => version?.id === item.selectedVersionId)
+    : undefined
+  const initialNavigationInspect =
     inspect ??
     (previousInspect &&
-    (!item.selectedVersionId ||
-      previousInspect.versions.some((version) => version.id === item.selectedVersionId))
-      ? item.selectedVersionId
-        ? { ...previousInspect, selectedVersionId: item.selectedVersionId }
-        : previousInspect
-      : undefined)
+    (!item.selectedVersionId || item.selectedVersionId === previousInspect.selectedVersionId)
+      ? previousInspect
+      : previousInspect && pendingSelectedVersion
+        ? {
+            ...previousInspect,
+            selectedVersionId: pendingSelectedVersion.id,
+            selectedVersion: pendingSelectedVersion,
+            previousVersion: undefined,
+            nextVersion: undefined
+          }
+        : undefined)
+  const navigationInspect = initialNavigationInspect
+    ? { ...initialNavigationInspect, versions: history.versions }
+    : undefined
   const controlsInspect = inspect ?? (mode === 'diff' ? navigationInspect : undefined)
-  const selectedDownloadVersion = navigationInspect?.versions.find(
-    (version) => version.id === navigationInspect.selectedVersionId
-  )
-  const latestDownloadVersion = navigationInspect?.versions.find(
-    (version) => version.id === navigationInspect.headVersionId
-  )
+  const selectedDownloadVersion =
+    navigationInspect?.selectedVersion ??
+    navigationInspect?.versions.find(
+      (version) => version.id === navigationInspect.selectedVersionId
+    )
+  const latestDownloadVersion =
+    navigationInspect?.headVersion ??
+    navigationInspect?.versions.find((version) => version.id === navigationInspect.headVersionId)
 
   const resetDiff = useCallback(
     (nextMode: SetStateAction<ManagedVersionMode>): void => {
@@ -183,6 +220,7 @@ const useManagedVersionWorkflow = ({
     stopDiff: () => resetDiff('view'),
     resetForVersionSelection: (preserveDiffMode: boolean) =>
       resetDiff(preserveDiffMode && mode === 'diff' ? 'diff' : 'view'),
+    history,
     refreshInspect: () => setRefresh((value) => value + 1)
   }
 }

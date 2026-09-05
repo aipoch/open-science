@@ -464,9 +464,9 @@ export class SkillBundleImportOwner {
       }
       seen.add(target)
     }
-    for (const left of seen) {
-      for (const right of seen) {
-        if (left !== right && right.startsWith(left + sep)) {
+    for (const target of seen) {
+      for (let parent = dirname(target); parent !== root; parent = dirname(parent)) {
+        if (seen.has(parent)) {
           throw new Error('Conflicting file and directory at the same path in skill import.')
         }
       }

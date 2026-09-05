@@ -219,7 +219,8 @@ describe('HomePage persistence recovery', () => {
       (button) => button.textContent?.trim() === 'Archive'
     )
     expect(archive?.disabled).toBe(true)
-    expect(archive?.title).toBe('Update Open Science before archiving this project.')
+    expect(archive?.title).toBe('')
+    expect(container.textContent).toContain('Update Open Science before archiving this project.')
   })
 
   it('maps a raced incomplete-catalog archive rejection to index repair guidance', async () => {

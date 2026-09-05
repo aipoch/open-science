@@ -32,7 +32,13 @@ const createOwner = (
     persistence: { deleteSession: deletePersisted },
     log
   })
-  return { owner, deleteRuntime, liveSessionProjectId, deletePersisted, log }
+  return {
+    owner,
+    deleteRuntime,
+    liveSessionProjectId,
+    deletePersisted,
+    log
+  }
 }
 
 describe('SessionDeletionOwner', () => {
@@ -83,6 +89,33 @@ describe('SessionDeletionOwner', () => {
       'Session runtime deletion failed',
       expect.objectContaining({ phase: 'delete-runtime', errorCategory: 'error' })
     )
+  })
+
+  it('leaves timeout ownership to runtime so pre-delete cleanup can finish safely', async () => {
+    vi.useFakeTimers()
+    try {
+      let finishRuntime: ((value: AcpStateSnapshot) => void) | undefined
+      const runtimeDeletion = new Promise<AcpStateSnapshot>((resolve) => {
+        finishRuntime = resolve
+      })
+      const { owner, deletePersisted } = createOwner({
+        deleteRuntime: vi.fn(() => runtimeDeletion)
+      })
+
+      const deletion = owner.delete(request)
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      await expect(
+        Promise.race([deletion, Promise.resolve('still-pending' as const)])
+      ).resolves.toBe('still-pending')
+      expect(deletePersisted).not.toHaveBeenCalled()
+
+      finishRuntime?.(snapshot([]))
+      await expect(deletion).resolves.toEqual({ status: 'deleted', runtimeDetached: true })
+      expect(deletePersisted).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not delete persistence while runtime state still contains the Session', async () => {

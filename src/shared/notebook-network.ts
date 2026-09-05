@@ -69,6 +69,7 @@ export const OPEN_SCIENCE_DOMAIN_GROUPS: readonly OpenScienceDomainGroup[] = Obj
       'anaconda.org',
       '*.anaconda.org',
       '*.conda.io',
+      ...AUTOMATIC_PACKAGE_MIRROR_DOMAINS,
       'cran.r-project.org',
       'cloud.r-project.org',
       'bioconductor.org',
@@ -304,3 +305,4 @@ export const buildNotebookNetworkPolicy = (
     deniedDomainReasons: {}
   }
 }
+import { AUTOMATIC_PACKAGE_MIRROR_DOMAINS } from './mirror'

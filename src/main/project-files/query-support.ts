@@ -147,8 +147,7 @@ const authoritativeCatalogCte = (projectIds: string[]): Prisma.Sql => {
     FROM "FileOriginSession" AS origin
     WHERE origin."projectId" IN (SELECT scope."projectId" FROM "CatalogProjectScope" AS scope)
       AND (
-        origin."state" <> 'active'
-        OR origin."deletedAt" IS NOT NULL
+        origin."state" = 'deleting'
         OR origin."deletionOperationId" IS NOT NULL
       )
   ),

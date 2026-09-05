@@ -39,10 +39,12 @@ import type { ResolvedReasoningEffort } from './reasoning-effort'
 import { sanitizeActivityGroupTitle } from './activity-groups'
 import { sanitizeElicitationProjection, type ElicitationProjection } from './elicitation'
 import {
+  derivePlanLifecycle,
   parsePlanDocumentV1,
   planStepTitles,
   projectPlanStepStates,
   type ActivePlanProjection,
+  type PlanDocumentV1,
   type PlanLifecycle
 } from './session-plan/contract'
 import {
@@ -320,10 +322,12 @@ export type SessionDelegatedWorkRuntimeContext = Readonly<{
 
 export type SessionPlanApproval = 'pending' | 'approved' | 'rejected'
 export type SessionPlanStepStatus = 'in_progress' | 'completed' | 'blocked' | 'skipped'
-export type SessionPlanContinuation = Readonly<{
+export type SessionPlanDelivery = Readonly<{
   commandId: string
   kind: 'approved-plan' | 'rejected-plan' | 'review-feedback'
-  state: 'queued' | 'continuing' | 'interrupted'
+  // `delivering` is a durable claim before provider acceptance has been observed. `accepted`
+  // records that boundary so restart recovery can settle instead of replaying the wakeup.
+  state: 'queued' | 'delivering' | 'accepted' | 'interrupted'
   originatingPromptMessageId: string
   createdAt: number
 }>
@@ -331,6 +335,9 @@ export type SessionPlanRuntimeContext = Readonly<{
   artifactId: string
   artifactVersionId: string
   artifactChecksum: string
+  // Verified immutable copy used to reconstruct Plan review/context while the originating Agent
+  // turn is parked and its provenance Artifact Version is still awaiting publication.
+  document?: PlanDocumentV1
   // The user Message whose Conversation Turn generated this Plan. Older persisted Plans may omit it.
   originatingPromptMessageId?: string
   // Durable causal boundary recorded after the Plan Artifact is verified and before approval begins.
@@ -339,7 +346,9 @@ export type SessionPlanRuntimeContext = Readonly<{
   // A persisted user Message that asks the Agent to revise or interpret this still-pending Plan.
   // It is neutral review input, not an approval decision.
   reviewFeedbackMessageId?: string
-  continuation?: SessionPlanContinuation
+  // One-shot approval or review-feedback handoff receipt. This is delivery state, not an execution
+  // capability, and never determines whether the Plan is active or updateable.
+  delivery?: SessionPlanDelivery
   stepStatuses: Readonly<
     Record<
       string,
@@ -777,8 +786,8 @@ export type PersistedChatSession = {
   // detached restored Session keeps it so the indicator survives an app restart.
   contextUsage?: AcpContextUsage
   runtimeContext?: SessionRuntimeContext
-  // Read-only UI history for branch-specific Plan discovery and exact-version previews. Main-owned
-  // execution authority remains exclusively in runtimeContext.plan.
+  // Read-only UI history for branch-specific Plan discovery and exact-version previews. The active
+  // mutable Plan remains exclusively in runtimeContext.plan.
   planHistoryProjections?: ActivePlanProjection[]
   messages: PersistedChatMessage[]
   // Session JSON v2 authority. Flat messages/activities remain an active-Branch compatibility view.
@@ -802,12 +811,41 @@ export type PersistedChatSession = {
   // unknown ACP-layer failure. Resolved once when the run fails and persisted so the "Report error"
   // gate survives a reload. Absent on older files — treated as reportable (the prior behavior).
   errorReportable?: boolean
+  // Identifies the artifact runtime event that owns the current finalization error. Historical
+  // Sessions omit it and retain the conservative replay-clearing behavior.
+  artifactErrorEventIds?: string[]
   artifacts?: PersistedArtifact[]
   // Incremented only when finalized file metadata changes; text streaming leaves it untouched.
   filesRevision?: number
   createdAt: number
   updatedAt: number
 }
+
+export type StageTaskSessionCompletionRequest = Readonly<{
+  projectId: string
+  sessionId: string
+  promptMessageId: string
+  message?: PersistedChatMessage
+  activities: readonly PersistedToolActivity[]
+  clearPendingHistoryReplay?: true
+  updatedAt: number
+}>
+
+export type SettleTaskSessionCompletionRequest = Readonly<{
+  projectId: string
+  sessionId: string
+  promptMessageId: string
+  taskRunCommitId: string
+  messageId?: string
+  artifacts: readonly PersistedArtifact[]
+  updatedAt: number
+}>
+
+export type FailTaskSessionRunRequest = SettleTaskSessionCompletionRequest &
+  Readonly<{
+    error: string
+    errorReportable?: false
+  }>
 
 // SQLite-backed startup projection. It intentionally excludes messages, activities, runtime
 // context, and artifact payloads; those remain in Session JSON and load only when opened.
@@ -915,6 +953,26 @@ export const isSessionRevisionConflictError = (
     'code' in error &&
     error.code === SESSION_REVISION_CONFLICT_ERROR_CODE) ||
   (error instanceof Error && error.message.includes('Session revision conflict:'))
+
+export class SessionConfigurationBusyError extends Error {
+  readonly code = 'session-configuration-busy' as const
+
+  constructor(readonly sessionId: string) {
+    super(`Session has active work: ${sessionId}`)
+    this.name = 'SessionConfigurationBusyError'
+  }
+}
+
+export const isSessionConfigurationBusyError = (
+  error: unknown
+): error is Readonly<{ code: SessionConfigurationBusyError['code']; message: string }> =>
+  error instanceof SessionConfigurationBusyError ||
+  (typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'session-configuration-busy' &&
+    'message' in error &&
+    typeof error.message === 'string')
 
 // Restored interrupted sessions carry this error verbatim; the renderer keys its resume banner off it.
 export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
@@ -1141,7 +1199,6 @@ const PLAN_LIFECYCLES = new Set<PlanLifecycle>([
   'awaiting_approval',
   'approved',
   'in_progress',
-  'interrupted',
   'blocked',
   'completed',
   'rejected'
@@ -1347,10 +1404,12 @@ const sanitizeSessionPlanRuntimeContext = (
           'artifactId',
           'artifactVersionId',
           'artifactChecksum',
+          'document',
           'originatingPromptMessageId',
           'materializedAt',
           'approval',
           'reviewFeedbackMessageId',
+          'delivery',
           'continuation',
           'stepStatuses'
         ].includes(field)
@@ -1362,6 +1421,14 @@ const sanitizeSessionPlanRuntimeContext = (
   const artifactId = asString(value.artifactId)
   const artifactVersionId = asString(value.artifactVersionId)
   const artifactChecksum = asString(value.artifactChecksum)
+  let document: PlanDocumentV1 | undefined
+  if (value.document !== undefined) {
+    try {
+      document = parsePlanDocumentV1(value.document)
+    } catch {
+      return undefined
+    }
+  }
   const originatingPromptMessageId =
     value.originatingPromptMessageId === undefined
       ? undefined
@@ -1413,34 +1480,35 @@ const sanitizeSessionPlanRuntimeContext = (
     })
   }
 
-  const rawContinuation = value.continuation
-  const continuation = (() => {
-    if (!isRecord(rawContinuation)) return undefined
+  const rawDelivery = Object.hasOwn(value, 'delivery') ? value.delivery : value.continuation
+  const delivery = (() => {
+    if (!isRecord(rawDelivery)) return undefined
     if (
-      Object.keys(rawContinuation).some(
+      Object.keys(rawDelivery).some(
         (field) =>
           !['commandId', 'kind', 'state', 'originatingPromptMessageId', 'createdAt'].includes(field)
       )
     ) {
       return undefined
     }
-    const commandId = asString(rawContinuation.commandId)
-    const continuationOriginatingPromptMessageId = asString(
-      rawContinuation.originatingPromptMessageId
-    )
-    const state: SessionPlanContinuation['state'] | undefined =
-      rawContinuation.state === 'queued' ||
-      rawContinuation.state === 'continuing' ||
-      rawContinuation.state === 'interrupted'
-        ? rawContinuation.state
+    const commandId = asString(rawDelivery.commandId)
+    const deliveryOriginatingPromptMessageId = asString(rawDelivery.originatingPromptMessageId)
+    const state: SessionPlanDelivery['state'] | undefined =
+      rawDelivery.state === 'queued' ||
+      rawDelivery.state === 'delivering' ||
+      rawDelivery.state === 'accepted' ||
+      rawDelivery.state === 'interrupted'
+        ? rawDelivery.state
+        : rawDelivery.state === 'continuing'
+          ? 'delivering'
+          : undefined
+    const kind: SessionPlanDelivery['kind'] | undefined =
+      rawDelivery.kind === 'approved-plan' ||
+      rawDelivery.kind === 'rejected-plan' ||
+      rawDelivery.kind === 'review-feedback'
+        ? rawDelivery.kind
         : undefined
-    const kind: SessionPlanContinuation['kind'] | undefined =
-      rawContinuation.kind === 'approved-plan' ||
-      rawContinuation.kind === 'rejected-plan' ||
-      rawContinuation.kind === 'review-feedback'
-        ? rawContinuation.kind
-        : undefined
-    const createdAt = asNumber(rawContinuation.createdAt)
+    const createdAt = asNumber(rawDelivery.createdAt)
     const kindMatchesApproval =
       (kind === 'approved-plan' && approval === 'approved') ||
       (kind === 'rejected-plan' && approval === 'rejected') ||
@@ -1452,8 +1520,8 @@ const sanitizeSessionPlanRuntimeContext = (
       !kind ||
       !state ||
       !commandId ||
-      !continuationOriginatingPromptMessageId ||
-      continuationOriginatingPromptMessageId !== expectedOriginatingMessageId ||
+      !deliveryOriginatingPromptMessageId ||
+      deliveryOriginatingPromptMessageId !== expectedOriginatingMessageId ||
       createdAt === undefined ||
       createdAt < 0
     ) {
@@ -1463,7 +1531,7 @@ const sanitizeSessionPlanRuntimeContext = (
       commandId,
       kind,
       state,
-      originatingPromptMessageId: continuationOriginatingPromptMessageId,
+      originatingPromptMessageId: deliveryOriginatingPromptMessageId,
       createdAt
     }
   })()
@@ -1472,11 +1540,12 @@ const sanitizeSessionPlanRuntimeContext = (
     artifactId,
     artifactVersionId,
     artifactChecksum,
+    ...(document ? { document } : {}),
     ...(originatingPromptMessageId ? { originatingPromptMessageId } : {}),
     ...(materializedAt !== undefined ? { materializedAt } : {}),
     approval,
     ...(reviewFeedbackMessageId ? { reviewFeedbackMessageId } : {}),
-    ...(continuation ? { continuation } : {}),
+    ...(delivery ? { delivery } : {}),
     stepStatuses
   }
 }
@@ -2619,7 +2688,7 @@ export const sanitizeSessionRuntimeContext = (
 }
 
 // Historical projections are presentation-only snapshots. Rebuild all derived fields from the
-// validated Plan document and statuses so persisted JSON cannot manufacture execution authority or
+// validated Plan document and statuses so persisted JSON cannot manufacture lifecycle state or
 // inconsistent counters. A prompt binding is mandatory because unbound history cannot be isolated
 // safely across Message Branches.
 const sanitizeHistoricalPlanProjection = (
@@ -2632,15 +2701,14 @@ const sanitizeHistoricalPlanProjection = (
 
   const originatingPromptMessageId = asString(sanitizedJson.originatingPromptMessageId)
   const revision = asNumber(sanitizedJson.revision)
-  const lifecycle = asString(sanitizedJson.lifecycle) as PlanLifecycle | undefined
+  const lifecycle = asString(sanitizedJson.lifecycle)
   if (
     !originatingPromptMessageId ||
     revision === undefined ||
     !Number.isSafeInteger(revision) ||
     revision < 0 ||
     !lifecycle ||
-    !PLAN_LIFECYCLES.has(lifecycle) ||
-    typeof sanitizedJson.requiresExplicitContinuation !== 'boolean'
+    (!PLAN_LIFECYCLES.has(lifecycle as PlanLifecycle) && lifecycle !== 'interrupted')
   ) {
     return undefined
   }
@@ -2671,8 +2739,7 @@ const sanitizeHistoricalPlanProjection = (
       originatingPromptMessageId,
       revision,
       approval: runtimePlan.approval,
-      lifecycle,
-      requiresExplicitContinuation: sanitizedJson.requiresExplicitContinuation,
+      lifecycle: derivePlanLifecycle(document, runtimePlan.approval, runtimePlan.stepStatuses),
       document,
       stepStatuses: runtimePlan.stepStatuses,
       stepStates: projectPlanStepStates(document, runtimePlan.stepStatuses),
@@ -2938,9 +3005,8 @@ const normalizeSessionAfterRestore = (
       : session
   }
 
-  // An approved Plan is durable execution authority, but its provider interaction is not. Restore
-  // the Session as idle so the Plan projection can ask for an explicit continuation without also
-  // presenting a generic runtime failure or implying that execution restarted on its own.
+  // An approved Plan remains durable work context after its provider interaction ends. Restore the
+  // Session as idle without presenting a generic runtime failure or implying that work restarted.
   if (session.runtimeContext?.plan?.approval === 'approved') {
     return {
       ...session,
@@ -3609,7 +3675,11 @@ const sanitizeMessage = (
   if (streamId) sanitized.streamId = streamId
   if (attribution) sanitized.attribution = attribution
   if (presentation) sanitized.presentation = presentation
-  if (responseToMessageId) sanitized.responseToMessageId = responseToMessageId
+  // Older application-routed user Messages could persist their own id as the response target.
+  // The edge carries no information, so canonicalize that known legacy shape on every read path.
+  if (responseToMessageId && (role !== 'user' || responseToMessageId !== id)) {
+    sanitized.responseToMessageId = responseToMessageId
+  }
   if (artifactIds.length > 0) sanitized.artifactIds = artifactIds
   if (delegatedTask) sanitized.delegatedTask = delegatedTask
   if (delegatedInputVersionIds.length > 0) {
@@ -4168,6 +4238,10 @@ const sanitizeSession = (
   if (error) sanitized.error = error
   // Only meaningful alongside an error; persisted only when explicitly false (absent = reportable).
   if (error && session.errorReportable === false) sanitized.errorReportable = false
+  const artifactErrorEventIds = [...new Set(asStringArray(session.artifactErrorEventIds))]
+  if (error?.startsWith('Generated file finalization') && artifactErrorEventIds.length > 0) {
+    sanitized.artifactErrorEventIds = artifactErrorEventIds
+  }
   if (agentFrameworkId && AGENT_FRAMEWORK_IDS.has(agentFrameworkId)) {
     sanitized.agentFrameworkId = agentFrameworkId
   }
@@ -4217,8 +4291,8 @@ const sanitizeSession = (
     sanitized.status === 'waiting-plan-approval' &&
     runtimeContext?.plan?.approval !== 'pending'
   ) {
-    // Approval waiting is meaningful only with restorable main-owned Plan authority. A corrupt or
-    // settled context must not leave the conversation permanently blocked with nothing to approve.
+    // Approval waiting is meaningful only with a restorable pending Plan. A corrupt or settled
+    // context must not leave the conversation permanently blocked with nothing to approve.
     sanitized.status = 'idle'
     sanitized.activeRun = undefined
   }
@@ -4708,6 +4782,20 @@ const saveSessionArgsCodec: RuntimeCodec<
   }
 })
 
+const updateSessionConfigurationArgsCodec: RuntimeCodec<
+  readonly [session: PersistedChatSession, expectedRevision: number]
+> = Object.freeze({
+  parse: (value) => {
+    if (!Array.isArray(value) || value.length !== 2) {
+      throw new Error('Invalid Session configuration update arguments.')
+    }
+    return [
+      persistedChatSessionCodec.parse(value[0]),
+      z.number().int().nonnegative().parse(value[1])
+    ]
+  }
+})
+
 // Runtime-validated contracts for Electron-facing Session commands. Request schemas double as wire
 // types, while Session-bearing commands share the recursive persistence codec above.
 export const sessionApplicationCommandContracts = Object.freeze({
@@ -4740,6 +4828,10 @@ export const sessionApplicationCommandContracts = Object.freeze({
     persistedChatSessionCodec
   ),
   save: defineApplicationCommandContract(saveSessionArgsCodec, persistedChatSessionCodec),
+  updateConfiguration: defineApplicationCommandContract(
+    updateSessionConfigurationArgsCodec,
+    persistedChatSessionCodec
+  ),
   editDetails: defineApplicationCommandContract(
     validationCodec(z.tuple([editSessionDetailsRequestSchema])),
     persistedChatSessionCodec

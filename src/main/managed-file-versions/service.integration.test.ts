@@ -149,6 +149,98 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
   }
 
   it.each(['artifact', 'upload'] as const)(
+    'bounds the initial %s history response for a frequently edited file',
+    async (source) => {
+      const fixture = await createFixture(source)
+      const totalVersions = 202
+      const numbers = Array.from({ length: totalVersions - 2 }, (_, index) => index + 3)
+      const latestId = `${source}-v${totalVersions}`
+      const key = (number: number): string =>
+        `${source}s/project-1/session-1/${fixture.fileId}/versions/${source}-v${number}/content`
+      if (source === 'artifact') {
+        const template = await client.artifactVersion.findUniqueOrThrow({
+          where: { id: fixture.versionIds[1] }
+        })
+        await client.artifactVersion.createMany({
+          data: numbers.map((versionNumber) => ({
+            ...template,
+            id: `${source}-v${versionNumber}`,
+            versionNumber,
+            basedOnVersionId: `${source}-v${versionNumber - 1}`,
+            contentStorageKey: key(versionNumber)
+          }))
+        })
+        await client.artifactLineage.update({
+          where: { id: fixture.fileId },
+          data: { currentVersionId: latestId }
+        })
+      } else {
+        const template = await client.uploadVersion.findUniqueOrThrow({
+          where: { id: fixture.versionIds[1] }
+        })
+        await client.uploadVersion.createMany({
+          data: numbers.map((versionNumber) => ({
+            ...template,
+            id: `${source}-v${versionNumber}`,
+            versionNumber,
+            basedOnVersionId: `${source}-v${versionNumber - 1}`,
+            contentStorageKey: key(versionNumber)
+          }))
+        })
+        await client.uploadFile.update({
+          where: { id: fixture.fileId },
+          data: { currentVersionId: latestId }
+        })
+      }
+      // Only the selected head is read; older immutable content is not needed to list metadata.
+      const latestPath = join(storageRoot, ...key(totalVersions).split('/'))
+      await mkdir(dirname(latestPath), { recursive: true })
+      await writeFile(latestPath, 'second\n')
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const result = await service.inspect({
+        source,
+        projectId: 'project-1',
+        fileId: fixture.fileId
+      })
+      expect(result.selectedVersionId).toBe(latestId)
+      expect(result.text).toBe('second\n')
+      expect(result.versions.some((version) => version.id === latestId)).toBe(true)
+      expect(result.versions).toHaveLength(50)
+      const versionIds = result.versions.map((version) => version.id)
+      let cursor = result.nextCursor
+      while (cursor) {
+        const page = await service.inspect({
+          source,
+          projectId: 'project-1',
+          fileId: fixture.fileId,
+          versionId: fixture.versionIds[0],
+          cursor
+        })
+        expect(page.versions.length).toBeLessThanOrEqual(50)
+        expect(page.selectedVersion?.id).toBe(fixture.versionIds[0])
+        expect(page.headVersion?.id).toBe(latestId)
+        expect(page.nextVersion?.id).toBe(fixture.versionIds[1])
+        expect(page.previousVersion).toBeUndefined()
+        versionIds.push(...page.versions.map((version) => version.id))
+        cursor = page.nextCursor
+      }
+      expect(versionIds).toHaveLength(totalVersions)
+      expect(new Set(versionIds).size).toBe(totalVersions)
+      await expect(
+        service.inspect({
+          source,
+          projectId: 'project-1',
+          fileId: fixture.fileId,
+          cursor: 'invalid'
+        })
+      ).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    }
+  )
+
+  it.each(['artifact', 'upload'] as const)(
     'resolves the %s DB head by default and an explicit owned historical version exactly',
     async (source) => {
       const fixture = await createFixture(source)
@@ -273,7 +365,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
   )
 
   it.each(['artifact', 'upload'] as const)(
-    'restores all readable %s history when its Session is restored',
+    'keeps all %s history readable but immutable after its Session is deleted',
     async (source) => {
       const fixture = await createFixture(source)
       const service = new ManagedFileVersionService({
@@ -308,19 +400,38 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         }
       })
 
-      await expect(service.openLatest(identity)).rejects.toMatchObject({ code: 'FILE_DELETED' })
-      await expect(readCurrentVersionId()).resolves.toBe(fixture.versionIds[1])
-
-      await client.fileOriginSession.update({
-        where: { projectId_sessionId: { projectId: 'project-1', sessionId: 'session-1' } },
-        data: { state: 'active', deletedAt: null, deletionOperationId: null }
-      })
-      const restored = await service.openVersion(identity, fixture.versionIds[0])
+      const latest = await service.openLatest(identity)
       try {
-        expect(restored.version.id).toBe(fixture.versionIds[0])
+        await expect(latest.readRange(0, latest.size)).resolves.toEqual(
+          new Uint8Array(Buffer.from('second\n'))
+        )
+        expect(latest.version.id).toBe(fixture.versionIds[1])
       } finally {
-        await restored.close()
+        await latest.close()
       }
+
+      const historical = await service.openVersion(identity, fixture.versionIds[0])
+      try {
+        expect(historical.version.id).toBe(fixture.versionIds[0])
+      } finally {
+        await historical.close()
+      }
+
+      await expect(service.inspect(identity)).resolves.toMatchObject({
+        headVersionId: fixture.versionIds[1],
+        selectedVersionId: fixture.versionIds[1],
+        canEdit: false,
+        unavailableReason: 'FILE_DELETED'
+      })
+      await expect(
+        service.saveTextEdit({
+          ...identity,
+          basedOnVersionId: fixture.versionIds[1],
+          expectedHeadVersionId: fixture.versionIds[1],
+          content: 'third\n',
+          operationId: `${source}-deleted-edit`
+        })
+      ).rejects.toMatchObject({ code: 'FILE_DELETED' })
       await expect(readCurrentVersionId()).resolves.toBe(fixture.versionIds[1])
     }
   )
@@ -2845,12 +2956,18 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       where: { id: fixture.versionIds[1] },
       data: { contentType: 'video/mp4' }
     })
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const openImmutable = vi.spyOn(versionFileOperator, 'openImmutable')
     const service = new ManagedFileVersionService({
       storageRoot,
-      getClient: () => Promise.resolve(client)
+      getClient: () => Promise.resolve(client),
+      versionFileOperator
     })
 
     await expect(service.auditActiveVersionIntegrity()).resolves.toEqual([])
+    expect(openImmutable).toHaveBeenCalledWith(expect.any(String), expect.any(Object), {
+      forceVerify: true
+    })
   })
 
   describe('openUnpublishedVersion', () => {

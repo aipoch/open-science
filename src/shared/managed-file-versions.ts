@@ -68,6 +68,11 @@ type ManagedFileVersionInspectResult = {
   headVersionId: string
   selectedVersionId: string
   versions: ManagedFileVersionDescriptor[]
+  nextCursor?: string
+  selectedVersion?: ManagedFileVersionDescriptor
+  headVersion?: ManagedFileVersionDescriptor
+  previousVersion?: ManagedFileVersionDescriptor
+  nextVersion?: ManagedFileVersionDescriptor
   canEdit: boolean
   canDiff: boolean
   unavailableReason?: ManagedTextEditUnavailableReason | 'PROJECT_NOT_WRITABLE' | 'FILE_DELETED'
@@ -106,7 +111,10 @@ type ManagedFileVersionErrorShape = {
 type ManagedFileVersionIpcResult<Value> =
   { ok: true; value: Value } | { ok: false; error: ManagedFileVersionErrorShape }
 
-type ManagedFileVersionInspectRequest = ManagedFileIdentity & { versionId?: string }
+type ManagedFileVersionInspectRequest = ManagedFileIdentity & {
+  versionId?: string
+  cursor?: string
+}
 type ManagedFileVersionDiffRequest = ManagedFileIdentity & { versionId: string; requestId: string }
 type ManagedFileVersionCancelDiffRequest = { requestId: string }
 

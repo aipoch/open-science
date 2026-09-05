@@ -7,8 +7,7 @@ import {
   CardContent,
   CardDescription,
   CardFooter,
-  CardHeader,
-  CardTitle
+  CardHeader
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
@@ -39,7 +38,9 @@ const EnvironmentStep = ({ onContinue }: EnvironmentStepProps): React.JSX.Elemen
   return (
     <>
       <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
-        <CardTitle className="text-[15px] font-semibold">{t('Prepare environment')}</CardTitle>
+        <h2 tabIndex={-1} className="text-[15px] font-semibold">
+          {t('Prepare environment')}
+        </h2>
         {/* Re-check lives on the title row (the setup card's own intro row is hidden via hideIntro),
             so the step header and the checklist read as one surface. */}
         <CardAction>

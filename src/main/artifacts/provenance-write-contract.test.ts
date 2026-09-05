@@ -94,6 +94,10 @@ type ExactMethodInventory = [PublicMethod] extends [ListedMethod]
   : false
 const exactMethodInventory: ExactMethodInventory = true
 
+// Hosted Windows runners rebuild the application schema under disk contention.
+// The Windows full-test workflow default is 60s; write-identity suites finish later without hanging.
+const WINDOWS_SQLITE_TEST_TIMEOUT_MS = 120_000
+
 describe('artifact provenance public write contract', () => {
   it('captures constructor, method, and runtime value exports without private placement', async () => {
     const { repository } = await fixture()
@@ -162,26 +166,30 @@ describe('artifact provenance allocation and write identity', () => {
     }
   })
 
-  it('returns the original immutable Version for an exact operation retry and rejects reuse', async () => {
-    const { client, repository, stagePng } = await fixture()
-    const request = createArtifactVersionRequest({
-      writeOperationId: 'stable-operation',
-      writeRequestChecksum: '3'.repeat(64)
-    })
-    await stagePng('original bytes')
-    const first = await repository.createVersion(request)
-    await stagePng('changed pending bytes')
+  it(
+    'returns the original immutable Version for an exact operation retry and rejects reuse',
+    async () => {
+      const { client, repository, stagePng } = await fixture()
+      const request = createArtifactVersionRequest({
+        writeOperationId: 'stable-operation',
+        writeRequestChecksum: '3'.repeat(64)
+      })
+      await stagePng('original bytes')
+      const first = await repository.createVersion(request)
+      await stagePng('changed pending bytes')
 
-    const retried = await repository.createVersion(request)
+      const retried = await repository.createVersion(request)
 
-    expect(retried).toMatchObject({ versionId: first.versionId, versionNumber: 1 })
-    await expect(readFile(retried.path)).resolves.toEqual(createPngBytes('original bytes'))
-    await expect(client.artifactVersion.count()).resolves.toBe(1)
-    await expect(
-      repository.createVersion({ ...request, writeRequestChecksum: '4'.repeat(64) })
-    ).rejects.toThrow(/write operation.*different request/i)
-    await expect(client.artifactVersion.count()).resolves.toBe(1)
-  })
+      expect(retried).toMatchObject({ versionId: first.versionId, versionNumber: 1 })
+      await expect(readFile(retried.path)).resolves.toEqual(createPngBytes('original bytes'))
+      await expect(client.artifactVersion.count()).resolves.toBe(1)
+      await expect(
+        repository.createVersion({ ...request, writeRequestChecksum: '4'.repeat(64) })
+      ).rejects.toThrow(/write operation.*different request/i)
+      await expect(client.artifactVersion.count()).resolves.toBe(1)
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
 
   it('diffs a generated text Version against its published or same-run predecessor', async () => {
     const value = await fixture()

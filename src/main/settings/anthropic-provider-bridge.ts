@@ -55,6 +55,7 @@ export type AnthropicProviderBridgeTarget = Readonly<{
   baseUrl: string
   key?: string
   model: string
+  backgroundModel?: string
   useApiKeyHeader?: boolean
 }>
 
@@ -189,7 +190,12 @@ export class AnthropicProviderBridge {
     const parsed = await request.readJsonObject()
 
     const target = this.target
-    const body = JSON.stringify({ ...parsed, model: target.model })
+    const requestedModel = typeof parsed.model === 'string' ? parsed.model : undefined
+    const model =
+      target.backgroundModel !== undefined && requestedModel === target.backgroundModel
+        ? requestedModel
+        : target.model
+    const body = JSON.stringify({ ...parsed, model })
     const headersToForward = requestHeaders(request, target.key, target.useApiKeyHeader)
     const replayKey = providerRequestFingerprint(
       target.id,

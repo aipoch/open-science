@@ -4,13 +4,7 @@ import { useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import {
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle
-} from '@/components/ui/card'
+import { CardContent, CardDescription, CardFooter, CardHeader } from '@/components/ui/card'
 import {
   dialogBodyClassName,
   dialogCloseButtonClassName,
@@ -170,9 +164,9 @@ const LocationStep = ({
   return (
     <>
       <CardHeader className="gap-1 rounded-t-lg px-4 py-5 sm:px-6">
-        <CardTitle className="text-[15px] font-semibold">
+        <h2 tabIndex={-1} className="text-[15px] font-semibold">
           {t('Where should Open Science store your data?')}
-        </CardTitle>
+        </h2>
         <CardDescription className="text-xs leading-5">
           {t(
             'Large files (artifacts, notebooks, environments) go here. Your settings and history always stay in the default location. You can change this later in Settings.'
@@ -219,7 +213,7 @@ const LocationStep = ({
           ) : null}
 
           <div className="rounded-xl border border-border-200 p-4">
-            <span className="text-xs font-medium text-text-100">{t('Location')}</span>
+            <span className="text-xs font-medium text-text-000">{t('Location')}</span>
             <div className="mt-1 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
               <p
                 aria-label={t('Data location path')}

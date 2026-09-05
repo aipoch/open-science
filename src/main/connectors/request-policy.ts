@@ -8,9 +8,14 @@ export const connectorRetryDelay = (
   retryAfter: string | null,
   baseMs = 400
 ): number => {
-  const retryAfterSeconds = retryAfter ? Number(retryAfter) : Number.NaN
-  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0) {
-    return Math.min(retryAfterSeconds * 1_000, 5_000)
+  const value = retryAfter?.trim()
+  if (value && /^\d+$/.test(value)) {
+    // Keep even very long waits: the caller checks its remaining budget before scheduling.
+    return Number(value) * 1_000
+  }
+  if (value && /[a-z]/i.test(value)) {
+    const retryAt = Date.parse(value)
+    if (Number.isFinite(retryAt)) return Math.max(0, retryAt - Date.now())
   }
   return boundedExponentialBackoff(attempt, baseMs) + Math.random() * baseMs
 }

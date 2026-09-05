@@ -140,6 +140,8 @@ export type GetArtifactLineageRequest = {
   projectId: string
   appSessionId: string
   artifactId: string
+  versionId?: string
+  cursor?: string
 }
 
 export type GetArtifactVersionProvenanceRequest = GetArtifactLineageRequest & {
@@ -197,6 +199,12 @@ export type ArtifactLineageProvenance = {
     deletedAt?: string
   }
   versions: ArtifactVersionDescriptor[]
+  nextCursor?: string
+  selectedVersion?: ArtifactVersionDescriptor
+  headVersion?: ArtifactVersionDescriptor
+  basedOnVersion?: ArtifactVersionDescriptor
+  previousVersion?: ArtifactVersionDescriptor
+  nextVersion?: ArtifactVersionDescriptor
 }
 
 type ArtifactEnvironmentUnavailableReason = Extract<

@@ -369,6 +369,36 @@ const constructionSites = (className: string): string[] => {
   return sites.sort()
 }
 
+const concreteCoordinatorConsumerFiles = (): string[] =>
+  findTypeScriptFiles(resolve(projectRoot, 'src/main'))
+    .filter((path) => !path.endsWith('/session-persistence/coordinator.ts'))
+    .filter((path) => path !== resolve(projectRoot, 'src/main/ipc.ts'))
+    .filter((path) => {
+      const sourceFile = createSourceFile(
+        path,
+        readFileSync(path, 'utf8'),
+        ScriptTarget.Latest,
+        true,
+        ScriptKind.TS
+      )
+      return sourceFile.statements.filter(isImportDeclaration).some((statement) => {
+        if (!isStringLiteralLike(statement.moduleSpecifier)) return false
+        const importedPath = resolve(path, '..', statement.moduleSpecifier.text)
+        if (importedPath !== resolve(__dirname, 'coordinator')) return false
+        const bindings = statement.importClause?.namedBindings
+        return (
+          bindings !== undefined &&
+          isNamedImports(bindings) &&
+          bindings.elements.some(
+            (element) =>
+              (element.propertyName ?? element.name).text === 'SessionPersistenceCoordinator'
+          )
+        )
+      })
+    })
+    .map((path) => relative(projectRoot, path).split(sep).join('/'))
+    .sort()
+
 type ModuleImpactManifest = {
   modules: Record<
     string,
@@ -429,6 +459,7 @@ describe('Session persistence coordinator architecture', () => {
         'createChildren',
         'deleteProjectSessions',
         'deleteSession',
+        'failTaskRun',
         'getProjectSessionDeletionState',
         'listLegacyProjectSessionTombstones',
         'loadAll',
@@ -458,6 +489,8 @@ describe('Session persistence coordinator architecture', () => {
         'setSessionDeletionHandlers',
         'setSessionEnabledComputeHosts',
         'settleMessage',
+        'settleTaskCompletion',
+        'stageTaskCompletion',
         'startAttemptRuntime',
         'startContinuationAttempt',
         'startMessageDispatch',
@@ -465,6 +498,7 @@ describe('Session persistence coordinator architecture', () => {
         'submitStructuredOutput',
         'transitionAttempt',
         'updateArchive',
+        'updateSessionConfiguration',
         'updateQuestionDraft'
       ].sort()
     )
@@ -502,16 +536,25 @@ describe('Session persistence coordinator architecture', () => {
     expect(exportedNames(facadeFile, 'type')).toEqual(
       [
         'ComputeJobDeletionParticipant',
+        'DelegatedWorkRecordCommands',
         'PatchSessionRuntimeContextCommand',
         'ProjectSessionDeletionResult',
+        'SessionCatalog',
+        'SessionDeletion',
         'SessionDeletionHandlers',
         'SessionFileIndex',
         'SessionMetadata',
         'SessionMetadataSnapshot',
+        'SessionMutation',
         'SessionMutationRepository',
-        'SessionProvenancePersistence'
+        'SessionProvenancePersistence',
+        'SessionRuntimeContextCommands'
       ].sort()
     )
+  })
+
+  it('keeps production consumers on named capability views', () => {
+    expect(concreteCoordinatorConsumerFiles()).toEqual([])
   })
 
   it('composes each owner once and keeps mutable state with its sole owner', () => {
@@ -664,6 +707,7 @@ describe('Session persistence coordinator architecture', () => {
         'clearSideChat',
         'commitSideChatRelays',
         'containsMessageOnActiveBranch',
+        'failTaskRun',
         'loadSessionForContinuation',
         'mutateSessionComputeHostAccess',
         'mutateSessionDetailsAuthority',
@@ -675,8 +719,11 @@ describe('Session persistence coordinator architecture', () => {
         'saveSessionSpecialistBinding',
         'saveSideChatProjection',
         'setSessionComputeConcurrencyLimit',
+        'settleTaskCompletion',
+        'stageTaskCompletion',
         'setSessionDelegationPolicy',
         'setSessionEnabledComputeHosts',
+        'updateSessionConfiguration',
         'updateArchive'
       ],
       runSessionThenGlobalIfNeeded: ['deleteSession'],
@@ -731,7 +778,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(36)
+    expect(expectedSchedulerRoute.size).toBe(40)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
@@ -861,6 +908,7 @@ describe('Session persistence coordinator architecture', () => {
         'appendUserMessage',
         'beginHydration',
         'containsMessageOnActiveBranch',
+        'failTaskRun',
         'invalidateBindingTopology',
         'markMetadataIncomplete',
         'metadataSnapshot',
@@ -877,11 +925,20 @@ describe('Session persistence coordinator architecture', () => {
         'sessionProjectId',
         'setComputeConcurrencyLimit',
         'setDelegationPolicy',
-        'setEnabledComputeHosts'
+        'setEnabledComputeHosts',
+        'settleTaskCompletion',
+        'stageTaskCompletion',
+        'updateSessionConfiguration'
       ].sort()
     )
     expect(methods(stateOwner, 'private')).toEqual(
-      ['loadRuntimeContextSession', 'saveSessionWithAuthority'].sort()
+      [
+        'loadRuntimeContextSession',
+        'loadTaskRunAuthority',
+        'persistTaskSession',
+        'persistTaskTerminalState',
+        'saveSessionWithAuthority'
+      ].sort()
     )
     expect(methods(deletionOwner, 'public')).toEqual(
       [
@@ -951,6 +1008,7 @@ describe('Session persistence coordinator architecture', () => {
         'deletionOwner.reconcileSessionDeletion',
         'stateOwner.metadataSnapshot'
       ],
+      failTaskRun: ['stateOwner.failTaskRun'],
       getProjectSessionDeletionState: ['deletionOwner.getProjectSessionDeletionState'],
       listLegacyProjectSessionTombstones: ['deletionOwner.listLegacyProjectSessionTombstones'],
       loadPersistedSideChats: ['sideChatOwner.loadCatalog'],
@@ -971,6 +1029,8 @@ describe('Session persistence coordinator architecture', () => {
       readChildren: ['delegatedWorkOwner.readChildren'],
       recoverInterruptedDelegatedWork: ['delegatedWorkOwner.recoverInterruptedDelegatedWork'],
       settleMessage: ['delegatedWorkOwner.settleMessage'],
+      settleTaskCompletion: ['stateOwner.settleTaskCompletion'],
+      stageTaskCompletion: ['stateOwner.stageTaskCompletion'],
       startMessageDispatch: ['delegatedWorkOwner.startMessageDispatch'],
       startPendingMessageTurn: ['delegatedWorkOwner.startPendingMessageTurn'],
       updateArchive: ['deletionOwner.updateArchive']
@@ -1036,7 +1096,7 @@ describe('Session persistence coordinator architecture', () => {
     expect(sessionPersistence.interfacePaths).toEqual([
       'src/main/session-persistence/coordinator.ts'
     ])
-    expect(sessionPersistence.consumerModules).toEqual([])
+    expect(sessionPersistence.consumerModules).toEqual(['project_lifecycle'])
     expect(sessionPersistence.testFiles.owner).toEqual([
       'src/main/session-persistence/coordinator.architecture.test.ts',
       'src/main/session-persistence/coordinator.test.ts',
@@ -1044,7 +1104,8 @@ describe('Session persistence coordinator architecture', () => {
     ])
     expect(sessionPersistence.testFiles.contract).toEqual([
       'src/shared/session-persistence.test.ts',
-      'src/main/session-persistence/coordinator-contract.test.ts'
+      'src/main/session-persistence/coordinator-contract.test.ts',
+      'src/main/session-persistence/ipc.test.ts'
     ])
     expect(sessionPersistence.testFiles.consumer).toEqual([
       'src/main/delegation/durable-delegated-work.test.ts',

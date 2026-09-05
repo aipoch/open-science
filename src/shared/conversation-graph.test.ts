@@ -67,6 +67,41 @@ const graphWithActivityGroup = (): ReturnType<typeof synchronizeActiveConversati
     ]
   )
 
+const graphWithChildFrame = (): ReturnType<typeof createLinearConversationGraph> => {
+  const graph = createLinearConversationGraph({
+    sessionId: 'session-1',
+    messages: [message('u1', 'user', 'question', 1), message('a1', 'agent', 'answer', 2)],
+    frameworkId: 'claude-code',
+    createdAt: 1,
+    updatedAt: 2
+  })
+  graph.frames.push({
+    id: 'child-frame',
+    parentFrameId: graph.rootFrameId,
+    originMessageId: 'u1',
+    originBindingState: 'validated',
+    kind: 'delegate',
+    status: 'completed',
+    activeBranchId: 'child-branch',
+    createdAt: 3,
+    completedAt: 4
+  })
+  graph.branches.push({
+    id: 'child-branch',
+    agentFrameId: 'child-frame',
+    headMessageId: 'child-u1',
+    createdAt: 3,
+    updatedAt: 4
+  })
+  graph.messages.push({
+    ...message('child-u1', 'user', 'delegated question', 3),
+    agentFrameId: 'child-frame',
+    introducedOnBranchId: 'child-branch',
+    revisionRootMessageId: 'child-u1'
+  })
+  return graph
+}
+
 describe('conversation graph', () => {
   it('forks an edited user Message without deleting the original downstream path', () => {
     const originalMessages = [
@@ -710,6 +745,157 @@ describe('conversation graph', () => {
     })
 
     expect(() => validateConversationGraph(graph)).toThrow(/Non-root Agent Frame is invalid/)
+  })
+
+  it.each([
+    {
+      relationship: 'validated Frame without an origin Message',
+      mutate: (graph: ReturnType<typeof graphWithChildFrame>) => {
+        delete graph.frames[1].originMessageId
+      }
+    },
+    {
+      relationship: 'validated Frame origin outside its parent Frame',
+      mutate: (graph: ReturnType<typeof graphWithChildFrame>) => {
+        graph.frames[1].originMessageId = 'child-u1'
+      }
+    },
+    {
+      relationship: 'legacy-unavailable Frame carrying an origin Message',
+      mutate: (graph: ReturnType<typeof graphWithChildFrame>) => {
+        graph.frames[1].originBindingState = 'legacy-unavailable'
+      }
+    }
+  ])('rejects a $relationship', ({ mutate }) => {
+    const graph = graphWithChildFrame()
+    mutate(graph)
+
+    expect(() => validateConversationGraph(graph)).toThrow(/Agent Frame origin Message is invalid/)
+  })
+
+  it('rejects an active child Frame whose origin is hidden on its parent current Branch', () => {
+    const graph = graphWithChildFrame()
+    const originalBranchId = graph.branches[0].id
+    graph.activeFrameId = graph.rootFrameId
+    const edited = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(graph, 'u1', 'branch-edited', 5),
+      [message('u2', 'user', 'revision', 5), message('a2', 'agent', 'new answer', 6)],
+      6
+    )
+    expect(() => validateConversationGraph(edited)).not.toThrow()
+    edited.activeFrameId = 'child-frame'
+
+    expect(edited.frames[0].activeBranchId).not.toBe(originalBranchId)
+    expect(() => validateConversationGraph(edited)).toThrow(
+      /Active Agent Frame origin is not on its parent current Branch/
+    )
+  })
+
+  it('rejects responseToMessageId outside the response Message path', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [message('u1', 'user', 'question', 1), message('a1', 'agent', 'answer', 2)],
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const edited = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(graph, 'u1', 'branch-edited', 3),
+      [
+        message('u2', 'user', 'edited question', 3),
+        { ...message('a2', 'agent', 'edited answer', 4), responseToMessageId: 'u2' }
+      ],
+      4
+    )
+    edited.messages.find(({ id }) => id === 'a2')!.responseToMessageId = 'u1'
+
+    expect(() => validateConversationGraph(edited)).toThrow(/Message response target is invalid/)
+  })
+
+  it('accepts routed user Messages linked to an earlier user or Agent Message on the same path', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [
+        message('u1', 'user', 'question', 1),
+        { ...message('a1', 'agent', 'choose an option', 2), responseToMessageId: 'u1' },
+        { ...message('u2', 'user', 'option one', 3), responseToMessageId: 'a1' },
+        { ...message('u3', 'user', 'additional context', 4), responseToMessageId: 'u1' }
+      ],
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 4
+    })
+
+    expect(() => validateConversationGraph(graph)).not.toThrow()
+  })
+
+  it('rejects an Agent response linked to another Agent Message', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [
+        message('u1', 'user', 'question', 1),
+        { ...message('a1', 'agent', 'first part', 2), responseToMessageId: 'u1' },
+        { ...message('a2', 'agent', 'second part', 3), responseToMessageId: 'a1' }
+      ],
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 3
+    })
+
+    expect(() => validateConversationGraph(graph)).toThrow(/Message response target is invalid/)
+  })
+
+  it('rejects revisionRootMessageId that does not identify a user Message', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [message('u1', 'user', 'question', 1), message('a1', 'agent', 'answer', 2)],
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 2
+    })
+    graph.messages[0].revisionRootMessageId = 'a1'
+
+    expect(() => validateConversationGraph(graph)).toThrow(/Message revision root is invalid/)
+  })
+
+  it('rejects an unrelated same-Frame revision root for an ordinary user Message', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [
+        message('u1', 'user', 'first question', 1),
+        message('a1', 'agent', 'first answer', 2),
+        message('u2', 'user', 'second question', 3)
+      ],
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 3
+    })
+    graph.messages.find(({ id }) => id === 'u2')!.revisionRootMessageId = 'u1'
+
+    expect(() => validateConversationGraph(graph)).toThrow(/Message revision root is invalid/)
+  })
+
+  it('rejects Branch and Message revision links from different chains', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [
+        message('u1', 'user', 'first question', 1),
+        message('a1', 'agent', 'first answer', 2),
+        message('u2', 'user', 'second question', 3),
+        message('a2', 'agent', 'second answer', 4)
+      ],
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 4
+    })
+    const edited = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(graph, 'u2', 'branch-edited', 5),
+      [message('u3', 'user', 'edited second question', 5)],
+      5
+    )
+    edited.branches.find(({ id }) => id === 'branch-edited')!.supersededMessageId = 'u1'
+
+    expect(() => validateConversationGraph(edited)).toThrow(/Message revision chain is invalid/)
   })
 
   it('rejects an Activity fork that is not on the Branch path', () => {

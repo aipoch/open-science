@@ -191,7 +191,7 @@ const createNotebookEnvironmentLifecycle = (
       logStartupGateFailure(error)
       deps.projectProgress({
         phase: 'error',
-        message: `Environment preparation failed: ${(error as Error).message}`,
+        diagnostic: `Environment preparation failed: ${(error as Error).message}`,
         progress: 0
       })
     }

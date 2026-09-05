@@ -268,22 +268,47 @@ export const projectPermissionCleared = (
 export const projectArtifactError = (
   session: ChatSession,
   error: string,
-  retryable = true
-): ChatSession => ({
-  ...session,
-  status: 'error',
-  error: `${retryable ? ARTIFACT_ERROR_PREFIX : TERMINAL_ARTIFACT_ERROR_PREFIX}: ${error}`,
-  errorReportable: true,
-  updatedAt: Date.now()
-})
+  retryable = true,
+  eventId?: string
+): ChatSession => {
+  const artifactErrorEventIds = eventId
+    ? [
+        ...new Set([
+          ...(isArtifactFinalizationError(session.error)
+            ? (session.artifactErrorEventIds ?? [])
+            : []),
+          eventId
+        ])
+      ]
+    : session.artifactErrorEventIds
+  return {
+    ...session,
+    status: 'error',
+    error: `${retryable ? ARTIFACT_ERROR_PREFIX : TERMINAL_ARTIFACT_ERROR_PREFIX}: ${error}`,
+    errorReportable: true,
+    artifactErrorEventIds,
+    updatedAt: Date.now()
+  }
+}
 
-export const projectArtifactErrorCleared = (session: ChatSession): ChatSession => {
+export const projectArtifactErrorCleared = (
+  session: ChatSession,
+  eventId?: string
+): ChatSession => {
   if (!isArtifactFinalizationError(session.error)) return session
+  if (eventId && session.artifactErrorEventIds?.length) {
+    if (!session.artifactErrorEventIds.includes(eventId)) return session
+    const artifactErrorEventIds = session.artifactErrorEventIds.filter(
+      (candidate) => candidate !== eventId
+    )
+    if (artifactErrorEventIds.length > 0) return { ...session, artifactErrorEventIds }
+  }
   return {
     ...session,
     status: session.activeRun ? 'running' : 'idle',
     error: undefined,
     errorReportable: undefined,
+    artifactErrorEventIds: undefined,
     updatedAt: Date.now()
   }
 }

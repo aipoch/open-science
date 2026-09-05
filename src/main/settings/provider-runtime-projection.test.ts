@@ -53,7 +53,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
 
     const target = owner.resolveRuntimeTarget(
       provider,
-      { kind: 'configured', requestedModel: 'unavailable-model' },
+      { kind: 'configured', requestedModel: 'lab-model' },
       getAgentFramework('codex')
     )
     const view = owner.toProviderView(provider)

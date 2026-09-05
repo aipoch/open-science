@@ -76,26 +76,35 @@ describe('AnthropicProviderBridge', () => {
     const firstBaseUrl = await listen(first.server)
     const secondBaseUrl = await listen(second.server)
     const targets: AnthropicProviderBridgeTarget[] = [
-      { id: 'deepseek/model-a', baseUrl: firstBaseUrl, key: 'key-a', model: 'model-a' },
+      {
+        id: 'deepseek/model-a',
+        baseUrl: firstBaseUrl,
+        key: 'key-a',
+        model: 'model-a',
+        backgroundModel: 'model-a-mini'
+      },
       { id: 'kimi/model-b', baseUrl: secondBaseUrl, key: 'key-b', model: 'model-b' }
     ]
     const bridge = new AnthropicProviderBridge(targets, targets[0].id)
     bridges.push(bridge)
     const connection = await bridge.start()
 
-    const send = (model: string): Promise<Response> =>
+    const send = (model?: unknown): Promise<Response> =>
       fetch(`${connection.baseUrl}/v1/messages?beta=1`, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${connection.token}`,
           'content-type': 'application/json'
         },
-        body: JSON.stringify({ model, messages: [] })
+        body: JSON.stringify({ ...(model === undefined ? {} : { model }), messages: [] })
       })
 
     await expect((await send('untrusted-model')).json()).resolves.toEqual({ model: 'model-a' })
+    await expect((await send('model-a-mini')).json()).resolves.toEqual({ model: 'model-a-mini' })
     expect(bridge.setTarget(targets[1].id)).toBe(true)
     await expect((await send('still-untrusted')).json()).resolves.toEqual({ model: 'model-b' })
+    await expect((await send()).json()).resolves.toEqual({ model: 'model-b' })
+    await expect((await send(42)).json()).resolves.toEqual({ model: 'model-b' })
     await expect(
       (
         await fetch(`${connection.baseUrl}/v1/messages/count_tokens`, {
@@ -114,9 +123,24 @@ describe('AnthropicProviderBridge', () => {
         authorization: 'Bearer key-a',
         body: { model: 'model-a', messages: [] },
         path: '/v1/messages?beta=1'
+      },
+      {
+        authorization: 'Bearer key-a',
+        body: { model: 'model-a-mini', messages: [] },
+        path: '/v1/messages?beta=1'
       }
     ])
     expect(second.requests).toEqual([
+      {
+        authorization: 'Bearer key-b',
+        body: { model: 'model-b', messages: [] },
+        path: '/v1/messages?beta=1'
+      },
+      {
+        authorization: 'Bearer key-b',
+        body: { model: 'model-b', messages: [] },
+        path: '/v1/messages?beta=1'
+      },
       {
         authorization: 'Bearer key-b',
         body: { model: 'model-b', messages: [] },

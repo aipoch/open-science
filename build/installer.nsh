@@ -232,6 +232,7 @@ FunctionEnd
   # Page callbacks do not run in silent mode. There is no later user choice in that mode, so the
   # installMode selected by initMultiUser is already final and machine protection can run now.
   ${if} ${Silent}
+    Call ensureExistingUninstallerIsWritable
     !insertmacro protectMachineDataRootForSelectedMode
   ${endif}
 !macroend
@@ -240,8 +241,9 @@ FunctionEnd
 # The normal path restores each directory immediately after its matching old-uninstaller pass.
 !macro customHeader
   # NSIS extracts the new uninstaller after the application package. Probe the same write access
-  # its File command will request before extracting anything, so a stale locked uninstaller cannot
-  # turn a silent install into a false success or leave an interactive install offering the unsafe
+  # its File command will request before uninstalling the old app, and again before extraction.
+  # Checking only after uninstalling can reject the update with the old executable already gone.
+  # A stale locked uninstaller must not turn a silent install into a false success or offer the unsafe
   # Ignore choice. OPEN_EXISTING keeps this check non-destructive; Retry lets the user release a
   # transient lock, while silent installs take the Cancel path and return a failure code.
   Function ensureExistingUninstallerIsWritable
@@ -261,6 +263,8 @@ FunctionEnd
       MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(uninstallFailed)$\r$\n$INSTDIR\${UNINSTALL_FILENAME}" IDRETRY ensureExistingUninstallerIsWritable_retry
 
     ensureExistingUninstallerIsWritable_cancel:
+      # customInit may already have moved nested user data outside the old installation.
+      !insertmacro restoreAllNestedDataRoots
       SetErrorLevel 2
       Quit
 
@@ -272,6 +276,7 @@ FunctionEnd
     !ifdef openScienceOriginalInstFilesPre
       Call ${openScienceOriginalInstFilesPre}
     !endif
+    Call ensureExistingUninstallerIsWritable
     !insertmacro protectMachineDataRootForSelectedMode
   FunctionEnd
 

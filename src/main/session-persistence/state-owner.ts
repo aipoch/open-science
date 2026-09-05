@@ -6,16 +6,22 @@ import type { ProjectFilesChangedEvent, ProjectFileSource } from '../../shared/p
 import {
   materializeSessionConversationGraph,
   normalizeDelegationPolicy,
+  sanitizePlanHistoryProjections,
   sanitizeSessionRuntimeContext,
+  SessionConfigurationBusyError,
   sessionRevision,
   type DelegationPolicy,
   type PersistedChatMessage,
   type PersistedChatSession,
   type PersistedSessionStatus,
   type SaveSessionOptions,
+  type FailTaskSessionRunRequest,
+  type SettleTaskSessionCompletionRequest,
+  type StageTaskSessionCompletionRequest,
   type SessionRuntimeContext,
   type SessionRuntimeContextPatch
 } from '../../shared/session-persistence'
+import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { FinalizedArtifactBindingConflictError } from '../artifacts/provenance-message-snapshot'
 import { sessionComputeHostAccessPolicy } from '../compute/session-compute-host-access'
 import { diagnosticErrorFields, type Logger } from '../logger'
@@ -44,6 +50,7 @@ type PatchSessionRuntimeContextCommand = Readonly<{
   sessionId: string
   expectedRevision: number
   patch: SessionRuntimeContextPatch
+  archivePlanProjection?: ActivePlanProjection
   sessionStatus?: PersistedSessionStatus
   beforePersist?: () => void
 }>
@@ -123,6 +130,20 @@ const emptySessionRuntimeContext = (): SessionRuntimeContext => ({ version: 1, r
 
 const cloneRuntimeContext = (context: SessionRuntimeContext): SessionRuntimeContext =>
   structuredClone(context)
+
+const dedupePlanHistoryProjections = (
+  projections: readonly ActivePlanProjection[]
+): ActivePlanProjection[] => {
+  const seen = new Set<string>()
+  return projections
+    .toReversed()
+    .filter((projection) => {
+      if (seen.has(projection.artifactVersionId)) return false
+      seen.add(projection.artifactVersionId)
+      return true
+    })
+    .toReversed()
+}
 
 const sessionBindingTopologyHash = (session: PersistedChatSession): string => {
   const graph = session.conversationGraph
@@ -367,12 +388,37 @@ class SessionPersistenceStateOwner {
     const runtimeContext = sanitizeSessionRuntimeContext(candidate)
     if (!runtimeContext) throw new Error('Session runtime context patch is not JSON-safe.')
 
-    const persisted = await saveSessionWithRevision(this.options.repository, {
+    const archivePlanProjection = command.archivePlanProjection
+      ? sanitizePlanHistoryProjections([command.archivePlanProjection])?.[0]
+      : undefined
+    const matchingArchivePlanProjection =
+      archivePlanProjection &&
+      Object.hasOwn(patch, 'plan') &&
+      current.plan &&
+      archivePlanProjection.artifactVersionId === current.plan.artifactVersionId &&
+      runtimeContext.plan?.artifactVersionId !== archivePlanProjection.artifactVersionId
+        ? archivePlanProjection
+        : undefined
+    const planHistoryProjections = sanitizePlanHistoryProjections(
+      dedupePlanHistoryProjections(
+        [
+          ...(session.planHistoryProjections ?? []),
+          ...(matchingArchivePlanProjection ? [matchingArchivePlanProjection] : [])
+        ].filter(
+          (projection) => projection.artifactVersionId !== runtimeContext.plan?.artifactVersionId
+        )
+      )
+    )
+
+    const durableSession: PersistedChatSession = {
       ...session,
       ...(sessionStatus ? { status: sessionStatus } : {}),
       runtimeContext,
       updatedAt: Math.max(session.updatedAt + 1, Date.now())
-    })
+    }
+    if (planHistoryProjections) durableSession.planHistoryProjections = planHistoryProjections
+    else delete durableSession.planHistoryProjections
+    const persisted = await saveSessionWithRevision(this.options.repository, durableSession)
     this.recordSession(persisted)
     this.options.notifyRuntimeContextSessionUpdated(persisted)
     return cloneRuntimeContext(runtimeContext)
@@ -466,6 +512,48 @@ class SessionPersistenceStateOwner {
     const persisted = await saveSessionWithRevision(this.options.repository, durableSession)
     this.recordSession(persisted)
     this.options.notifyDelegationPolicyUpdated?.(persisted)
+    return persisted
+  }
+
+  async updateSessionConfiguration(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession> {
+    this.options.assertMutable(session.projectId, session.id, 'mutate')
+    const loaded = await loadAuthority(this.options.repository, session.projectId, session.id)
+    if (loaded.status !== 'found') {
+      throw new Error(`Cannot update configuration for a ${loaded.status} Session.`)
+    }
+    if (
+      loaded.session.activeRun ||
+      (loaded.session.status !== 'idle' && loaded.session.status !== 'error')
+    ) {
+      throw new SessionConfigurationBusyError(session.id)
+    }
+    const durableSession: PersistedChatSession = {
+      ...loaded.session,
+      agentConfiguration: session.agentConfiguration,
+      permissionProfile: session.permissionProfile,
+      autoReviewEnabled: session.autoReviewEnabled,
+      memoryEnabled: session.memoryEnabled,
+      delegationPolicy: session.delegationPolicy,
+      enabledComputeHosts: session.enabledComputeHosts
+        ? [...session.enabledComputeHosts]
+        : undefined,
+      selectedComputeHosts: session.selectedComputeHosts
+        ? [...session.selectedComputeHosts]
+        : undefined,
+      updatedAt: Math.max(loaded.session.updatedAt + 1, session.updatedAt)
+    }
+    const persisted = await saveSessionWithRevision(
+      this.options.repository,
+      durableSession,
+      expectedRevision
+    )
+    this.recordSession(persisted)
+    if (persisted.delegationPolicy !== loaded.session.delegationPolicy) {
+      this.options.notifyDelegationPolicyUpdated?.(persisted)
+    }
     return persisted
   }
 
@@ -598,6 +686,170 @@ class SessionPersistenceStateOwner {
     )
   }
 
+  async stageTaskCompletion(
+    command: StageTaskSessionCompletionRequest
+  ): Promise<PersistedChatSession> {
+    const session = await this.loadTaskRunAuthority(command)
+    const messageIds = new Set(session.messages.map(({ id }) => id))
+    const activities = (session.activities ?? []).map((activity) => structuredClone(activity))
+    const activityById = new Map(activities.map((activity) => [activity.id, activity]))
+    for (const activity of command.activities) {
+      const current = activityById.get(activity.id)
+      if (current) {
+        Object.assign(current, structuredClone(activity), {
+          eventIds: [...new Set([...current.eventIds, ...activity.eventIds])],
+          createdAt: Math.min(current.createdAt, activity.createdAt),
+          updatedAt: Math.max(current.updatedAt, activity.updatedAt)
+        })
+      } else {
+        const next = structuredClone(activity)
+        activities.push(next)
+        activityById.set(next.id, next)
+      }
+    }
+    const candidate = materializeSessionConversationGraph({
+      ...session,
+      messages:
+        command.message && !messageIds.has(command.message.id)
+          ? [...session.messages, structuredClone(command.message)]
+          : session.messages,
+      activities,
+      ...(command.clearPendingHistoryReplay ? { pendingHistoryReplay: undefined } : {}),
+      updatedAt: Math.max(session.updatedAt + 1, command.updatedAt)
+    })
+    return this.persistTaskSession(candidate)
+  }
+
+  async settleTaskCompletion(
+    command: SettleTaskSessionCompletionRequest
+  ): Promise<PersistedChatSession> {
+    const session = await this.loadTaskRunAuthority(command)
+    return this.persistTaskTerminalState(session, command, {
+      status: 'idle',
+      error: undefined,
+      errorReportable: undefined
+    })
+  }
+
+  async failTaskRun(command: FailTaskSessionRunRequest): Promise<PersistedChatSession> {
+    const session = await this.loadTaskRunAuthority(command, command.messageId)
+    return this.persistTaskTerminalState(session, command, {
+      status: 'error',
+      error: command.error,
+      errorReportable: command.errorReportable
+    })
+  }
+
+  private async loadTaskRunAuthority(
+    command: {
+      projectId: string
+      sessionId: string
+      promptMessageId: string
+    },
+    settledMessageId?: string
+  ): Promise<PersistedChatSession> {
+    this.options.assertMutable(command.projectId, command.sessionId, 'mutate')
+    const loaded = await loadAuthority(
+      this.options.repository,
+      command.projectId,
+      command.sessionId
+    )
+    if (loaded.status !== 'found') {
+      throw new Error(`Cannot mutate Task completion for a ${loaded.status} Session.`)
+    }
+    const ownsActiveRun = loaded.session.activeRun?.promptMessageId === command.promptMessageId
+    const ownsSettledMessage =
+      loaded.session.activeRun === undefined &&
+      settledMessageId !== undefined &&
+      loaded.session.messages.some(
+        (message) =>
+          message.id === settledMessageId && message.responseToMessageId === command.promptMessageId
+      )
+    if (!ownsActiveRun && !ownsSettledMessage) {
+      throw new Error('Task completion no longer owns the active Session run.')
+    }
+    return loaded.session
+  }
+
+  private async persistTaskTerminalState(
+    session: PersistedChatSession,
+    command: SettleTaskSessionCompletionRequest,
+    terminal: Pick<PersistedChatSession, 'status' | 'error' | 'errorReportable'>
+  ): Promise<PersistedChatSession> {
+    const newArtifacts = command.artifacts.filter(
+      ({ id }) => !session.artifacts?.some((artifact) => artifact.id === id)
+    )
+    const artifactIds = command.artifacts.map(({ id }) => id)
+    const messages = session.messages.map((message) =>
+      message.id === command.messageId && artifactIds.length > 0
+        ? {
+            ...message,
+            artifactIds: [...new Set([...(message.artifactIds ?? []), ...artifactIds])],
+            updatedAt: Math.max(message.updatedAt + 1, command.updatedAt)
+          }
+        : message
+    )
+    if (artifactIds.length > 0 && !messages.some(({ id }) => id === command.messageId)) {
+      throw new Error('Task completion Artifact owner Message is missing.')
+    }
+    const candidate = materializeSessionConversationGraph({
+      ...session,
+      ...terminal,
+      activeRun: undefined,
+      taskRunCommitId: command.taskRunCommitId,
+      messages,
+      artifacts: [
+        ...(session.artifacts ?? []),
+        ...newArtifacts.map((artifact) => structuredClone(artifact))
+      ],
+      filesRevision:
+        newArtifacts.length > 0 ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
+      updatedAt: Math.max(session.updatedAt + 1, command.updatedAt)
+    })
+    const validation = await validateFinalizedArtifactBindings(
+      this.options.provenance,
+      candidate,
+      this.options.log
+    )
+    if (validation.status === 'conflict') throw validation.error
+    const persisted = await this.persistTaskSession(candidate)
+    if (validation.status === 'valid') {
+      this.validatedBindingTopologies.set(
+        `${persisted.projectId}:${persisted.id}`,
+        sessionBindingTopologyHash(persisted)
+      )
+    }
+    await this.options.provenance?.captureFinalizedMessages(persisted)
+    if (artifactIds.length === 0) return persisted
+    let changedSources: ProjectFileSource[]
+    try {
+      changedSources = await this.options.fileIndex.syncSession(persisted)
+    } catch (error) {
+      this.markMetadataIncomplete()
+      this.options.notifyFilesChanged({
+        projectId: persisted.projectId,
+        sources: ['artifact', 'upload'],
+        kind: 'reset'
+      })
+      throw error
+    }
+    if (changedSources.length > 0) {
+      this.options.notifyFilesChanged({
+        projectId: persisted.projectId,
+        sessionId: persisted.id,
+        sources: changedSources,
+        kind: 'upsert'
+      })
+    }
+    return persisted
+  }
+
+  private async persistTaskSession(session: PersistedChatSession): Promise<PersistedChatSession> {
+    const persisted = await saveSessionWithRevision(this.options.repository, session)
+    this.recordSession(persisted)
+    return persisted
+  }
+
   private async saveSessionWithAuthority(
     session: PersistedChatSession,
     options: MainSaveSessionOptions = {},
@@ -621,6 +873,7 @@ class SessionPersistenceStateOwner {
     const rendererOwnedSession: PersistedChatSession = { ...submittedSession }
     delete rendererOwnedSession.runtimeContext
     delete rendererOwnedSession.archivedAt
+    if (authority) delete rendererOwnedSession.planHistoryProjections
     const taskRunCommitId =
       saveAuthority.taskRunCommit && rendererOwnedSession.taskRunCommitId
         ? rendererOwnedSession.taskRunCommitId
@@ -679,6 +932,9 @@ class SessionPersistenceStateOwner {
       ...mainOwnedSessionDetails,
       ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
+      ...(authority?.planHistoryProjections
+        ? { planHistoryProjections: authority.planHistoryProjections }
+        : {}),
       ...(taskRunCommitId ? { taskRunCommitId } : {}),
       ...(authority && !specialistBindingOwnedByCaller
         ? {

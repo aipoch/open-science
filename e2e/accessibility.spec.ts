@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import type { Locator, Page } from 'playwright'
 import { createProject, sendPrompt } from './certification/helpers'
 import {
-  ACCESSIBILITY_ADVISORY,
+  ACCESSIBILITY_COLLECT_ALL,
   ACCESSIBILITY_SCAN_ATTACHMENT,
   ACCESSIBILITY_UI_FINDING_ATTACHMENT,
   ACCESSIBILITY_UI_READY_ATTACHMENT,
@@ -26,6 +26,16 @@ test.beforeEach(async ({ app }) => {
   void app
 })
 
+const blockingViolations = (results: AxeResults): AccessibilityScan['violations'] =>
+  results.violations
+    .filter((violation) => violation.impact === 'critical' || violation.impact === 'serious')
+    .map<AccessibilityScan['violations'][number]>(({ id, impact, help, nodes }) => ({
+      id,
+      impact: impact ?? null,
+      help,
+      nodes: nodes.map(({ html, target }) => ({ html, target }))
+    }))
+
 const scanAccessibility = async (page: Page, surface: AccessibilitySurface): Promise<void> => {
   const axeSource = await readFile(AXE_PATH, 'utf8')
   await page.evaluate(axeSource)
@@ -38,20 +48,13 @@ const scanAccessibility = async (page: Page, surface: AccessibilitySurface): Pro
 
     return axe.run(document, { runOnly: { type: 'tag', values: tags } })
   }, WCAG_TAGS)) as AxeResults
-  const blocking = results.violations
-    .filter((violation) => violation.impact === 'critical' || violation.impact === 'serious')
-    .map<AccessibilityScan['violations'][number]>(({ id, impact, help, nodes }) => ({
-      id,
-      impact: impact ?? null,
-      help,
-      nodes: nodes.map(({ html, target }) => ({ html, target }))
-    }))
+  const blocking = blockingViolations(results)
 
   await test.info().attach(ACCESSIBILITY_SCAN_ATTACHMENT, {
     body: JSON.stringify({ surface, violations: blocking } satisfies AccessibilityScan),
     contentType: 'application/json'
   })
-  if (!ACCESSIBILITY_ADVISORY) {
+  if (!ACCESSIBILITY_COLLECT_ALL) {
     expect(blocking, `${surface} has blocking axe violations`).toEqual([])
   }
 }
@@ -72,7 +75,7 @@ const expectKeyboardOutcome = async (
     await assertion()
     return true
   } catch (error) {
-    if (!ACCESSIBILITY_ADVISORY) throw error
+    if (!ACCESSIBILITY_COLLECT_ALL) throw error
     await page.evaluate(() => document.readyState)
     await recordAccessibilityFinding(
       surface,
@@ -127,7 +130,7 @@ const focusWithTab = async (page: Page, target: Locator, maxTabs = 80): Promise<
     if (await target.evaluate((element) => document.activeElement === element)) return true
     await page.keyboard.press('Tab')
   }
-  if (ACCESSIBILITY_ADVISORY) {
+  if (ACCESSIBILITY_COLLECT_ALL) {
     await recordAccessibilityFinding(
       'Keyboard focus order',
       `Keyboard focus did not reach ${await target.getAttribute('aria-label')}`
@@ -146,10 +149,24 @@ test('reports accessibility violations in startup and home surfaces', async ({ a
     app.page.getByRole('heading', { name: 'Set up your research workspace.' })
   ).toBeVisible()
   await scanAccessibility(app.page, 'Onboarding')
+  const continueButton = app.page.getByRole('button', { name: 'Continue', exact: true })
+  await expect(continueButton).toBeEnabled()
+  await continueButton.focus()
+  await continueButton.press('Enter')
+  const locationStep = app.page.getByRole('region', { name: 'Choose data location' })
+  await expect(locationStep).toBeVisible()
+  await expectKeyboardOutcome(app.page, 'Onboarding step focus', async () => {
+    await expect(
+      app.page.getByRole('heading', { name: 'Where should Open Science store your data?' })
+    ).toBeFocused()
+  })
+  await scanAccessibility(app.page, 'Onboarding step focus')
 
   const page = await app.completeOnboarding()
   await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
   await scanAccessibility(page, 'Home')
+  await setViewport(page, 390, 844)
+  await scanAccessibility(page, 'Home (narrow)')
 })
 
 test('reports accessibility violations in core dialog and workspace surfaces', async ({ app }) => {
@@ -264,6 +281,7 @@ test('reports accessibility violations across representative state combinations'
     .getByRole('tab', { name: 'Files' })
     .press('Delete')
 
+  await app.configureFileBrowserFixture()
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const settings = page.getByRole('dialog', { name: 'Settings' })
   await settings
@@ -273,6 +291,35 @@ test('reports accessibility violations across representative state combinations'
   await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
   await setViewport(page, 767)
   await scanAccessibility(page, 'Compute settings (narrow, dark)')
+  await settings.getByRole('button', { name: 'Browse files on Accessibility fixture' }).click()
+  const goTo = page.getByRole('button', { name: 'Go to', exact: true })
+  await goTo.press('Enter')
+  const locations = page.getByRole('menu', { name: 'Go to', exact: true })
+  await expect(locations).toBeVisible()
+  await waitForFiniteAnimations(page)
+  await scanAccessibility(page, 'Go-to locations (open)')
+  const fileBrowser = page.getByRole('dialog', { name: 'Remote file browser' })
+  const removeBookmark = locations.getByRole('menuitem', {
+    name: 'Remove bookmark /scratch/fixture/pinned',
+    exact: true
+  })
+  await removeBookmark.click({ timeout: 5_000 })
+  await expect(fileBrowser).toBeVisible()
+  await expect(locations).toBeHidden()
+  await expect(goTo).toBeFocused()
+  await goTo.press('Enter')
+  await expect(removeBookmark).toHaveCount(0)
+  await locations.getByRole('menuitem', { name: 'Home /home/fixture', exact: true }).click()
+  await expect(fileBrowser).toBeVisible()
+  await expect(locations).toBeHidden()
+  await expect(goTo).toBeFocused()
+  await goTo.press('Enter')
+  await page.keyboard.press('Escape')
+  await expectKeyboardOutcome(page, 'Go-to Escape focus return', async () => {
+    await expect(locations).toBeHidden()
+    await expect(goTo).toBeFocused()
+  })
+  await page.keyboard.press('Escape')
   await settings.getByRole('button', { name: 'Close settings' }).click()
   await expect(settings).toBeHidden()
 
@@ -320,7 +367,9 @@ test('supports the core project journey with keyboard input only', async ({ app 
   if (
     !(await expectKeyboardOutcome(page, 'Send a message with Enter', async () => {
       await expect(
-        page.getByText('Summarize the deterministic fixture.', { exact: true })
+        page
+          .getByLabel('Conversation', { exact: true })
+          .getByText('Summarize the deterministic fixture.', { exact: true })
       ).toBeVisible()
     }))
   )
@@ -367,7 +416,7 @@ test('supports the core project journey with keyboard input only', async ({ app 
   const settingsFocusRestored = await settingsTrigger.evaluate(
     (element) => document.activeElement === element
   )
-  if (ACCESSIBILITY_ADVISORY && !settingsFocusRestored) {
+  if (ACCESSIBILITY_COLLECT_ALL && !settingsFocusRestored) {
     await recordAccessibilityFinding(
       'Keyboard focus restoration',
       'Closing settings did not restore focus to the settings trigger.'
@@ -376,3 +425,84 @@ test('supports the core project journey with keyboard input only', async ({ app 
   }
   await expect(settingsTrigger).toBeFocused()
 })
+
+for (const width of [375, 767] as const) {
+  for (const theme of ['Light', 'Dark'] as const) {
+    test(`home has named project actions at ${width}px in ${theme}`, async ({ app }) => {
+      const page = await app.completeOnboarding()
+      await setTheme(page, theme)
+      await setViewport(page, width)
+      await waitForFiniteAnimations(page)
+      const surface = `Home (${width}px, ${theme === 'Light' ? 'light' : 'dark'})` as const
+      await scanAccessibility(page, surface)
+      await expectKeyboardOutcome(page, surface, async () => {
+        const action = page.getByRole('button', { name: 'New project', exact: true }).first()
+        await expect(action).toBeVisible()
+        await action.click()
+        await expect(page.getByRole('dialog', { name: 'New project' })).toBeVisible()
+      })
+    })
+  }
+}
+
+for (const theme of ['Light', 'Dark'] as const) {
+  test(`reported text keeps sufficient contrast in ${theme}`, async ({ app }) => {
+    await app.completeOnboarding()
+    const page = await app.configureFakeAgent()
+    await setTheme(page, theme)
+    await createProject(page, `Contrast regression ${theme}`)
+    await page.evaluate(await readFile(AXE_PATH, 'utf8'))
+    const violations: AccessibilityScan['violations'] = []
+
+    const checkContrast = async (target: Locator, label: string): Promise<void> => {
+      await expect(target).toBeVisible()
+      await waitForFiniteAnimations(page)
+      const result = await target.evaluate(async (element) => {
+        const axe = (
+          globalThis as unknown as {
+            axe: { run: (context: Element, options: unknown) => Promise<AxeResults> }
+          }
+        ).axe
+        return axe.run(element, { runOnly: { type: 'rule', values: ['color-contrast'] } })
+      })
+      await test.info().attach(label, {
+        body: JSON.stringify({ violations: result.violations, incomplete: result.incomplete }),
+        contentType: 'application/json'
+      })
+      violations.push(...blockingViolations(result))
+      if (!ACCESSIBILITY_COLLECT_ALL) expect.soft(result.violations, label).toEqual([])
+      expect.soft(result.incomplete, `${label} must be measurable`).toEqual([])
+    }
+
+    for (const width of [1280, 767]) {
+      await setViewport(page, width)
+      await checkContrast(
+        page.getByText('Discover, share, and collaborate on research that matters', {
+          exact: true
+        }),
+        `Empty conversation ${width}px`
+      )
+      await checkContrast(
+        page
+          .getByRole('button', { name: 'Select model', exact: true })
+          .getByText('e2e-model', { exact: true }),
+        `Model ${width}px`
+      )
+    }
+    await page.getByRole('textbox', { name: 'Ask anything' }).fill('Request fixture permission.')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await page.getByRole('button', { name: 'Deny', exact: true }).click()
+    await expect(page.getByText('Fixture permission denied.', { exact: true })).toBeVisible()
+    await checkContrast(
+      page.getByText('Declined by you: tool', { exact: true }),
+      'Declined tool 767px'
+    )
+    await test.info().attach(ACCESSIBILITY_SCAN_ATTACHMENT, {
+      body: JSON.stringify({
+        surface: theme === 'Light' ? 'Reported text (light)' : 'Reported text (dark)',
+        violations
+      } satisfies AccessibilityScan),
+      contentType: 'application/json'
+    })
+  })
+}

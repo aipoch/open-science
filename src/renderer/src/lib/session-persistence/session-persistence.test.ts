@@ -15,6 +15,7 @@ import {
   type PersistedChatSession,
   type SessionSummary
 } from '../../../../shared/session-persistence'
+import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
 import {
   createInitialSessionState,
@@ -48,6 +49,41 @@ const createPersistedSession = (
   createdAt: 1710000000000,
   updatedAt: 1710000000000,
   ...overrides
+})
+
+const createHistoricalPlan = (
+  artifactVersionId: string,
+  revision: number
+): ActivePlanProjection => ({
+  artifactId: `artifact-${artifactVersionId}`,
+  artifactVersionId,
+  artifactChecksum: 'b'.repeat(64),
+  originatingPromptMessageId: `prompt-${artifactVersionId}`,
+  revision,
+  approval: 'approved',
+  lifecycle: 'completed',
+  document: {
+    schema_version: 1,
+    task_summary: `Plan ${artifactVersionId}`,
+    phases: [
+      {
+        name: 'Execution',
+        delegations: [
+          {
+            name: 'Primary agent',
+            steps: [{ title: `Step ${artifactVersionId}`, description: 'Complete the work.' }]
+          }
+        ]
+      }
+    ],
+    desired_outputs: [],
+    feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+  },
+  stepStatuses: {
+    [`Step ${artifactVersionId}`]: { status: 'completed', updatedAt: revision }
+  },
+  stepStates: { [`Step ${artifactVersionId}`]: { status: 'completed' } },
+  counts: { phases: 1, delegations: 1, steps: 1, completed: 1, inProgress: 0 }
 })
 
 const createLoadResult = (
@@ -1125,6 +1161,47 @@ describe('renderer session persistence bridge', () => {
     expect(useSessionStore.getState().sessions[0].conversationGraph?.messages).toEqual([
       expect.objectContaining(remoteMessage)
     ])
+  })
+
+  it('keeps latest Main-owned Plan history when rebasing a revision conflict', async () => {
+    const baseHistory = createHistoricalPlan('plan-a', 1)
+    const localHistory = createHistoricalPlan('renderer-plan', 2)
+    const mainHistory = createHistoricalPlan('plan-a', 3)
+    const base = createPersistedSession({ revision: 1, planHistoryProjections: [baseHistory] })
+    const latest = createPersistedSession({
+      ...base,
+      revision: 2,
+      planHistoryProjections: [mainHistory],
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(1, 2))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 3 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(latest),
+      saveSession
+    })
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        title: 'Local edit',
+        planHistoryProjections: [localHistory]
+      }))
+    }))
+
+    await expect(
+      save(useSessionStore.getState(), { forceTargets: new Set(['session:session-1']) })
+    ).resolves.toBeUndefined()
+
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 2,
+      title: 'Local edit',
+      planHistoryProjections: [mainHistory]
+    })
   })
 
   it('does not persist unbound pending sessions', async () => {

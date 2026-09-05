@@ -194,7 +194,7 @@ export class NotebookEnvironmentOperations {
         const message = `Could not prepare ${input.environment}: ${
           error instanceof Error ? error.message : String(error)
         }`
-        report({ phase: 'error', message, progress: 0, language: input.language })
+        report({ phase: 'error', diagnostic: message, progress: 0, language: input.language })
         throw new Error(message, { cause: error })
       }
     })

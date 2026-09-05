@@ -20,7 +20,7 @@ import { flagStaleReviews } from './stale-reviews'
 import { ReviewRepository } from './repository'
 import type { ReviewerAcpRuntime } from './acp-runtime'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
-import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
+import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { SessionRepository } from '../session-persistence/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
@@ -167,7 +167,7 @@ const createInFlightReviewStart = (): InFlightReviewStart => {
 // Owns reviewer arbitration and fix-loop cancellation independently from any command transport.
 // The triggerReview alias preserves the existing direct-call result returned by IPC registration.
 const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerCommandOwner => {
-  const storageRoot = options.storageRoot ?? resolveStorageRoot()
+  const storageRoot = options.storageRoot ?? resolveConfigRoot()
   const dataRoot = options.dataRoot ?? resolveDataRoot()
   const artifactProvenanceRepository = options.artifactProvenanceRepository
   const reviewRepository = createDefaultReviewRepository(storageRoot, dataRoot)

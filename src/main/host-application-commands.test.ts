@@ -154,10 +154,10 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
       kind: 'move' as const,
       dataRoot: '/target/OpenScience'
     })),
-    migrate: vi.fn(async () => ({ ok: true as const })),
+    migrate: vi.fn(async () => ({ ok: true as const, cleanupPending: false })),
     setDataRootAndRelaunch: vi.fn(async () => ({ ok: true as const })),
     cancelMigrate: vi.fn(() => undefined),
-    commitAndRelaunch: vi.fn(async () => ({ ok: true as const })),
+    commitAndRelaunch: vi.fn(async () => ({ ok: true as const, cleanupPending: false })),
     discardMigratedCopy: vi.fn(async () => ({ ok: true as const })),
     dismissLegacyMovePrompt: vi.fn(async () => undefined)
   },

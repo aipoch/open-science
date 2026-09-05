@@ -11,19 +11,16 @@ type SessionPlanApprovalParking = Readonly<{
   reject: (error: Error) => void
 }>
 
-type SessionPlanExecutionBinding = Readonly<{
+type SessionPlanAgentDecisionAuthorization = Readonly<{
   artifactVersionId: string
   interactionSequence: number
 }>
-
-type SessionPlanAgentDecisionAuthorization = SessionPlanExecutionBinding
 
 type SessionPlanInteractionRow = {
   identity?: SessionPlanInteractionIdentity
   approvalReservation?: string
   approval?: SessionPlanApprovalParking
   agentDecisionAuthorization?: SessionPlanAgentDecisionAuthorization
-  execution?: SessionPlanExecutionBinding
 }
 
 class SessionPlanInteractionOwner {
@@ -161,29 +158,6 @@ class SessionPlanInteractionOwner {
     return true
   }
 
-  bindExecution({
-    sessionId,
-    artifactVersionId,
-    interactionSequence
-  }: SessionPlanExecutionBinding & Readonly<{ sessionId: string }>): void {
-    const row = this.rows.get(sessionId) ?? {}
-    row.execution = { artifactVersionId, interactionSequence }
-    this.rows.set(sessionId, row)
-  }
-
-  executionBindingFor(sessionId: string): SessionPlanExecutionBinding | undefined {
-    const execution = this.rows.get(sessionId)?.execution
-    return execution ? { ...execution } : undefined
-  }
-
-  releaseExecution(sessionId: string, interactionSequence: number): boolean {
-    const row = this.rows.get(sessionId)
-    if (row?.execution?.interactionSequence !== interactionSequence) return false
-    delete row.execution
-    this.prune(sessionId, row)
-    return true
-  }
-
   clearSession(sessionId: string, approvalReason: string): void {
     const row = this.rows.get(sessionId)
     if (!row) return
@@ -202,8 +176,7 @@ class SessionPlanInteractionOwner {
       !row.identity &&
       !row.approvalReservation &&
       !row.approval &&
-      !row.agentDecisionAuthorization &&
-      !row.execution
+      !row.agentDecisionAuthorization
     ) {
       this.rows.delete(sessionId)
     }
@@ -211,4 +184,3 @@ class SessionPlanInteractionOwner {
 }
 
 export { SessionPlanInteractionOwner }
-export type { SessionPlanExecutionBinding }

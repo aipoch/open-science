@@ -32,90 +32,6 @@ const createOwner = (
   })
 
 describe('ACP session capability owner', () => {
-  it.each([
-    { globalEnabled: true, sessionEnabled: true, expected: '1' },
-    { globalEnabled: true, sessionEnabled: false, expected: '0' },
-    { globalEnabled: false, sessionEnabled: true, expected: '0' },
-    { globalEnabled: false, sessionEnabled: false, expected: '0' }
-  ])(
-    'enables Memory tools only when global=$globalEnabled and session=$sessionEnabled',
-    async ({ globalEnabled, sessionEnabled, expected }) => {
-      const getRpcConnection = vi.fn(async () => ({
-        endpoint: 'http://127.0.0.1:1',
-        token: 'notebook'
-      }))
-      const owner = createOwner({
-        artifacts: undefined,
-        skillImport: undefined,
-        notebook: {
-          projectId: 'project',
-          mcpEntryPath: '/app/main.js',
-          isMemoryEnabled: async () => globalEnabled,
-          getRpcConnection
-        }
-      })
-
-      const provision = await owner.provision({
-        stableAppSessionId: 'session-1',
-        framework: opencodeFramework,
-        nativeMcpEnabled: true,
-        bridgeMcpAliasesEnabled: false,
-        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-        sessionCwd: '/workspace',
-        projectId: 'project',
-        memoryEnabled: sessionEnabled
-      })
-      const notebook = provision.mcpServers.find(
-        (server) => server.name === 'open_science_notebook'
-      )
-
-      expect(notebook && 'env' in notebook ? notebook.env : []).toContainEqual({
-        name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
-        value: expected
-      })
-      expect(getRpcConnection).toHaveBeenCalledWith(
-        expect.objectContaining({ memoryTools: expected === '1' })
-      )
-    }
-  )
-
-  it('fails closed without blocking capability provisioning when the global Memory gate cannot be read', async () => {
-    const getRpcConnection = vi.fn(async () => ({
-      endpoint: 'http://127.0.0.1:1',
-      token: 'notebook'
-    }))
-    const owner = createOwner({
-      artifacts: undefined,
-      skillImport: undefined,
-      notebook: {
-        projectId: 'project',
-        mcpEntryPath: '/app/main.js',
-        isMemoryEnabled: async () => {
-          throw new Error('settings unavailable')
-        },
-        getRpcConnection
-      }
-    })
-
-    const provision = await owner.provision({
-      stableAppSessionId: 'session-1',
-      framework: opencodeFramework,
-      nativeMcpEnabled: true,
-      bridgeMcpAliasesEnabled: false,
-      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-      sessionCwd: '/workspace',
-      projectId: 'project',
-      memoryEnabled: true
-    })
-    const notebook = provision.mcpServers.find((server) => server.name === 'open_science_notebook')
-
-    expect(notebook && 'env' in notebook ? notebook.env : []).toContainEqual({
-      name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
-      value: '0'
-    })
-    expect(getRpcConnection).toHaveBeenCalledWith(expect.objectContaining({ memoryTools: false }))
-  })
-
   it('marks delegated Notebook MCP processes as ineligible for memory tools', async () => {
     const owner = createOwner({
       artifacts: undefined,
@@ -1155,7 +1071,8 @@ describe('ACP session capability owner', () => {
         bridgeMcpAliasesEnabled,
         policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
         sessionCwd: '/workspace',
-        projectId: 'project'
+        projectId: 'project',
+        memoryEnabled: false
       })
 
       expect(built.descriptor.controlRpcMethods).toEqual(
@@ -1182,6 +1099,11 @@ describe('ACP session capability owner', () => {
       expect(built.descriptor.transport).toBe('stdio')
       expect(built.descriptor.modelFacingMcpServerNames).toContain(artifactServerName)
       expect(built.descriptor.modelFacingMcpServerNames).toContain(notebookServerName)
+      const notebook = built.mcpServers.find((server) => server.name === notebookServerName)
+      expect(notebook && 'env' in notebook ? notebook.env : []).toContainEqual({
+        name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
+        value: '1'
+      })
     }
   )
 

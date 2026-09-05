@@ -9,6 +9,7 @@ import {
 } from '../../../shared/settings'
 import type {
   AgentFrameworkId,
+  ProviderDeletionScenarioModelHandling,
   ProviderView,
   RefreshProviderModelsResult,
   SettingsSnapshot,
@@ -46,7 +47,10 @@ export type ProviderAuthActions = {
   refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
   setActiveProvider: (providerId: string, model?: string) => Promise<void>
   setAgentFramework: (id: AgentFrameworkId) => Promise<void>
-  deleteProvider: (providerId: string) => Promise<void>
+  deleteProvider: (
+    providerId: string,
+    scenarioModelHandling?: ProviderDeletionScenarioModelHandling
+  ) => Promise<void>
 }
 
 // This slice owns workflows only. Core remains the sole owner of the full Settings snapshot so
@@ -297,8 +301,11 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     }
   },
 
-  deleteProvider: async (providerId) => {
-    const snapshot = await getCommands().deleteProvider({ id: providerId })
+  deleteProvider: async (providerId, scenarioModelHandling) => {
+    const snapshot = await getCommands().deleteProvider({
+      id: providerId,
+      ...(scenarioModelHandling ? { scenarioModelHandling } : {})
+    })
     reconcileSnapshot(snapshot)
     await refreshPreflight()
   }

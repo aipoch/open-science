@@ -58,6 +58,71 @@ afterEach(async () => {
 })
 
 describe('artifact provenance repository', () => {
+  it('pages lineage history while resolving an old selected Version independently', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-lineage-history-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.artifactLineage.create({
+      data: {
+        id: 'history-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'notes.md',
+        normalizedFilename: 'notes.md'
+      }
+    })
+    await client.artifactVersion.createMany({
+      data: Array.from({ length: 102 }, (_, index) => ({
+        id: `history-v${index + 1}`,
+        artifactId: 'history-file',
+        versionNumber: index + 1,
+        filename: 'notes.md',
+        originKind: 'legacy',
+        state: 'finalized',
+        contentStorageKey: `artifacts/project-1/session-1/history-file/v${index + 1}/content`,
+        sizeBytes: 0n,
+        checksum: 'a'.repeat(64)
+      }))
+    })
+    await client.artifactLineage.update({
+      where: { id: 'history-file' },
+      data: { currentVersionId: 'history-v102' }
+    })
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'history-file',
+      versionId: 'history-v1'
+    }
+    const first = await repository.getLineage(request)
+    expect(first?.versions).toHaveLength(50)
+    expect(first?.selectedVersion?.versionId).toBe('history-v1')
+    expect(first?.headVersion?.versionId).toBe('history-v102')
+    const second = await repository.getLineage({ ...request, cursor: first!.nextCursor })
+    const last = await repository.getLineage({ ...request, cursor: second!.nextCursor })
+    expect(second?.versions).toHaveLength(50)
+    expect(last?.versions.map((version) => version.versionNumber)).toEqual([1, 2])
+    expect(last?.nextCursor).toBeUndefined()
+    expect(
+      new Set(
+        [...first!.versions, ...second!.versions, ...last!.versions].map(
+          (version) => version.versionId
+        )
+      ).size
+    ).toBe(102)
+    await expect(
+      repository.getLineage({ ...request, projectId: 'other-project' })
+    ).resolves.toBeUndefined()
+  })
+
   it('projects finalized user edits in lineage without inventing Agent provenance', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-user-edit-lineage-'))
     const client = createProjectDbClient(storageRoot)

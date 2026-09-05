@@ -19,6 +19,7 @@ type ProjectFormDialogProps = {
   agentContextDraft: string
   isSubmitting: boolean
   error: string | undefined
+  errorDetail?: string
   onNameChange: (value: string) => void
   onDescriptionChange: (value: string) => void
   onAgentContextChange: (value: string) => void
@@ -46,6 +47,7 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
   const [descriptionDraft, setDescriptionDraft] = useState('')
   const [agentContextDraft, setAgentContextDraft] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [errorDetail, setErrorDetail] = useState<string>()
   const [formError, setFormError] = useState<string | undefined>(undefined)
 
   const openCreateDialog = useCallback((): void => {
@@ -57,6 +59,7 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
     setDescriptionDraft('')
     setAgentContextDraft('')
     setFormError(undefined)
+    setErrorDetail(undefined)
   }, [isSubmitting])
 
   const openEditDialog = useCallback(
@@ -73,6 +76,7 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
       setDescriptionDraft(project.description)
       setAgentContextDraft(project.agentContext ?? '')
       setFormError(undefined)
+      setErrorDetail(undefined)
     },
     [isSubmitting]
   )
@@ -98,6 +102,7 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
 
     setIsSubmitting(true)
     setFormError(undefined)
+    setErrorDetail(undefined)
 
     const request = isCreate
       ? createProject({ name, description, agentContext })
@@ -114,7 +119,7 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
         // The store resolves undefined when the IPC layer returns no project row; surface that
         // instead of silently swallowing the save.
         if (!project) {
-          setFormError(t('Could not save project.'))
+          setFormError(t('Could not save project. Please try again.'))
           return
         }
 
@@ -123,12 +128,11 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
         if (isCreate) openProject(project.id, 'user')
       })
       .catch((error: unknown) => {
+        setErrorDetail(error instanceof Error ? error.message : String(error))
         setFormError(
           error instanceof Error && error.message === 'Project changed elsewhere.'
             ? t('Project changed elsewhere. Reopen Project Settings and try again.')
-            : error instanceof Error
-              ? error.message
-              : t('Could not save project.')
+            : t('Could not save project. Please try again.')
         )
       })
       .finally(() => {
@@ -147,12 +151,19 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
       description: isEdit
         ? t("Update this project's name, description, and agent context.")
         : t('Group related sessions under a project. You can rename it later.'),
-      submitLabel: isEdit ? t('Save') : t('Create project'),
+      submitLabel: isSubmitting
+        ? isEdit
+          ? t('Saving…')
+          : t('Creating…')
+        : isEdit
+          ? t('Save')
+          : t('Create project'),
       nameDraft,
       descriptionDraft,
       agentContextDraft,
       isSubmitting,
       error: formError,
+      errorDetail,
       onNameChange: setNameDraft,
       onDescriptionChange: setDescriptionDraft,
       onAgentContextChange: setAgentContextDraft,

@@ -3,45 +3,31 @@
 // "…" menu shows the file identity, Copy path, and an "On this machine" group with Download
 // (same save pipeline as managed files) and Save as artifact (same staging pipeline as composer
 // uploads). Kept in its own module so PreviewFileSurface stays source-neutral.
-import {
-  Check,
-  ClipboardCopy,
-  Download,
-  ExternalLink,
-  File,
-  MoreHorizontal,
-  PackagePlus,
-  RotateCw
-} from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Check, ExternalLink, File, MoreHorizontal, RotateCw } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ActionToast } from '@/components/ActionToast'
+import { ActionMenuItems } from '@/components/action-menu'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useNavigationStore } from '@/stores/navigation-store'
+import { errorDetail } from '@/lib/error-detail'
+import { usePreviewActions } from './preview-actions/preview-action-hooks'
 
-type LocalFileActionFailure = Readonly<{
+export type LocalFileActionFailure = Readonly<{
   title: string
   detail?: string
   retry: () => void
 }>
 
-const errorDetail = (error: unknown): string | undefined => {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'string') return error
-  return undefined
-}
-
-const LocalFileActionErrorToast = ({
+export const LocalFileActionErrorToast = ({
   failure,
   onDismiss
 }: {
@@ -108,94 +94,31 @@ export const LocalFileFallbackAction = ({
   )
 }
 
-type SaveAsArtifactState = 'idle' | 'saving' | 'saved'
+export type SaveAsArtifactState = 'idle' | 'saving' | 'saved'
 
 export const LocalFileHeaderActions = ({
   path,
   name,
+  saveAsArtifactState,
   onReload,
   tooltipClassName
 }: {
   path: string
   name: string
+  saveAsArtifactState: SaveAsArtifactState
   onReload?: () => void
   tooltipClassName?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
-
-  const [copied, setCopied] = useState(false)
-  const [failure, setFailure] = useState<LocalFileActionFailure>()
-  // In-memory only by design: the staged upload joins the normal upload lifecycle, and the header
-  // just reflects that this preview already handed the file over.
-  const [saveAsArtifactState, setSaveAsArtifactState] = useState<SaveAsArtifactState>('idle')
-  const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const activeProjectId = useNavigationStore((state) => state.activeProjectId)
-
-  // Clear any pending "Copied" reset when the header unmounts (tab closed within the 1.5s window).
-  useEffect(() => () => clearTimeout(copiedTimer.current), [])
-
-  const copyPath = async (): Promise<void> => {
-    setFailure(undefined)
-    if (!navigator.clipboard?.writeText) {
-      setFailure({
-        title: t('Could not copy the file path.'),
-        retry: () => void copyPath()
-      })
-      return
-    }
-    try {
-      await navigator.clipboard.writeText(path)
-      setCopied(true)
-      clearTimeout(copiedTimer.current)
-      copiedTimer.current = setTimeout(() => setCopied(false), 1500)
-    } catch (error) {
-      setFailure({
-        title: t('Could not copy the file path.'),
-        detail: errorDetail(error),
-        retry: () => void copyPath()
-      })
-    }
-  }
-  const download = async (): Promise<void> => {
-    setFailure(undefined)
-    try {
-      await window.api.saveManagedFile({ source: 'local', path, suggestedName: name })
-    } catch (error) {
-      console.error(`Failed to download local file: ${name}`, error)
-      setFailure({
-        title: t('Could not download this file.'),
-        detail: errorDetail(error),
-        retry: () => void download()
-      })
-    }
-  }
-  const stageLocalPath = window.api.uploads.stageLocalPath
-
-  const saveAsArtifact = async (): Promise<void> => {
-    if (!stageLocalPath || saveAsArtifactState === 'saving') return
-
-    setFailure(undefined)
-    setSaveAsArtifactState('saving')
-    try {
-      await stageLocalPath({
-        transferId: crypto.randomUUID(),
-        name,
-        sourcePath: path,
-        projectId: activeProjectId
-      })
-      setSaveAsArtifactState('saved')
-    } catch (error) {
-      console.error(`Failed to save local file as artifact: ${name}`, error)
-      setSaveAsArtifactState('idle')
-      setFailure({
-        title: t('Could not save this file as an artifact.'),
-        detail: errorDetail(error),
-        retry: () => void saveAsArtifact()
-      })
-    }
-  }
-
-  const canSaveAsArtifact = saveAsArtifactState !== 'saved' && typeof stageLocalPath === 'function'
+  const previewActions = usePreviewActions()
+  // The content menu has additional window actions; the header overflow keeps its established
+  // Copy path -> On this machine grouping without duplicating the adjacent full-screen/close UI.
+  const identityEntries = previewActions.entries.filter(
+    (entry) => entry.kind === 'action' && entry.action === 'copy-path'
+  )
+  const machineEntries = (['download', 'save-as-artifact'] as const).flatMap((action) =>
+    previewActions.entries.filter((entry) => entry.kind === 'action' && entry.action === action)
+  )
 
   return (
     <>
@@ -250,37 +173,21 @@ export const LocalFileHeaderActions = ({
             </div>
           </div>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => void copyPath()} className="gap-2">
-            {/* The label already flips to "Copied", so the checkmark needs no color of its own. */}
-            {copied ? (
-              <Check className="size-4" aria-hidden="true" />
-            ) : (
-              <ClipboardCopy className="size-4" aria-hidden="true" />
-            )}
-            {copied ? t('Copied') : t('Copy path')}
-          </DropdownMenuItem>
+          <ActionMenuItems
+            entries={identityEntries}
+            onSelect={previewActions.execute}
+            compact={false}
+          />
           <DropdownMenuLabel className="px-1 text-[10px] font-medium uppercase tracking-wider">
             {t('On this machine')}
           </DropdownMenuLabel>
-          <DropdownMenuItem onSelect={() => void download()} className="gap-2">
-            <Download className="size-4" aria-hidden="true" />
-            {t('Download')}
-          </DropdownMenuItem>
-          {canSaveAsArtifact ? (
-            <DropdownMenuItem
-              onSelect={() => void saveAsArtifact()}
-              disabled={saveAsArtifactState === 'saving'}
-              className="gap-2"
-            >
-              <PackagePlus className="size-4" aria-hidden="true" />
-              {saveAsArtifactState === 'saving' ? t('Saving…') : t('Save as artifact')}
-            </DropdownMenuItem>
-          ) : null}
+          <ActionMenuItems
+            entries={machineEntries}
+            onSelect={previewActions.execute}
+            compact={false}
+          />
         </DropdownMenuContent>
       </DropdownMenu>
-      {failure ? (
-        <LocalFileActionErrorToast failure={failure} onDismiss={() => setFailure(undefined)} />
-      ) : null}
     </>
   )
 }

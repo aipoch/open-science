@@ -135,15 +135,30 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'uploads:stage-local-file'
 ])
 
-const TASK_NATIVE_COMMAND_NAMES = Object.freeze(['reviewer:abort'])
+const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
+  'projects:update-session-defaults',
+  'reviewer:abort',
+  'settings:set-agent-routing',
+  'sessions:fail-task-run',
+  'sessions:settle-task-completion',
+  'sessions:stage-task-completion',
+  'sessions:update-configuration'
+])
 
 const TASK_COMMAND_NAMES = Object.freeze([
   'projects:list',
   'projects:create',
   'projects:update',
+  'projects:update-session-defaults',
+  'settings:get-settings',
+  'settings:set-agent-routing',
   'sessions:load-all',
   'sessions:save-session',
+  'sessions:stage-task-completion',
+  'sessions:settle-task-completion',
+  'sessions:fail-task-run',
   'sessions:set-delegation-policy',
+  'sessions:update-configuration',
   'acp:get-plan-projection',
   'acp:respond-plan',
   'reviewer:abort',

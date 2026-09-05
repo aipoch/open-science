@@ -27,6 +27,7 @@ type SystemShutdownRelay = {
 }
 
 const STARTUP_SYSTEM_SHUTDOWN_TIMEOUT_MS = 5_000
+const STARTUP_SHELL_TIMEOUT_MS = 15_000
 
 type StartupWindowSurface = {
   focus: () => void
@@ -189,12 +190,17 @@ export const prepareVisibleStartupRuntime = async <Shell, Modules, Runtime>(
 // and lifecycle must keep initializing even when Chromium cannot produce the first frame. Main-frame
 // load failure discards the unusable window; windows.ts owns renderer-process crash recovery.
 export const waitForStartupShell = (
-  window: Pick<BrowserWindow, 'destroy' | 'once' | 'removeListener' | 'webContents'>
+  window: Pick<BrowserWindow, 'destroy' | 'once' | 'removeListener' | 'webContents'>,
+  options: {
+    diagnostics?: Pick<DiagnosticOperation, 'phase'>
+    timeoutMs?: number
+  } = {}
 ): Promise<void> =>
   new Promise((resolve) => {
     let settled = false
 
     const cleanup = (): void => {
+      clearTimeout(timeout)
       window.removeListener('ready-to-show', settle)
       window.removeListener('closed', settle)
       window.webContents.removeListener('did-fail-load', onDidFailLoad)
@@ -224,6 +230,12 @@ export const waitForStartupShell = (
     window.once('closed', settle)
     window.webContents.on('did-fail-load', onDidFailLoad)
     window.webContents.once('render-process-gone', settle)
+    const timeoutMs = options.timeoutMs ?? STARTUP_SHELL_TIMEOUT_MS
+    const timeout = setTimeout(() => {
+      options.diagnostics?.phase('startup-shell-timeout', { timeoutMs })
+      window.destroy()
+      settle()
+    }, timeoutMs)
   })
 
 // Runs the ordered startup sequence: gate on the single-instance lock (quitting a secondary launch

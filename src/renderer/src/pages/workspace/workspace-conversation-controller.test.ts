@@ -540,7 +540,6 @@ describe('workspace conversation controller', () => {
       revision: 3,
       approval: 'pending',
       lifecycle: 'awaiting_approval',
-      requiresExplicitContinuation: false,
       document: {
         schema_version: 1,
         task_summary: 'Analyze the dataset',
@@ -598,7 +597,6 @@ describe('workspace conversation controller', () => {
       revision: 3,
       approval: 'pending',
       lifecycle: 'awaiting_approval',
-      requiresExplicitContinuation: false,
       document: {
         schema_version: 1,
         task_summary: 'Analyze the dataset',

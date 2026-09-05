@@ -27,6 +27,7 @@ const formatResultCountLabel = (
 const renderSearchDetailsBody = (
   activity: ToolActivity,
   details: WebSearchDetails,
+  t: ReturnType<typeof useTranslation>['t'],
   annotationPort?: AnnotationPort
 ): React.JSX.Element => {
   const annotate = (children: React.ReactNode, sectionId: string): React.JSX.Element =>
@@ -53,7 +54,7 @@ const renderSearchDetailsBody = (
   return (
     <>
       <div className="grid grid-cols-[auto_1fr] items-start gap-x-4 gap-y-1.5">
-        <span className="pt-px text-text-100">query</span>
+        <span className="pt-px text-text-100">{t('query')}</span>
         {annotate(
           <span className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-text-000">
             {details.query}
@@ -125,7 +126,7 @@ const WorkspaceWebSearchActivityRow = ({
       panelTestId="tool-search-details"
       onToggle={onToggleSearch}
     >
-      {renderSearchDetailsBody(activity, details, annotationPort)}
+      {renderSearchDetailsBody(activity, details, t, annotationPort)}
     </WorkspaceToolActivityRowButton>
   )
 }

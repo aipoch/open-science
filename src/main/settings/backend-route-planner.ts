@@ -324,6 +324,9 @@ class BackendRoutePlanner {
                 baseUrl,
                 ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
                 model,
+                ...(candidate.provider.vendorId === 'apodex'
+                  ? { backgroundModel: 'apodex-1.1-mini' }
+                  : {}),
                 ...(candidate.provider.vendorId &&
                 usesVendorAnthropicApiKeyHeader(candidate.provider.vendorId)
                   ? { useApiKeyHeader: true }

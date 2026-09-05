@@ -6,9 +6,9 @@ import { SessionDetailsModelOwner } from './session-details-model-owner'
 import type { SettingsRepository } from './repository'
 import type { ProviderAccountsModule } from './provider-accounts'
 import type { AgentBackendResolver } from './backend-resolver'
-import type { StoredSettings } from './types'
+import type { StoredProvider, StoredSettings } from './types'
 
-const provider = {
+const provider: StoredProvider = {
   id: 'provider-a',
   type: 'custom' as const,
   name: 'Provider A',
@@ -17,7 +17,8 @@ const provider = {
 }
 
 const createOwner = (
-  configuration: SessionDetailsModelConfiguration
+  configuration: SessionDetailsModelConfiguration,
+  providerPatch: Partial<StoredProvider> = {}
 ): {
   owner: SessionDetailsModelOwner
   repository: SettingsRepository
@@ -25,7 +26,7 @@ const createOwner = (
 } => {
   let settings = {
     version: 2,
-    providers: [provider],
+    providers: [{ ...provider, ...providerPatch }],
     agentFrameworkId: 'opencode' as const,
     sessionDetailsModel: configuration
   } satisfies StoredSettings
@@ -38,9 +39,14 @@ const createOwner = (
     })
   } as unknown as SettingsRepository
   const providers = {
-    resolveRuntimeTarget: vi.fn(() => ({
+    resolveRuntimeTarget: vi.fn((_provider, selection) => ({
+      providerId: provider.id,
+      providerType: provider.type,
+      effectiveModel: selection.kind === 'required' ? selection.model : provider.model,
+      apiEndpoints: ['openai'],
       frameworkCompatible: true,
       modelBridgeSupported: true,
+      needsChatResponsesBridge: false,
       reasoningEffortProfile: { supported: false }
     }))
   } as unknown as ProviderAccountsModule
@@ -137,5 +143,39 @@ describe('SessionDetailsModelOwner', () => {
     await expect(owner.admit(session({ agentFrameworkId: 'opencode' }))).rejects.toThrow(
       'no complete Main model target'
     )
+  })
+
+  it('applies a targeted validation failure only to its matching model', async () => {
+    const failure = {
+      at: 20,
+      category: 'model-not-found' as const,
+      target: { model: 'model-b', endpoint: 'openai' as const }
+    }
+    const { owner } = createOwner(
+      {
+        mode: 'fixed',
+        providerId: 'provider-a',
+        model: 'model-a',
+        reasoningEffort: 'low'
+      },
+      { lastValidationFailure: failure }
+    )
+
+    await expect(
+      owner.set({
+        mode: 'fixed',
+        providerId: 'provider-a',
+        model: 'model-a',
+        reasoningEffort: 'low'
+      })
+    ).resolves.toBeUndefined()
+    await expect(
+      owner.set({
+        mode: 'fixed',
+        providerId: 'provider-a',
+        model: 'model-b',
+        reasoningEffort: 'low'
+      })
+    ).rejects.toThrow('no longer available')
   })
 })

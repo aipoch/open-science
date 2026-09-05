@@ -1,3 +1,4 @@
+import { ProjectFilesReconciliationError } from '../project-files/repository'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -8,6 +9,7 @@ vi.mock('electron', () => ({
 }))
 
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
+import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { hasAnswerableDelegatedQuestion } from '../../shared/delegated-work-projection'
 import {
   createLinearConversationGraph,
@@ -16,6 +18,7 @@ import {
 } from '../../shared/conversation-graph'
 import {
   materializeSessionConversationGraph,
+  SessionRevisionConflictError,
   type PersistedArtifact,
   type PersistedChatMessage,
   type PersistedChatSession,
@@ -53,6 +56,16 @@ const createSession = (overrides: Partial<PersistedChatSession> = {}): Persisted
   createdAt: 1,
   updatedAt: 2,
   ...overrides
+})
+
+const createUserMessage = (id: string, createdAt: number): PersistedChatMessage => ({
+  id,
+  role: 'user',
+  content: id,
+  status: 'complete',
+  eventIds: [],
+  createdAt,
+  updatedAt: createdAt
 })
 
 const createIdleSessionWithRunningChild = (originMessageId = 'root-prompt'): PersistedChatSession =>
@@ -228,6 +241,39 @@ const createRuntimePlan = (
   artifactChecksum: 'a'.repeat(64),
   approval: 'pending',
   stepStatuses: {},
+  ...overrides
+})
+
+const createPlanProjection = (
+  overrides: Partial<ActivePlanProjection> = {}
+): ActivePlanProjection => ({
+  artifactId: 'plan-1',
+  artifactVersionId: 'plan-version-1',
+  artifactChecksum: 'a'.repeat(64),
+  originatingPromptMessageId: 'prompt-plan-1',
+  revision: 7,
+  approval: 'approved',
+  lifecycle: 'completed',
+  document: {
+    schema_version: 1,
+    task_summary: 'Analyze the dataset',
+    phases: [
+      {
+        name: 'Analysis',
+        delegations: [
+          {
+            name: 'Primary agent',
+            steps: [{ title: 'Analyze data', description: 'Produce the result.' }]
+          }
+        ]
+      }
+    ],
+    desired_outputs: ['Analysis report'],
+    feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+  },
+  stepStatuses: { 'Analyze data': { status: 'completed', updatedAt: 6 } },
+  stepStates: { 'Analyze data': { status: 'completed' } },
+  counts: { phases: 1, delegations: 1, steps: 1, completed: 1, inProgress: 0 },
   ...overrides
 })
 
@@ -455,6 +501,208 @@ describe('SessionPersistenceCoordinator', () => {
     expect(artifactStorage.prepareProjectReconciliation).not.toHaveBeenCalled()
   })
 
+  it('stages and settles Task completion from current authority without replacing concurrent state', async () => {
+    const prompt: PersistedChatMessage = {
+      id: 'task-prompt',
+      role: 'user',
+      content: 'Run the task',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const concurrentMessage: PersistedChatMessage = {
+      id: 'concurrent-message',
+      role: 'agent',
+      content: 'Concurrent state',
+      status: 'complete',
+      responseToMessageId: prompt.id,
+      eventIds: ['concurrent-event'],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    let durable = materializeSessionConversationGraph(
+      createSession({
+        revision: 3,
+        status: 'running',
+        errorReportable: false,
+        agentFrameworkId: 'codex',
+        activeRun: { promptMessageId: prompt.id, startedAt: 1 },
+        runtimeContext: { version: 1, revision: 2 },
+        messages: [prompt, concurrentMessage],
+        activities: [
+          {
+            id: 'concurrent-activity',
+            kind: 'tool',
+            title: 'Concurrent tool',
+            promptMessageId: prompt.id,
+            status: 'completed',
+            sortIndex: 2,
+            eventIds: ['concurrent-tool-event'],
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ],
+        artifacts: [{ id: 'concurrent-artifact', kind: 'workspace-file', path: '/concurrent.txt' }]
+      })
+    )
+    const expectedRevisions: number[] = []
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: structuredClone(durable)
+      })),
+      saveSession: vi.fn(async (candidate, expectedRevision) => {
+        const expected = expectedRevision ?? candidate.revision ?? 0
+        expect(expected).toBe(durable.revision)
+        expectedRevisions.push(expected)
+        durable = structuredClone({ ...candidate, revision: expected + 1 })
+        return structuredClone(durable)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex({ syncSession: vi.fn().mockResolvedValue([]) })
+    )
+    const taskMessage: PersistedChatMessage = {
+      id: 'task-answer',
+      role: 'agent',
+      content: 'Finished',
+      status: 'complete',
+      responseToMessageId: prompt.id,
+      eventIds: ['task-event'],
+      createdAt: 4,
+      updatedAt: 4
+    }
+
+    await coordinator.stageTaskCompletion({
+      projectId: durable.projectId,
+      sessionId: durable.id,
+      promptMessageId: prompt.id,
+      message: taskMessage,
+      activities: [
+        {
+          id: 'task-activity',
+          kind: 'tool',
+          title: 'Task tool',
+          promptMessageId: prompt.id,
+          status: 'completed',
+          sortIndex: 4,
+          eventIds: ['task-tool-event'],
+          createdAt: 4,
+          updatedAt: 4
+        }
+      ],
+      updatedAt: 4
+    })
+    await coordinator.settleTaskCompletion({
+      projectId: durable.projectId,
+      sessionId: durable.id,
+      promptMessageId: prompt.id,
+      taskRunCommitId: 'task-run',
+      messageId: taskMessage.id,
+      artifacts: [{ id: 'task-artifact', kind: 'workspace-file', path: '/task.txt' }],
+      updatedAt: 4
+    })
+
+    expect(expectedRevisions).toEqual([3, 4])
+    expect(durable).toMatchObject({
+      revision: 5,
+      status: 'idle',
+      activeRun: undefined,
+      taskRunCommitId: 'task-run'
+    })
+    expect(durable.errorReportable).toBeUndefined()
+    expect(durable.runtimeContext).toEqual({ version: 1, revision: 2 })
+    expect(durable.messages.map(({ id }) => id)).toEqual([
+      prompt.id,
+      concurrentMessage.id,
+      taskMessage.id
+    ])
+    expect(durable.messages.at(-1)?.artifactIds).toEqual(['task-artifact'])
+    expect(
+      durable.conversationGraph?.messages.find(({ id }) => id === taskMessage.id)?.artifactIds
+    ).toEqual(['task-artifact'])
+    expect(durable.activities?.map(({ id }) => id)).toEqual([
+      'concurrent-activity',
+      'task-activity'
+    ])
+    expect(durable.artifacts?.map(({ id }) => id)).toEqual(['concurrent-artifact', 'task-artifact'])
+  })
+
+  it('persists Task failure as a delta against current authority', async () => {
+    const taskMessage: PersistedChatMessage = {
+      id: 'task-answer',
+      role: 'agent',
+      content: 'Partial answer',
+      status: 'complete',
+      responseToMessageId: 'task-prompt',
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    let durable = createSession({
+      revision: 8,
+      status: 'running',
+      activeRun: { promptMessageId: 'task-prompt', startedAt: 1 },
+      runtimeContext: { version: 1, revision: 4 },
+      messages: [
+        {
+          id: 'task-prompt',
+          role: 'user',
+          content: 'Run the task',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        taskMessage
+      ],
+      artifacts: [{ id: 'concurrent-artifact', kind: 'workspace-file', path: '/concurrent.txt' }]
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (candidate) => {
+        durable = structuredClone({ ...candidate, revision: (candidate.revision ?? 0) + 1 })
+        return durable
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex({ syncSession: vi.fn().mockResolvedValue([]) })
+    )
+
+    await coordinator.failTaskRun({
+      projectId: durable.projectId,
+      sessionId: durable.id,
+      promptMessageId: 'task-prompt',
+      taskRunCommitId: 'task-run',
+      messageId: taskMessage.id,
+      artifacts: [{ id: 'partial-artifact', kind: 'workspace-file', path: '/partial.txt' }],
+      error: 'Provider failed',
+      errorReportable: false,
+      updatedAt: 9
+    })
+
+    expect(durable).toMatchObject({
+      revision: 9,
+      status: 'error',
+      activeRun: undefined,
+      error: 'Provider failed',
+      errorReportable: false,
+      taskRunCommitId: 'task-run',
+      runtimeContext: { version: 1, revision: 4 }
+    })
+    expect(durable.messages.at(-1)?.artifactIds).toEqual(['partial-artifact'])
+    expect(durable.artifacts?.map(({ id }) => id)).toEqual([
+      'concurrent-artifact',
+      'partial-artifact'
+    ])
+  })
+
   it('resolves Message membership from the durable active Branch', async () => {
     const prompt = (id: string, createdAt: number): PersistedChatMessage => ({
       id,
@@ -581,6 +829,7 @@ describe('SessionPersistenceCoordinator', () => {
   it('persists blocked Plan feedback as a standard user Message without changing Plan authority', async () => {
     let durable = createSession({
       status: 'waiting-plan-approval',
+      messages: [createUserMessage('interaction-1', 1)],
       runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
     })
     const repository = createSessionRepository({
@@ -604,7 +853,10 @@ describe('SessionPersistenceCoordinator', () => {
     })
 
     expect(beforePersist).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'session-1', messages: [] })
+      expect.objectContaining({
+        id: 'session-1',
+        messages: [expect.objectContaining({ id: 'interaction-1' })]
+      })
     )
     expect(durable.messages).toContainEqual(
       expect.objectContaining({
@@ -625,6 +877,7 @@ describe('SessionPersistenceCoordinator', () => {
   it('atomically persists Plan feedback and its neutral review marker in one Session save', async () => {
     let durable = createSession({
       status: 'waiting-plan-approval',
+      messages: [createUserMessage('interaction-1', 1)],
       runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
     })
     const repository = createSessionRepository({
@@ -680,7 +933,9 @@ describe('SessionPersistenceCoordinator', () => {
     expect(publishRuntimeContextSession).toHaveBeenCalledOnce()
     expect(publishRuntimeContextSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        messages: [expect.objectContaining({ content: 'Split the analysis by cohort.' })],
+        messages: expect.arrayContaining([
+          expect.objectContaining({ content: 'Split the analysis by cohort.' })
+        ]),
         runtimeContext: expect.objectContaining({ revision: 3 })
       }),
       'runtime-context'
@@ -741,7 +996,7 @@ describe('SessionPersistenceCoordinator', () => {
   })
 
   it('publishes the parent Session after every Side chat mutation', async () => {
-    let durable = createSession()
+    let durable = createSession({ messages: [createUserMessage('main-prompt-1', 1)] })
     const repository = createSessionRepository({
       loadSessionWithDiagnostics: vi.fn(async () => ({
         status: 'found' as const,
@@ -801,6 +1056,7 @@ describe('SessionPersistenceCoordinator', () => {
 
   it('keeps durable relays deliverable after clearing their producer Side chat', async () => {
     let durable = createSession({
+      messages: [createUserMessage('main-prompt-1', 1), createUserMessage('main-prompt-2', 2)],
       runtimeContext: {
         version: 1,
         revision: 5,
@@ -1070,6 +1326,166 @@ describe('SessionPersistenceCoordinator', () => {
       }),
       'runtime-context'
     )
+  })
+
+  it('atomically archives the replaced Plan and preserves Main-owned history across restart and renderer saves', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-plan-history-owner-'))
+    const repository = new SessionRepository(root)
+    const oldPlan = createRuntimePlan({
+      approval: 'approved',
+      stepStatuses: { 'Analyze data': { status: 'completed', updatedAt: 6 } }
+    })
+    const finalProjection = createPlanProjection()
+    const retainedLastProjection = createPlanProjection({
+      artifactId: 'plan-retained',
+      artifactVersionId: 'plan-version-retained',
+      artifactChecksum: 'c'.repeat(64),
+      revision: 5
+    })
+    const newPlan = createRuntimePlan({
+      artifactId: 'plan-2',
+      artifactVersionId: 'plan-version-2',
+      artifactChecksum: 'b'.repeat(64)
+    })
+    try {
+      await repository.saveSession(
+        createSession({
+          runtimeContext: { version: 1, revision: 7, plan: oldPlan },
+          planHistoryProjections: [
+            createPlanProjection({
+              lifecycle: 'approved',
+              stepStatuses: {},
+              stepStates: { 'Analyze data': { status: 'not_started' } },
+              counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+            }),
+            createPlanProjection({
+              ...retainedLastProjection,
+              revision: 4,
+              lifecycle: 'approved',
+              stepStatuses: {},
+              stepStates: { 'Analyze data': { status: 'not_started' } },
+              counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+            }),
+            retainedLastProjection,
+            createPlanProjection({
+              artifactId: newPlan.artifactId,
+              artifactVersionId: newPlan.artifactVersionId,
+              artifactChecksum: newPlan.artifactChecksum
+            })
+          ]
+        })
+      )
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+      await coordinator.patchSessionRuntimeContext({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedRevision: 7,
+        patch: { plan: newPlan },
+        archivePlanProjection: finalProjection,
+        sessionStatus: 'waiting-plan-approval'
+      })
+
+      const afterReplacement = await repository.loadSession('project-1', 'session-1')
+      if (!afterReplacement) throw new Error('Expected the replaced Session to remain durable.')
+      expect(afterReplacement).toMatchObject({
+        status: 'waiting-plan-approval',
+        runtimeContext: { revision: 8, plan: newPlan },
+        planHistoryProjections: [retainedLastProjection, finalProjection]
+      })
+
+      await coordinator.saveSession({
+        ...afterReplacement,
+        runtimeContext: { version: 1, revision: 1, plan: oldPlan },
+        planHistoryProjections: [
+          createPlanProjection({
+            artifactId: newPlan.artifactId,
+            artifactVersionId: newPlan.artifactVersionId,
+            artifactChecksum: newPlan.artifactChecksum
+          })
+        ]
+      })
+
+      const restarted = new SessionPersistenceCoordinator(repository, createFileIndex())
+      const loaded = await restarted.loadAllReadOnly()
+      expect(loaded.sessions[0]).toMatchObject({
+        runtimeContext: { revision: 8, plan: newPlan },
+        planHistoryProjections: [retainedLastProjection, finalProjection]
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not reject an authoritative Plan replacement when its optional history projection is not displayable', async () => {
+    let durable = createSession({
+      runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const successor = createRuntimePlan({
+      artifactId: 'plan-2',
+      artifactVersionId: 'plan-version-2',
+      artifactChecksum: 'b'.repeat(64)
+    })
+
+    await expect(
+      coordinator.patchSessionRuntimeContext({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedRevision: 2,
+        patch: { plan: successor },
+        archivePlanProjection: createPlanProjection({ originatingPromptMessageId: undefined })
+      })
+    ).resolves.toMatchObject({ revision: 3, plan: successor })
+
+    expect(durable).toMatchObject({ runtimeContext: { revision: 3, plan: successor } })
+    expect(durable.planHistoryProjections).toBeUndefined()
+
+    const oversizedProjection = createPlanProjection({
+      artifactId: successor.artifactId,
+      artifactVersionId: successor.artifactVersionId,
+      artifactChecksum: successor.artifactChecksum
+    })
+    const oversizedSuccessor = createRuntimePlan({
+      artifactId: 'plan-3',
+      artifactVersionId: 'plan-version-3',
+      artifactChecksum: 'c'.repeat(64)
+    })
+    await expect(
+      coordinator.patchSessionRuntimeContext({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedRevision: 3,
+        patch: { plan: oversizedSuccessor },
+        archivePlanProjection: {
+          ...oversizedProjection,
+          document: {
+            ...oversizedProjection.document,
+            phases: [
+              {
+                name: 'Analysis',
+                delegations: [
+                  {
+                    name: 'Primary agent',
+                    steps: [{ title: 'Analyze data', description: 'x'.repeat(513_000) }]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      })
+    ).resolves.toMatchObject({ revision: 4, plan: oversizedSuccessor })
+    expect(durable.planHistoryProjections).toBeUndefined()
   })
 
   it('does not persist a runtime context patch when its commit precondition fails', async () => {
@@ -1887,6 +2303,98 @@ describe('SessionPersistenceCoordinator', () => {
     expect(onDelegationPolicyUpdated).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ id: 'session-1', delegationPolicy: 'deny' })
     )
+  })
+
+  it('updates Main-owned Session configuration in one revision-checked commit', async () => {
+    let durable = createSession({
+      revision: 4,
+      title: 'Authoritative title',
+      memoryEnabled: true,
+      delegationPolicy: 'allow',
+      enabledComputeHosts: ['ssh:old'],
+      selectedComputeHosts: ['ssh:old']
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session, expectedRevision) => {
+        const revision = expectedRevision ?? session.revision ?? 0
+        if (revision !== durable.revision) {
+          throw new SessionRevisionConflictError(revision, durable.revision ?? 0)
+        }
+        durable = structuredClone({ ...session, revision: revision + 1 })
+        return durable
+      })
+    })
+    const onDelegationPolicyUpdated = vi.fn()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onDelegationPolicyUpdated
+    )
+    const candidate = createSession({
+      ...durable,
+      title: 'Untrusted replacement title',
+      permissionProfile: 'full',
+      memoryEnabled: false,
+      delegationPolicy: 'deny',
+      enabledComputeHosts: ['ssh:new'],
+      selectedComputeHosts: ['ssh:new']
+    })
+
+    await expect(coordinator.updateSessionConfiguration(candidate, 4)).resolves.toMatchObject({
+      revision: 5,
+      title: 'Authoritative title',
+      permissionProfile: 'full',
+      memoryEnabled: false,
+      delegationPolicy: 'deny',
+      enabledComputeHosts: ['ssh:new'],
+      selectedComputeHosts: ['ssh:new']
+    })
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+    expect(onDelegationPolicyUpdated).toHaveBeenCalledOnce()
+
+    await expect(coordinator.updateSessionConfiguration(candidate, 4)).rejects.toMatchObject({
+      code: 'session-revision-conflict',
+      expectedRevision: 4,
+      actualRevision: 5
+    })
+  })
+
+  it('rejects a configuration update after a Run wins the Session lane', async () => {
+    const durable = createSession({
+      revision: 5,
+      status: 'running',
+      activeRun: { promptMessageId: 'prompt-1', startedAt: 3 }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      }))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.updateSessionConfiguration(
+        { ...durable, memoryEnabled: false, status: 'idle', activeRun: undefined },
+        5
+      )
+    ).rejects.toMatchObject({
+      code: 'session-configuration-busy',
+      sessionId: durable.id
+    })
+    expect(repository.saveSession).not.toHaveBeenCalled()
   })
 
   it('preserves main-owned delegation policy on an ordinary existing-Session save', async () => {
@@ -3457,6 +3965,72 @@ describe('SessionPersistenceCoordinator', () => {
     await expect(coordinator.saveSession(session)).resolves.toMatchObject({
       id: 'session-1'
     })
+  })
+
+  it('preserves the deletion failure and every failed compensation', async () => {
+    const session = createSession()
+    const deletionError = new Error('disk locked')
+    const indexRollbackError = new Error('database unavailable')
+    const computeRollbackError = new Error('compute cleanup unavailable')
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session }),
+      deleteSession: vi.fn().mockRejectedValue(deletionError)
+    })
+    const fileIndex = createFileIndex({
+      restoreSession: vi.fn().mockRejectedValue(indexRollbackError)
+    })
+    const computeJobs = {
+      prepareSessionJobDeletion: vi.fn(async () => undefined),
+      commitSessionJobDeletion: vi.fn(async () => undefined),
+      prepareProjectJobDeletion: vi.fn(async () => undefined),
+      commitProjectJobDeletion: vi.fn(async () => undefined),
+      abortSessionJobDeletion: vi.fn().mockRejectedValue(computeRollbackError)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createTestLogger(),
+      computeJobs
+    )
+
+    const failure = await coordinator
+      .deleteSession('project-1', 'session-1')
+      .catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect((failure as AggregateError).errors).toEqual([
+      deletionError,
+      indexRollbackError,
+      computeRollbackError
+    ])
+    expect(fileIndex.restoreSession).toHaveBeenCalledWith(
+      'project-1',
+      'session-1',
+      'delete-session-operation'
+    )
+    expect(computeJobs.abortSessionJobDeletion).toHaveBeenCalledWith('project-1', 'session-1')
+    expect(fileIndex.markReconciliationIncomplete).toHaveBeenCalledWith('project-1')
+  })
+
+  it('does not widen an already scoped file reconciliation failure during hydration', async () => {
+    const session = createSession()
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const fileIndex = createFileIndex({
+      reconcileActiveSessions: vi
+        .fn()
+        .mockRejectedValue(new ProjectFilesReconciliationError([new Error('busy')], ['project-1']))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+    await coordinator.loadAll()
+    expect(fileIndex.markReconciliationIncomplete).not.toHaveBeenCalled()
   })
 
   it('hydrates sessions after indexing and reconciles only a complete scan', async () => {

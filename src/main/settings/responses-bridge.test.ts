@@ -535,6 +535,19 @@ describe('Responses-compatible bridge conversion', () => {
       })
     ).toMatchObject({ thinking: { type: 'enabled' } })
 
+    const apodexRequest = responsesToChatRequest(
+      { model: 'catalog', input: 'hi' },
+      'apodex-1.1',
+      undefined,
+      [],
+      {
+        reasoningEffortOverride: 'high',
+        vendorId: 'apodex'
+      }
+    )
+    expect(apodexRequest).not.toHaveProperty('thinking')
+    expect(apodexRequest).not.toHaveProperty('reasoning_effort')
+
     expect(
       responsesToChatRequest({ model: 'catalog', input: 'hi' }, 'qwen/qwen3.7-max', undefined, [], {
         reasoningEffortOverride: 'none',
@@ -2327,6 +2340,50 @@ describe('Responses bridge Skill selector', () => {
     expect(upstreamBody).toMatchObject({ thinking: { type: 'disabled' } })
     expect(upstreamBody).not.toHaveProperty('reasoning_effort')
   })
+
+  it.each([
+    ['Codex', undefined],
+    ['CodeBuddy', { skillSelectorFailureMode: 'throw' as const }]
+  ])(
+    'omits unsupported Apodex Chat reasoning controls for %s Skill routing',
+    async (_framework, options) => {
+      let upstreamBody: Record<string, unknown> = {}
+      const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return Response.json({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    function: {
+                      name: 'select_skills',
+                      arguments: JSON.stringify({ skill_names: ['literature-review'] })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      })
+      const bridge = new ResponsesBridge(
+        {
+          baseUrl: 'https://api.apodex.ai/v1',
+          model: 'apodex-1.1',
+          vendorId: 'apodex'
+        },
+        upstreamFetch,
+        options
+      )
+
+      await expect(bridge.selectSkills('Prepare a literature review.', catalog)).resolves.toEqual([
+        { name: 'literature-review', path: '/private/review/SKILL.md' }
+      ])
+      expect(upstreamBody).not.toHaveProperty('thinking')
+      expect(upstreamBody).not.toHaveProperty('reasoning_effort')
+    }
+  )
 
   it('retries without tools when forced tool choice produces ordinary content', async () => {
     const requests: Array<Record<string, unknown>> = []

@@ -29,10 +29,21 @@ const RETRYABLE_COLLISION_REVISION = -1
 type ManagedFileSoftDeleteToken = string
 type ManagedFileSyncOptions = { force?: boolean }
 
+// Callers must not widen failures already recorded against known projects into a global outage.
+class ProjectFilesReconciliationError extends AggregateError {
+  constructor(
+    errors: unknown[],
+    readonly projectIds: readonly string[]
+  ) {
+    super(errors, 'Project file reconciliation failed.')
+  }
+}
+
 // Owns every Project Files projection mutation and its completeness state. The public repository
 // delegates here while retaining the stable caller interface and the query orchestration for FI2.
 class ProjectFilesMutationOwner {
   private readonly incompleteSessions = new Map<string, string>()
+  private readonly incompleteProjects = new Set<string>()
   private isReconciliationIncomplete = false
 
   constructor(
@@ -346,6 +357,9 @@ class ProjectFilesMutationOwner {
     sessions: PersistedChatSession[],
     projectId?: string
   ): Promise<void> {
+    let scopedFailure = false
+    const failures: unknown[] = []
+    const failedProjects = new Set<string>()
     try {
       const client = await this.getClient()
       const activeKeys = new Set(
@@ -367,43 +381,70 @@ class ProjectFilesMutationOwner {
       )
 
       for (const indexed of indexedSessions) {
-        const key = sessionKey(indexed.projectId, indexed.sessionId)
-        const isActive = activeKeys.has(key) || retainedKeys.has(key)
+        try {
+          const key = sessionKey(indexed.projectId, indexed.sessionId)
+          const isActive = activeKeys.has(key) || retainedKeys.has(key)
 
-        if (isActive && indexed.deletedAt !== null) {
-          await client.$transaction([
-            client.managedFile.updateMany({
-              where: {
-                projectId: indexed.projectId,
-                sessionId: indexed.sessionId,
-                deletedAt: { not: null }
-              },
-              data: { deletedAt: null, deleteOperationId: null }
-            }),
-            client.managedFileSessionSync.updateMany({
-              where: {
-                projectId: indexed.projectId,
-                sessionId: indexed.sessionId,
-                deletedAt: { not: null }
-              },
-              data: { deletedAt: null, deleteOperationId: null }
-            })
-          ])
-        } else if (!isActive && indexed.deletedAt === null) {
-          await this.softDeleteSession(indexed.projectId, indexed.sessionId)
+          if (isActive && indexed.deletedAt !== null) {
+            await client.$transaction([
+              client.managedFile.updateMany({
+                where: {
+                  projectId: indexed.projectId,
+                  sessionId: indexed.sessionId,
+                  deletedAt: { not: null }
+                },
+                data: { deletedAt: null, deleteOperationId: null }
+              }),
+              client.managedFileSessionSync.updateMany({
+                where: {
+                  projectId: indexed.projectId,
+                  sessionId: indexed.sessionId,
+                  deletedAt: { not: null }
+                },
+                data: { deletedAt: null, deleteOperationId: null }
+              })
+            ])
+          } else if (!isActive && indexed.deletedAt === null) {
+            await this.softDeleteSession(indexed.projectId, indexed.sessionId)
+          }
+        } catch (error) {
+          failures.push(error)
+          failedProjects.add(indexed.projectId)
         }
       }
       for (const origin of retainedOrigins) {
-        await this.rebuildRetainedOriginProjection(client, origin.projectId, origin.sessionId)
+        try {
+          await this.rebuildRetainedOriginProjection(client, origin.projectId, origin.sessionId)
+        } catch (error) {
+          failures.push(error)
+          failedProjects.add(origin.projectId)
+        }
       }
       for (const key of this.incompleteSessions.keys()) {
-        if ((!projectId || key.startsWith(`${projectId}:`)) && !activeKeys.has(key)) {
+        if (
+          (!projectId || key.startsWith(`${projectId}:`)) &&
+          !activeKeys.has(key) &&
+          ![...failedProjects].some((id) => key.startsWith(`${id}:`))
+        ) {
           this.incompleteSessions.delete(key)
         }
       }
-      if (!projectId) this.isReconciliationIncomplete = false
+      for (const id of [...this.incompleteProjects]) {
+        if ((!projectId || projectId === id) && !failedProjects.has(id))
+          this.incompleteProjects.delete(id)
+      }
+      for (const id of failedProjects) this.incompleteProjects.add(id)
+      if (failures.length) {
+        scopedFailure = true
+        throw new ProjectFilesReconciliationError(failures, [...failedProjects])
+      }
+      if (projectId) this.incompleteProjects.delete(projectId)
+      else {
+        this.incompleteProjects.clear()
+        this.isReconciliationIncomplete = false
+      }
     } catch (error) {
-      this.isReconciliationIncomplete = true
+      if (!scopedFailure) this.markReconciliationIncomplete(projectId)
       throw error
     }
   }
@@ -522,17 +563,19 @@ class ProjectFilesMutationOwner {
     })
   }
 
-  markReconciliationIncomplete(): void {
-    this.isReconciliationIncomplete = true
+  markReconciliationIncomplete(projectId?: string): void {
+    if (projectId) this.incompleteProjects.add(projectId)
+    else this.isReconciliationIncomplete = true
   }
 
   isIndexComplete(projectId: string): boolean {
     return (
       !this.isReconciliationIncomplete &&
+      !this.incompleteProjects.has(projectId) &&
       ![...this.incompleteSessions.keys()].some((key) => key.startsWith(`${projectId}:`))
     )
   }
 }
 
-export { ProjectFilesMutationOwner }
+export { ProjectFilesMutationOwner, ProjectFilesReconciliationError }
 export type { ManagedFileSoftDeleteToken, ManagedFileSyncOptions }

@@ -146,6 +146,7 @@ const FilePreviewDialog = ({
                   onViewInContextNavigate={onClose}
                   onPdfContextError={onPdfContextError}
                   tooltipClassName="z-[70]"
+                  actionMenuContentClassName="z-[70]"
                   leaveGuardScope={dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)}
                   retryResolutionEnabled={open}
                   {...annotationPort}

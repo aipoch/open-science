@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+  buildNotebookNetworkPolicy,
+  domainPatternMatches
+} from '../../shared/notebook-network'
+import {
+  MIRROR_CANDIDATES,
   effectiveMirrorAsync,
   type MirrorCandidate,
   pickFastestMirror,
@@ -49,6 +55,28 @@ const probeFrom =
 afterEach(() => resetAutoMirrorCache())
 
 describe('pickFastestMirror', () => {
+  it('keeps every automatic package mirror reachable through the default network policy', () => {
+    const policy = buildNotebookNetworkPolicy(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
+    const automaticMirrorHosts = MIRROR_CANDIDATES.flatMap((candidate) =>
+      [
+        candidate.probeUrl,
+        candidate.biocondaProbeUrl,
+        candidate.mirror.condaChannel,
+        candidate.mirror.pypiIndex,
+        candidate.mirror.cranMirror
+      ]
+        .filter((url): url is string => Boolean(url))
+        .map((url) => new URL(url).hostname)
+    )
+
+    expect(
+      automaticMirrorHosts.filter(
+        (hostname) =>
+          !policy.allowedDomains.some((pattern) => domainPatternMatches(pattern, hostname))
+      )
+    ).toEqual([])
+  })
+
   it('returns the fastest candidate whose conda-forge and bioconda channels respond', async () => {
     const result = await pickFastestMirror({
       candidates,

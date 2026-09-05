@@ -133,7 +133,6 @@ export type SessionCapabilityNotebookOptions = {
   mcpEntryPath: string
   mcpCommand?: string
   memoryTools?: boolean
-  isMemoryEnabled?: () => Promise<boolean>
   getRpcConnection?: (binding: {
     sessionId: string
     projectId: string
@@ -569,14 +568,7 @@ export class AcpSessionCapabilityOwner {
     const skillImportAllowed = policyAllowsSessionCapability(request.policy, 'skill-import')
     const planAllowed = policyAllowsSessionCapability(request.policy, 'plan')
     const hostMessageAllowed = policyAllowsSessionCapability(request.policy, 'host-message')
-    let memoryToolsEnabled = false
-    if ((this.options.notebook?.memoryTools ?? true) && request.memoryEnabled !== false) {
-      try {
-        memoryToolsEnabled = (await this.options.notebook?.isMemoryEnabled?.()) !== false
-      } catch (error) {
-        safeLogError('Memory capability gate read failed', diagnosticErrorFields(error))
-      }
-    }
+    const memoryToolsEnabled = this.options.notebook?.memoryTools ?? true
     const literatureAllowed =
       policyAllowsSessionCapability(request.policy, 'literature') &&
       Boolean(this.options.literature) &&

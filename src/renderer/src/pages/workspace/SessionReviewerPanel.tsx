@@ -204,7 +204,7 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
             aria-hidden
           />
         </span>
-        <span className="font-semibold text-text-300">{entry.toolName || 'tool'}</span>
+        <span className="font-semibold text-text-300">{entry.toolName || t('Tool')}</span>
         {summary ? (
           <code className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-text-400">
             {summary}

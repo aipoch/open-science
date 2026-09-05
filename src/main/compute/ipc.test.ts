@@ -39,7 +39,7 @@ import type { PermissionGrantRegistry } from '../permission-grants/registry'
 // ---------------------------------------------------------------------------
 // electron mock — captures ipcMain.handle registrations and stubs BrowserWindow
 // so the broadcaster path never tries to walk real renderer windows. Also
-// stubs `app` so resolveStorageRoot() resolves against a controllable home
+// stubs `app` so resolveConfigRoot() resolves against a controllable home
 // directory (OPEN_SCIENCE_STORAGE_ROOT is preferred when set).
 // ---------------------------------------------------------------------------
 

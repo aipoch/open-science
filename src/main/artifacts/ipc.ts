@@ -1,3 +1,7 @@
+import {
+  captureProvenanceRead,
+  type ProvenanceReadResult
+} from '../../shared/provenance-read-result'
 import { shell } from 'electron'
 import { basename, dirname } from 'node:path'
 
@@ -57,19 +61,21 @@ type ArtifactHandlers = {
   reconcilePendingArtifacts: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
   openFile: (request: OpenArtifactFileRequest) => Promise<void>
   readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
-  getLineage: (request: GetArtifactLineageRequest) => Promise<ArtifactLineageProvenance | undefined>
+  getLineage: (
+    request: GetArtifactLineageRequest
+  ) => Promise<ProvenanceReadResult<ArtifactLineageProvenance | undefined>>
   getVersionProvenance: (
     request: GetArtifactVersionProvenanceRequest
-  ) => Promise<ArtifactVersionProvenance>
+  ) => Promise<ProvenanceReadResult<ArtifactVersionProvenance>>
   getVersionExecution: (
     request: GetArtifactVersionProvenanceRequest
-  ) => Promise<ArtifactVersionExecutionProvenance>
+  ) => Promise<ProvenanceReadResult<ArtifactVersionExecutionProvenance>>
   getVersionMessages: (
     request: GetArtifactVersionProvenanceRequest
-  ) => Promise<ArtifactVersionMessagesProvenance>
+  ) => Promise<ProvenanceReadResult<ArtifactVersionMessagesProvenance>>
   getVersionReview: (
     request: GetArtifactVersionProvenanceRequest
-  ) => Promise<ArtifactVersionReviewProvenance>
+  ) => Promise<ProvenanceReadResult<ArtifactVersionReviewProvenance>>
   getCodeReconstruction: (
     request: GetArtifactCodeReconstructionRequest
   ) => Promise<ArtifactCodeReconstructionState>
@@ -273,26 +279,31 @@ const createArtifactHandlers = (
       }
       throw new Error('Managed Artifact preview requires a logical identity.')
     },
-    getLineage: (request) => {
-      if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
-      return dependencies.provenance.getLineage(request)
-    },
-    getVersionProvenance: (request) => {
-      if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
-      return dependencies.provenance.getVersionCore(request)
-    },
-    getVersionExecution: (request) => {
-      if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
-      return dependencies.provenance.getVersionExecution(request)
-    },
-    getVersionMessages: (request) => {
-      if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
-      return dependencies.provenance.getVersionMessages(request)
-    },
-    getVersionReview: (request) => {
-      if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
-      return dependencies.provenance.getVersionReview(request)
-    },
+    getLineage: (request) =>
+      captureProvenanceRead(async () => {
+        if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
+        return dependencies.provenance.getLineage(request)
+      }),
+    getVersionProvenance: (request) =>
+      captureProvenanceRead(async () => {
+        if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
+        return dependencies.provenance.getVersionCore(request)
+      }),
+    getVersionExecution: (request) =>
+      captureProvenanceRead(async () => {
+        if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
+        return dependencies.provenance.getVersionExecution(request)
+      }),
+    getVersionMessages: (request) =>
+      captureProvenanceRead(async () => {
+        if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
+        return dependencies.provenance.getVersionMessages(request)
+      }),
+    getVersionReview: (request) =>
+      captureProvenanceRead(async () => {
+        if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
+        return dependencies.provenance.getVersionReview(request)
+      }),
     getCodeReconstruction: (request) => {
       if (!dependencies.codeReconstruction) {
         throw new Error('Artifact code reconstruction is not configured.')

@@ -76,7 +76,8 @@ describe('release and scheduled workflow topology', () => {
     )
     expect(job).toMatchObject({
       needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}"
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}",
+      'timeout-minutes': 35
     })
     expect(sandbox).toMatchObject({
       needs: 'plan',

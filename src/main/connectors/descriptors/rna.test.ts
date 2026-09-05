@@ -366,6 +366,96 @@ describe('rna / rfam', () => {
     })
   })
 
+  it.each([150_000, 295_000])(
+    'search_sequence preserves the default window for a job ready after %ims',
+    async (readyAfterMs) => {
+      vi.useFakeTimers()
+      vi.setSystemTime(0)
+      try {
+        const submissionMs = 20_000
+        const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+          if (init?.method === 'POST') {
+            await new Promise((resolve) => setTimeout(resolve, submissionMs))
+            return Response.json({ jobId: 'job-1', resultURL: 'https://rfam.test/result/1' })
+          }
+          return Response.json(
+            Date.now() >= submissionMs + readyAfterMs
+              ? { hits: {}, searchSequence: 'GGUUCC' }
+              : { status: 'PEND' }
+          )
+        })
+        const result = new ParserEngine({ fetchImpl })
+          .call(tool('search_sequence'), { sequence: 'GGUUCC' }, {})
+          .then(
+            (value) => ({ value, finishedAt: Date.now() }),
+            (error: unknown) => ({ error, finishedAt: Date.now() })
+          )
+        await vi.advanceTimersByTimeAsync(submissionMs + readyAfterMs)
+        expect(await result).toMatchObject({
+          value: { job_id: 'job-1', num_hits: 0, search_sequence: 'GGUUCC' },
+          finishedAt: submissionMs + readyAfterMs
+        })
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('search_sequence still stops an unfinished job at its default polling deadline', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) =>
+        Response.json(
+          init?.method === 'POST'
+            ? { jobId: 'job-1', resultURL: 'https://rfam.test/result/1' }
+            : { status: 'PEND' }
+        )
+      )
+      const result = new ParserEngine({ fetchImpl })
+        .call(tool('search_sequence'), { sequence: 'GGUUCC' }, {})
+        .catch((error: unknown) => ({ error, finishedAt: Date.now() }))
+      await vi.advanceTimersByTimeAsync(300_000)
+      expect(await result).toMatchObject({
+        error: { message: expect.stringContaining('Rfam sequence search not finished after 300s') },
+        finishedAt: 300_000
+      })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('search_sequence keeps a hard call deadline for longer custom polling waits', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) =>
+        Response.json(
+          init?.method === 'POST'
+            ? { jobId: 'job-1', resultURL: 'https://rfam.test/result/1' }
+            : { status: 'PEND' }
+        )
+      )
+      const result = new ParserEngine({ fetchImpl })
+        .call(
+          tool('search_sequence'),
+          { sequence: 'GGUUCC', max_wait_s: 1200, poll_interval_s: 30 },
+          {}
+        )
+        .catch((error: unknown) => ({ error, finishedAt: Date.now() }))
+      await vi.advanceTimersByTimeAsync(600_000)
+      expect(await result).toMatchObject({
+        error: { name: 'ConnectorRequestTimeoutError' },
+        finishedAt: 600_000
+      })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('aborts the polling delay without starting another request', async () => {
     vi.useFakeTimers()
     const cancellation = new AbortController()

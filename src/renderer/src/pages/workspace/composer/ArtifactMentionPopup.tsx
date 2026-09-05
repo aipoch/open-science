@@ -168,9 +168,9 @@ export const ArtifactMentionPopup = ({
           setSelectionError(t('Could not resolve file version.'))
           return
         }
-        const head = result.value.versions.find(
-          (version) => version.id === result.value.headVersionId
-        )
+        const head =
+          result.value.headVersion ??
+          result.value.versions.find((version) => version.id === result.value.headVersionId)
         if (!head) {
           setSelectionError(t('The current file version is unavailable.'))
           return

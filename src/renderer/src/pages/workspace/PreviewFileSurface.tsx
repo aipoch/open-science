@@ -1,8 +1,11 @@
+import { useVersionHistoryPages } from './use-version-history-pages'
+import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
+import { unwrapProvenanceRead } from '../../../../shared/provenance-read-result'
 import {
   BookOpen,
+  Check,
   ChevronLeft,
   ChevronRight,
-  Download,
   Eye,
   FileDiff,
   GitBranch,
@@ -21,14 +24,17 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ActionMenuItems, ActionMenuProvider, ActionMenuTarget } from '@/components/action-menu'
 import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { errorDetail } from '@/lib/error-detail'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -45,13 +51,21 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
-import { LocalFileHeaderActions } from './LocalFileHeaderActions'
+import {
+  LocalFileActionErrorToast,
+  LocalFileHeaderActions,
+  type LocalFileActionFailure,
+  type SaveAsArtifactState
+} from './LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
+import {
+  useManagedFileDownload,
+  type ManagedFileDownloadController
+} from './use-managed-file-download'
 import { usePdfContextAction, type PdfContextAction } from './use-pdf-context-action'
 import {
   createProjectFileResolveRequest,
@@ -65,6 +79,17 @@ import type { PreviewDownloadVersionContext } from './previews/preview-runtime-c
 import type { PreviewInteractionPort } from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
 import { ManagedVersionDiffContent } from './ManagedVersionDiffContent'
+import { PreviewActionMenuAdapterProvider } from './preview-actions/preview-action-adapter'
+import { usePreviewActions } from './preview-actions/preview-action-hooks'
+import {
+  LOCAL_PREVIEW_MENU_RECIPE,
+  MANAGED_PDF_PREVIEW_MENU_RECIPE,
+  MANAGED_PREVIEW_MENU_RECIPE,
+  PREVIEW_CAPABILITY_CATALOG,
+  shouldHandlePreviewContextMenu,
+  type PreviewActionBindings,
+  type PreviewCapabilityId
+} from './preview-actions/preview-action-model'
 import { useManagedVersionWorkflow, type ManagedVersionMode } from './useManagedVersionWorkflow'
 
 type PreviewFileSurfaceProps = PreviewInteractionPort & {
@@ -72,6 +97,7 @@ type PreviewFileSurfaceProps = PreviewInteractionPort & {
   contentKey?: string
   renderContent?: boolean
   tooltipClassName?: string
+  actionMenuContentClassName?: string
   onClose: () => void
   onOpenFullScreen?: () => void
   onOpenProvenance?: () => void
@@ -206,7 +232,9 @@ const PreviewFileHeader = ({
   managedControls,
   managedControlsOnly = false,
   downloadVersionContext,
-  pdfContextAction
+  pdfContextAction,
+  saveAsArtifactState,
+  managedDownload
 }: Pick<
   PreviewFileSurfaceProps,
   | 'item'
@@ -223,8 +251,24 @@ const PreviewFileHeader = ({
   managedControlsOnly?: boolean
   downloadVersionContext?: PreviewDownloadVersionContext
   pdfContextAction?: PdfContextAction
+  saveAsArtifactState: SaveAsArtifactState
+  managedDownload: ManagedFileDownloadController
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const previewActions = usePreviewActions()
+  // The header overflow stays scoped to provenance/context while the content menu owns the full
+  // capability recipe, including download, full-screen, and close.
+  const provenanceActionEntry = previewActions.entries.find(
+    (entry) => entry.kind === 'action' && entry.action === 'provenance'
+  )
+  const viewInContextEntry = previewActions.entries.find(
+    (entry) => entry.kind === 'action' && entry.action === 'view-in-context'
+  )
+  const managedMenuEntries = [
+    ...(provenanceActionEntry ? [provenanceActionEntry] : []),
+    ...(provenanceActionEntry && viewInContextEntry ? [{ kind: 'separator' as const }] : []),
+    ...(viewInContextEntry ? [viewInContextEntry] : [])
+  ]
 
   return (
     <header
@@ -329,6 +373,7 @@ const PreviewFileHeader = ({
         <LocalFileHeaderActions
           path={item.path}
           name={item.name}
+          saveAsArtifactState={saveAsArtifactState}
           onReload={onReload}
           tooltipClassName={tooltipClassName}
         />
@@ -364,6 +409,7 @@ const PreviewFileHeader = ({
                     }
                   : {})}
                 suggestedName={item.name}
+                download={managedDownload}
                 tone="strong"
                 className="bg-transparent shadow-none"
               />
@@ -375,7 +421,7 @@ const PreviewFileHeader = ({
                   {t('Source session deleted')}
                 </span>
               ) : null}
-              {onOpenProvenance && provenanceEntry === 'menu' ? (
+              {provenanceEntry === 'menu' && managedMenuEntries.length > 0 ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -389,25 +435,16 @@ const PreviewFileHeader = ({
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="z-[70] min-w-36">
-                    <DropdownMenuItem onSelect={onOpenProvenance}>
-                      <GitBranch className="mr-2 size-4" aria-hidden="true" />
-                      {t('Provenance')}
-                    </DropdownMenuItem>
-                    {onViewInContext ? (
-                      <>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          disabled={viewInContextDisabled}
-                          onSelect={onViewInContext}
-                        >
-                          <Eye className="mr-2 size-4" aria-hidden="true" />
-                          {t('View in context')}
-                          {viewInContextDisabled
-                            ? ` (${t('Source conversation is archived')})`
-                            : ''}
-                        </DropdownMenuItem>
-                      </>
-                    ) : null}
+                    <ActionMenuItems
+                      entries={managedMenuEntries}
+                      onSelect={previewActions.execute}
+                      compact={false}
+                      renderLabel={(entry, translatedLabel) =>
+                        entry.action === 'view-in-context' && viewInContextDisabled
+                          ? `${translatedLabel} (${t('Source conversation is archived')})`
+                          : translatedLabel
+                      }
+                    />
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : null}
@@ -474,7 +511,8 @@ const ArtifactVersionNavigation = ({
   const selectedIndex = lineage.versions.findIndex(
     (version) => version.versionId === selectedVersionId
   )
-  if (selectedIndex < 0) return null
+  const selected = resolveArtifactVersionDescriptor(lineage, selectedVersionId)
+  if (!selected) return null
 
   return (
     <div
@@ -486,25 +524,32 @@ const ArtifactVersionNavigation = ({
         variant="ghost"
         size="icon-xs"
         aria-label={t('Previous Artifact version')}
-        disabled={selectedIndex <= 0}
+        disabled={selectedIndex <= 0 && !lineage.previousVersion}
         onClick={() => {
-          const versionId = lineage.versions[selectedIndex - 1]?.versionId
+          const versionId = (
+            selectedIndex > 0 ? lineage.versions[selectedIndex - 1] : lineage.previousVersion
+          )?.versionId
           if (versionId) onSelect(versionId)
         }}
       >
         <ChevronLeft aria-hidden="true" />
       </Button>
-      <span className="text-xs font-medium text-text-100">
-        v{lineage.versions[selectedIndex]?.versionNumber}
-      </span>
+      <span className="text-xs font-medium text-text-100">v{selected.versionNumber}</span>
       <Button
         type="button"
         variant="ghost"
         size="icon-xs"
         aria-label={t('Next Artifact version')}
-        disabled={selectedIndex >= lineage.versions.length - 1}
+        disabled={
+          (selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1) &&
+          !lineage.nextVersion
+        }
         onClick={() => {
-          const versionId = lineage.versions[selectedIndex + 1]?.versionId
+          const versionId = (
+            selectedIndex >= 0
+              ? (lineage.versions[selectedIndex + 1] ?? lineage.nextVersion)
+              : lineage.nextVersion
+          )?.versionId
           if (versionId) onSelect(versionId)
         }}
       >
@@ -535,25 +580,34 @@ const ManagedVersionNavigation = ({
         variant="ghost"
         size="icon-xs"
         aria-label={t('Previous file version')}
-        disabled={selectedIndex <= 0}
+        disabled={selectedIndex <= 0 && !inspect.previousVersion}
         onClick={() => {
-          const id = inspect.versions[selectedIndex - 1]?.id
+          const id = (
+            selectedIndex > 0 ? inspect.versions[selectedIndex - 1] : inspect.previousVersion
+          )?.id
           if (id) onSelect(id)
         }}
       >
         <ChevronLeft aria-hidden="true" />
       </Button>
-      <span className="min-w-8 text-center text-xs font-medium text-text-100">
-        v{inspect.versions[selectedIndex]?.versionNumber}
+      <span className="min-w-8 text-center text-xs font-medium text-text-000">
+        v{inspect.selectedVersion?.versionNumber ?? inspect.versions[selectedIndex]?.versionNumber}
       </span>
       <Button
         type="button"
         variant="ghost"
         size="icon-xs"
         aria-label={t('Next file version')}
-        disabled={selectedIndex >= inspect.versions.length - 1}
+        disabled={
+          (selectedIndex < 0 || selectedIndex >= inspect.versions.length - 1) &&
+          !inspect.nextVersion
+        }
         onClick={() => {
-          const id = inspect.versions[selectedIndex + 1]?.id
+          const id = (
+            selectedIndex >= 0
+              ? (inspect.versions[selectedIndex + 1] ?? inspect.nextVersion)
+              : inspect.nextVersion
+          )?.id
           if (id) onSelect(id)
         }}
       >
@@ -572,6 +626,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       contentKey,
       renderContent = true,
       tooltipClassName,
+      actionMenuContentClassName,
       onClose,
       onOpenFullScreen,
       onViewInContextNavigate,
@@ -597,17 +652,17 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     const [provenanceTarget, setProvenanceTarget] = useState<string>()
     // Bumping this token remounts the content tree so a local file is re-read from disk.
     const [reloadToken, setReloadToken] = useState(0)
+    const [copied, setCopied] = useState(false)
+    const [saveAsArtifactState, setSaveAsArtifactState] = useState<SaveAsArtifactState>('idle')
+    const [localActionFailure, setLocalActionFailure] = useState<LocalFileActionFailure>()
+    const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+    const contextMenuComposerFocusRequestedRef = useRef(false)
     const [versionOverride, setVersionOverride] = useState<{
       key: string
       item: PreviewFileItem
     }>()
     const [lineageLoadState, setLineageLoadState] = useState<LineageLoadState>()
     const [lineageRetryToken, setLineageRetryToken] = useState(0)
-    const [pdfContextMenu, setPdfContextMenu] = useState<{
-      itemKey: string
-      x: number
-      y: number
-    }>()
     const [mode, setMode] = useState<ManagedVersionMode>('view')
     const [draft, setDraft] = useState('')
     const [editBaseline, setEditBaseline] = useState<{
@@ -677,15 +732,46 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     // Selection and origin lifecycle changes can update a stable tab without changing its Artifact
     // identity. Keep the response keyed to the full request so stale lineage is never consumed.
     const lineageRequestKey = `${lineageKey}:${sessionFilesRevision}:${previewItem.selectedVersionId ?? ''}:${previewItem.originSession?.state ?? ''}`
-    const lineage =
+    const initialLineage =
       lineageLoadState?.key === lineageRequestKey && lineageLoadState.phase === 'loaded'
         ? lineageLoadState.value
         : undefined
+    const historyLineage =
+      lineageLoadState?.key.startsWith(lineageKey + ':') && lineageLoadState.phase === 'loaded'
+        ? lineageLoadState.value
+        : undefined
+    const lineageHistory = useVersionHistoryPages({
+      historyKey:
+        lineageKey +
+        ':' +
+        (historyLineage?.headVersion?.versionId ??
+          historyLineage?.versions.at(-1)?.versionId ??
+          ''),
+      initial: historyLineage,
+      loadPage: async (cursor) => {
+        const value = unwrapProvenanceRead(
+          await window.api.artifacts.getLineage({
+            projectId: projectId!,
+            appSessionId: previewItem.sessionId,
+            artifactId: previewItem.artifactId!,
+            versionId: previewItem.selectedVersionId,
+            cursor
+          })
+        )
+        if (!value) throw new Error('Artifact history is unavailable.')
+        return value
+      }
+    })
+    const lineage = useMemo(
+      () => (initialLineage ? { ...initialLineage, versions: lineageHistory.versions } : undefined),
+      [initialLineage, lineageHistory.versions]
+    )
     const lineageFailed =
       lineageLoadState?.key === lineageRequestKey && lineageLoadState.phase === 'error'
-    const exactSelectedVersion = lineage?.versions.find(
-      (version) => version.versionId === previewItem.selectedVersionId
-    )
+    const exactSelectedVersion =
+      lineage && previewItem.selectedVersionId
+        ? resolveArtifactVersionDescriptor(lineage, previewItem.selectedVersionId)
+        : undefined
     const newestLoadedVersion = lineage?.versions.at(-1)
     const selectionIsNewerThanLoadedLineage =
       typeof previewItem.versionNumber === 'number' &&
@@ -713,7 +799,22 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       onPdfContextError,
       { link: onLinkReadingContext, unlink: onUnlinkReadingContext }
     )
-    const pdfContextMenuItemKey = `${resolvedPreviewItem.id}:${selectedVersionId ?? ''}`
+    const downloadVersionContext = managedWorkflow.downloadVersionContext
+    const managedDownload = useManagedFileDownload({
+      source: resolvedPreviewItem.source ?? 'artifact',
+      path: resolvedPreviewItem.path,
+      ...(resolvedPreviewItem.projectId && resolvedPreviewItem.managedFileId
+        ? {
+            projectId: resolvedPreviewItem.projectId,
+            fileId: resolvedPreviewItem.managedFileId,
+            ...(downloadVersionContext ??
+              (resolvedPreviewItem.selectedVersionId
+                ? { versionId: resolvedPreviewItem.selectedVersionId }
+                : {}))
+          }
+        : {}),
+      suggestedName: resolvedPreviewItem.name
+    })
     const reportPdfReadingPosition = useCallback(
       (position: { pageNumber: number; pageCount: number }): void => {
         if (!readingContextBindingId) return
@@ -721,6 +822,77 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       },
       [readingContextBindingId]
     )
+    const stageLocalPath = window.api.uploads?.stageLocalPath
+
+    const copyPath = async (): Promise<void> => {
+      setLocalActionFailure(undefined)
+      if (!navigator.clipboard?.writeText) {
+        setLocalActionFailure({
+          title: t('Could not copy the file path.'),
+          retry: () => void copyPath()
+        })
+        return
+      }
+
+      try {
+        await navigator.clipboard.writeText(resolvedPreviewItem.path)
+        setCopied(true)
+        clearTimeout(copiedTimer.current)
+        copiedTimer.current = setTimeout(() => setCopied(false), 1500)
+      } catch (error) {
+        setLocalActionFailure({
+          title: t('Could not copy the file path.'),
+          detail: errorDetail(error),
+          retry: () => void copyPath()
+        })
+      }
+    }
+
+    const downloadLocalFile = async (): Promise<void> => {
+      setLocalActionFailure(undefined)
+      try {
+        await window.api.saveManagedFile({
+          source: 'local',
+          path: resolvedPreviewItem.path,
+          suggestedName: resolvedPreviewItem.name
+        })
+      } catch (error) {
+        console.error(`Failed to download local file: ${resolvedPreviewItem.name}`, error)
+        setLocalActionFailure({
+          title: t('Could not download this file.'),
+          detail: errorDetail(error),
+          retry: () => void downloadLocalFile()
+        })
+      }
+    }
+
+    const saveLocalFileAsArtifact = async (): Promise<void> => {
+      if (!stageLocalPath || saveAsArtifactState === 'saving') return
+
+      setLocalActionFailure(undefined)
+      setSaveAsArtifactState('saving')
+      try {
+        const navigationProjectId = useNavigationStore.getState().activeProjectId
+        await stageLocalPath({
+          transferId: crypto.randomUUID(),
+          name: resolvedPreviewItem.name,
+          sourcePath: resolvedPreviewItem.path,
+          ...(navigationProjectId ? { projectId: navigationProjectId } : {})
+        })
+        setSaveAsArtifactState('saved')
+      } catch (error) {
+        console.error(`Failed to save local file as artifact: ${resolvedPreviewItem.name}`, error)
+        setSaveAsArtifactState('idle')
+        setLocalActionFailure({
+          title: t('Could not save this file as an artifact.'),
+          detail: errorDetail(error),
+          retry: () => void saveLocalFileAsArtifact()
+        })
+      }
+    }
+
+    // Copy feedback is transient and must not outlive a closed or replaced preview.
+    useEffect(() => () => clearTimeout(copiedTimer.current), [])
     const isDirty = mode === 'edit' && editBaseline !== undefined && draft !== editBaseline.text
     const discardEdit = useCallback((): void => {
       saveGenerationRef.current += 1
@@ -794,10 +966,16 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         .getLineage({
           projectId,
           appSessionId: previewItem.sessionId,
-          artifactId: previewItem.artifactId
+          artifactId: previewItem.artifactId,
+          ...(previewItem.selectedVersionId ? { versionId: previewItem.selectedVersionId } : {})
         })
         .then((value) => {
-          if (active) setLineageLoadState({ key: lineageRequestKey, phase: 'loaded', value })
+          if (active)
+            setLineageLoadState({
+              key: lineageRequestKey,
+              phase: 'loaded',
+              value: unwrapProvenanceRead(value)
+            })
         })
         .catch(() => {
           if (active) setLineageLoadState({ key: lineageRequestKey, phase: 'error' })
@@ -812,6 +990,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       lineageRetryToken,
       previewItem.artifactId,
       previewItem.sessionId,
+      previewItem.selectedVersionId,
       previewItem.source,
       projectId
     ])
@@ -898,7 +1077,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
 
     const selectPreviewVersion = (versionId: string): void => {
       if (!lineage || !projectId) return
-      const version = lineage.versions.find((candidate) => candidate.versionId === versionId)
+      const version = resolveArtifactVersionDescriptor(lineage, versionId)
       if (!version) return
 
       applyVersionItem(
@@ -923,37 +1102,17 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         .getState()
         .openSession(projectId, previewItem.sessionId, 'user', onViewInContextNavigate)
     }
-
-    const downloadPreviewFile = (): void => {
-      setPdfContextMenu(undefined)
-      const source = resolvedPreviewItem.source ?? 'artifact'
-      const managedIdentity =
-        resolvedPreviewItem.projectId && resolvedPreviewItem.managedFileId
-          ? {
-              projectId: resolvedPreviewItem.projectId,
-              fileId: resolvedPreviewItem.managedFileId,
-              ...(managedWorkflow.downloadVersionContext ??
-                (resolvedPreviewItem.selectedVersionId
-                  ? { versionId: resolvedPreviewItem.selectedVersionId }
-                  : {}))
-            }
-          : undefined
-      if ((source === 'artifact' || source === 'upload') && !managedIdentity) return
-      const request = managedIdentity
-        ? {
-            source,
-            path: resolvedPreviewItem.path,
-            suggestedName: resolvedPreviewItem.name,
-            ...managedIdentity
-          }
-        : {
-            source: source as 'local' | 'notebook-input',
-            path: resolvedPreviewItem.path,
-            suggestedName: resolvedPreviewItem.name
-          }
-      void window.api.saveManagedFile(request).catch((error: unknown) => {
-        console.error(`Failed to download ${resolvedPreviewItem.name} from the PDF preview`, error)
-      })
+    const openProvenance =
+      previewItem.source !== 'upload' && previewItem.artifactId && projectId
+        ? (): void => setProvenanceTarget(surfaceKey)
+        : undefined
+    const closePreview = (): void => {
+      const close = (): void => {
+        invalidateSave()
+        onClose()
+      }
+      if (workbenchConnected) close()
+      else requestLeave(close)
     }
 
     const selectProvenanceVersion = (nextItem: PreviewFileItem): boolean => {
@@ -962,9 +1121,13 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
 
     const selectManagedVersion = (versionId: string): void => {
       if (!managedNavigationInspect || !projectId) return
-      const version = managedNavigationInspect.versions.find(
-        (candidate) => candidate.id === versionId
-      )
+      const version = [
+        managedNavigationInspect.selectedVersion,
+        managedNavigationInspect.headVersion,
+        managedNavigationInspect.previousVersion,
+        managedNavigationInspect.nextVersion,
+        ...managedNavigationInspect.versions
+      ].find((candidate) => candidate?.id === versionId)
       if (!version) return
       const nextItem = createPreviewFileItemForManagedVersion({
         item: previewItem,
@@ -1055,320 +1218,382 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       })
     }
 
-    return (
-      <div className="flex size-full min-h-0 flex-col overflow-hidden">
-        <PreviewFileHeader
-          item={resolvedPreviewItem}
-          onClose={() => {
-            const close = (): void => {
-              invalidateSave()
-              onClose()
-            }
-            if (workbenchConnected) close()
-            else requestLeave(close)
-          }}
-          onOpenFullScreen={onOpenFullScreen}
-          onReload={() => setReloadToken((token) => token + 1)}
-          pdfContextAction={pdfContextAction}
-          provenanceEntry={provenanceEntry}
-          onOpenProvenance={
-            previewItem.source !== 'upload' && previewItem.artifactId && projectId
-              ? () => setProvenanceTarget(surfaceKey)
-              : undefined
+    const managedDownloadUnavailable =
+      (resolvedPreviewItem.source === 'artifact' || resolvedPreviewItem.source === 'upload') &&
+      (!resolvedPreviewItem.projectId || !resolvedPreviewItem.managedFileId)
+    const previewActionBindings: PreviewActionBindings =
+      resolvedPreviewItem.source === 'local'
+        ? {
+            'copy-path': {
+              execute: copyPath,
+              ...(copied ? { labelKey: 'Copied', icon: Check } : {})
+            },
+            download: { execute: downloadLocalFile },
+            'save-as-artifact': {
+              execute: saveLocalFileAsArtifact,
+              hidden: !stageLocalPath || saveAsArtifactState === 'saved',
+              disabled: saveAsArtifactState === 'saving',
+              ...(saveAsArtifactState === 'saving' ? { labelKey: 'Saving…' } : {})
+            },
+            ...(onOpenFullScreen ? { 'open-fullscreen': { execute: onOpenFullScreen } } : {}),
+            close: { execute: closePreview }
           }
-          onViewInContext={canViewInContext ? viewInContext : undefined}
-          viewInContextDisabled={originSessionArchived}
-          tooltipClassName={tooltipClassName}
-          downloadVersionContext={managedWorkflow.downloadVersionContext}
-          managedControlsOnly={mode === 'edit'}
-          managedControls={
-            managedWorkflow.showTextTools && managedControlsInspect ? (
-              mode === 'edit' ? (
-                <div className="flex h-7 shrink-0 items-center gap-1">
+        : {
+            ...(pdfContextAction
+              ? {
+                  'pdf-context': {
+                    execute: () => {
+                      // Linking intentionally moves focus to the composer after the menu closes.
+                      contextMenuComposerFocusRequestedRef.current =
+                        pdfContextAction.state !== 'remove'
+                      return pdfContextAction.run()
+                    },
+                    disabled: pdfContextAction.disabled || pdfContextAction.pending,
+                    labelKey:
+                      pdfContextAction.state === 'remove'
+                        ? 'Remove PDF from context'
+                        : 'Read with agent',
+                    icon: pdfContextAction.state === 'remove' ? Link2Off : BookOpen
+                  }
+                }
+              : {}),
+            ...(openProvenance ? { provenance: { execute: openProvenance } } : {}),
+            ...(canViewInContext
+              ? {
+                  'view-in-context': {
+                    execute: viewInContext,
+                    disabled: originSessionArchived
+                  }
+                }
+              : {}),
+            download: {
+              execute: managedDownload.execute,
+              disabled: managedDownload.status === 'saving' || managedDownloadUnavailable
+            },
+            ...(onOpenFullScreen ? { 'open-fullscreen': { execute: onOpenFullScreen } } : {}),
+            close: { execute: closePreview }
+          }
+    const previewActionIdentityKey = JSON.stringify([
+      resolvedPreviewItem.id,
+      resolvedPreviewItem.path,
+      resolvedPreviewItem.managedFileId ?? null,
+      resolvedPreviewItem.selectedVersionId ?? null,
+      resolvedPreviewItem.mtimeMs ?? null
+    ])
+    const previewActionRecipe =
+      resolvedPreviewItem.source === 'local'
+        ? LOCAL_PREVIEW_MENU_RECIPE
+        : resolvedPreviewItem.format === 'pdf'
+          ? MANAGED_PDF_PREVIEW_MENU_RECIPE
+          : MANAGED_PREVIEW_MENU_RECIPE
+    const previewActionTargetId = 'preview-file-content'
+
+    return (
+      <ActionMenuProvider
+        testId="preview-content-context-menu"
+        contentClassName={actionMenuContentClassName}
+        onOpenChange={(_targetId, open) => {
+          if (open) contextMenuComposerFocusRequestedRef.current = false
+        }}
+      >
+        <PreviewActionMenuAdapterProvider targetId={previewActionTargetId}>
+          <ActionMenuTarget<PreviewCapabilityId, undefined>
+            targetId={previewActionTargetId}
+            identityKey={previewActionIdentityKey}
+            catalog={PREVIEW_CAPABILITY_CATALOG}
+            recipe={previewActionRecipe}
+            bindings={previewActionBindings}
+            invocation={undefined}
+            resolveInvocation={(event) => {
+              if (showProvenance || !renderContent || mode === 'edit') return null
+              if (
+                !(event.target instanceof Element) ||
+                !event.target.closest('[data-preview-action-menu-content]')
+              ) {
+                return null
+              }
+              return shouldHandlePreviewContextMenu(event.target) ? undefined : null
+            }}
+            onRestoreFocus={(restoreDefault) => {
+              if (!contextMenuComposerFocusRequestedRef.current) restoreDefault()
+            }}
+            asChild
+          >
+            <div className="flex size-full min-h-0 flex-col overflow-hidden">
+              <PreviewFileHeader
+                item={resolvedPreviewItem}
+                onClose={closePreview}
+                onOpenFullScreen={onOpenFullScreen}
+                onReload={() => setReloadToken((token) => token + 1)}
+                pdfContextAction={pdfContextAction}
+                saveAsArtifactState={saveAsArtifactState}
+                managedDownload={managedDownload}
+                provenanceEntry={provenanceEntry}
+                onOpenProvenance={openProvenance}
+                onViewInContext={canViewInContext ? viewInContext : undefined}
+                viewInContextDisabled={originSessionArchived}
+                tooltipClassName={tooltipClassName}
+                downloadVersionContext={managedWorkflow.downloadVersionContext}
+                managedControlsOnly={mode === 'edit'}
+                managedControls={
+                  managedWorkflow.showTextTools && managedControlsInspect ? (
+                    mode === 'edit' ? (
+                      <div className="flex h-7 shrink-0 items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-text-000 hover:text-text-000"
+                          onClick={() => {
+                            requestLeave(() => {
+                              invalidateSave()
+                              setMode('view')
+                              setDraft('')
+                              setEditBaseline(undefined)
+                            })
+                          }}
+                        >
+                          {t('Cancel')}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          aria-label={t('Save changes')}
+                          disabled={!isDirty || saving}
+                          onClick={() => void saveEdit()}
+                        >
+                          {t('Save')}
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        {managedInspect?.canEdit ? (
+                          <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  className={previewHeaderActionClassName}
+                                  aria-label={t('Edit {{name}}', {
+                                    name: resolvedPreviewItem.name
+                                  })}
+                                  onClick={beginEdit}
+                                >
+                                  <Pencil aria-hidden="true" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent className={tooltipClassName}>
+                                {t('Edit content')}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        ) : null}
+                        <TooltipProvider delayDuration={200}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                type="button"
+                                variant={mode === 'diff' ? 'default' : 'ghost'}
+                                size="icon-xs"
+                                className={
+                                  mode === 'diff' ? undefined : previewHeaderActionClassName
+                                }
+                                aria-label={
+                                  mode === 'diff'
+                                    ? t('Stop comparing {{name}}', {
+                                        name: resolvedPreviewItem.name
+                                      })
+                                    : t('Compare {{name}} with its source version', {
+                                        name: resolvedPreviewItem.name
+                                      })
+                                }
+                                disabled={mode !== 'diff' && !managedControlsInspect.canDiff}
+                                onClick={toggleDiff}
+                              >
+                                <FileDiff aria-hidden="true" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent className={tooltipClassName}>
+                              {mode === 'diff'
+                                ? t('Stop comparing {{name}}', { name: resolvedPreviewItem.name })
+                                : managedControlsInspect.canDiff
+                                  ? t('Compare with source version')
+                                  : t('No source version to compare')}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </>
+                    )
+                  ) : undefined
+                }
+              />
+              {!showProvenance && lineageFailed ? (
+                <div
+                  role="alert"
+                  className="flex shrink-0 items-center justify-between gap-2 border-b border-border-300/50 bg-danger-900 px-3 py-1 text-[11px] leading-4 text-danger-000"
+                >
+                  <span>{t('Could not load version history.')}</span>
                   <Button
                     type="button"
                     variant="ghost"
-                    size="sm"
-                    className="text-text-000 hover:text-text-000"
+                    size="xs"
                     onClick={() => {
-                      requestLeave(() => {
-                        invalidateSave()
-                        setMode('view')
-                        setDraft('')
-                        setEditBaseline(undefined)
-                      })
+                      setLineageLoadState({ key: lineageRequestKey, phase: 'loading' })
+                      setLineageRetryToken((token) => token + 1)
                     }}
+                    className="h-5 text-danger-000 hover:bg-danger-000/10 hover:text-danger-000"
                   >
-                    {t('Cancel')}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    aria-label={t('Save changes')}
-                    disabled={!isDirty || saving}
-                    onClick={() => void saveEdit()}
-                  >
-                    {t('Save')}
+                    {t('Retry')}
                   </Button>
                 </div>
-              ) : (
+              ) : !showProvenance && managedNavigationInspect?.text !== undefined ? (
                 <>
-                  {managedInspect?.canEdit ? (
-                    <TooltipProvider delayDuration={200}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-xs"
-                            className={previewHeaderActionClassName}
-                            aria-label={t('Edit {{name}}', { name: resolvedPreviewItem.name })}
-                            onClick={beginEdit}
-                          >
-                            <Pencil aria-hidden="true" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent className={tooltipClassName}>
-                          {t('Edit content')}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  ) : null}
-                  <TooltipProvider delayDuration={200}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant={mode === 'diff' ? 'default' : 'ghost'}
-                          size="icon-xs"
-                          className={mode === 'diff' ? undefined : previewHeaderActionClassName}
-                          aria-label={
-                            mode === 'diff'
-                              ? t('Stop comparing {{name}}', { name: resolvedPreviewItem.name })
-                              : t('Compare {{name}} with its source version', {
-                                  name: resolvedPreviewItem.name
-                                })
-                          }
-                          disabled={mode !== 'diff' && !managedControlsInspect.canDiff}
-                          onClick={toggleDiff}
-                        >
-                          <FileDiff aria-hidden="true" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent className={tooltipClassName}>
-                        {mode === 'diff'
-                          ? t('Stop comparing {{name}}', { name: resolvedPreviewItem.name })
-                          : managedControlsInspect.canDiff
-                            ? t('Compare with source version')
-                            : t('No source version to compare')}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  <ManagedVersionNavigation
+                    inspect={managedNavigationInspect}
+                    onSelect={selectManagedVersion}
+                  />
+                  <VersionHistoryLoadButton history={managedWorkflow.history} />
                 </>
-              )
-            ) : undefined
-          }
-        />
-        {!showProvenance && lineageFailed ? (
-          <div
-            role="alert"
-            className="flex shrink-0 items-center justify-between gap-2 border-b border-border-300/50 bg-danger-900 px-3 py-1 text-[11px] leading-4 text-danger-000"
-          >
-            <span>{t('Could not load version history.')}</span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              onClick={() => {
-                setLineageLoadState({ key: lineageRequestKey, phase: 'loading' })
-                setLineageRetryToken((token) => token + 1)
-              }}
-              className="h-5 text-danger-000 hover:bg-danger-000/10 hover:text-danger-000"
-            >
-              {t('Retry')}
-            </Button>
-          </div>
-        ) : !showProvenance && managedNavigationInspect?.text !== undefined ? (
-          <ManagedVersionNavigation
-            inspect={managedNavigationInspect}
-            onSelect={selectManagedVersion}
-          />
-        ) : !showProvenance &&
-          !managedIdentity &&
-          lineage &&
-          hasManagedTextEditExtension(resolvedPreviewItem.name) ? (
-          <ArtifactVersionNavigation
-            lineage={lineage}
-            selectedVersionId={selectedVersionId}
-            onSelect={selectPreviewVersion}
-          />
-        ) : null}
-        <div
-          data-testid="preview-file-content-surface"
-          className="min-h-0 flex-1 overflow-y-auto bg-bg-000"
-          onContextMenu={(event) => {
-            if (
-              resolvedPreviewItem.format !== 'pdf' ||
-              !pdfContextAction ||
-              showProvenance ||
-              !renderContent ||
-              mode === 'edit'
-            )
-              return
-            event.preventDefault()
-            setPdfContextMenu({
-              itemKey: pdfContextMenuItemKey,
-              x: event.clientX,
-              y: event.clientY
-            })
-          }}
-        >
-          {showProvenance && projectId ? (
-            <ArtifactProvenancePanel
-              item={resolvedPreviewItem}
-              projectId={projectId}
-              onClose={() => setProvenanceTarget(undefined)}
-              onVersionChange={selectProvenanceVersion}
-            />
-          ) : mode === 'edit' ? (
-            <div className="flex size-full min-h-0 flex-col">
-              <textarea
-                autoFocus
-                aria-label={t('Edit {{name}} source', { name: resolvedPreviewItem.name })}
-                className="min-h-0 flex-1 resize-none bg-bg-000 p-4 font-mono text-sm leading-6 text-text-000 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-              />
-              {editError ? (
+              ) : !showProvenance &&
+                !managedIdentity &&
+                lineage &&
+                hasManagedTextEditExtension(resolvedPreviewItem.name) ? (
+                <>
+                  <ArtifactVersionNavigation
+                    lineage={lineage}
+                    selectedVersionId={selectedVersionId}
+                    onSelect={selectPreviewVersion}
+                  />
+                  <VersionHistoryLoadButton history={lineageHistory} />
+                </>
+              ) : null}
+              <div
+                data-testid="preview-file-content-region"
+                data-preview-action-menu-content
+                className="min-h-0 flex-1 overflow-hidden"
+              >
                 <div
-                  role="alert"
-                  className="flex items-center justify-between border-t border-border-300 px-3 py-2 text-xs text-destructive"
+                  data-testid="preview-file-content-surface"
+                  className="size-full min-h-0 overflow-y-auto bg-bg-000"
                 >
-                  {editError}
-                  {conflictHead ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        if (!projectId || !managedInspect) return
-                        const nextItem = createPreviewFileItemForManagedVersion({
-                          item: previewItem,
-                          version: conflictHead,
-                          projectId,
-                          sessionId: managedInspect.sessionId
-                        })
-                        applyVersionItem(nextItem, false, () => finishVersionSelection(false))
-                      }}
-                    >
-                      {t('View latest version')}
-                    </Button>
+                  {showProvenance && projectId ? (
+                    <ArtifactProvenancePanel
+                      item={resolvedPreviewItem}
+                      projectId={projectId}
+                      onClose={() => setProvenanceTarget(undefined)}
+                      onVersionChange={selectProvenanceVersion}
+                    />
+                  ) : mode === 'edit' ? (
+                    <div className="flex size-full min-h-0 flex-col">
+                      <textarea
+                        autoFocus
+                        aria-label={t('Edit {{name}} source', { name: resolvedPreviewItem.name })}
+                        className="min-h-0 flex-1 resize-none bg-bg-000 p-4 font-mono text-sm leading-6 text-text-000 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                        value={draft}
+                        onChange={(event) => setDraft(event.target.value)}
+                      />
+                      {editError ? (
+                        <div
+                          role="alert"
+                          className="flex items-center justify-between border-t border-border-300 px-3 py-2 text-xs text-destructive"
+                        >
+                          {editError}
+                          {conflictHead ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                if (!projectId || !managedInspect) return
+                                const nextItem = createPreviewFileItemForManagedVersion({
+                                  item: previewItem,
+                                  version: conflictHead,
+                                  projectId,
+                                  sessionId: managedInspect.sessionId
+                                })
+                                applyVersionItem(nextItem, false, () =>
+                                  finishVersionSelection(false)
+                                )
+                              }}
+                            >
+                              {t('View latest version')}
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : mode === 'diff' ? (
+                    managedInspect &&
+                    !managedInspect.canDiff &&
+                    managedWorkflow.isSelectedSourceText ? (
+                      renderContent ? (
+                        <PreviewFileContent
+                          key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
+                          item={resolvedPreviewItem}
+                          downloadVersionContext={managedWorkflow.downloadVersionContext}
+                          annotationVersionId={annotationVersionId}
+                          annotationBlockedByHistoricalVersion={
+                            annotationBlockedByHistoricalVersion
+                          }
+                          annotationVersionPending={annotationVersionPending}
+                          activeAnnotations={activeAnnotations}
+                          onAddAnnotation={onAddAnnotation}
+                          onUpdateAnnotationNote={onUpdateAnnotationNote}
+                          onRemoveAnnotation={onRemoveAnnotation}
+                          onUndoAnnotation={onUndoAnnotation}
+                          onRedoAnnotation={onRedoAnnotation}
+                          onAnnotationError={onAnnotationError}
+                          onRetry={retryManagedPreview}
+                          onPdfReadingPositionChange={
+                            readingContextBindingId ? reportPdfReadingPosition : undefined
+                          }
+                        />
+                      ) : null
+                    ) : managedWorkflow.diffResult ? (
+                      <ManagedVersionDiffContent
+                        result={managedWorkflow.diffResult}
+                        format={resolvedPreviewItem.format}
+                        name={resolvedPreviewItem.name}
+                      />
+                    ) : (
+                      <div className="p-4 text-sm text-text-100">
+                        {managedWorkflow.diffError ?? t('Comparing versions...')}
+                      </div>
+                    )
+                  ) : renderContent ? (
+                    <PreviewFileContent
+                      key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
+                      item={resolvedPreviewItem}
+                      downloadVersionContext={managedWorkflow.downloadVersionContext}
+                      annotationVersionId={annotationVersionId}
+                      annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}
+                      annotationVersionPending={annotationVersionPending}
+                      activeAnnotations={activeAnnotations}
+                      onAddAnnotation={onAddAnnotation}
+                      onUpdateAnnotationNote={onUpdateAnnotationNote}
+                      onRemoveAnnotation={onRemoveAnnotation}
+                      onUndoAnnotation={onUndoAnnotation}
+                      onRedoAnnotation={onRedoAnnotation}
+                      onAnnotationError={onAnnotationError}
+                      onRetry={retryManagedPreview}
+                      onPdfReadingPositionChange={
+                        readingContextBindingId ? reportPdfReadingPosition : undefined
+                      }
+                    />
                   ) : null}
                 </div>
+              </div>
+              {localActionFailure ? (
+                <LocalFileActionErrorToast
+                  failure={localActionFailure}
+                  onDismiss={() => setLocalActionFailure(undefined)}
+                />
               ) : null}
             </div>
-          ) : mode === 'diff' ? (
-            managedInspect && !managedInspect.canDiff && managedWorkflow.isSelectedSourceText ? (
-              renderContent ? (
-                <PreviewFileContent
-                  key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
-                  item={resolvedPreviewItem}
-                  downloadVersionContext={managedWorkflow.downloadVersionContext}
-                  annotationVersionId={annotationVersionId}
-                  annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}
-                  annotationVersionPending={annotationVersionPending}
-                  activeAnnotations={activeAnnotations}
-                  onAddAnnotation={onAddAnnotation}
-                  onUpdateAnnotationNote={onUpdateAnnotationNote}
-                  onRemoveAnnotation={onRemoveAnnotation}
-                  onUndoAnnotation={onUndoAnnotation}
-                  onRedoAnnotation={onRedoAnnotation}
-                  onAnnotationError={onAnnotationError}
-                  onRetry={retryManagedPreview}
-                  onPdfReadingPositionChange={
-                    readingContextBindingId ? reportPdfReadingPosition : undefined
-                  }
-                />
-              ) : null
-            ) : managedWorkflow.diffResult ? (
-              <ManagedVersionDiffContent
-                result={managedWorkflow.diffResult}
-                format={resolvedPreviewItem.format}
-                name={resolvedPreviewItem.name}
-              />
-            ) : (
-              <div className="p-4 text-sm text-text-100">
-                {managedWorkflow.diffError ?? t('Comparing versions...')}
-              </div>
-            )
-          ) : renderContent ? (
-            <PreviewFileContent
-              key={`${contentKey ?? ''}:${previewItem.selectedVersionId ?? ''}:${reloadToken}`}
-              item={resolvedPreviewItem}
-              downloadVersionContext={managedWorkflow.downloadVersionContext}
-              annotationVersionId={annotationVersionId}
-              annotationBlockedByHistoricalVersion={annotationBlockedByHistoricalVersion}
-              annotationVersionPending={annotationVersionPending}
-              activeAnnotations={activeAnnotations}
-              onAddAnnotation={onAddAnnotation}
-              onUpdateAnnotationNote={onUpdateAnnotationNote}
-              onRemoveAnnotation={onRemoveAnnotation}
-              onUndoAnnotation={onUndoAnnotation}
-              onRedoAnnotation={onRedoAnnotation}
-              onAnnotationError={onAnnotationError}
-              onRetry={retryManagedPreview}
-              onPdfReadingPositionChange={
-                readingContextBindingId ? reportPdfReadingPosition : undefined
-              }
-            />
-          ) : null}
-        </div>
-        {pdfContextMenu?.itemKey === pdfContextMenuItemKey && pdfContextAction ? (
-          <DropdownMenu
-            open
-            onOpenChange={(open) => {
-              if (!open) setPdfContextMenu(undefined)
-            }}
-          >
-            <DropdownMenuTrigger asChild>
-              <span
-                aria-hidden="true"
-                className="pointer-events-none fixed size-0"
-                style={{ left: pdfContextMenu.x, top: pdfContextMenu.y }}
-              />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              className="z-[70] min-w-[9.5rem] p-1"
-              data-testid="pdf-preview-context-menu"
-              onCloseAutoFocus={(event) => event.preventDefault()}
-            >
-              <DropdownMenuItem
-                className="h-6 min-h-0 gap-2 rounded-md px-2 py-0 text-[12px]"
-                disabled={pdfContextAction.pending || pdfContextAction.disabled}
-                onSelect={() => {
-                  setPdfContextMenu(undefined)
-                  pdfContextAction.run()
-                }}
-              >
-                {pdfContextAction.state === 'remove' ? (
-                  <Link2Off className="size-3.5 shrink-0" aria-hidden="true" />
-                ) : (
-                  <BookOpen className="size-3.5 shrink-0" aria-hidden="true" />
-                )}
-                {pdfContextAction.label}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                className="h-6 min-h-0 gap-2 rounded-md px-2 py-0 text-[12px]"
-                onSelect={downloadPreviewFile}
-              >
-                <Download className="size-3.5 shrink-0" aria-hidden="true" />
-                {t('Download')}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
+          </ActionMenuTarget>
+        </PreviewActionMenuAdapterProvider>
         <ConfirmActionDialog
           open={pendingLeaveAction !== undefined}
           title={t('Discard unsaved changes?')}
@@ -1385,7 +1610,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             if (action) previewLeaveGuards.runApproved(leaveGuardScope, action)
           }}
         />
-      </div>
+      </ActionMenuProvider>
     )
   }
 )

@@ -703,6 +703,7 @@ const HomePage = ({
               size="sm"
               className="h-8 gap-1 rounded-md px-3 text-xs"
               onClick={openCreateDialog}
+              aria-label={t('New project')}
             >
               <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
               <span className="hidden sm:inline">{t('New project')}</span>
@@ -1016,7 +1017,11 @@ const HomePage = ({
                             disabled={
                               !canArchiveProject(project) || archivingProjectIds.has(project.id)
                             }
-                            title={archiveUnavailableReason(project)}
+                            aria-describedby={
+                              archiveUnavailableReason(project)
+                                ? `archive-reason-${project.id}`
+                                : undefined
+                            }
                             onSelect={() => archiveProject(project)}
                           >
                             <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
@@ -1025,20 +1030,34 @@ const HomePage = ({
                               ? t('Archiving…')
                               : t('Archive', { context: 'verb' })}
                           </DropdownMenuItem>
+                          {archiveUnavailableReason(project) ? (
+                            <p
+                              id={`archive-reason-${project.id}`}
+                              className="max-w-64 px-2 pb-2 text-xs text-muted-foreground"
+                            >
+                              {archiveUnavailableReason(project)}
+                            </p>
+                          ) : null}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"
                             disabled={!canDeleteProjects}
-                            title={
-                              canDeleteProjects
-                                ? undefined
-                                : t('Retry project recovery before deleting projects.')
+                            aria-describedby={
+                              !canDeleteProjects ? `delete-reason-${project.id}` : undefined
                             }
                             onSelect={() => openDeleteDialog(project)}
                           >
                             <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
                             {t('Delete')}
                           </DropdownMenuItem>
+                          {!canDeleteProjects ? (
+                            <p
+                              id={`delete-reason-${project.id}`}
+                              className="max-w-64 px-2 pb-2 text-xs text-muted-foreground"
+                            >
+                              {t('Retry project recovery before deleting projects.')}
+                            </p>
+                          ) : null}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>

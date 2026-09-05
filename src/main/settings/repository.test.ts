@@ -54,6 +54,37 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('commits framework, Reviewer, and Subagent routing as one validated mutation', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    const fixed = {
+      mode: 'fixed' as const,
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high' as const
+    }
+
+    await repository.setAgentRouting(
+      { framework: 'opencode', reviewer: fixed, subagent: fixed },
+      (candidate) => candidate
+    )
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      agentFrameworkId: 'opencode',
+      reviewerModel: fixed,
+      subagentModel: fixed
+    })
+
+    await expect(
+      repository.setAgentRouting({ framework: 'codex', reviewer: { mode: 'inherit' } }, () => {
+        throw new Error('routing is unavailable')
+      })
+    ).rejects.toThrow('routing is unavailable')
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      agentFrameworkId: 'opencode',
+      reviewerModel: fixed,
+      subagentModel: fixed
+    })
+  })
+
   it('defaults legacy and malformed Subagent model settings to dynamic inheritance', () => {
     expect(sanitizeSettings({ providers: [] }).subagentModel).toEqual({ mode: 'inherit' })
     expect(
@@ -794,6 +825,55 @@ describe('settings repository', () => {
     expect(settings.activeProviderId).toBeUndefined()
   })
 
+  it('atomically resets every affected scenario while deleting a provider', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+    const fixed = {
+      mode: 'fixed' as const,
+      providerId: 'p1',
+      model: 'm',
+      reasoningEffort: 'high' as const
+    }
+
+    await repository.upsertProvider(provider())
+    await repository.setSubagentModel(fixed)
+    await repository.setReviewerModel(fixed)
+    await repository.setSessionDetailsModel(fixed)
+    await repository.setVisionModel(fixed)
+
+    const settings = await repository.deleteProvider('p1', 'inherit')
+
+    expect(settings).toMatchObject({
+      providers: [],
+      subagentModel: { mode: 'inherit' },
+      reviewerModel: { mode: 'inherit' },
+      sessionDetailsModel: { mode: 'inherit', reasoningEffort: 'high' }
+    })
+    expect(settings.visionModel).toBeUndefined()
+    await expect(new SettingsRepository(root).getSettings()).resolves.toMatchObject({
+      providers: [],
+      subagentModel: { mode: 'inherit' },
+      reviewerModel: { mode: 'inherit' },
+      sessionDetailsModel: { mode: 'inherit', reasoningEffort: 'high' }
+    })
+  })
+
+  it('resets references to either Claude subscription record when deleting the collapsed card', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.upsertClaudeIsolatedProvider({ keyRef: 'enc:claude' })
+    await repository.setReviewerModel({
+      mode: 'fixed',
+      providerId: 'builtin-claude-shared',
+      model: 'claude-sonnet-4-5',
+      reasoningEffort: 'high'
+    })
+
+    const settings = await repository.deleteProvider('builtin-claude-isolated', 'inherit')
+
+    expect(settings.providers).toEqual([])
+    expect(settings.reviewerModel).toEqual({ mode: 'inherit' })
+  })
+
   it('ignores an active pointer that references an unknown provider', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
@@ -892,21 +972,29 @@ describe('settings repository', () => {
 
     await repository.upsertProvider(
       provider({
+        lastValidatedAt: 1716999999999,
+        lastValidatedTarget: { model: 'model-a', endpoint: 'anthropic' },
         lastValidationFailure: {
           at: 1717000000000,
-          category: 'auth',
-          status: 401,
-          message: 'nope'
+          category: 'model-not-found',
+          status: 404,
+          message: 'nope',
+          target: { model: 'model-b', endpoint: 'anthropic' }
         }
       })
     )
 
     const reloaded = await new SettingsRepository(root).getSettings()
+    expect(reloaded.providers[0].lastValidatedTarget).toEqual({
+      model: 'model-a',
+      endpoint: 'anthropic'
+    })
     expect(reloaded.providers[0].lastValidationFailure).toEqual({
       at: 1717000000000,
-      category: 'auth',
-      status: 401,
-      message: 'nope'
+      category: 'model-not-found',
+      status: 404,
+      message: 'nope',
+      target: { model: 'model-b', endpoint: 'anthropic' }
     })
   })
 

@@ -220,6 +220,27 @@ should compose `ErrorNotice` instead of rolling their own layout.
   external GitHub link disabled until the user has reviewed the current URL; editing diagnostics
   invalidates prior consent.
 
+## Shared context menus
+
+Integrate new renderer context menus through `src/renderer/src/components/action-menu/`; do not
+build a surface-specific Radix menu. Define actions in a capability catalog, order them in recipes,
+keep effects in owner-provided bindings, mount one `ActionMenuProvider`, and register each region
+with `ActionMenuTarget`. Use a stable resource identity for `identityKey`; the provider owns menu
+snapshots, pending-action deduplication, dismissal, error handling, and focus restoration.
+
+Preview integrations extend
+`src/renderer/src/pages/workspace/preview-actions/preview-action-model.ts` and use
+`PreviewActionMenuAdapterProvider`. Iframe previews register through
+`useRegisterPreviewContextMenuFrame`; retain the main-process protocol/frame/editability checks,
+stale-frame rejection, and `[data-preview-context-menu-passthrough]` behavior. Electron supplies
+child-frame coordinates in the root viewport: normalize DIP `x`/`y` by zoom exactly once in the main
+bridge, then anchor with the resulting renderer CSS pixels. Keep the original `frame` reference,
+add no iframe offset or coordinate heuristic, and keep the pointer menu portal under `document.body`.
+
+Cover catalog/recipe/binding resolution and target lifecycle with unit tests. For iframe changes,
+also use a real Playwright right-click at non-100% Electron zoom and verify passthrough; a synthetic
+`webContents.emit()` event is not sufficient as the only regression test.
+
 ## Known patterns
 
 ### Radix Tooltip + DropdownMenu/Dialog trigger: tooltip reopens after the menu closes

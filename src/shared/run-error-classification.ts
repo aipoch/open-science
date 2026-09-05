@@ -87,6 +87,13 @@ export const CLAUDE_EXECUTABLE_MISSING_MESSAGE =
   'Claude executable is not configured. Complete onboarding in settings.'
 export const CODEX_BRIDGE_UNSUPPORTED_MESSAGE =
   'The active model is not supported over the Codex Chat Completions bridge. Pick another model in Settings → Model.'
+export const CONFIGURED_MODEL_UNAVAILABLE_PREFIX =
+  'The configured model is no longer available from provider'
+export const buildConfiguredModelUnavailableMessage = (
+  model: string,
+  providerName: string
+): string =>
+  `${CONFIGURED_MODEL_UNAVAILABLE_PREFIX} "${providerName}": "${model}". Pick another model in Settings → Model.`
 // The model↔framework mismatch message interpolates the framework name, so the classifier matches on
 // this leading, framework-independent phrase. It also covers the resume-path RESUME_MODEL_INCOMPATIBLE
 // wording (both begin here), so either surfacing is recognized.
@@ -159,6 +166,7 @@ export const isExpectedRunFailure = (error: string | null | undefined): boolean 
   if (message.startsWith(PROVIDER_RESOURCE_NOT_FOUND_PREFIX)) return true
   // The actionable provider connection reminder produced for Claude Code connection failures.
   if (message.startsWith(PROVIDER_CONNECTION_FAILED_PREFIX)) return true
+  if (message.startsWith(CONFIGURED_MODEL_UNAVAILABLE_PREFIX)) return true
   // Model↔framework incompatibility raised at spawn/createSession. The main-side message names the
   // framework (`…compatible with Codex.`) while the resume path rewords it to a generic form; both
   // share this leading phrase, so one prefix covers the createSession path (which is not reworded) and

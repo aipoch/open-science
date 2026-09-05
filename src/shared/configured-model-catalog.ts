@@ -8,9 +8,11 @@ import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
+  preferredEndpoint,
   isXaiSubscriptionProvider,
   providerEndpoints,
   providerValidationFailed,
+  requiresChatCompletionsBridge,
   selectClaudeSubscriptionProvider,
   type AgentFrameworkId,
   type ChatApiEndpoint,
@@ -91,7 +93,8 @@ export const buildConfiguredModelInventory = (
         (!isClaudeSubscriptionProvider(provider.type) ||
           input.includeAllClaudeSubscriptions === true ||
           provider.id === selectedClaudeProvider?.id) &&
-        !providerValidationFailed(provider)
+        (!providerValidationFailed(provider) ||
+          provider.lastValidationFailure?.target !== undefined)
     )
     .flatMap((provider) =>
       (provider.models.length > 0 ? provider.models : provider.model ? [provider.model] : ['']).map(
@@ -120,23 +123,40 @@ export const buildConfiguredModelCatalog = (
     frameworkEndpoints: readonly ChatApiEndpoint[]
   }>
 ): readonly ConfiguredModelCatalogEntry[] => {
-  return buildConfiguredModelInventory(input).map((entry) => {
+  return buildConfiguredModelInventory(input).flatMap((entry) => {
     const provider = input.providers.find((candidate) => candidate.id === entry.providerId)!
     const model = entry.model
     const apiEndpoints = configuredModelApiEndpoints(provider, model)
+    const usesCompatibilityTransport = requiresChatCompletionsBridge(
+      { apiEndpoints },
+      { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }
+    )
+    const validationEndpoint = preferredEndpoint(
+      apiEndpoints,
+      provider.type === 'xai-subscription'
+        ? (['responses'] as const)
+        : input.frameworkId === 'codex'
+          ? (['anthropic', 'openai', 'responses'] as const)
+          : usesCompatibilityTransport
+            ? apiEndpoints
+            : input.frameworkEndpoints
+    )
+    if (providerValidationFailed(provider, { model, endpoint: validationEndpoint })) return []
     const frameworkCompatible = isProviderUsableByFramework(
       { apiEndpoints, type: provider.type },
       { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }
     )
     const bridgeSupported = input.frameworkId !== 'codex' || isModelBridgeSupported(provider, model)
-    return Object.freeze({
-      ...entry,
-      selectable: frameworkCompatible && bridgeSupported,
-      ...(!frameworkCompatible
-        ? { unavailableReason: 'framework-incompatible' as const }
-        : !bridgeSupported
-          ? { unavailableReason: 'model-bridge-unsupported' as const }
-          : {})
-    })
+    return [
+      Object.freeze({
+        ...entry,
+        selectable: frameworkCompatible && bridgeSupported,
+        ...(!frameworkCompatible
+          ? { unavailableReason: 'framework-incompatible' as const }
+          : !bridgeSupported
+            ? { unavailableReason: 'model-bridge-unsupported' as const }
+            : {})
+      })
+    ]
   })
 }

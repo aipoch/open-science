@@ -329,9 +329,12 @@ describe('provider auth slice: authentication and catalogs', () => {
   it('deletes through the authoritative snapshot and then refreshes readiness', async () => {
     commands.deleteProvider.mockResolvedValue(snapshot([provider('remaining')]))
 
-    await store.getState().deleteProvider('removed')
+    await store.getState().deleteProvider('removed', 'inherit')
 
-    expect(commands.deleteProvider).toHaveBeenCalledWith({ id: 'removed' })
+    expect(commands.deleteProvider).toHaveBeenCalledWith({
+      id: 'removed',
+      scenarioModelHandling: 'inherit'
+    })
     expect(store.getState().providers.map(({ id }) => id)).toEqual(['remaining'])
     expect(refreshPreflight).toHaveBeenCalledOnce()
   })

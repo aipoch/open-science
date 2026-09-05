@@ -91,7 +91,6 @@ const createPlanProjection = (artifactVersionId: string): ActivePlanProjection =
   revision: 1,
   approval: 'pending',
   lifecycle: 'awaiting_approval',
-  requiresExplicitContinuation: false,
   document: {
     schema_version: 1,
     task_summary: `Plan ${artifactVersionId}`,
@@ -112,6 +111,21 @@ const createPlanProjection = (artifactVersionId: string): ActivePlanProjection =
   stepStatuses: {},
   stepStates: { Step: { status: 'not_started' } },
   counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+})
+
+const createCompletedPlanProjection = (
+  artifactVersionId: string,
+  originatingPromptMessageId: string
+): ActivePlanProjection => ({
+  ...createPlanProjection(artifactVersionId),
+  originatingPromptMessageId,
+  approval: 'approved',
+  lifecycle: 'completed',
+  stepStatuses: {
+    [`Step ${artifactVersionId}`]: { status: 'completed', updatedAt: 4 }
+  },
+  stepStates: { [`Step ${artifactVersionId}`]: { status: 'completed' } },
+  counts: { phases: 1, delegations: 1, steps: 1, completed: 1, inProgress: 0 }
 })
 
 describe('session store', () => {
@@ -1217,8 +1231,7 @@ describe('session store', () => {
       ...createPlanProjection('version-1'),
       revision: 2,
       approval: 'approved' as const,
-      lifecycle: 'approved' as const,
-      requiresExplicitContinuation: true
+      lifecycle: 'approved' as const
     }
     useSessionStore.getState().setActivePlanProjection('session-1', newerProjection)
     const source = useSessionStore.getState().sessions[0]
@@ -2408,7 +2421,7 @@ describe('session store', () => {
     ).toEqual([command])
   })
 
-  it('accepts a newer durable root Branch head before saving the next streamed chunk', () => {
+  it('persists the next streamed chunk when the durable graph timestamp is ahead of the wall clock', () => {
     const prompt = {
       id: 'root-prompt',
       role: 'user' as const,
@@ -2444,8 +2457,14 @@ describe('session store', () => {
     })
 
     const durable = toPersistedSession(useSessionStore.getState().sessions[0])
-    durable.updatedAt += 10
+    const futureUpdatedAt = Date.now() + 60_000
+    const responseMessageId = durable.messages.at(-1)!.id
+    durable.messages.at(-1)!.updatedAt = futureUpdatedAt
+    durable.conversationGraph!.messages.find(({ id }) => id === responseMessageId)!.updatedAt =
+      futureUpdatedAt
+    durable.updatedAt = futureUpdatedAt
     useSessionStore.getState().upsertPersistedSession(durable)
+    vi.setSystemTime(futureUpdatedAt - 120_000)
     useSessionStore.getState().appendAgentMessageChunk({
       sessionId: base.id,
       streamId: 'root-stream',
@@ -2455,7 +2474,14 @@ describe('session store', () => {
     })
 
     const current = useSessionStore.getState().sessions[0]
-    expect(() => toPersistedSession(current)).not.toThrow()
+    expect(current.messages.at(-1)?.content).toBe('Delegation complete')
+    const persisted = toPersistedSession(current)
+    useSessionStore.getState().hydrateSessions([persisted])
+
+    expect(persisted.messages.at(-1)?.content).toBe('Delegation complete')
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)?.content).toBe(
+      'Delegation complete'
+    )
     expect(
       current.conversationGraph?.branches.find(
         ({ id }) => id === current.conversationGraph?.frames[0].activeBranchId
@@ -2549,6 +2575,128 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].planHistoryProjections).toEqual([original])
   })
 
+  it('replaces Plan history from Main runtime authority and clears stale current-version history', () => {
+    const localPlanA = createCompletedPlanProjection('version-a', 'prompt-a')
+    const authoritativePlanA = {
+      ...localPlanA,
+      revision: 8,
+      stepStatuses: {
+        'Step version-a': { status: 'completed' as const, updatedAt: 8, notes: 'Main final' }
+      }
+    }
+    const stalePlanB = createCompletedPlanProjection('version-b', 'prompt-b')
+    const rendererOnlyPlan = createCompletedPlanProjection('renderer-only', 'prompt-local')
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan authority',
+        cwd: '/workspace',
+        status: 'idle',
+        runtimeContext: {
+          version: 1,
+          revision: 7,
+          plan: {
+            artifactId: stalePlanB.artifactId,
+            artifactVersionId: stalePlanB.artifactVersionId,
+            artifactChecksum: stalePlanB.artifactChecksum,
+            originatingPromptMessageId: stalePlanB.originatingPromptMessageId,
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        },
+        planHistoryProjections: [localPlanA, rendererOnlyPlan],
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        runtimeContext: { ...source.runtimeContext!, revision: 8 },
+        planHistoryProjections: [localPlanA, authoritativePlanA, stalePlanB],
+        updatedAt: 3
+      },
+      mode: 'runtime-context-authority'
+    })
+
+    expect(useSessionStore.getState().sessions[0].planHistoryProjections).toEqual([
+      expect.objectContaining({
+        artifactVersionId: 'version-a',
+        revision: 8,
+        stepStatuses: authoritativePlanA.stepStatuses
+      })
+    ])
+  })
+
+  it('treats omitted Plan history as an authoritative clear for accepted runtime authority', () => {
+    const historical = createCompletedPlanProjection('version-a', 'prompt-a')
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan authority clear',
+        cwd: '/workspace',
+        status: 'idle',
+        runtimeContext: { version: 1, revision: 2 },
+        planHistoryProjections: [historical],
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        planHistoryProjections: undefined,
+        runtimeContext: { version: 1, revision: 3 },
+        updatedAt: 3
+      },
+      mode: 'runtime-context-authority'
+    })
+
+    expect(useSessionStore.getState().sessions[0].planHistoryProjections).toBeUndefined()
+  })
+
+  it('ignores an older runtime echo that omits Plan history', () => {
+    const historical = createCompletedPlanProjection('version-a', 'prompt-a')
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Ignore stale Plan clear',
+        cwd: '/workspace',
+        status: 'idle',
+        runtimeContext: { version: 1, revision: 3 },
+        planHistoryProjections: [historical],
+        messages: [],
+        createdAt: 1,
+        updatedAt: 3
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        planHistoryProjections: undefined,
+        runtimeContext: { version: 1, revision: 2 },
+        updatedAt: 4
+      },
+      mode: 'runtime-context-authority'
+    })
+
+    expect(useSessionStore.getState().sessions[0].planHistoryProjections).toEqual([historical])
+  })
+
   it('releases renderer Composer blocking when the active Plan is rejected', () => {
     useSessionStore.getState().hydrateSessions(
       [
@@ -2592,8 +2740,7 @@ describe('session store', () => {
     const approved = {
       ...createPlanProjection('version-1'),
       approval: 'approved' as const,
-      lifecycle: 'approved' as const,
-      requiresExplicitContinuation: true
+      lifecycle: 'approved' as const
     }
 
     useSessionStore.getState().setActivePlanProjection('session-1', approved)
@@ -2601,7 +2748,7 @@ describe('session store', () => {
     const session = useSessionStore.getState().sessions[0]
     expect(session).toMatchObject({
       status: 'idle',
-      activePlanProjection: { approval: 'approved', requiresExplicitContinuation: true }
+      activePlanProjection: { approval: 'approved' }
     })
     expect(session.activeRun).toBeUndefined()
   })
@@ -3925,12 +4072,13 @@ describe('session store', () => {
     })
   })
 
-  it('blocks ordinary sends while an approved durable Plan continuation is queued', () => {
+  it('does not derive Session activity from legacy Plan continuation fields', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
       content: 'Create a plan'
     })
-    const queued = {
+    useSessionStore.getState().finishRun('transport-session-1')
+    const approvedWithLegacyContinuation = {
       ...createPlanProjection('version-1'),
       approval: 'approved' as const,
       lifecycle: 'approved' as const,
@@ -3938,11 +4086,13 @@ describe('session store', () => {
       requiresExplicitContinuation: false
     }
 
-    useSessionStore.getState().setActivePlanProjection('transport-session-1', queued)
+    useSessionStore
+      .getState()
+      .setActivePlanProjection('transport-session-1', approvedWithLegacyContinuation)
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'running',
-      activePlanProjection: { continuationState: 'queued' }
+      status: 'idle',
+      activePlanProjection: { approval: 'approved' }
     })
   })
 
@@ -5740,6 +5890,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
+      'src/renderer/src/pages/workspace/session-action-menu.ts',
       'src/renderer/src/pages/workspace/session-message-artifact-reference.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/active-branch-plan.ts',

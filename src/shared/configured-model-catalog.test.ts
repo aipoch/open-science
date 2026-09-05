@@ -67,6 +67,24 @@ describe('configured model catalog', () => {
     ])
   })
 
+  it('excludes only the model target whose validation reported it missing', () => {
+    const failedTargetProvider = provider('multi-model', ['model-a', 'model-b'], {
+      lastValidationFailure: {
+        at: 11,
+        category: 'model-not-found',
+        target: { model: 'model-b', endpoint: 'openai' }
+      }
+    } as Partial<ProviderView>)
+
+    const entries = buildConfiguredModelCatalog({
+      providers: [failedTargetProvider],
+      frameworkId: 'opencode',
+      frameworkEndpoints: ['openai']
+    })
+
+    expect(entries.map((entry) => entry.model)).toEqual(['model-a'])
+  })
+
   it('checks each official model against its documented protocol', () => {
     const entries = buildConfiguredModelCatalog({
       providers: [

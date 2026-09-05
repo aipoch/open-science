@@ -1,3 +1,4 @@
+import type { ProvenanceReadResult } from './provenance-read-result'
 import type {
   AcpCancelPromptRequest,
   AcpAgentRuntimeUpdate,
@@ -203,6 +204,10 @@ import type {
   ReadManagedPreviewRangeRequest,
   ReleaseManagedPreviewRequest
 } from './preview-resources'
+import {
+  PREVIEW_CONTEXT_MENU_REQUESTED_CHANNEL,
+  type PreviewContextMenuRequest
+} from './preview-context-menu'
 import type {
   CreateProjectRequest,
   DeleteProjectRequest,
@@ -793,19 +798,29 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (request: GetArtifactCodeReconstructionRequest) => Promise<ArtifactCodeReconstructionState>
   >()('artifacts', ['artifacts:get-code-reconstruction']),
   'artifacts.getLineage': callable<
-    (request: GetArtifactLineageRequest) => Promise<ArtifactLineageProvenance | undefined>
+    (
+      request: GetArtifactLineageRequest
+    ) => Promise<ProvenanceReadResult<ArtifactLineageProvenance | undefined>>
   >()('artifacts', ['artifacts:get-lineage']),
   'artifacts.getVersionExecution': callable<
-    (request: GetArtifactVersionProvenanceRequest) => Promise<ArtifactVersionExecutionProvenance>
+    (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ProvenanceReadResult<ArtifactVersionExecutionProvenance>>
   >()('artifacts', ['artifacts:get-version-execution']),
   'artifacts.getVersionMessages': callable<
-    (request: GetArtifactVersionProvenanceRequest) => Promise<ArtifactVersionMessagesProvenance>
+    (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ProvenanceReadResult<ArtifactVersionMessagesProvenance>>
   >()('artifacts', ['artifacts:get-version-messages']),
   'artifacts.getVersionProvenance': callable<
-    (request: GetArtifactVersionProvenanceRequest) => Promise<ArtifactVersionProvenance>
+    (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ProvenanceReadResult<ArtifactVersionProvenance>>
   >()('artifacts', ['artifacts:get-version-provenance']),
   'artifacts.getVersionReview': callable<
-    (request: GetArtifactVersionProvenanceRequest) => Promise<ArtifactVersionReviewProvenance>
+    (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ProvenanceReadResult<ArtifactVersionReviewProvenance>>
   >()('artifacts', ['artifacts:get-version-review']),
   'artifacts.openFile': callable<(request: OpenArtifactFileRequest) => Promise<void>>()(
     'artifacts',
@@ -1287,6 +1302,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'preview',
     ['preview:save']
   ),
+  'previewContextMenu.onRequested': callable<
+    (listener: AcpListener<PreviewContextMenuRequest>) => RemoveListener
+  >()('preview-context-menu', [PREVIEW_CONTEXT_MENU_REQUESTED_CHANNEL, ELECTRON_EVENT]),
   'previewResources.acquire': callable<
     (request: AcquireManagedPreviewRequest) => Promise<ManagedPreviewResource>
   >()('preview-resources', ['preview-resources:acquire']),
@@ -2377,6 +2395,7 @@ const RENDERER_CAPABILITY_ORDER = Object.freeze([
   'permissions',
   'platform-file-save',
   'preview',
+  'preview-context-menu',
   'preview-resources',
   'project-files',
   'projects',

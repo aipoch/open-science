@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
@@ -79,6 +80,7 @@ type WorkspaceComposerUploadController = {
     attachments: UploadedAttachment[]
     transfers: ComposerUploadTransfer[]
     error: string | null
+    errorDetail?: string
     isUploading: boolean
   }
   actions: {
@@ -159,7 +161,13 @@ export const useWorkspaceComposerUploadController = ({
 }: WorkspaceComposerUploadControllerInput): WorkspaceComposerUploadController => {
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([])
   const [transfers, setTransfers] = useState<ComposerUploadTransfer[]>([])
-  const [error, setError] = useState<string | null>(null)
+  const { t } = useTranslation()
+  const [error, setErrorText] = useState<string | null>(null)
+  const [errorDetail, setErrorDetail] = useState<string>()
+  const setError = useCallback((message: string | null): void => {
+    setErrorText(message)
+    setErrorDetail(undefined)
+  }, [])
   const attachmentsRef = useRef(attachments)
   const transfersRef = useRef<ComposerUploadTransfer[]>([])
   const controllersRef = useRef<Record<string, AbortController>>({})
@@ -242,7 +250,7 @@ export const useWorkspaceComposerUploadController = ({
         (deleteError) => setError(asText(deleteError))
       )
     },
-    [uploads]
+    [uploads, setError]
   )
   const currentSnapshot = useCallback(
     (caret?: ComposerCaretPosition): ComposerHistorySnapshot => {
@@ -620,7 +628,7 @@ export const useWorkspaceComposerUploadController = ({
             if (controller.signal.aborted) {
               updateTransfer({ remove: true })
             } else {
-              const message = asText(uploadError)
+              const message = t('Could not attach the file. Check available storage and try again.')
               if (transfer.pastedTextId) {
                 updateTransfer({ remove: true })
                 reconcileFailedPastedTextUndo(draftKey, transfer.pastedTextId, transfer.transferId)
@@ -629,7 +637,10 @@ export const useWorkspaceComposerUploadController = ({
                 updateTransfer({ status: 'error', error: message })
               }
               delete transferFilesRef.current[transfer.transferId]
-              if (activeDraftKeyRef.current === draftKey) setError(message)
+              if (activeDraftKeyRef.current === draftKey) {
+                setError(message)
+                setErrorDetail(asText(uploadError))
+              }
             }
           } finally {
             delete controllersRef.current[transfer.transferId]
@@ -644,7 +655,9 @@ export const useWorkspaceComposerUploadController = ({
       restorePastedTextInline,
       reconcileFailedPastedTextUndo,
       updateDraftTransfers,
-      uploads
+      uploads,
+      setError,
+      t
     ]
   )
 
@@ -695,7 +708,8 @@ export const useWorkspaceComposerUploadController = ({
       supportsImageInput,
       transfers.length,
       captureUndo,
-      updateActiveTransfers
+      updateActiveTransfers,
+      setError
     ]
   )
 
@@ -721,7 +735,7 @@ export const useWorkspaceComposerUploadController = ({
         .deleteUpload({ path: attachment.path })
         .catch((deleteError) => setError(asText(deleteError)))
     },
-    [updateActiveAttachments, updateActiveTransfers, uploads]
+    [updateActiveAttachments, updateActiveTransfers, uploads, setError]
   )
 
   const reconcileRemovedPastedTextUploads = useCallback(
@@ -817,7 +831,8 @@ export const useWorkspaceComposerUploadController = ({
       setActiveDoc,
       transfers.length,
       captureUndo,
-      updateActiveTransfers
+      updateActiveTransfers,
+      setError
     ]
   )
 
@@ -1197,7 +1212,8 @@ export const useWorkspaceComposerUploadController = ({
       markChanged,
       removePastedText,
       updateActiveAttachments,
-      uploads
+      uploads,
+      setError
     ]
   )
 
@@ -1269,7 +1285,8 @@ export const useWorkspaceComposerUploadController = ({
       draftsRef,
       setActiveAttachments,
       setActiveTransfers,
-      uploads
+      uploads,
+      setError
     ]
   )
 
@@ -1278,6 +1295,7 @@ export const useWorkspaceComposerUploadController = ({
       attachments,
       transfers,
       error,
+      errorDetail,
       isUploading: transfers.some(unfinishedComposerUpload)
     },
     actions: {

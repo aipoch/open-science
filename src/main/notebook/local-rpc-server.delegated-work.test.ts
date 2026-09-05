@@ -297,7 +297,8 @@ describe('authenticated delegatedWorkCall route', () => {
     })
     const call = async (
       params: Record<string, unknown>,
-      method = 'delegatedWorkCall'
+      method = 'delegatedWorkCall',
+      expectedStatus = 400
     ): Promise<unknown> => {
       const response = await fetch(connection.endpoint, {
         method: 'POST',
@@ -307,11 +308,11 @@ describe('authenticated delegatedWorkCall route', () => {
         },
         body: JSON.stringify({ method, params })
       })
-      expect(response.status).toBe(500)
+      expect(response.status).toBe(expectedStatus)
       return response.json()
     }
 
-    await expect(call({ value: 'done' }, 'delegatedOutputCall')).resolves.toEqual({
+    await expect(call({ value: 'done' }, 'delegatedOutputCall', 500)).resolves.toEqual({
       error: 'host.submit_output is not configured.'
     })
     await expect(
@@ -581,7 +582,7 @@ describe('authenticated delegatedWorkCall route', () => {
         })
       })
 
-      expect(response.status).toBe(500)
+      expect(response.status).toBe(400)
     }
 
     expect(readHostArtifactCatalog).not.toHaveBeenCalled()
@@ -718,7 +719,8 @@ describe('authenticated delegatedWorkCall route', () => {
           }
         })
       })
-      expect(response.status).toBe(500)
+      // A catalog integrity failure remains a server error, unlike a rejected caller-owned input.
+      expect(response.status).toBe(identity === 'collision' ? 500 : 403)
       if (identity === 'artifact-1') {
         await expect(response.json()).resolves.toEqual({
           error: expect.stringMatching(/version_id\/versionId.*not artifact_id.*omit inputs/i)
@@ -777,7 +779,7 @@ describe('authenticated delegatedWorkCall route', () => {
         body: JSON.stringify({ method: 'delegatedWorkCall', params: { request } })
       })
 
-      expect(response.status).toBe(500)
+      expect(response.status).toBe(400)
       await expect(response.json()).resolves.toEqual({ error })
     }
     expect(delegate).not.toHaveBeenCalled()
@@ -1089,7 +1091,7 @@ describe('authenticated delegatedWorkCall route', () => {
       })
     })
 
-    expect(response.status).toBe(500)
+    expect(response.status).toBe(400)
     await expect(response.json()).resolves.toEqual({
       error:
         'delegate context was removed; include all goals, background, constraints, and deliverables in task and retry'

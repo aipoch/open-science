@@ -263,8 +263,15 @@ export const resolveArtifactVersionDescriptor = (
   selectedVersionId: string | undefined
 ): ArtifactVersionDescriptor | undefined =>
   selectedVersionId === undefined
-    ? lineage.versions.at(-1)
-    : lineage.versions.find((version) => version.versionId === selectedVersionId)
+    ? (lineage.headVersion ?? lineage.versions.at(-1))
+    : [
+        lineage.selectedVersion,
+        lineage.headVersion,
+        lineage.basedOnVersion,
+        lineage.previousVersion,
+        lineage.nextVersion,
+        ...lineage.versions
+      ].find((version) => version?.versionId === selectedVersionId)
 
 // Converts a sent user upload into the same preview shape used by message attachment clicks.
 export const createPreviewFileItemFromUpload = (

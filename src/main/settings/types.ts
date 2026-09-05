@@ -9,6 +9,7 @@ import type {
   ProjectFilesFilterPreference,
   ProviderType,
   ProviderValidationFailure,
+  ProviderValidationTarget,
   ReasoningEffort,
   ReviewerModelConfiguration,
   SessionDetailsModelConfiguration,
@@ -80,8 +81,10 @@ export type StoredProvider = {
   accountEmail?: string
   keyRef?: string
   keyMask?: string
-  // Timestamp of the last successful connectivity/key check on the provider's first model.
+  // Timestamp of the last successful connectivity/key check.
   lastValidatedAt?: number
+  // Non-secret model/protocol fingerprint for the last successful target probe.
+  lastValidatedTarget?: ProviderValidationTarget
   // Estimated expiry of a stored credential, used to surface "expires <date>" on the Settings card.
   // Only set for credential types that have a known bounded lifetime: today that is the Claude
   // `claude setup-token` (Anthropic documents a one-year lifetime) and a codex subscription sign-in

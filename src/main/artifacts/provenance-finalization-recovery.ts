@@ -56,12 +56,13 @@ type ArtifactProvenanceFinalizationRecoveryOptions = {
   >
 }
 
-// Resolves the one agent message produced by the prepared prompt turn. It deliberately considers
+// Resolves the agent message owning the prepared prompt turn's output. It deliberately considers
 // only messages before the next user prompt on the declared Branch and Runtime Segment; choosing a
 // latest message (or accepting multiple candidates) could attach a crashed run to a later turn.
 const inferDurableFinalizationMessageId = (
   session: PersistedChatSession,
-  context: PreparedArtifactFinalizationContext
+  context: PreparedArtifactFinalizationContext,
+  versionIds: readonly string[]
 ): string | undefined => {
   const graph = materializeSessionConversationGraph(session).conversationGraph!
   if (graph.rootFrameId !== context.rootFrameId) return undefined
@@ -89,10 +90,28 @@ const inferDurableFinalizationMessageId = (
         message.introducedOnBranchId === context.messageBranchId &&
         message.runtimeSegmentId === context.runtimeSegmentId
     )
-  if (candidates.length !== 1) return undefined
+  let message = candidates.length === 1 ? candidates[0] : undefined
+  if (candidates.length > 1) {
+    // A turn may contain commentary before its result. Use durable attachments to distinguish the
+    // owner, but reject even a partial competing claim anywhere in the Session graph/projection.
+    const claimedMessageIds = new Set(
+      [...session.messages, ...(session.conversationGraph?.messages ?? [])]
+        .filter((candidate) => candidate.artifactIds?.some((id) => versionIds.includes(id)))
+        .map((candidate) => candidate.id)
+    )
+    if (claimedMessageIds.size !== 1) return undefined
+    message = candidates.find((candidate) => claimedMessageIds.has(candidate.id))
+    if (
+      !message ||
+      !versionIds.every((id) => isArtifactLinkedToDurableMessage(session, message!.id, id))
+    ) {
+      return undefined
+    }
+  }
+  if (!message) return undefined
 
-  validateDurableMessageOwnership(session, { ...context, messageId: candidates[0].id })
-  return candidates[0].id
+  validateDurableMessageOwnership(session, { ...context, messageId: message.id })
+  return message.id
 }
 
 // Require Session metadata and every persisted owner projection to carry ArtifactFile.id.
@@ -249,7 +268,12 @@ class ArtifactProvenanceFinalizationRecovery {
       let proof: { messageId: string } | undefined
       try {
         const messageId =
-          marker.messageId ?? inferDurableFinalizationMessageId(durableSession, markerContext)
+          marker.messageId ??
+          inferDurableFinalizationMessageId(
+            durableSession,
+            markerContext,
+            runVersions.map((version) => version.id)
+          )
         if (messageId) {
           validateDurableMessageOwnership(durableSession, {
             ...markerContext,

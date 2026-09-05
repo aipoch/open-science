@@ -194,4 +194,85 @@ describe('useManagedPreviewResource', () => {
       maxBytes: 4096
     })
   })
+
+  it.each(['artifact', 'upload'] as const)(
+    'returns an error without acquiring when a %s has no logical file identity',
+    async (source) => {
+      const item: PreviewFileItem = {
+        ...firstItem,
+        id: source === 'upload' ? 'upload:legacy-file' : 'legacy-artifact-version',
+        source,
+        path: '/managed/legacy-file.html',
+        name: 'legacy-file.html',
+        title: 'legacy-file.html',
+        format: 'html',
+        managedFileId: undefined,
+        ...(source === 'upload' ? { artifactId: 'artifact-from-wrong-source' } : {})
+      }
+      root = createRoot(container)
+
+      await act(async () => root.render(<Probe item={item} />))
+
+      expect(container.querySelector('div')?.dataset.state).toBe('error')
+      expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
+    }
+  )
+
+  it('returns an error when capability acquisition rejects asynchronously', async () => {
+    vi.mocked(window.api.previewResources.acquire).mockRejectedValue(
+      new Error('Capability acquisition failed')
+    )
+    root = createRoot(container)
+
+    await act(async () => root.render(<Probe item={firstItem} />))
+
+    expect(container.querySelector('div')?.dataset.state).toBe('error')
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let a stale acquisition error replace the current resource', async () => {
+    let rejectFirstAcquire: ((reason: Error) => void) | undefined
+    vi.mocked(window.api.previewResources.acquire).mockImplementation((request) => {
+      if (request.source === 'artifact') {
+        return new Promise((_, reject) => {
+          rejectFirstAcquire = reject
+        })
+      }
+      return Promise.resolve({
+        id: 'current-resource',
+        url: 'open-science-preview://current-resource/second.pdf',
+        size: 20,
+        mimeType: 'application/pdf',
+        version: 1
+      })
+    })
+    root = createRoot(container)
+
+    await act(async () => root.render(<Probe item={firstItem} />))
+    await act(async () => root.render(<Probe item={secondItem} />))
+    expect(container.textContent).toBe('current-resource')
+
+    await act(async () => rejectFirstAcquire?.(new Error('Stale acquisition failed')))
+
+    expect(container.querySelector('div')?.dataset.state).toBe('ready')
+    expect(container.textContent).toBe('current-resource')
+  })
+
+  it('does not reacquire or release when stable identity props rerender', async () => {
+    vi.mocked(window.api.previewResources.acquire).mockResolvedValue({
+      id: 'stable-resource',
+      url: 'open-science-preview://stable-resource/first.pdf',
+      size: 12,
+      mimeType: 'application/pdf',
+      version: 1
+    })
+    root = createRoot(container)
+
+    await act(async () => root.render(<Probe item={firstItem} />))
+    await act(async () => root.render(<Probe item={{ ...firstItem }} />))
+
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+    expect(window.api.previewResources.release).not.toHaveBeenCalled()
+    expect(container.textContent).toBe('stable-resource')
+  })
 })

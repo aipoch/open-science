@@ -44,8 +44,6 @@ const projection = (phases: Phase[], confidence: 'high' | 'medium' | 'low'): Act
     revision: 1,
     approval: 'approved',
     lifecycle: 'in_progress',
-    continuationState: 'active',
-    requiresExplicitContinuation: false,
     stepStatuses: {},
     stepStates: {},
     counts: { phases: phases.length, delegations: 1, steps: 1, completed: 0, inProgress: 0 },

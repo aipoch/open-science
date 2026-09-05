@@ -113,7 +113,7 @@ const uploadedAttachmentSchema = z
   .object({
     id: z.string(),
     versionId: z.string().optional(),
-    versionNumber: z.number().finite().optional(),
+    versionNumber: z.number().int().positive().optional(),
     sessionId: z.string(),
     name: z.string(),
     originalName: z.string(),

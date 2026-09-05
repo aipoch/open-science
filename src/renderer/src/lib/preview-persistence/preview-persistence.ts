@@ -24,6 +24,7 @@ type PreviewStoreState = ReturnType<typeof usePreviewWorkbenchStore.getState>
 type PreviewSave = (request: SavePreviewStateRequest) => Promise<SavePreviewStateResult>
 type PreviewSaveInput = Omit<SavePreviewStateRequest, 'expectedRevision'>
 type FinalizedUploadPreview = {
+  managedFileId: string
   sessionId: string
   path: string
   size: number
@@ -121,6 +122,7 @@ const synchronizeUploadPreviewIndex = (
         uploadIds.add(previewId)
         index.uploads.set(previewId, {
           ...upload,
+          managedFileId: upload.id,
           path: getUploadedAttachmentPath(upload, session.projectId)
         })
       }
@@ -135,6 +137,20 @@ const synchronizeUploadPreviewIndex = (
   }
 
   return index.uploads
+}
+
+const indexAuthoritativeArtifactIds = (sessions: ChatSession[]): ReadonlyMap<string, string> => {
+  const artifactIdByRecordId = new Map<string, string>()
+
+  for (const session of sessions) {
+    for (const artifact of session.artifacts ?? []) {
+      if (artifact.kind === 'managed-file' && artifact.artifactId) {
+        artifactIdByRecordId.set(artifact.id, artifact.artifactId)
+      }
+    }
+  }
+
+  return artifactIdByRecordId
 }
 
 // Applies only the changes made after `base` to the authoritative state. This preserves remote tabs
@@ -408,6 +424,7 @@ const toRestoredSlice = (
 ): RestoredPreviewSlice => {
   // Hydrated sessions hold finalized upload paths while persisted tabs may still reference staging.
   const uploadByPreviewId = synchronizeUploadPreviewIndex(sessions)
+  const artifactIdByRecordId = indexAuthoritativeArtifactIds(sessions)
 
   return {
     panelState: persisted.panelState,
@@ -415,6 +432,18 @@ const toRestoredSlice = (
     items: [
       ...persisted.items.map((item) => {
         const upload = item.source === 'upload' ? uploadByPreviewId.get(item.id) : undefined
+        // Restore managed identity only from authoritative data for the persisted source.
+        const hasArtifactSource = item.source === undefined || item.source === 'artifact'
+        const artifactId = hasArtifactSource
+          ? (item.artifactId ?? artifactIdByRecordId.get(item.id))
+          : undefined
+        const hydratedManagedFileId =
+          item.source === 'upload'
+            ? upload?.managedFileId
+            : hasArtifactSource
+              ? artifactId
+              : undefined
+        const managedFileId = item.managedFileId ?? hydratedManagedFileId
         const mimeType = upload?.mimeType ?? item.mimeType
         const currentFormat = getPreviewFormatForFile({ name: item.name, mimeType })
 
@@ -433,8 +462,8 @@ const toRestoredSlice = (
             ? { size: upload?.size ?? item.size }
             : {}),
           ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {}),
-          ...(item.artifactId ? { artifactId: item.artifactId } : {}),
-          ...(item.managedFileId ? { managedFileId: item.managedFileId } : {}),
+          ...(artifactId ? { artifactId } : {}),
+          ...(managedFileId ? { managedFileId } : {}),
           ...(item.selectedVersionId ? { selectedVersionId: item.selectedVersionId } : {}),
           ...(item.versionNumber !== undefined ? { versionNumber: item.versionNumber } : {}),
           ...(item.originSession ? { originSession: item.originSession } : {})

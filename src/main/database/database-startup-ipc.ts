@@ -1,7 +1,10 @@
 import type { App, BrowserWindow, IpcMain } from 'electron'
 
 import { DATABASE_STARTUP_CHANNELS } from '../../shared/database-startup'
+import { createLogger, errorLogFields } from '../logger'
 import type { DatabaseStartupOwner } from './database-startup-owner'
+
+const log = createLogger('database-startup-ipc')
 
 type DatabaseStartupIpcDeps = {
   ipcMain: Pick<IpcMain, 'handle' | 'removeHandler'>
@@ -17,8 +20,16 @@ const registerDatabaseStartupIpc = (deps: DatabaseStartupIpcDeps): (() => void) 
 
   const unsubscribe = deps.owner.subscribe((state) => {
     for (const window of deps.getWindows()) {
-      if (!window.isDestroyed())
-        window.webContents.send(DATABASE_STARTUP_CHANNELS.stateChanged, state)
+      try {
+        if (!window.isDestroyed())
+          window.webContents.send(DATABASE_STARTUP_CHANNELS.stateChanged, state)
+      } catch (error) {
+        try {
+          log.warn('database startup window notification failed', errorLogFields(error))
+        } catch {
+          // Continue delivering to the remaining windows even if logging fails.
+        }
+      }
     }
   })
 

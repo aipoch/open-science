@@ -88,14 +88,14 @@ describe('lineageCall RPC', () => {
         options: {},
         ...forged
       })
-      expect(attempt.response.status).toBe(500)
+      expect(attempt.response.status).toBe(400)
       expect(attempt.payload).toEqual({ error: 'host.lineage RPC params are invalid.' })
     }
 
     await expect(
       callLineage(control, control.token, { op: 'clear', version_id: 'version-1' })
     ).resolves.toMatchObject({
-      response: { status: 500 },
+      response: { status: 400 },
       payload: { error: 'Unknown host.lineage operation.' }
     })
   })

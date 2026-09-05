@@ -272,16 +272,23 @@ describe('application command composition', () => {
     expect(composition.task.commandNames()).not.toContain('reviewer:abort-fix-loop')
   })
 
-  it('exposes only the fourteen Task commands and no transport-wide capability', async () => {
+  it('exposes only the twenty-one Task commands and no transport-wide capability', async () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.task.commandNames()).toEqual([
       'projects:list',
       'projects:create',
       'projects:update',
+      'projects:update-session-defaults',
+      'settings:get-settings',
+      'settings:set-agent-routing',
       'sessions:load-all',
       'sessions:save-session',
+      'sessions:stage-task-completion',
+      'sessions:settle-task-completion',
+      'sessions:fail-task-run',
       'sessions:set-delegation-policy',
+      'sessions:update-configuration',
       'acp:get-plan-projection',
       'acp:respond-plan',
       'reviewer:abort',

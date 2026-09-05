@@ -1,4 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import {
+  parseVersionHistoryCursor,
+  versionHistoryPage,
+  VERSION_HISTORY_PAGE_SIZE
+} from '../../shared/version-history'
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 
@@ -23,6 +28,7 @@ import { ManagedFileVersionError } from './error'
 import {
   NodeVersionFileOperator,
   VersionFileOperatorError,
+  type OpenImmutableOptions,
   type PlannedFile,
   type ReadLease,
   type VersionFileOperator,
@@ -430,10 +436,14 @@ class ManagedFileVersionService {
       }
     }
 
-    const lease = await this.versionFileOperator.openImmutable(activeVersion.contentStorageKey, {
-      sizeBytes: bytes.byteLength,
-      checksum
-    })
+    const lease = await this.versionFileOperator.openImmutable(
+      activeVersion.contentStorageKey,
+      {
+        sizeBytes: bytes.byteLength,
+        checksum
+      },
+      { forceVerify: true }
+    )
     await lease.close()
     const published = await client.$transaction(async (tx) => {
       const logicalFile = await this.loadLogicalFile(tx, {
@@ -463,7 +473,24 @@ class ManagedFileVersionService {
     request: ManagedFileVersionInspectRequest
   ): Promise<ManagedFileVersionInspectResult> {
     const resolved = await this.resolveRecord(request)
-    const versions = await this.listVersions(resolved.logicalFile)
+    let before: number | undefined
+    try {
+      before = parseVersionHistoryCursor(request.cursor)
+    } catch {
+      operationError('INVALID_REQUEST', 'Invalid version history cursor.')
+    }
+    const page = versionHistoryPage(await this.listVersions(resolved.logicalFile, before))
+    const head =
+      resolved.version.id === resolved.logicalFile.currentVersionId
+        ? resolved
+        : await this.resolveRecord({
+            ...request,
+            versionId: resolved.logicalFile.currentVersionId!
+          })
+    const [previous, next] = await Promise.all([
+      this.listVersions(resolved.logicalFile, resolved.version.versionNumber, undefined, 1),
+      this.listVersions(resolved.logicalFile, undefined, resolved.version.versionNumber, 1)
+    ])
     const writeUnavailableReason = await this.writeUnavailableReason(resolved.logicalFile)
     const eligibility = await this.readTextEligibility(resolved)
 
@@ -475,9 +502,22 @@ class ManagedFileVersionService {
       displayName: resolved.logicalFile.displayName,
       headVersionId: resolved.logicalFile.currentVersionId!,
       selectedVersionId: resolved.version.id,
-      versions: versions.map((version) =>
+      versions: page.versions.map((version) =>
         toDescriptor(request.source, resolved.logicalFile.displayName, version)
       ),
+      nextCursor: page.nextCursor,
+      previousVersion: previous[0]
+        ? toDescriptor(request.source, resolved.logicalFile.displayName, previous[0])
+        : undefined,
+      nextVersion: next[0]
+        ? toDescriptor(request.source, resolved.logicalFile.displayName, next[0])
+        : undefined,
+      selectedVersion: toDescriptor(
+        request.source,
+        resolved.logicalFile.displayName,
+        resolved.version
+      ),
+      headVersion: toDescriptor(request.source, resolved.logicalFile.displayName, head.version),
       canEdit: eligibility.editable && writeUnavailableReason === undefined,
       canDiff: eligibility.editable && resolved.version.basedOnVersionId !== null,
       ...(eligibility.editable ? { text: eligibility.text, textFormat: eligibility.format } : {}),
@@ -969,7 +1009,7 @@ class ManagedFileVersionService {
     if (!project) operationError('FILE_NOT_FOUND', 'Managed file project was not found.')
     if (
       deleting ||
-      (origin && (origin.state !== 'active' || origin.deletedAt || origin.deletionOperationId)) ||
+      (origin && (origin.state === 'deleting' || origin.deletionOperationId)) ||
       sync?.deletedAt ||
       sync?.deleteOperationId ||
       projection?.deletedAt ||
@@ -1160,16 +1200,27 @@ class ManagedFileVersionService {
       : null
   }
 
-  private async listVersions(logicalFile: ManagedLogicalFile): Promise<ManagedFileVersionRecord[]> {
+  private async listVersions(
+    logicalFile: ManagedLogicalFile,
+    before?: number,
+    after?: number,
+    take = VERSION_HISTORY_PAGE_SIZE + 1
+  ): Promise<ManagedFileVersionRecord[]> {
     const client = await this.options.getClient()
     if (logicalFile.source === 'artifact') {
       const versions = await client.artifactVersion.findMany({
         where: {
           artifactId: logicalFile.id,
+          ...(before === undefined
+            ? after === undefined
+              ? {}
+              : { versionNumber: { gt: after } }
+            : { versionNumber: { lt: before } }),
           state: 'finalized',
           OR: [{ originKind: { not: 'agent_generated' } }, { managedVisibleAt: { not: null } }]
         },
-        orderBy: { versionNumber: 'asc' }
+        orderBy: { versionNumber: after === undefined ? 'desc' : 'asc' },
+        take
       })
       return versions.map((version) => ({
         ...version,
@@ -1179,8 +1230,17 @@ class ManagedFileVersionService {
       }))
     }
     const versions = await client.uploadVersion.findMany({
-      where: { uploadFileId: logicalFile.id, state: 'ready' },
-      orderBy: { versionNumber: 'asc' }
+      where: {
+        uploadFileId: logicalFile.id,
+        state: 'ready',
+        ...(before === undefined
+          ? after === undefined
+            ? {}
+            : { versionNumber: { gt: after } }
+          : { versionNumber: { lt: before } })
+      },
+      orderBy: { versionNumber: after === undefined ? 'desc' : 'asc' },
+      take
     })
     return versions.map((version) => ({
       ...version,
@@ -1190,7 +1250,8 @@ class ManagedFileVersionService {
   }
 
   private async openVersionLease(
-    resolved: ResolvedManagedFileVersion
+    resolved: ResolvedManagedFileVersion,
+    options?: OpenImmutableOptions
   ): Promise<ManagedFileReadLease> {
     let operatorLease: ReadLease
     try {
@@ -1199,7 +1260,8 @@ class ManagedFileVersionService {
         {
           sizeBytes: Number(resolved.version.sizeBytes),
           checksum: resolved.version.checksum
-        }
+        },
+        options
       )
     } catch (error) {
       throw translateVersionFileError(
@@ -1267,7 +1329,7 @@ class ManagedFileVersionService {
   }
 
   private async verifyResolvedVersion(resolved: ResolvedManagedFileVersion): Promise<void> {
-    const lease = await this.openVersionLease(resolved)
+    const lease = await this.openVersionLease(resolved, { forceVerify: true })
     await lease.close()
   }
 
@@ -1583,7 +1645,8 @@ class ManagedFileVersionService {
     try {
       const lease = await this.versionFileOperator.openImmutable(
         operation.contentStorageKey,
-        expectedIntegrity
+        expectedIntegrity,
+        { forceVerify: true }
       )
       await lease.close()
     } catch (error) {

@@ -94,9 +94,13 @@ const createFakeRuntime = (options: {
   beginProviderTurnObservation: ReturnType<typeof vi.fn>
   captureSessionModel: ReturnType<typeof vi.fn>
   setPermissionProfile: ReturnType<typeof vi.fn>
+  setMemoryEnabled: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
   requestUserInput: ReturnType<typeof vi.fn>
   disableLiteratureContext: ReturnType<typeof vi.fn>
+  callSessionPlan: ReturnType<typeof vi.fn>
+  getSessionPlanProjection: ReturnType<typeof vi.fn>
+  respondSessionPlan: ReturnType<typeof vi.fn>
   emitEvent: (event: AcpRuntimeEvent) => void
   emitPermission: (request: AcpPermissionRequest) => void
   emitState: (overrides: Partial<AcpStateSnapshot>) => void
@@ -166,6 +170,7 @@ const createFakeRuntime = (options: {
     appliedModel: `${sessionId}:applied`
   }))
   const setPermissionProfile = vi.fn(async () => snapshot)
+  const setMemoryEnabled = vi.fn()
   const respondToPermission = vi.fn((response: AcpPermissionResponse) => {
     options.callbacks.onPermissionSettled?.(
       response.requestId,
@@ -175,6 +180,9 @@ const createFakeRuntime = (options: {
   })
   const requestUserInput = vi.fn(async () => ({ action: 'answered', answer: 'Minimal' }))
   const disableLiteratureContext = vi.fn(async () => undefined)
+  const callSessionPlan = vi.fn(async () => ({ ok: true }))
+  const getSessionPlanProjection = vi.fn(async () => null)
+  const respondSessionPlan = vi.fn(async () => ({ changed: false }))
   const shutdown = vi.fn()
   const shutdownForQuit = vi.fn(async () => ({ reaped: true }))
   const shutdownForUpdateGate = vi.fn(async () => ({ reaped: true }))
@@ -301,9 +309,13 @@ const createFakeRuntime = (options: {
     beginProviderTurnObservation,
     captureSessionModel,
     setPermissionProfile,
+    setMemoryEnabled,
     respondToPermission,
     requestUserInput,
     disableLiteratureContext,
+    callSessionPlan,
+    getSessionPlanProjection,
+    respondSessionPlan,
     shutdown,
     shutdownForQuit,
     shutdownForUpdateGate
@@ -332,9 +344,13 @@ const createFakeRuntime = (options: {
     beginProviderTurnObservation,
     captureSessionModel,
     setPermissionProfile,
+    setMemoryEnabled,
     respondToPermission,
     requestUserInput,
     disableLiteratureContext,
+    callSessionPlan,
+    getSessionPlanProjection,
+    respondSessionPlan,
     emitEvent: (event) => {
       snapshot = {
         ...snapshot,
@@ -370,6 +386,34 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('lazily recreates a runtime for cold Session Plan operations after retirement', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: [],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    created[0].emitRetired()
+
+    await coordinator.getSessionPlanProjection('project-1', 'session-1')
+    await coordinator.callSessionPlan({ sessionId: 'session-1' } as never)
+    await coordinator.respondSessionPlan({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      feedback: 'Revise the Plan.'
+    })
+
+    expect(created).toHaveLength(2)
+    expect(created[1].getSessionPlanProjection).toHaveBeenCalledWith('project-1', 'session-1')
+    expect(created[1].callSessionPlan).toHaveBeenCalledOnce()
+    expect(created[1].respondSessionPlan).toHaveBeenCalledOnce()
+  })
+
   it('forwards a Codex WebSocket fallback from a runtime to the application callback', () => {
     const onCodexWebSocketFallback = vi.fn()
     let runtimeCallbacks: AcpRuntimeCallbacks | undefined
@@ -1097,6 +1141,9 @@ describe('AcpRuntimeCoordinator', () => {
       profile: 'ask'
     })
     expect(delegated.setPermissionProfile).toHaveBeenCalledWith('session-1', 'ask')
+
+    coordinator.setMemoryEnabled('session-1', false)
+    expect(created[0].setMemoryEnabled).toHaveBeenCalledWith('session-1', false)
 
     await coordinator.cancelPrompt({ sessionId: 'session-1' })
     expect(delegated.stopSession).not.toHaveBeenCalled()

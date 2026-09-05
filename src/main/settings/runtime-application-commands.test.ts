@@ -29,6 +29,7 @@ const expectedChannels = [
   'settings:delete-provider',
   'settings:set-active-provider',
   'settings:set-agent-framework',
+  'settings:set-agent-routing',
   'settings:set-reasoning-effort',
   'settings:login-shared-claude',
   'settings:logout-shared-claude',
@@ -89,7 +90,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings runtime application commands', () => {
-  it('installs the exact 20-command inventory and dispatches a remote-safe selection', async () => {
+  it('installs the exact 21-command inventory and keeps Task-only routing off renderer IPC', async () => {
     const { dependencies, workflowMethod } = createDependencies()
     const selected = { activeProviderId: 'provider-1' }
     workflowMethod('setActiveProvider').mockResolvedValue(selected)
@@ -102,7 +103,12 @@ describe('Settings runtime application commands', () => {
     expect(settingsRuntimeApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedChannels
     )
-    expect(settingsChannels).toEqual(expect.arrayContaining([...expectedChannels]))
+    expect(settingsChannels).toEqual(
+      expect.arrayContaining(
+        expectedChannels.filter((channel) => channel !== 'settings:set-agent-routing')
+      )
+    )
+    expect(settingsChannels).not.toContain('settings:set-agent-routing')
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     await expect(
       router.dispatcher.invoke(
@@ -113,7 +119,7 @@ describe('Settings runtime application commands', () => {
     expect(workflowMethod('setActiveProvider')).toHaveBeenCalledWith({ id: 'provider-1' })
   })
 
-  it('delegates the five remote-safe mutations through the runtime workflow', async () => {
+  it('delegates the six remote-safe mutations through the runtime workflow', async () => {
     const { dependencies, workflowMethod } = createDependencies()
     const router = createApplicationCommandRouter()
     registerRuntimeSettingsApplicationCommands(router.registrar, dependencies)
@@ -124,7 +130,7 @@ describe('Settings runtime application commands', () => {
     )
     await router.dispatcher.invoke(
       settingsRuntimeApplicationCommands.deleteProvider,
-      invocation([{ id: 'provider-1' }] as const, 'remote')
+      invocation([{ id: 'provider-1', scenarioModelHandling: 'inherit' }] as const, 'remote')
     )
     await router.dispatcher.invoke(
       settingsRuntimeApplicationCommands.setActiveProvider,
@@ -135,6 +141,24 @@ describe('Settings runtime application commands', () => {
       invocation([{ id: 'opencode' }] as const, 'remote')
     )
     await router.dispatcher.invoke(
+      settingsRuntimeApplicationCommands.setAgentRouting,
+      invocation(
+        [
+          {
+            framework: 'codex',
+            reviewer: { mode: 'inherit' },
+            subagent: {
+              mode: 'fixed',
+              providerId: 'provider-2',
+              model: 'model-1',
+              reasoningEffort: 'high'
+            }
+          }
+        ] as const,
+        'remote'
+      )
+    )
+    await router.dispatcher.invoke(
       settingsRuntimeApplicationCommands.setReasoningEffort,
       invocation([{ effort: 'high' }] as const, 'remote')
     )
@@ -143,12 +167,22 @@ describe('Settings runtime application commands', () => {
       type: 'custom',
       name: 'Provider'
     })
-    expect(workflowMethod('deleteProvider')).toHaveBeenCalledWith('provider-1')
+    expect(workflowMethod('deleteProvider')).toHaveBeenCalledWith('provider-1', 'inherit')
     expect(workflowMethod('setActiveProvider')).toHaveBeenCalledWith({
       id: 'provider-2',
       model: 'model-1'
     })
     expect(workflowMethod('setAgentFramework')).toHaveBeenCalledWith({ id: 'opencode' })
+    expect(workflowMethod('setAgentRouting')).toHaveBeenCalledWith({
+      framework: 'codex',
+      reviewer: { mode: 'inherit' },
+      subagent: {
+        mode: 'fixed',
+        providerId: 'provider-2',
+        model: 'model-1',
+        reasoningEffort: 'high'
+      }
+    })
     expect(workflowMethod('setReasoningEffort')).toHaveBeenCalledWith({ effort: 'high' })
   })
 

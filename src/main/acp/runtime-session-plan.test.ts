@@ -17,7 +17,6 @@ const projection = (
   revision,
   approval: 'pending',
   lifecycle: 'awaiting_approval',
-  requiresExplicitContinuation: false,
   document: {
     schema_version: 1,
     task_summary: 'Analyze one dataset',
@@ -80,6 +79,7 @@ const createRuntimeHarness = (options: {
           routeToInteractionId: 'interaction-1',
           artifactVersionId: generated.artifactVersionId,
           text: input.feedback,
+          deliveryCommandId: 'delivery-1',
           message: {
             id: 'message-1',
             role: 'user' as const,
@@ -96,7 +96,7 @@ const createRuntimeHarness = (options: {
         input.decision === 'rejected'
           ? { ...generated, approval: 'rejected' as const, lifecycle: 'rejected' as const }
           : approved
-      return { projection: currentProjection, changed: true }
+      return { projection: currentProjection, changed: true, deliveryCommandId: 'delivery-1' }
     }),
     getProjection: vi.fn(
       async (
@@ -152,10 +152,11 @@ const createRuntimeHarness = (options: {
       publication: { pushEvent: (event: unknown) => options.onEvent?.(event) }
     } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2],
     {
-      continuations: {
+      deliveries: {
+        accept: vi.fn(async () => true),
         begin: vi.fn(async () => true),
         clear: vi.fn(async () => true),
-        rearmUndispatched: vi.fn(async () => true)
+        rearmUnaccepted: vi.fn(async () => true)
       }
     }
   )
@@ -175,7 +176,7 @@ const createRuntimeHarness = (options: {
       get: vi.fn(() => undefined),
       delete: vi.fn(() => false)
     },
-    planContinuationClaimRetries: new Map(),
+    planDeliveryClaimRetries: new Map(),
     artifactTurns: {
       handleForExecution: () => 'artifact-handle',
       snapshot: () => ({ promptMessageId: 'interaction-1' })
@@ -405,18 +406,13 @@ describe('AcpRuntime Session Plan seam', () => {
     await expect(successorApproval).resolves.toEqual({ decision: 'approved' })
   })
 
-  it('updates a Plan only through its exact execution binding', async () => {
-    const { runtime, interactions, updateStepStatus } = createRuntimeHarness({
+  it('updates an approved Plan from an ordinary Attempt without live interaction affinity', async () => {
+    const { runtime, updateStepStatus } = createRuntimeHarness({
       activeProjection: {
         ...projection('version-1', 4),
         approval: 'approved',
         lifecycle: 'approved'
       }
-    })
-    interactions.bindExecution({
-      sessionId: 'session-1',
-      interactionSequence: 7,
-      artifactVersionId: 'version-1'
     })
 
     await expect(
@@ -430,18 +426,13 @@ describe('AcpRuntime Session Plan seam', () => {
     expect(updateStepStatus).toHaveBeenCalledOnce()
   })
 
-  it('rejects an MCP server-bound execution version after a replacement became active', async () => {
-    const { runtime, interactions, updateStepStatus } = createRuntimeHarness({
+  it('rejects an expected Artifact Version after a replacement became active', async () => {
+    const { runtime, updateStepStatus } = createRuntimeHarness({
       activeProjection: {
         ...projection('version-2', 4),
         approval: 'approved',
         lifecycle: 'approved'
       }
-    })
-    interactions.bindExecution({
-      sessionId: 'session-1',
-      interactionSequence: 7,
-      artifactVersionId: 'version-1'
     })
 
     await expect(
@@ -455,7 +446,7 @@ describe('AcpRuntime Session Plan seam', () => {
           expectedArtifactVersionId: 'version-1'
         }
       })
-    ).rejects.toMatchObject({ code: 'interaction-mismatch' })
+    ).rejects.toMatchObject({ code: 'stale-plan' })
     expect(updateStepStatus).toHaveBeenCalledOnce()
   })
 
@@ -532,13 +523,12 @@ describe('AcpRuntime Session Plan seam', () => {
     expect(service.respond).not.toHaveBeenCalled()
   })
 
-  it('rejects Plan execution from an ordinary interaction without explicit continuation authority', async () => {
+  it('updates an approved Plan without a special wakeup Attempt', async () => {
     const { runtime, updateStepStatus } = createRuntimeHarness({
       activeProjection: {
         ...projection('version-1', 4),
         approval: 'approved',
-        lifecycle: 'approved',
-        requiresExplicitContinuation: true
+        lifecycle: 'approved'
       }
     })
 
@@ -549,24 +539,19 @@ describe('AcpRuntime Session Plan seam', () => {
         operation: 'updateStepStatus',
         input: { title: 'Analyze the data', status: 'in_progress' }
       })
-    ).rejects.toMatchObject({ code: 'continuation-required' })
+    ).resolves.toMatchObject({ changed: true })
     expect(updateStepStatus).toHaveBeenCalledOnce()
   })
 
-  it('rejects a Plan version bound to a different interaction', async () => {
-    const { runtime, interactions, updateStepStatus } = createRuntimeHarness({
+  it('updates an approved Plan after the active interaction changes', async () => {
+    const { runtime, setCurrentInteraction, updateStepStatus } = createRuntimeHarness({
       activeProjection: {
         ...projection('version-2', 4),
         approval: 'approved',
-        lifecycle: 'approved',
-        requiresExplicitContinuation: true
+        lifecycle: 'approved'
       }
     })
-    interactions.bindExecution({
-      sessionId: 'session-1',
-      interactionSequence: 6,
-      artifactVersionId: 'version-2'
-    })
+    setCurrentInteraction({ sequence: 8, promptMessageId: 'interaction-2' })
 
     await expect(
       runtime.callSessionPlan({
@@ -575,64 +560,8 @@ describe('AcpRuntime Session Plan seam', () => {
         operation: 'updateStepStatus',
         input: { title: 'Analyze the data', status: 'in_progress' }
       })
-    ).rejects.toMatchObject({ code: 'interaction-mismatch' })
+    ).resolves.toMatchObject({ changed: true })
     expect(updateStepStatus).toHaveBeenCalledOnce()
-  })
-
-  it('does not release a successor execution when an older rejection finishes late', async () => {
-    const { runtime, interactions, service } = createRuntimeHarness({})
-    interactions.authorizeAgentDecision({
-      sessionId: 'session-1',
-      interactionSequence: 7,
-      artifactVersionId: 'version-1'
-    })
-    interactions.bindExecution({
-      sessionId: 'session-1',
-      interactionSequence: 6,
-      artifactVersionId: 'version-1'
-    })
-    let markRespondStarted!: () => void
-    let finishRespond!: () => void
-    const respondStarted = new Promise<void>((resolve) => {
-      markRespondStarted = resolve
-    })
-    const respondGate = new Promise<void>((resolve) => {
-      finishRespond = resolve
-    })
-    service.respond.mockImplementationOnce(async (input) => {
-      markRespondStarted()
-      await respondGate
-      if (input.beforeDecisionCommit && !input.beforeDecisionCommit()) {
-        throw new PlanCommandError('interaction-mismatch', 'Decision authorization was revoked.')
-      }
-      return {
-        projection: {
-          ...projection('version-1'),
-          approval: 'rejected' as const,
-          lifecycle: 'rejected' as const
-        },
-        changed: true
-      }
-    })
-
-    const rejected = runtime.callSessionPlan({
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      operation: 'reject'
-    })
-    await respondStarted
-    interactions.bindExecution({
-      sessionId: 'session-1',
-      interactionSequence: 8,
-      artifactVersionId: 'version-2'
-    })
-    finishRespond()
-
-    await rejected
-    expect(interactions.executionBindingFor('session-1')).toEqual({
-      artifactVersionId: 'version-2',
-      interactionSequence: 8
-    })
   })
 
   it('rejects an Agent decision whose authorization is revoked while the response is pending', async () => {
@@ -680,76 +609,6 @@ describe('AcpRuntime Session Plan seam', () => {
 
     await expect(approved).rejects.toMatchObject({ code: 'interaction-mismatch' })
     expect(decisionPersisted).toBe(false)
-    expect(interactions.executionBindingFor('session-1')).toBeUndefined()
-  })
-
-  it('binds an Agent decision to its authorizing interaction when cancellation follows commit', async () => {
-    const { runtime, interactions, service, setCurrentInteraction } = createRuntimeHarness({})
-    interactions.authorizeAgentDecision({
-      sessionId: 'session-1',
-      interactionSequence: 7,
-      artifactVersionId: 'version-1'
-    })
-    service.respond.mockImplementationOnce(async (input) => {
-      expect(input.beforeDecisionCommit?.()).toBe(true)
-      setCurrentInteraction({ sequence: 8, promptMessageId: 'interaction-2' })
-      return {
-        projection: {
-          ...projection('version-1'),
-          approval: 'approved' as const,
-          lifecycle: 'approved' as const
-        },
-        changed: true
-      }
-    })
-
-    await runtime.callSessionPlan({
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      operation: 'approve'
-    })
-
-    expect(interactions.executionBindingFor('session-1')).toEqual({
-      artifactVersionId: 'version-1',
-      interactionSequence: 7
-    })
-  })
-
-  it('preserves a successor execution binding when an older Agent approval commits late', async () => {
-    const { runtime, interactions, service, setCurrentInteraction } = createRuntimeHarness({})
-    interactions.authorizeAgentDecision({
-      sessionId: 'session-1',
-      interactionSequence: 7,
-      artifactVersionId: 'version-1'
-    })
-    service.respond.mockImplementationOnce(async (input) => {
-      expect(input.beforeDecisionCommit?.()).toBe(true)
-      setCurrentInteraction({ sequence: 8, promptMessageId: 'interaction-2' })
-      interactions.bindExecution({
-        sessionId: 'session-1',
-        interactionSequence: 8,
-        artifactVersionId: 'version-1'
-      })
-      return {
-        projection: {
-          ...projection('version-1'),
-          approval: 'approved' as const,
-          lifecycle: 'approved' as const
-        },
-        changed: true
-      }
-    })
-
-    await runtime.callSessionPlan({
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      operation: 'approve'
-    })
-
-    expect(interactions.executionBindingFor('session-1')).toEqual({
-      artifactVersionId: 'version-1',
-      interactionSequence: 8
-    })
   })
 
   it('restores decision authorization after persistence fails so the same interaction can retry', async () => {
@@ -803,8 +662,8 @@ describe('AcpRuntime Session Plan seam', () => {
     expect(attempts).toBe(2)
   })
 
-  it('preserves a successor execution binding after an idempotent Agent approval', async () => {
-    const { runtime, interactions, service, setCurrentInteraction } = createRuntimeHarness({})
+  it('clears decision authorization after an idempotent Agent approval', async () => {
+    const { runtime, interactions, service } = createRuntimeHarness({})
     const authorization = {
       sessionId: 'session-1',
       interactionSequence: 7,
@@ -813,12 +672,6 @@ describe('AcpRuntime Session Plan seam', () => {
     interactions.authorizeAgentDecision(authorization)
     service.respond.mockImplementationOnce(async (input) => {
       expect(input.beforeDecisionCommit).toBeTypeOf('function')
-      setCurrentInteraction({ sequence: 8, promptMessageId: 'interaction-2' })
-      interactions.bindExecution({
-        sessionId: 'session-1',
-        interactionSequence: 8,
-        artifactVersionId: 'version-1'
-      })
       return {
         projection: {
           ...projection('version-1'),
@@ -835,10 +688,6 @@ describe('AcpRuntime Session Plan seam', () => {
       operation: 'approve'
     })
 
-    expect(interactions.executionBindingFor('session-1')).toEqual({
-      artifactVersionId: 'version-1',
-      interactionSequence: 8
-    })
     expect(interactions.isAgentDecisionAuthorized(authorization)).toBe(false)
   })
 
@@ -1001,7 +850,7 @@ describe('AcpRuntime Session Plan seam', () => {
     )
   })
 
-  it('reports pending approval before continuation authority when the Agent skips its decision', async () => {
+  it('reports pending approval before Agent decision admission when the Agent skips its decision', async () => {
     const { runtime, updateStepStatus } = createRuntimeHarness({})
 
     await expect(
@@ -1038,16 +887,6 @@ describe('AcpRuntime Session Plan seam', () => {
       artifactVersionId: 'version-1',
       interactionId: 'interaction-1'
     })
-    interactions.bindExecution({
-      sessionId: 'session-1',
-      artifactVersionId: 'version-1',
-      interactionSequence: 7
-    })
-    interactions.bindExecution({
-      sessionId: 'session-2',
-      artifactVersionId: 'version-2',
-      interactionSequence: 8
-    })
     const approval = interactions.parkApproval('session-1', 'interaction-1').catch((error) => error)
 
     await runtime.deleteSession({ sessionId: 'session-1' })
@@ -1056,10 +895,5 @@ describe('AcpRuntime Session Plan seam', () => {
       message: 'The Session Plan interaction was deleted.'
     })
     expect(interactions.interactionIdFor('session-1', 'version-1')).toBeUndefined()
-    expect(interactions.executionBindingFor('session-1')).toBeUndefined()
-    expect(interactions.executionBindingFor('session-2')).toEqual({
-      artifactVersionId: 'version-2',
-      interactionSequence: 8
-    })
   })
 })

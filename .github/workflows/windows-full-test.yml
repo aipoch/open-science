@@ -60,7 +60,7 @@ jobs:
     needs: plan
     if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -82,8 +82,9 @@ jobs:
       - name: Test complete suite shard
         # SQLite-heavy integration suites contend heavily for Windows disk I/O when Vitest uses
         # every available core, and hosted-runner disk latency occasionally exceeds the default
-        # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; the 25-minute
-        # job timeout remains the backstop for a real hang.
+        # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; individual
+        # tests still fail at that bound. The 35-minute job timeout covers checkout, npm ci, and a
+        # slow serial suite without treating a still-progressing shard as a hang.
         run: npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
 
   notebook_sandbox:

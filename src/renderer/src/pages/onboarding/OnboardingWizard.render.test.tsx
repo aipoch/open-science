@@ -735,3 +735,48 @@ describe('OnboardingWizard flow', () => {
     expect(window.api.storage.getInfo).not.toHaveBeenCalled()
   })
 })
+
+it('regression: step changes move focus to the new heading', async () => {
+  readyClaudeState()
+  await renderWizard()
+  act(() => {
+    findButton(/^continue$/i)!.focus()
+  })
+  await clickButton(/^continue$/i)
+  expect(currentSection('Choose data location')).not.toBeNull()
+  expect(document.activeElement?.textContent).toBe('Where should Open Science store your data?')
+  expect(document.activeElement?.tagName).toBe('H2')
+  act(() => {
+    findButton(/^back$/i)!.focus()
+  })
+  await clickButton(/^back$/i)
+  expect(document.activeElement?.textContent).toBe('Prepare environment')
+  expect(document.activeElement?.tagName).toBe('H2')
+})
+
+it('regression: every setup step exposes and focuses its own level-two heading', async () => {
+  readyClaudeState()
+  await renderWizard()
+  const expectHeading = (title: string): void => {
+    expect(document.activeElement?.tagName).toBe('H2')
+    expect(document.activeElement?.textContent).toBe(title)
+  }
+  await clickButton(/^continue$/i)
+  expectHeading('Where should Open Science store your data?')
+  await clickButton(/^continue$/i)
+  expectHeading('Set up the agent runtime')
+  await clickButton(/^continue$/i)
+  expectHeading('Connect a model')
+  await fillRequiredProviderFields(container)
+  await clickButton(/test & continue/i)
+  expectHeading('Notebook runtime (optional)')
+  for (const title of [
+    'Connect a model',
+    'Set up the agent runtime',
+    'Where should Open Science store your data?',
+    'Prepare environment'
+  ]) {
+    await clickButton(/^back$/i)
+    expectHeading(title)
+  }
+})

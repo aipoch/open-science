@@ -11,6 +11,7 @@ import {
   STREAMDOWN_MERMAID_FULLSCREEN_SELECTOR,
   STREAMDOWN_TABLE_FULLSCREEN_SELECTOR
 } from './dom-selectors'
+import { resolveLanguageIconPath } from './language-icons'
 import { installMermaidHeightAnimation } from './mermaid-height-animation'
 
 const saveBlobFile = (request: SaveBlobFileRequest): Promise<SaveBlobFileResult> =>
@@ -748,6 +749,52 @@ const installFullscreenDialogAdapter = (): (() => void) => {
   }
 }
 
+/* --- Code block language badge --- */
+
+const CODE_BLOCK_ACTIONS = `${AGENT_MARKDOWN_ROOT_SELECTOR} [data-streamdown="code-block-actions"]`
+
+const GENERIC_CODE_ICON_PATH = 'M8 6L2 12l6 6M16 6l6 6-6 6'
+
+const buildCodeBadgeSvg = (language: string): string => {
+  const path = resolveLanguageIconPath(language.toLowerCase())
+  if (path) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="${path}"/></svg>`
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${GENERIC_CODE_ICON_PATH}"/></svg>`
+}
+
+const decorateCodeBlockChips = (): void => {
+  for (const actions of document.querySelectorAll(`${CODE_BLOCK_ACTIONS}:not([data-lang-badge])`)) {
+    actions.setAttribute('data-lang-badge', '')
+    const language = actions
+      .closest('[data-streamdown="code-block"]')
+      ?.getAttribute('data-language')
+      ?.trim()
+    if (!language) continue
+
+    const badge = document.createElement('span')
+    badge.setAttribute('data-lang-icon', '')
+    badge.title = language
+    badge.setAttribute('aria-label', language)
+    badge.innerHTML = buildCodeBadgeSvg(language)
+    actions.prepend(badge)
+  }
+}
+
+const installCodeLanguageBadges = (): (() => void) => {
+  decorateCodeBlockChips()
+  const observer = new MutationObserver(decorateCodeBlockChips)
+  observer.observe(document.body, { childList: true, subtree: true })
+
+  return () => {
+    observer.disconnect()
+    for (const badge of document.querySelectorAll('[data-lang-icon]')) badge.remove()
+    for (const actions of document.querySelectorAll(`${CODE_BLOCK_ACTIONS}[data-lang-badge]`)) {
+      actions.removeAttribute('data-lang-badge')
+    }
+  }
+}
+
 /* --- Public entry --- */
 
 let installCount = 0
@@ -762,7 +809,8 @@ const installStreamdown = (): (() => void) => {
       installMermaidHeightAnimation(),
       installFullscreenDialogAdapter(),
       installTableActions(),
-      installTableFullscreenFix()
+      installTableFullscreenFix(),
+      installCodeLanguageBadges()
     )
   }
 

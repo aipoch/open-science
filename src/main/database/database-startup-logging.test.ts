@@ -118,7 +118,9 @@ describe('database startup logging', () => {
               '0023_compute_job_operation',
               '0024_compute_job_file_evidence',
               '0025_managed_file_version_foundation',
-              '0026_compute_job_remote_cleanup'
+              '0026_compute_job_remote_cleanup',
+              '0027_project_session_defaults',
+              '0028_database_numeric_and_null_constraints'
             ],
             adoptedLegacy: true
           })

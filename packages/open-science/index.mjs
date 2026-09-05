@@ -203,6 +203,21 @@ export class OpenScienceClient {
     })
   }
 
+  getProjectSessionDefaults(projectId, options) {
+    return this.request(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/session-defaults`,
+      options
+    )
+  }
+
+  updateProjectSessionDefaults(projectId, request, options) {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/session-defaults`, {
+      ...options,
+      method: 'PATCH',
+      body: request
+    })
+  }
+
   listSessions(projectId, options) {
     const query = projectId ? `?project=${encodeURIComponent(projectId)}` : ''
     return this.request(`/api/v1/sessions${query}`, options)
@@ -210,6 +225,30 @@ export class OpenScienceClient {
 
   getSession(sessionId, options) {
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, options)
+  }
+
+  getSessionConfiguration(sessionId, options) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/config`, options)
+  }
+
+  updateSessionConfiguration(sessionId, request, options) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/config`, {
+      ...options,
+      method: 'PATCH',
+      body: request
+    })
+  }
+
+  getAgentRouting(options) {
+    return this.request('/api/v1/settings/agent-routing', options)
+  }
+
+  updateAgentRouting(request, options) {
+    return this.request('/api/v1/settings/agent-routing', {
+      ...options,
+      method: 'PATCH',
+      body: request
+    })
   }
 
   getSessionPlan(sessionId, options) {

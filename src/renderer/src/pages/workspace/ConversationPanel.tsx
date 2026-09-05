@@ -63,6 +63,7 @@ import {
 } from '../../../../shared/annotations'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
+import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { ErrorNotice } from '@/components/error-notice'
 import { RemoteJobBadge } from '@/components/RemoteJobBadge'
 import { Button } from '@/components/ui/button'
@@ -436,6 +437,7 @@ const ConversationPanel = ({
       attachments,
       transfers: attachmentTransfers,
       error: composerError,
+      errorDetail: composerErrorDetail,
       historyStatus,
       isHistoryBrowsing,
       isUploading: isUploadingAttachments,
@@ -1109,6 +1111,9 @@ const ConversationPanel = ({
                     <ErrorNotice icon={AlertTriangle} tone="red" title={composerError} />
                   </div>
                 ) : null}
+                {composerError && composerErrorDetail ? (
+                  <DiagnosticDetails detail={composerErrorDetail} />
+                ) : null}
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
                     red error box, so the user can re-attach and continue the interrupted turn. */}
                 {!sideChat && activeSession?.interrupted && !hasUnsupportedCodexAcpRunError ? (
@@ -1133,14 +1138,14 @@ const ConversationPanel = ({
                       <span className="min-w-0 break-words">{resolvedActionError}</span>
                     ) : null}
                     {activeSession?.status === 'error' ? (
-                      <div className="flex items-start gap-2">
-                        <span className="min-w-0 flex-1 break-words">{resolvedRunError}</span>
-                        {/* The button sits on the failure row beside the run's own error, so the shown
-                            text and the reported text are always the same error. Shown only for an
-                            unknown failure — a recognized one (app guidance or a known provider error)
-                            keeps its message but is not a bug worth a GitHub issue. */}
+                      <div className="flex flex-col items-stretch gap-2">
+                        <span className="min-w-0 break-words">{resolvedRunError}</span>
+                        {/* Actions stay with the run's own error, so the shown and reported text are
+                            always the same error. Shown only for an unknown failure — a recognized one
+                            (app guidance or a known provider error) keeps its message but is not a bug
+                            worth a GitHub issue. */}
                         {canRetryArtifactFinalization || isRunErrorReportable ? (
-                          <div className="flex shrink-0 items-center gap-1">
+                          <div className="flex flex-wrap items-center justify-end gap-1 self-end">
                             {canRetryArtifactFinalization ? (
                               <button
                                 type="button"
@@ -1821,7 +1826,10 @@ const ConversationPanel = ({
                                   ? t('Cancelling…')
                                   : transfer.status === 'error'
                                     ? transfer.error || t('Upload failed')
-                                    : `${percent}% of ${formatAttachmentSize(transfer.totalBytes)}`
+                                    : t('{{percent}}% of {{size}}', {
+                                        percent,
+                                        size: formatAttachmentSize(transfer.totalBytes)
+                                      })
                             const pastedText = transfer.pastedTextId
                               ? pastedTextById.get(transfer.pastedTextId)
                               : undefined

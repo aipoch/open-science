@@ -481,8 +481,8 @@ describe('settings IPC handlers', () => {
     await invoke('settings:upsert-provider', { type: 'custom', name: 'G' })
     expect(service.upsertProvider).toHaveBeenCalledWith({ type: 'custom', name: 'G' })
 
-    await invoke('settings:delete-provider', { id: 'p1' })
-    expect(service.deleteProvider).toHaveBeenCalledWith('p1')
+    await invoke('settings:delete-provider', { id: 'p1', scenarioModelHandling: 'inherit' })
+    expect(service.deleteProvider).toHaveBeenCalledWith('p1', 'inherit')
 
     await invoke('settings:validate-provider', { providerId: 'p1' })
     expect(service.validateProvider).toHaveBeenCalledWith({ providerId: 'p1' })

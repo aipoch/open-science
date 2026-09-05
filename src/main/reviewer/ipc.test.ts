@@ -28,7 +28,7 @@ vi.mock('electron', () => ({
 }))
 
 vi.mock('../storage-root', () => ({
-  resolveStorageRoot: () => CONFIG_ROOT,
+  resolveConfigRoot: () => CONFIG_ROOT,
   resolveDataRoot: () => DATA_ROOT
 }))
 
@@ -57,7 +57,7 @@ vi.mock('./repository', () => ({
 
 // Spies on getProjectDbClient so the injected-config-root test can assert that
 // registerReviewerIpcHandlers really passes options.storageRoot into the prisma-client getter that
-// the ReviewRepository's lazy thunk captures. A regression that re-introduces resolveStorageRoot()
+// the ReviewRepository's lazy thunk captures. A regression that bypasses resolveConfigRoot()
 // here would otherwise slip past unnoticed.
 const getProjectDbClient = vi.fn()
 vi.mock('../projects/prisma-client', () => ({
@@ -373,7 +373,7 @@ describe('reviewer IPC handlers', () => {
 
     const passed = runReview.mock.calls[0][0] as { artifactStorageRoot: string }
     expect(passed.artifactStorageRoot).toBe(INJECTED_DATA_ROOT)
-    // ReviewRepository is constructed against the injected config root, not the resolveStorageRoot()
+    // ReviewRepository is constructed against the injected config root, not the resolveConfigRoot()
     // default. The repository captures a thunk `() => getProjectDbClient(storageRoot)`; invoke it
     // and assert the captured storageRoot surfaces through the getProjectDbClient spy.
     expect(reviewRepositoryThunks).toHaveLength(1)

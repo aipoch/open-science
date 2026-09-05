@@ -89,6 +89,7 @@ describe('project repository', () => {
         id: 'project-1',
         name: 'Research',
         description: 'A project',
+        sessionDefaults: {},
         isExample: false,
         createdAt: 1710000000000,
         updatedAt: 1710000000100
@@ -97,6 +98,39 @@ describe('project repository', () => {
     expect(project.findMany).toHaveBeenCalledWith({
       where: { deletedAt: null },
       orderBy: { updatedAt: 'desc' }
+    })
+  })
+
+  it('hides projects with a committed deletion intent before soft deletion completes', async () => {
+    const deletingProject = createRow({ id: 'project-deleting', name: 'Deleting' })
+    const activeProject = createRow({ id: 'project-active', name: 'Active' })
+    const { client, projectDeletionIntent } = createMockClient({
+      findMany: () => Promise.resolve([deletingProject, activeProject])
+    })
+    projectDeletionIntent.findMany.mockResolvedValue([{ projectId: 'project-deleting' }])
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(repository.list()).resolves.toEqual([
+      expect.objectContaining({ id: 'project-active', name: 'Active' })
+    ])
+  })
+
+  it('keeps every project available when one row has malformed Session defaults', async () => {
+    const { client } = createMockClient({
+      findMany: () =>
+        Promise.resolve([
+          createRow({ id: 'corrupt-project', sessionDefaults: '{not-json' }),
+          createRow({ id: 'healthy-project', sessionDefaults: '{}' })
+        ])
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    const projects = await repository.list()
+
+    expect(projects.map(({ id }) => id)).toEqual(['corrupt-project', 'healthy-project'])
+    expect(projects[0]?.sessionDefaults).toEqual({
+      permissionProfile: 'ask',
+      delegationPolicy: 'deny'
     })
   })
 
@@ -114,6 +148,59 @@ describe('project repository', () => {
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
     await expect(repository.get('project-1')).resolves.toBeNull()
+  })
+
+  it('preserves valid safety defaults when another stored default fails validation', async () => {
+    const { client } = createMockClient({
+      findUnique: () =>
+        Promise.resolve(
+          createRow({
+            sessionDefaults:
+              '{"permissionProfile":"ask","delegationPolicy":"deny","memoryEnabled":"not-a-boolean"}'
+          })
+        )
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(repository.get('project-1')).resolves.toMatchObject({
+      id: 'project-1',
+      name: 'Research',
+      sessionDefaults: { permissionProfile: 'ask', delegationPolicy: 'deny' }
+    })
+  })
+
+  it('uses conservative values when stored safety defaults fail validation', async () => {
+    const { client } = createMockClient({
+      findUnique: () =>
+        Promise.resolve(
+          createRow({
+            sessionDefaults:
+              '{"permissionProfile":"unrestricted","delegationPolicy":"sometimes","memoryEnabled":false}'
+          })
+        )
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(repository.get('project-1')).resolves.toMatchObject({
+      sessionDefaults: {
+        permissionProfile: 'ask',
+        delegationPolicy: 'deny',
+        memoryEnabled: false
+      }
+    })
+  })
+
+  it('checks active existence without hydrating optional Project configuration', async () => {
+    const { client, project } = createMockClient({
+      findUnique: () => Promise.resolve({ deletedAt: null })
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(repository.exists('project-1')).resolves.toBe(true)
+    expect(project.findUnique).toHaveBeenCalledWith({
+      where: { id: 'project-1' },
+      select: { deletedAt: true }
+    })
   })
 
   it('trims the name and defaults the description on create', async () => {
@@ -148,6 +235,7 @@ describe('project repository', () => {
     await repository.update({
       id: 'project-1',
       name: '  Renamed  ',
+      sessionDefaults: { memoryEnabled: false, permissionProfile: 'auto' },
       expectedUpdatedAt: 1710000000100
     })
 
@@ -157,7 +245,11 @@ describe('project repository', () => {
         deletedAt: null,
         updatedAt: new Date(1710000000100)
       },
-      data: { name: 'Renamed', updatedAt: expect.any(Date) }
+      data: {
+        name: 'Renamed',
+        sessionDefaults: '{"permissionProfile":"auto","memoryEnabled":false}',
+        updatedAt: expect.any(Date)
+      }
     })
     expect(project.update).not.toHaveBeenCalled()
   })
@@ -177,6 +269,29 @@ describe('project repository', () => {
     ).rejects.toThrow('Project changed elsewhere.')
 
     expect(project.findUnique).not.toHaveBeenCalled()
+  })
+
+  it('returns an ordinary update after the write commits despite malformed Session defaults', async () => {
+    const updated = createRow({
+      name: 'Renamed',
+      sessionDefaults: '{not-json',
+      updatedAt: new Date(1710000000200)
+    })
+    const { client, project } = createMockClient({
+      findUnique: () => Promise.resolve(updated),
+      updateMany: () => Promise.resolve({ count: 1 })
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(
+      repository.update({
+        id: 'project-1',
+        name: 'Renamed',
+        expectedUpdatedAt: 1710000000100
+      })
+    ).resolves.toMatchObject({ name: 'Renamed', sessionDefaults: {} })
+
+    expect(project.updateMany).toHaveBeenCalledOnce()
   })
 
   it('does not roll back concurrent activity time while changing pin placement', async () => {

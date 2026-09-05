@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { FileWarning } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -17,6 +17,10 @@ import {
   OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
   OFFICE_PREVIEW_RUNTIME_ORIGIN
 } from '../../../../../../shared/office-preview'
+import {
+  usePreviewActions,
+  useRegisterPreviewContextMenuFrame
+} from '../../preview-actions/preview-action-hooks'
 
 import { LocalFileFallbackAction } from '../../LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from '../../ManagedFileDownloadButton'
@@ -161,6 +165,9 @@ const RemoteOfficePreviewContent = ({
   const { t } = useTranslation()
   const hostId = useId()
   const frameRef = useRef<HTMLIFrameElement | null>(null)
+  const { openContextMenu } = usePreviewActions()
+  // Menu state can replace the host callback, but it must not restart the attached Office runtime.
+  const openRuntimeContextMenu = useEffectEvent(openContextMenu)
   const runtime = usePreviewRuntime()
   const attempt = runtime?.attempt ?? 0
   const extension = resolveOfficeExtension(item)
@@ -170,6 +177,12 @@ const RemoteOfficePreviewContent = ({
   const [frameLoadGeneration, setFrameLoadGeneration] = useState(0)
   const hasSourceIdentity =
     source === 'notebook-input' || Boolean(item.projectId && item.managedFileId)
+  useRegisterPreviewContextMenuFrame({
+    id: `office-preview:${hostId}`,
+    frameUrl: frame?.url ?? '',
+    frameRef,
+    enabled: ownsLease && frame !== undefined
+  })
 
   useEffect(
     () =>
@@ -292,16 +305,30 @@ const RemoteOfficePreviewContent = ({
     const handleMessage = (event: MessageEvent): void => {
       if (
         !active ||
+        !attached ||
         event.source !== frameRef.current?.contentWindow ||
         event.origin !== OFFICE_PREVIEW_RUNTIME_ORIGIN ||
-        !isOfficePreviewRuntimeMessage(event.data) ||
-        event.data.state.sessionId !== frame.sessionId
+        !isOfficePreviewRuntimeMessage(event.data)
       ) {
         return
       }
 
-      if (event.data.type === 'state' && attached) {
+      if (event.data.type === 'state' && event.data.state.sessionId === frame.sessionId) {
         window.api.officePreview.reportState(frame.sessionId, event.data.state)
+      } else if (
+        event.data.type === 'context-menu' &&
+        event.data.contextMenu.sessionId === frame.sessionId
+      ) {
+        const currentFrame = frameRef.current
+        if (!currentFrame) return
+        const bounds = currentFrame.getBoundingClientRect()
+        openRuntimeContextMenu(
+          {
+            x: bounds.left + event.data.contextMenu.x,
+            y: bounds.top + event.data.contextMenu.y
+          },
+          currentFrame
+        )
       }
     }
 

@@ -3,7 +3,13 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ClaudeSubscriptionProviderId, ProviderView } from '../../../../shared/settings'
+import type {
+  AgentFrameworkId,
+  ChatApiEndpoint,
+  ClaudeSubscriptionProviderId,
+  ProviderView
+} from '../../../../shared/settings'
+import { defaultVendorModel } from '../../../../shared/provider-registry'
 import { ProviderList } from './ProviderList'
 
 let container: HTMLDivElement
@@ -61,6 +67,9 @@ const renderList = (
     onCancelXaiLogin?: () => void
     onLogoutXai?: () => void
     claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
+    activeModel?: string
+    agentFrameworkId?: AgentFrameworkId
+    frameworkEndpoints?: readonly ChatApiEndpoint[]
   } = {}
 ): void => {
   act(() => {
@@ -68,6 +77,9 @@ const renderList = (
       <ProviderList
         providers={providers}
         activeProviderId={activeId}
+        activeModel={callbacks.activeModel}
+        agentFrameworkId={callbacks.agentFrameworkId}
+        frameworkEndpoints={callbacks.frameworkEndpoints}
         busyProviderId={busyId}
         onEdit={noop}
         onDelete={noop}
@@ -217,6 +229,60 @@ describe('ProviderList', () => {
 
     expect(container.querySelector('[aria-label="Connection verified"]')).not.toBeNull()
     expect(container.textContent).not.toContain('Test failed')
+  })
+
+  it('does not mark the active provider verified for a different model target', () => {
+    renderList(
+      [
+        provider({
+          model: 'model-b',
+          models: ['model-a', 'model-b'],
+          lastValidatedTarget: { model: 'model-a', endpoint: 'anthropic' }
+        })
+      ],
+      'p1',
+      undefined,
+      { activeModel: 'model-b' }
+    )
+
+    expect(container.querySelector('[aria-label="Connection verified"]')).toBeNull()
+  })
+
+  it('does not mark the active provider verified for a different protocol target', () => {
+    renderList(
+      [
+        provider({
+          apiEndpoints: ['anthropic', 'openai'],
+          lastValidatedTarget: { model: 'claude-sonnet-4-5', endpoint: 'anthropic' }
+        })
+      ],
+      'p1',
+      undefined,
+      {
+        activeModel: 'claude-sonnet-4-5',
+        agentFrameworkId: 'opencode',
+        frameworkEndpoints: ['openai']
+      }
+    )
+
+    expect(container.querySelector('[aria-label="Connection verified"]')).toBeNull()
+  })
+
+  it('matches an official provider validation against its default effective model', () => {
+    const model = defaultVendorModel('anthropic')
+    renderList(
+      [
+        provider({
+          type: 'official',
+          vendorId: 'anthropic',
+          model: undefined,
+          lastValidatedTarget: { model, endpoint: 'anthropic' }
+        })
+      ],
+      'p1'
+    )
+
+    expect(container.querySelector('[aria-label="Connection verified"]')).not.toBeNull()
   })
 
   it('shows a testing state (and no check/warning) while a provider is being validated', () => {

@@ -121,6 +121,7 @@ type ElectronApp = {
     message: string
   } | null>
   completeOnboarding: () => Promise<Page>
+  configureFileBrowserFixture: () => Promise<void>
   configureFakeAgent: () => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
   enableFakeRemoteIt: () => Promise<Page>
@@ -134,11 +135,13 @@ type ElectronApp = {
   >
   requestMainWindowClose: () => Promise<void>
   restoreDelegatedHandoffCleanup: (childName: string) => Promise<void>
+  emitPreviewContextMenuAtCssPoint: (point: { x: number; y: number }) => Promise<void>
   showMainWindow: () => Promise<void>
   restart: (options?: { resourceProfilePhase?: string }) => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
   sampleResourceProfileNow: () => Promise<void>
+  setMainWindowZoomFactor: (factor: number) => Promise<void>
   finishResourceProfile: () => Promise<RuntimeProfileResult>
 }
 
@@ -495,6 +498,35 @@ class ElectronAppHarness implements ElectronApp {
     return profiler.finish()
   }
 
+  // Keep real renderer/preload navigation while replacing the external SSH directory read.
+  // This isolated Electron process is disposed after the test, including its IPC handler.
+  async configureFileBrowserFixture(): Promise<void> {
+    await this.runningApplication.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('compute:list-dir')
+      ipcMain.handle('compute:list-dir', () => ({
+        entries: [],
+        truncated: false,
+        roots: { home: '/home/fixture', scratch: '/scratch/fixture' },
+        resolvedPath: '/home/fixture'
+      }))
+    })
+    await this.page.evaluate(async () => {
+      const bridge = window as unknown as {
+        api: {
+          compute: {
+            create: (request: { sshAlias: string; displayName: string }) => Promise<unknown>
+            bookmarksSet: (providerId: string, paths: string[]) => Promise<unknown>
+          }
+        }
+      }
+      await bridge.api.compute.create({
+        sshAlias: 'a11y-fixture',
+        displayName: 'Accessibility fixture'
+      })
+      await bridge.api.compute.bookmarksSet('ssh:a11y-fixture', ['/scratch/fixture/pinned'])
+    })
+  }
+
   async completeOnboarding(): Promise<Page> {
     await this.page.evaluate(async () => {
       const bridge = globalThis as unknown as {
@@ -606,6 +638,14 @@ class ElectronAppHarness implements ElectronApp {
     await expect.poll(() => this.mainWindowState()).toMatchObject({ visible: true })
   }
 
+  async setMainWindowZoomFactor(factor: number): Promise<void> {
+    await this.runningApplication.evaluate(({ BrowserWindow }, nextFactor) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      mainWindow.webContents.setZoomFactor(nextFactor)
+    }, factor)
+  }
+
   async launchSecondInstance(): Promise<Page> {
     const { appPath, executable } = await this.runningApplication.evaluate(({ app }) => ({
       appPath: app.getAppPath(),
@@ -667,6 +707,35 @@ class ElectronAppHarness implements ElectronApp {
       if (!mainWindow) throw new Error('Open Science main window was not found.')
       mainWindow.close()
     })
+  }
+
+  async emitPreviewContextMenuAtCssPoint(point: { x: number; y: number }): Promise<void> {
+    await this.runningApplication.evaluate(({ BrowserWindow }, cssPoint) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (!mainWindow) throw new Error('Open Science main window was not found.')
+      const { webContents } = mainWindow
+      const frame = webContents.mainFrame.framesInSubtree.find(
+        (candidate) =>
+          candidate !== webContents.mainFrame && candidate.url.startsWith('open-science-preview:')
+      )
+      if (!frame) throw new Error('Managed HTML preview frame was not found.')
+      const zoomFactor = webContents.getZoomFactor()
+      // Playwright injects CSS coordinates; Electron's native context-menu event reports DIPs.
+      const contextMenuPoint = {
+        x: Math.round(cssPoint.x * zoomFactor),
+        y: Math.round(cssPoint.y * zoomFactor)
+      }
+      webContents.emit(
+        'context-menu',
+        {} as Electron.Event,
+        {
+          ...contextMenuPoint,
+          frame,
+          isEditable: false,
+          formControlType: 'none'
+        } as Electron.ContextMenuParams
+      )
+    }, point)
   }
 
   async readFakeAgentPrompts(): Promise<

@@ -52,6 +52,10 @@ type StoredFile = Integrity & {
   versionToken?: string
 }
 
+type OpenImmutableOptions = {
+  forceVerify?: boolean
+}
+
 type PublishImmutableInput = PlanImmutableInput & {
   plannedFile: PlannedFile
   content: Uint8Array
@@ -97,7 +101,7 @@ class VersionFileOperatorError extends Error {
   }
 }
 
-type LeaseSnapshot = Pick<BigIntStats, 'dev' | 'ino' | 'size' | 'mtimeNs'>
+type LeaseSnapshot = Pick<BigIntStats, 'dev' | 'ino' | 'size' | 'mtimeNs' | 'ctimeNs'>
 
 type StorageParentSnapshot = Pick<BigIntStats, 'dev' | 'ino'> & {
   path: string
@@ -110,6 +114,9 @@ const snapshotMatches = (expected: LeaseSnapshot, actual: BigIntStats): boolean 
   expected.ino === actual.ino &&
   expected.size === actual.size &&
   expected.mtimeNs === actual.mtimeNs
+
+const verificationSnapshotMatches = (expected: LeaseSnapshot, actual: BigIntStats): boolean =>
+  snapshotMatches(expected, actual) && expected.ctimeNs === actual.ctimeNs
 
 const normalizeStorageError = (
   error: unknown,
@@ -145,7 +152,11 @@ const normalizeStorageError = (
 interface VersionFileOperator {
   planImmutable(input: PlanImmutableInput): PlannedFile
   publishImmutable(input: PublishImmutableInput): Promise<StoredFile>
-  openImmutable(storageRef: string, expectedIntegrity: Integrity): Promise<ReadLease>
+  openImmutable(
+    storageRef: string,
+    expectedIntegrity: Integrity,
+    options?: OpenImmutableOptions
+  ): Promise<ReadLease>
   removeImmutable(storageRef: string, expectedIntegrity: Integrity): Promise<void>
 }
 
@@ -194,7 +205,26 @@ type VersionFileSystem = {
 const SAFE_SCOPE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 const VERSION_FILE_CANDIDATE_LIMIT = 16
 const VERSION_TOKEN_SPACE = 36n ** 8n
+const VERIFIED_IMMUTABLE_FILE_LIMIT = 1024
 const immutableOperationTails = new Map<string, Promise<void>>()
+const verifiedImmutableFiles = new Set<string>()
+
+const immutableVerificationKey = (integrity: Integrity, snapshot: LeaseSnapshot): string =>
+  [
+    integrity.checksum,
+    snapshot.dev,
+    snapshot.ino,
+    snapshot.size,
+    snapshot.mtimeNs,
+    snapshot.ctimeNs
+  ].join('\0')
+
+const rememberVerifiedImmutableFile = (key: string): void => {
+  verifiedImmutableFiles.add(key)
+  if (verifiedImmutableFiles.size <= VERIFIED_IMMUTABLE_FILE_LIMIT) return
+  const oldest = verifiedImmutableFiles.values().next().value
+  if (oldest !== undefined) verifiedImmutableFiles.delete(oldest)
+}
 
 const serializeImmutableOperation = async <T>(
   key: string,
@@ -455,7 +485,11 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
     }
   }
 
-  async openImmutable(storageRef: string, expectedIntegrity: Integrity): Promise<ReadLease> {
+  async openImmutable(
+    storageRef: string,
+    expectedIntegrity: Integrity,
+    options?: OpenImmutableOptions
+  ): Promise<ReadLease> {
     const localPath = this.resolveStorageRef(storageRef)
     if (
       !Number.isSafeInteger(expectedIntegrity.sizeBytes) ||
@@ -493,21 +527,32 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
         dev: before.dev,
         ino: before.ino,
         size: before.size,
-        mtimeNs: before.mtimeNs
+        mtimeNs: before.mtimeNs,
+        ctimeNs: before.ctimeNs
       }
-      const hash = createHash('sha256')
-      let position = 0
-      while (position < expectedIntegrity.sizeBytes) {
-        const buffer = Buffer.allocUnsafe(
-          Math.min(64 * 1024, expectedIntegrity.sizeBytes - position)
-        )
-        await readExact(handle, buffer, position)
-        hash.update(buffer)
-        position += buffer.byteLength
+      let verificationKey = immutableVerificationKey(expectedIntegrity, snapshot)
+      let cached = !options?.forceVerify && verifiedImmutableFiles.has(verificationKey)
+      if (cached) {
+        const after = await handle.stat({ bigint: true })
+        if (!snapshotMatches(snapshot, after)) {
+          throw new Error('Immutable version changed during cached integrity verification.')
+        }
+        if (snapshot.ctimeNs !== after.ctimeNs) {
+          snapshot.ctimeNs = after.ctimeNs
+          verificationKey = immutableVerificationKey(expectedIntegrity, snapshot)
+          cached = false
+        }
       }
-      const after = await handle.stat({ bigint: true })
-      if (hash.digest('hex') !== expectedIntegrity.checksum || !snapshotMatches(snapshot, after)) {
-        throw new Error('Immutable version changed during integrity verification.')
+      if (!cached) {
+        const checksum = await checksumHandle(handle, expectedIntegrity.sizeBytes)
+        const after = await handle.stat({ bigint: true })
+        if (
+          checksum !== expectedIntegrity.checksum ||
+          !verificationSnapshotMatches(snapshot, after)
+        ) {
+          throw new Error('Immutable version changed during integrity verification.')
+        }
+        rememberVerifiedImmutableFile(verificationKey)
       }
 
       const leaseHandle = handle
@@ -529,6 +574,26 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
               'INTEGRITY_FAILED',
               'Immutable version changed during trusted consumption.'
             )
+          }
+          if (snapshot.ctimeNs !== current.ctimeNs) {
+            const checksum = await checksumHandle(leaseHandle, expectedIntegrity.sizeBytes)
+            const after = await leaseHandle.stat({ bigint: true })
+            const revalidationSnapshot: LeaseSnapshot = {
+              ...snapshot,
+              ctimeNs: current.ctimeNs
+            }
+            if (
+              checksum !== expectedIntegrity.checksum ||
+              !verificationSnapshotMatches(revalidationSnapshot, after)
+            ) {
+              throw new VersionFileOperatorError(
+                'INTEGRITY_FAILED',
+                'Immutable version changed during trusted consumption.'
+              )
+            }
+            verifiedImmutableFiles.delete(immutableVerificationKey(expectedIntegrity, snapshot))
+            snapshot.ctimeNs = after.ctimeNs
+            rememberVerifiedImmutableFile(immutableVerificationKey(expectedIntegrity, snapshot))
           }
         } catch (error) {
           throw normalizeStorageError(
@@ -1505,6 +1570,7 @@ export {
   type NodeVersionFileOperatorOptions,
   type Integrity,
   type InspectRecoveryInput,
+  type OpenImmutableOptions,
   type PlanImmutableInput,
   type PlannedFile,
   type PublishImmutableInput,

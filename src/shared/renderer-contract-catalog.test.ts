@@ -323,6 +323,28 @@ describe('renderer contract catalog', () => {
     })
   })
 
+  it('keeps preview frame context-menu requests on the Electron surface only', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(
+        ({ publicPath }) => publicPath === 'previewContextMenu.onRequested'
+      )
+    ).toMatchObject({
+      kind: 'event',
+      channel: 'preview-context-menu:requested',
+      surfaceInstallation: {
+        electron: 'preload',
+        localWeb: 'unavailable',
+        remoteWeb: 'unavailable'
+      },
+      dispatchPolicy: {
+        electron: 'electron-ipc-subscription',
+        localWeb: 'none',
+        remoteWeb: 'none'
+      },
+      mapProjection: 'none'
+    })
+  })
+
   it('publishes the complete Memory capability from the typed renderer contract', () => {
     const memory = RENDERER_CONTRACT_GROUPS.find(({ capability }) => capability === 'memory')
 

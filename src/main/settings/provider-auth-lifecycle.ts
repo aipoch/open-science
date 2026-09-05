@@ -34,6 +34,10 @@ import {
 } from './claude-shared-auth'
 import { encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey } from './crypto'
 import { getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
+import {
+  buildProviderValidationPatch,
+  targetForValidationResult
+} from './provider-validation-state'
 import type { SettingsRepository } from './repository'
 import type { SystemProxyEnvironment } from './system-proxy'
 import type { StoredProvider, StoredSettings } from './types'
@@ -224,9 +228,14 @@ class ProviderAuthLifecycleOwner {
       return this.repository.updateCodexIsolatedValidationIfIdentityMatches(
         provider,
         result.ok
-          ? { lastValidatedAt: Date.now(), lastValidationFailure: undefined }
+          ? {
+              lastValidatedAt: Date.now(),
+              lastValidatedTarget: undefined,
+              lastValidationFailure: undefined
+            }
           : {
               lastValidatedAt: undefined,
+              lastValidatedTarget: undefined,
               lastValidationFailure: {
                 at: Date.now(),
                 category: result.category,
@@ -307,33 +316,26 @@ class ProviderAuthLifecycleOwner {
     )
     if (!provider) return { ...result, applied: false }
 
-    if (result.ok) {
-      result = await this.options.runClaudeSubscriptionProbe(
-        this.options.resolveProvider(
-          provider,
-          settings.activeProviderId === provider.id ? settings.activeModel : undefined
-        ),
-        settings
-      )
-    }
+    const resolvedTarget = this.options.resolveProvider(
+      provider,
+      settings.activeProviderId === provider.id ? settings.activeModel : undefined
+    )
+    const probeStarted = result.ok
+    if (probeStarted)
+      result = await this.options.runClaudeSubscriptionProbe(resolvedTarget, settings)
+    const validationTarget = probeStarted
+      ? targetForValidationResult(result, {
+          model: resolvedTarget.model,
+          endpoint: 'anthropic'
+        })
+      : undefined
+    const validationPatch = buildProviderValidationPatch(provider, result, validationTarget)
     const applied = await this.repository.updateClaudeIsolatedValidationIfKeyMatches(
       provider.keyRef,
-      result.ok
-        ? {
-            expiresAt: Date.now() + SETUP_TOKEN_LIFETIME_MS,
-            lastValidatedAt: Date.now(),
-            lastValidationFailure: undefined
-          }
-        : {
-            expiresAt: undefined,
-            lastValidatedAt: undefined,
-            lastValidationFailure: {
-              at: Date.now(),
-              category: result.category,
-              status: result.status,
-              message: result.message
-            }
-          }
+      {
+        expiresAt: result.ok ? Date.now() + SETUP_TOKEN_LIFETIME_MS : undefined,
+        ...validationPatch
+      }
     )
     return { ...result, applied }
   }
@@ -357,6 +359,7 @@ class ProviderAuthLifecycleOwner {
         ...provider,
         expiresAt: undefined,
         lastValidatedAt: undefined,
+        lastValidatedTarget: undefined,
         lastValidationFailure: undefined
       })
     }
@@ -394,26 +397,21 @@ class ProviderAuthLifecycleOwner {
     if (result.ok) {
       result = await this.options.runClaudeSubscriptionProbe(resolvedTarget, settings)
     }
+    const validationTarget = authStatus.authenticated
+      ? targetForValidationResult(result, {
+          model: resolvedTarget.model,
+          endpoint: 'anthropic'
+        })
+      : undefined
+    const validationPatch = buildProviderValidationPatch(targetProvider, result, validationTarget)
     const applied = await this.repository.updateClaudeSharedValidationIfUnchanged(
       targetProvider,
       loginTarget.claudeSubscriptionProviderId,
       resolvedTarget.model,
-      result.ok
-        ? {
-            disconnectedAt: undefined,
-            lastValidatedAt: Date.now(),
-            lastValidationFailure: undefined
-          }
-        : {
-            disconnectedAt: authStatus.authenticated ? undefined : targetProvider.disconnectedAt,
-            lastValidatedAt: undefined,
-            lastValidationFailure: {
-              at: Date.now(),
-              category: result.category,
-              status: result.status,
-              message: result.message
-            }
-          }
+      {
+        disconnectedAt: authStatus.authenticated ? undefined : targetProvider.disconnectedAt,
+        ...validationPatch
+      }
     )
 
     return { ...result, applied }
@@ -431,6 +429,7 @@ class ProviderAuthLifecycleOwner {
         ...provider,
         disconnectedAt,
         lastValidatedAt: undefined,
+        lastValidatedTarget: undefined,
         lastValidationFailure: {
           at: disconnectedAt,
           category: 'auth',
@@ -584,10 +583,11 @@ class ProviderAuthLifecycleOwner {
       checkedAt: Date.now()
     }
     if (!status.authenticated) {
-      return this.claudeSharedAuthValidationResult(
+      const result = this.claudeSharedAuthValidationResult(
         status,
         'Not signed in. Sign in via browser OAuth in the Settings card to connect your Claude subscription.'
       )
+      return status.supported ? { ...result, category: 'auth' } : result
     }
     return this.options.runClaudeSubscriptionProbe(provider, settings)
   }

@@ -279,13 +279,18 @@ export type ClaudeDetectResult = {
   }
 }
 
-// A recorded failed validation, kept so the list can flag a provider as unverified and say why
-// (e.g. "auth failed"). Cleared whenever a later validation of the same credentials succeeds.
+// Non-secret fingerprint for a concrete model/protocol probe. Provider-auth-only checks omit it.
+export type ProviderValidationTarget = {
+  model?: string
+  endpoint?: ChatApiEndpoint
+}
+
 export type ProviderValidationFailure = {
   at: number
   category: ValidationCategory
   status?: number
   message?: string
+  target?: ProviderValidationTarget
 }
 
 // Renderer-facing provider view: masked and stripped of every secret field.
@@ -325,9 +330,10 @@ export type ProviderView = {
   hasKey: boolean
   // True when a stored key could not be decrypted and must be re-entered before use.
   needsKey: boolean
-  // Timestamp of the last successful connectivity/key check (a single ping on the provider's first
-  // model). Codex per-model bridge compatibility is NOT a runtime probe — it's a static registry mark.
+  // Timestamp of the last successful connectivity/key check.
   lastValidatedAt?: number
+  // The model and protocol exercised by lastValidatedAt. Absent on legacy/provider-auth-only checks.
+  lastValidatedTarget?: ProviderValidationTarget
   // Present when the most recent validation failed and no later one has succeeded. Drives the
   // "unverified" warning in the provider list.
   lastValidationFailure?: ProviderValidationFailure
@@ -345,16 +351,43 @@ export type XaiOAuthDeviceAuthorization = {
   intervalSeconds: number
 }
 
-// True when a provider's most recent validation failed (and no later one succeeded). A failed
-// provider is flagged in the settings list and excluded from the model pickers, so it can't be
-// picked as a model source until it passes a test. Shared by main and renderer for one rule.
-export const providerValidationFailed = (provider: {
-  lastValidatedAt?: number
-  lastValidationFailure?: ProviderValidationFailure
-}): boolean =>
+// Applies a targeted failure only to the model/protocol it probed; provider-level failures still
+// apply everywhere. Shared by main and renderer so every selection surface uses the same rule.
+export const providerValidationTargetMatches = (
+  left: ProviderValidationTarget,
+  right: ProviderValidationTarget
+): boolean => left.model === right.model && left.endpoint === right.endpoint
+
+export const providerValidationFailed = (
+  provider: {
+    lastValidatedAt?: number
+    lastValidatedTarget?: ProviderValidationTarget
+    lastValidationFailure?: ProviderValidationFailure
+  },
+  target?: ProviderValidationTarget
+): boolean =>
   provider.lastValidationFailure !== undefined &&
+  (provider.lastValidationFailure.target === undefined ||
+    (target !== undefined &&
+      providerValidationTargetMatches(provider.lastValidationFailure.target, target))) &&
   (provider.lastValidatedAt === undefined ||
+    (target !== undefined &&
+      provider.lastValidatedTarget !== undefined &&
+      !providerValidationTargetMatches(provider.lastValidatedTarget, target)) ||
     provider.lastValidationFailure.at >= provider.lastValidatedAt)
+
+export const providerValidationSucceeded = (
+  provider: {
+    lastValidatedAt?: number
+    lastValidatedTarget?: ProviderValidationTarget
+    lastValidationFailure?: ProviderValidationFailure
+  },
+  target: ProviderValidationTarget
+): boolean =>
+  provider.lastValidatedAt !== undefined &&
+  (provider.lastValidatedTarget === undefined ||
+    providerValidationTargetMatches(provider.lastValidatedTarget, target)) &&
+  !providerValidationFailed(provider, target)
 
 // The agent backends the app can drive over ACP. Persisted settings and the UI reference these ids;
 // the main-process AgentFramework registry is keyed by the same union.
@@ -399,6 +432,12 @@ export type ReviewerModelConfiguration = SubagentModelConfiguration
 export const DEFAULT_REVIEWER_MODEL_CONFIGURATION: ReviewerModelConfiguration = Object.freeze({
   mode: 'inherit'
 })
+
+export type SetAgentRoutingRequest = Readonly<{
+  framework?: AgentFrameworkId
+  reviewer?: ReviewerModelConfiguration
+  subagent?: SubagentModelConfiguration
+}>
 
 export type SessionDetailsModelConfiguration =
   | Readonly<{ mode: 'inherit'; reasoningEffort: ReasoningEffort }>
@@ -679,8 +718,13 @@ export type UpsertProviderRequest = ProviderDraft & {
   reimportCodexAuthentication?: boolean
 }
 
+export type ProviderDeletionScenarioModelHandling = 'preserve' | 'inherit'
+
 export type DeleteProviderRequest = {
   id: string
+  // Missing preserves the historical, restorable unavailable selections. The settings UI can
+  // instead reset every affected scenario in the same document mutation as the provider deletion.
+  scenarioModelHandling?: ProviderDeletionScenarioModelHandling
 }
 
 export type SetActiveProviderRequest = {

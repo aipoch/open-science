@@ -264,6 +264,7 @@ describe('provider-kind helpers', () => {
     const apiKeys = groupKeys('api')
 
     expect(apiKeys).toContain('official:deepseek')
+    expect(apiKeys).toContain('official:apodex')
     expect(apiKeys).toContain('official:openai')
     expect(apiKeys).toContain('official:tencent')
     expect(apiKeys).toContain('official:tencentcodingplan')

@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { resolveActionMenuEntries } from '@/components/action-menu'
 import type { PreviewFileItem, PreviewToolItem } from '@/stores/preview-workbench-store'
 
 import {
+  createPreviewTabActionBindings,
+  getPreviewTabActionRecipe,
   getPreviewTabActionGroups,
+  PREVIEW_TAB_ACTION_CATALOG,
   runPreviewTabAction,
   type PreviewTabActionDeps
 } from './preview-tab-actions'
@@ -30,14 +34,89 @@ const createToolItem = (overrides: Partial<PreviewToolItem> = {}): PreviewToolIt
   ...overrides
 })
 
-const commandsOf = (groups: ReturnType<typeof getPreviewTabActionGroups>): string[] =>
-  [...groups.pdfContext, ...groups.shared, ...groups.specific].map((action) => action.command)
+const commandsOf = (groups: ReturnType<typeof getPreviewTabActionGroups>): string[] => [
+  ...groups.pdfContext,
+  ...groups.shared,
+  ...groups.specific
+]
 
 const specificCommandsOf = (groups: ReturnType<typeof getPreviewTabActionGroups>): string[] =>
-  groups.specific.map((action) => action.command)
+  groups.specific
 
 const pdfContextCommandsOf = (groups: ReturnType<typeof getPreviewTabActionGroups>): string[] =>
-  groups.pdfContext.map((action) => action.command)
+  groups.pdfContext
+
+describe('Preview tab Action Menu spec', () => {
+  it('resolves the established PDF, shared, and local action order from catalog and bindings', () => {
+    const item = createFileItem({ source: 'local', format: 'pdf' })
+    const deps: PreviewTabActionDeps = {
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      saveManagedFile: vi.fn(),
+      copyText: vi.fn(),
+      stageLocalPath: vi.fn(),
+      togglePdfContext: vi.fn(),
+      activeProjectId: 'project-1'
+    }
+
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'file-1',
+        catalog: PREVIEW_TAB_ACTION_CATALOG,
+        recipe: getPreviewTabActionRecipe(item, { tabCount: 2, pdfContext: 'link' }),
+        bindings: createPreviewTabActionBindings({ tabCount: 2, pdfContext: 'link' }, deps)
+      },
+      item
+    )
+
+    expect(entries.map((entry) => (entry.kind === 'action' ? entry.action : 'separator'))).toEqual([
+      'toggle-pdf-context',
+      'separator',
+      'close',
+      'close-others',
+      'separator',
+      'copy-path',
+      'download',
+      'save-as-artifact'
+    ])
+    expect(entries[0]).toMatchObject({
+      kind: 'action',
+      action: 'toggle-pdf-context',
+      labelKey: 'Read with agent',
+      danger: false,
+      disabled: false
+    })
+  })
+
+  it('resolves dynamic labels and state from catalog and bindings', () => {
+    const item = createFileItem({ format: 'pdf' })
+    const context = { tabCount: 1, pdfContext: 'remove' as const }
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'file-1',
+        catalog: PREVIEW_TAB_ACTION_CATALOG,
+        recipe: getPreviewTabActionRecipe(item, context),
+        bindings: createPreviewTabActionBindings(context, {
+          closeTab: vi.fn(),
+          closeOtherTabs: vi.fn(),
+          saveManagedFile: vi.fn(),
+          copyText: vi.fn(),
+          stageLocalPath: vi.fn(),
+          togglePdfContext: vi.fn(),
+          activeProjectId: 'project-1'
+        })
+      },
+      item
+    )
+
+    expect(
+      entries.find((entry) => entry.kind === 'action' && entry.action === 'toggle-pdf-context')
+    ).toMatchObject({ labelKey: 'Remove PDF from context', danger: false })
+    expect(
+      entries.find((entry) => entry.kind === 'action' && entry.action === 'close-others')
+    ).toMatchObject({ disabled: true, danger: true })
+  })
+})
 
 describe('getPreviewTabActionGroups', () => {
   it('offers close actions on every tab type', () => {
@@ -51,16 +130,6 @@ describe('getPreviewTabActionGroups', () => {
       const commands = commandsOf(getPreviewTabActionGroups(item, { tabCount: 3 }))
       expect(commands).toEqual(expect.arrayContaining(['close', 'close-others']))
     }
-  })
-
-  it('disables close-others when it is the only tab', () => {
-    const { shared } = getPreviewTabActionGroups(createFileItem({}), { tabCount: 1 })
-
-    expect(shared.find((action) => action.command === 'close-others')).toMatchObject({
-      disabled: true,
-      danger: true
-    })
-    expect(shared.find((action) => action.command === 'close')).toMatchObject({ disabled: false })
   })
 
   it('adds download to managed and upload file tabs', () => {
@@ -100,19 +169,6 @@ describe('getPreviewTabActionGroups', () => {
 
     expect(pdfContextCommandsOf(groups)).toEqual(['toggle-pdf-context'])
     expect(commandsOf(groups)[0]).toBe('toggle-pdf-context')
-    expect(groups.pdfContext[0]).toMatchObject({
-      label: 'Read with agent',
-      danger: false,
-      disabled: false
-    })
-  })
-
-  it('labels the reading-context command by link state without danger styling', () => {
-    const item = createFileItem({ format: 'pdf' })
-
-    expect(
-      getPreviewTabActionGroups(item, { tabCount: 2, pdfContext: 'remove' }).pdfContext[0]
-    ).toMatchObject({ label: 'Remove PDF from context', danger: false })
   })
 
   it('omits the reading-context command for non-linkable tabs', () => {

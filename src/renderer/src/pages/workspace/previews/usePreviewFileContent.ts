@@ -4,10 +4,12 @@ import type { ArtifactPreviewResult } from '../../../../../shared/artifacts'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { createManagedPreviewRequest } from './preview-file-reader'
-import { isUnavailableFileError } from './preview-errors'
+import { isManagedFilePublicationPendingError, isUnavailableFileError } from './preview-errors'
 
 export const PREVIEW_TEXT_MAX_BYTES = 1024 * 1024
 const MAX_PREVIEW_BYTES = 10 * 1024 * 1024
+const PUBLICATION_RETRY_DELAY_MS = 200
+const PUBLICATION_RETRY_LIMIT = 4
 
 type PreviewPagination = {
   pageNumber: number
@@ -64,7 +66,20 @@ const readManagedPreviewPage = async (
     signal: AbortSignal
   }
 ): Promise<ArtifactPreviewResult> => {
-  const resource = await window.api.previewResources.acquire(createManagedPreviewRequest(request))
+  const previewRequest = createManagedPreviewRequest(request)
+  let resource
+  for (let attempt = 0; ; attempt += 1) {
+    if (request.signal.aborted) throw request.signal.reason
+    try {
+      resource = await window.api.previewResources.acquire(previewRequest)
+      break
+    } catch (error) {
+      if (attempt === PUBLICATION_RETRY_LIMIT || !isManagedFilePublicationPendingError(error)) {
+        throw error
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, PUBLICATION_RETRY_DELAY_MS))
+    }
+  }
 
   try {
     if (request.signal.aborted) throw request.signal.reason

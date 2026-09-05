@@ -6,10 +6,14 @@ import { queryObjects } from 'node:v8'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
-import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { Project } from '../../shared/projects'
-import { normalizeSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
+import type { SettingsSnapshot } from '../../shared/settings'
+import {
+  normalizeSessionFile,
+  SessionConfigurationBusyError,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 import type { TaskRun } from '../../shared/task-api'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
@@ -17,6 +21,7 @@ import type { TaskRunJournalEntry } from './task-run-journal'
 import {
   TASK_RUN_DISPOSAL_BUDGET_MS,
   TaskRunner,
+  type TaskAgentPort,
   type TaskPreviewResourcePort,
   type TaskProjectPort,
   type TaskRunnerDependencies,
@@ -51,19 +56,132 @@ const session: PersistedChatSession = {
   updatedAt: 2
 }
 
+const settings: SettingsSnapshot = {
+  claude: {},
+  opencode: {},
+  codebuddy: {},
+  codex: {},
+  claudeManaged: false,
+  opencodeManaged: false,
+  codebuddyManaged: false,
+  codexManaged: false,
+  providers: [],
+  agentFrameworkId: 'claude-code',
+  agentFrameworks: [],
+  reasoningEffort: 'default',
+  notificationsEnabled: true,
+  conversationSkillImportEnabled: true,
+  appIconVariant: 'light'
+}
+
+const configuredSettings: SettingsSnapshot = {
+  ...settings,
+  activeProviderId: 'provider-1',
+  activeModel: 'model-1',
+  providers: [
+    {
+      id: 'provider-1',
+      type: 'custom',
+      name: 'Test provider',
+      apiEndpoints: ['anthropic'],
+      model: 'model-1',
+      models: ['model-1', 'model-2'],
+      supportsImageInput: false,
+      hasKey: true,
+      needsKey: false
+    }
+  ]
+}
+
 class RetainedRunEventPayload {}
 
-type TaskRunnerOverrides = Omit<Partial<TaskRunnerDependencies>, 'sessions'> & {
-  sessions?: Omit<Partial<TaskSessionPort>, 'save'> & {
+type TaskRunnerOverrides = Omit<Partial<TaskRunnerDependencies>, 'agent' | 'sessions'> & {
+  agent?: Partial<TaskAgentPort>
+  sessions?: Omit<
+    Partial<TaskSessionPort>,
+    'save' | 'stageCompletion' | 'settleCompletion' | 'failRun'
+  > & {
     save?: (session: PersistedChatSession) => Promise<PersistedChatSession | void>
+    stageCompletion?: TaskSessionPort['stageCompletion']
+    settleCompletion?: TaskSessionPort['settleCompletion']
+    failRun?: TaskSessionPort['failRun']
   }
 }
 
 const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
+  const sessions = new Map<string, PersistedChatSession>()
+  const save = async (value: PersistedChatSession): Promise<PersistedChatSession> => {
+    const persisted = (await overrides.sessions?.save?.(value)) ?? value
+    sessions.set(persisted.id, structuredClone(persisted))
+    return persisted
+  }
+  const loadSession = (sessionId: string): PersistedChatSession => {
+    const current = sessions.get(sessionId)
+    if (!current) throw new Error(`Missing test Session: ${sessionId}`)
+    return structuredClone(current)
+  }
   const defaultSessions: TaskSessionPort = {
-    list: async () => [],
-    save: async (value) => value,
+    list: async () => {
+      const loaded = (await overrides.sessions?.list?.()) ?? []
+      for (const value of loaded) sessions.set(value.id, structuredClone(value))
+      return loaded
+    },
+    save,
+    stageCompletion: async (request) => {
+      const current = loadSession(request.sessionId)
+      const candidate: PersistedChatSession = {
+        ...current,
+        messages: request.message ? [...current.messages, request.message] : current.messages,
+        activities: [...(current.activities ?? []), ...request.activities],
+        updatedAt: request.updatedAt
+      }
+      if (request.clearPendingHistoryReplay) delete candidate.pendingHistoryReplay
+      return save(candidate)
+    },
+    settleCompletion: async (request) => {
+      const current = loadSession(request.sessionId)
+      const artifactIds = request.artifacts.map(({ id }) => id)
+      return save({
+        ...current,
+        status: 'idle',
+        activeRun: undefined,
+        taskRunCommitId: request.taskRunCommitId,
+        messages: current.messages.map((message) =>
+          message.id === request.messageId && artifactIds.length > 0
+            ? { ...message, artifactIds }
+            : message
+        ),
+        artifacts: [...(current.artifacts ?? []), ...request.artifacts],
+        filesRevision:
+          request.artifacts.length > 0 ? (current.filesRevision ?? 0) + 1 : current.filesRevision,
+        updatedAt: request.updatedAt
+      })
+    },
+    failRun: async (request) => {
+      const current = loadSession(request.sessionId)
+      return save({
+        ...current,
+        status: 'error',
+        activeRun: undefined,
+        taskRunCommitId: request.taskRunCommitId,
+        error: request.error,
+        errorReportable: request.errorReportable,
+        artifacts: [...(current.artifacts ?? []), ...request.artifacts],
+        updatedAt: request.updatedAt
+      })
+    },
+    updateConfiguration: async (value) => save(value),
     setDelegationPolicy: async () => undefined
+  }
+  const defaultAgent: TaskAgentPort = {
+    withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+    listAttachedSessionIds: async () => [],
+    createSession: async () => ({ sessionId: 'session-created' }),
+    resumeSession: async (request) => ({ sessionId: request.sessionId }),
+    setPermissionProfile: async () => undefined,
+    setMemoryEnabled: async () => undefined,
+    cancelPrompt: async () => undefined,
+    prompt: async () => undefined
   }
   return new TaskRunner({
     projects: {
@@ -74,19 +192,11 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
       acquire: async () => ({ id: 'resource-1', url: 'preview://resource-1', size: 0 }),
       release: async () => undefined
     },
-    agent: {
-      withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
-      listAttachedSessionIds: async () => [],
-      createSession: async () => ({ sessionId: 'session-created' }),
-      resumeSession: async (request) => ({ sessionId: request.sessionId }),
-      setPermissionProfile: async () => undefined,
-      cancelPrompt: async () => undefined,
-      prompt: async () => undefined
-    },
     artifacts: {
       finalizeRun: async () => ({ ok: true, artifacts: [] })
     },
     runtimeEvents: { subscribe: () => () => undefined },
+    settings: { get: async () => settings },
     specialists: { resolve: async (reference) => ({ id: reference }) },
     reviewer: { review: async () => ({ started: true }) },
     computePreferences: {
@@ -99,14 +209,395 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
     createId: () => 'generated-id',
     now: () => 1,
     ...overrides,
+    agent: { ...defaultAgent, ...overrides.agent },
     sessions: {
       ...defaultSessions,
       ...overrides.sessions,
-      save: async (value) => (await overrides.sessions?.save?.(value)) ?? value
+      list: defaultSessions.list,
+      save,
+      stageCompletion: overrides.sessions?.stageCompletion ?? defaultSessions.stageCompletion,
+      settleCompletion: overrides.sessions?.settleCompletion ?? defaultSessions.settleCompletion,
+      failRun: overrides.sessions?.failRun ?? defaultSessions.failRun
     }
   })
 }
 describe('TaskRunner', () => {
+  it('updates an idle Session configuration atomically with revision and availability checks', async () => {
+    let current: PersistedChatSession = {
+      ...session,
+      revision: 4,
+      agentConfiguration: {
+        providerId: 'provider-1',
+        model: 'model-1',
+        reasoningEffort: 'default'
+      }
+    }
+    const updateConfiguration = vi.fn(async (value: PersistedChatSession) => {
+      current = { ...value, revision: (value.revision ?? 0) + 1 }
+      return current
+    })
+    const validate = vi.fn(async (providerIds: readonly string[]) => [...new Set(providerIds)])
+    const setMemoryEnabled = vi.fn(async () => undefined)
+    const runner = createRunner({
+      sessions: { list: async () => [current], updateConfiguration },
+      settings: { get: async () => configuredSettings },
+      agent: {
+        listAttachedSessionIds: async () => [session.id],
+        setMemoryEnabled
+      },
+      computePreferences: {
+        withReservation: async (providerIds, operation) => operation([...new Set(providerIds)]),
+        set: async () => current,
+        validate,
+        listAvailable: async () => ['ssh:alpha']
+      }
+    })
+
+    await expect(
+      runner.updateSessionConfiguration(session.id, {
+        expectedRevision: 4,
+        agentConfiguration: { model: 'model-2', reasoningEffort: 'high' },
+        permissionProfile: 'full',
+        memoryEnabled: false,
+        computeHosts: { enabled: ['ssh:alpha'], selected: ['ssh:alpha'] }
+      })
+    ).resolves.toMatchObject({
+      revision: 5,
+      persisted: {
+        agentConfiguration: {
+          providerId: 'provider-1',
+          model: 'model-2',
+          reasoningEffort: 'high'
+        },
+        permissionProfile: 'full',
+        memoryEnabled: false,
+        computeHosts: { enabled: ['ssh:alpha'], selected: ['ssh:alpha'] }
+      },
+      availability: {
+        agentConfiguration: { available: true },
+        computeHosts: { 'ssh:alpha': { available: true } }
+      }
+    })
+    expect(updateConfiguration).toHaveBeenCalledWith(expect.any(Object), 4)
+    expect(setMemoryEnabled).toHaveBeenCalledWith(session.id, false)
+    expect(validate).toHaveBeenCalledWith(['ssh:alpha', 'ssh:alpha'])
+  })
+
+  it('keeps a committed configuration update when its attached runtime detaches', async () => {
+    let current: PersistedChatSession = { ...session, revision: 4, memoryEnabled: true }
+    const updateConfiguration = vi.fn(async (value: PersistedChatSession) => {
+      current = { ...value, revision: 5 }
+      return current
+    })
+    const listAttachedSessionIds = vi
+      .fn<() => Promise<string[]>>()
+      .mockResolvedValueOnce([session.id])
+      .mockResolvedValueOnce([])
+    const runner = createRunner({
+      sessions: { list: async () => [current], updateConfiguration },
+      agent: {
+        listAttachedSessionIds,
+        setMemoryEnabled: async () => {
+          throw new Error(`ACP session not found: ${session.id}`)
+        }
+      }
+    })
+
+    await expect(
+      runner.updateSessionConfiguration(session.id, {
+        expectedRevision: 4,
+        memoryEnabled: false
+      })
+    ).resolves.toMatchObject({ revision: 5, persisted: { memoryEnabled: false } })
+    expect(updateConfiguration).toHaveBeenCalledOnce()
+    expect(listAttachedSessionIds).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports a runtime synchronization failure while the Session remains attached', async () => {
+    let current: PersistedChatSession = { ...session, revision: 4, memoryEnabled: true }
+    const updateConfiguration = vi.fn(async (value: PersistedChatSession) => {
+      current = { ...value, revision: 5 }
+      return current
+    })
+    const runner = createRunner({
+      sessions: { list: async () => [current], updateConfiguration },
+      agent: {
+        listAttachedSessionIds: async () => [session.id],
+        setMemoryEnabled: async () => {
+          throw new Error('runtime synchronization failed')
+        }
+      }
+    })
+
+    await expect(
+      runner.updateSessionConfiguration(session.id, {
+        expectedRevision: 4,
+        memoryEnabled: false
+      })
+    ).rejects.toThrow('runtime synchronization failed')
+    expect(updateConfiguration).toHaveBeenCalledOnce()
+  })
+
+  it('rejects stale or active Session configuration updates without persisting them', async () => {
+    const current = { ...session, revision: 3 }
+    const save = vi.fn(async (value: PersistedChatSession) => value)
+    const staleRunner = createRunner({ sessions: { list: async () => [current], save } })
+
+    await expect(
+      staleRunner.updateSessionConfiguration(session.id, {
+        expectedRevision: 2,
+        memoryEnabled: false
+      })
+    ).rejects.toMatchObject({ code: 'session_revision_conflict' })
+
+    const busyRunner = createRunner({
+      sessions: { list: async () => [current], save },
+      isSessionBusy: () => true
+    })
+    await expect(
+      busyRunner.updateSessionConfiguration(session.id, {
+        expectedRevision: 3,
+        memoryEnabled: false
+      })
+    ).rejects.toMatchObject({ code: 'session_busy' })
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('reports availability for the persisted Agent configuration instead of its fallback', async () => {
+    const pinned = {
+      ...session,
+      agentConfiguration: {
+        providerId: 'provider-removed',
+        model: 'model-removed',
+        reasoningEffort: 'high' as const
+      }
+    }
+    const runner = createRunner({
+      sessions: { list: async () => [pinned] },
+      settings: { get: async () => configuredSettings }
+    })
+
+    await expect(runner.getSessionConfiguration(pinned.id)).resolves.toMatchObject({
+      persisted: { agentConfiguration: pinned.agentConfiguration },
+      availability: { agentConfiguration: { available: false } }
+    })
+  })
+
+  it('maps an authoritative concurrent-start rejection to session_busy', async () => {
+    const current = { ...session, revision: 3 }
+    const updateConfiguration = vi.fn(async (): Promise<PersistedChatSession> => {
+      throw new SessionConfigurationBusyError(current.id)
+    })
+    const runner = createRunner({
+      sessions: { list: async () => [current], updateConfiguration }
+    })
+
+    await expect(
+      runner.updateSessionConfiguration(current.id, {
+        expectedRevision: 3,
+        memoryEnabled: false
+      })
+    ).rejects.toMatchObject({ code: 'session_busy' })
+    expect(updateConfiguration).toHaveBeenCalledOnce()
+  })
+
+  it('requires an explicit model decision when changing providers', async () => {
+    const current = {
+      ...session,
+      revision: 3,
+      agentConfiguration: {
+        providerId: 'provider-1',
+        model: 'model-1',
+        reasoningEffort: 'default' as const
+      }
+    }
+    const save = vi.fn(async (value: PersistedChatSession) => value)
+    const runner = createRunner({
+      sessions: { list: async () => [current], save },
+      settings: { get: async () => configuredSettings }
+    })
+
+    await expect(
+      runner.updateSessionConfiguration(session.id, {
+        expectedRevision: 3,
+        agentConfiguration: { providerId: 'provider-2' }
+      })
+    ).rejects.toMatchObject({ code: 'invalid_configuration' })
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('persists Project Session defaults without rewriting existing Sessions', async () => {
+    let currentProject: Project = { ...project, updatedAt: 7 }
+    const update = vi.fn(async (request: Parameters<NonNullable<TaskProjectPort['update']>>[0]) => {
+      currentProject = {
+        ...currentProject,
+        sessionDefaults: request.sessionDefaults,
+        updatedAt: 8
+      }
+      return currentProject
+    })
+    const save = vi.fn(async (value: PersistedChatSession) => value)
+    const runner = createRunner({
+      projects: {
+        list: async () => [currentProject],
+        create: async (request) => ({ ...currentProject, ...request }),
+        update
+      },
+      sessions: { list: async () => [session], save },
+      settings: { get: async () => configuredSettings },
+      specialists: { resolve: async () => ({ id: 'specialist-id' }) },
+      computePreferences: {
+        withReservation: async (providerIds, operation) => operation([...new Set(providerIds)]),
+        set: async () => session,
+        validate: async (providerIds) => [...new Set(providerIds)],
+        listAvailable: async () => ['ssh:alpha']
+      }
+    })
+
+    await expect(
+      runner.updateProjectSessionDefaults(project.id, {
+        expectedUpdatedAt: 7,
+        patch: {
+          agentConfiguration: {
+            providerId: 'provider-1',
+            model: 'model-2',
+            reasoningEffort: 'high'
+          },
+          permissionProfile: 'auto',
+          memoryEnabled: false,
+          specialistId: 'specialist-name',
+          computeHosts: { enabled: ['ssh:alpha'], selected: ['ssh:alpha'] }
+        }
+      })
+    ).resolves.toMatchObject({
+      updatedAt: 8,
+      configured: {
+        agentConfiguration: {
+          providerId: 'provider-1',
+          model: 'model-2',
+          reasoningEffort: 'high'
+        },
+        permissionProfile: 'auto',
+        memoryEnabled: false,
+        specialistId: 'specialist-id',
+        computeHosts: { enabled: ['ssh:alpha'], selected: ['ssh:alpha'] }
+      }
+    })
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ id: project.id, expectedUpdatedAt: 7 })
+    )
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('snapshots Project defaults into only new Sessions with explicit Run overrides and additions', async () => {
+    const defaultedProject: Project = {
+      ...project,
+      sessionDefaults: {
+        agentConfiguration: {
+          providerId: 'provider-1',
+          model: 'model-1',
+          reasoningEffort: 'low'
+        },
+        permissionProfile: 'full',
+        autoReviewEnabled: true,
+        memoryEnabled: false,
+        delegationPolicy: 'deny',
+        computeHosts: {
+          enabled: ['ssh:alpha', 'ssh:beta'],
+          selected: ['ssh:alpha']
+        }
+      }
+    }
+    const created: Array<Parameters<TaskRunnerDependencies['agent']['createSession']>[0]> = []
+    const saved: PersistedChatSession[] = []
+    const ids = ['user-defaults', 'run-defaults', 'agent-defaults']
+    const runner = createRunner({
+      projects: {
+        list: async () => [defaultedProject],
+        create: async (request) => ({ ...defaultedProject, ...request })
+      },
+      settings: { get: async () => configuredSettings },
+      sessions: {
+        list: async () => [],
+        save: async (value) => {
+          saved.push(structuredClone(value))
+          return value
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async (request) => {
+          created.push(request)
+          return {
+            sessionId: 'session-defaults',
+            agentConfiguration: request.agentConfiguration
+          }
+        },
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      prompt: 'Use the configured defaults.',
+      permissionProfile: 'auto',
+      memoryEnabled: true,
+      agentConfiguration: { model: 'model-2' },
+      enabledComputeHostIds: ['ssh:gamma'],
+      computeHostIds: ['ssh:beta']
+    })
+    await runner.waitForRun(started.id)
+
+    expect(created).toEqual([
+      {
+        projectId: project.id,
+        permissionProfile: 'auto',
+        agentConfiguration: {
+          providerId: 'provider-1',
+          model: 'model-2',
+          reasoningEffort: 'low'
+        }
+      }
+    ])
+    expect(saved).toContainEqual(
+      expect.objectContaining({
+        permissionProfile: 'auto',
+        autoReviewEnabled: true,
+        memoryEnabled: true,
+        delegationPolicy: 'deny',
+        enabledComputeHosts: ['ssh:alpha', 'ssh:beta', 'ssh:gamma'],
+        selectedComputeHosts: ['ssh:beta'],
+        agentConfiguration: {
+          providerId: 'provider-1',
+          model: 'model-2',
+          reasoningEffort: 'low'
+        }
+      })
+    )
+
+    const cleared = await runner.startRun({
+      project: project.id,
+      prompt: 'Override the configured Compute Host defaults.',
+      enabledComputeHostIds: [],
+      computeHostIds: []
+    })
+    await runner.waitForRun(cleared.id)
+
+    expect(saved).toContainEqual(
+      expect.objectContaining({
+        enabledComputeHosts: [],
+        selectedComputeHosts: []
+      })
+    )
+  })
+
   it('resolves only the active Task Run that owns a Session and prompt', async () => {
     let finishPrompt: (() => void) | undefined
     const prompt = new Promise<void>((resolve) => {
@@ -507,9 +998,10 @@ describe('TaskRunner', () => {
       list: async () => [project],
       create: async (request) => ({ ...project, ...request })
     }
-    const sessions: TaskSessionPort = {
+    const sessions: TaskRunnerOverrides['sessions'] = {
       list: async () => [session],
       save: async (value) => value,
+      updateConfiguration: async (value) => value,
       setDelegationPolicy: async () => undefined
     }
     const runner = createRunner({ projects, sessions })
@@ -698,6 +1190,27 @@ describe('TaskRunner', () => {
       code: 'invalid_request',
       message: `Session ${bound.id} is bound to a different Specialist.`
     })
+  })
+
+  it('rejects enabled Compute Host changes while resuming an existing Session', async () => {
+    const save = vi.fn(async (value: PersistedChatSession) => value)
+    const runner = createRunner({
+      sessions: { list: async () => [session], save }
+    })
+
+    await expect(
+      runner.startRun({
+        project: project.id,
+        sessionId: session.id,
+        prompt: 'Continue with changed host access.',
+        enabledComputeHostIds: ['ssh:alpha']
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message:
+        'Provider, model, reasoning effort, memory, and enabled Compute Hosts must be changed with session config update before resuming an existing Session.'
+    })
+    expect(save).not.toHaveBeenCalled()
   })
 
   it('rejects a cwd that conflicts with an existing Session workspace', async () => {
@@ -2678,6 +3191,124 @@ describe('TaskRunner', () => {
     ])
   })
 
+  it('completes against current Session authority after a concurrent writer advances revision', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let authoritative: PersistedChatSession = { ...session, revision: 0 }
+    const revisionConflicts: string[] = []
+    const save = async (candidate: PersistedChatSession): Promise<PersistedChatSession> => {
+      const expectedRevision = candidate.revision ?? 0
+      const actualRevision = authoritative.revision ?? 0
+      if (expectedRevision !== actualRevision) {
+        const message = `Session revision conflict: expected ${expectedRevision}, actual ${actualRevision}.`
+        revisionConflicts.push(message)
+        throw new Error(message)
+      }
+      authoritative = structuredClone({ ...candidate, revision: actualRevision + 1 })
+      return structuredClone(authoritative)
+    }
+    const mutateAuthority = (
+      mutation: (latest: PersistedChatSession) => PersistedChatSession
+    ): Promise<PersistedChatSession> => save(mutation(structuredClone(authoritative)))
+    const completionSessions = {
+      stageCompletion: (request: {
+        message?: PersistedChatSession['messages'][number]
+        activities: readonly NonNullable<PersistedChatSession['activities']>[number][]
+        updatedAt: number
+      }) =>
+        mutateAuthority((latest) => ({
+          ...latest,
+          messages: request.message ? [...latest.messages, request.message] : latest.messages,
+          activities: [...(latest.activities ?? []), ...request.activities],
+          updatedAt: request.updatedAt
+        })),
+      settleCompletion: (request: { taskRunCommitId: string; updatedAt: number }) =>
+        mutateAuthority((latest) => ({
+          ...latest,
+          status: 'idle',
+          activeRun: undefined,
+          taskRunCommitId: request.taskRunCommitId,
+          updatedAt: request.updatedAt
+        })),
+      failRun: (request: { taskRunCommitId: string; error: string; updatedAt: number }) =>
+        mutateAuthority((latest) => ({
+          ...latest,
+          status: 'error',
+          activeRun: undefined,
+          taskRunCommitId: request.taskRunCommitId,
+          error: request.error,
+          updatedAt: request.updatedAt
+        }))
+    }
+    const ids = ['task-user', 'task-run', 'task-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [structuredClone(authoritative)],
+        save,
+        ...completionSessions
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [session.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+          await save({
+            ...authoritative,
+            messages: [
+              ...authoritative.messages,
+              {
+                id: 'concurrent-message',
+                role: 'agent',
+                content: 'Concurrent renderer state',
+                status: 'complete',
+                eventIds: ['concurrent-event'],
+                createdAt: 20,
+                updatedAt: 20
+              }
+            ],
+            updatedAt: 20
+          })
+          emitEvent?.({
+            id: 'task-output-event',
+            timestamp: 21,
+            kind: 'message',
+            level: 'info',
+            sessionId: session.id,
+            role: 'assistant',
+            text: 'Task answer'
+          })
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id',
+      now: () => 30
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: session.id,
+      prompt: 'Finish the task.'
+    })
+    const completed = await runner.waitForRun(started.id)
+
+    expect(revisionConflicts).toEqual([])
+    expect(completed.status).toBe('completed')
+    expect(authoritative.taskRunCommitId).toBe(started.id)
+    expect(authoritative.messages.map(({ id }) => id)).toEqual([
+      'task-user',
+      'concurrent-message',
+      'task-agent'
+    ])
+  })
+
   it('settles a run as failed when final session persistence fails', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     let saveCount = 0
@@ -2688,7 +3319,9 @@ describe('TaskRunner', () => {
         list: async () => [],
         save: async () => {
           saveCount += 1
-          if (saveCount === 2) throw new Error('Session storage is unavailable')
+        },
+        settleCompletion: async () => {
+          throw new Error('Session storage is unavailable')
         }
       },
       agent: {
@@ -2733,7 +3366,7 @@ describe('TaskRunner', () => {
     expect(progressPhases.at(-1)).toBe('failed')
   })
 
-  it('preserves finalized artifacts when a later claim fails after an ownership retry', async () => {
+  it('preserves finalized artifacts when a later claim fails after ownership staging', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     let finalizeAttempts = 0
     const savedSessions: PersistedChatSession[] = []
@@ -2787,13 +3420,6 @@ describe('TaskRunner', () => {
       artifacts: {
         finalizeRun: async (request) => {
           finalizeAttempts += 1
-          if (request.claimId === 'claim-1' && finalizeAttempts === 1) {
-            return {
-              ok: false,
-              code: ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
-              message: 'The durable projection has not caught up yet.'
-            }
-          }
           if (request.claimId === 'claim-2') {
             throw new Error('compatibility publication failed')
           }
@@ -2833,7 +3459,7 @@ describe('TaskRunner', () => {
       error: 'Provider rejected the request.',
       artifacts: [{ id: 'artifact-partial', name: 'partial-report.md' }]
     })
-    expect(finalizeAttempts).toBe(3)
+    expect(finalizeAttempts).toBe(2)
     expect(savedSessions.at(-1)).toMatchObject({
       status: 'error',
       error: 'Provider rejected the request.',
@@ -3550,7 +4176,7 @@ describe('TaskRunner', () => {
     let durableSession: PersistedChatSession | undefined
     let rejectCommittedSave = true
     let durableRuns: TaskRunJournalEntry[] = []
-    const sessions: TaskSessionPort = {
+    const sessions: NonNullable<TaskRunnerOverrides['sessions']> = {
       list: async () =>
         durableSession ? [normalizeSessionFile(structuredClone(durableSession))!] : [],
       save: async (value) => {
@@ -3561,6 +4187,7 @@ describe('TaskRunner', () => {
         }
         return value
       },
+      updateConfiguration: async (value) => value,
       setDelegationPolicy: async () => undefined
     }
     const runJournal = {
@@ -3616,7 +4243,7 @@ describe('TaskRunner', () => {
     let rejectCommittedSave = true
     let blockCompensation = true
     let durableRuns: TaskRunJournalEntry[] = []
-    const sessions: TaskSessionPort = {
+    const sessions: NonNullable<TaskRunnerOverrides['sessions']> = {
       list: async () =>
         durableSession ? [normalizeSessionFile(structuredClone(durableSession))!] : [],
       save: async (value) => {
@@ -3633,6 +4260,7 @@ describe('TaskRunner', () => {
         durableSession = structuredClone(value)
         return value
       },
+      updateConfiguration: async (value) => value,
       setDelegationPolicy: async () => undefined
     }
     const runJournal = {
@@ -3686,7 +4314,7 @@ describe('TaskRunner', () => {
     let rejectCommittedSave = true
     let rejectCompensationSave = true
     let durableRuns: TaskRunJournalEntry[] = []
-    const sessions: TaskSessionPort = {
+    const sessions: NonNullable<TaskRunnerOverrides['sessions']> = {
       list: async () =>
         durableSession ? [normalizeSessionFile(structuredClone(durableSession))!] : [],
       save: async (value) => {
@@ -3702,6 +4330,7 @@ describe('TaskRunner', () => {
         durableSession = structuredClone(value)
         return value
       },
+      updateConfiguration: async (value) => value,
       setDelegationPolicy: async () => undefined
     }
     const runJournal = {
@@ -3971,13 +4600,14 @@ describe('TaskRunner', () => {
     const reviewGate = new Promise<void>((resolve) => {
       releaseReview = resolve
     })
-    const sessions: TaskSessionPort = {
+    const sessions: NonNullable<TaskRunnerOverrides['sessions']> = {
       list: async () => (durableSession ? [normalizeSessionFile(durableSession)!] : []),
       save: async (value) => {
         const persisted = { ...value, revision: (value.revision ?? 0) + 1 }
         durableSession = structuredClone(persisted)
         return persisted
       },
+      updateConfiguration: async (value) => value,
       setDelegationPolicy: async () => undefined
     }
     const runJournal = {
@@ -4062,13 +4692,14 @@ describe('TaskRunner', () => {
       releaseTerminalWrite = resolve
     })
     let terminalWriteBlocked = false
-    const sessions: TaskSessionPort = {
+    const sessions: NonNullable<TaskRunnerOverrides['sessions']> = {
       list: async () => (durableSession ? [normalizeSessionFile(durableSession)!] : []),
       save: async (value) => {
         const persisted = { ...value, revision: (value.revision ?? 0) + 1 }
         durableSession = structuredClone(persisted)
         return persisted
       },
+      updateConfiguration: async (value) => value,
       setDelegationPolicy: async () => undefined
     }
     const runJournal = {

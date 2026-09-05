@@ -707,7 +707,7 @@ describe('notebook run repository', () => {
           {
             path: join(root, 'notebooks', 'default-project', 'session-1', 'data', 'processed.csv'),
             relativePath: 'data/processed.csv',
-            kind: 'processed-data',
+            kind: 'other',
             size: 123,
             mtimeMs: 200,
             createdByRunId: 'run-1'
@@ -734,7 +734,7 @@ describe('notebook run repository', () => {
       workingFiles: [
         {
           relativePath: 'data/processed.csv',
-          kind: 'processed-data',
+          kind: 'other',
           size: 123
         }
       ]

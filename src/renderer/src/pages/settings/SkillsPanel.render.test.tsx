@@ -1403,7 +1403,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(
       document.body.querySelector('[aria-label="Skill package usage"]')?.textContent
-    ).toContain('References: 1 / 253')
+    ).toContain(`References: 1 / ${SKILL_IMPORT_LIMITS.maxFiles - 3}`)
     expect(document.body.textContent).toContain('references/guide.md')
     expect(document.body.textContent).toContain('references/guides/deep.md')
     expect(document.body.textContent).toContain('scripts/run.sh')

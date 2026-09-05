@@ -13,7 +13,9 @@ import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
-  type FinalizeRunArtifactsRequest
+  type FinalizeRunArtifactsRequest,
+  type ReconcilePendingArtifactsRequest,
+  type ReconcilePendingArtifactsResult
 } from '../../../../shared/artifacts'
 import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
 import {
@@ -234,6 +236,9 @@ const isNonActionableCodexDiagnostic = (text: string): boolean => {
 
 type WorkspaceRuntimeEventDependencies = {
   finalizeRunArtifacts?: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
+  reconcilePendingArtifacts?: (
+    request: ReconcilePendingArtifactsRequest
+  ) => Promise<ReconcilePendingArtifactsResult>
   saveSession?: (session: PersistedChatSession) => Promise<PersistedChatSession | void>
 }
 
@@ -294,6 +299,115 @@ const finalizeArtifactEvent = async (
 ): Promise<boolean> => {
   if (!isFinalizableArtifactEvent(event)) return false
 
+  const session = useSessionStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === event.sessionId)
+  const persistLatestSession = async (): Promise<void> => {
+    const attachedSession = useSessionStore
+      .getState()
+      .sessions.find((candidate) => candidate.id === event.sessionId)
+    if (!attachedSession) {
+      throw new Error('Artifact finalization Session is no longer available.')
+    }
+    const submittedSession = toPersistedSession(attachedSession)
+    const durableSession = await (dependencies.saveSession ?? saveSessionInRuntimeOrder)(
+      submittedSession
+    )
+    if (durableSession) {
+      useSessionStore.getState().applyDurableSessionProjection({
+        source: attachedSession,
+        session: durableSession
+      })
+    }
+  }
+  const ownsArtifactPrompt = (message: { responseToMessageId?: string }): boolean =>
+    !event.promptMessageId || message.responseToMessageId === event.promptMessageId
+  const appliedMessage = [
+    ...(session?.messages ?? []),
+    ...(session?.conversationGraph?.messages ?? [])
+  ].find((message) => message.eventIds.includes(event.id) && ownsArtifactPrompt(message))
+  const appliedArtifactIds = new Set(appliedMessage?.artifactIds ?? [])
+  const sessionReferencesOnly = (resolvedArtifactIds: ReadonlySet<string>): boolean =>
+    [...(session?.messages ?? []), ...(session?.conversationGraph?.messages ?? [])].every(
+      (message) =>
+        (message.artifactIds ?? []).every((artifactId) => resolvedArtifactIds.has(artifactId))
+    )
+  const artifactVersionIds = event.artifacts.flatMap((artifact) =>
+    artifact.versionId ? [artifact.versionId] : []
+  )
+  const artifactProjectId = session?.projectId ?? event.artifacts[0]?.projectId
+  if (appliedMessage && artifactProjectId && artifactVersionIds.length > 0) {
+    try {
+      await persistLatestSession()
+      const reconcile =
+        dependencies.reconcilePendingArtifacts ?? window.api.artifacts.reconcilePendingArtifacts
+      const result = await reconcile({
+        projectId: artifactProjectId,
+        sessionId: event.sessionId,
+        messageId: appliedMessage.id,
+        pendingPaths: event.artifacts
+          .map((artifact) => artifact.path)
+          .filter((path) => path.split(/[\\/]/).includes('.pending')),
+        artifactVersionIds
+      })
+      if (!Array.isArray(result)) {
+        const error = new Error(result.message) as Error & { code: typeof result.code }
+        error.code = result.code
+        throw error
+      }
+      const reconciledVersionIds = new Set(
+        result.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
+      )
+      if (artifactVersionIds.every((versionId) => reconciledVersionIds.has(versionId))) {
+        const resolvedArtifactIds = new Set([
+          ...event.artifacts.map((artifact) => artifact.id),
+          ...result.map((artifact) => artifact.id)
+        ])
+        if (
+          session?.artifactErrorEventIds?.includes(event.id) ||
+          sessionReferencesOnly(resolvedArtifactIds)
+        ) {
+          useSessionStore.getState().clearArtifactError(event.sessionId, event.id)
+        }
+        return true
+      }
+      throw new Error('Artifact reconciliation did not resolve all native Versions.')
+    } catch (error) {
+      useSessionStore
+        .getState()
+        .recordArtifactError(
+          event.sessionId,
+          getErrorText(error),
+          !isArtifactFinalizationProofError(error),
+          event.id
+        )
+      throw error
+    }
+  }
+  const resolvedCompatibilityArtifactIds = new Set<string>()
+  const eventArtifactsAreFinalized = event.artifacts.every((pendingArtifact) => {
+    const finalizedArtifact = session?.artifacts?.find(
+      (artifact) =>
+        appliedArtifactIds.has(artifact.id) &&
+        artifact.name === pendingArtifact.name &&
+        artifact.size === pendingArtifact.size &&
+        artifact.mtimeMs === pendingArtifact.mtimeMs &&
+        !pendingArtifact.versionId &&
+        !artifact.path.split(/[\\/]/).includes('.pending')
+    )
+    if (finalizedArtifact) resolvedCompatibilityArtifactIds.add(finalizedArtifact.id)
+    return Boolean(finalizedArtifact)
+  })
+  if (appliedMessage && eventArtifactsAreFinalized) {
+    if (
+      session?.artifactErrorEventIds?.includes(event.id) ||
+      sessionReferencesOnly(resolvedCompatibilityArtifactIds)
+    ) {
+      useSessionStore.getState().clearArtifactError(event.sessionId, event.id)
+    }
+    return true
+  }
+
   const attached = attachArtifactEvent(event, turnUsage)
 
   if (!attached) return true
@@ -302,25 +416,6 @@ const finalizeArtifactEvent = async (
   let artifactsFinalized = false
 
   try {
-    const persistLatestSession = async (): Promise<void> => {
-      const attachedSession = useSessionStore
-        .getState()
-        .sessions.find((session) => session.id === event.sessionId)
-      if (!attachedSession) {
-        throw new Error('Artifact finalization Session is no longer available.')
-      }
-      const submittedSession = toPersistedSession(attachedSession)
-      const durableSession = await (dependencies.saveSession ?? saveSessionInRuntimeOrder)(
-        submittedSession
-      )
-      if (durableSession) {
-        useSessionStore.getState().applyDurableSessionProjection({
-          source: attachedSession,
-          session: durableSession
-        })
-      }
-    }
-
     await persistLatestSession()
 
     const finalize = dependencies.finalizeRunArtifacts ?? finalizeRunArtifacts
@@ -343,7 +438,7 @@ const finalizeArtifactEvent = async (
       messageId: attached.messageId,
       artifacts: finalizedArtifacts
     })
-    store.clearArtifactError(event.sessionId)
+    store.clearArtifactError(event.sessionId, event.id)
     openMoleculePreviews(event.sessionId, finalizedArtifacts)
     // Auto-review and every main-process provenance reader load the durable Session, not renderer
     // memory. Persist the checksum-bearing finalized Version descriptors before the stop handler may
@@ -355,7 +450,8 @@ const finalizeArtifactEvent = async (
       store.recordArtifactError(
         event.sessionId,
         getErrorText(error),
-        !isArtifactFinalizationProofError(error)
+        !isArtifactFinalizationProofError(error),
+        event.id
       )
     }
     throw error
@@ -626,7 +722,9 @@ const applyWorkspaceRuntimeEvent = async (
       ...(sanitizeMessageAttribution(event.attribution)
         ? { attribution: sanitizeMessageAttribution(event.attribution) }
         : {}),
-      ...(event.promptMessageId ? { responseToMessageId: event.promptMessageId } : {}),
+      ...(event.promptMessageId && event.promptMessageId !== event.messageId
+        ? { responseToMessageId: event.promptMessageId }
+        : {}),
       ...(event.uploads && event.uploads.length > 0 ? { uploads: event.uploads } : {}),
       ...(event.parts && event.parts.length > 0 ? { parts: event.parts } : {})
     })

@@ -206,7 +206,9 @@ export const projectAgentMessageChunks = (
     return { session, results: inputs.map(() => undefined), shouldCommit: false }
   }
   const replayedGraphMessages = new Map<string, ChatMessage[]>()
+  const graphMessagesById = new Map<string, ChatMessage>()
   for (const message of session.conversationGraph?.messages ?? []) {
+    graphMessagesById.set(message.id, message)
     if (message.role !== 'agent') continue
     for (const eventId of message.eventIds) {
       if (!incomingEventIds.has(eventId)) continue
@@ -286,7 +288,11 @@ export const projectAgentMessageChunks = (
     }
 
     const hasVisibleOutput = content.trim().length > 0 || Boolean(sanitizedImage)
-    const now = Date.now()
+    const now = Math.max(
+      Date.now(),
+      (existing?.message.updatedAt ?? -1) + 1,
+      (graphMessagesById.get(messageId)?.updatedAt ?? -1) + 1
+    )
     const mergeContent = (current = ''): string => {
       const text = `${current}${content}`
       return session.agentFrameworkId === 'claude-code'

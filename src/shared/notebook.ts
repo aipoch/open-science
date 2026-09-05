@@ -347,9 +347,9 @@ export const parseNotebookInputPreviewKey = (key: string): NotebookInputPreviewI
   }
 }
 
-// Classifies files that are created inside the notebook session workspace.
-export type NotebookWorkingFileKind =
-  'raw-data' | 'processed-data' | 'cache' | 'script' | 'intermediate' | 'other'
+// Observation reports unclassified changes under data/ and handoff/, not scientific file roles.
+// Historical JSON is read permissively; this contract describes current runtime output.
+export type NotebookWorkingFileKind = 'other'
 
 // Keeps raw streams separate while also preserving a display-ready plain text projection.
 export type NotebookTextOutput = {

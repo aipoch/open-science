@@ -111,7 +111,6 @@ const useAcpRuntime = (): {
     resumeFallback?: AcpPromptRequest['resumeFallback'],
     provenanceContext?: AcpPromptRequest['provenanceContext'],
     contextReset?: AcpPromptRequest['contextReset'],
-    planContinuation?: AcpPromptRequest['planContinuation'],
     turnIntent?: AcpPromptRequest['turnIntent'],
     memoryEnabled?: boolean,
     referencedSessions?: AcpPromptRequest['referencedSessions'],
@@ -463,7 +462,6 @@ const useAcpRuntime = (): {
       resumeFallback?: AcpPromptRequest['resumeFallback'],
       provenanceContext?: AcpPromptRequest['provenanceContext'],
       contextReset?: AcpPromptRequest['contextReset'],
-      planContinuation?: AcpPromptRequest['planContinuation'],
       turnIntent?: AcpPromptRequest['turnIntent'],
       memoryEnabled = true,
       referencedSessions?: AcpPromptRequest['referencedSessions'],
@@ -488,7 +486,6 @@ const useAcpRuntime = (): {
           ...(resumeFallback ? { resumeFallback } : {}),
           ...(provenanceContext ? { provenanceContext } : {}),
           ...(contextReset ? { contextReset: true } : {}),
-          ...(planContinuation ? { planContinuation } : {}),
           ...(turnIntent ? { turnIntent } : {})
         })
       ),

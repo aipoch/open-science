@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import axe from 'axe-core'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -379,4 +380,22 @@ describe('LocalFileBrowser Go to menu', () => {
     expect(follows(pinnedLabel, bookmarkItem)).toBe(true)
     expect(follows(bookmarkItem, pinAction)).toBe(true)
   })
+})
+
+it('regression: local directory children match their ARIA container role', async () => {
+  listDir.mockImplementation(async (path: string): Promise<LocalDirListing> => ({
+    entries: [{ name: 'data', isDirectory: true, size: 0, mtimeMs: 1704067200000 }],
+    truncated: false,
+    resolvedPath: path
+  }))
+  await act(async () => {
+    root.render(<LocalFileBrowser />)
+  })
+  await flush()
+  const result = await axe.run(container, {
+    runOnly: { type: 'rule', values: ['aria-required-children', 'aria-required-parent'] }
+  })
+  expect(
+    result.violations.map(({ id, nodes }) => ({ id, html: nodes.map((node) => node.html) }))
+  ).toEqual([])
 })

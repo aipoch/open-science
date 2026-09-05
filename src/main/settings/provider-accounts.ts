@@ -1,7 +1,9 @@
 import type {
   ChatApiEndpoint,
   ProviderDraft,
+  ProviderDeletionScenarioModelHandling,
   ProviderView,
+  ProviderValidationTarget,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   UpsertProviderRequest,
@@ -21,6 +23,7 @@ import {
   isProviderUsableByFramework,
   isXaiSubscriptionProvider,
   providerEndpoints,
+  preferredEndpoint,
   requiresChatCompletionsBridge,
   xaiSubscriptionProviderIdentity
 } from '../../shared/settings'
@@ -59,6 +62,10 @@ import { XaiProviderAccountOwner } from './xai-provider-account-owner'
 import { ProviderModelCatalogOwner } from './provider-model-catalog-owner'
 import { assertProviderCapacity, assertProviderDraftLimits } from './provider-resource-limits'
 import { assertProviderModelLimit } from './provider-resource-limits'
+import {
+  buildProviderValidationPatch,
+  targetForValidationResult
+} from './provider-validation-state'
 type ProviderAccountsModuleOptions = {
   repository: SettingsRepository
   storageRoot: string
@@ -255,6 +262,8 @@ class ProviderAccountsModule {
 
     if (existing?.lastValidatedAt !== undefined && !credentialsChanged)
       provider.lastValidatedAt = existing.lastValidatedAt
+    if (existing?.lastValidatedTarget !== undefined && !credentialsChanged)
+      provider.lastValidatedTarget = existing.lastValidatedTarget
     const preserveValidationFailure =
       !credentialsChanged ||
       (provider.type === 'claude-shared' && provider.disconnectedAt !== undefined)
@@ -277,7 +286,10 @@ class ProviderAccountsModule {
     await this.repository.upsertProvider(provider, editId)
   }
 
-  async deleteProvider(id: string): Promise<void> {
+  async deleteProvider(
+    id: string,
+    scenarioModelHandling?: ProviderDeletionScenarioModelHandling
+  ): Promise<void> {
     const settings = await this.repository.getSettings()
     if (settings.providers.some((provider) => provider.id === id && isXaiRecord(provider))) {
       await this.xai.logout()
@@ -285,7 +297,7 @@ class ProviderAccountsModule {
 
     await this.auth.serializeAccountMutation(async () => {
       await this.auth.cleanupProviderBeforeDelete(id)
-      await this.repository.deleteProvider(id)
+      await this.repository.deleteProvider(id, scenarioModelHandling)
     })
   }
 
@@ -412,6 +424,13 @@ class ProviderAccountsModule {
         ? undefined
         : await this.auth.validateProviderAuth(resolved.provider, settings, storedValidationTarget)
     const usesCompatibilityTransport = requiresChatCompletionsBridge(resolved.provider, framework)
+    const validationFrameworkEndpoints = isXaiSubscriptionProvider(resolved.provider.type)
+      ? (['responses'] as const)
+      : framework.id === 'codebuddy' && usesCompatibilityTransport
+        ? providerEndpoints(resolved.provider)
+        : framework.id === 'codex'
+          ? undefined
+          : framework.supportedApiTypes
     const result =
       incompatibility ??
       xaiAuthResult ??
@@ -422,13 +441,7 @@ class ProviderAccountsModule {
         requireNativeResponsesCompatibility:
           !isXaiSubscriptionProvider(resolved.provider.type) &&
           requiresNativeResponsesCompatibility(resolved.provider, framework),
-        frameworkEndpoints: isXaiSubscriptionProvider(resolved.provider.type)
-          ? ['responses']
-          : framework.id === 'codebuddy' && usesCompatibilityTransport
-            ? providerEndpoints(resolved.provider)
-            : framework.id === 'codex'
-              ? undefined
-              : framework.supportedApiTypes
+        frameworkEndpoints: validationFrameworkEndpoints
       }))
 
     if (!resolved.storedId) return result
@@ -447,20 +460,18 @@ class ProviderAccountsModule {
       return { ...result, applied: false }
     }
 
-    const validationPatch = result.ok
-      ? {
-          lastValidatedAt: Date.now(),
-          lastValidationFailure: undefined
-        }
-      : {
-          lastValidatedAt: undefined,
-          lastValidationFailure: {
-            at: Date.now(),
-            category: result.category,
-            status: result.status,
-            message: result.message
-          }
-        }
+    const validationTarget: ProviderValidationTarget | undefined =
+      isCodexSubscriptionProvider(resolved.provider.type) ||
+      resolved.provider.type === 'claude-isolated'
+        ? undefined
+        : targetForValidationResult(result, {
+            model: resolved.provider.model,
+            endpoint: preferredEndpoint(
+              resolved.provider.apiEndpoints ?? ['anthropic'],
+              validationFrameworkEndpoints ?? ['anthropic', 'openai', 'responses']
+            )
+          })
+    const validationPatch = buildProviderValidationPatch(stored, result, validationTarget)
 
     if (stored.type === 'claude-shared') {
       if (storedValidationTarget?.type !== 'claude-shared') {
@@ -503,7 +514,7 @@ class ProviderAccountsModule {
   }
 
   // Produces an ephemeral backend input without mutating selection or entering authentication;
-  // configured fallback rules remain, while an explicit required model must match exactly.
+  // a persisted or explicitly required model must still exist in the current catalog.
   resolveRuntimeTarget(
     storedProvider: StoredProvider,
     selection: RuntimeProviderModelSelection,

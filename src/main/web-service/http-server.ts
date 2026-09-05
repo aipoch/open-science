@@ -46,6 +46,9 @@ import type {
   CreateTaskProjectRequest,
   StartTaskRunRequest,
   TaskPlanResponseRequest,
+  UpdateProjectSessionDefaultsRequest,
+  UpdateSessionConfigurationRequest,
+  UpdateTaskAgentRoutingRequest,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
 import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
@@ -143,7 +146,20 @@ type WebServerOptions = {
     | 'releaseArtifact'
     | 'runWithCallerContext'
   > &
-    Partial<Pick<HeadlessTaskApi, 'getSessionPlan' | 'respondSessionPlan' | 'resolveActiveRun'>>
+    Partial<
+      Pick<
+        HeadlessTaskApi,
+        | 'getSessionPlan'
+        | 'respondSessionPlan'
+        | 'resolveActiveRun'
+        | 'getProjectSessionDefaults'
+        | 'updateProjectSessionDefaults'
+        | 'getSessionConfiguration'
+        | 'updateSessionConfiguration'
+        | 'getAgentRouting'
+        | 'updateAgentRouting'
+      >
+    >
   onShutdownRequest?: () => void
   bootstrap: {
     appName: string
@@ -600,8 +616,10 @@ const readJsonBody = async (
 
 const taskErrorStatus = (error: TaskApiError): number => {
   if (error.code === 'invalid_request') return 400
+  if (error.code === 'invalid_configuration') return 400
   if (
     error.code === 'session_busy' ||
+    error.code === 'session_revision_conflict' ||
     error.code === 'project_conflict' ||
     error.code === 'session_archived' ||
     error.code === 'project_archived'
@@ -982,6 +1000,42 @@ const handleTaskApiRequest = async (
         })
         return true
       }
+      const projectSessionDefaultsMatch = url.pathname.match(
+        /^\/api\/v1\/projects\/([^/]+)\/session-defaults$/
+      )
+      if (
+        projectSessionDefaultsMatch &&
+        request.method === 'GET' &&
+        tasks.getProjectSessionDefaults
+      ) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, {
+          data: await tasks.getProjectSessionDefaults(
+            decodeURIComponent(projectSessionDefaultsMatch[1])
+          )
+        })
+        return true
+      }
+      if (
+        projectSessionDefaultsMatch &&
+        request.method === 'PATCH' &&
+        tasks.updateProjectSessionDefaults
+      ) {
+        const body = (await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )) as UpdateProjectSessionDefaultsRequest
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, {
+          data: await tasks.updateProjectSessionDefaults(
+            decodeURIComponent(projectSessionDefaultsMatch[1]),
+            body
+          )
+        })
+        return true
+      }
       const projectMatch = url.pathname.match(/^\/api\/v1\/projects\/([^/]+)$/)
       if (projectMatch && request.method === 'PATCH') {
         const body = (await readJsonBody(
@@ -1001,6 +1055,30 @@ const handleTaskApiRequest = async (
         json(response, 200, {
           data: await tasks.listSessions(url.searchParams.get('project') ?? undefined)
         })
+        return true
+      }
+      if (
+        url.pathname === '/api/v1/settings/agent-routing' &&
+        request.method === 'GET' &&
+        tasks.getAgentRouting
+      ) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data: await tasks.getAgentRouting() })
+        return true
+      }
+      if (
+        url.pathname === '/api/v1/settings/agent-routing' &&
+        request.method === 'PATCH' &&
+        tasks.updateAgentRouting
+      ) {
+        const body = (await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )) as UpdateTaskAgentRoutingRequest
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data: await tasks.updateAgentRouting(body) })
         return true
       }
       if (url.pathname === '/api/v1/runs' && request.method === 'POST') {
@@ -1069,6 +1147,30 @@ const handleTaskApiRequest = async (
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, {
           data: await tasks.listArtifacts(decodeURIComponent(sessionArtifactsMatch[1]))
+        })
+        return true
+      }
+      const sessionConfigMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/config$/)
+      if (sessionConfigMatch && request.method === 'GET' && tasks.getSessionConfiguration) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, {
+          data: await tasks.getSessionConfiguration(decodeURIComponent(sessionConfigMatch[1]))
+        })
+        return true
+      }
+      if (sessionConfigMatch && request.method === 'PATCH' && tasks.updateSessionConfiguration) {
+        const body = (await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )) as UpdateSessionConfigurationRequest
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, {
+          data: await tasks.updateSessionConfiguration(
+            decodeURIComponent(sessionConfigMatch[1]),
+            body
+          )
         })
         return true
       }

@@ -3,8 +3,10 @@ import {
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   XAI_SUBSCRIPTION_PROVIDER_ID,
+  type ProviderDeletionScenarioModelHandling,
   type SetActiveProviderRequest,
   type SetAgentFrameworkRequest,
+  type SetAgentRoutingRequest,
   type SetReasoningEffortRequest,
   type UpsertProviderRequest
 } from '../../../shared/settings'
@@ -22,6 +24,7 @@ type RuntimeSettingsWorkflowStore = Pick<
   | 'deleteProvider'
   | 'setActiveProvider'
   | 'setAgentFramework'
+  | 'setAgentRouting'
   | 'setReasoningEffort'
   | 'loginClaudeShared'
   | 'logoutClaudeShared'
@@ -93,10 +96,11 @@ class RuntimeSettingsWorkflows {
   }
 
   async deleteProvider(
-    id: string
+    id: string,
+    scenarioModelHandling?: ProviderDeletionScenarioModelHandling
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['deleteProvider']>>> {
     const before = await this.settings.getSettingsView()
-    const snapshot = await this.settings.deleteProvider(id)
+    const snapshot = await this.settings.deleteProvider(id, scenarioModelHandling)
     this.effects.requestProviderReconnect(
       affectedProviderIds(id),
       before.activeProviderId !== snapshot.activeProviderId
@@ -115,6 +119,17 @@ class RuntimeSettingsWorkflows {
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['setAgentFramework']>>> {
     const snapshot = await this.settings.setAgentFramework(request.id)
     this.effects.requestAgentFrameworkSwitch()
+    return snapshot
+  }
+
+  async setAgentRouting(
+    request: SetAgentRoutingRequest
+  ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['setAgentRouting']>>> {
+    const before = await this.settings.getSettingsView()
+    const snapshot = await this.settings.setAgentRouting(request)
+    if (snapshot.agentFrameworkId !== before.agentFrameworkId) {
+      this.effects.requestAgentFrameworkSwitch()
+    }
     return snapshot
   }
 
