@@ -188,3 +188,46 @@ describe('database startup owner', () => {
     expect(blocked.phase === 'blocked' && blocked.error.diagnostics).toBeFalsy()
   })
 })
+
+describe('D03 subscriber failure isolation', () => {
+  it('keeps verification, published state, and retry consistent when starting delivery throws', async () => {
+    const verifyDatabase = vi.fn(async () => {})
+    const reportBlocked = vi.fn()
+    const owner = createDatabaseStartupOwner({ verifyDatabase, reportBlocked })
+    const unsubscribe = owner.subscribe((state) => {
+      if (state.phase === 'starting') throw new Error('injected notification failure')
+    })
+    const healthyListener = vi.fn()
+    owner.subscribe(healthyListener)
+
+    expect.soft(await owner.start()).toEqual({ phase: 'starting' })
+    await owner.whenVerified()
+    expect.soft(healthyListener).toHaveBeenCalledWith({ phase: 'starting' })
+    expect.soft(reportBlocked).not.toHaveBeenCalled()
+    unsubscribe()
+    expect.soft(await owner.retry()).toEqual({ phase: 'starting' })
+    expect(verifyDatabase).toHaveBeenCalledOnce()
+    owner.complete()
+    expect(owner.getState()).toEqual({ phase: 'ready' })
+  })
+  it('can retry a database failure even if blocked notifications throw', async () => {
+    const failure = new DatabaseMigrationError('database_open_failed', 'locked', true)
+    const verifyDatabase = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(undefined)
+    const owner = createDatabaseStartupOwner({ verifyDatabase, reportBlocked: vi.fn() })
+    owner.subscribe(() => {
+      throw new Error('notification unavailable')
+    })
+    const healthy = vi.fn()
+    owner.subscribe(healthy)
+    await expect(owner.start()).resolves.toMatchObject({
+      phase: 'blocked',
+      error: { retryable: true }
+    })
+    expect(healthy).toHaveBeenCalledWith(expect.objectContaining({ phase: 'blocked' }))
+    await expect(owner.retry()).resolves.toEqual({ phase: 'starting' })
+    await owner.whenVerified()
+    owner.complete()
+    expect(healthy).toHaveBeenCalledWith({ phase: 'ready' })
+    expect(verifyDatabase).toHaveBeenCalledTimes(2)
+  })
+})

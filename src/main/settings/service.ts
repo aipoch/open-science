@@ -89,7 +89,7 @@ import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
-import { resolveStorageRoot } from '../storage-root'
+import { resolveConfigRoot } from '../storage-root'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   type AgentModelChangeTarget,
@@ -156,7 +156,7 @@ export type UninstallResult = {
 
 export type SettingsServiceOptions = {
   repository?: SettingsRepository
-  storageRoot?: string
+  configRoot?: string
   // Packaged main entry reused as the isolated stdio Skill runtime MCP child.
   skillRuntimeMcpEntryPath?: string
   log?: Logger
@@ -209,7 +209,7 @@ export type SettingsServiceOptions = {
   getNotebookNetworkStatus?: () => Promise<NotebookNetworkStatus>
   installNotebookNetwork?: () => Promise<{ cancelled: boolean }>
   removeNotebookNetwork?: () => Promise<{ cancelled: boolean }>
-  // Encrypted-token controller for claude-isolated; default-constructed against this.storageRoot
+  // Encrypted-token controller for claude-isolated; default-constructed against this.configRoot
   // when omitted. Storage is delegated to the host's SettingsRepository + encrypt/tryDecryptKey
   // pipeline, mirroring how CodexAuthController delegates to openCodexAuthSession.
   claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
@@ -231,7 +231,7 @@ class SettingsService {
   private readonly runtimeManager: AgentRuntimeManager
   private readonly backendResolver: AgentBackendResolver
   private readonly scenarioModels: ScenarioModelOwner
-  private readonly storageRoot: string
+  private readonly configRoot: string
   private readonly networkProxy: NetworkProxySettingsOwner
   private readonly notebookNetwork: NotebookNetworkSettingsOwner
   private readonly packageMirror: PackageMirrorSettingsOwner
@@ -248,8 +248,8 @@ class SettingsService {
   private deviceCredentialDisconnector?: (credentialId: string) => Promise<void>
   private skillDeletionGuard?: (skillId: string) => Promise<void>
   constructor(options: SettingsServiceOptions = {}) {
-    this.storageRoot = options.storageRoot ?? resolveStorageRoot()
-    this.repository = options.repository ?? new SettingsRepository(this.storageRoot)
+    this.configRoot = options.configRoot ?? resolveConfigRoot()
+    this.repository = options.repository ?? new SettingsRepository(this.configRoot)
     this.networkProxy = new NetworkProxySettingsOwner({
       repository: this.repository,
       apply: options.applyNetworkProxy ?? (async () => undefined)
@@ -283,13 +283,13 @@ class SettingsService {
     this.connectors = new ConnectorSettingsModule(
       this.repository,
       options.openAlexFetch,
-      new DeviceCredentialStore(this.storageRoot)
+      new DeviceCredentialStore(this.configRoot)
     )
     this.userClaudeDir = options.userClaudeDir ?? getUserClaudeConfigDir()
     const userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
     this.skills = new SkillCatalogModule({
       repository: this.repository,
-      storageRoot: this.storageRoot,
+      storageRoot: this.configRoot,
       userClaudeDir: this.userClaudeDir,
       userCodexDir,
       userAgentsDir: options.userAgentsDir ?? join(homedir(), '.agents'),
@@ -301,7 +301,7 @@ class SettingsService {
     const allocateSettingsIdSequence = createSettingsIdSequence()
     this.runtimeManager = new AgentRuntimeManager({
       repository: this.repository,
-      storageRoot: this.storageRoot,
+      configRoot: this.configRoot,
       userClaudeDir: this.userClaudeDir,
       skills: this.skills,
       connectors: this.connectors,
@@ -319,7 +319,7 @@ class SettingsService {
     })
     this.providers = new ProviderAccountsModule({
       repository: this.repository,
-      storageRoot: this.storageRoot,
+      storageRoot: this.configRoot,
       userClaudeDir: this.userClaudeDir,
       userCodexDir,
       allocateSettingsIdSequence,
@@ -337,7 +337,7 @@ class SettingsService {
       providers: this.providers,
       runtime: this.runtimeManager,
       connectors: this.connectors,
-      storageRoot: this.storageRoot,
+      storageRoot: this.configRoot,
       userClaudeDir: this.userClaudeDir,
       skillRuntimeMcpEntryPath: options.skillRuntimeMcpEntryPath ?? process.argv[1] ?? '',
       getXaiOAuthAccessToken: (forceRefresh) => this.providers.getXaiOAuthAccessToken(forceRefresh)
@@ -777,7 +777,7 @@ class SettingsService {
     }
 
     if (!(await this.connectors.provisionedConnectorSkillNames()).includes(name)) return null
-    const filePath = join(connectorSkillSourceDir(this.storageRoot), name, 'SKILL.md')
+    const filePath = join(connectorSkillSourceDir(this.configRoot), name, 'SKILL.md')
     const metadata = await stat(filePath).catch(() => undefined)
     // The body is renderer-bound preview text; cap it at the shared preview budget before reading.
     if (!metadata?.isFile() || metadata.size > SKILL_IMPORT_LIMITS.maxPreviewContentBytes) {
@@ -1397,7 +1397,7 @@ class SettingsService {
   }
 }
 
-// Production service rooted at the shared storage root with real detection dependencies.
+// Production service rooted at the fixed config root with real detection dependencies.
 const createDefaultSettingsService = (): SettingsService => new SettingsService()
 
 export { SettingsService, createDefaultSettingsService }

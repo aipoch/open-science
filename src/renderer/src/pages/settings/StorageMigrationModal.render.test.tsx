@@ -21,9 +21,9 @@ type MockStorageApi = {
 const installApi = (overrides: Partial<MockStorageApi> = {}): MockStorageApi => {
   const api: MockStorageApi = {
     detectActive: vi.fn().mockResolvedValue([]),
-    migrate: vi.fn().mockResolvedValue({ ok: true }),
+    migrate: vi.fn().mockResolvedValue({ ok: true, cleanupPending: false }),
     cancelMigrate: vi.fn().mockResolvedValue(undefined),
-    commitAndRelaunch: vi.fn().mockResolvedValue({ ok: true }),
+    commitAndRelaunch: vi.fn().mockResolvedValue({ ok: true, cleanupPending: false }),
     discardMigratedCopy: vi.fn().mockResolvedValue({ ok: true }),
     onProgress: vi.fn(() => () => {}),
     ...overrides
@@ -172,7 +172,7 @@ describe('StorageMigrationModal', () => {
     expect(document.body.textContent).toMatch(/cleaning up/i)
 
     await act(async () => {
-      resolveMigrate?.({ ok: true })
+      resolveMigrate?.({ ok: true, cleanupPending: false })
       await Promise.resolve()
     })
 
@@ -191,7 +191,7 @@ describe('StorageMigrationModal', () => {
   it('Keep current location discards the copy and closes without committing', async () => {
     const onClose = vi.fn()
     const api = installApi({
-      migrate: vi.fn().mockResolvedValue({ ok: true })
+      migrate: vi.fn().mockResolvedValue({ ok: true, cleanupPending: false })
     })
 
     await act(async () => {

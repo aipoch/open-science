@@ -376,7 +376,6 @@ import {
   initDataRoot,
   resolveConfigRoot,
   resolveDataRoot,
-  resolveStorageRoot,
   samePath
 } from './storage-root'
 import { createUpdateCommandOwner, registerUpdateIpcHandlers } from './update/ipc'
@@ -512,12 +511,12 @@ const createApplicationModules = async (
   const permissionApprovalPresence = new PermissionApprovalPresence()
   const webSessionPersistenceFlush = createWebSessionPersistenceFlush(applicationEvents)
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
-  const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
+  const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveConfigRoot())
   const specialistPackageRecovery = {
     current: undefined as (<T>(operation: () => Promise<T>) => Promise<T>) | undefined
   }
   const settingsRepository = new SettingsRepository(
-    settingsStore ?? resolveStorageRoot(),
+    settingsStore ?? resolveConfigRoot(),
     (operation) => specialistPackageSkillAdapter.runMutationExclusive(operation)
   )
   const networkProxyRuntime = new NetworkProxyRuntime({
@@ -692,7 +691,7 @@ const createApplicationModules = async (
   }
   const notificationInbox = createNotificationInboxController({
     headless,
-    repository: new NotificationInboxDbRepository(() => getProjectDbClient(resolveStorageRoot())),
+    repository: new NotificationInboxDbRepository(() => getProjectDbClient(resolveConfigRoot())),
     onChanged: (event) => applicationEvents.publish('notifications:changed', event),
     onError: (error) =>
       createLogger('notifications').warn('message center operation failed', errorLogFields(error))
@@ -720,7 +719,7 @@ const createApplicationModules = async (
   }
   const managedFileVersionService = new ManagedFileVersionService({
     storageRoot: resolveDataRoot(),
-    getClient: () => getProjectDbClient(resolveStorageRoot())
+    getClient: () => getProjectDbClient(resolveConfigRoot())
   })
   // Session reads and permission scope validation both need a late-bound view of ACP ownership:
   // startup runs before the runtime exists, while later reads must preserve live prompt state.
@@ -764,7 +763,7 @@ const createApplicationModules = async (
   )
   const auxiliaryUsageLog = createLogger('session-usage:auxiliary')
   const auxiliaryUsageRecorder = new SessionAuxiliaryTurnUsageRecorder(() =>
-    getProjectDbClient(resolveStorageRoot())
+    getProjectDbClient(resolveConfigRoot())
   )
   const recordAuxiliaryUsage = async (record: SessionAuxiliaryTurnUsageRecord): Promise<void> => {
     try {
@@ -813,7 +812,7 @@ const createApplicationModules = async (
   })
   const artifactProvenanceRepository = new ArtifactProvenanceRepository({
     storageRoot: resolveDataRoot(),
-    getClient: () => getProjectDbClient(resolveStorageRoot()),
+    getClient: () => getProjectDbClient(resolveConfigRoot()),
     inputAuthority: immutableInputAuthority,
     managedFileVersions: managedFileVersionService,
     compatibilityRepository: artifactRepository,
@@ -821,7 +820,7 @@ const createApplicationModules = async (
   })
   const provenanceMessageSnapshots = new ProvenanceMessageSnapshotRepository({
     storageRoot: resolveDataRoot(),
-    getClient: () => getProjectDbClient(resolveStorageRoot())
+    getClient: () => getProjectDbClient(resolveConfigRoot())
   })
   const artifactRunRegistry = new ArtifactRunRegistry()
   // The upload repository above is shared so staging recovery, Session upgrade, prompt finalization,
@@ -832,7 +831,7 @@ const createApplicationModules = async (
   // settings service is passed as the legacy store so a pre-existing settings.json
   // grantedLocalRoots field is imported into the DB once on first use.
   const grantedRootsRepository = new GrantedLocalRootsRepository(
-    () => getProjectDbClient(resolveStorageRoot()),
+    () => getProjectDbClient(resolveConfigRoot()),
     settingsService
   )
   grantedRootsRepositoryRef.current = grantedRootsRepository
@@ -881,7 +880,7 @@ const createApplicationModules = async (
 
   // Construct one storage/index/deletion graph for every related IPC surface. Sharing these instances
   // is essential: separate coordinators would have independent queues and recovery gates.
-  const configRoot = resolveStorageRoot()
+  const configRoot = resolveConfigRoot()
   const permissionGrantRegistry = await createPermissionGrantRegistry({
     getClient: () => getProjectDbClient(configRoot),
     isScopeLive: (scope) =>
@@ -1426,7 +1425,7 @@ const createApplicationModules = async (
 
   // Builtins are validated once at startup from read-only repository resources. Package imports use
   // the same repository while keeping their dynamic Connector/custom-Skill catalog separate.
-  const specialistRepository = new SpecialistRepository(resolveStorageRoot())
+  const specialistRepository = new SpecialistRepository(resolveConfigRoot())
   const appVersion = app.getVersion()
   const specialistSkills = await settingsService.listSpecialistSkillCatalog({ bundledOnly: true })
   composition.phase('specialist-catalog')
@@ -1452,7 +1451,7 @@ const createApplicationModules = async (
     builtinRegistry,
     (operation) => specialistPackageRecovery.current?.(operation) ?? operation()
   )
-  const marketplaceRepository = new MarketplaceRepository(resolveStorageRoot())
+  const marketplaceRepository = new MarketplaceRepository(resolveConfigRoot())
   const marketplaceOperationCoordinator = new MarketplaceOperationCoordinator()
   await specialistService.ensureBuiltinCatalogReady()
   composition.phase('builtin-specialists')
@@ -1484,7 +1483,7 @@ const createApplicationModules = async (
     }
   }
   const specialistPackageService = new SpecialistPackageService({
-    storageDir: resolveStorageRoot(),
+    storageDir: resolveConfigRoot(),
     repository: specialistRepository,
     catalog: async () => {
       const appVersion = app.getVersion()
@@ -1665,7 +1664,7 @@ const createApplicationModules = async (
   // Startup registers the complete production adapter below before any IPC surface becomes callable.
   const completionGateRuntimeRegistry = new CompletionGateRuntimeRegistry()
   const completionHandoffLifecycle = new CompletionHandoffLifecycle(
-    new FileCompletionHandoffRepository(join(resolveStorageRoot(), 'specialist-handoffs')),
+    new FileCompletionHandoffRepository(join(resolveConfigRoot(), 'specialist-handoffs')),
     completionGateRuntimeRegistry,
     Date.now,
     (event) => broadcastToRenderers(SPECIALIST_IPC.HANDOFF_LIFECYCLE_CHANGED, event),
@@ -1767,7 +1766,7 @@ const createApplicationModules = async (
   const connectorApplication = await modules.add(
     {
       settings: settingsService,
-      skillsDir: connectorSkillSourceDir(resolveStorageRoot()),
+      skillsDir: connectorSkillSourceDir(resolveConfigRoot()),
       openExternal: (url) => shell.openExternal(url),
       notifyStatusChanged: () =>
         broadcastToRenderers('settings:connector-runtime-changed', undefined),

@@ -19,6 +19,71 @@ const sessions = (count: number, projectId = 'project-a'): SearchableSession[] =
   }))
 
 describe('global search catalog', () => {
+  it.each([
+    ['Übersicht', 'übersicht'],
+    ['ÉTUDE', 'étude'],
+    ['ТЕСТ', 'тест'],
+    ['Analysis', 'ＡＮＡＬＹＳＩＳ'],
+    ['Étude', 'E\u0301tude'],
+    ['ＡＮＡＬＹＳＩＳ', 'analysis'],
+    ['E\u0301tude', 'étude'],
+    ['ﬀ analysis', 'ff'],
+    ['Ⓓ analysis', 'd'],
+    ['İstanbul', 'İ'],
+    ['İstanbul', 'i\u0307'],
+    ['İstanbul in summer', 'i'],
+    ['Literal [.*+?^${}()|\\] query', '[.*+?^${}()|\\]'],
+    ['İstanbul', '']
+  ])('finds title %s using query %s', (title, query) => {
+    const result = searchSessionTitles({
+      sessions: [{ ...sessions(1)[0], title }],
+      projectNames: new Map([['project-a', 'Alpha']]),
+      primaryProjectId: 'project-a',
+      query,
+      visiblePrimaryCount: 8
+    })
+
+    expect(result.primary.map((session) => session.id)).toEqual(['session-0'])
+    expect(result.primaryTotalCount).toBe(1)
+    expect(result.primary[0].title).toBe(title)
+  })
+
+  it.each([
+    ['Étude', 'etude'],
+    ['Übersicht', 'ubersicht'],
+    ['Straße', 'strasse'],
+    ['İstanbul', 'i'],
+    ['i\u0307stanbul', 'i'],
+    ['i\u0307\u0301stanbul', 'i\u0307'],
+    ['No wildcard match', '.*']
+  ])('keeps title %s distinct from query %s', (title, query) => {
+    const result = searchSessionTitles({
+      sessions: [{ ...sessions(1)[0], title }],
+      projectNames: new Map([['project-a', 'Alpha']]),
+      primaryProjectId: 'project-a',
+      query,
+      visiblePrimaryCount: 8
+    })
+
+    expect(result.primary).toEqual([])
+  })
+
+  it('uses the existing number lookup for full-width digits', () => {
+    const result = searchSessionTitles({
+      sessions: [
+        { ...sessions(1)[0], id: 'prefix', number: 123, updatedAt: 2_000 },
+        { ...sessions(1)[0], id: 'exact', number: 12 },
+        { ...sessions(1)[0], id: 'title-only', title: '12', number: 7 }
+      ],
+      projectNames: new Map([['project-a', 'Alpha']]),
+      primaryProjectId: 'project-a',
+      query: '１２',
+      visiblePrimaryCount: 8
+    })
+
+    expect(result.primary.map((session) => session.id)).toEqual(['exact', 'prefix'])
+  })
+
   it('matches Session titles, partitions other projects, and reveals primary results in batches of eight', () => {
     const result = searchSessionTitles({
       sessions: [

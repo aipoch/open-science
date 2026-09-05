@@ -46,9 +46,16 @@ const NoticeButton = ({
   button: ErrorNoticeButton
   variant?: 'secondary'
 }): React.JSX.Element => (
-  <Button variant={variant} onClick={button.onClick} disabled={button.disabled || button.loading}>
+  <Button
+    type="button"
+    className="focus-visible:transition-none"
+    variant={variant}
+    onClick={button.onClick}
+    disabled={button.disabled || button.loading}
+    aria-busy={button.loading || undefined}
+  >
     {button.loading ? (
-      <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
+      <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
     ) : null}
     {button.label}
   </Button>
@@ -66,54 +73,54 @@ const ErrorNotice = ({
   primaryButton
 }: ErrorNoticeProps): React.JSX.Element => {
   return (
-    <section className="flex w-full max-w-md flex-col items-center gap-5">
-      <FlaskLogo className="mb-1 h-auto w-1/3 text-text-300" />
+    <section className="flex w-full min-w-0 max-w-md flex-col gap-4 text-left">
+      <FlaskLogo className="size-10 text-text-300" />
 
       {title !== undefined || description !== undefined ? (
-        <div className="flex w-full items-start gap-4">
+        <div className="flex min-w-0 items-start gap-3">
           {Icon ? (
             <div
-              className={`flex size-11 shrink-0 items-center justify-center rounded-full ${TONE_CLASSES[tone ?? 'amber']}`}
+              className={`flex size-9 shrink-0 items-center justify-center rounded-full ${TONE_CLASSES[tone ?? 'amber']}`}
             >
-              <Icon className="size-5" strokeWidth={1.8} />
+              <Icon className="size-4" strokeWidth={1.8} aria-hidden="true" />
             </div>
           ) : null}
-          <div className="flex flex-col gap-1.5 pt-0.5">
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
             {title !== undefined ? (
-              <h1 className="text-lg font-semibold text-foreground">{title}</h1>
+              <h1 className="text-base leading-6 font-semibold text-foreground [overflow-wrap:anywhere]">
+                {title}
+              </h1>
             ) : null}
             {description !== undefined ? (
-              <p className="text-sm leading-6 text-muted-foreground">{description}</p>
+              <p className="text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+                {description}
+              </p>
             ) : null}
           </div>
         </div>
       ) : null}
 
       {errorCode !== undefined ? (
-        <p className="w-full rounded-lg bg-muted px-3.5 py-2.5 text-center font-mono text-xs text-muted-foreground">
+        <p className="w-full rounded-lg bg-muted px-3 py-2.5 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
           {errorCode}
         </p>
       ) : null}
 
       {help ? (
-        <div className="flex w-full flex-col gap-3.5 rounded-2xl bg-muted p-5">
+        <div className="flex w-full min-w-0 flex-col gap-4 rounded-lg bg-muted p-4 [overflow-wrap:anywhere]">
           <div className="flex flex-col gap-1">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-              {help.whyLabel}
-            </p>
+            <p className="text-xs font-medium text-muted-foreground">{help.whyLabel}</p>
             <p className="text-[13px] leading-6 text-foreground/90">{help.why}</p>
           </div>
           <div className="flex flex-col gap-1">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-              {help.howLabel}
-            </p>
+            <p className="text-xs font-medium text-muted-foreground">{help.howLabel}</p>
             <p className="text-[13px] leading-6 text-foreground/90">{help.how}</p>
           </div>
         </div>
       ) : null}
 
       {secondaryButton !== undefined || primaryButton !== undefined ? (
-        <div className="flex items-center gap-3">
+        <div className="flex w-full flex-wrap items-center justify-end gap-2">
           {secondaryButton ? <NoticeButton button={secondaryButton} variant="secondary" /> : null}
           {primaryButton ? <NoticeButton button={primaryButton} /> : null}
         </div>
@@ -125,10 +132,10 @@ const ErrorNotice = ({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                className="inline-flex items-center gap-1.5 text-xs text-muted-foreground underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
+                className="inline-flex max-w-full items-center gap-1.5 self-end rounded-sm text-xs text-muted-foreground underline decoration-dotted underline-offset-4 hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 onClick={issueLink.onClick}
               >
-                <CircleQuestionMark className="size-3.5" />
+                <CircleQuestionMark className="size-3.5 shrink-0" aria-hidden="true" />
                 {issueLink.label}
               </button>
             </TooltipTrigger>

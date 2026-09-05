@@ -6,7 +6,9 @@ import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useSessionStore } from '@/stores/session-store'
+import { isTerminalProvisionPhase } from '../../../../shared/notebook-env'
 import { getAgentThinkingStartedAt, type AgentLoadingPhase } from './agent-loading-message'
+import { provisionProgressText } from './provision-progress-text'
 
 type WorkspaceAgentLoadingRowProps = {
   sessionId: string
@@ -88,8 +90,7 @@ const AgentLoadingIndicator = ({
     const progress = state.progress
     return sessionId &&
       progress?.sessionId === sessionId &&
-      progress.phase !== 'done' &&
-      progress.phase !== 'error'
+      !isTerminalProvisionPhase(progress.phase)
       ? progress
       : undefined
   })
@@ -99,7 +100,7 @@ const AgentLoadingIndicator = ({
       {environmentProgress && !visiblePermissionPending && phase !== 'waiting-for-response' ? (
         <div className="flex items-center gap-2 text-xs text-text-000/70">
           <OpenScienceThinkingIndicator />
-          <span>{environmentProgress.message}</span>
+          <span>{provisionProgressText(t, environmentProgress.event)}</span>
           <span className="tabular-nums" aria-hidden="true">
             {Math.round(environmentProgress.progress * 100)}%
           </span>

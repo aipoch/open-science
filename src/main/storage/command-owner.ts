@@ -490,7 +490,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       } else {
         handoffPending = true
       }
-      return result
+      return result.ok ? { ...result, cleanupPending: false } : result
     } catch (err) {
       // runDataRootMigration never rejects; guard the IPC boundary anyway so a renderer call
       // never sees a raw thrown error. Nothing was committed, so lift the write-gate.

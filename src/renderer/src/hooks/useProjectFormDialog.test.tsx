@@ -165,7 +165,8 @@ describe('useProjectFormDialog', () => {
     await act(async () => submitForm(hook.current()))
 
     expect(hook.current().dialogProps.open).toBe(true)
-    expect(hook.current().dialogProps.error).toBe('database is locked')
+    expect(hook.current().dialogProps.error).toBe('Could not save project. Please try again.')
+    expect(hook.current().dialogProps.errorDetail).toBe('database is locked')
     expect(hook.current().dialogProps.isSubmitting).toBe(false)
     expect(openProject).not.toHaveBeenCalled()
     hook.unmount()
@@ -245,7 +246,7 @@ describe('useProjectFormDialog', () => {
     await act(async () => submitForm(hook.current()))
 
     expect(hook.current().dialogProps.open).toBe(true)
-    expect(hook.current().dialogProps.error).toBe('Could not save project.')
+    expect(hook.current().dialogProps.error).toBe('Could not save project. Please try again.')
     expect(hook.current().dialogProps.isSubmitting).toBe(false)
     expect(openProject).not.toHaveBeenCalled()
     hook.unmount()
@@ -259,7 +260,7 @@ describe('useProjectFormDialog', () => {
     await act(async () => submitForm(hook.current()))
 
     expect(hook.current().dialogProps.open).toBe(true)
-    expect(hook.current().dialogProps.error).toBe('Could not save project.')
+    expect(hook.current().dialogProps.error).toBe('Could not save project. Please try again.')
     expect(hook.current().dialogProps.isSubmitting).toBe(false)
     expect(openProject).not.toHaveBeenCalled()
     hook.unmount()

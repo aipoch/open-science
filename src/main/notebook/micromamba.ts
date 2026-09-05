@@ -34,7 +34,7 @@ const isFile = (path: string): boolean => {
 // packaged resource (process.resourcesPath) → <storageRoot>/runtime/micromamba/bin → PATH. The
 // storage-root fallback reuses the production session dir name
 // (PROD_SESSION_DIR_NAME, i.e. ~/.open-science) since this module stays electron-free and cannot
-// see the dev/prod choice made by resolveStorageRoot; dev builds rely on the env override or PATH.
+// see the dev/prod choice made by resolveConfigRoot; dev builds rely on the env override or PATH.
 export type MicromambaLocation = {
   kind: 'override' | 'bundled' | 'runtime' | 'path'
   path: string

@@ -23,7 +23,7 @@ const resolveE2eStorageRoot = (): string | undefined => {
 // A development-only absolute override supports truly isolated onboarding previews without changing
 // HOME — changing HOME breaks the macOS default-keychain lookup and can trigger a dangerous "restore
 // default keychain" dialog. Packaged certification uses its own explicit, disposable E2E root.
-const resolveStorageRoot = (): string => {
+const resolveConfigRoot = (): string => {
   const e2eRoot = resolveE2eStorageRoot()
   if (e2eRoot) return e2eRoot
 
@@ -43,8 +43,8 @@ const resolveStorageRoot = (): string => {
   )
 }
 
-// Alias for call-site clarity now that a second (data) root exists.
-const resolveConfigRoot = resolveStorageRoot
+// Legacy alias retained for source compatibility. New production call sites use resolveConfigRoot.
+const resolveStorageRoot = resolveConfigRoot
 
 // Visible, no-space data folder name. NO space: runtime/ holds conda/venv whose tools break on
 // spaced paths. dev gets a suffix so it never shares data with a packaged build.

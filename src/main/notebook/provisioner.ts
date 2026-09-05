@@ -488,7 +488,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     if (removed) {
       onProgress({
         phase: 'upgrade',
-        message: 'Removed a legacy package blocked by the Windows path limit.',
+        event: { code: 'legacy-package-removed' },
         progress: 0.05
       })
     }
@@ -556,7 +556,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       progress += (CREATE_CEIL - progress) * CREATE_TICK_GAIN
       onProgress({
         phase: `create-${spec.language}`,
-        message: `Creating ${spec.name} environment…`,
+        event: { code: 'environment-create', environment: spec.name },
         progress
       })
     }, CREATE_TICK_MS)
@@ -956,7 +956,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       this.markerPrefixDirectory(DEFAULT_PY_ENV)
     )
     this.cleanupLegacyDefaultPrefix(DEFAULT_PY_ENV)
-    onProgress({ phase: 'done', message: 'Python environment ready', progress: 1 })
+    onProgress({ phase: 'done', event: { code: 'python-ready' }, progress: 1 })
   }
 
   async provisionR(rawProgress: (p: ProvisionProgress) => void): Promise<void> {
@@ -984,7 +984,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       this.markerPrefixDirectory(DEFAULT_R_ENV)
     )
     this.cleanupLegacyDefaultPrefix(DEFAULT_R_ENV)
-    onProgress({ phase: 'done', message: 'R environment ready', progress: 1 })
+    onProgress({ phase: 'done', event: { code: 'r-ready' }, progress: 1 })
   }
 
   async upgradeIfNeeded(onProgress: (p: ProvisionProgress) => void): Promise<void> {
@@ -997,7 +997,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       this.assertPrefixWritable(envPrefix(this.deps.root, DEFAULT_PY_ENV, this.platform))
       // Apply the exact published baseline to the existing env. `install --file --offline` preserves
       // extra user packages while avoiding a repodata solve for the platform-maintained floor.
-      onProgress({ phase: 'upgrade', message: 'Updating default packages…', progress: 0.1 })
+      onProgress({ phase: 'upgrade', event: { code: 'updating-default-packages' }, progress: 0.1 })
       // Hold the env lock around each additive `install --file` so it can't overlap a package install
       // into the same env. Per-env (python then R), matching the service's install-lock key.
       await this.withEnvPrefixLock(DEFAULT_PY_ENV, () =>
@@ -1009,7 +1009,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
         rMaterialized(this.deps.root, this.platform) &&
         !this.deps.isPrefixBlocked?.(envPrefix(this.deps.root, DEFAULT_R_ENV, this.platform))
       ) {
-        onProgress({ phase: 'upgrade-r', message: 'Updating R packages…', progress: 0.6 })
+        onProgress({ phase: 'upgrade-r', event: { code: 'updating-r-packages' }, progress: 0.6 })
         await this.withEnvPrefixLock(DEFAULT_R_ENV, () => this.upgradeOrRebuildR(onProgress))
         writeRReadyMarker(
           this.deps.root,
@@ -1024,7 +1024,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
         (this.deps.now ?? defaultNow)(),
         this.markerPrefixDirectory(DEFAULT_PY_ENV)
       )
-      onProgress({ phase: 'done', message: 'Default environments updated', progress: 1 })
+      onProgress({ phase: 'done', event: { code: 'default-environments-updated' }, progress: 1 })
     } finally {
       this.provisioning = false
     }
@@ -1183,7 +1183,11 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
               return
             }
           }
-          onProgress({ phase: 'restore', message: `Restoring ${name}…`, progress: 0.5 })
+          onProgress({
+            phase: 'restore',
+            event: { code: 'restoring-environment', environment: name },
+            progress: 0.5
+          })
           try {
             // Journal the rebuild (child PID + prefix) so a crash mid-restore is recovered like a
             // materialize. The prefix cleanup + create both run INSIDE the wrapper (after begin
@@ -1248,7 +1252,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           }
         })
       }
-      onProgress({ phase: 'done', message: 'Runtime restored', progress: 1 })
+      onProgress({ phase: 'done', event: { code: 'runtime-restored' }, progress: 1 })
     } finally {
       this.provisioning = false
     }
@@ -1532,7 +1536,11 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     if (existsSync(bin)) {
       try {
         await this.deps.verify(bin, prefix)
-        onProgress({ phase: `${spec.language}-ready`, message: `${spec.name} ready`, progress: 1 })
+        onProgress({
+          phase: `${spec.language}-ready`,
+          event: { code: 'environment-ready', environment: spec.name },
+          progress: 1
+        })
         return
       } catch {
         // A prior failed create can leave an interpreter file before the environment is runnable.
@@ -1543,7 +1551,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
 
     onProgress({
       phase: `fetch-${spec.language}`,
-      message: `Preparing ${spec.name} packages…`,
+      event: { code: 'preparing-packages', environment: spec.name },
       progress: 0.1
     })
     const fetchCache = this.legacyCache
@@ -1561,7 +1569,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     }
     onProgress({
       phase: `create-${spec.language}`,
-      message: `Creating ${spec.name} environment…`,
+      event: { code: 'environment-create', environment: spec.name },
       progress: CREATE_FLOOR
     })
     // Select the cache scoped to this bundle (Windows budget) and clear any legacy over-budget URL
@@ -1629,7 +1637,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
             () => {
               onProgress({
                 phase: `create-${spec.language}`,
-                message: `Retrying ${spec.name} with the short Windows package cache…`,
+                event: { code: 'retrying-short-cache', environment: spec.name },
                 progress: CREATE_FLOOR
               })
             },
@@ -1664,9 +1672,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           if (windowsAccessViolation) rmSync(prefix, { recursive: true, force: true })
           onProgress({
             phase: `create-${spec.language}`,
-            message: windowsAccessViolation
-              ? `Repairing ${spec.name} after a Windows runtime crash…`
-              : `Repairing ${spec.name} package cache…`,
+            event: windowsAccessViolation
+              ? { code: 'repairing-windows-crash', environment: spec.name }
+              : { code: 'repairing-package-cache', environment: spec.name },
             progress: CREATE_FLOOR
           })
           const reseeded = await this.deps.fetchBundle(
@@ -1697,11 +1705,15 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
 
     onProgress({
       phase: `verify-${spec.language}`,
-      message: `Verifying ${spec.name} interpreter…`,
+      event: { code: 'verifying-interpreter', environment: spec.name },
       progress: 0.9
     })
     await this.deps.verify(bin, prefix)
-    onProgress({ phase: `${spec.language}-ready`, message: `${spec.name} ready`, progress: 0.97 })
+    onProgress({
+      phase: `${spec.language}-ready`,
+      event: { code: 'environment-ready', environment: spec.name },
+      progress: 0.97
+    })
   }
 }
 

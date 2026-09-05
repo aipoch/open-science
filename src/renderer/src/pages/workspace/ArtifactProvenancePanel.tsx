@@ -1542,8 +1542,8 @@ const ArtifactProvenancePanel = ({
                   </dd>
                   <dt className="text-text-300">{t('Source')}</dt>
                   <dd className="text-text-100">
-                    {asString(environment.runtime_source) ?? 'unknown'} ·{' '}
-                    {asString(environment.kernel_kind) ?? 'unknown'}
+                    {asString(environment.runtime_source) ?? t('unknown')} ·{' '}
+                    {asString(environment.kernel_kind) ?? t('unknown')}
                   </dd>
                   <dt className="text-text-300">{t('Capture')}</dt>
                   <dd className="text-text-100">
@@ -1586,7 +1586,7 @@ const ArtifactProvenancePanel = ({
                             {asString(pkg.version) ?? '—'}
                           </td>
                           <td className="px-3 py-2 text-text-300">
-                            {asString(pkg.loaded_state) ?? 'unknown'}
+                            {asString(pkg.loaded_state) ?? t('unknown')}
                           </td>
                         </tr>
                       ))}
@@ -1702,7 +1702,7 @@ const ArtifactProvenancePanel = ({
                                         : '—'}
                                   </td>
                                   <td className="whitespace-normal break-words px-2 py-2 align-top text-text-300">
-                                    {asString(operation.result) ?? 'unknown'}
+                                    {asString(operation.result) ?? t('unknown')}
                                   </td>
                                 </tr>
                                 {hasPackageChanges ? (

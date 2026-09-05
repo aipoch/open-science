@@ -1,7 +1,8 @@
-import { X } from 'lucide-react'
+import { LoaderCircle, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
+import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
@@ -34,6 +35,7 @@ type ProjectFormDialogProps = {
   agentContextDraft: string
   isSubmitting: boolean
   error: string | undefined
+  errorDetail?: string
   onNameChange: (value: string) => void
   onDescriptionChange: (value: string) => void
   onAgentContextChange: (value: string) => void
@@ -53,6 +55,7 @@ const ProjectFormDialog = ({
   agentContextDraft,
   isSubmitting,
   error,
+  errorDetail,
   onNameChange,
   onDescriptionChange,
   onAgentContextChange,
@@ -79,7 +82,7 @@ const ProjectFormDialog = ({
           onInteractOutside={(event) => event.preventDefault()}
           className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))] p-0')}
         >
-          <form onSubmit={onConfirm}>
+          <form onSubmit={onConfirm} aria-busy={isSubmitting}>
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
                 <Dialog.Title className={dialogTitleClassName}>{dialogTitle}</Dialog.Title>
@@ -92,6 +95,7 @@ const ProjectFormDialog = ({
                 aria-label={t('Close')}
                 className={dialogCloseButtonClassName}
                 onClick={onCancel}
+                disabled={isSubmitting}
               >
                 <X className="size-4" aria-hidden="true" />
               </Button>
@@ -160,16 +164,28 @@ const ProjectFormDialog = ({
                 {error}
               </p>
             ) : null}
+            {errorDetail ? (
+              <div className="px-5 pb-4">
+                <DiagnosticDetails detail={errorDetail} />
+              </div>
+            ) : null}
             <div className={dialogFooterClassName}>
               <Button
                 type="button"
                 variant="ghost"
                 className={dialogCancelButtonClassName}
                 onClick={onCancel}
+                disabled={isSubmitting}
               >
                 {t('Cancel')}
               </Button>
               <Button type="submit" disabled={nameDraft.trim().length === 0 || isSubmitting}>
+                {isSubmitting ? (
+                  <LoaderCircle
+                    className="size-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                ) : null}
                 {dialogSubmitLabel}
               </Button>
             </div>

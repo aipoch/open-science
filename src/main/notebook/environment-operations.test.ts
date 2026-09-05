@@ -129,7 +129,12 @@ describe('NotebookEnvironmentOperations', () => {
     owner.setDefaultEnvProvisioner(
       {
         provisionPython: async (report) => {
-          report({ phase: 'extract', message: 'extracting', progress: 0.5, language: 'python' })
+          report({
+            phase: 'create-python',
+            event: { code: 'environment-create', environment: 'default-python' },
+            progress: 0.5,
+            language: 'python'
+          })
           throw new Error('bundle corrupt')
         },
         provisionR: async () => undefined
@@ -149,7 +154,7 @@ describe('NotebookEnvironmentOperations', () => {
     ).rejects.toThrow('Could not prepare default-python: bundle corrupt')
 
     expect(forwarded).toEqual([
-      expect.objectContaining({ phase: 'extract', scope: 'python', sessionId: 'session-1' }),
+      expect.objectContaining({ phase: 'create-python', scope: 'python', sessionId: 'session-1' }),
       expect.objectContaining({
         phase: 'error',
         language: 'python',
@@ -289,8 +294,8 @@ describe('NotebookEnvironmentOperations', () => {
     owner.setDefaultEnvProvisioner({
       provisionPython: async (report) => {
         report({
-          phase: 'download',
-          message: 'downloading',
+          phase: 'fetch-python',
+          event: { code: 'downloading-python-runtime' },
           progress: 0.5,
           language: 'python',
           download: {

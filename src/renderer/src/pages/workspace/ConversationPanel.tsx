@@ -63,6 +63,7 @@ import {
 } from '../../../../shared/annotations'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
+import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { ErrorNotice } from '@/components/error-notice'
 import { RemoteJobBadge } from '@/components/RemoteJobBadge'
 import { Button } from '@/components/ui/button'
@@ -436,6 +437,7 @@ const ConversationPanel = ({
       attachments,
       transfers: attachmentTransfers,
       error: composerError,
+      errorDetail: composerErrorDetail,
       historyStatus,
       isHistoryBrowsing,
       isUploading: isUploadingAttachments,
@@ -1111,6 +1113,9 @@ const ConversationPanel = ({
                   >
                     <ErrorNotice icon={AlertTriangle} tone="red" title={composerError} />
                   </div>
+                ) : null}
+                {composerError && composerErrorDetail ? (
+                  <DiagnosticDetails detail={composerErrorDetail} />
                 ) : null}
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
                     red error box, so the user can re-attach and continue the interrupted turn. */}
@@ -1825,7 +1830,10 @@ const ConversationPanel = ({
                                   ? t('Cancelling…')
                                   : transfer.status === 'error'
                                     ? transfer.error || t('Upload failed')
-                                    : `${percent}% of ${formatAttachmentSize(transfer.totalBytes)}`
+                                    : t('{{percent}}% of {{size}}', {
+                                        percent,
+                                        size: formatAttachmentSize(transfer.totalBytes)
+                                      })
                             const pastedText = transfer.pastedTextId
                               ? pastedTextById.get(transfer.pastedTextId)
                               : undefined

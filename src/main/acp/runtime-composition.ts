@@ -41,7 +41,7 @@ import {
   buildSpecialistIdentityPrefix
 } from '../specialist/identity'
 import type { SpecialistService } from '../specialist/service'
-import { resolveConfigRoot, resolveDataRoot, resolveStorageRoot } from '../storage-root'
+import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import type { UploadRepository } from '../uploads/repository'
 import type {
   SessionCatalog,
@@ -213,7 +213,7 @@ const createAcpRuntime = ({
   const defaultCwd = homedir()
   const runtimeCoordinatorRef: { current?: AcpRuntimeCoordinator } = {}
   // One lazily-shared repository for Agent Context lookups; getProjectDbClient caches the client.
-  const projectRepository = new ProjectRepository(() => getProjectDbClient(resolveStorageRoot()))
+  const projectRepository = new ProjectRepository(() => getProjectDbClient(resolveConfigRoot()))
   const eventBroadcast = createAcpRuntimeEventBroadcastCoalescer({
     publish: (events) => broadcastToRenderers('acp:event', events)
   })

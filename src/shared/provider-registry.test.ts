@@ -275,11 +275,20 @@ describe('provider registry', () => {
 
   it('exposes the first catalog entry as the default model', () => {
     expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
+    expect(defaultVendorModel('anthropic')).toBe('claude-opus-5')
     expect(defaultVendorModel('xai')).toBe('grok-4.6')
     expect(defaultVendorModel('zhipu')).toBe('glm-5.3')
   })
 
   it('resolves model-specific static reasoning effort profiles without network discovery', () => {
+    expect(resolveVendorModelReasoningEffort('openai', 'gpt-6-astra')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('anthropic', 'claude-fable-5-1')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'max']
+    })
     expect(resolveVendorModelReasoningEffort('openai', 'gpt-5.5')).toEqual({
       supported: true,
       slots: ['none', 'low', 'medium', 'high', 'xhigh']
@@ -951,8 +960,10 @@ describe('provider registry', () => {
     })
 
     it('resolves shipped models with vendor-published per-model limits', () => {
+      expect(resolveModelContextWindow('anthropic', 'claude-fable-5-1')).toBe(1_000_000)
       expect(resolveModelContextWindow('anthropic', 'claude-opus-4-8')).toBe(1_000_000)
       expect(resolveModelContextWindow('anthropic', 'claude-haiku-4-5-20251001')).toBe(200_000)
+      expect(resolveModelContextWindow('openai', 'gpt-6-astra')).toBe(1_050_000)
       expect(resolveModelContextWindow('openai', 'gpt-5.6-sol')).toBe(1_050_000)
       expect(resolveModelContextWindow('openai', 'gpt-5.4-mini')).toBe(400_000)
       expect(resolveModelContextWindow('xai', 'grok-4.5')).toBe(500_000)

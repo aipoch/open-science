@@ -121,6 +121,7 @@ type ElectronApp = {
     message: string
   } | null>
   completeOnboarding: () => Promise<Page>
+  configureFileBrowserFixture: () => Promise<void>
   configureFakeAgent: () => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
   enableFakeRemoteIt: () => Promise<Page>
@@ -495,6 +496,35 @@ class ElectronAppHarness implements ElectronApp {
     this.resourceProfiler = undefined
     profiler.detach()
     return profiler.finish()
+  }
+
+  // Keep real renderer/preload navigation while replacing the external SSH directory read.
+  // This isolated Electron process is disposed after the test, including its IPC handler.
+  async configureFileBrowserFixture(): Promise<void> {
+    await this.runningApplication.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('compute:list-dir')
+      ipcMain.handle('compute:list-dir', () => ({
+        entries: [],
+        truncated: false,
+        roots: { home: '/home/fixture', scratch: '/scratch/fixture' },
+        resolvedPath: '/home/fixture'
+      }))
+    })
+    await this.page.evaluate(async () => {
+      const bridge = window as unknown as {
+        api: {
+          compute: {
+            create: (request: { sshAlias: string; displayName: string }) => Promise<unknown>
+            bookmarksSet: (providerId: string, paths: string[]) => Promise<unknown>
+          }
+        }
+      }
+      await bridge.api.compute.create({
+        sshAlias: 'a11y-fixture',
+        displayName: 'Accessibility fixture'
+      })
+      await bridge.api.compute.bookmarksSet('ssh:a11y-fixture', ['/scratch/fixture/pinned'])
+    })
   }
 
   async completeOnboarding(): Promise<Page> {

@@ -17,6 +17,7 @@ on:
           - classified
           - unit-coverage
           - i18n
+          - windows-e2e
 
 permissions:
   contents: read
@@ -157,6 +158,13 @@ jobs:
               '' \
               '- `workflow_dispatch i18n -> focused dry-run`' \
               >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "windows-e2e" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:windows-e2e"],"lanes":["policy","e2e_functional_windows","e2e_workspace_windows"],"bundles":["policy","windows_e2e"],"reasonChains":["workflow_dispatch windows-e2e -> focused dry-run"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy","e2e_functional_windows","e2e_workspace_windows"]' >> "$GITHUB_OUTPUT"
+            printf '%s\n' '## PR Gate preflight' '' '- Focused dry-run: Windows E2E shards' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if [[ "$TRUSTED_CLASSIFIER_SOURCE" == "base" ]]; then
@@ -343,22 +351,31 @@ jobs:
         id: interface_contracts
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'interface_contracts') }}
         continue-on-error: true
+        env:
+          RUN_DEDICATED_TESTS: ${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
         run: |
           npm run check:web-api-map
-          npx vitest run \
-            src/preload/index.test.ts \
-            src/preload/electron-renderer-contract-adapter.test.ts \
-            src/shared/renderer-contract.test.ts \
-            src/shared/renderer-contract-catalog.test.ts \
-            src/shared/renderer-surface-inventory.test.ts \
-            src/shared/renderer-surface-matrix.test.ts \
-            src/shared/web-rpc-contract.test.ts
+          # Full portable shards already execute these tests. Keep the map check in this lane.
+          if [[ "$RUN_DEDICATED_TESTS" == "true" ]]; then
+            npx vitest run \
+              src/preload/index.test.ts \
+              src/preload/electron-renderer-contract-adapter.test.ts \
+              src/shared/renderer-contract.test.ts \
+              src/shared/renderer-contract-catalog.test.ts \
+              src/shared/renderer-surface-inventory.test.ts \
+              src/shared/renderer-surface-matrix.test.ts \
+              src/shared/web-rpc-contract.test.ts
+          fi
       - name: Test CLI and SDK
         id: cli_sdk
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
         continue-on-error: true
+        env:
+          RUN_DEDICATED_TESTS: ${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
         run: |
-          npx vitest run cli packages/open-science
+          if [[ "$RUN_DEDICATED_TESTS" == "true" ]]; then
+            npx vitest run cli packages/open-science
+          fi
           npm run check:cli-package
       - name: Check i18n catalog
         id: i18n
@@ -751,7 +768,8 @@ jobs:
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') }}
     runs-on: macos-14
-    timeout-minutes: 15
+    # Builds and all four E2E groups share this runner; allow the final visual group to finish.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -879,11 +897,15 @@ jobs:
           exit "$failed"
 
   windows_e2e:
-    name: Windows E2E
+    name: Windows E2E (shard ${{ matrix.shard }}/2)
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}
     runs-on: windows-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -904,14 +926,14 @@ jobs:
         id: e2e_functional_windows
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
         continue-on-error: true
-        # Balance tests inside slow spec files without increasing the two-worker concurrency cap.
-        run: npm run test:e2e:journey -- --workers=2 --fully-parallel --fail-on-flaky-tests
+        # Split individual tests across runners while keeping each runner's two-worker cap.
+        run: npm run test:e2e:journey -- --workers=2 --fully-parallel --shard=${{ matrix.shard }}/2 --fail-on-flaky-tests
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: functional-e2e-windows-failure
+          name: functional-e2e-windows-failure-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/
@@ -921,13 +943,13 @@ jobs:
         id: e2e_workspace_windows
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') }}
         continue-on-error: true
-        run: npm run test:e2e:workspace -- --workers=2 --fully-parallel --fail-on-flaky-tests
+        run: npm run test:e2e:workspace -- --workers=2 --fully-parallel --shard=${{ matrix.shard }}/2 --fail-on-flaky-tests
       - name: Upload workspace failure artifacts
         if: ${{ steps.e2e_workspace_windows.outcome == 'failure' }}
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: workspace-e2e-windows-failure
+          name: workspace-e2e-windows-failure-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/
@@ -937,7 +959,7 @@ jobs:
       # The new manifest never emits it, so ordinary PRs do not pay this Windows accessibility cost.
       - name: Run legacy Windows accessibility compatibility
         id: e2e_accessibility_windows
-        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows') }}
+        if: ${{ matrix.shard == 1 && steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows') }}
         continue-on-error: true
         run: npm run test:e2e:accessibility -- --fail-on-flaky-tests
       - name: Upload legacy accessibility failure artifacts

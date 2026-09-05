@@ -42,6 +42,7 @@ import {
 import { PythonIcon, RIcon } from './language-icons'
 import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
 import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
+import { provisionProgressText } from '../workspace/provision-progress-text'
 
 // v4 Runtime Registry write surface: one CARD per discovered interpreter per language. Each card can
 // be enabled/disabled (the agent only ever sees enabled envs); external envs additionally expose a
@@ -79,6 +80,7 @@ type ManagedOperationView = {
 }
 
 type RuntimesPanelProps = {
+  headingAs?: 'h2' | 'h3'
   title: string
   description: React.ReactNode
   onOpenNetworkProtection?: () => void
@@ -86,6 +88,7 @@ type RuntimesPanelProps = {
 
 const RuntimesPanel = ({
   title,
+  headingAs,
   description,
   onOpenNetworkProtection
 }: RuntimesPanelProps): React.JSX.Element => {
@@ -592,6 +595,7 @@ const RuntimesPanel = ({
     <div className="p-5" data-testid="runtimes-panel">
       <SettingsSection
         title={title}
+        headingAs={headingAs}
         description={description}
         aria-label={title}
         contentClassName="space-y-5"
@@ -662,6 +666,7 @@ const RuntimesPanel = ({
             const settingUp = preparing || finishing
             const langProgress = langState?.progress
             const progress = finishing ? 1 : (langProgress?.progress ?? 0)
+            const progressMessage = provisionProgressText(t, langProgress?.event) || undefined
             const langError = langState?.error
             const managedRunnable = managedRunnableFor(id)
             const managedEnv = list.find((env) => isDefaultManagedRuntime(id, env))
@@ -670,7 +675,7 @@ const RuntimesPanel = ({
                   preparing,
                   finishing,
                   progress,
-                  message: finishing ? undefined : langProgress?.message,
+                  message: finishing ? undefined : progressMessage,
                   error: langError
                 }
               : undefined
@@ -736,7 +741,7 @@ const RuntimesPanel = ({
                               managedRunnable,
                               settingUp,
                               t,
-                              finishing ? t('Finishing setup…') : langProgress?.message
+                              finishing ? t('Finishing setup…') : progressMessage
                             )}
                           </div>
                           {settingUp ? (

@@ -36,7 +36,7 @@ import type {
   InstallRequest as InstallRequestForTest,
   InstallResult as InstallResultForTest
 } from './package-manager'
-import type { EnvironmentInfo } from '../../shared/notebook-env'
+import type { EnvironmentInfo, ProvisionProgress } from '../../shared/notebook-env'
 import {
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
   NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
@@ -3156,7 +3156,7 @@ describe('notebook runtime service', () => {
           workspaceCwd: root
         })
       }
-      const executions = Array.from({ length: 7 }, (_, index) =>
+      const executions = Array.from({ length: 6 }, (_, index) =>
         service.executeShell({
           sessionId: `session-${index + 1}`,
           workspaceCwd: root,
@@ -3164,36 +3164,41 @@ describe('notebook runtime service', () => {
         })
       )
 
-      await vi.waitFor(async () => {
-        const queuedState = await service.state({
-          sessionId: 'session-7',
-          workspaceCwd: root
-        })
-        expect(queuedState.runs).toHaveLength(1)
-      })
-      const queuedState = await service.state({
-        sessionId: 'session-7',
-        workspaceCwd: root
-      })
-      const queuedRun = queuedState.runs.at(-1)
-      if (queuedRun?.status !== 'queued') {
-        await vi.waitFor(() => expect(entered).toHaveLength(7))
-        for (const release of releases.values()) release()
-        await Promise.allSettled(executions)
-      }
-      expect(queuedRun).toMatchObject({ script: 'command-7', status: 'queued' })
-
       try {
-        await vi.waitFor(() => expect(entered).toHaveLength(6))
+        // Fill the slots before submitting the queued call; filesystem scheduling must not
+        // decide which Session gets the seventh admission under coverage on a busy runner.
+        await vi.waitFor(() => expect(entered).toHaveLength(6), { timeout: 10_000 })
+        executions.push(
+          service.executeShell({
+            sessionId: 'session-7',
+            workspaceCwd: root,
+            command: 'command-7'
+          })
+        )
+        await vi.waitFor(
+          async () => {
+            const state = await service.state({ sessionId: 'session-7', workspaceCwd: root })
+            expect(state.runs).toHaveLength(1)
+            expect(state.runs[0]).toMatchObject({ script: 'command-7', status: 'queued' })
+          },
+          { timeout: 10_000 }
+        )
         expect(entered).toHaveLength(6)
         expect(entered).not.toContain('command-7')
 
         releases.get('command-1')?.()
-        await vi.waitFor(() => expect(entered).toContain('command-7'))
+        await vi.waitFor(() => expect(entered).toContain('command-7'), { timeout: 10_000 })
         for (const release of releases.values()) release()
 
         await expect(Promise.all(executions)).resolves.toHaveLength(7)
       } finally {
+        // Drain calls that have not reached the process stub yet as well as those already
+        // running, even when a readiness assertion fails before the normal release path.
+        execute.mockImplementation(async ({ command }) => ({
+          stdout: command,
+          stderr: '',
+          exitCode: 0
+        }))
         for (const release of releases.values()) release()
         await Promise.allSettled(executions)
       }
@@ -7400,12 +7405,16 @@ describe('notebook runtime service', () => {
       const root = await createStorageRoot()
       const executions: NotebookExecutionRequest[] = []
       const service = recordingService(root, executions)
-      const progress: Array<{ phase: string; message: string; progress: number }> = []
+      const progress: ProvisionProgress[] = []
       service.setDefaultEnvProvisioner(
         {
           provisionPython: async () => undefined,
           provisionR: async (onProgress) => {
-            onProgress({ phase: 'fetch-r', message: 'Downloading R runtime', progress: 0.4 })
+            onProgress({
+              phase: 'fetch-r',
+              event: { code: 'downloading-r-runtime' },
+              progress: 0.4
+            })
             throw new Error('checksum mismatch')
           }
         },
@@ -7425,14 +7434,14 @@ describe('notebook runtime service', () => {
       expect(progress).toEqual([
         {
           phase: 'fetch-r',
-          message: 'Downloading R runtime',
+          event: { code: 'downloading-r-runtime' },
           progress: 0.4,
           scope: 'r',
           sessionId: 's'
         },
         {
           phase: 'error',
-          message: 'Could not prepare default-r: checksum mismatch',
+          diagnostic: 'Could not prepare default-r: checksum mismatch',
           progress: 0,
           scope: 'r',
           sessionId: 's',

@@ -70,6 +70,7 @@ const createProductionPlanService = ({
       sessionId,
       expectedRevision,
       plan,
+      archivePlanProjection,
       sessionStatus,
       beforePersist
     }) =>
@@ -78,6 +79,7 @@ const createProductionPlanService = ({
         sessionId,
         expectedRevision,
         patch: { plan },
+        ...(archivePlanProjection ? { archivePlanProjection } : {}),
         sessionStatus,
         ...(beforePersist ? { beforePersist } : {})
       }),

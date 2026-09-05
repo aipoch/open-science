@@ -2,7 +2,6 @@ import type { AcpMessageImage, AcpRuntimeEvent } from '../../../../shared/acp'
 import type { FileReference } from '../../../../shared/artifacts'
 import * as annotationProtocol from '../../../../shared/annotations'
 import { withPdfContext as withPdf } from '../../../../shared/session-pdf-context'
-import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import {
   collectSessionReferences,
   isSessionSizeLimitError,
@@ -64,9 +63,6 @@ type SendWorkspaceMessageIntent = {
   attribution?: MessageAttribution
   requireExistingSession?: boolean
   turnIntent?: 'plan-first'
-  planContinuation?: Pick<ActivePlanProjection, 'artifactVersionId' | 'revision'> & {
-    pendingAction?: 'review' | 'approve' | 'reject'
-  }
   attachments?: UploadedAttachment[]
   annotations?: annotationProtocol.Annotation[]
   cwd?: string
@@ -239,7 +235,6 @@ type PromptDispatch = {
     resumeFallback?: HistoryReplayContext
     contextReset?: boolean
   }
-  continuation?: Parameters<WorkspaceCommandRuntime['sendPrompt']>[11]
   turnIntent?: SendWorkspaceMessageIntent['turnIntent']
   accepted?: () => void
 }
@@ -266,7 +261,6 @@ const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatc
     request.replay?.resumeFallback,
     promptContext(request.sessionId, request.messageId),
     request.replay?.contextReset,
-    request.continuation,
     request.turnIntent,
     useSessionStore.getState().sessions.find((session) => session.id === request.sessionId)
       ?.memoryEnabled !== false
@@ -827,8 +821,6 @@ const sendWorkspaceMessage = async (
       }
     }
     const projectId = input.projectId ?? session?.projectId
-    if (input.planContinuation && !projectId) return undefined
-
     if (session?.isPending) {
       const cwd = input.cwd || session.cwd || undefined
       let replay: HistoryReplayContext | undefined
@@ -1006,16 +998,6 @@ const sendWorkspaceMessage = async (
       if (!ownsPrompt(sessionId, appended.messageId)) return undefined
     }
     const replay = prepared.replay()
-    const continuation = input.planContinuation
-      ? {
-          projectId: projectId!,
-          artifactVersionId: input.planContinuation.artifactVersionId,
-          expectedRevision: input.planContinuation.revision,
-          ...(input.planContinuation.pendingAction
-            ? { pendingAction: input.planContinuation.pendingAction }
-            : {})
-        }
-      : undefined
     const promptMedia =
       input.truncateFromMessageId && promptAttachments.length > 0
         ? partitionWorkspacePromptAttachments({
@@ -1037,7 +1019,6 @@ const sendWorkspaceMessage = async (
       replay: promptMedia
         ? { ...replay, historyAttachments: promptMedia.historyAttachments }
         : replay,
-      continuation,
       turnIntent: input.turnIntent,
       accepted: () => prepared.acceptPrompt(appended.messageId)
     })

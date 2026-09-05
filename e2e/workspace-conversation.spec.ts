@@ -78,6 +78,9 @@ test('edits and navigates message revisions that persist after relaunch', async 
   let conversation = page.getByRole('region', { name: 'Conversation' })
   await expect(conversation.getByText(USER_MESSAGE, { exact: true })).toBeVisible()
   await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  // Reply text can arrive before the Agent turn ends. Wait for Main to observe completion
+  // before editing history and restarting, which otherwise can open a native quit dialog.
+  await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
 
   await conversation.getByText(USER_MESSAGE, { exact: true }).hover()
   await conversation.getByRole('button', { name: 'Edit message' }).click()

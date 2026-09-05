@@ -754,7 +754,7 @@ describe('Settings backend ownership architecture', () => {
     const mainIpc = readSource(resolve(projectRoot, 'src/main/ipc.ts'))
     const mainIndex = readSource(resolve(projectRoot, 'src/main/index.ts'))
     expect(mainIndex).toContain(
-      'const settingsStore = new SettingsDocumentStore(resolveStorageRoot())'
+      'const settingsStore = new SettingsDocumentStore(resolveConfigRoot())'
     )
     expect(mainIndex).toContain(
       'const startupSettingsRepository = new SettingsRepository(settingsStore)'
@@ -762,7 +762,7 @@ describe('Settings backend ownership architecture', () => {
     expect(mainIndex).toMatch(
       /registerIpcHandlers\(\{\s+mainEntryPath,\s+settingsStore,\s+translate,/u
     )
-    expect(mainIpc).toContain('settingsStore ?? resolveStorageRoot()')
+    expect(mainIpc).toContain('settingsStore ?? resolveConfigRoot()')
     expect(mainIpc).toContain('await settingsService.migrateAgentHomeSkillIdentities()')
     expect(mainIpc.indexOf('specialistPackageRecovery.current =')).toBeLessThan(
       mainIpc.indexOf('await settingsService.migrateAgentHomeSkillIdentities()')

@@ -51,11 +51,35 @@ describe('NotebookNetworkProtectionBanner', () => {
     expect(onOpen).toHaveBeenCalledOnce()
   })
 
-  it('does not claim protection is active when setup is required', async () => {
+  it('keeps Windows standard execution available without claiming protection or requiring setup to run', async () => {
+    const onOpen = vi.fn()
     window.api.settings.getNotebookNetworkStatus = vi.fn().mockResolvedValue({
       kind: 'setupRequired',
       platform: 'win32',
       reasons: ['windowsProfileMissing']
+    })
+    await act(async () => root.render(<NotebookNetworkProtectionBanner onOpen={onOpen} />))
+    await flush()
+
+    expect(container.textContent).toContain('Notebook network protection is not set up.')
+    expect(container.textContent).toContain(
+      'Notebook continues using standard execution. No protected mode is active.'
+    )
+    expect(container.textContent).not.toContain('before notebooks can run')
+    expect(container.textContent).not.toContain('Network protection on')
+
+    const button = container.querySelector<HTMLButtonElement>('button')
+    expect(button?.textContent).toBe('Network settings')
+    expect(button?.disabled).toBe(false)
+    await act(async () => button?.click())
+    expect(onOpen).toHaveBeenCalledOnce()
+  })
+
+  it('requires setup before Linux notebooks can run when bubblewrap is missing', async () => {
+    window.api.settings.getNotebookNetworkStatus = vi.fn().mockResolvedValue({
+      kind: 'setupRequired',
+      platform: 'linux',
+      reasons: ['linuxBubblewrapMissing']
     })
     await act(async () => root.render(<NotebookNetworkProtectionBanner onOpen={() => undefined} />))
     await flush()
@@ -63,8 +87,8 @@ describe('NotebookNetworkProtectionBanner', () => {
     expect(container.textContent).toContain(
       'Notebook network protection needs setup before notebooks can run.'
     )
-    expect(container.textContent).toContain('Notebook continues using standard execution.')
-    expect(container.textContent).not.toContain('protection is active')
+    expect(container.textContent).not.toContain('Notebook continues using standard execution.')
+    expect(container.textContent).not.toContain('Network protection on')
   })
 
   it('uses a generic, actionable message when the status check fails', async () => {

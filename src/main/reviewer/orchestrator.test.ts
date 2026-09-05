@@ -121,7 +121,6 @@ const makeSessionWithRequiredPlanOutput = (): PersistedChatSession => {
     revision: 1,
     approval: 'approved' as const,
     lifecycle: 'in_progress' as const,
-    requiresExplicitContinuation: false,
     document,
     stepStatuses: { Write: { status: 'in_progress' as const, updatedAt: 1500 } },
     stepStates: { Write: { status: 'in_progress' as const } },

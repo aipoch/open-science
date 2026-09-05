@@ -460,6 +460,63 @@ describe('codexFramework', () => {
     ])
   })
 
+  it('keeps the native catalog when an unbundled official model is only a sibling option', () => {
+    const framework = createCodexFramework()
+    const activeProvider = {
+      type: 'official' as const,
+      vendorId: 'openai' as const,
+      apiEndpoints: ['responses' as const],
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5.4',
+      key: 'sk-plaintext-secret'
+    }
+    const config = framework.prepareModelConfig(activeProvider, {
+      storageRoot: '/data',
+      executablePath: '/runtime/codex-acp',
+      nativeVersion: CODEX_VERSION,
+      providerModelCatalog: [
+        { provider: activeProvider },
+        { provider: { ...activeProvider, model: 'gpt-6-astra', contextWindow: 1_050_000 } }
+      ]
+    })
+
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).not.toHaveProperty('model_catalog_json')
+  })
+
+  it('adds local metadata when the active official model is not bundled by Codex', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      {
+        type: 'official',
+        vendorId: 'openai',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-6-astra',
+        contextWindow: 1_050_000,
+        key: 'sk-plaintext-secret'
+      },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        nativeVersion: CODEX_VERSION,
+        reasoningEffort: 'max',
+        reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max']
+      }
+    )
+
+    const codexConfig = JSON.parse(config.env?.CODEX_CONFIG ?? '')
+    const modelCatalogFile = config.configFiles?.find(
+      (file) => file.path === codexConfig.model_catalog_json
+    )
+    expect(JSON.parse(modelCatalogFile?.content ?? '').models).toEqual([
+      expect.objectContaining({
+        slug: 'gpt-6-astra',
+        context_window: 1_050_000,
+        default_reasoning_level: 'max'
+      })
+    ])
+  })
+
   it('keeps bundled metadata for a custom Responses provider on the official OpenAI API host', () => {
     const framework = createCodexFramework()
     const config = framework.prepareModelConfig(

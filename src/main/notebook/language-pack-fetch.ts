@@ -223,7 +223,7 @@ export const createFetchBundleAdapter = (
     try {
       onProgress({
         phase: `fetch-${spec.language}`,
-        message: 'Fetching managed runtime manifest…',
+        event: { code: 'fetching-runtime-manifest' },
         progress: 0.05
       })
       const fetched = await fetchLanguagePack(
@@ -246,17 +246,12 @@ export const createFetchBundleAdapter = (
         (download) => {
           const ratio =
             download.total && download.total > 0 ? download.transferred / download.total : 0
-          const detail =
-            download.phase === 'reconnecting'
-              ? ' (resuming…)'
-              : download.total
-                ? ` (${Math.min(100, Math.round(ratio * 100))}%)`
-                : download.transferred > 0
-                  ? ` (${Math.round(download.transferred / 1024 / 1024)} MB)`
-                  : ''
           onProgress({
             phase: `fetch-${spec.language}`,
-            message: `Downloading managed ${spec.language} runtime${detail}`,
+            event: {
+              code:
+                spec.language === 'python' ? 'downloading-python-runtime' : 'downloading-r-runtime'
+            },
             progress: 0.1 + 0.25 * Math.min(1, ratio),
             download
           })
@@ -264,7 +259,7 @@ export const createFetchBundleAdapter = (
       )
       onProgress({
         phase: `fetch-${spec.language}`,
-        message: `Downloaded ${fetched.entry.file}`,
+        event: { code: 'runtime-downloaded', file: fetched.entry.file },
         progress: 0.35
       })
 
@@ -279,7 +274,7 @@ export const createFetchBundleAdapter = (
       const entries = await validateAndSeedPack(root, unpackedDir, lockPath, (completed, total) => {
         onProgress({
           phase: `fetch-${spec.language}`,
-          message: `Verifying ${completed}/${total} packages…`,
+          event: { code: 'verifying-packages', completed, total },
           progress: 0.35 + 0.15 * (completed / total)
         })
       })
@@ -333,7 +328,8 @@ export const createFetchBundleAdapter = (
       const message = `Managed runtime pack unavailable: ${error instanceof Error ? error.message : String(error)}`
       onProgress({
         phase: `fetch-${spec.language}`,
-        message,
+        event: { code: 'runtime-pack-unavailable' },
+        diagnostic: message,
         progress: 0.1
       })
       throw new Error(message, { cause: error })

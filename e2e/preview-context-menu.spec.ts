@@ -50,7 +50,7 @@ const openLocalBrowserAt = async (page: Page, directory: string): Promise<void> 
     .click()
   const browser = page.getByLabel('Local file browser')
   await expect(browser).toBeVisible()
-  const contents = browser.getByRole('listbox', { name: 'Directory contents' })
+  const contents = browser.getByRole('list', { name: 'Directory contents' })
   await expect(contents).toBeVisible()
   const address = browser.getByLabel('Directory path')
   await address.fill(canonicalDirectory)
@@ -61,7 +61,7 @@ const openLocalBrowserAt = async (page: Page, directory: string): Promise<void> 
 
 const openLocalFile = async (page: Page, name: string): Promise<void> => {
   await page
-    .getByRole('listbox', { name: 'Directory contents' })
+    .getByRole('list', { name: 'Directory contents' })
     .getByRole('button')
     .filter({ hasText: name })
     .click()

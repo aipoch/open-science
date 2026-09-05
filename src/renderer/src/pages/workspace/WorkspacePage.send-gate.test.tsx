@@ -148,7 +148,6 @@ const planProjection = (approval: 'pending' | 'approved', revision = 3): ActiveP
   revision,
   approval,
   lifecycle: approval === 'pending' ? 'awaiting_approval' : 'approved',
-  requiresExplicitContinuation: approval === 'approved',
   document: {
     schema_version: 1,
     task_summary: 'Analyze data',
@@ -604,7 +603,7 @@ describe('WorkspacePage send gate while compacting', () => {
     }
   )
 
-  it('sends approved-Plan continuation language as an ordinary Message for the Agent to interpret', async () => {
+  it('sends an approved-Plan follow-up as an ordinary Message for the Agent to interpret', async () => {
     useSessionStore.setState({
       sessions: [createSession({ activePlanProjection: planProjection('approved') })],
       selectedSessionId: 'sess-a'
@@ -625,10 +624,6 @@ describe('WorkspacePage send gate while compacting', () => {
         text: 'continue'
       })
     )
-    expect(runtime.sendMessage).toHaveBeenCalledWith(
-      expect.not.objectContaining({ planContinuation: expect.anything() })
-    )
-
     runtime.sendMessage.mockClear()
     await act(async () => {
       conversationProps.composer.actions.changeDoc(textDoc('What is the weather?'))
@@ -637,10 +632,6 @@ describe('WorkspacePage send gate while compacting', () => {
       conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
       await Promise.resolve()
     })
-
-    expect(runtime.sendMessage).toHaveBeenCalledWith(
-      expect.not.objectContaining({ planContinuation: expect.anything() })
-    )
   })
 
   it('sends approval language as an ordinary user Message after a Plan interaction ends', async () => {
@@ -667,9 +658,6 @@ describe('WorkspacePage send gate while compacting', () => {
         text: 'approve and continue'
       })
     )
-    expect(runtime.sendMessage).toHaveBeenCalledWith(
-      expect.not.objectContaining({ planContinuation: expect.anything() })
-    )
   })
 
   it('does not convert a plain orphaned-Plan approval Message into a UI decision', async () => {
@@ -692,9 +680,6 @@ describe('WorkspacePage send gate while compacting', () => {
 
     expect(window.api.acp.respondPlan).not.toHaveBeenCalled()
     expect(runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'approve' }))
-    expect(runtime.sendMessage).toHaveBeenCalledWith(
-      expect.not.objectContaining({ planContinuation: expect.anything() })
-    )
   })
 
   it('blocks message-branch changes only while the project-scoped review is running', async () => {

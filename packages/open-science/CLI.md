@@ -326,7 +326,8 @@ open-science plan revise <session-id> --feedback "Split the validation step" --j
 ```
 
 Version/revision matching prevents a stale automation client from deciding a newer Plan. Approval
-continues the parked Run; feedback asks the live Plan interaction for a revision.
+persists the exact decision and triggers a one-time Agent wakeup; feedback asks the live Plan
+interaction for a revision.
 
 ## Session configuration
 
@@ -382,15 +383,20 @@ schema migration:
   that omit it, and malformed values, restore as `allow`.
 - autoReviewEnabled and specialistId already existed and are reused. Historical
   autoReviewEnabled omissions remain disabled; an omitted specialistId remains Main Agent.
-- Plan artifacts/approval/continuation continue under runtimeContext.plan; delegated attempts,
-  messages, and questions continue under runtimeContext.delegatedWork.
+- Plan artifacts, persisted approval, active context, and delivery receipts remain under
+  runtimeContext.plan. The originating Conversation Turn remains the Plan owner; related later
+  ordinary or application Attempts on the same durable Message Branch receive it as active context
+  without taking ownership. Delegated attempts, messages, and questions remain under
+  runtimeContext.delegatedWork.
 
 Project Session defaults add one `sessionDefaults` JSON-text column to the Project table. Existing
 rows migrate to `{}` and therefore retain prior behavior. Agent routing reuses the existing Settings
 JSON fields.
 
-No persistent enum value is added. Existing waiting-plan-approval remains the durable Session
-status, while a public Run remains running and carries an attention discriminant.
+No persistent Session status enum value is added. Existing waiting-plan-approval remains the
+durable Session status, while a public Run remains running and carries an attention discriminant.
+Plan delivery receipts may persist `accepted` after the provider boundary so restart recovery can
+settle that one-shot wakeup without replaying it.
 
 ## Machine-readable output
 

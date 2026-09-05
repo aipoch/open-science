@@ -516,6 +516,12 @@ describe('SessionPersistenceCoordinator contracts', () => {
       reconcileSessionDeletions: vi.fn(async () => {
         order.push('provenance')
       }),
+      reconcileSessionCleanup: vi.fn(async () => {
+        order.push('provenance:cleanup')
+      }),
+      reconcileMessageSnapshots: vi.fn(async () => {
+        order.push('provenance:snapshots')
+      }),
       prepareSessionDeletion: vi.fn(async (session: PersistedChatSession) => ({
         kind: 'ordinary' as const,
         projectId: session.projectId,
@@ -559,13 +565,14 @@ describe('SessionPersistenceCoordinator contracts', () => {
       'load',
       'unread',
       'permission',
+      'provenance:cleanup',
       'upload:session-1',
       'upload:session-2',
-      'provenance',
       'artifact-project:project-1',
       'artifact-project:project-2',
       'artifact-session:session-1',
       'artifact-session:session-2',
+      'provenance:snapshots',
       'files:reconcile',
       'files:sync:session-1',
       'files:sync:session-2'
@@ -587,5 +594,46 @@ describe('SessionPersistenceCoordinator contracts', () => {
       expect.any(Object),
       expect.objectContaining({ removeOrphanStaging: false })
     )
+  })
+
+  it('runs independent Provenance cleanup before fallible Artifact recovery', async () => {
+    const session = createSession()
+    const { repository } = createRepository([session])
+    const reconcileSessionCleanup = vi.fn(async () => undefined)
+    const reconcileMessageSnapshots = vi.fn(async () => undefined)
+    const provenance = {
+      validateFinalizedMessageBindings: vi.fn(async () => undefined),
+      captureFinalizedMessages: vi.fn(async () => undefined),
+      reconcileSessionDeletions: vi.fn(async () => undefined),
+      reconcileSessionCleanup,
+      reconcileMessageSnapshots,
+      prepareSessionDeletion: vi.fn(async () => ({
+        kind: 'ordinary' as const,
+        projectId: session.projectId,
+        sessionId: session.id
+      })),
+      completeSessionDeletion: vi.fn(async () => undefined),
+      abortSessionDeletion: vi.fn(async () => undefined)
+    }
+    const artifactStorage = {
+      prepareProjectReconciliation: vi.fn(async () => {
+        throw new Error('artifact recovery failed')
+      }),
+      reconcileSession: vi.fn(async () => ({ recoveredMessageArtifacts: [] }))
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      provenance,
+      undefined,
+      artifactStorage
+    )
+
+    await coordinator.loadAll()
+
+    expect(reconcileSessionCleanup).toHaveBeenCalledOnce()
+    expect(reconcileSessionCleanup).toHaveBeenCalledWith([session])
+    expect(reconcileMessageSnapshots).not.toHaveBeenCalled()
   })
 })

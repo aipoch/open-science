@@ -590,7 +590,7 @@ const ManagedVersionNavigation = ({
       >
         <ChevronLeft aria-hidden="true" />
       </Button>
-      <span className="min-w-8 text-center text-xs font-medium text-text-100">
+      <span className="min-w-8 text-center text-xs font-medium text-text-000">
         v{inspect.selectedVersion?.versionNumber ?? inspect.versions[selectedIndex]?.versionNumber}
       </span>
       <Button

@@ -31,7 +31,7 @@ import { computeProviderId } from '../../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { createLogger, errorLogFields } from '../logger'
-import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
+import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { createSettingsComputeGrantPort } from '../settings/compute-grant-port'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { TaskNotificationService } from '../notifications/task-notifications'
@@ -608,13 +608,13 @@ const createComputeHandlers = (
 // is passed as a provider (not a resolved promise) so a failed first initialization can be retried on
 // the next request instead of being cached for the app's lifetime.
 const createDefaultComputeHostRepository = (): ComputeHostRepository =>
-  new ComputeHostRepository(() => getProjectDbClient(resolveStorageRoot()))
+  new ComputeHostRepository(() => getProjectDbClient(resolveConfigRoot()))
 
 const createDefaultComputeJobRepository = (): ComputeJobRepository =>
-  new ComputeJobRepository(() => getProjectDbClient(resolveStorageRoot()))
+  new ComputeJobRepository(() => getProjectDbClient(resolveConfigRoot()))
 
 const createDefaultComputeJobOperationRepository = (): ComputeJobOperationRepository =>
-  new ComputeJobOperationRepository(() => getProjectDbClient(resolveStorageRoot()))
+  new ComputeJobOperationRepository(() => getProjectDbClient(resolveConfigRoot()))
 
 // Broadcasts a job summary to all renderer windows. Called by the JobPoller onJobUpdated hook
 // and by the job dispatcher on status transitions (Phase 3d, design.md §9).
@@ -692,14 +692,14 @@ const createComputeIpcModule = (
   sessionLimitPersistence?: SessionConcurrencyLimitPersistence
 ): ComputeIpcModule => {
   const operationRepository = createDefaultComputeJobOperationRepository()
-  const storageRoot = resolveStorageRoot()
+  const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
   const sessionCacheOwner = new SessionCacheOwner(dataRoot)
   void repository
     .cleanupOrphanCredentials?.()
     .catch((error) => log.warn('orphan Compute Credential cleanup failed', errorLogFields(error)))
   const effectiveLegacyComputeGrants =
-    legacyComputeGrants ?? createSettingsComputeGrantPort(storageRoot)
+    legacyComputeGrants ?? createSettingsComputeGrantPort(configRoot)
 
   // Broadcast dispatcher status transitions to the renderer, same hook shape as the JobPoller uses.
   const onJobUpdated = createJobUpdatedBroadcaster(repository, dataRoot, jobRepository)

@@ -6,6 +6,7 @@ import type { ProjectFilesChangedEvent, ProjectFileSource } from '../../shared/p
 import {
   materializeSessionConversationGraph,
   normalizeDelegationPolicy,
+  sanitizePlanHistoryProjections,
   sanitizeSessionRuntimeContext,
   SessionConfigurationBusyError,
   sessionRevision,
@@ -20,6 +21,7 @@ import {
   type SessionRuntimeContext,
   type SessionRuntimeContextPatch
 } from '../../shared/session-persistence'
+import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { FinalizedArtifactBindingConflictError } from '../artifacts/provenance-message-snapshot'
 import { sessionComputeHostAccessPolicy } from '../compute/session-compute-host-access'
 import { diagnosticErrorFields, type Logger } from '../logger'
@@ -48,6 +50,7 @@ type PatchSessionRuntimeContextCommand = Readonly<{
   sessionId: string
   expectedRevision: number
   patch: SessionRuntimeContextPatch
+  archivePlanProjection?: ActivePlanProjection
   sessionStatus?: PersistedSessionStatus
   beforePersist?: () => void
 }>
@@ -127,6 +130,20 @@ const emptySessionRuntimeContext = (): SessionRuntimeContext => ({ version: 1, r
 
 const cloneRuntimeContext = (context: SessionRuntimeContext): SessionRuntimeContext =>
   structuredClone(context)
+
+const dedupePlanHistoryProjections = (
+  projections: readonly ActivePlanProjection[]
+): ActivePlanProjection[] => {
+  const seen = new Set<string>()
+  return projections
+    .toReversed()
+    .filter((projection) => {
+      if (seen.has(projection.artifactVersionId)) return false
+      seen.add(projection.artifactVersionId)
+      return true
+    })
+    .toReversed()
+}
 
 const sessionBindingTopologyHash = (session: PersistedChatSession): string => {
   const graph = session.conversationGraph
@@ -371,12 +388,37 @@ class SessionPersistenceStateOwner {
     const runtimeContext = sanitizeSessionRuntimeContext(candidate)
     if (!runtimeContext) throw new Error('Session runtime context patch is not JSON-safe.')
 
-    const persisted = await saveSessionWithRevision(this.options.repository, {
+    const archivePlanProjection = command.archivePlanProjection
+      ? sanitizePlanHistoryProjections([command.archivePlanProjection])?.[0]
+      : undefined
+    const matchingArchivePlanProjection =
+      archivePlanProjection &&
+      Object.hasOwn(patch, 'plan') &&
+      current.plan &&
+      archivePlanProjection.artifactVersionId === current.plan.artifactVersionId &&
+      runtimeContext.plan?.artifactVersionId !== archivePlanProjection.artifactVersionId
+        ? archivePlanProjection
+        : undefined
+    const planHistoryProjections = sanitizePlanHistoryProjections(
+      dedupePlanHistoryProjections(
+        [
+          ...(session.planHistoryProjections ?? []),
+          ...(matchingArchivePlanProjection ? [matchingArchivePlanProjection] : [])
+        ].filter(
+          (projection) => projection.artifactVersionId !== runtimeContext.plan?.artifactVersionId
+        )
+      )
+    )
+
+    const durableSession: PersistedChatSession = {
       ...session,
       ...(sessionStatus ? { status: sessionStatus } : {}),
       runtimeContext,
       updatedAt: Math.max(session.updatedAt + 1, Date.now())
-    })
+    }
+    if (planHistoryProjections) durableSession.planHistoryProjections = planHistoryProjections
+    else delete durableSession.planHistoryProjections
+    const persisted = await saveSessionWithRevision(this.options.repository, durableSession)
     this.recordSession(persisted)
     this.options.notifyRuntimeContextSessionUpdated(persisted)
     return cloneRuntimeContext(runtimeContext)
@@ -831,6 +873,7 @@ class SessionPersistenceStateOwner {
     const rendererOwnedSession: PersistedChatSession = { ...submittedSession }
     delete rendererOwnedSession.runtimeContext
     delete rendererOwnedSession.archivedAt
+    if (authority) delete rendererOwnedSession.planHistoryProjections
     const taskRunCommitId =
       saveAuthority.taskRunCommit && rendererOwnedSession.taskRunCommitId
         ? rendererOwnedSession.taskRunCommitId
@@ -889,6 +932,9 @@ class SessionPersistenceStateOwner {
       ...mainOwnedSessionDetails,
       ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
+      ...(authority?.planHistoryProjections
+        ? { planHistoryProjections: authority.planHistoryProjections }
+        : {}),
       ...(taskRunCommitId ? { taskRunCommitId } : {}),
       ...(authority && !specialistBindingOwnedByCaller
         ? {
