@@ -1,5 +1,6 @@
 import {
   mkdtemp,
+  open as openFile,
   readFile,
   readdir,
   rename as renameFile,
@@ -13,7 +14,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const faults = vi.hoisted(() => ({
-  failReadOnceWith: undefined as Error | undefined,
+  failOpenOnceWith: undefined as Error | undefined,
   renameFailuresRemaining: 0,
   reportedSize: undefined as number | undefined
 }))
@@ -21,14 +22,15 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
-    readFile: vi.fn(async (...args: Parameters<typeof actual.readFile>) => {
-      if (faults.failReadOnceWith) {
-        const error = faults.failReadOnceWith
-        faults.failReadOnceWith = undefined
+    open: vi.fn(async (...args: Parameters<typeof actual.open>) => {
+      if (faults.failOpenOnceWith) {
+        const error = faults.failOpenOnceWith
+        faults.failOpenOnceWith = undefined
         throw error
       }
-      return actual.readFile(...args)
+      return actual.open(...args)
     }),
+    readFile: vi.fn((...args: Parameters<typeof actual.readFile>) => actual.readFile(...args)),
     rename: vi.fn(async (source: string, destination: string) => {
       if (faults.renameFailuresRemaining > 0) {
         faults.renameFailuresRemaining -= 1
@@ -50,7 +52,7 @@ import { SettingsDocumentStore } from './document-store'
 let storageRoot: string | undefined
 
 afterEach(async () => {
-  faults.failReadOnceWith = undefined
+  faults.failOpenOnceWith = undefined
   faults.renameFailuresRemaining = 0
   faults.reportedSize = undefined
   vi.clearAllMocks()
@@ -214,9 +216,10 @@ describe('settings document store', () => {
     const readFailure = Object.assign(new Error('EACCES: settings file is unreadable'), {
       code: 'EACCES'
     })
-    faults.failReadOnceWith = readFailure
+    faults.failOpenOnceWith = readFailure
 
     await expect(store.mutate(update)).rejects.toBe(readFailure)
+    expect(openFile).toHaveBeenCalledWith(settingsPath, 'r')
     expect(update).not.toHaveBeenCalled()
     await expect(readFile(settingsPath, 'utf8')).resolves.toBe(originalContents)
 
