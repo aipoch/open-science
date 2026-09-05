@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -17,6 +17,7 @@ import {
   pkgsCache,
   pythonBin,
   rBin,
+  rLibraryDir,
   readRReadyMarker,
   readReadyMarker,
   readyMarkerPath,
@@ -30,6 +31,7 @@ import {
   DEFAULT_PYTHON_SPEC,
   DEFAULT_R_SPEC,
   DefaultRuntimeProvisioner,
+  createProductionProvisioner,
   type FetchedBundle,
   type ProvisionProgress,
   type ProvisionerDeps
@@ -1381,6 +1383,63 @@ const makeNamedEnvDeps = (
 }
 
 describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
+  it.skipIf(process.platform === 'win32')(
+    'verifies a managed R environment with app-owned user state and only its prefix library',
+    async () => {
+      const root = makeRoot()
+      const prefix = envPrefix(root, 'r-stats')
+      const bin = rBin(prefix)
+      const expectedHome = join(root, 'home')
+      const expectedLibrary = rLibraryDir(prefix)
+      const inheritedKeys = ['HOME', 'R_USER', 'R_LIBS', 'R_LIBS_USER', 'R_LIBS_SITE'] as const
+      const inherited = Object.fromEntries(inheritedKeys.map((key) => [key, process.env[key]]))
+      process.env.HOME = join(root, 'host-home')
+      process.env.R_USER = join(root, 'host-r-user')
+      process.env.R_LIBS = join(root, 'host-r-libs')
+      process.env.R_LIBS_USER = join(root, 'host-r-user-library')
+      process.env.R_LIBS_SITE = join(root, 'host-r-site-library')
+      const provisioner = createProductionProvisioner(
+        { root, channel: 'https://conda.example/conda-forge' },
+        {
+          runner: { initialPath: '/fake/micromamba', resolve: async () => '/fake/micromamba' },
+          maintainCache: async () => undefined,
+          captureExplicitLock: async () => '@EXPLICIT\n',
+          runArgv: async () => {
+            mkdirSync(expectedLibrary, { recursive: true })
+            mkdirSync(dirname(bin), { recursive: true })
+            writeFileSync(
+              bin,
+              [
+                `#!${process.execPath}`,
+                `if (process.env.HOME !== ${JSON.stringify(expectedHome)}) process.exit(41)`,
+                `if (process.env.R_USER !== ${JSON.stringify(expectedHome)}) process.exit(42)`,
+                `if (process.env.R_LIBS_USER !== ${JSON.stringify(expectedLibrary)}) process.exit(43)`,
+                'if (process.env.R_LIBS || process.env.R_LIBS_SITE) process.exit(44)',
+                `const prefix = ${JSON.stringify(prefix)}`,
+                "process.stdout.write(['OPEN_SCIENCE_R_HOME=' + prefix + '/lib/R', 'OPEN_SCIENCE_R_BASE_LIBRARY=' + prefix + '/lib/R/library', 'OPEN_SCIENCE_R_LIBRARY=' + process.env.R_LIBS_USER].join('\\n') + '\\n')"
+              ].join('\n') + '\n'
+            )
+            chmodSync(bin, 0o755)
+          }
+        }
+      )
+
+      try {
+        await expect(provisioner.createNamedEnvironment('r-stats', 'r')).resolves.toMatchObject({
+          name: 'r-stats',
+          language: 'r',
+          ready: true
+        })
+      } finally {
+        for (const key of inheritedKeys) {
+          const value = inherited[key]
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        }
+      }
+    }
+  )
+
   it('uses the injected platform for the interpreter it verifies', async () => {
     const root = makeRoot()
     const platform: NodeJS.Platform = process.platform === 'win32' ? 'linux' : 'win32'

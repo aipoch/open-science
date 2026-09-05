@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildManagedRuntimeProcessEnvironment,
   buildNotebookKernelEnvironment,
   buildNotebookShellEnvironment,
   environmentPathRoots,
@@ -36,6 +37,39 @@ describe('Notebook process environment', () => {
     expect(env.API_TOKEN).toBeUndefined()
     expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined()
     expect(env.JAVA_TOOL_OPTIONS).toBeUndefined()
+    expect(env.PYTHONNOUSERSITE).toBeUndefined()
+  })
+
+  it('adds Python user-site isolation only for an app-managed runtime', () => {
+    expect(
+      buildManagedRuntimeProcessEnvironment('/runtime', {
+        language: 'python',
+        platform: 'linux',
+        sourceEnv: { PATH: '/usr/bin', HOME: '/host' }
+      })
+    ).toMatchObject({ HOME: '/runtime/home', PYTHONNOUSERSITE: '1' })
+  })
+
+  it('removes inherited R library injection and selects the managed prefix library', () => {
+    const env = buildManagedRuntimeProcessEnvironment('/runtime', {
+      language: 'r',
+      prefix: '/runtime/envs/analysis',
+      platform: 'linux',
+      sourceEnv: {
+        R_USER: '/host',
+        R_LIBS: '/host/libs',
+        R_LIBS_USER: '/host/user-lib',
+        R_LIBS_SITE: '/host/site-lib'
+      }
+    })
+
+    expect(env).toMatchObject({
+      HOME: '/runtime/home',
+      R_USER: '/runtime/home',
+      R_LIBS_USER: '/runtime/envs/analysis/lib/R/library'
+    })
+    expect(env.R_LIBS).toBeUndefined()
+    expect(env.R_LIBS_SITE).toBeUndefined()
   })
 
   it('keeps the dedicated Windows account identity instead of overlaying the host profile', () => {

@@ -1,6 +1,9 @@
 import { statSync } from 'node:fs'
 import { posix, win32 } from 'node:path'
 
+import type { NotebookLanguage } from '../../shared/notebook'
+import { rLibraryDir } from './runtime-paths'
+
 const COMMON_ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ'] as const
 
 const POSIX_ENV_ALLOWLIST = ['HOME', 'USER', 'LOGNAME', 'SHELL'] as const
@@ -66,6 +69,66 @@ export const buildNotebookKernelEnvironment = (
   platform: NodeJS.Platform = process.platform,
   sourceEnv: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv => projectEnvironment(sourceEnv, platform)
+
+type ManagedRuntimeProcessEnvironmentOptions = {
+  language?: NotebookLanguage
+  prefix?: string
+  platform?: NodeJS.Platform
+  sourceEnv?: NodeJS.ProcessEnv
+}
+
+const MANAGED_USER_STATE_KEYS = [
+  'HOME',
+  'USERPROFILE',
+  'XDG_CACHE_HOME',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'XDG_STATE_HOME'
+] as const
+
+const R_USER_STATE_KEYS = ['R_USER', 'R_LIBS', 'R_LIBS_USER', 'R_LIBS_SITE'] as const
+
+export const sanitizeManagedRuntimeHostState = (
+  sourceEnv: NodeJS.ProcessEnv,
+  includeRState = false
+): NodeJS.ProcessEnv => {
+  const removed = new Set<string>([
+    ...MANAGED_USER_STATE_KEYS,
+    ...(includeRState ? R_USER_STATE_KEYS : [])
+  ])
+  return Object.fromEntries(
+    Object.entries(sourceEnv).filter(([key]) => !removed.has(key.toUpperCase()))
+  )
+}
+
+export const buildManagedRuntimeProcessEnvironment = (
+  root: string,
+  options: ManagedRuntimeProcessEnvironmentOptions = {}
+): NodeJS.ProcessEnv => {
+  const platform = options.platform ?? process.platform
+  const platformPath = platform === 'win32' ? win32 : posix
+  const home = platformPath.join(root, 'home')
+  const env = sanitizeManagedRuntimeHostState(
+    options.sourceEnv ?? process.env,
+    options.language === 'r'
+  )
+  return {
+    ...env,
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CACHE_HOME: platformPath.join(home, '.cache'),
+    XDG_CONFIG_HOME: platformPath.join(home, '.config'),
+    XDG_DATA_HOME: platformPath.join(home, '.local', 'share'),
+    XDG_STATE_HOME: platformPath.join(home, '.local', 'state'),
+    ...(options.language === 'python' ? { PYTHONNOUSERSITE: '1' } : {}),
+    ...(options.language === 'r'
+      ? {
+          R_USER: home,
+          ...(options.prefix ? { R_LIBS_USER: rLibraryDir(options.prefix, platform) } : {})
+        }
+      : {})
+  }
+}
 
 export const notebookTrustBundleEnvironment = (path?: string): NodeJS.ProcessEnv =>
   path

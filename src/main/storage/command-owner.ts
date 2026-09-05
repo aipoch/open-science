@@ -24,10 +24,11 @@ import {
   resolveDataRoot,
   samePath
 } from '../storage-root'
-import { resolveMicromamba } from '../notebook/micromamba'
+import { micromambaSpawnEnv, resolveMicromamba } from '../notebook/micromamba'
 import type { MicromambaRunner } from '../notebook/windows-micromamba-runner'
 import { captureMicromamba } from '../notebook/provisioner-runtime'
 import { exportRuntimeLocks } from '../notebook/runtime-relocation'
+import { runtimeRoot } from '../notebook/runtime-paths'
 import { removeMicromambaCacheForRoot } from '../notebook/micromamba-cache'
 import { removeNotebookWorkloadCache } from '../notebook/notebook-workload-cache-paths'
 import { detectActiveSessions } from './detect-active'
@@ -504,7 +505,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
               mm: deps.micromambaRunner
                 ? await deps.micromambaRunner.resolve()
                 : resolveMicromamba({ resourcesPath: process.resourcesPath }),
-              capture: captureMicromamba
+              capture: (argv) =>
+                captureMicromamba(argv, micromambaSpawnEnv(runtimeRoot(fromDataRoot)))
             })
         },
         request.parent,

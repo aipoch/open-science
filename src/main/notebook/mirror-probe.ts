@@ -13,15 +13,23 @@ export const MIRROR_CANDIDATES = AUTOMATIC_PACKAGE_MIRROR_CANDIDATES
 
 // Measures one URL's latency (ms), rejecting on error/timeout. Injectable so the selection logic is
 // testable without network.
-export type LatencyProbe = (url: string, timeoutMs: number) => Promise<number>
+export type LatencyProbe = (
+  url: string,
+  timeoutMs: number,
+  trustedDomains: readonly string[]
+) => Promise<number>
 
-const defaultProbe: LatencyProbe = async (url, timeoutMs) => {
+const defaultProbe: LatencyProbe = async (url, timeoutMs, trustedDomains) => {
   const started = Date.now()
   const res = await netFetchStandard(url, {
     method: 'HEAD',
     signal: AbortSignal.timeout(timeoutMs)
   })
   if (!res.ok) throw new Error(`probe failed ${res.status}`)
+  const finalHostname = new URL(res.url || url).hostname.toLowerCase()
+  if (!trustedDomains.some((domain) => domain.toLowerCase() === finalHostname)) {
+    throw new Error(`probe redirected to untrusted host ${finalHostname}`)
+  }
   return Date.now() - started
 }
 
@@ -45,8 +53,8 @@ export const pickFastestMirror = async (
     candidates.map(async (candidate) => {
       try {
         const [condaMs, biocondaMs] = await Promise.all([
-          probe(candidate.probeUrl, timeoutMs),
-          probe(candidate.biocondaProbeUrl, timeoutMs)
+          probe(candidate.probeUrl, timeoutMs, candidate.trustedDomains),
+          probe(candidate.biocondaProbeUrl, timeoutMs, candidate.trustedDomains)
         ])
         return { candidate, ms: Math.max(condaMs, biocondaMs) }
       } catch {

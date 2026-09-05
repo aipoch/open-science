@@ -419,6 +419,7 @@ describe('installPackages', () => {
     const prefix = envPrefix(runtimeRoot('/root'), DEFAULT_PY_ENV)
     expect(calls[0][0]).toBe(pipBin(prefix))
     expect(calls[0][1]).toEqual(['install', '-i', 'https://mirror.test/simple', 'seaborn'])
+    expect(calls[0][2]?.PYTHONNOUSERSITE).toBe('1')
   })
 
   it('installs into an EXTERNAL interpreter via its own pip, never the app-managed prefix', async () => {
@@ -442,6 +443,7 @@ describe('installPackages', () => {
       'https://mirror.test/simple',
       'rich'
     ])
+    expect(calls[0][2]?.PYTHONNOUSERSITE).toBeUndefined()
     expect(result).toMatchObject({ ok: true, method: 'pip' })
   })
 
@@ -800,15 +802,16 @@ describe('installPackages', () => {
     const prefix = envPrefix(runtimeRoot('/root'), DEFAULT_R_ENV)
     const rLib = rLibraryDir(prefix)
     expect(calls[1][0]).toBe(rScriptBin(prefix))
-    expect(calls[1][1][0]).toBe('-e')
+    expect(calls[1][1].slice(0, 3)).toEqual(['--vanilla', '--slave', '-e'])
+    const rScript = calls[1][1][3]
     // The env R library is created and install is pinned to it via an explicit lib=, so a fronted
     // user library can never receive the package.
     // The code JSON-stringifies the lib path into the R script (so a Windows backslash path is escaped
     // correctly); mirror that here so the assertion holds on both POSIX and Windows.
-    expect(calls[1][1][1]).toContain(
+    expect(rScript).toContain(
       `dir.create(${JSON.stringify(rLib)}, recursive=TRUE, showWarnings=FALSE)`
     )
-    expect(calls[1][1][1]).toContain(
+    expect(rScript).toContain(
       `install.packages(c("someCranOnlyPkg"), lib=${JSON.stringify(rLib)}, repos="https://cran.mirror.test")`
     )
     expect(result).toMatchObject({
@@ -1049,7 +1052,8 @@ describe('installPackages', () => {
 
     const env = calls[0][2] ?? {}
     expect(env.CONDA_PKGS_DIRS).toBe('C:\\osp1234567890')
-    expect(env.MAMBA_ROOT_PREFIX).toBeUndefined()
+    expect(env.MAMBA_ROOT_PREFIX).toBe('/root/runtime')
+    expect(env.CONDA_ENVS_PATH).toBe('\\root\\runtime\\envs')
   })
 
   it('does not inject the package cache into a pip subprocess', async () => {
@@ -1588,9 +1592,9 @@ describe('installPackages uninstall', () => {
     // First a conda remove is attempted, then the CRAN remove.packages fallback.
     expect(calls[0][0]).toBe('/mm/bin/micromamba')
     expect(calls[1][0]).toBe(rScriptBin(prefix))
-    expect(calls[1][1][0]).toBe('-e')
+    expect(calls[1][1].slice(0, 3)).toEqual(['--vanilla', '--slave', '-e'])
     // Removal is pinned to the env's own R library via an explicit lib=, never .libPaths()[1].
-    expect(calls[1][1][1]).toContain(
+    expect(calls[1][1][3]).toContain(
       `remove.packages(c("someCranOnlyPkg"), lib=${JSON.stringify(rLib)})`
     )
     expect(result).toMatchObject({

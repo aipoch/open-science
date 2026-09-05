@@ -70,13 +70,21 @@ type VerifyExecutableOptions = {
   prefix?: string
   env?: NodeJS.ProcessEnv
   platform?: NodeJS.Platform
+  completeEnv?: boolean
 }
 
 const executableEnv = ({
   prefix,
   env,
-  platform = process.platform
+  platform = process.platform,
+  completeEnv = false
 }: VerifyExecutableOptions): NodeJS.ProcessEnv | undefined => {
+  if (completeEnv) {
+    const complete = { ...env }
+    return platform === 'win32' && prefix
+      ? { ...complete, PATH: condaActivatedPath(prefix, complete.PATH, platform) }
+      : complete
+  }
   if (platform !== 'win32' || !prefix) {
     return env && Object.keys(env).length > 0 ? { ...process.env, ...env } : undefined
   }
@@ -136,7 +144,8 @@ const assertRRuntimePaths = (
     baseLibraries.length !== 1 ||
     !pathIsWithin(homes[0], prefix, platform) ||
     !pathIsWithin(baseLibraries[0], prefix, platform) ||
-    !libraries.some((library) => pathIsWithin(library, prefix, platform))
+    libraries.length === 0 ||
+    !libraries.every((library) => pathIsWithin(library, prefix, platform))
   ) {
     throw new Error(
       `R runtime paths resolve outside the expected prefix ${prefix}; the environment may have been ` +
@@ -376,7 +385,9 @@ export const captureMicromamba = async (
       timeout: 600_000,
       windowsHide: true,
       maxBuffer: 32 * 1024 * 1024,
-      env: env && Object.keys(env).length > 0 ? { ...process.env, ...env } : undefined
+      // Callers pass a complete managed environment. Merging process.env here would reintroduce
+      // host CONDA_*/MAMBA_* state after micromambaSpawnEnv deliberately removed it.
+      env
     })
     return stdout
   } catch (error) {
