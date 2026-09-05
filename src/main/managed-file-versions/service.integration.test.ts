@@ -1542,6 +1542,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     const fixture = await createFixture('upload')
     const collidingPaths: string[] = []
     const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const publishImmutable = versionFileOperator.publishImmutable.bind(versionFileOperator)
     const service = new ManagedFileVersionService({
       storageRoot,
       getClient: () => Promise.resolve(client),
@@ -1562,17 +1563,16 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       })
     })
 
-    await expect(
-      service.saveTextEdit({
-        source: 'upload',
-        projectId: 'project-1',
-        fileId: fixture.fileId,
-        basedOnVersionId: fixture.versionIds[1],
-        expectedHeadVersionId: fixture.versionIds[1],
-        content: 'never published\n',
-        operationId: 'exhausted-collision-operation'
-      })
-    ).rejects.toMatchObject({ code: 'STORAGE_COLLISION' })
+    const request = {
+      source: 'upload' as const,
+      projectId: 'project-1',
+      fileId: fixture.fileId,
+      basedOnVersionId: fixture.versionIds[1],
+      expectedHeadVersionId: fixture.versionIds[1],
+      content: 'never published\n',
+      operationId: 'exhausted-collision-operation'
+    }
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({ code: 'STORAGE_COLLISION' })
 
     expect(collidingPaths).toHaveLength(16)
     for (const collidingPath of collidingPaths) {
@@ -1583,6 +1583,15 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         where: { operationId: 'exhausted-collision-operation' }
       })
     ).resolves.toMatchObject({ state: 'failed', errorCode: 'STORAGE_COLLISION' })
+
+    versionFileOperator.publishImmutable = publishImmutable
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({
+      code: 'CONTENT_INTEGRITY_FAILED'
+    })
+    await expect(
+      service.saveTextEdit({ ...request, operationId: 'fresh-operation-after-collision' })
+    ).resolves.toMatchObject({ kind: 'created', replayed: false, version: { versionNumber: 3 } })
+    expect(await client.uploadVersion.count()).toBe(3)
   })
 
   it('never writes temporary or final bytes outside the storage root through a symlinked ancestor', async () => {
