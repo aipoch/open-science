@@ -137,6 +137,37 @@ describe('session store', () => {
     useSessionStore.setState(createInitialSessionState())
   })
 
+  it.each([
+    'runtime-context-authority',
+    'permission-authority',
+    'delegated-authority',
+    'session-details-authority',
+    'compute-host-access-authority',
+    'archive-authority',
+    'merge-upload-identities',
+    'replace-persisted-if-current'
+  ] as const)('preserves an incoming reset obligation through %s', (mode) => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Remember the selected branch',
+      projectId: 'project-1',
+      cwd: '/workspace'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const source = useSessionStore.getState().sessions[0]
+    const incoming = {
+      ...toPersistedSession(source),
+      revision: (source.revision ?? 0) + 1,
+      branchContextResetRequired: true
+    }
+
+    useSessionStore.getState().applyDurableSessionProjection({ source, session: incoming, mode })
+
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.branchContextResetRequired).toBe(true)
+    expect(toPersistedSession(projected).branchContextResetRequired).toBe(true)
+  })
+
   it('keeps a newer runtime revision authoritative when Reading context was removed', () => {
     const merged = mergePersistedRuntimeIdentityProjection(
       {

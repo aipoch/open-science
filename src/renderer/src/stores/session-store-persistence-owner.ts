@@ -188,10 +188,15 @@ export const createInitialSessionState = (): SessionStoreData => ({
 
 // Activity timestamps include unsaved local edits. Only the durable revision orders archive state;
 // equal versioned snapshots are echoes. Legacy unversioned snapshots retain arrival-order behavior.
-const projectSessionArchiveAuthority = (
-  current: ChatSession,
+const projectSessionMetadataAuthority = (
+  source: ChatSession,
   incoming: PersistedChatSession
 ): ChatSession => {
+  // A pending context reset survives metadata projections until this renderer performs it.
+  const current =
+    incoming.branchContextResetRequired && !source.branchContextResetRequired
+      ? { ...source, branchContextResetRequired: true }
+      : source
   const currentRevision = sessionRevision(current)
   const incomingRevision = sessionRevision(incoming)
   if (
@@ -565,7 +570,7 @@ const projectDelegationPolicyAuthority = (
   if (sessionRevision(authority) < sessionRevision(current)) return undefined
 
   return {
-    ...projectSessionArchiveAuthority(current, authority),
+    ...projectSessionMetadataAuthority(current, authority),
     revision: sessionRevision(authority),
     delegationPolicy: normalizeDelegationPolicy(authority.delegationPolicy),
     delegationPolicyAuthorityPending: undefined,
@@ -639,7 +644,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
       if (existing?.contentLoaded === false) {
         const loaded = hydrateSession(session)
-        const archive = projectSessionArchiveAuthority(existing, session)
+        const archive = projectSessionMetadataAuthority(existing, session)
         const incomingIsNewer = sessionRevision(session) > sessionRevision(existing)
         const hydrated: ChatSession = {
           ...loaded,
@@ -681,7 +686,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         const filesAdvanced = (session.filesRevision ?? 0) > (existing.filesRevision ?? 0)
         const fileIdentityMerge =
           sameTimestamp && (session.filesRevision ?? 0) === (existing.filesRevision ?? 0)
-        const archive = projectSessionArchiveAuthority(existing, session)
+        const archive = projectSessionMetadataAuthority(existing, session)
         const archiveChanged = existing.archivedAt !== archive.archivedAt
         const flat = sameTimestamp
           ? mergeDurableUploadProjection(existing.messages, existing.messages, session.messages)
@@ -759,7 +764,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       const hydratedWithTransientState = {
         ...hydratedSession,
         archivedAt: existing
-          ? projectSessionArchiveAuthority(existing, session).archivedAt
+          ? projectSessionMetadataAuthority(existing, session).archivedAt
           : session.archivedAt,
         ...retainedPlanHistory,
         ...currentPlanProjection,
@@ -786,7 +791,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set((state) => {
       const current = state.sessions.find((candidate) => candidate.id === session.id)
       if (!current) return state
-      const archive = projectSessionArchiveAuthority(current, session)
+      const archive = projectSessionMetadataAuthority(current, session)
 
       if (mode === 'archive-authority') {
         const projected = archive
@@ -1004,6 +1009,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         {
           ...projected,
           archivedAt: archive.archivedAt,
+          branchContextResetRequired: archive.branchContextResetRequired,
           // Whole-Session saves and continuation acknowledgements do not own Delegation policy.
           // Keep the last dedicated mutation result even when a later ordinary projection carries
           // a newer Session revision from unrelated running activity.
