@@ -1,4 +1,7 @@
-import { createHash } from 'node:crypto'
+import crypto, { createHash } from 'node:crypto'
+import { renameSync, symlinkSync } from 'node:fs'
+import filesystem from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,10 +27,80 @@ const authorization = (
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
+  syncBuiltinESMExports()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
 describe('publishMicromambaArchives', () => {
+  it.skipIf(process.platform === 'win32')(
+    'rejects an archive replaced by a symlink after enumeration',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'os-archive-enumeration-race-'))
+      roots.push(root)
+      const working = join(root, 'working')
+      await mkdir(working)
+      const source = join(working, 'a.conda')
+      const outside = join(root, 'outside.conda')
+      await writeFile(source, 'trusted')
+      await writeFile(outside, 'trusted')
+      const expected = authorization('a.conda', 'trusted')
+      const original = filesystem.realpath
+      let replaced = false
+      vi.spyOn(filesystem, 'realpath').mockImplementation(async (path, ...args) => {
+        const result = await original(path, ...args)
+        if (path === source && !replaced) {
+          replaced = true
+          renameSync(source, `${source}.old`)
+          symlinkSync(outside, source)
+        }
+        return result
+      })
+      syncBuiltinESMExports()
+      await expect(
+        publishMicromambaArchives(join(root, 'runtime'), working, [expected])
+      ).rejects.toThrow()
+      expect(replaced).toBe(true)
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'publishes the verified snapshot if the source is replaced when its digest completes',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'os-archive-copy-race-'))
+      roots.push(root)
+      const working = join(root, 'working')
+      await mkdir(working)
+      const source = join(working, 'a.conda')
+      const outside = join(root, 'outside.conda')
+      await writeFile(source, 'trusted')
+      await writeFile(outside, 'outside bytes must not be copied')
+      const expected = authorization('a.conda', 'trusted')
+      const original = crypto.createHash
+      let replaced = false
+      vi.spyOn(crypto, 'createHash').mockImplementation((...args) => {
+        const hash = original(...args)
+        const digest = hash.digest.bind(hash)
+        vi.spyOn(hash, 'digest').mockImplementation((encoding) => {
+          const result = digest(encoding)
+          if (!replaced) {
+            replaced = true
+            renameSync(source, `${source}.old`)
+            symlinkSync(outside, source)
+          }
+          return result
+        })
+        return hash
+      })
+      syncBuiltinESMExports()
+      await expect(
+        publishMicromambaArchives(join(root, 'runtime'), working, [expected])
+      ).resolves.toBe(1)
+      expect(replaced).toBe(true)
+      expect(await readFile(join(root, 'runtime', 'pkgs', 'a.conda'), 'utf8')).toBe('trusted')
+    }
+  )
+
   it.skipIf(process.platform === 'win32').each(['archive', 'directory'])(
     'does not publish an authorized archive reached through a %s symlink',
     async (linkType) => {

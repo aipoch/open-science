@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { copyFile, lstat, mkdir, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
+import { constants, createReadStream } from 'node:fs'
+import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, sep } from 'node:path'
 
 import { withExclusiveCacheLock } from './pkgs-cache-lock'
@@ -150,8 +150,13 @@ const isInsideOrEqual = (root: string, candidate: string): boolean => {
   return nested === '' || (!isAbsolute(nested) && nested !== '..' && !nested.startsWith(`..${sep}`))
 }
 
-const archiveFiles = async (root: string, validateRoot?: () => boolean): Promise<string[]> => {
-  const files: string[] = []
+type ArchiveCandidate = { path: string; physical: string; dev: number; ino: number }
+
+const archiveFiles = async (
+  root: string,
+  validateRoot?: () => boolean
+): Promise<ArchiveCandidate[]> => {
+  const files: ArchiveCandidate[] = []
   if (validateRoot && !validateRoot()) {
     throw new Error('Micromamba working cache changed before archive traversal.')
   }
@@ -192,7 +197,9 @@ const archiveFiles = async (root: string, validateRoot?: () => boolean): Promise
         throw new Error('Micromamba working cache entry escaped its validated root.')
       }
       if (state.isDirectory()) await visit(path)
-      else if (state.isFile() && isPackageArchive(entry.name)) files.push(path)
+      else if (state.isFile() && isPackageArchive(entry.name)) {
+        files.push({ path, physical, dev: state.dev, ino: state.ino })
+      }
     }
   }
   await visit(root)
@@ -236,30 +243,73 @@ export const publishMicromambaArchives = async (
       throw new Error('Micromamba working cache failed recovery trust validation.')
     }
 
-    const sourcesByFile = new Map<string, string[]>()
+    const sourcesByFile = new Map<string, ArchiveCandidate[]>()
     for (const source of await archiveFiles(workingRoot, validateWorkingRoot)) {
-      const file = basename(source)
+      const file = basename(source.path)
       sourcesByFile.set(file, [...(sourcesByFile.get(file) ?? []), source])
     }
     let published = 0
     for (const [file, expected] of missing) {
       const destination = join(durableRoot, file)
-      let source: string | undefined
-      for (const candidate of sourcesByFile.get(file) ?? []) {
-        if (await matchesAuthorizations(candidate, expected)) {
-          source = candidate
-          break
-        }
-      }
-      if (!source) {
-        throw new Error(`authorized package archive is unavailable or failed verification: ${file}`)
-      }
-
+      let verified = false
       const temp = `${destination}.${process.pid}-${randomUUID()}.tmp`
       try {
-        await copyFile(source, temp)
-        if (!(await matchesAuthorizations(temp, expected))) {
-          throw new Error(`copied package archive failed verification: ${file}`)
+        for (const candidate of sourcesByFile.get(file) ?? []) {
+          const source = await open(
+            candidate.path,
+            constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+          )
+          try {
+            const identity = await source.stat()
+            const current = await lstat(candidate.path)
+            if (
+              !identity.isFile() ||
+              current.isSymbolicLink() ||
+              identity.dev !== candidate.dev ||
+              identity.ino !== candidate.ino ||
+              current.dev !== identity.dev ||
+              current.ino !== identity.ino ||
+              (await realpath(candidate.path)) !== candidate.physical ||
+              (validateWorkingRoot && !validateWorkingRoot())
+            ) {
+              throw new Error('Micromamba archive identity changed before publication.')
+            }
+            // Snapshot and hash the same descriptor: a later path replacement cannot
+            // redirect either the bytes we verify or the bytes we publish.
+            const snapshot = await open(temp, 'wx', 0o600)
+            try {
+              const hashes = expected.map(({ algorithm }) => createHash(algorithm))
+              for await (const chunk of source.createReadStream({ autoClose: false })) {
+                const bytes = chunk as Buffer
+                hashes.forEach((hash) => hash.update(bytes))
+                let offset = 0
+                while (offset < bytes.length) {
+                  const { bytesWritten } = await snapshot.write(
+                    bytes,
+                    offset,
+                    bytes.length - offset
+                  )
+                  if (bytesWritten === 0)
+                    throw new Error('Micromamba archive snapshot write made no progress.')
+                  offset += bytesWritten
+                }
+              }
+              verified = hashes.every(
+                (hash, index) => hash.digest('hex') === expected[index].digest
+              )
+            } finally {
+              await snapshot.close()
+            }
+          } finally {
+            await source.close()
+          }
+          if (verified) break
+          await rm(temp, { force: true })
+        }
+        if (!verified) {
+          throw new Error(
+            `authorized package archive is unavailable or failed verification: ${file}`
+          )
         }
         await rename(temp, destination)
         published += 1
