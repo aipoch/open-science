@@ -1226,17 +1226,22 @@ export async function installPackages(
     process.env.OPEN_SCIENCE_STORAGE_ROOT ??
     join(homedir(), PROD_SESSION_DIR_NAME)
   const root = runtimeRoot(storageRoot)
-  Object.assign(spawnEnv, notebookWorkloadCacheEnv(root))
+  const workloadCacheEnv = notebookWorkloadCacheEnv(root)
+  Object.assign(spawnEnv, workloadCacheEnv)
   const channels = condaInstallChannels(deps.condaChannel ?? DEFAULT_CONDA_CHANNEL, req.channels)
   const prefix = envPrefix(root, envName)
   if (!deps.interpreter) {
     const platform = deps.micromambaEnv?.platform ?? process.platform
-    spawnEnv = buildManagedRuntimeProcessEnvironment(root, {
-      language: req.language,
-      prefix,
-      platform,
-      sourceEnv: spawnEnv
-    })
+    spawnEnv = {
+      ...buildManagedRuntimeProcessEnvironment(root, {
+        language: req.language,
+        prefix,
+        platform,
+        sourceEnv: spawnEnv
+      }),
+      ...workloadCacheEnv,
+      ...caBundleEnv(deps.caBundle)
+    }
   }
   // micromamba install/remove extract into and mutate the SHARED pkgs cache (<root>/runtime/pkgs), so
   // they must hold the shared cache lock — otherwise a concurrent corrupt-cache repair (which takes the
@@ -1249,20 +1254,24 @@ export async function installPackages(
     const cache = deps.micromambaEnv?.selectCache
       ? deps.micromambaEnv.selectCache(root, DEFAULT_MAX_CACHE_RELATIVE_PATH)
       : selectMicromambaCache(root, DEFAULT_MAX_CACHE_RELATIVE_PATH, deps.micromambaEnv)
-    const env = buildManagedRuntimeProcessEnvironment(root, {
-      language: req.language,
-      prefix,
-      platform: deps.micromambaEnv?.platform,
-      sourceEnv: {
-        ...micromambaSpawnEnv(
-          root,
-          deps.caBundle,
-          { ...deps.micromambaEnv, selectCache: () => cache },
-          DEFAULT_MAX_CACHE_RELATIVE_PATH
-        ),
-        ...notebookWorkloadCacheEnv(root)
-      }
-    })
+    const env = {
+      ...buildManagedRuntimeProcessEnvironment(root, {
+        language: req.language,
+        prefix,
+        platform: deps.micromambaEnv?.platform,
+        sourceEnv: {
+          ...micromambaSpawnEnv(
+            root,
+            deps.caBundle,
+            { ...deps.micromambaEnv, selectCache: () => cache },
+            DEFAULT_MAX_CACHE_RELATIVE_PATH
+          ),
+          ...workloadCacheEnv
+        }
+      }),
+      ...workloadCacheEnv,
+      ...caBundleEnv(deps.caBundle)
+    }
     condaContext = { cache, env }
     return condaContext
   }

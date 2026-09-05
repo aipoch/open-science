@@ -41,13 +41,40 @@ describe('Notebook process environment', () => {
   })
 
   it('adds Python user-site isolation only for an app-managed runtime', () => {
+    const env = buildManagedRuntimeProcessEnvironment('/runtime', {
+      language: 'python',
+      platform: 'linux',
+      sourceEnv: {
+        PATH: '/usr/bin',
+        HOME: '/host',
+        PYTHONHOME: '/host/python',
+        PYTHONPATH: '/host/python/modules',
+        PYTHONSTARTUP: '/host/python/startup.py',
+        PYTHONUSERBASE: '/host/python/user-base',
+        PYTHONEXECUTABLE: '/host/python/bin/python',
+        PYTHONNOUSERSITE: '0',
+        PIP_CONFIG_FILE: '/host/pip.conf',
+        PIP_USER: '1',
+        PIP_TARGET: '/host/pip-target',
+        PIP_PREFIX: '/host/pip-prefix',
+        PIP_INDEX_URL: 'https://host.invalid/simple',
+        PIP_EXTRA_INDEX_URL: 'https://extra.invalid/simple',
+        PIP_NO_INDEX: '1',
+        PIP_FIND_LINKS: '/host/wheels',
+        PIP_TRUSTED_HOST: 'host.invalid',
+        PIP_REQUIRE_VIRTUALENV: '1',
+        PIP_CERT: '/host/cert.pem',
+        PIP_CLIENT_CERT: '/host/client.pem',
+        PIP_CACHE_DIR: '/host/pip-cache'
+      }
+    })
+
+    expect(env).toMatchObject({ HOME: '/runtime/home', PYTHONNOUSERSITE: '1' })
     expect(
-      buildManagedRuntimeProcessEnvironment('/runtime', {
-        language: 'python',
-        platform: 'linux',
-        sourceEnv: { PATH: '/usr/bin', HOME: '/host' }
-      })
-    ).toMatchObject({ HOME: '/runtime/home', PYTHONNOUSERSITE: '1' })
+      Object.keys(env).filter(
+        (key) => key !== 'PYTHONNOUSERSITE' && (/^PYTHON/u.test(key) || /^PIP_/u.test(key))
+      )
+    ).toEqual([])
   })
 
   it('removes inherited R library injection and selects the managed prefix library', () => {
@@ -57,9 +84,14 @@ describe('Notebook process environment', () => {
       platform: 'linux',
       sourceEnv: {
         R_USER: '/host',
+        R_HOME: '/host/r-home',
         R_LIBS: '/host/libs',
         R_LIBS_USER: '/host/user-lib',
-        R_LIBS_SITE: '/host/site-lib'
+        R_LIBS_SITE: '/host/site-lib',
+        R_ENVIRON: '/host/Renviron',
+        R_ENVIRON_USER: '/host/user.Renviron',
+        R_PROFILE: '/host/Rprofile',
+        R_PROFILE_USER: '/host/user.Rprofile'
       }
     })
 
@@ -70,6 +102,11 @@ describe('Notebook process environment', () => {
     })
     expect(env.R_LIBS).toBeUndefined()
     expect(env.R_LIBS_SITE).toBeUndefined()
+    expect(env.R_HOME).toBeUndefined()
+    expect(env.R_ENVIRON).toBeUndefined()
+    expect(env.R_ENVIRON_USER).toBeUndefined()
+    expect(env.R_PROFILE).toBeUndefined()
+    expect(env.R_PROFILE_USER).toBeUndefined()
   })
 
   it('keeps the dedicated Windows account identity instead of overlaying the host profile', () => {

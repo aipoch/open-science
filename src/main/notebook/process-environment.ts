@@ -86,18 +86,37 @@ const MANAGED_USER_STATE_KEYS = [
   'XDG_STATE_HOME'
 ] as const
 
-const R_USER_STATE_KEYS = ['R_USER', 'R_LIBS', 'R_LIBS_USER', 'R_LIBS_SITE'] as const
+const R_USER_STATE_KEYS = [
+  'R_USER',
+  'R_HOME',
+  'R_LIBS',
+  'R_LIBS_USER',
+  'R_LIBS_SITE',
+  'R_ENVIRON',
+  'R_ENVIRON_USER',
+  'R_PROFILE',
+  'R_PROFILE_USER'
+] as const
+
+type ManagedRuntimeHostStateScope = NotebookLanguage | 'all'
 
 export const sanitizeManagedRuntimeHostState = (
   sourceEnv: NodeJS.ProcessEnv,
-  includeRState = false
+  scope?: ManagedRuntimeHostStateScope
 ): NodeJS.ProcessEnv => {
   const removed = new Set<string>([
     ...MANAGED_USER_STATE_KEYS,
-    ...(includeRState ? R_USER_STATE_KEYS : [])
+    ...(scope === 'r' || scope === 'all' ? R_USER_STATE_KEYS : [])
   ])
   return Object.fromEntries(
-    Object.entries(sourceEnv).filter(([key]) => !removed.has(key.toUpperCase()))
+    Object.entries(sourceEnv).filter(([key]) => {
+      const normalized = key.toUpperCase()
+      if (removed.has(normalized)) return false
+      return !(
+        (scope === 'python' || scope === 'all') &&
+        (normalized.startsWith('PYTHON') || normalized.startsWith('PIP_'))
+      )
+    })
   )
 }
 
@@ -108,10 +127,7 @@ export const buildManagedRuntimeProcessEnvironment = (
   const platform = options.platform ?? process.platform
   const platformPath = platform === 'win32' ? win32 : posix
   const home = platformPath.join(root, 'home')
-  const env = sanitizeManagedRuntimeHostState(
-    options.sourceEnv ?? process.env,
-    options.language === 'r'
-  )
+  const env = sanitizeManagedRuntimeHostState(options.sourceEnv ?? process.env, options.language)
   return {
     ...env,
     HOME: home,

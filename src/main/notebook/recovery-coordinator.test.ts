@@ -376,6 +376,48 @@ describe('NotebookRecoveryCoordinator', () => {
     })
   })
 
+  it.skipIf(process.platform === 'win32')(
+    'keeps a valid managed Python prefix when host Python and pip state is hostile',
+    async () => {
+      const inherited = {
+        HOME: process.env.HOME,
+        PYTHONHOME: process.env.PYTHONHOME,
+        PIP_CONFIG_FILE: process.env.PIP_CONFIG_FILE
+      }
+      const runtimeRoot = await createRuntimeRoot()
+      const prefix = envPrefix(runtimeRoot, DEFAULT_PY_ENV)
+      const bin = pythonBin(prefix)
+      await mkdir(join(prefix, 'conda-meta'), { recursive: true })
+      await mkdir(dirname(bin), { recursive: true })
+      await writeFile(
+        bin,
+        `#!${process.execPath}\n` +
+          `if (process.env.HOME !== ${JSON.stringify(join(runtimeRoot, 'home'))}) process.exit(41)\n` +
+          `if (process.env.PYTHONHOME || process.env.PIP_CONFIG_FILE) process.exit(42)\n` +
+          `if (process.env.PYTHONNOUSERSITE !== '1') process.exit(43)\n`
+      )
+      await chmod(bin, 0o755)
+      const journal = await beginInterruptedMaterialize(runtimeRoot, 'valid-python', prefix)
+      try {
+        process.env.HOME = '/host/home'
+        process.env.PYTHONHOME = '/host/python'
+        process.env.PIP_CONFIG_FILE = '/host/pip.conf'
+
+        await new NotebookRecoveryCoordinator(runtimeRoot).recover()
+
+        expect({ prefixExists: existsSync(prefix), pending: await journal.pending() }).toEqual({
+          prefixExists: true,
+          pending: []
+        })
+      } finally {
+        for (const [key, value] of Object.entries(inherited)) {
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        }
+      }
+    }
+  )
+
   describe.skipIf(process.platform === 'win32')('language-specific interpreter recovery', () => {
     it.each(['create-r', 'restore'])(
       'verifies the R interpreter for an interrupted %s operation',

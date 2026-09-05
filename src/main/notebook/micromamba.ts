@@ -171,7 +171,7 @@ export const micromambaSpawnEnv = (
   // package cache or registering the managed prefix in ~/.conda/environments.txt.
   const cleaned = sanitizeManagedRuntimeHostState(
     Object.fromEntries(Object.entries(inherited).filter(([key]) => !/^(CONDA|MAMBA)_/i.test(key))),
-    true
+    'all'
   )
   return {
     ...cleaned,
