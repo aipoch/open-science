@@ -63,9 +63,9 @@ describe('Project Session defaults migration', () => {
     )
 
     await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toMatchObject({
-      applied: ['0027_project_session_defaults'],
+      applied: ['0027_project_session_defaults', '0028_database_numeric_and_null_constraints'],
       from: '0026_compute_job_remote_cleanup',
-      to: '0027_project_session_defaults'
+      to: '0028_database_numeric_and_null_constraints'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ sessionDefaults: string }>>(

@@ -568,19 +568,32 @@ describe('artifact finalization startup recovery', () => {
         if (failDirectorySync) throw new Error('compatibility storage is read-only')
       }
     })
-    const { provenance, version } = await prepareRecovery(compatibility)
     const visibleBytes = Buffer.from('previous visible artifact')
-    const visibleVersionId = 'artifact-visible-v0'
+    const visibleVersionId = 'artifact-visible-v1'
     const visibleStorageKey =
-      'artifacts/project-1/session-1/.provenance/artifact-visible/versions/artifact-visible-v0/content'
+      'artifacts/project-1/session-1/.provenance/artifact-visible/versions/artifact-visible-v1/content'
     const visiblePath = join(storageRoot, ...visibleStorageKey.split('/'))
     await mkdir(dirname(visiblePath), { recursive: true })
     await writeFile(visiblePath, visibleBytes)
+    // Seed the visible Version before the real writer allocates the pending Version.
+    const artifactId = 'existing-artifact'
+    await client.fileOriginSession.create({
+      data: { projectId: PROJECT_ID, sessionId: SESSION_ID }
+    })
+    await client.artifactLineage.create({
+      data: {
+        id: artifactId,
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        filename: 'result.png',
+        normalizedFilename: 'result.png'
+      }
+    })
     await client.artifactVersion.create({
       data: {
         id: visibleVersionId,
-        artifactId: version.artifactId,
-        versionNumber: 0,
+        artifactId,
+        versionNumber: 1,
         filename: 'result.png',
         originKind: 'legacy',
         state: 'finalized',
@@ -590,9 +603,11 @@ describe('artifact finalization startup recovery', () => {
       }
     })
     await client.artifactLineage.update({
-      where: { id: version.artifactId },
+      where: { id: artifactId },
       data: { currentVersionId: visibleVersionId }
     })
+    const { provenance, version } = await prepareRecovery(compatibility)
+    expect(version.versionNumber).toBe(2)
     await client.managedFile.create({
       data: {
         source: 'artifact',

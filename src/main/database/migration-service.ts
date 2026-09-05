@@ -52,6 +52,7 @@ import {
 } from './migrations/0025-managed-file-version-foundation'
 import { computeJobRemoteCleanupMigration } from './migrations/0026-compute-job-remote-cleanup'
 import { projectSessionDefaultsMigration } from './migrations/0027-project-session-defaults'
+import { numericAndNullConstraintsMigration } from './migrations/0028-database-numeric-and-null-constraints'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -354,6 +355,12 @@ const PROJECT_SESSION_DEFAULTS_CHECKSUM = checksumMigrationPayload(
   projectSessionDefaultsMigration.verifiers,
   projectSessionDefaultsMigration.operations
 )
+const NUMERIC_AND_NULL_CONSTRAINTS_CHECKSUM = checksumMigrationPayload(
+  numericAndNullConstraintsMigration.id,
+  numericAndNullConstraintsMigration.statements,
+  numericAndNullConstraintsMigration.verifiers,
+  numericAndNullConstraintsMigration.operations
+)
 const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
   computeJobSensitiveDataEncryptionMigration.id,
   computeJobSensitiveDataEncryptionMigration.statements,
@@ -449,6 +456,12 @@ const COMPUTE_JOB_OPERATION_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints
         Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
       ])
   )
+const NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
+  numericAndNullConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
+    table,
+    Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+  ])
+)
 const mergeAllowedSuffixChecks = (
   ...contracts: readonly AllowedSuffixCheckConstraints[]
 ): AllowedSuffixCheckConstraints => {
@@ -623,6 +636,13 @@ const MIGRATION_MANIFEST = [
     checksum: PROJECT_SESSION_DEFAULTS_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...numericAndNullConstraintsMigration,
+    checksum: NUMERIC_AND_NULL_CONSTRAINTS_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain',
+    foreignKeysDuringApply: 'disabled'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -873,10 +893,16 @@ const runMigrationVerifiers = async (
           const tableSql = rows[0]?.sql
           if (
             !tableSql ||
-            table.constraints.some(
-              ({ name, expression }) =>
-                !tableSql.includes(`CONSTRAINT "${name}" CHECK (${expression})`)
-            )
+            table.constraints.some(({ name, expression }) => {
+              const upgradedExpression = allowedSuffixChecks[table.table]?.[name]
+              return (
+                !tableSql.includes(`CONSTRAINT "${name}" CHECK (${expression})`) &&
+                !(
+                  upgradedExpression &&
+                  tableSql.includes(`CONSTRAINT "${name}" CHECK (${upgradedExpression})`)
+                )
+              )
+            })
           ) {
             throw new Error(
               `Migration verification found missing CHECK constraints in ${table.table}.`
@@ -969,8 +995,18 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
     tableNames: MEMORY_AUXILIARY_TABLE_NAMES,
     triggerNames: memoryTriggerNames
   })
-  await runMigrationVerifiers(client, agentMemoryProjectScopeMigration.verifiers)
-  await runMigrationVerifiers(client, sessionAuxiliaryTurnUsageMigration.verifiers)
+  // The generated schema enforces the latest checks; frozen auxiliary verifiers also accept
+  // the exact stronger expressions from the immutable suffix.
+  await runMigrationVerifiers(
+    client,
+    agentMemoryProjectScopeMigration.verifiers,
+    NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
+  )
+  await runMigrationVerifiers(
+    client,
+    sessionAuxiliaryTurnUsageMigration.verifiers,
+    NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
+  )
   await runMigrationVerifiers(client, sessionUsageAttributionMigration.verifiers)
   await runMigrationVerifiers(client, computeJobAnalysisStateMigration.verifiers)
   await runMigrationVerifiers(client, computeJobAnalysisConstraintsMigration.verifiers)
@@ -1316,31 +1352,25 @@ const classifyDatabaseFailure = (
   if (error instanceof DatabaseMigrationError) return error
 
   let engineCode = ''
-  let engineName = ''
   try {
     if ((typeof error === 'object' && error !== null) || typeof error === 'function') {
       const code = Reflect.get(error, 'code')
-      const name = Reflect.get(error, 'name')
       if (typeof code === 'string') engineCode = code
-      if (typeof name === 'string') engineName = name
     }
   } catch {
     // Classification remains fail-closed when a hostile error object cannot be inspected.
   }
-  const detail = `${error instanceof Error ? error.message : String(error)} ${engineCode} ${engineName}`
+  const detail = `${error instanceof Error ? error.message : String(error)} ${engineCode}`
   const transient =
-    /SQLITE_(?:BUSY|LOCKED|IOERR|FULL|READONLY)|database is locked|database or disk is full|attempt to write a readonly database|disk I\/O|EACCES|EPERM|permission denied/i.test(
+    /SQLITE_(?:BUSY|LOCKED|IOERR|FULL|READONLY|CANTOPEN)|database(?: table| schema)? is locked|unable to open (?:the )?database file|database or disk is full|attempt to write a readonly database|disk I\/O|EACCES|EPERM|permission denied/i.test(
       detail
     )
   const runtimeUnavailable =
-    /query engine|libquery_engine|PrismaClientInitializationError|dynamic librar|shared object|dlopen/i.test(
-      detail
-    )
+    /query engine|libquery_engine|dynamic librar|shared object|dlopen/i.test(detail)
   const validationFailure =
-    phase === 'validation' ||
-    (error instanceof DatabaseValidationError &&
-      error.data.kind === 'check-constraint-violation') ||
-    /classification blocked|unsupported value|unknown columns?|row-count mismatch|foreign-key violation|baseline verification/i.test(
+    (phase === 'validation' && !transient) ||
+    error instanceof DatabaseValidationError ||
+    /CHECK constraint failed|FOREIGN KEY constraint failed|classification blocked|unsupported value|unknown columns?|row-count mismatch|foreign-key violation|baseline verification/i.test(
       detail
     )
 
@@ -1362,7 +1392,7 @@ const classifyDatabaseFailure = (
       { cause: error }
     )
   }
-  if (phase === 'open') {
+  if (phase !== 'migration') {
     return new DatabaseMigrationError(
       'database_open_failed',
       'Open Science could not open its database.',
@@ -1508,15 +1538,26 @@ const applyManifestMigration = async (
     ? await adaptMigrationOperationsForCurrentSchema(client, migration.operations ?? [])
     : { operations: migration.operations ?? [], currentTableNames: [] }
   const currentTableNames = new Set(adapted.currentTableNames)
+  // An unledgered current schema can already carry 0028's stronger CHECKs. Accept that exact
+  // immutable suffix while verifying older steps, so their ALTERs are not replayed over it.
+  const allowedCheckUpgrades =
+    migration.id < numericAndNullConstraintsMigration.id
+      ? NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
+      : {}
   const verifyMigrationTarget = async (targetClient: PrismaClient): Promise<void> => {
     if (!canVerifyAsCurrentSchema) {
-      await runMigrationVerifiers(targetClient, migration.verifiers)
+      await runMigrationVerifiers(targetClient, migration.verifiers, allowedCheckUpgrades)
       return
     }
     await verifyCurrentRuntimeSchemaTables(targetClient, adapted.currentTableNames)
-    await runMigrationVerifiers(targetClient, migration.verifiers, {}, currentTableNames)
+    await runMigrationVerifiers(
+      targetClient,
+      migration.verifiers,
+      allowedCheckUpgrades,
+      currentTableNames
+    )
     if (migration.id === projectPreviewStateOwnerFkMigration.id) {
-      await runMigrationVerifiers(targetClient, migration.verifiers)
+      await runMigrationVerifiers(targetClient, migration.verifiers, allowedCheckUpgrades)
     }
   }
   const disableForeignKeys =
@@ -1536,8 +1577,11 @@ const applyManifestMigration = async (
       try {
         await verifyMigrationTarget(transactionClient)
         contractAlreadySatisfied = true
-      } catch {
-        // The migration statements below own bringing this schema suffix into compliance.
+      } catch (error) {
+        const failure = classifyDatabaseFailure(error, 'validation', migration.id)
+        // Only a contract mismatch calls for schema changes. A failed read must not cause
+        // non-idempotent ALTER statements to be replayed over an already compatible schema.
+        if (failure.code !== 'database_validation_failed') throw failure
       }
       if (
         contractAlreadySatisfied &&
@@ -1572,13 +1616,7 @@ const applyManifestMigration = async (
       try {
         await verifyMigrationTarget(transactionClient)
       } catch (error) {
-        throw new DatabaseMigrationError(
-          'database_validation_failed',
-          'The existing database does not satisfy the required schema contract.',
-          false,
-          migration.id,
-          { cause: error }
-        )
+        throw classifyDatabaseFailure(error, 'validation', migration.id)
       }
       await insertLedgerRow(transactionClient, migration)
     })

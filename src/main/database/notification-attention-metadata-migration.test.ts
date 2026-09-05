@@ -86,10 +86,11 @@ describe('notification attention metadata migration', () => {
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
         '0026_compute_job_remote_cleanup',
-        '0027_project_session_defaults'
+        '0027_project_session_defaults',
+        '0028_database_numeric_and_null_constraints'
       ],
       from: '0006_database_domain_constraints',
-      to: '0027_project_session_defaults'
+      to: '0028_database_numeric_and_null_constraints'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)

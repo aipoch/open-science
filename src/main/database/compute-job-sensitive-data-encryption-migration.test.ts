@@ -74,10 +74,11 @@ describe('Compute Job sensitive data encryption migration', () => {
         '0024_compute_job_file_evidence',
         '0025_managed_file_version_foundation',
         '0026_compute_job_remote_cleanup',
-        '0027_project_session_defaults'
+        '0027_project_session_defaults',
+        '0028_database_numeric_and_null_constraints'
       ],
       from: '0015_session_model_call_usage',
-      to: '0027_project_session_defaults'
+      to: '0028_database_numeric_and_null_constraints'
     })
     await expect(
       access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)

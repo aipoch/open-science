@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { DATABASE_STARTUP_CHANNELS, type DatabaseStartupState } from '../../shared/database-startup'
 import { installDatabaseStartupQuitGuard, registerDatabaseStartupIpc } from './database-startup-ipc'
-import type { DatabaseStartupOwner } from './database-startup-owner'
+import { createDatabaseStartupOwner, type DatabaseStartupOwner } from './database-startup-owner'
 
 describe('database startup Electron bridge', () => {
   it('serves the current state and broadcasts owner changes', async () => {
@@ -133,5 +133,43 @@ describe('database startup Electron bridge', () => {
 
     expect(quit).toHaveBeenCalledOnce()
     guard.dispose()
+  })
+})
+
+describe('D03 window delivery failure isolation', () => {
+  it('delivers to surviving windows when another webContents.send throws', async () => {
+    const owner = createDatabaseStartupOwner({
+      verifyDatabase: async () => {},
+      reportBlocked: vi.fn()
+    })
+    const destroyedSend = vi.fn()
+    const healthySend = vi.fn()
+    const dispose = registerDatabaseStartupIpc({
+      ipcMain: { handle: vi.fn(), removeHandler: vi.fn() },
+      owner,
+      quit: vi.fn(),
+      getWindows: () =>
+        [
+          { isDestroyed: () => true, webContents: { send: destroyedSend } },
+          {
+            isDestroyed: () => false,
+            webContents: {
+              send: (_channel: string, state: DatabaseStartupState) => {
+                if (state.phase === 'starting') throw new Error('Object has been destroyed')
+              }
+            }
+          },
+          { isDestroyed: () => false, webContents: { send: healthySend } }
+        ] as never
+    })
+    try {
+      expect.soft(await owner.start()).toEqual({ phase: 'starting' })
+      expect
+        .soft(healthySend)
+        .toHaveBeenCalledWith(DATABASE_STARTUP_CHANNELS.stateChanged, { phase: 'starting' })
+      expect(destroyedSend).not.toHaveBeenCalled()
+    } finally {
+      dispose()
+    }
   })
 })

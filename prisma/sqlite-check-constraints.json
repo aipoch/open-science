@@ -43,7 +43,7 @@
     {
       "tableName": "SessionModelCallUsage",
       "name": "SessionModelCallUsage_nonnegative_check",
-      "expression": "\"inputTokens\" >= 0 AND \"cacheTokens\" >= 0 AND \"outputTokens\" >= 0 AND ((\"cachedReadTokens\" IS NULL AND \"cachedWriteTokens\" IS NULL) OR (\"cachedReadTokens\" >= 0 AND \"cachedWriteTokens\" >= 0)) AND (\"contextUsedTokens\" IS NULL OR \"contextUsedTokens\" >= 0) AND (\"contextWindowSize\" IS NULL OR \"contextWindowSize\" > 0)"
+      "expression": "\"inputTokens\" >= 0 AND \"cacheTokens\" >= 0 AND \"outputTokens\" >= 0 AND ((\"cachedReadTokens\" IS NULL AND \"cachedWriteTokens\" IS NULL) OR (\"cachedReadTokens\" IS NOT NULL AND \"cachedWriteTokens\" IS NOT NULL AND \"cachedReadTokens\" >= 0 AND \"cachedWriteTokens\" >= 0)) AND (\"contextUsedTokens\" IS NULL OR \"contextUsedTokens\" >= 0) AND (\"contextWindowSize\" IS NULL OR \"contextWindowSize\" > 0)"
     },
     {
       "tableName": "SessionAuxiliaryTurnUsage",
@@ -58,7 +58,7 @@
     {
       "tableName": "SessionAuxiliaryTurnUsage",
       "name": "SessionAuxiliaryTurnUsage_nonnegative_check",
-      "expression": "\"completedAtMs\" >= 0 AND \"inputTokens\" >= 0 AND \"cacheTokens\" >= 0 AND \"outputTokens\" >= 0 AND ((\"cachedReadTokens\" IS NULL AND \"cachedWriteTokens\" IS NULL) OR (\"cachedReadTokens\" >= 0 AND \"cachedWriteTokens\" >= 0)) AND (\"modelCallCount\" IS NULL OR \"modelCallCount\" > 0)"
+      "expression": "\"completedAtMs\" >= 0 AND \"inputTokens\" >= 0 AND \"cacheTokens\" >= 0 AND \"outputTokens\" >= 0 AND ((\"cachedReadTokens\" IS NULL AND \"cachedWriteTokens\" IS NULL) OR (\"cachedReadTokens\" IS NOT NULL AND \"cachedWriteTokens\" IS NOT NULL AND \"cachedReadTokens\" >= 0 AND \"cachedWriteTokens\" >= 0)) AND (\"modelCallCount\" IS NULL OR \"modelCallCount\" > 0)"
     },
     {
       "tableName": "SessionRun",
@@ -588,7 +588,7 @@
     {
       "tableName": "ComputeJobOperation",
       "name": "ComputeJobOperation_lifecycle_check",
-      "expression": "(\"phase\" = 'active' AND \"outcome\" IS NULL AND \"settledAt\" IS NULL) OR (\"phase\" = 'settled' AND \"outcome\" IN ('fulfilled', 'superseded') AND \"settledAt\" IS NOT NULL)"
+      "expression": "(\"phase\" = 'active' AND \"outcome\" IS NULL AND \"settledAt\" IS NULL) OR (\"phase\" = 'settled' AND \"outcome\" IS NOT NULL AND \"outcome\" IN ('fulfilled', 'superseded') AND \"settledAt\" IS NOT NULL)"
     },
     {
       "tableName": "ComputeJobOperation",
@@ -618,7 +618,7 @@
     {
       "tableName": "MemoryCategory",
       "name": "MemoryCategory_shape_check",
-      "expression": "((\"systemKey\" = 'about-you' AND \"name\" IS NULL AND \"nameKey\" IS NULL AND \"guidance\" = '' AND \"autoRecall\" = true) OR (\"systemKey\" IS NULL AND \"name\" IS NOT NULL AND \"nameKey\" IS NOT NULL))"
+      "expression": "((\"systemKey\" IS NOT NULL AND \"systemKey\" = 'about-you' AND \"name\" IS NULL AND \"nameKey\" IS NULL AND \"guidance\" = '' AND \"autoRecall\" = true) OR (\"systemKey\" IS NULL AND \"name\" IS NOT NULL AND \"nameKey\" IS NOT NULL))"
     },
     {
       "tableName": "MemoryCategory",
@@ -674,6 +674,31 @@
       "tableName": "MemoryEntry",
       "name": "MemoryEntry_revision_check",
       "expression": "\"revision\" >= 1"
+    },
+    {
+      "tableName": "UploadVersion",
+      "name": "UploadVersion_numeric_bounds_check",
+      "expression": "\"sizeBytes\" >= 0 AND \"versionNumber\" >= 1"
+    },
+    {
+      "tableName": "ArtifactVersion",
+      "name": "ArtifactVersion_numeric_bounds_check",
+      "expression": "\"sizeBytes\" >= 0 AND \"versionNumber\" >= 1"
+    },
+    {
+      "tableName": "ArtifactVersionInput",
+      "name": "ArtifactVersionInput_numeric_bounds_check",
+      "expression": "\"sizeBytes\" >= 0 AND (\"sourceVersionNumber\" IS NULL OR \"sourceVersionNumber\" >= 1)"
+    },
+    {
+      "tableName": "ManagedFile",
+      "name": "ManagedFile_numeric_bounds_check",
+      "expression": "\"sizeBytes\" >= 0"
+    },
+    {
+      "tableName": "ManagedFileVersionWriteOperation",
+      "name": "ManagedFileVersionWriteOperation_numeric_bounds_check",
+      "expression": "\"sizeBytes\" >= 0"
     }
   ],
   "indexes": [
