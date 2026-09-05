@@ -2,6 +2,7 @@ import type { NotebookLanguage } from '../../shared/notebook'
 import type { NotebookEnvironmentOperations } from './environment-operations'
 import type { NotebookPackageAdmittedTarget } from './package-admission'
 import type { NotebookRuntimeBindingOwner } from './runtime-binding'
+import { notebookLaneKey } from './lane-identity'
 import {
   addRepairRequired,
   clearRepairRequired,
@@ -68,7 +69,7 @@ class NotebookRuntimeRepairOwner {
     const environmentName = defaultEnvironment(language)
     const target = { language, environmentName, binding } satisfies RuntimeRepairScope
     const affectedLanguages = ['python', 'r'] as const
-    const sessions = this.matchingSessions(target, true)
+    const sessions = Array.from(this.options.sessions())
     const repairKeys = new Set(this.options.policy.registryKeys(language, environmentName, binding))
     for (const session of sessions) {
       for (const [boundLanguage, boundBinding] of session.runtimeBindingEntries()) {
@@ -92,7 +93,7 @@ class NotebookRuntimeRepairOwner {
     }
 
     await this.options.bindings.runWrites(
-      sessions.map((session) => session.sessionId),
+      sessions.map((session) => notebookLaneKey(session.lane)),
       async () => {
         const changed = new Set<RepairSession>()
         for (const session of sessions) {
@@ -132,9 +133,9 @@ class NotebookRuntimeRepairOwner {
     const languages: readonly NotebookLanguage[] = managed
       ? ['python', 'r']
       : [repairTarget.language]
-    const sessions = this.matchingSessions(repairTarget, managed)
+    const sessions = Array.from(this.options.sessions())
     await this.options.bindings.runWrites(
-      sessions.map((session) => session.sessionId),
+      sessions.map((session) => notebookLaneKey(session.lane)),
       async () => {
         const changed = new Set<RepairSession>()
         if (managed) {
@@ -228,14 +229,13 @@ class NotebookRuntimeRepairOwner {
       }
     }
 
-    const sessions = this.matchingSessions(target, false).filter((session) =>
-      Boolean(session.runtimeBinding(language))
-    )
+    const sessions = Array.from(this.options.sessions())
     await this.options.bindings.runWrites(
-      sessions.map((session) => session.sessionId),
+      sessions.map((session) => notebookLaneKey(session.lane)),
       async () => {
         for (const session of sessions) {
           if (!this.options.isCurrentSession(session)) continue
+          if (!this.matches(session, language, target, false)) continue
           const previous = session.runtimeBinding(language)
           if (!previous) continue
           session.setRuntimeBinding(language, replacement)
@@ -322,27 +322,10 @@ class NotebookRuntimeRepairOwner {
     )
   }
 
-  private matchingSessions(target: RuntimeRepairScope, crossLanguage: boolean): RepairSession[] {
-    const languages: readonly NotebookLanguage[] = crossLanguage
-      ? ['python', 'r']
-      : [target.language]
-    return Array.from(this.options.sessions()).filter((session) =>
-      languages.some((language) => this.matches(session, language, target, crossLanguage))
-    )
-  }
-
   private async restoreBindings(target: RuntimeRepairScope, crossLanguage: boolean): Promise<void> {
-    const sessions = this.matchingSessions(target, crossLanguage).filter((session) =>
-      session
-        .runtimeBindingEntries()
-        .some(
-          ([language, binding]) =>
-            binding.reason === 'repair-required' &&
-            this.matches(session, language, target, crossLanguage)
-        )
-    )
+    const sessions = Array.from(this.options.sessions())
     await this.options.bindings.runWrites(
-      sessions.map((session) => session.sessionId),
+      sessions.map((session) => notebookLaneKey(session.lane)),
       async () => {
         const changedSessions: RepairSession[] = []
         for (const session of sessions) {

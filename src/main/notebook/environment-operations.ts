@@ -1,7 +1,7 @@
 import type { NotebookKernelMetadata, NotebookLanguage } from '../../shared/notebook'
 import type { ProvisionProgress } from '../../shared/notebook-env'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
-import type { NotebookLaneIdentity } from './lane-identity'
+import { notebookLaneKey, type NotebookLaneIdentity } from './lane-identity'
 import { EnvironmentLeaseManager, type EnvironmentLeaseMode } from './environment-lease-manager'
 import type { NotebookRecoveryCoordinator } from './recovery-coordinator'
 import { errorLogFields } from '../logger'
@@ -237,18 +237,14 @@ export class NotebookEnvironmentOperations {
     runtimeId: string,
     options: { force?: boolean } = {}
   ): Promise<void> {
-    const targetSessions = Array.from(this.options.sessions()).filter((session) => {
-      const binding = session.runtimeBinding(language)
-      return binding?.runtimeId === runtimeId && binding.status !== 'unavailable'
-    })
+    // A pending selection can enter or leave this runtime. Match after the lane's earlier binding
+    // writes settle, rather than omitting a not-yet-published selection from revocation.
+    const targetSessions = Array.from(this.options.sessions())
     await this.options.bindings.runWrites(
-      targetSessions.map((session) => session.sessionId),
+      targetSessions.map((session) => notebookLaneKey(session.lane)),
       async () => {
         for (const session of targetSessions) {
-          const current = Array.from(this.options.sessions()).find(
-            (candidate) => candidate.sessionId === session.sessionId
-          )
-          if (current !== session) continue
+          if (!Array.from(this.options.sessions()).includes(session)) continue
           const revocation = await this.options.bindings.revoke(
             session,
             language,

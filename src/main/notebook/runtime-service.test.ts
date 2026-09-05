@@ -8731,6 +8731,103 @@ describe('v4 runtime bindings & agent tools', () => {
     }
   })
 
+  it.each(
+    (['revoke-old', 'revoke-new', 'prepare-repair', 'complete-repair'] as const).flatMap(
+      (mutation) => [false, true].map((childLane) => ({ mutation, childLane }))
+    )
+  )(
+    'N06 serializes $mutation with a published switch (child lane: $childLane)',
+    async ({ mutation, childLane }) => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const enablement = {
+        enabled: { [managedPy.envId]: true, [userPyB.envId]: true },
+        installAuthorized: {}
+      }
+      const service = bindingService(root, { repository, enablement })
+      const request = {
+        projectId: 'project-q',
+        sessionId: 'same-session',
+        workspaceCwd: root,
+        ...(childLane
+          ? {
+              provenanceContext: {
+                rootFrameId: 'root-frame-same-session',
+                agentFrameId: 'child',
+                messageBranchId: 'branch',
+                runtimeSegmentId: 'segment',
+                promptMessageId: 'message'
+              }
+            }
+          : {})
+      }
+      const published = createDeferred<void>()
+      const gate = createDeferred<void>()
+      let switching: Promise<unknown> | undefined
+      let mutating: Promise<unknown> | undefined
+      let restarted: NotebookRuntimeService | undefined
+      try {
+        await service.bindRuntime({ ...request, language: 'python', runtimeId: managedPy.envId })
+        const persist = repository.setRuntimeBindings.bind(repository)
+        vi.spyOn(repository, 'setRuntimeBindings').mockImplementationOnce(async (...args) => {
+          const document = await persist(...args)
+          published.resolve()
+          await gate.promise
+          return document
+        })
+        switching = service.switchRuntime({
+          ...request,
+          language: 'python',
+          runtimeId: userPyB.envId
+        })
+        await published.promise
+        if (mutation.startsWith('revoke')) {
+          const runtimeId = mutation === 'revoke-old' ? managedPy.envId : userPyB.envId
+          enablement.enabled[runtimeId] = false
+          mutating = service.revokeRuntime('python', runtimeId)
+        } else if (mutation === 'prepare-repair') {
+          mutating = service.prepareRuntimeRepair('python', {
+            kind: 'runtime',
+            runtimeId: managedPy.envId
+          })
+        } else {
+          mutating = service.completeRuntimeRepair('python')
+        }
+        // Let the competing public operation enter while publication is held. No wall-clock race.
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        gate.resolve()
+        await expect(switching).resolves.toHaveProperty('bound.runtimeId', userPyB.envId)
+        await mutating
+        const expected = {
+          runtimeId: userPyB.envId,
+          status: mutation === 'revoke-new' ? 'unavailable' : 'active'
+        }
+        expect.soft((await service.state(request)).runtimeBindings.python).toMatchObject(expected)
+        const lane = childLane
+          ? createFrameNotebookLane(request.projectId, request.sessionId, 'child')
+          : createRootNotebookLane(request.projectId, request.sessionId, 'root-frame-same-session')
+        expect
+          .soft(
+            (
+              await new NotebookRunRepository(root).findExisting(
+                request.projectId,
+                request.sessionId,
+                lane
+              )
+            )?.runtimeBindings?.python
+          )
+          .toMatchObject(expected)
+        restarted = bindingService(root, { enablement })
+        expect.soft((await restarted.state(request)).runtimeBindings.python).toMatchObject(expected)
+      } finally {
+        gate.resolve()
+        await Promise.allSettled([switching, mutating])
+        await restarted?.dispose()
+        await service.dispose()
+      }
+    }
+  )
+
   it('prepares a healthy managed Python reinstall by closing explicit and implicit kernels', async () => {
     const root = await createStorageRoot()
     const terminations: string[] = []

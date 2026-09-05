@@ -78,10 +78,7 @@ const defaultEnvironment = (
 
 /** Owns Notebook runtime discovery, selection, binding transitions, and durable wire snapshots. */
 export class NotebookRuntimeBindingOwner {
-  private readonly changes = new WeakMap<
-    RuntimeBindingSession,
-    Promise<RuntimeBindingOperationResult>
-  >()
+  private readonly pendingWrites = new Map<string, AdmissionGate>()
   private activeWrites = 0
   private readonly activeWritesBySession = new Map<string, number>()
   private globalWriteGate: AdmissionGate | undefined
@@ -111,17 +108,29 @@ export class NotebookRuntimeBindingOwner {
     }
     this.acquireWrites(sessionIds)
 
+    // Reserve every affected lane together. Revocation, repair and explicit selections all mutate
+    // the same binding snapshot; their read/modify/write sequences must share this queue.
+    const predecessors = sessionIds.flatMap((id) => {
+      const pending = this.pendingWrites.get(id)
+      return pending ? [pending.promise] : []
+    })
+    const gate = admissionGate()
+    for (const id of sessionIds) this.pendingWrites.set(id, gate)
+
     let result: Promise<T>
     try {
       // Start the operation synchronously with admission. In particular, ensureSession() must enter
       // the registry before a same-tick global teardown can close registry creation admission.
-      result = operation()
+      result = predecessors.length > 0 ? Promise.all(predecessors).then(operation) : operation()
     } catch (error) {
-      for (const sessionId of sessionIds) this.releaseWrite(sessionId)
-      return Promise.reject(error)
+      result = Promise.reject(error)
     }
     return result.finally(() => {
-      for (const sessionId of sessionIds) this.releaseWrite(sessionId)
+      for (const sessionId of sessionIds) {
+        if (this.pendingWrites.get(sessionId) === gate) this.pendingWrites.delete(sessionId)
+        this.releaseWrite(sessionId)
+      }
+      gate.release()
     })
   }
 
@@ -242,41 +251,30 @@ export class NotebookRuntimeBindingOwner {
     return this.change(session, language, runtimeId, true, beforeReplace)
   }
 
-  private change(
+  private async change(
     session: RuntimeBindingSession,
     language: NotebookLanguage,
     runtimeId: string,
     replace: boolean,
     beforeChange?: (binding: NotebookSessionRuntimeBinding) => Promise<void>
   ): Promise<RuntimeBindingOperationResult> {
-    // Both languages share one durable snapshot. Build each candidate only after the previous
-    // change has settled, so a concurrent selection cannot erase the other language's binding.
-    const previous = this.changes.get(session) ?? Promise.resolve()
-    const operation = previous
-      .catch(() => undefined)
-      .then(async () => {
-        let binding: NotebookSessionRuntimeBinding
-        try {
-          binding = await this.resolveEnabledRuntime(language, runtimeId)
-          const existing = session.runtimeBinding(language)
-          if (!replace && existing && existing.runtimeId !== binding.runtimeId) {
-            throw new Error(
-              `A ${language} runtime is already bound for this session. Use ` +
-                'notebook_switch_runtime to change it (it tears down the current kernel first).'
-            )
-          }
-          if (replace || !existing) await beforeChange?.(binding)
-        } catch (error) {
-          return this.failureResult(session, language, error)
-        }
-        // Keep reconciliation failures outside the validation catch: an unreadable commit must not
-        // be turned into a fabricated bindingChanged:false receipt.
-        return this.commitBinding(session, binding)
-      })
-    this.changes.set(session, operation)
-    return operation.finally(() => {
-      if (this.changes.get(session) === operation) this.changes.delete(session)
-    })
+    let binding: NotebookSessionRuntimeBinding
+    try {
+      binding = await this.resolveEnabledRuntime(language, runtimeId)
+      const existing = session.runtimeBinding(language)
+      if (!replace && existing && existing.runtimeId !== binding.runtimeId) {
+        throw new Error(
+          `A ${language} runtime is already bound for this session. Use ` +
+            'notebook_switch_runtime to change it (it tears down the current kernel first).'
+        )
+      }
+      if (replace || !existing) await beforeChange?.(binding)
+    } catch (error) {
+      return this.failureResult(session, language, error)
+    }
+    // Keep reconciliation failures outside the validation catch: an unreadable commit must not
+    // be turned into a fabricated bindingChanged:false receipt.
+    return this.commitBinding(session, binding)
   }
 
   private async commitBinding(
