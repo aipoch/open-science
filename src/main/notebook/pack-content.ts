@@ -1,5 +1,5 @@
 import { copyFile, mkdir, readFile, readdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, posix, win32 } from 'node:path'
 
 import { pkgsCache } from './runtime-paths'
 import { md5File } from './provisioner-runtime'
@@ -7,6 +7,20 @@ import { micromambaCacheLockKey, type MicromambaCache } from './micromamba-cache
 import { withExclusiveCacheLock } from './pkgs-cache-lock'
 
 export type LockPackage = { file: string; md5: string }
+
+// A lock line's URL basename doubles as the cached tarball's filename AND the local download
+// destination, so it must be a plain conda archive basename — never a path. A `\` survives a naive
+// `url.split('/')` and lets `join(staging, '..\\..\\x')` escape the staging dir on Windows (and a
+// URL-legal dot-segment like `.`/`..` is equally unsafe), so validate with BOTH path modules'
+// basename semantics (pure functions — host-independent) plus the conda archive extension.
+// Shared by every lock parser so the download, seed, and micromamba sides cannot drift.
+export const isSafePackageBasename = (file: string): boolean =>
+  file !== '.' &&
+  file !== '..' &&
+  /^[^/\\]+$/.test(file) &&
+  posix.basename(file) === file &&
+  win32.basename(file) === file &&
+  /\.(conda|tar\.bz2)$/i.test(file)
 
 // Parses the @EXPLICIT entries and rejects malformed lines before any file is copied into the shared
 // micromamba cache. Package URLs are expected to end in a basename and a 32-char md5 digest.
@@ -23,7 +37,7 @@ export const lockPackages = (lockText: string): LockPackage[] => {
 
   if (packages.length === 0) throw new Error('runtime pack lock contains no package entries')
   for (const pkg of packages) {
-    if (!pkg.file || pkg.file.includes('/') || !/^[0-9a-f]{32}$/i.test(pkg.md5)) {
+    if (!isSafePackageBasename(pkg.file) || !/^[0-9a-f]{32}$/i.test(pkg.md5)) {
       throw new Error(`runtime pack lock contains a malformed package entry: ${pkg.file}`)
     }
   }

@@ -233,6 +233,18 @@ export const listArgv = (mm: string, root: string, prefix: string): string[] => 
   '--json'
 ]
 
+// micromamba list --prefix <prefix> --explicit --md5
+// Raw explicit package URLs (+MD5) for one env; normalizeExplicitLock turns them into a lock.
+export const explicitLockArgv = (mm: string, prefix: string): string[] => [
+  mm,
+  '--no-rc',
+  'list',
+  '--prefix',
+  prefix,
+  '--explicit',
+  '--md5'
+]
+
 // Normalizes raw `micromamba list --explicit --md5` output into a valid @EXPLICIT lock. The raw
 // output lacks the @EXPLICIT header and includes comment/title lines; feeding it to
 // `create --file --offline` as-is silently degrades to an online solve and errors (spec §2.5). We

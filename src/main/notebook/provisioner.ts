@@ -1,8 +1,20 @@
-import { type Dirent, existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import {
+  type Dirent,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook'
+import { resilientDownload } from '../net/resilient-download'
+import { netFetchStandard } from '../skills/net-fetch'
 import {
   bootTokenProvesReboot,
   listOperationChildren,
@@ -70,16 +82,19 @@ import type { NotebookProcessSandbox } from './process-sandbox'
 import {
   isChildUnconfirmedError,
   captureMicromamba,
+  md5File,
   micromambaDiagnosticText,
   runMicromamba,
   verifyExecutable
 } from './provisioner-runtime'
 import { envsLockDir } from './runtime-relocation'
+import { downloadExplicitLockPackages, parseExplicitLock } from './environment-lock'
 import {
   DEFAULT_ENV_VERSION,
   resolveRuntimeCdnBase,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
+  assertSafeEnvName,
   envPrefix,
   legacyDefaultEnvPrefix,
   logicalEnvNameFromDirectory,
@@ -203,6 +218,11 @@ export type ProvisionerDeps = {
   retainWorkingCache?: MicromambaWorkingCacheRetainer
   // Captures the new environment's explicit lock before a named environment is exposed to a kernel.
   captureExplicitLock?: (prefix: string) => Promise<string>
+  // Downloads one pinned package URL to a local path for a lock restore (see
+  // restoreEnvironmentFromLock). Production wires the shared resilient downloader (system/VPN
+  // proxy aware, resumable); tests inject a fake. md5 verification is NOT done here — the
+  // restore verifies every download against the lock before anything is seeded or deleted.
+  downloadPackage?: (url: string, dest: string, signal?: AbortSignal) => Promise<void>
   // Verifies `<bin> --version`; rejects otherwise.
   verify: (bin: string, prefix: string) => Promise<void>
   // Clock injection for the ready-marker timestamp.
@@ -337,6 +357,16 @@ export interface RuntimeProvisioner {
   // Rebuilds envs captured by a data-root relocation (see runtime-relocation.ts) offline from their
   // @EXPLICIT locks + the copied pkgs cache. No-op when no relocation bundle is present.
   restoreRelocatedEnvs(onProgress: (p: ProvisionProgress) => void): Promise<void>
+  // Restores ONE managed env from a validated @EXPLICIT lock (the reverse of exportEnvironmentLock,
+  // issue #924): downloads each pinned URL into journaled staging (md5-verified), seeds the shared
+  // pkgs cache, then rebuilds the prefix offline through the same journaled create as the
+  // relocation restore. Create and replace are one sequence — an existing prefix is cleared inside
+  // the journal. Only managed env names are addressable; user-own interpreters are out of scope.
+  restoreEnvironmentFromLock(
+    name: string,
+    lockText: string,
+    opts?: { signal?: AbortSignal; onProgress?: (p: ProvisionProgress) => void }
+  ): Promise<void>
 }
 
 export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
@@ -1258,6 +1288,208 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     }
   }
 
+  // Restores ONE managed env from a validated @EXPLICIT lock (user-facing counterpart to
+  // exportEnvironmentLock, issue #924). Every pinned package URL is downloaded into a journaled
+  // .incoming-* staging dir and md5-verified BEFORE the prefix is touched, then seeded into the
+  // shared pkgs cache and rebuilt OFFLINE through the same journaled create the relocation restore
+  // uses (kind 'materialize', phase 'restore'), so crash recovery, child-PID supervision, and the
+  // corrupt-cache lock behave identically. Create and replace are one sequence: an existing prefix
+  // is cleared INSIDE the journal (never before begin() succeeds), and a download/verify failure
+  // leaves it untouched — with an empty package cache the downloads alone rebuild it, which is what
+  // makes the restore fully portable. A failed restore never looks ready: the ready marker is
+  // stamped only after the recreated interpreter verifies (defaults; named envs are bin-present by
+  // definition, D7). Readiness/discovery re-evaluate on the next status()/listEnvironments() pull.
+  // Cancellation: opts.signal aborts the in-flight download and create; an aborted create leaves
+  // the same partial prefix a cancelled provision does — cleared by the next restore or by
+  // startup recovery. Live kernels are NOT torn down here; an in-session caller must drain them
+  // through the explicit-repair path first (the only sanctioned teardown).
+  async restoreEnvironmentFromLock(
+    name: string,
+    lockText: string,
+    opts?: { signal?: AbortSignal; onProgress?: (p: ProvisionProgress) => void }
+  ): Promise<void> {
+    // The two default envs are the reserved managed names; anything else must be a safe env name.
+    // assertSafeEnvName also rejects the bare 'python'/'r' aliases — restore never guesses a
+    // target from an ambiguous name.
+    if (name !== DEFAULT_PY_ENV && name !== DEFAULT_R_ENV) assertSafeEnvName(name)
+    const prefix = envPrefix(this.deps.root, name, this.platform)
+    if (
+      this.platform === 'win32' &&
+      prefix.length + DEFAULT_MAX_ENV_RELATIVE_PATH > WINDOWS_MAX_USABLE_PATH
+    ) {
+      throw new Error(
+        `Environment "${name}" exceeds the conservative Windows environment path budget; ` +
+          'choose a shorter name or data-root path.'
+      )
+    }
+    // Validate the lock BEFORE any mutation (staging included): a malformed, checksum-broken, or
+    // foreign-platform lock must not download a byte or delete the existing env.
+    const entries = parseExplicitLock(lockText, { platform: this.platform, arch: process.arch })
+    const downloadPackage = this.deps.downloadPackage
+    if (!downloadPackage) {
+      throw new Error(
+        'Environment restore requires a package downloader (downloadPackage unwired).'
+      )
+    }
+    this.assertPrefixWritable(prefix)
+    const onProgress = opts?.onProgress ?? (() => undefined)
+    await this.withEnvPrefixLock(name, async () => {
+      // Authoritative re-check AFTER the lock: a package install or repair can fail with an
+      // unconfirmed child and mark this prefix blocked while the restore WAITED for the lock —
+      // the early check above is only a fast path, never the destructive-boundary check.
+      this.assertPrefixWritable(prefix)
+      onProgress({
+        phase: 'restore',
+        event: { code: 'restoring-environment', environment: name },
+        progress: 0.05
+      })
+      // Stage under <root>/packs (same volume as the cache seed/copy targets). The 'download'
+      // journal record mirrors createFetchBundleAdapter's lifecycle: it is only cleared in the
+      // finally, so a killed process leaves a record whose targetPath startup recovery removes.
+      const packsRoot = join(this.deps.root, 'packs')
+      mkdirSync(packsRoot, { recursive: true })
+      const staging = mkdtempSync(join(packsRoot, '.incoming-'))
+      const lockPath = join(staging, `${name}.lock`)
+      writeFileSync(lockPath, lockText, 'utf8')
+      const journal = RuntimeOperationJournal.forPath(operationJournalPath(this.deps.root))
+      const operationId = randomUUID()
+      await journal
+        .begin({
+          operationId,
+          kind: 'download',
+          runtimeId: name,
+          phase: 'restore',
+          startedAt: Date.now(),
+          targetPath: staging
+        })
+        .catch(() => undefined)
+      try {
+        onProgress({
+          phase: 'restore',
+          event: { code: 'preparing-packages', environment: name },
+          progress: 0.1
+        })
+        await downloadExplicitLockPackages(entries, staging, {
+          download: (url, dest, signal) => downloadPackage(url, dest, signal),
+          md5: (path) => md5File(path),
+          signal: opts?.signal,
+          onProgress: (completed, total) =>
+            onProgress({
+              phase: 'restore',
+              event: { code: 'verifying-packages', completed, total },
+              progress: 0.1 + (0.4 * completed) / total
+            })
+        })
+        onProgress({
+          phase: 'restore',
+          event: { code: 'preparing-packages', environment: name },
+          progress: 0.55
+        })
+        // Re-parses the staged lock + re-verifies every md5 (second, independent gate), then seeds
+        // the working/durable cache idempotently — a cache hit only skips the copy, not the check.
+        await validateAndSeedPackIntoCache(staging, lockPath, this.cache)
+        onProgress({
+          phase: 'restore',
+          event: { code: 'environment-create', environment: name },
+          progress: 0.6
+        })
+        await this.withJournaledPrefixWrite(
+          'materialize',
+          name,
+          prefix,
+          'restore',
+          async (onBeforeSpawn, onChild) => {
+            const cache = this.cache
+            await this.runWithMaxPathRecovery(
+              () =>
+                withSharedCacheLocks(this.cacheLockKeys(cache), () => {
+                  // Clear the default's ready marker BEFORE the destructive replace. pythonReady()
+                  // reads marker + interpreter presence only — it never re-verifies — so leaving
+                  // the OLD marker in place would let a hard crash mid-create (interpreter already
+                  // linked, later packages missing) surface as a "ready" but broken default. From
+                  // this point on only a fresh verify can re-stamp readiness; a crash instead falls
+                  // back to the normal re-provision/recovery path.
+                  if (name === DEFAULT_PY_ENV)
+                    rmSync(readyMarkerPath(this.deps.root), { force: true })
+                  else if (name === DEFAULT_R_ENV)
+                    rmSync(rReadyMarkerPath(this.deps.root), { force: true })
+                  // Clear any prior content so the offline recreate starts clean (a wedge like
+                  // conda-meta-without-interpreter would make `create -p` fail). INSIDE the
+                  // journal: a fail-closed begin() can never leave the prefix deleted.
+                  rmSync(prefix, { recursive: true, force: true })
+                  return this.deps.runArgv(
+                    createFromLockArgv(this.deps.mm, this.deps.root, prefix, lockPath),
+                    opts?.signal,
+                    onChild,
+                    onBeforeSpawn,
+                    cache,
+                    DEFAULT_MAX_CACHE_RELATIVE_PATH
+                  )
+                }),
+              undefined,
+              cache
+            )
+            return this.deps.retainWorkingCache
+              ? [
+                  {
+                    workingRoot: cache.path,
+                    authorizations: archiveAuthorizationsFromExplicitLock(lockText)
+                  }
+                ]
+              : []
+          }
+        )
+        // Reserved defaults must verify THEIR OWN interpreter — a default-python restored from an
+        // R-only lock must fail loudly, not "succeed" with an R env that pythonReady() then reads
+        // as not-ready. Named envs infer by presence (a named env may be either language).
+        const bin =
+          name === DEFAULT_PY_ENV
+            ? pythonBin(prefix, this.platform)
+            : name === DEFAULT_R_ENV
+              ? rBin(prefix, this.platform)
+              : existsSync(pythonBin(prefix, this.platform))
+                ? pythonBin(prefix, this.platform)
+                : rBin(prefix, this.platform)
+        if (!existsSync(bin)) {
+          throw new Error(
+            `Restored ${name} is missing its expected interpreter at ${bin}; ` +
+              (name === DEFAULT_PY_ENV || name === DEFAULT_R_ENV
+                ? 'the lock does not match the environment it was restored into.'
+                : 'the create did not produce a runnable interpreter.')
+          )
+        }
+        await this.deps.verify(bin, prefix)
+        // Stamp the default marker only after the rebuilt interpreter verifies, so a failed
+        // restore never looks ready.
+        const now = (this.deps.now ?? defaultNow)()
+        if (name === DEFAULT_PY_ENV)
+          writeReadyMarker(
+            this.deps.root,
+            DEFAULT_ENV_VERSION,
+            now,
+            this.markerPrefixDirectory(name)
+          )
+        else if (name === DEFAULT_R_ENV)
+          writeRReadyMarker(
+            this.deps.root,
+            DEFAULT_ENV_VERSION,
+            now,
+            this.markerPrefixDirectory(name)
+          )
+        onProgress({
+          phase: 'done',
+          event: { code: 'environment-ready', environment: name },
+          progress: 1
+        })
+      } finally {
+        rmSync(staging, { recursive: true, force: true })
+        // Staging is gone (committed or cleaned) — clear the journal entry so only a killed
+        // process leaves it for startup recovery.
+        await journal.complete(operationId).catch(() => undefined)
+      }
+    })
+  }
+
   // Named-env create (design D2). Reuses the same online-create path as `materialize` (no bundle
   // fetch — named envs are always solved live) but does NOT stamp/require the .env-ready marker: a
   // named env is "ready" iff its interpreter bin exists (D7). Packages = base floor + user packages,
@@ -1860,6 +2092,8 @@ export type ProductionProvisionerDeps = {
   verify?: ProvisionerDeps['verify']
   retainWorkingCache?: ProvisionerDeps['retainWorkingCache']
   captureExplicitLock?: ProvisionerDeps['captureExplicitLock']
+  // Narrow seam for the lock-restore downloader's network contract test.
+  downloadPackage?: ProvisionerDeps['downloadPackage']
 }
 
 // Wires the real micromamba binary, CDN fetch, subprocess runner and interpreter verification into a
@@ -1911,6 +2145,18 @@ export const createProductionProvisioner = (
       await runner.resolve()
       return fetchBundle(...args)
     },
+    // Lock-restore package downloads share the pack fetcher's resilience: system/VPN proxy via
+    // Electron net, Range resume, retry, and a stall timeout. md5 verification happens per file
+    // in downloadExplicitLockPackages (locks pin md5, not sha256).
+    downloadPackage:
+      deps.downloadPackage ??
+      (async (url, dest, signal) => {
+        await resilientDownload(url, dest, {
+          stallTimeoutMs: 60_000,
+          signal,
+          deps: { fetchImpl: netFetchStandard }
+        })
+      }),
     runArgv: async (
       argv,
       signal,

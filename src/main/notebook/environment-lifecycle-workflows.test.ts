@@ -43,6 +43,7 @@ const fakeProvisioner = (over: Partial<RuntimeProvisioner> = {}): RuntimeProvisi
     await options?.onVerified?.()
   }),
   restoreRelocatedEnvs: vi.fn().mockResolvedValue(undefined),
+  restoreEnvironmentFromLock: vi.fn().mockResolvedValue(undefined),
   cancel: vi.fn(),
   ...over
 })

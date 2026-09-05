@@ -182,6 +182,8 @@ const serializeProvisioner = (provisioner: RuntimeProvisioner): RuntimeProvision
       serializeLanguage(language, () => provisioner.repair(language, onProgress, options)),
     restoreRelocatedEnvs: (onProgress) =>
       serialize(() => provisioner.restoreRelocatedEnvs(onProgress)),
+    restoreEnvironmentFromLock: (name, lockText, opts) =>
+      serialize(() => provisioner.restoreEnvironmentFromLock(name, lockText, opts)),
     // Cancellation must interrupt immediately rather than wait behind the operation it is aborting.
     // A language-specific idle cancel remains a no-op so it cannot arm an unrelated future operation.
     cancel: (language) => {

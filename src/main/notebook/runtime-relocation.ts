@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { normalizeExplicitLock } from './micromamba'
+import { exportEnvironmentLock } from './environment-lock'
 import {
   envPrefix,
   logicalEnvNameFromDirectory,
@@ -65,6 +65,7 @@ export const exportRuntimeLocks = async (
   entries.sort((a, b) => Number(b.canonical) - Number(a.canonical))
   const seen = new Set<string>()
 
+  const lockDeps = { mm: deps.mm, capture: deps.capture }
   const locks: Array<{ name: string; contents: string }> = []
   for (const { name, prefix } of entries) {
     if (seen.has(name)) continue
@@ -72,20 +73,8 @@ export const exportRuntimeLocks = async (
     // Skip mid-creation leftovers with no interpreter — nothing to reconstruct.
     if (!existsSync(pythonBin(prefix, deps.platform)) && !existsSync(rBin(prefix, deps.platform)))
       continue
-    const raw = await deps.capture([
-      deps.mm,
-      '--no-rc',
-      'list',
-      '--prefix',
-      prefix,
-      '--explicit',
-      '--md5'
-    ])
-    const lock = normalizeExplicitLock(raw)
-    if (!/^https?:\/\//m.test(lock)) {
-      throw new Error(`Could not preserve ${name}: the exported lock contains no package URLs.`)
-    }
-    locks.push({ name, contents: lock })
+    const contents = await exportEnvironmentLock({ name, prefix }, lockDeps)
+    locks.push({ name, contents })
   }
   if (locks.length === 0) return []
 

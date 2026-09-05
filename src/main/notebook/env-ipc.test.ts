@@ -39,6 +39,7 @@ const fakeProvisioner = (over: Partial<RuntimeProvisioner> = {}): RuntimeProvisi
   upgradeIfNeeded: vi.fn().mockResolvedValue(undefined),
   repair: vi.fn().mockResolvedValue(undefined),
   restoreRelocatedEnvs: vi.fn().mockResolvedValue(undefined),
+  restoreEnvironmentFromLock: vi.fn().mockResolvedValue(undefined),
   cancel: vi.fn(),
   ...over
 })

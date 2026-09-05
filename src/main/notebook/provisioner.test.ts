@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -16,10 +16,12 @@ import {
   logicalEnvNameFromDirectory,
   pkgsCache,
   pythonBin,
+  pythonReady,
   rBin,
   readRReadyMarker,
   readReadyMarker,
   readyMarkerPath,
+  runtimeSubdir,
   writeRReadyMarker,
   writeReadyMarker
 } from './runtime-paths'
@@ -32,7 +34,8 @@ import {
   DefaultRuntimeProvisioner,
   type FetchedBundle,
   type ProvisionProgress,
-  type ProvisionerDeps
+  type ProvisionerDeps,
+  type RuntimeProvisioner
 } from './provisioner'
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import { envsLockDir } from './runtime-relocation'
@@ -2969,5 +2972,350 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     expect(restored).toEqual([DEFAULT_PY_ENV])
     expect(existsSync(join(dir, `${DEFAULT_PY_ENV}.lock`))).toBe(false)
     expect(existsSync(join(dir, 'my-analysis.lock'))).toBe(true)
+  })
+})
+
+describe('DefaultRuntimeProvisioner.restoreEnvironmentFromLock', () => {
+  const PKG_CONTENT = 'restore tarball'
+  const PKG_MD5 = createHash('md5').update(PKG_CONTENT).digest('hex')
+  const PKG = 'python-3.12.conda'
+  // Host-independent subdir: the provisioner parses the lock against the HOST platform, so a
+  // hardcoded linux-64 URL would fail the foreign-platform gate on macOS/Windows runners.
+  const SUBDIR = runtimeSubdir()
+  const LOCK = `@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/${SUBDIR}/${PKG}#${PKG_MD5}\n`
+
+  // makeDeps variant that fakes downloads (writes the pinned content) and materializes the
+  // interpreter on create, like the existing runArgv double.
+  const makeRestoreDeps = (
+    root: string,
+    overrides: Partial<ProvisionerDeps> & {
+      downloadPackage?: (url: string, dest: string, signal?: AbortSignal) => Promise<void>
+    } = {}
+  ): ProvisionerDeps => {
+    const { downloadPackage, ...rest } = overrides
+    const deps = makeDeps(root, rest)
+    return {
+      ...deps,
+      downloadPackage:
+        downloadPackage ??
+        (async (url, dest) => {
+          writeFileSync(dest, PKG_CONTENT)
+          expect(url).toBe(`https://conda.anaconda.org/conda-forge/${SUBDIR}/${PKG}`)
+        })
+    }
+  }
+
+  it('creates a managed env from a lock: downloads, seeds the cache, then creates offline', async () => {
+    const root = makeRoot()
+    const argvs: string[][] = []
+    const deps = makeRestoreDeps(root, {
+      runArgv: async (argv) => {
+        argvs.push(argv)
+        const prefix = argv[argv.findIndex((a) => a === '-p' || a === '--prefix') + 1]
+        const bin = prefix === envPrefix(root, DEFAULT_PY_ENV) ? pythonBin(prefix) : rBin(prefix)
+        mkdirSync(join(bin, '..'), { recursive: true })
+        writeFileSync(bin, 'x')
+      }
+    })
+    const progress: ProvisionProgress[] = []
+    await new DefaultRuntimeProvisioner(deps).restoreEnvironmentFromLock(DEFAULT_PY_ENV, LOCK, {
+      onProgress: (p) => progress.push(p)
+    })
+
+    expect(argvs).toEqual([
+      [
+        '/mm',
+        '--no-rc',
+        'create',
+        '-p',
+        envPrefix(root, DEFAULT_PY_ENV),
+        '--file',
+        expect.any(String),
+        '--offline',
+        '-y',
+        '--root-prefix',
+        root
+      ]
+    ])
+    // The staged lock file was passed to create and the cache was seeded from the download.
+    expect(argvs[0]![6]).toMatch(/\.incoming-.*default-python\.lock$/)
+    expect(existsSync(join(pkgsCache(root), PKG))).toBe(true)
+    // .incoming staging is cleaned and the interpreter + ready marker exist.
+    expect(existsSync(pythonBin(envPrefix(root, DEFAULT_PY_ENV)))).toBe(true)
+    expect(readReadyMarker(root)?.defaultEnvVersion).toBe(DEFAULT_ENV_VERSION)
+    expect(readdirSync(join(root, 'packs')).filter((f) => f.startsWith('.incoming-'))).toEqual([])
+    expect(progress.at(-1)?.phase).toBe('done')
+  })
+
+  it('replaces a broken existing prefix and stamps the marker only after verify succeeds', async () => {
+    const root = makeRoot()
+    const prefix = envPrefix(root, 'my-analysis')
+    mkdirSync(join(prefix, 'conda-meta'), { recursive: true }) // half-built leftover
+    let markerDuringRun = false
+    const deps = makeRestoreDeps(root, {
+      runArgv: async (argv) => {
+        const p = argv[argv.findIndex((a) => a === '-p' || a === '--prefix') + 1]
+        markerDuringRun = existsSync(readyMarkerPath(root))
+        const bin = pythonBin(p)
+        mkdirSync(join(bin, '..'), { recursive: true })
+        writeFileSync(bin, 'x')
+      }
+    })
+    await new DefaultRuntimeProvisioner(deps).restoreEnvironmentFromLock('my-analysis', LOCK)
+    expect(markerDuringRun).toBe(false) // never looks ready mid-restore
+    expect(existsSync(pythonBin(prefix))).toBe(true)
+    expect(existsSync(join(prefix, 'conda-meta'))).toBe(false) // leftover cleared by create
+  })
+
+  it('rejects an invalid lock before any download or mutation', async () => {
+    const root = makeRoot()
+    const prefix = envPrefix(root, DEFAULT_PY_ENV)
+    mkdirSync(join(prefix, 'conda-meta'), { recursive: true })
+    const downloadPackage = vi.fn()
+    const runArgv = vi.fn()
+    const deps = makeRestoreDeps(root, { downloadPackage, runArgv })
+    await expect(
+      new DefaultRuntimeProvisioner(deps).restoreEnvironmentFromLock(
+        DEFAULT_PY_ENV,
+        `@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/${SUBDIR}/a.conda#nothex\n`
+      )
+    ).rejects.toThrow('malformed package entry')
+    expect(downloadPackage).not.toHaveBeenCalled()
+    expect(runArgv).not.toHaveBeenCalled()
+    expect(existsSync(join(prefix, 'conda-meta'))).toBe(true) // existing prefix untouched
+  })
+
+  it('rejects an unknown or unsafe target env name', async () => {
+    const root = makeRoot()
+    const runArgv = vi.fn()
+    const deps = makeRestoreDeps(root, { runArgv })
+    const provisioner = new DefaultRuntimeProvisioner(deps)
+    await expect(provisioner.restoreEnvironmentFromLock('../escape', LOCK)).rejects.toThrow(
+      'Invalid environment name'
+    )
+    await expect(provisioner.restoreEnvironmentFromLock('python', LOCK)).rejects.toThrow(
+      'reserved environment name'
+    )
+    expect(runArgv).not.toHaveBeenCalled()
+  })
+
+  it('rejects when no downloader is wired', async () => {
+    const root = makeRoot()
+    const deps = makeDeps(root)
+    await expect(
+      new DefaultRuntimeProvisioner(deps).restoreEnvironmentFromLock(DEFAULT_PY_ENV, LOCK)
+    ).rejects.toThrow('downloadPackage unwired')
+  })
+
+  it('aborts before deleting the existing env when a download fails md5 verification', async () => {
+    const root = makeRoot()
+    const prefix = envPrefix(root, DEFAULT_PY_ENV)
+    const bin = pythonBin(prefix)
+    mkdirSync(join(bin, '..'), { recursive: true })
+    writeFileSync(bin, 'original')
+    const deps = makeRestoreDeps(root, {
+      downloadPackage: async (_url, dest) => {
+        writeFileSync(dest, 'CORRUPTED')
+      }
+    })
+    await expect(
+      new DefaultRuntimeProvisioner(deps).restoreEnvironmentFromLock(DEFAULT_PY_ENV, LOCK)
+    ).rejects.toThrow('md5 verification')
+    expect(existsSync(bin)).toBe(true) // existing env untouched — download fails closed
+    expect(existsSync(join(pkgsCache(root), PKG))).toBe(false) // nothing seeded
+  })
+
+  it('fails cleanly on a create failure and leaves no ready marker', async () => {
+    const root = makeRoot()
+    const deps = makeRestoreDeps(root, {
+      runArgv: vi.fn().mockRejectedValue(new Error('micromamba failed (1; create)'))
+    })
+    await expect(
+      new DefaultRuntimeProvisioner(deps).restoreEnvironmentFromLock(DEFAULT_PY_ENV, LOCK)
+    ).rejects.toThrow('micromamba failed')
+    expect(existsSync(readyMarkerPath(root))).toBe(false)
+    expect(existsSync(pythonBin(envPrefix(root, DEFAULT_PY_ENV)))).toBe(false)
+    // Staging is cleaned; the seeded cache file remains (verified bytes, reusable on retry).
+    expect(readdirSync(join(root, 'packs'))).toEqual([])
+  })
+
+  it('aborts the in-flight download on cancellation', async () => {
+    const root = makeRoot()
+    const controller = new AbortController()
+    const runArgv = vi.fn()
+    const deps = makeRestoreDeps(root, {
+      runArgv,
+      downloadPackage: vi.fn().mockRejectedValue(new Error('Runtime setup cancelled.'))
+    })
+    await expect(
+      new DefaultRuntimeProvisioner(deps).restoreEnvironmentFromLock(DEFAULT_PY_ENV, LOCK, {
+        signal: controller.signal
+      })
+    ).rejects.toThrow('Runtime setup cancelled.')
+    expect(runArgv).not.toHaveBeenCalled() // never reached the destructive phase
+    expect(existsSync(readyMarkerPath(root))).toBe(false)
+  })
+
+  it('crash-journals the download staging so recovery removes the orphan', async () => {
+    const root = makeRoot()
+    const deps = makeRestoreDeps(root, {
+      downloadPackage: async (_url, dest) => {
+        // Simulate the hard-quit window: the download journal record exists while staging is live.
+        const packsEntries = readdirSync(join(root, 'packs'))
+        if (packsEntries.some((e) => e.startsWith('.incoming-'))) {
+          const pending = await RuntimeOperationJournal.forPath(
+            operationJournalPath(root)
+          ).pending()
+          expect(pending.find((r) => r.kind === 'download' && r.phase === 'restore')).toMatchObject(
+            { targetPath: expect.stringContaining('.incoming-') }
+          )
+        }
+        writeFileSync(dest, PKG_CONTENT)
+      }
+    })
+    await new DefaultRuntimeProvisioner(deps).restoreEnvironmentFromLock('my-analysis', LOCK)
+    // The journal entry is completed and the staging removed on the normal path.
+    expect(await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()).toEqual([])
+    expect(readdirSync(join(root, 'packs'))).toEqual([])
+  })
+
+  it('runs journaled through the materialize/restore kind (prefix-write supervision)', async () => {
+    const root = makeRoot()
+    let recordDuringCreate: RuntimeOperationRecord | undefined
+    const deps = makeRestoreDeps(root, {
+      runArgv: async (argv) => {
+        // While the prefix write runs, the journal must hold a materialize record for the target.
+        recordDuringCreate = (
+          await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()
+        ).find((r) => r.kind === 'materialize' && r.phase === 'restore')
+        const prefix = argv[argv.findIndex((a) => a === '-p' || a === '--prefix') + 1]
+        const bin = pythonBin(prefix)
+        mkdirSync(join(bin, '..'), { recursive: true })
+        writeFileSync(bin, 'x')
+      }
+    })
+    await new DefaultRuntimeProvisioner(deps).restoreEnvironmentFromLock('my-analysis', LOCK)
+    expect(recordDuringCreate).toMatchObject({
+      kind: 'materialize',
+      runtimeId: 'my-analysis',
+      targetPath: envPrefix(root, 'my-analysis')
+    })
+    // Completed afterwards — no retained operations.
+    expect(await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()).toEqual([])
+  })
+
+  it('re-checks the recovery block after acquiring the prefix lock (TOCTOU)', async () => {
+    const root = makeRoot()
+    const prefix = envPrefix(root, DEFAULT_PY_ENV)
+    const runArgv = vi.fn()
+    // The pre-check passes (nothing blocked yet); while the restore WAITS for the prefix lock, a
+    // concurrent failed install marks the prefix blocked. The authoritative re-check inside the
+    // lock must reject — rmSync/create may never race a possibly-live orphan writer.
+    const blocked = new Set<string>()
+    let markBlockedOnNextLock = true
+    const deps = makeRestoreDeps(root, {
+      runArgv,
+      isPrefixBlocked: (candidate) => blocked.has(candidate),
+      withPrefixLock: async (envName, fn) => {
+        if (markBlockedOnNextLock) {
+          markBlockedOnNextLock = false
+          expect(envName).toBe(DEFAULT_PY_ENV)
+          blocked.add(prefix)
+        }
+        return fn()
+      }
+    })
+    await expect(
+      new DefaultRuntimeProvisioner(deps).restoreEnvironmentFromLock(DEFAULT_PY_ENV, LOCK)
+    ).rejects.toThrow('RUNTIME_RECOVERY_BLOCKED')
+    expect(runArgv).not.toHaveBeenCalled()
+    // Nothing was staged or downloaded either.
+    expect(existsSync(join(root, 'packs'))).toBe(false)
+  })
+
+  it('clears the old ready marker at the destructive boundary so a failed replace never looks ready', async () => {
+    const root = makeRoot()
+    const prefix = envPrefix(root, DEFAULT_PY_ENV)
+    // A previously READY default: valid interpreter + committed marker.
+    const bin = pythonBin(prefix)
+    mkdirSync(join(bin, '..'), { recursive: true })
+    writeFileSync(bin, 'original')
+    writeReadyMarker(root, DEFAULT_ENV_VERSION, 't-old')
+    expect(pythonReady(root, DEFAULT_ENV_VERSION)).toBe(true)
+    // A create that links the interpreter (a mid-create crash window) and then fails.
+    const deps = makeRestoreDeps(root, {
+      runArgv: async (argv) => {
+        const p = argv[argv.findIndex((a) => a === '-p' || a === '--prefix') + 1]
+        mkdirSync(join(pythonBin(p), '..'), { recursive: true })
+        writeFileSync(pythonBin(p), 'linked-then-broken')
+        throw new Error('micromamba failed (1; create)')
+      }
+    })
+    await expect(
+      new DefaultRuntimeProvisioner(deps).restoreEnvironmentFromLock(DEFAULT_PY_ENV, LOCK)
+    ).rejects.toThrow('micromamba failed')
+    // The OLD marker must not vouch for the new partial prefix: pythonReady reads marker + bin
+    // presence only, so the marker has to be gone for the failure to be visible.
+    expect(existsSync(readyMarkerPath(root))).toBe(false)
+    expect(pythonReady(root, DEFAULT_ENV_VERSION)).toBe(false)
+  })
+
+  it('rejects restoring a default env with the wrong language interpreter', async () => {
+    const root = makeRoot()
+    const prefix = envPrefix(root, DEFAULT_PY_ENV)
+    // The create materializes ONLY an R interpreter — e.g. an r-base lock restored as
+    // default-python. Forcing the DEFAULT_PY_ENV interpreter check must fail the restore loudly
+    // instead of "succeeding" with an env whose ready marker pythonReady() would then contradict.
+    const deps = makeRestoreDeps(root, {
+      runArgv: async (argv) => {
+        const p = argv[argv.findIndex((a) => a === '-p' || a === '--prefix') + 1]
+        mkdirSync(join(rBin(p), '..'), { recursive: true })
+        writeFileSync(rBin(p), 'x')
+      }
+    })
+    await expect(
+      new DefaultRuntimeProvisioner(deps).restoreEnvironmentFromLock(DEFAULT_PY_ENV, LOCK)
+    ).rejects.toThrow('missing its expected interpreter')
+    expect(existsSync(readyMarkerPath(root))).toBe(false)
+    expect(existsSync(pythonBin(prefix))).toBe(false)
+  })
+
+  it('serializes against a concurrent provision through serializeProvisioner', async () => {
+    const root = makeRoot()
+    const order: string[] = []
+    let releaseProvision: (() => void) | undefined
+    const deps = makeRestoreDeps(root)
+    const raw = new DefaultRuntimeProvisioner(deps)
+    const wrapped: RuntimeProvisioner = {
+      status: () => raw.status(),
+      provisionPython: (onProgress) => {
+        order.push('provision:start')
+        return new Promise<void>((resolve) => {
+          releaseProvision = resolve
+        }).then(() => {
+          order.push('provision:end')
+          return raw.provisionPython(onProgress).catch(() => undefined)
+        })
+      },
+      provisionR: raw.provisionR.bind(raw),
+      upgradeIfNeeded: raw.upgradeIfNeeded.bind(raw),
+      repair: raw.repair.bind(raw),
+      restoreRelocatedEnvs: raw.restoreRelocatedEnvs.bind(raw),
+      restoreEnvironmentFromLock: (name: string, lock: string): Promise<void> => {
+        order.push('restore:start')
+        return raw.restoreEnvironmentFromLock(name, lock).then(() => {
+          order.push('restore:end')
+        })
+      },
+      cancel: raw.cancel.bind(raw)
+    }
+    const provisioner = serializeProvisioner(wrapped)
+    const provision = provisioner.provisionPython(() => {})
+    // The restore must wait behind the in-flight provision; then run to completion.
+    await vi.waitFor(() => expect(order).toContain('provision:start'))
+    releaseProvision?.()
+    await provision
+    await provisioner.restoreEnvironmentFromLock('my-analysis', LOCK)
+    expect(order.indexOf('restore:start')).toBeGreaterThan(order.indexOf('provision:end'))
   })
 })
