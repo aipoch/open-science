@@ -805,7 +805,6 @@
     "Could not reveal the log file.": "ログファイルをフォルダーに表示できませんでした。",
     "Could not save contribution template. Try again.": "投稿テンプレートを保存できませんでした。もう一度やり直してください。",
     "Could not save Vision model. Refresh the model catalog and try again.": "ビジョンモデルを保存できませんでした。モデルカタログを更新して、再試行してください。",
-    "Could not save project.": "プロジェクトを保存できませんでした。",
     "Project changed elsewhere. Reopen Project Settings and try again.": "プロジェクトが別の場所に変更されました。プロジェクト設定を再度開き、再試行してください。",
     "Could not save provider.": "プロバイダーを保存できませんでした。",
     "Could not save the Claude token.": "Claude トークンを保存できませんでした。",
@@ -4051,6 +4050,9 @@
     "unsupported": "非対応",
     "No model from {{provider}} is supported over the Codex Chat Completions bridge.": "{{provider}} のモデルは、いずれも Codex Chat Completions ブリッジではサポートされていません。",
     "CSV parsing encountered a problem. The preview may be incomplete.": "CSV の解析中に問題が発生しました。プレビューが不完全な可能性があります。",
-    "{{percent}}% of {{size}}": "{{size}} の {{percent}}%"
+    "{{percent}}% of {{size}}": "{{size}} の {{percent}}%",
+    "Could not save project. Please try again.": "プロジェクトを保存できませんでした。もう一度お試しください。",
+    "Could not attach the file. Check available storage and try again.": "ファイルを添付できませんでした。ストレージの空き容量を確認して、もう一度お試しください。",
+    "Close the file browser and open it again to retry.": "ファイルブラウザーを閉じて再度開き、もう一度お試しください。"
   }
 }

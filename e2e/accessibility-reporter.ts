@@ -12,11 +12,14 @@ import { dirname, resolve } from 'node:path'
 const ACCESSIBILITY_SCAN_ATTACHMENT = 'accessibility-scan'
 const ACCESSIBILITY_UI_FINDING_ATTACHMENT = 'accessibility-ui-finding'
 const ACCESSIBILITY_UI_READY_ATTACHMENT = 'accessibility-ui-ready'
-const ACCESSIBILITY_ADVISORY = process.env.ACCESSIBILITY_ADVISORY === '1'
+const ACCESSIBILITY_COLLECT_ALL = process.env.ACCESSIBILITY_COLLECT_ALL === '1'
 const DEFAULT_RESULT_PATH = 'test-results/accessibility/accessibility-summary.json'
 const ACCESSIBILITY_SURFACES = [
   'Onboarding',
   'Home',
+  'Home (narrow)',
+  'Onboarding step focus',
+  'Go-to locations (open)',
   'New project dialog',
   'Workspace',
   'Settings',
@@ -112,13 +115,13 @@ const formatAccessibilitySummary = (
     `Result: **${heading}**`,
     '',
     `- axe scans completed: ${scans.length}`,
-    `- advisory findings: ${result.findings}`
+    `- blocking findings: ${result.findings}`
   ]
 
   if (result.status === 'infra-failure') {
     lines.push('', 'The real UI scan did not complete. Treat this as test infrastructure failure.')
   } else if (result.status === 'advisory') {
-    lines.push('', 'Findings are advisory and do not block this pull request.')
+    lines.push('', 'Findings block this pull request.')
     if (scans.some(({ violations }) => violations.length > 0)) {
       lines.push('', '### axe findings', '')
     }
@@ -202,7 +205,7 @@ class AccessibilityReporter implements Reporter {
           formatAccessibilitySummary(result, scans, uiFindings)
         )
       }
-      if (result.status === 'infra-failure') return { status: 'failed' }
+      if (result.status !== 'passed') return { status: 'failed' }
       return undefined
     } catch (error) {
       console.error('Failed to publish accessibility scan evidence.', error)
@@ -213,7 +216,7 @@ class AccessibilityReporter implements Reporter {
 
 export default AccessibilityReporter
 export {
-  ACCESSIBILITY_ADVISORY,
+  ACCESSIBILITY_COLLECT_ALL,
   ACCESSIBILITY_SCAN_ATTACHMENT,
   ACCESSIBILITY_SURFACES,
   ACCESSIBILITY_UI_FINDING_ATTACHMENT,

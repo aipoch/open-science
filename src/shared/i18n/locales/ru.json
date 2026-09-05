@@ -847,7 +847,6 @@
     "Could not reveal the log file.": "Не удалось показать файл журнала.",
     "Could not save contribution template. Try again.": "Не удалось сохранить шаблон для публикации. Попробуйте снова.",
     "Could not save Vision model. Refresh the model catalog and try again.": "Не удалось сохранить модель Vision. Обновите каталог моделей и попробуйте снова.",
-    "Could not save project.": "Не удалось сохранить проект.",
     "Project changed elsewhere. Reopen Project Settings and try again.": "Проект был изменён в другом месте. Снова откройте настройки проекта и повторите попытку.",
     "Could not save provider.": "Не удалось сохранить поставщика.",
     "Could not save the Claude token.": "Не удалось сохранить токен Claude.",
@@ -4491,6 +4490,9 @@
     "unsupported": "не поддерживается",
     "No model from {{provider}} is supported over the Codex Chat Completions bridge.": "Ни одна модель {{provider}} не поддерживается через мост Codex Chat Completions.",
     "CSV parsing encountered a problem. The preview may be incomplete.": "При разборе CSV возникла проблема. Предпросмотр может быть неполным.",
-    "{{percent}}% of {{size}}": "{{percent}}% из {{size}}"
+    "{{percent}}% of {{size}}": "{{percent}}% из {{size}}",
+    "Could not save project. Please try again.": "Не удалось сохранить проект. Повторите попытку.",
+    "Could not attach the file. Check available storage and try again.": "Не удалось прикрепить файл. Проверьте свободное место и повторите попытку.",
+    "Close the file browser and open it again to retry.": "Закройте файловый браузер и откройте его снова, чтобы повторить попытку."
   }
 }

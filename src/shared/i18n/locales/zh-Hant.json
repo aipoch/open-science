@@ -890,7 +890,6 @@
     "Could not reveal the log file.": "無法在資料夾中顯示記錄檔。",
     "Could not save contribution template. Try again.": "無法儲存貢獻範本，請重試。",
     "Could not save Vision model. Refresh the model catalog and try again.": "無法儲存視覺模型。請重新整理模型目錄後再試一次。",
-    "Could not save project.": "無法儲存專案。",
     "Project changed elsewhere. Reopen Project Settings and try again.": "專案已在其他位置變更。請重新開啟專案設定後再試。",
     "Could not save provider.": "無法儲存模型服務商。",
     "Could not save the Claude token.": "無法儲存 Claude 權杖。",
@@ -4051,6 +4050,9 @@
     "unsupported": "不支援",
     "No model from {{provider}} is supported over the Codex Chat Completions bridge.": "{{provider}} 的所有模型均不支援透過 Codex Chat Completions 橋接使用。",
     "CSV parsing encountered a problem. The preview may be incomplete.": "CSV 剖析發生問題，預覽可能不完整。",
-    "{{percent}}% of {{size}}": "{{size}} 的 {{percent}}%"
+    "{{percent}}% of {{size}}": "{{size}} 的 {{percent}}%",
+    "Could not save project. Please try again.": "無法儲存專案。請重試。",
+    "Could not attach the file. Check available storage and try again.": "無法附加檔案。請檢查可用儲存空間後重試。",
+    "Close the file browser and open it again to retry.": "請關閉檔案瀏覽器後重新開啟以重試。"
   }
 }

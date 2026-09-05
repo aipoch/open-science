@@ -852,7 +852,6 @@
     "Could not reveal the log file.": "Impossible de révéler le fichier journal.",
     "Could not save contribution template. Try again.": "Impossible d'enregistrer le modèle de contribution. Essayer à nouveau.",
     "Could not save Vision model. Refresh the model catalog and try again.": "Impossible d'enregistrer le modèle Vision. Actualisez le catalogue de modèles et réessayez.",
-    "Could not save project.": "Impossible d'enregistrer le projet.",
     "Project changed elsewhere. Reopen Project Settings and try again.": "Projet modifié ailleurs. Rouvrez les paramètres du projet et réessayez.",
     "Could not save provider.": "Impossible d'enregistrer le fournisseur.",
     "Could not save the Claude token.": "Impossible d'enregistrer le jeton Claude.",
@@ -4361,6 +4360,9 @@
     "unsupported": "non pris en charge",
     "No model from {{provider}} is supported over the Codex Chat Completions bridge.": "Aucun modèle de {{provider}} n’est pris en charge via la passerelle Chat Completions de Codex.",
     "CSV parsing encountered a problem. The preview may be incomplete.": "Un problème est survenu lors de l’analyse du CSV. L’aperçu peut être incomplet.",
-    "{{percent}}% of {{size}}": "{{percent}} % de {{size}}"
+    "{{percent}}% of {{size}}": "{{percent}} % de {{size}}",
+    "Could not save project. Please try again.": "Impossible d’enregistrer le projet. Veuillez réessayer.",
+    "Could not attach the file. Check available storage and try again.": "Impossible de joindre le fichier. Vérifiez l’espace de stockage disponible et réessayez.",
+    "Close the file browser and open it again to retry.": "Fermez le navigateur de fichiers et rouvrez-le pour réessayer."
   }
 }

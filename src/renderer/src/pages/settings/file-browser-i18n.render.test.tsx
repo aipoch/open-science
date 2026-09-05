@@ -2,8 +2,8 @@
 // Locale coverage for FileBrowserModal: chrome, listing columns, error banner, detail panel and
 // the download success banner must all follow the active language — including text that was
 // produced by an earlier event and is only rendered later (see the language-switch cases).
+import { openRadixMenu } from './test-utils'
 import { act } from 'react'
-import { fireEvent } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -96,7 +96,7 @@ const selectFile = async (name: string): Promise<void> => {
 const openGoTo = async (): Promise<void> => {
   const trigger = document.body.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')
   await act(async () => {
-    fireEvent.keyDown(trigger!, { key: 'Enter' })
+    openRadixMenu(trigger)
   })
 }
 

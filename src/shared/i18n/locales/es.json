@@ -852,7 +852,6 @@
     "Could not reveal the log file.": "No se pudo mostrar el archivo de registro.",
     "Could not save contribution template. Try again.": "No se pudo guardar la plantilla de contribución. Inténtelo de nuevo.",
     "Could not save Vision model. Refresh the model catalog and try again.": "No se pudo guardar el modelo de visión. Actualice el catálogo de modelos y vuelva a intentarlo.",
-    "Could not save project.": "No se pudo guardar el proyecto.",
     "Project changed elsewhere. Reopen Project Settings and try again.": "El proyecto se modificó en otro lugar. Vuelva a abrir Configuración del proyecto e inténtelo de nuevo.",
     "Could not save provider.": "No se pudo guardar el proveedor.",
     "Could not save the Claude token.": "No se pudo guardar el token Claude.",
@@ -4361,6 +4360,9 @@
     "unsupported": "no compatible",
     "No model from {{provider}} is supported over the Codex Chat Completions bridge.": "Ningún modelo de {{provider}} es compatible con el puente de Chat Completions de Codex.",
     "CSV parsing encountered a problem. The preview may be incomplete.": "Se ha producido un problema al analizar el CSV. La vista previa puede estar incompleta.",
-    "{{percent}}% of {{size}}": "{{percent}} % de {{size}}"
+    "{{percent}}% of {{size}}": "{{percent}} % de {{size}}",
+    "Could not save project. Please try again.": "No se pudo guardar el proyecto. Vuelva a intentarlo.",
+    "Could not attach the file. Check available storage and try again.": "No se pudo adjuntar el archivo. Compruebe el espacio de almacenamiento disponible y vuelva a intentarlo.",
+    "Close the file browser and open it again to retry.": "Cierre el explorador de archivos y vuelva a abrirlo para intentarlo de nuevo."
   }
 }

@@ -569,8 +569,12 @@ describe('workspace composer controller', () => {
 
     expect(hook.result.current.view.attachments).toEqual([])
     expect(hook.result.current.view.transfers).toEqual([
-      expect.objectContaining({ status: 'error', error: 'claim failed' })
+      expect.objectContaining({
+        status: 'error',
+        error: 'Could not attach the file. Check available storage and try again.'
+      })
     ])
+    expect(hook.result.current.view.errorDetail).toBe('claim failed')
     expect(uploadApi.abortTransfer).toHaveBeenCalledWith({ transferId: expect.any(String) })
   })
 
@@ -1190,7 +1194,7 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.transfers[0]).toMatchObject({
       name: 'paper.pdf',
       status: 'error',
-      error: 'disk full'
+      error: 'Could not attach the file. Check available storage and try again.'
     })
 
     act(() => expect(hook.result.current.actions.undo()).toBe(true))
@@ -1200,7 +1204,7 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.transfers[0]).toMatchObject({
       name: 'paper.pdf',
       status: 'error',
-      error: 'disk full'
+      error: 'Could not attach the file. Check available storage and try again.'
     })
     expect(stageLocalFile).toHaveBeenCalledOnce()
   })
@@ -1618,7 +1622,7 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.caretRequest).toBeUndefined()
   })
 
-  it('restores the original text inline when staging a converted paste fails', async () => {
+  it('shows an actionable summary after attachment staging fails', async () => {
     const hook = renderController(uploads(vi.fn().mockRejectedValue(new Error('disk full'))))
     mounted.push(hook)
     const node: ComposerPastedTextNode = {
@@ -1633,7 +1637,8 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.transfers).toEqual([])
     expect(hook.result.current.view.doc).toEqual(textDoc('before payload after'))
     expect(hook.result.current.view.attachments).toEqual([])
-    expect(hook.result.current.view.error).toBe('disk full')
+    expect(hook.result.current.view.error).not.toBe('disk full')
+    expect(hook.result.current.view.error).toMatch(/try again|storage|space/i)
     act(() => expect(hook.result.current.actions.undo()).toBe(true))
     expect(hook.result.current.view.doc).toEqual(emptyDoc)
   })

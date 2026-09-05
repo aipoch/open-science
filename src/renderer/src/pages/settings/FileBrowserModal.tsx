@@ -34,6 +34,7 @@ import { formatDisplayDateTime } from '@/lib/locale-format'
 import type { DirListing, RemoteDirEntry } from '../../../../shared/remote-fs'
 import type { ComputeAuthenticationErrorCode } from '../../../../shared/compute'
 import { resolveRemotePath, validateRemotePath } from '../../../../shared/remote-fs'
+import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -857,7 +858,10 @@ export function FileBrowserModal({
                 >
                   <div className={'flex-1'}>
                     <p className={'font-semibold'}>{bookmarksState.summary}</p>
-                    <p className={'mt-0.5 text-muted-foreground'}>{bookmarksState.detail}</p>
+                    <p className="mt-0.5 text-muted-foreground">
+                      {t('Close the file browser and open it again to retry.')}
+                    </p>
+                    <DiagnosticDetails detail={bookmarksState.detail} />
                   </div>
                 </div>
               )}

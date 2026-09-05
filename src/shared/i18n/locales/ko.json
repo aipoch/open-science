@@ -824,7 +824,6 @@
     "Could not reveal the log file.": "로그 파일을 표시할 수 없습니다.",
     "Could not save contribution template. Try again.": "참여 템플릿을 저장할 수 없습니다. 다시 시도해 보세요.",
     "Could not save Vision model. Refresh the model catalog and try again.": "Vision 모델을 저장할 수 없습니다. 모델 카탈로그를 새로 고치고 다시 시도하세요.",
-    "Could not save project.": "프로젝트를 저장할 수 없습니다.",
     "Project changed elsewhere. Reopen Project Settings and try again.": "프로젝트가 다른 곳에서 변경되었습니다. 프로젝트 설정을 다시 열고 다시 시도하세요.",
     "Could not save provider.": "모델 제공업체를 저장할 수 없습니다.",
     "Could not save the Claude token.": "Claude 토큰을 저장할 수 없습니다.",
@@ -4049,6 +4048,9 @@
     "unsupported": "지원되지 않음",
     "No model from {{provider}} is supported over the Codex Chat Completions bridge.": "{{provider}}의 모델은 모두 Codex Chat Completions 브리지에서 지원되지 않습니다.",
     "CSV parsing encountered a problem. The preview may be incomplete.": "CSV를 분석하는 중 문제가 발생했습니다. 미리보기가 불완전할 수 있습니다.",
-    "{{percent}}% of {{size}}": "{{size}} 중 {{percent}}%"
+    "{{percent}}% of {{size}}": "{{size}} 중 {{percent}}%",
+    "Could not save project. Please try again.": "프로젝트를 저장하지 못했습니다. 다시 시도해 주세요.",
+    "Could not attach the file. Check available storage and try again.": "파일을 첨부하지 못했습니다. 저장 공간을 확인한 후 다시 시도해 주세요.",
+    "Close the file browser and open it again to retry.": "파일 브라우저를 닫았다가 다시 열어 재시도해 주세요."
   }
 }

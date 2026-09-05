@@ -141,7 +141,7 @@ describe('accessibility run classification', () => {
     })
   })
 
-  it('writes an advisory report without failing the Playwright run', async () => {
+  it('fails the Playwright run when complete evidence contains keyboard findings', async () => {
     const root = mkdtempSync(join(tmpdir(), 'accessibility-reporter-'))
     const previousResultPath = process.env.ACCESSIBILITY_RESULT_PATH
 
@@ -177,7 +177,9 @@ describe('accessibility run classification', () => {
         } as never
       )
 
-      await expect(reporter.onEnd({ status: 'passed' } as never)).resolves.toBeUndefined()
+      await expect(reporter.onEnd({ status: 'passed' } as never)).resolves.toEqual({
+        status: 'failed'
+      })
       expect(JSON.parse(readFileSync(resultPath, 'utf8'))).toMatchObject({
         status: 'advisory',
         axeRunCount: ACCESSIBILITY_SURFACES.length,
@@ -194,7 +196,7 @@ describe('accessibility run classification', () => {
 
 it('accepts complete evidence from the expanded responsive and contrast matrix', () => {
   const surfaces = [
-    ...ACCESSIBILITY_SURFACES.slice(0, 12),
+    ...ACCESSIBILITY_SURFACES.slice(0, 15),
     'Home (375px, light)',
     'Home (375px, dark)',
     'Home (767px, light)',

@@ -64,6 +64,18 @@ describe('OnboardingWizard flow', () => {
     expect(layout?.className).toContain('md:grid-cols-[240px_minmax(0,1fr)]')
   })
 
+  it('moves focus into the new step after Continue', async () => {
+    readyClaudeState()
+    await renderWizard()
+    const continueButton = findButton(/^continue$/i)
+    continueButton?.focus()
+    expect(document.activeElement).toBe(continueButton)
+    await clickButton(/^continue$/i)
+    const location = currentSection('Choose data location')
+    expect(location).not.toBeNull()
+    expect(location?.contains(document.activeElement)).toBe(true)
+  })
+
   it('walks all five steps forward in order, tracking progress', async () => {
     readyClaudeState()
 

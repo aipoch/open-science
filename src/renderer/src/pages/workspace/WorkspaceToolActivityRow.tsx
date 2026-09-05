@@ -29,7 +29,9 @@ const WorkspaceToolActivityRow = ({
       <span className="mt-0.5 inline-flex shrink-0 items-center md:mt-0">
         <WorkspaceActivityIcon activity={activity} phase={phase} />
       </span>
-      <span className="min-w-0 flex-1 truncate text-left">
+      <span
+        className={`min-w-0 flex-1 truncate text-left ${phase === 'declined' ? 'text-text-000' : ''}`}
+      >
         {formatActivityTitle(activity, phase, t)}
       </span>
     </div>

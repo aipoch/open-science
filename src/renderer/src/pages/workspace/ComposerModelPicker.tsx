@@ -217,7 +217,7 @@ const ComposerModelPicker = ({
                   <>
                     {/* The model name alone ellipsizes under the trigger's max width; the effort
                         suffix is the newer signal and stays fully visible. */}
-                    <span className="truncate font-medium text-text-100">
+                    <span className="truncate font-medium text-text-000">
                       {optionLabel(displayCurrent)}
                     </span>
                     {effortSuffixLabel ? (

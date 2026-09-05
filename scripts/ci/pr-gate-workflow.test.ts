@@ -612,7 +612,7 @@ describe('PR Gate workflow', () => {
     })
   })
 
-  it('enables advisory accessibility signaling only in the macOS PR lane', () => {
+  it('runs complete accessibility collection in the macOS PR lane', () => {
     const macosStep = workflow.jobs.macos_e2e.steps?.find(
       ({ id }) => id === 'e2e_accessibility_macos'
     )

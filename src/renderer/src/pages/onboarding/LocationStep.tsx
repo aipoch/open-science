@@ -213,7 +213,7 @@ const LocationStep = ({
           ) : null}
 
           <div className="rounded-xl border border-border-200 p-4">
-            <span className="text-xs font-medium text-text-100">{t('Location')}</span>
+            <span className="text-xs font-medium text-text-000">{t('Location')}</span>
             <div className="mt-1 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
               <p
                 aria-label={t('Data location path')}

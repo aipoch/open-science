@@ -10,6 +10,9 @@ const EXPECTED_TESTS = 11
 export const EXPECTED_ACCESSIBILITY_SURFACES = [
   'Onboarding',
   'Home',
+  'Home (narrow)',
+  'Onboarding step focus',
+  'Go-to locations (open)',
   'New project dialog',
   'Workspace',
   'Settings',
@@ -89,7 +92,8 @@ export function runAccessibilityE2e(environment = process.env) {
     {
       env: {
         ...environment,
-        ACCESSIBILITY_ADVISORY: '1',
+        // Collect every surface before the reporter fails the run for findings.
+        ACCESSIBILITY_COLLECT_ALL: '1',
         ACCESSIBILITY_RESULT_PATH: resultPath
       },
       stdio: 'inherit'
@@ -98,10 +102,10 @@ export function runAccessibilityE2e(environment = process.env) {
 
   if (run.error) throw run.error
   const result = readAccessibilityResult(resultPath)
-  if (run.status !== 0 && result.status !== 'infra-failure') {
-    throw new Error('Playwright failed after publishing a non-infrastructure accessibility result.')
+  if (run.status !== 0 && result.status === 'passed') {
+    throw new Error('Playwright failed after publishing a passing accessibility result.')
   }
-  return result.status === 'infra-failure' ? 1 : 0
+  return result.status === 'passed' && run.status === 0 ? 0 : 1
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
