@@ -15,10 +15,10 @@ const PROBE_SCRIPT = [
   'echo "os=$(uname -s 2>/dev/null)"',
   'echo "cpus=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo)"',
   'echo "mem_mib=$(free -m 2>/dev/null | awk \'NR==2{print $2}\' || echo $(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 )))"',
-  "echo \"gpus=$(nvidia-smi -L 2>/dev/null | grep -oP 'GPU \\d+: \\K[^(]+' | tr '\\n' ';' || echo)\"",
-  'echo "sbatch=$(command -v sbatch 2>/dev/null && echo yes || echo no)"',
-  'echo "qsub=$(command -v qsub 2>/dev/null && echo yes || echo no)"',
-  'echo "bsub=$(command -v bsub 2>/dev/null && echo yes || echo no)"',
+  "echo \"gpus=$(nvidia-smi -L 2>/dev/null | sed -n 's/^GPU [0-9][0-9]*: \\([^()]*\\).*/\\1/p' | tr '\\n' ';' || echo)\"",
+  'echo "sbatch=$(command -v sbatch >/dev/null 2>&1 && echo yes || echo no)"',
+  'echo "qsub=$(command -v qsub >/dev/null 2>&1 && echo yes || echo no)"',
+  'echo "bsub=$(command -v bsub >/dev/null 2>&1 && echo yes || echo no)"',
   'echo "scratch=$SCRATCH"'
 ].join('\n')
 
@@ -93,6 +93,13 @@ const waitForRetry = (delayMs: number, signal?: AbortSignal): Promise<void> => {
 
 const buildDetailsSkeleton = (probe: ProbeResult): string => {
   const lines: string[] = ['## Resources', '']
+  if (probe.detectedScheduler && probe.detectedScheduler !== 'none') {
+    lines.push(
+      'The CPU, memory and GPU values below describe the SSH login host, not a scheduler allocation.',
+      'Inspect scheduler partitions and provider guidance before requesting compute resources.',
+      ''
+    )
+  }
   if (probe.cpus != null) lines.push(`cpus: ${probe.cpus}`)
   if (probe.memMib != null) lines.push(`mem: ${Math.round(probe.memMib / 1024)} GB`)
   if (probe.gpus && probe.gpus.length > 0) {

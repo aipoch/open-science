@@ -53,6 +53,7 @@ import {
 import { computeJobRemoteCleanupMigration } from './migrations/0026-compute-job-remote-cleanup'
 import { projectSessionDefaultsMigration } from './migrations/0027-project-session-defaults'
 import { numericAndNullConstraintsMigration } from './migrations/0028-database-numeric-and-null-constraints'
+import { computeHostExecutionModeMigration } from './migrations/0029-compute-host-execution-mode'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -361,6 +362,12 @@ const NUMERIC_AND_NULL_CONSTRAINTS_CHECKSUM = checksumMigrationPayload(
   numericAndNullConstraintsMigration.verifiers,
   numericAndNullConstraintsMigration.operations
 )
+const COMPUTE_HOST_EXECUTION_MODE_CHECKSUM = checksumMigrationPayload(
+  computeHostExecutionModeMigration.id,
+  computeHostExecutionModeMigration.statements,
+  computeHostExecutionModeMigration.verifiers,
+  computeHostExecutionModeMigration.operations
+)
 const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
   computeJobSensitiveDataEncryptionMigration.id,
   computeJobSensitiveDataEncryptionMigration.statements,
@@ -643,6 +650,12 @@ const MIGRATION_MANIFEST = [
     backupOnApply: 'required',
     backupRetention: 'retain',
     foreignKeysDuringApply: 'disabled'
+  },
+  {
+    ...computeHostExecutionModeMigration,
+    checksum: COMPUTE_HOST_EXECUTION_MODE_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs

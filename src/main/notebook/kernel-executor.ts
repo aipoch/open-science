@@ -998,6 +998,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
       ...(kind === 'repl' && request.projectId
         ? { OPEN_SCIENCE_NOTEBOOK_PROJECT_ID: request.projectId }
         : {}),
+      ...(kind === 'repl' && request.workspaceCwd
+        ? { OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD: request.workspaceCwd }
+        : {}),
       ...(kind === 'repl' ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       ...(rEnvPrefix ? { OPEN_SCIENCE_R_ENV_PREFIX: rEnvPrefix } : {})
     }

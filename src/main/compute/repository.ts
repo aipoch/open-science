@@ -3,6 +3,7 @@ import type { ComputeHost as PrismaComputeHost, PrismaClient } from '@prisma/cli
 import type {
   ComputeHost,
   ComputeAuthenticationMode,
+  ComputeExecutionMode,
   ComputeHostShape,
   CreateComputeHostRequest,
   DetailsAuthor,
@@ -193,6 +194,11 @@ const asShape = (value: string): ComputeHostShape => {
   throw new Error(`Compute Host data is corrupt or unsupported: unknown shape ${value}.`)
 }
 
+const asExecutionMode = (value: string): ComputeExecutionMode => {
+  if (value === 'direct_ssh' || value === 'slurm') return value
+  throw new Error(`Compute Host data is corrupt or unsupported: unknown execution mode ${value}.`)
+}
+
 const asAuthor = (value: string | null): DetailsAuthor | undefined => {
   if (value === null) return undefined
   if (value === 'user' || value === 'agent') return value
@@ -231,6 +237,7 @@ const toHost = (row: PrismaComputeHost, hasCredential = false): ComputeHost => (
   providerId: row.providerId,
   displayName: row.displayName,
   shape: asShape(row.shape),
+  executionMode: asExecutionMode(row.executionMode ?? 'direct_ssh'),
   sshAlias: row.sshAlias,
   sshOverrides: parseComputeJson(row.sshOverrides, decodeSshOverrides, 'sshOverrides'),
   authentication: {
@@ -323,6 +330,7 @@ class ComputeHostRepository {
   // Creates a host record. Validates the alias, the 32 KiB details cap, and rejects a duplicate
   // provider_id with a readable error before inserting. No SSH connection is made in Phase 1.
   async create(request: CreateComputeHostRequest): Promise<ComputeHost> {
+    const executionMode = asExecutionMode(request.executionMode ?? 'direct_ssh')
     const profile = validateHostConnectionProfile({
       sshAlias: request.sshAlias,
       displayName: request.displayName,
@@ -356,6 +364,7 @@ class ComputeHostRepository {
     const row = await client.computeHost.create({
       data: {
         providerId,
+        executionMode,
         displayName: profile.displayName,
         sshAlias: alias,
         sshOverrides: serializeOverrides({
@@ -403,6 +412,7 @@ class ComputeHostRepository {
       const host = await transaction.computeHost.create({
         data: {
           providerId,
+          executionMode: asExecutionMode(request.executionMode ?? 'direct_ssh'),
           displayName: request.displayName?.trim() || alias,
           sshAlias: alias,
           sshOverrides: serializeOverrides({ user: request.username, port: request.port }),
@@ -819,6 +829,17 @@ class ComputeHostRepository {
     await client.computeHost.update({
       where: { providerId },
       data: { concurrencyLimit }
+    })
+  }
+
+  async updateExecutionMode(
+    providerId: string,
+    executionMode: ComputeExecutionMode
+  ): Promise<void> {
+    const client = await this.getClient()
+    await client.computeHost.update({
+      where: { providerId },
+      data: { executionMode: asExecutionMode(executionMode) }
     })
   }
 }

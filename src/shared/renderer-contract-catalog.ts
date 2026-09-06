@@ -866,6 +866,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'compute',
     ['compute:concurrency:set']
   ),
+  'compute.executionModeSet': callable<
+    (providerId: string, executionMode: import('./compute').ComputeExecutionMode) => Promise<void>
+  >()('compute', ['compute:execution-mode:set']),
   'compute.create': callable<(request: CreateComputeHostRequest) => Promise<ComputeHost>>()(
     'compute',
     ['compute:create']

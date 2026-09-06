@@ -215,7 +215,8 @@ describe('application database (integration)', () => {
         '0025_managed_file_version_foundation',
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
-        '0028_database_numeric_and_null_constraints'
+        '0028_database_numeric_and_null_constraints',
+        '0029_compute_host_execution_mode'
       ]
     })
 
@@ -696,6 +697,7 @@ describe('application database (integration)', () => {
     await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "executionMode"')
 
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
@@ -781,6 +783,7 @@ describe('application database (integration)', () => {
     await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client)
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "executionMode"')
 
     await migrateApplicationDatabase(client)
 
@@ -1264,7 +1267,8 @@ describe('application database (integration)', () => {
         '0025_managed_file_version_foundation',
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
-        '0028_database_numeric_and_null_constraints'
+        '0028_database_numeric_and_null_constraints',
+        '0029_compute_host_execution_mode'
       ]
     })
 

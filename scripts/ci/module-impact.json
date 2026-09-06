@@ -769,6 +769,7 @@
     },
     "artifact_provenance": {
       "ownerPaths": [
+        "src/main/artifacts/compute-output-evidence.ts",
         "src/main/artifacts/provenance-canonical.ts",
         "src/main/artifacts/provenance-content-status.ts",
         "src/main/artifacts/provenance-core-evidence.ts",

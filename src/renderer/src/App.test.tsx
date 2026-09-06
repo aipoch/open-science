@@ -155,7 +155,10 @@ const mocks = vi.hoisted(() => {
 })
 
 vi.mock('@/lib/session-persistence/session-persistence', () => ({
-  useSessionPersistence: () => mocks.sessionPersistence
+  useSessionPersistence: () => mocks.sessionPersistence,
+  loadPersistedSession: vi.fn(async () => undefined),
+  hydratePersistedSessionIfPresent: vi.fn(() => undefined),
+  flushSessionPersistence: vi.fn(async () => undefined)
 }))
 vi.mock('@/lib/deep-link', () => ({
   useDeepLinkNavigation: mocks.deepLinkNavigation

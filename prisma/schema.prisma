@@ -646,6 +646,7 @@ model ComputeJob {
   id                       String                @id @default(cuid())
   providerId               String
   shape                    String
+  executionMode            String                @default("direct_ssh") // direct_ssh | slurm
   sessionId                String
   projectId                String
   status                   String                @default("submitted")
@@ -731,6 +732,7 @@ model ComputeHost {
   providerId             String             @unique // "ssh:<alias>"
   displayName            String
   shape                  String             @default("direct_ssh") // direct_ssh | scheduler_cluster | bridge_runner
+  executionMode          String             @default("direct_ssh") // direct_ssh | slurm
   sshAlias               String
   sshOverrides           String? // JSON: { user?, port?, identityFile? } — never credentials
   authenticationMode     String             @default("ssh_config")

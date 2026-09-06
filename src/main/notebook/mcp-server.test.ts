@@ -933,6 +933,8 @@ describe('repl_execute tool', () => {
     expect(tool?.description).toContain('host.mcp')
     // host.compute (remote compute) is only reachable here too, same as host.mcp.
     expect(tool?.description).toContain('host.compute')
+    expect(tool?.description).toContain('Remote Compute (SSH)')
+    expect(tool?.description).toContain('Compute Environment Setup')
     expect(tool?.description).toContain('host.agents')
     expect(tool?.description).toContain('host.help()')
     expect(tool?.description).not.toContain('host.skills')

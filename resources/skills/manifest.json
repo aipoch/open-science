@@ -104,6 +104,12 @@
       "updatedAt": "2026-07-14T00:00:00.000Z"
     },
     {
+      "id": "compute-env-setup",
+      "name": "Compute Environment Setup",
+      "source": "featured",
+      "updatedAt": "2026-09-06T00:00:00.000Z"
+    },
+    {
       "id": "remote-compute-ssh",
       "name": "Remote Compute (SSH)",
       "source": "featured",

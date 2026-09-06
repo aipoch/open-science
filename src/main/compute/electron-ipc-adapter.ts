@@ -35,12 +35,14 @@ const finiteNumberSchema = z.number().finite()
 const integerSchema = finiteNumberSchema.int()
 const stringArraySchema = z.array(z.string())
 const detailsAuthorSchema = z.enum(['user', 'agent']) satisfies z.ZodType<DetailsAuthor>
+const executionModeSchema = z.enum(['direct_ssh', 'slurm'])
 
 const createComputeHostRequestSchema = z
   .object({
     sshAlias: z.string(),
     displayName: z.string().optional(),
     detailsDoc: z.string().optional(),
+    executionMode: executionModeSchema.optional(),
     sshOverrides: z
       .object({
         user: z.string().optional(),
@@ -57,6 +59,7 @@ const createPasswordComputeHostRequestSchema = z
     sshAlias: z.string(),
     displayName: z.string().optional(),
     detailsDoc: z.string().optional(),
+    executionMode: executionModeSchema.optional(),
     authenticationMode: z.literal('password'),
     username: z.string(),
     port: finiteNumberSchema,
@@ -158,6 +161,7 @@ const computeIpcArgumentSchemas = Object.freeze({
   'compute:scratch:set': z.tuple([z.string(), z.string()]),
   'compute:scratch:clear': z.tuple([z.string()]),
   'compute:concurrency:set': z.tuple([z.string(), finiteNumberSchema]),
+  'compute:execution-mode:set': z.tuple([z.string(), executionModeSchema]),
   'compute:session:set-concurrency-limit': z.tuple([z.string(), finiteNumberSchema]),
   'compute:session:status': z.tuple([z.string()]),
   'compute:list-dir': z.tuple([z.string(), z.string()]),
@@ -245,6 +249,9 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   )
   handleComputeIpc('compute:concurrency:set', (_event, providerId, limit) =>
     handlers.concurrencySet(providerId, limit)
+  )
+  handleComputeIpc('compute:execution-mode:set', (_event, providerId, executionMode) =>
+    handlers.executionModeSet(providerId, executionMode)
   )
   // Session-level concurrency control (Phase 3c, issue 04).
   handleComputeIpc('compute:session:set-concurrency-limit', (_event, sessionId, limit) =>

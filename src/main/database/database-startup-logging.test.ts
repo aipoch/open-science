@@ -120,7 +120,8 @@ describe('database startup logging', () => {
               '0025_managed_file_version_foundation',
               '0026_compute_job_remote_cleanup',
               '0027_project_session_defaults',
-              '0028_database_numeric_and_null_constraints'
+              '0028_database_numeric_and_null_constraints',
+              '0029_compute_host_execution_mode'
             ],
             adoptedLegacy: true
           })
