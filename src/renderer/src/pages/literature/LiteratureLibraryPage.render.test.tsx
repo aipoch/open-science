@@ -1870,7 +1870,7 @@ describe('LiteratureLibraryPage', () => {
     const apaPreviewTrigger = screen.getByLabelText('Preview: APA Style 7th edition')
     fireEvent.pointerEnter(apaPreviewTrigger, { pointerType: 'mouse' })
     fireEvent.pointerMove(apaPreviewTrigger, { pointerType: 'mouse' })
-    const preview = await screen.findByRole('tooltip')
+    const preview = await screen.findByRole('dialog', { name: 'Preview: APA Style 7th edition' })
     expect(within(preview).getByText('In-text citation')).not.toBeNull()
     expect(within(preview).getByText('(Rivera & Chen, 2024)')).not.toBeNull()
     expect(within(preview).getByText('Reference')).not.toBeNull()
