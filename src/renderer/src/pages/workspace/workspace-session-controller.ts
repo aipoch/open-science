@@ -12,7 +12,7 @@ import type {
   DeleteSessionRequest,
   SessionDeletionResult
 } from '../../../../shared/session-persistence'
-import { isSessionSizeLimitError } from '../../../../shared/session-persistence'
+import { isSessionSizeLimitError, sessionRevision } from '../../../../shared/session-persistence'
 import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
@@ -64,7 +64,7 @@ type SessionDeletionFailureReason = Extract<SessionDeletionResult, { status: 'fa
 type SessionDeleteDialogState = {
   session: ChatSession
   isDeleting: boolean
-  error: SessionDeletionFailureReason | null
+  error: SessionDeletionFailureReason | 'unknown' | null
 }
 type SpecialistSendIntent = {
   draftSpecialistId: string | null | undefined
@@ -260,7 +260,7 @@ const useWorkspaceSessionController = ({
       projectId: session.projectId,
       sessionId: session.id,
       archived: true,
-      expectedArchivedAt: null
+      expectedRevision: sessionRevision(session)
     })
       .then((archived) => {
         if (clearIdleRetry(session.id)) clearPending(session.id)
@@ -325,7 +325,7 @@ const useWorkspaceSessionController = ({
         settleSessionDeletion(sessionId, false)
         setDeleteDialog((current) =>
           current?.session.id === sessionId
-            ? { ...current, isDeleting: false, error: 'runtime' }
+            ? { ...current, isDeleting: false, error: 'unknown' }
             : current
         )
       })

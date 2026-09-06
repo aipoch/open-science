@@ -50,9 +50,9 @@ describe('project application command contracts', () => {
     ).toEqual({ ...project, agentContext: 'Always cite DOIs.' })
     expect(
       projectApplicationCommandContracts.updateArchive.args.parse([
-        { id: 'project-1', archived: true, expectedArchivedAt: null }
+        { id: 'project-1', archived: true, expectedArchiveRevision: 0 }
       ])
-    ).toEqual([{ id: 'project-1', archived: true, expectedArchivedAt: null }])
+    ).toEqual([{ id: 'project-1', archived: true, expectedArchiveRevision: 0 }])
     expect(projectApplicationCommandContracts.delete.args.parse([{ id: 'project-1' }])).toEqual([
       { id: 'project-1' }
     ])

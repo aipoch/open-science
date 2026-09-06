@@ -73,6 +73,7 @@ const toProject = (row: PrismaProject): Project => ({
   isExample: row.isExample,
   ...(row.pinned ? { pinned: true } : {}),
   ...(row.archivedAt ? { archivedAt: row.archivedAt.getTime() } : {}),
+  archiveRevision: row.archiveRevision,
   createdAt: row.createdAt.getTime(),
   updatedAt: row.updatedAt.getTime()
 })
@@ -230,7 +231,10 @@ class ProjectRepository {
   // forge or clear visibility state. The compare-and-set condition also makes Undo safe across
   // windows without changing the research activity timestamp.
   async updateArchive(request: UpdateProjectArchiveRequest, archivedAt: number): Promise<Project> {
-    if (!Number.isSafeInteger(request.expectedArchivedAt) && request.expectedArchivedAt !== null) {
+    if (
+      !Number.isSafeInteger(request.expectedArchiveRevision) ||
+      request.expectedArchiveRevision < 0
+    ) {
       throw new Error('Project archive state is invalid.')
     }
     if (!Number.isSafeInteger(archivedAt) || archivedAt <= 0) {
@@ -238,15 +242,15 @@ class ProjectRepository {
     }
 
     const client = await this.getClient()
-    const expectedArchivedAt = request.expectedArchivedAt
     // Prisma's @updatedAt automation also runs for administrative changes. Updating only the archive
-    // column in SQL preserves the activity timestamp without reading and later restoring a stale value.
+    // columns in SQL preserves the activity timestamp without reading and later restoring a stale value.
     const updated = await client.$executeRaw`
       UPDATE "Project"
-      SET "archivedAt" = ${request.archived ? new Date(archivedAt) : null}
+      SET "archivedAt" = ${request.archived ? new Date(archivedAt) : null},
+          "archiveRevision" = "archiveRevision" + 1
       WHERE "id" = ${request.id}
         AND "deletedAt" IS NULL
-        AND "archivedAt" IS ${expectedArchivedAt === null ? null : new Date(expectedArchivedAt)}
+        AND "archiveRevision" = ${request.expectedArchiveRevision}
     `
     if (updated !== 1) {
       const current = await client.project.findUnique({ where: { id: request.id } })

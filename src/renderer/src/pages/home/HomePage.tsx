@@ -514,7 +514,11 @@ const HomePage = ({
 
     setArchivingProjectIds((current) => new Set(current).add(project.id))
     setProjectActionError(undefined)
-    void updateProjectArchive({ id: project.id, archived: true, expectedArchivedAt: null })
+    void updateProjectArchive({
+      id: project.id,
+      archived: true,
+      expectedArchiveRevision: project.archiveRevision ?? 0
+    })
       .then((archived) => enqueueProjectArchive(archived))
       .catch((error: unknown) =>
         setProjectActionError(

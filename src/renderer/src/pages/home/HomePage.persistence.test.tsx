@@ -247,7 +247,7 @@ describe('HomePage persistence recovery', () => {
     expect(updateProjectArchive).toHaveBeenCalledWith({
       id: project.id,
       archived: true,
-      expectedArchivedAt: null
+      expectedArchiveRevision: 0
     })
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
       'Repair the project index before archiving.'

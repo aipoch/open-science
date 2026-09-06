@@ -10,6 +10,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "isExample" BOOLEAN NOT NULL DEFAULT false,
     "pinned" BOOLEAN NOT NULL DEFAULT false,
     "archivedAt" DATETIME,
+    "archiveRevision" INTEGER NOT NULL DEFAULT 0,
     "deletedAt" DATETIME,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL

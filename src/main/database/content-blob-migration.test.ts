@@ -34,7 +34,7 @@ const createDatabaseBeforeLiteratureFoundation = async (client: PrismaClient): P
   await client.$executeRawUnsafe('DROP TABLE "ContentBlob"')
   await client.$executeRawUnsafe(
     `DELETE FROM "_open_science_migrations"
-     WHERE "id" IN ('0030_literature_foundation')`
+     WHERE "id" >= '0030_literature_foundation'`
   )
 }
 
@@ -69,7 +69,7 @@ describe('Content blob migration', () => {
     )
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      applied: ['0030_literature_foundation']
+      applied: ['0030_literature_foundation', '0031_project_archive_revision']
     })
     await expect(
       client.literatureIdentifier.findMany({ orderBy: { id: 'asc' }, select: { itemId: true } })
@@ -90,7 +90,7 @@ describe('Content blob migration', () => {
         await client.$executeRawUnsafe(
           schema === 'pre-ledger'
             ? 'DELETE FROM "_open_science_migrations"'
-            : `DELETE FROM "_open_science_migrations" WHERE "id" = '0030_literature_foundation'`
+            : `DELETE FROM "_open_science_migrations" WHERE "id" >= '0030_literature_foundation'`
         )
       }
 
@@ -141,9 +141,9 @@ describe('Content blob migration', () => {
         applied:
           schema === 'pre-ledger'
             ? MIGRATION_MANIFEST.map(({ id }) => id)
-            : ['0030_literature_foundation'],
+            : ['0030_literature_foundation', '0031_project_archive_revision'],
         from: schema === 'pre-ledger' ? null : '0029_compute_host_execution_mode',
-        to: '0030_literature_foundation'
+        to: '0031_project_archive_revision'
       })
 
       await expect(
@@ -216,7 +216,7 @@ describe('Content blob migration', () => {
       // The fixture rewinds the ledger after changing data; discard its earlier recovery snapshot.
       await rm(`${databasePath}.before-0030_literature_foundation.backup`, { force: true })
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" = '0030_literature_foundation'`
+        `DELETE FROM "_open_science_migrations" WHERE "id" >= '0030_literature_foundation'`
       )
       await migrateApplicationDatabase(client)
       expect(await readContent()).toEqual(before)

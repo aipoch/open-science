@@ -4,7 +4,10 @@ import { createStore, type StoreApi } from 'zustand/vanilla'
 import type { AcpContextUsage } from '../../../shared/acp'
 import type { PermissionProfileId } from '../../../shared/permission-profiles'
 import type { SessionAgentConfiguration } from '../../../shared/settings'
-import type { UpdateSessionArchiveRequest } from '../../../shared/session-persistence'
+import type {
+  PersistedChatSession,
+  UpdateSessionArchiveRequest
+} from '../../../shared/session-persistence'
 import { createSessionMessageGraphOwner } from './session-store-message-graph-owner'
 import type { SessionMessageGraphActions } from './session-store-message-graph-helpers'
 import {
@@ -292,7 +295,28 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
 
   updateSessionArchive: async (request) => {
     const source = get().sessions.find((session) => session.id === request.sessionId)
-    const persisted = await window.api.sessions.updateArchive(request)
+    let persisted: PersistedChatSession
+    try {
+      persisted = await window.api.sessions.updateArchive(request)
+    } catch (error) {
+      // A conflict or lost response requires a fresh projection, not a new version on the old intent.
+      try {
+        const current = await window.api.sessions.loadOne({
+          projectId: request.projectId,
+          sessionId: request.sessionId
+        })
+        if (source && current) {
+          get().applyDurableSessionProjection({
+            source,
+            session: current,
+            mode: 'archive-authority'
+          })
+        }
+      } catch {
+        /* Keep the original failure if the authority cannot be reached. */
+      }
+      throw error
+    }
     if (source)
       get().applyDurableSessionProjection({ source, session: persisted, mode: 'archive-authority' })
     return (

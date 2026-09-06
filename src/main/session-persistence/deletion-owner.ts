@@ -6,6 +6,8 @@ import {
 } from '../../shared/delegated-work-projection'
 import {
   SessionDeletionCommittedError,
+  sessionRevision,
+  SessionRevisionConflictError,
   type LoadAllSessionsResult,
   type PersistedChatSession,
   type PersistedChatMessage,
@@ -82,7 +84,10 @@ type SessionDeletionRepository = {
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
-  saveSession(session: PersistedChatSession): Promise<PersistedChatSession | void>
+  saveSession(
+    session: PersistedChatSession,
+    expectedRevision?: number
+  ): Promise<PersistedChatSession | void>
   saveCommittedProjectSession(session: PersistedChatSession): Promise<void>
   deleteSession(projectId: string, sessionId: string): Promise<void>
   deleteProjectSessions(projectId: string): Promise<void>
@@ -160,12 +165,6 @@ const ARCHIVE_BLOCKING_SESSION_STATUSES = new Set<PersistedSessionStatus>([
   'waiting-plan-approval'
 ])
 
-const assertArchiveExpectedAt = (value: number | null, target: 'Project' | 'Session'): void => {
-  if (value !== null && (!Number.isSafeInteger(value) || value <= 0)) {
-    throw new Error(`${target} archive state is invalid.`)
-  }
-}
-
 const isSessionArchiveBlocked = (session: PersistedChatSession): boolean =>
   ARCHIVE_BLOCKING_SESSION_STATUSES.has(session.status)
 
@@ -203,18 +202,16 @@ class SessionPersistenceDeletionOwner {
 
   async assertProjectArchivable(
     projectId: string,
-    isRuntimeBusy: (sessionId: string) => boolean = () => false
+    isRuntimeBusy: (sessionId: string) => boolean | Promise<boolean> = () => false
   ): Promise<string[]> {
     const loaded = await this.repository.loadProjectWithDiagnostics(projectId)
     if (!loaded.isComplete) {
       throw new Error('Cannot archive a Project while its Session catalog is incomplete.')
     }
-    if (
-      loaded.sessions.some(
-        (session) => isSessionArchiveBlockedByPersistedWork(session) || isRuntimeBusy(session.id)
-      )
-    ) {
-      throw new Error('Finish or stop active sessions before archiving this project.')
+    for (const session of loaded.sessions) {
+      if (isSessionArchiveBlockedByPersistedWork(session) || (await isRuntimeBusy(session.id))) {
+        throw new Error('Finish or stop active sessions before archiving this project.')
+      }
     }
     return loaded.sessions.map((session) => session.id)
   }
@@ -232,9 +229,11 @@ class SessionPersistenceDeletionOwner {
 
   async updateArchive(
     request: UpdateSessionArchiveRequest,
-    isRuntimeBusy: () => boolean = () => false
+    isRuntimeBusy: () => boolean | Promise<boolean> = () => false
   ): Promise<PersistedChatSession> {
-    assertArchiveExpectedAt(request.expectedArchivedAt, 'Session')
+    if (!Number.isSafeInteger(request.expectedRevision) || request.expectedRevision < 0) {
+      throw new Error('Session archive state is invalid.')
+    }
     this.assertArchiveMutable(request.projectId, request.sessionId)
 
     const loaded = await this.repository.loadSessionWithDiagnostics(
@@ -247,21 +246,25 @@ class SessionPersistenceDeletionOwner {
     }
 
     const currentArchivedAt = loaded.session.archivedAt ?? null
-    if (currentArchivedAt !== request.expectedArchivedAt) {
-      throw new Error('Session archive state changed elsewhere.')
+    if (sessionRevision(loaded.session) !== request.expectedRevision) {
+      throw new SessionRevisionConflictError(
+        request.expectedRevision,
+        sessionRevision(loaded.session)
+      )
     }
     if (
       request.archived &&
-      (isSessionArchiveBlockedByPersistedWork(loaded.session) || isRuntimeBusy())
+      (isSessionArchiveBlockedByPersistedWork(loaded.session) || (await isRuntimeBusy()))
     ) {
       throw new Error('Finish or stop this session before archiving.')
     }
+    this.assertArchiveMutable(request.projectId, request.sessionId)
     if (request.archived === (currentArchivedAt !== null)) return loaded.session
 
     const next: PersistedChatSession = { ...loaded.session }
     if (request.archived) next.archivedAt = Date.now()
     else delete next.archivedAt
-    const persisted = await saveSessionWithRevision(this.repository, next)
+    const persisted = await saveSessionWithRevision(this.repository, next, request.expectedRevision)
     this.stateOwner.recordSession(persisted)
     return persisted
   }

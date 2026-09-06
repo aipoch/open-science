@@ -102,6 +102,7 @@
     "Import Connector configuration": "Импорт конфигурации коннектора"
   },
   "renderer": {
+    "Project: {{name}}": "Проект: {{name}}",
     "An installer is not available for this platform. Download manually to check other installation options.": "Установщик для этой платформы недоступен. Перейдите к ручной загрузке, чтобы узнать о других вариантах установки.",
     "Latest saved version": "Последняя сохранённая версия",
     "Unable to discard the Plan.": "Не удалось удалить план.",
@@ -985,7 +986,7 @@
     "Could not check whether package registries are reachable.": "Не удалось проверить, доступны ли реестры пакетов.",
     "Could not choose the data location. Try again.": "Не удалось выбрать папку с данными. Попробуйте снова.",
     "Could not delete project.": "Не удалось удалить проект.",
-    "Could not delete session.": "Не удалось удалить сессию.",
+    "Could not confirm the deletion result. Please try again.": "Не удалось подтвердить результат удаления. Попробуйте ещё раз.",
     "Could not delete the project. Please try again.": "Не удалось удалить проект. Попробуйте снова.",
     "Project cleanup": "Очистка проектов",
     "Deleted project": "Удалённый проект",

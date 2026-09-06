@@ -718,7 +718,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   // cannot prove that an omitted Session is idle, so it is unsafe to hide the whole Project.
   assertProjectArchivable(
     projectId: string,
-    isRuntimeBusy: (sessionId: string) => boolean = () => false
+    isRuntimeBusy: (sessionId: string) => boolean | Promise<boolean> = () => false
   ): Promise<string[]> {
     return this.operationScheduler.runProject(projectId, () =>
       this.deletionOwner.assertProjectArchivable(projectId, isRuntimeBusy)
@@ -745,7 +745,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   // never allows a stale renderer projection to alter archive state.
   updateArchive(
     request: UpdateSessionArchiveRequest,
-    isRuntimeBusy: () => boolean = () => false
+    isRuntimeBusy: () => boolean | Promise<boolean> = () => false
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(request.projectId, request.sessionId, () =>
       this.deletionOwner.updateArchive(request, isRuntimeBusy)

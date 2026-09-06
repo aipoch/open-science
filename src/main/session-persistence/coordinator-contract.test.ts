@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs'
+import ts from 'typescript'
+import { ArchiveCoordinator, type SessionRuntimeActivity } from '../archive/coordinator'
+import type { Project, UpdateProjectArchiveRequest } from '../../shared/projects'
 import { setImmediate } from 'node:timers/promises'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -6,6 +10,7 @@ import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
 import type {
   PersistedChatSession,
+  UpdateSessionArchiveRequest,
   SessionPlanRuntimeContext
 } from '../../shared/session-persistence'
 import {
@@ -541,13 +546,18 @@ describe('SessionPersistenceCoordinator contracts', () => {
 
   it('applies optimistic archive checks before changing durable Session visibility', async () => {
     const { repository, sessions } = createRepository()
+    repository.saveSession = vi.fn(async (session) => {
+      const next = { ...session, revision: (sessions.get(session.id)?.revision ?? 0) + 1 }
+      sessions.set(session.id, next)
+      return next
+    })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
     const archived = await coordinator.updateArchive({
       projectId: 'project-1',
       sessionId: 'session-1',
       archived: true,
-      expectedArchivedAt: null
+      expectedRevision: 0
     })
     expect(archived.archivedAt).toEqual(expect.any(Number))
 
@@ -556,9 +566,9 @@ describe('SessionPersistenceCoordinator contracts', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         archived: false,
-        expectedArchivedAt: null
+        expectedRevision: 0
       })
-    ).rejects.toThrow('Session archive state changed elsewhere.')
+    ).rejects.toThrow('Session revision conflict')
 
     const running = createSession({ id: 'session-2', status: 'running' })
     sessions.set(running.id, running)
@@ -567,7 +577,7 @@ describe('SessionPersistenceCoordinator contracts', () => {
         projectId: 'project-1',
         sessionId: 'session-2',
         archived: true,
-        expectedArchivedAt: null
+        expectedRevision: 0
       })
     ).rejects.toThrow('Finish or stop this session before archiving.')
   })
@@ -762,4 +772,258 @@ describe('SessionPersistenceCoordinator contracts', () => {
     expect(reconcileSessionCleanup).toHaveBeenCalledWith([session])
     expect(reconcileMessageSnapshots).not.toHaveBeenCalled()
   })
+})
+
+// Execute the composition root's real activity adapter. Importing ipc.ts would boot Electron and
+// unrelated application modules; this test-only extraction keeps its wiring observable without a
+// production seam or a duplicate implementation of the archive policy.
+const archiveRuntime = (
+  jobs: {
+    countNonTerminalBySession: (sessionId: string) => Promise<number>
+    findNonTerminal: () => Promise<{ project_id: string }[]>
+  },
+  detect: () => { projectId: string; sessionId: string }[] = () => []
+): SessionRuntimeActivity => {
+  const source = ts.createSourceFile(
+    'ipc.ts',
+    readFileSync(new URL('../ipc.ts', import.meta.url), 'utf8'),
+    ts.ScriptTarget.Latest,
+    true
+  )
+  let runtime: ts.Expression | undefined
+  const visit = (node: ts.Node): void => {
+    if (ts.isNewExpression(node) && node.expression.getText(source) === 'ArchiveCoordinator') {
+      runtime = node.arguments?.[2]
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  if (!runtime) throw new Error('ArchiveCoordinator runtime wiring was not found')
+  const script = ts.transpileModule(`return (${runtime.getText(source)})`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+  }).outputText
+  return new Function(
+    'sideChatOwnerRef',
+    'detectArchiveBlockingSessions',
+    'reviewerProjectRuntime',
+    'computeJobActivityRef',
+    'runtimeRef',
+    script
+  )({}, detect, { isProjectBusy: () => false }, { current: jobs }, {})
+}
+
+const createArchiveHarness = (
+  runtime?: SessionRuntimeActivity
+): {
+  coordinator: ArchiveCoordinator
+  sessions: Map<string, PersistedChatSession>
+  projects: { get(): Promise<Project> }
+  repository: SessionMutationRepository
+} => {
+  const { repository, sessions } = createRepository([createSession({ revision: 1 })])
+  // Model the repository's existing durable revision advancement, including archive writes.
+  repository.saveSession = vi.fn(async (next) => {
+    const persisted = { ...next, revision: (sessions.get(next.id)?.revision ?? 0) + 1 }
+    sessions.set(next.id, structuredClone(persisted))
+    return persisted
+  })
+  const persistence = new SessionPersistenceCoordinator(repository, createFileIndex())
+  let project: Project = {
+    id: 'project-1',
+    name: 'Project',
+    description: '',
+    isExample: false,
+    createdAt: 1,
+    updatedAt: 2
+  }
+  const projects = {
+    get: vi.fn(async () => ({ ...project })),
+    updateArchive: vi.fn(async (request: UpdateProjectArchiveRequest, archivedAt: number) => {
+      if ((project.archiveRevision ?? 0) !== request.expectedArchiveRevision) {
+        throw new Error('Project archive state changed elsewhere.')
+      }
+      project = {
+        ...project,
+        archivedAt: request.archived ? archivedAt : undefined,
+        archiveRevision: (project.archiveRevision ?? 0) + 1
+      }
+      return { ...project }
+    })
+  }
+  const coordinator = new ArchiveCoordinator(
+    projects,
+    persistence,
+    runtime ?? {
+      isSessionBusy: () => false,
+      isProjectBusy: () => false,
+      liveSessionProjectId: () => 'project-1'
+    }
+  )
+  return { coordinator, sessions, projects, repository }
+}
+
+const sessionArchiveRequest = (
+  archived: boolean,
+  expectedRevision: number
+): UpdateSessionArchiveRequest => ({
+  projectId: 'project-1',
+  sessionId: 'session-1',
+  archived,
+  expectedRevision
+})
+
+describe('archive admission regressions', () => {
+  it.each(['queued', 'submitted', 'running'])(
+    'rejects an idle Session with a %s Compute Job through the real IPC activity adapter',
+    async (status) => {
+      const job = { session_id: 'session-1', project_id: 'project-1', status }
+      const jobs = {
+        countNonTerminalBySession: vi.fn(async (id: string) => (id === job.session_id ? 1 : 0)),
+        findNonTerminal: vi.fn(async () => [job])
+      }
+      const { coordinator, repository } = createArchiveHarness(archiveRuntime(jobs))
+      await expect(
+        coordinator.updateProjectArchive({
+          id: 'project-1',
+          archived: true,
+          expectedArchiveRevision: 0
+        })
+      ).rejects.toThrow('Finish or stop active sessions')
+      await expect(
+        coordinator.updateSessionArchive(sessionArchiveRequest(true, 1))
+      ).rejects.toThrow('Finish or stop')
+      expect(repository.saveSession).not.toHaveBeenCalled()
+      expect(jobs.countNonTerminalBySession).toHaveBeenCalledWith('session-1')
+    }
+  )
+
+  it('fails closed when the Session Compute Job query rejects', async () => {
+    const jobs = {
+      countNonTerminalBySession: vi.fn().mockRejectedValue(new Error('Job database unavailable')),
+      findNonTerminal: vi.fn().mockResolvedValue([])
+    }
+    const { coordinator, repository } = createArchiveHarness(archiveRuntime(jobs))
+    await expect(coordinator.updateSessionArchive(sessionArchiveRequest(true, 1))).rejects.toThrow(
+      'Job database unavailable'
+    )
+    expect(repository.saveSession).not.toHaveBeenCalled()
+  })
+
+  it('waits for the Session Compute Job query before persisting archive state', async () => {
+    const gate = createDeferred<number>()
+    const jobs = {
+      countNonTerminalBySession: vi.fn(() => gate.promise),
+      findNonTerminal: vi.fn().mockResolvedValue([])
+    }
+    const { coordinator, repository } = createArchiveHarness(archiveRuntime(jobs))
+    const outcome = coordinator.updateSessionArchive(sessionArchiveRequest(true, 1)).then(
+      () => 'archived',
+      () => 'rejected'
+    )
+    // Drain local I/O/microtasks without depending on a wall-clock timeout or a sleep duration.
+    await setImmediate()
+    const writesBeforeQueryCompleted = vi.mocked(repository.saveSession).mock.calls.length
+    gate.resolve(1)
+    const result = await outcome
+    expect(writesBeforeQueryCompleted).toBe(0)
+    expect(result).toBe('rejected')
+    expect(jobs.countNonTerminalBySession).toHaveBeenCalledWith('session-1')
+  })
+
+  it('rechecks runtime activity after the asynchronous Compute Job query', async () => {
+    const gate = createDeferred<number>()
+    let running = false
+    const jobs = {
+      countNonTerminalBySession: vi.fn(() => gate.promise),
+      findNonTerminal: vi.fn().mockResolvedValue([])
+    }
+    const { coordinator, repository } = createArchiveHarness(
+      archiveRuntime(jobs, () =>
+        running ? [{ projectId: 'project-1', sessionId: 'session-1' }] : []
+      )
+    )
+    const result = coordinator.updateSessionArchive(sessionArchiveRequest(true, 1))
+    const rejected = expect(result).rejects.toThrow('Finish or stop')
+    await setImmediate()
+    running = true
+    gate.resolve(0)
+    await rejected
+    expect(repository.saveSession).not.toHaveBeenCalled()
+  })
+
+  it.each(['success', 'failed', 'timeout', 'error', 'another Session'])(
+    'allows Session archive when the only Compute Job is %s',
+    async (status) => {
+      const jobs = {
+        countNonTerminalBySession: vi.fn(async (id: string) =>
+          status === 'another Session' && id === 'session-2' ? 1 : 0
+        ),
+        findNonTerminal: vi.fn(async () =>
+          status === 'another Session' ? [{ project_id: 'project-1' }] : []
+        )
+      }
+      const { coordinator } = createArchiveHarness(archiveRuntime(jobs))
+      await expect(
+        coordinator.updateSessionArchive(sessionArchiveRequest(true, 1))
+      ).resolves.toMatchObject({ archivedAt: expect.any(Number), updatedAt: 2 })
+    }
+  )
+
+  it.each(['Project', 'Session'] as const)(
+    'rejects a delayed %s archive created before another window archives and restores',
+    async (target) => {
+      const { coordinator, sessions, projects } = createArchiveHarness()
+      const update = (
+        archived: boolean,
+        expectedRevision: number
+      ): Promise<Project | PersistedChatSession> =>
+        target === 'Project'
+          ? coordinator.updateProjectArchive({
+              id: 'project-1',
+              archived,
+              expectedArchiveRevision: expectedRevision
+            })
+          : coordinator.updateSessionArchive(sessionArchiveRequest(archived, expectedRevision))
+      // Window A captures its command now but sends it only after Window B's round trip.
+      const initialRevision = target === 'Project' ? 0 : 1
+      const delayed = (): Promise<Project | PersistedChatSession> => update(true, initialRevision)
+      await update(true, initialRevision)
+      await update(false, initialRevision + 1)
+      expect((await projects.get()).updatedAt).toBe(2)
+      expect(sessions.get('session-1')?.updatedAt).toBe(2)
+      if (target === 'Session') expect(sessions.get('session-1')?.revision).toBe(3)
+      await expect(delayed()).rejects.toThrow(/changed elsewhere|revision/i)
+    }
+  )
+
+  it.each(['Project', 'Session'] as const)(
+    'rejects an old %s Undo when two archives use the same millisecond',
+    async (target) => {
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(1000)
+      try {
+        const { coordinator } = createArchiveHarness()
+        const update = (
+          archived: boolean,
+          expectedRevision: number
+        ): Promise<Project | PersistedChatSession> =>
+          target === 'Project'
+            ? coordinator.updateProjectArchive({
+                id: 'project-1',
+                archived,
+                expectedArchiveRevision: expectedRevision
+              })
+            : coordinator.updateSessionArchive(sessionArchiveRequest(archived, expectedRevision))
+        const initialRevision = target === 'Project' ? 0 : 1
+        const first = await update(true, initialRevision)
+        await update(false, initialRevision + 1)
+        const second = await update(true, initialRevision + 2)
+        expect(second.archivedAt).toBe(first.archivedAt)
+        await expect(update(false, initialRevision + 1)).rejects.toThrow(
+          /changed elsewhere|revision/i
+        )
+      } finally {
+        clock.mockRestore()
+      }
+    }
+  )
 })

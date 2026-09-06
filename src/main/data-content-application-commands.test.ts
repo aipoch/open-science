@@ -511,7 +511,7 @@ describe('Data and content application commands', () => {
       },
       {
         key: 'projectUpdateArchive',
-        args: [{ id: 'project-1', archived: true, expectedArchivedAt: null }],
+        args: [{ id: 'project-1', archived: true, expectedArchiveRevision: 0 }],
         owner: deps.projects.updateArchive
       },
       {
@@ -521,7 +521,7 @@ describe('Data and content application commands', () => {
             projectId: 'project-1',
             sessionId: 'session-1',
             archived: true,
-            expectedArchivedAt: null
+            expectedRevision: 0
           }
         ],
         owner: deps.sessions.updateArchive
@@ -882,7 +882,7 @@ describe('Data and content application commands', () => {
       },
       {
         command: 'projectUpdateArchive' as const,
-        args: [{ id: 'project-1', archived: true, expectedArchivedAt: null }]
+        args: [{ id: 'project-1', archived: true, expectedArchiveRevision: 0 }]
       },
       {
         command: 'projectUpdate' as const,
@@ -1040,7 +1040,7 @@ describe('Data and content application commands', () => {
             projectId: 'project-1',
             sessionId: 'session-1',
             archived: true,
-            expectedArchivedAt: null
+            expectedRevision: 0
           }
         ]
       },
@@ -1393,7 +1393,7 @@ describe('Data and content application commands', () => {
             projectId: 'project-1',
             sessionId: 'session-1',
             archived: true,
-            expectedArchivedAt: null
+            expectedRevision: 0
           }
         ] as const)
       )
@@ -1466,7 +1466,7 @@ describe('Data and content application commands', () => {
           projectId: 'project-1',
           sessionId: 'session-1',
           archived: true,
-          expectedArchivedAt: null
+          expectedRevision: 0
         }
       ] as const)
     )
@@ -1541,7 +1541,7 @@ describe('Data and content application commands', () => {
           projectId: 'project-1',
           sessionId: 'session-1',
           archived: true,
-          expectedArchivedAt: null
+          expectedRevision: 0
         }
       ] as const)
     )
@@ -1699,7 +1699,7 @@ describe('Data and content application commands', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         archived: true,
-        expectedArchivedAt: null,
+        expectedRevision: 0,
         force: true
       },
       owner: 'updateArchive' as const
@@ -1711,7 +1711,7 @@ describe('Data and content application commands', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         archived: false,
-        expectedArchivedAt: Number.NaN
+        expectedRevision: Number.NaN
       },
       owner: 'updateArchive' as const
     },

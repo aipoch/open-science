@@ -385,6 +385,12 @@ const WorkspacePage = ({
     deleteSession,
     onSessionSizeLimit
   })
+  const deleteSessionProjectName = useProjectStore(
+    (state) =>
+      state.projects.find(
+        (project) => project.id === sessionController.view.dialogs.delete?.session.projectId
+      )?.name
+  )
   const exportConversationSessionId = sessionController.view.dialogs.exportConversation?.id
   const currentExportConversationSession = useSessionStore((state) =>
     state.sessions.find((session) => session.id === exportConversationSessionId)
@@ -1426,6 +1432,7 @@ const WorkspacePage = ({
       />
       <DeleteSessionDialog
         session={sessionController.view.dialogs.delete?.session}
+        projectName={deleteSessionProjectName}
         canDelete={canDeleteConversations}
         isDeleting={sessionController.view.dialogs.delete?.isDeleting}
         error={sessionController.view.dialogs.delete?.error ?? undefined}

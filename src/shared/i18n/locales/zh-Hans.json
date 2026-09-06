@@ -99,6 +99,7 @@
     "Import Connector configuration": "导入连接器配置"
   },
   "renderer": {
+    "Project: {{name}}": "项目：{{name}}",
     "An installer is not available for this platform. Download manually to check other installation options.": "此平台暂无可用的安装包。请前往手动下载页面查看其他安装选项。",
     "Latest saved version": "最新保存的版本",
     "Unable to discard the Plan.": "无法丢弃计划。",
@@ -1026,7 +1027,7 @@
     "Could not check whether package registries are reachable.": "无法检查软件源是否可达。",
     "Could not choose the data location. Try again.": "无法选择数据位置。请重试。",
     "Could not delete project.": "无法删除项目。",
-    "Could not delete session.": "无法删除会话。",
+    "Could not confirm the deletion result. Please try again.": "未能确认删除结果，请重试。",
     "Could not delete the project. Please try again.": "无法删除项目。请重试。",
     "Project cleanup": "项目清理",
     "Deleted project": "已删除的项目",

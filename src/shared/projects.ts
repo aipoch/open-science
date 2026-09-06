@@ -27,6 +27,8 @@ export const projectSchema = z
     // An absent timestamp keeps the Project on active surfaces. Archive is reversible and does not
     // affect the Project's research activity ordering.
     archivedAt: z.number().finite().optional(),
+    // Missing only in older snapshots; current database reads always include this generation.
+    archiveRevision: z.number().int().nonnegative().optional(),
     createdAt: z.number().finite(),
     updatedAt: z.number().finite()
   })
@@ -75,7 +77,7 @@ export const updateProjectArchiveRequestSchema = z
     archived: z.boolean(),
     // The last authoritative archive value prevents a stale renderer from restoring or archiving a
     // Project after another window has already changed it.
-    expectedArchivedAt: z.number().finite().nullable()
+    expectedArchiveRevision: z.number().int().nonnegative()
   })
   .strict()
 

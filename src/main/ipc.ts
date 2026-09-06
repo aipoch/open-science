@@ -1245,11 +1245,19 @@ const createApplicationModules = async (
     projectRepository,
     sessionPersistenceCoordinator,
     {
-      isSessionBusy: (projectId, sessionId) =>
-        sideChatOwnerRef.current?.hasForParent(sessionId) === true ||
-        detectArchiveBlockingSessions().some(
-          (session) => session.projectId === projectId && session.sessionId === sessionId
-        ),
+      isSessionBusy: async (projectId, sessionId) => {
+        const computeJobs = computeJobActivityRef.current
+        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
+        const jobs = await computeJobs.countNonTerminalBySession(sessionId)
+        // Read synchronous activity after the database await so a newly active runtime is visible.
+        return (
+          jobs > 0 ||
+          sideChatOwnerRef.current?.hasForParent(sessionId) === true ||
+          detectArchiveBlockingSessions().some(
+            (session) => session.projectId === projectId && session.sessionId === sessionId
+          )
+        )
+      },
       isProjectBusy: async (projectId) => {
         if (
           reviewerProjectRuntime.isProjectBusy(projectId) ||
