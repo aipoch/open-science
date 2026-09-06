@@ -4407,6 +4407,16 @@
     "Clears memory in the selected language kernel. Other kernels are unaffected.": "Efface la mémoire du noyau du langage sélectionné. Les autres noyaux ne sont pas affectés.",
     "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "Les modifications des identifiants ont été enregistrées, mais les Connecteurs n’ont pas pu être actualisés. Réessayez depuis Paramètres > Connecteurs.",
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "Un argument par ligne. Les espaces et les lignes vides sont conservés. Videz le champ pour supprimer tous les arguments.",
-    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Les arguments enregistrés contiennent des sauts de ligne internes. Modifier ce champ remplace la liste avec un argument par ligne."
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Les arguments enregistrés contiennent des sauts de ligne internes. Modifier ce champ remplace la liste avec un argument par ligne.",
+    "Use a safe filename without path separators or reserved characters.": "Utilisez un nom de fichier sûr, sans séparateurs de chemin ni caractères réservés.",
+    "Review Skill changes": "Examiner les modifications de la compétence",
+    "This Skill changed while you were editing. Your draft is preserved.": "Cette compétence a été modifiée pendant votre édition. Votre brouillon est conservé.",
+    "Your draft": "Votre brouillon",
+    "Latest version": "Dernière version",
+    "No reference files": "Aucun fichier de référence",
+    "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "Charger la dernière version supprime votre brouillon. Écraser remplace le contenu modifiable et supprime les fichiers de référence absents de votre brouillon.",
+    "Keep editing": "Continuer la modification",
+    "Load latest version": "Charger la dernière version",
+    "Overwrite with my draft": "Écraser avec mon brouillon"
   }
 }

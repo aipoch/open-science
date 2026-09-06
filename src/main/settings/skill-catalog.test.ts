@@ -814,6 +814,7 @@ describe('SkillCatalogModule', () => {
       (
         await catalog.updateSkill({
           id: 'personal-my-skill',
+          etag: (await catalog.getSkillDetail('personal-my-skill')).etag!,
           description: 'Edited.',
           body: '# Edited'
         })
@@ -1140,3 +1141,224 @@ describe('SkillCatalogModule', () => {
     ])
   })
 })
+
+describe('reported Skill integrity regressions through Settings APIs', () => {
+  it('importing wrapped metadata cannot make an existing personal skill unavailable', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({ name: 'victim', description: 'Victim', body: 'Original victim' })
+    const file = join(userSkillSourceDir(catalog, 'personal'), 'victim', 'SKILL.md')
+    const original = await readFile(file, 'utf8')
+    const bytes = zipSync({
+      'wrapped/SKILL.md': strToU8('---\nname: external\ndescription: External\n---\nExternal body'),
+      'wrapped/.specialist-package.json': strToU8(
+        JSON.stringify({
+          id: 'personal-victim',
+          version: '1.0.0',
+          contentHash: 'external',
+          standalone: false,
+          ownerIds: ['absent-owner']
+        })
+      )
+    })
+    const result = await catalog
+      .importSkillZip({ dataBase64: Buffer.from(bytes).toString('base64') })
+      .then(
+        (outcome) => ({ outcome }),
+        (error: unknown) => ({ error })
+      )
+    // The reported attack corrupts identity, not the original file bytes.
+    expect(await readFile(file, 'utf8')).toBe(original)
+    const skills = await catalog.listSkills()
+    expect
+      .soft(skills.find((skill) => skill.name === 'victim'))
+      .toMatchObject({ id: 'personal-victim', available: true })
+    if ('outcome' in result)
+      expect
+        .soft(skills.find((skill) => skill.name === 'external'))
+        .toMatchObject({ id: result.outcome.id, available: true })
+    else expect(String(result.error)).toMatch(/reserved|metadata/i)
+    await expect(catalog.getSkillDetail('personal-victim')).resolves.toMatchObject({
+      body: expect.stringContaining('Original victim')
+    })
+  })
+
+  it('an old detail snapshot cannot overwrite a later save and delete its new attachment', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({
+      name: 'draft',
+      description: 'Original description',
+      body: 'Original body',
+      references: [{ path: 'old.csv', dataBase64: Buffer.from('old').toString('base64') }]
+    })
+    const old = await catalog.getSkillDetail('personal-draft')
+    const oldEtag = old.etag!
+    await catalog.updateSkill({
+      ...{ etag: oldEtag },
+      id: old.id,
+      description: 'Newer description',
+      body: 'Newer body',
+      references: [
+        { path: 'old.csv' },
+        { path: 'new.csv', dataBase64: Buffer.from('new').toString('base64') }
+      ]
+    })
+    const result = await catalog
+      .updateSkill({
+        ...{ etag: oldEtag },
+        id: old.id,
+        description: old.description,
+        body: 'Old editor body edit',
+        metadata: old.metadata,
+        references: old.references.map(({ path }) => ({ path }))
+      })
+      .then(
+        () => 'saved',
+        () => 'rejected'
+      )
+    expect.soft(result).toBe('rejected')
+    const latest = await catalog.getSkillDetail(old.id)
+    expect.soft(latest.description).toBe('Newer description')
+    expect.soft(latest.references.map(({ path }) => path)).toContain('new.csv')
+    await expect(
+      readFile(
+        join(userSkillSourceDir(catalog, 'personal'), 'draft', 'references', 'new.csv'),
+        'utf8'
+      )
+    ).resolves.toBe('new')
+  })
+})
+
+describe('optimistic editor boundary', () => {
+  it('accepts one of two saves with the same precondition, then accepts a freshly read edit', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({ name: 'concurrent', description: 'Initial', body: 'Initial' })
+    const etag = (await catalog.getSkillDetail('personal-concurrent')).etag!
+    const request = {
+      id: 'personal-concurrent',
+      etag,
+      description: 'First',
+      body: 'First'
+    }
+    const results = await Promise.allSettled([
+      catalog.updateSkill(request),
+      catalog.updateSkill({ ...request, description: 'Second', body: 'Second' })
+    ])
+    expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected'])
+    const current = await catalog.getSkillDetail(request.id)
+    const next = {
+      ...request,
+      etag: (await catalog.getSkillDetail(request.id)).etag!,
+      body: 'Fresh edit'
+    }
+    await catalog.updateSkill(next)
+    expect((await catalog.getSkillDetail(current.id)).body).toBe('Fresh edit')
+  })
+
+  it('preserves unconditional updates for clients that omit the etag', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({ name: 'missing-token', description: 'Original', body: 'Original' })
+    await expect(
+      catalog.updateSkill({
+        id: 'personal-missing-token',
+        description: 'Changed',
+        body: 'Changed'
+      } as never)
+    ).resolves.toBeDefined()
+    expect((await catalog.getSkillDetail('personal-missing-token')).body).toBe('Changed')
+  })
+
+  it('detects attachment-only changes even when SKILL.md is unchanged', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({
+      name: 'attachment',
+      description: 'Original',
+      body: 'Original',
+      references: [{ path: 'data.csv', dataBase64: Buffer.from('before').toString('base64') }]
+    })
+    const etag = (await catalog.getSkillDetail('personal-attachment')).etag!
+    const file = join(
+      userSkillSourceDir(catalog, 'personal'),
+      'attachment',
+      'references',
+      'data.csv'
+    )
+    await writeFile(file, 'after')
+    const request = {
+      id: 'personal-attachment',
+      etag,
+      description: 'Changed',
+      body: 'Changed'
+    }
+    await expect(catalog.updateSkill(request)).rejects.toThrow(/changed|reload/i)
+    expect(await readFile(file, 'utf8')).toBe('after')
+    expect((await catalog.getSkillDetail(request.id)).body).toBe('Original')
+  })
+})
+
+it.each(['', null, 17])('rejects an invalid supplied etag %s without writing', async (etag) => {
+  const catalog = await createCatalog()
+  await catalog.createSkill({ name: 'invalid-etag', description: 'Original', body: 'Original' })
+  await expect(
+    catalog.updateSkill({
+      id: 'personal-invalid-etag',
+      description: 'Changed',
+      body: 'Changed',
+      etag
+    } as never)
+  ).rejects.toThrow(/etag/i)
+  expect((await catalog.getSkillDetail('personal-invalid-etag')).body).toBe('Original')
+})
+
+it('returns an opaque etag with the detail and changes it after an unconditional save', async () => {
+  const catalog = await createCatalog()
+  await catalog.createSkill({ name: 'etag', description: 'Original', body: 'Original' })
+  const before = await catalog.getSkillDetail('personal-etag')
+  expect(before).toHaveProperty('etag', expect.stringMatching(/^".+"$/))
+  expect(before).not.toHaveProperty('compatibility')
+  await catalog.updateSkill({ id: before.id, description: 'New', body: 'New' } as never)
+  const after = await catalog.getSkillDetail(before.id)
+  expect(after.etag).not.toBe(before.etag)
+  await catalog.updateSkill({
+    id: before.id,
+    description: 'Fresh',
+    body: 'Fresh',
+    etag: after.etag
+  } as never)
+  expect((await catalog.getSkillDetail(before.id)).body).toBe('Fresh')
+})
+
+// Windows cannot represent these historical POSIX basenames as ordinary files.
+it.skipIf(process.platform === 'win32').each(['CON.csv', 'trailing.'])(
+  'preserves a historical reference named %s through an editor save',
+  async (name) => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({ name: 'legacy', description: 'Original', body: 'Original body' })
+    const refsDir = join(userSkillSourceDir(catalog, 'personal'), 'legacy', 'references')
+    await mkdir(refsDir)
+    await writeFile(join(refsDir, name), 'historical bytes')
+    const detail = await catalog.getSkillDetail('personal-legacy')
+    expect(detail.references).toEqual([{ path: name, sizeBytes: 16 }])
+
+    await catalog.updateSkill({
+      id: detail.id,
+      etag: detail.etag,
+      description: detail.description,
+      body: 'Edited body',
+      references: detail.references.map(({ path }) => ({ path }))
+    })
+    const updated = await catalog.getSkillDetail(detail.id)
+    expect(updated.body).toContain('Edited body')
+    expect(updated.references).toEqual(detail.references)
+    expect(await readFile(join(refsDir, name), 'utf8')).toBe('historical bytes')
+
+    await catalog.updateSkill({
+      id: updated.id,
+      etag: updated.etag,
+      description: updated.description,
+      body: updated.body,
+      references: []
+    })
+    expect((await catalog.getSkillDetail(detail.id)).references).toEqual([])
+    await expect(readFile(join(refsDir, name))).rejects.toMatchObject({ code: 'ENOENT' })
+  }
+)

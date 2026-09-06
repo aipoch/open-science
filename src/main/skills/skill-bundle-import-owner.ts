@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 
 import type {
@@ -7,7 +7,7 @@ import type {
   SkillBundlePreviewResult,
   SkippedSkill
 } from '../../shared/settings'
-import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
+import { SKILL_IMPORT_LIMITS, isAppOwnedSkillRootFile } from '../../shared/skill-import-limits'
 import {
   fetchSkillFiles,
   fetchSkillPreview,
@@ -22,16 +22,30 @@ import {
 import { parseSkillDocument } from './frontmatter'
 import { canonicalSkillDocument } from './skill-document-name'
 import { selectSkillManifestRoots } from './skill-bundle-paths'
+import { inspectSkillPackage } from './skill-package-inspection'
 import { extractZip, extractZipLenient } from './zip-extract'
-import {
-  SOURCE_MANIFEST,
-  type SkillPackageTransactionOwner
-} from './skill-package-transaction-owner'
+import type { SkillPackageTransactionOwner } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
 import { UserSkillStore, normalizeSkillName, parseUserSkillId } from './user-skill-store'
 
 type SkillRoot = { subPath: string; files: FetchedSkillFile[] }
 type SkillDiscovery = { roots: SkillRoot[]; skipped: SkippedSkill[] }
+
+// Installation identity excludes the pinned revision; package paths remain case-sensitive.
+const githubSourceKey = (url: string): string | undefined => {
+  const location = parseGitHubSkillUrl(url)
+  return location
+    ? JSON.stringify([location.owner.toLowerCase(), location.repo.toLowerCase(), location.path])
+    : undefined
+}
+
+const assertOrdinarySkillFiles = (files: readonly FetchedSkillFile[]): void => {
+  for (const file of files) {
+    if (isAppOwnedSkillRootFile(file.relativePath)) {
+      throw new Error(`Skill import may not include the reserved file ${file.relativePath}.`)
+    }
+  }
+}
 
 const signatureOf = (files: FetchedSkillFile[]): string => {
   const hash = createHash('sha256')
@@ -204,6 +218,7 @@ export class SkillBundleImportOwner {
     if (!fetcher) throw new Error('No fetch implementation available.')
 
     const files = await fetchSkillFiles(location, fetcher, options)
+    assertOrdinarySkillFiles(files)
     const signature = signatureOf(files)
     const preview = parsedSkillPreview(
       files
@@ -218,7 +233,10 @@ export class SkillBundleImportOwner {
       const existingDirectoryName = await this.findImportedDirectoryNameByUrl(url)
       if (existingDirectoryName) {
         const existing = await this.transactions.readImportedSource(existingDirectoryName)
-        if (existing?.signature === signature) {
+        if (
+          existing?.signature === signature &&
+          (await this.installedMatches(existingDirectoryName, files))
+        ) {
           return { status: 'unchanged', id: `imported-${existingDirectoryName}` }
         }
         await this.writeImported(existingDirectoryName, files, url, signature)
@@ -265,9 +283,10 @@ export class SkillBundleImportOwner {
             continue
           }
 
-          const alreadyImported = Boolean(
-            await this.findImportedDirectoryNameBySignature(signatureOf(root.files))
-          )
+          assertOrdinarySkillFiles(root.files)
+          const existing = await this.findImportedDirectoryNameBySignature(signatureOf(root.files))
+          const alreadyImported =
+            existing !== undefined && (await this.installedMatches(existing, root.files))
           const replaceableId = alreadyImported ? undefined : await this.replaceableImportedId(name)
 
           if (!previewContentUnavailable) previewContentBytes += skillMd.content.length
@@ -340,7 +359,7 @@ export class SkillBundleImportOwner {
     repoInput: string,
     fetchImpl?: FetchLike,
     options: GitHubFetchOptions = {}
-  ): Promise<(ScannedSkill & { alreadyImported: boolean })[]> {
+  ): Promise<(ScannedSkill & { alreadyImported: boolean; installedId?: string })[]> {
     const repo = parseGitHubRepo(repoInput)
     if (!repo) throw new Error('Not a recognizable GitHub repo (owner/repo or a github.com URL).')
 
@@ -351,19 +370,29 @@ export class SkillBundleImportOwner {
       scanRepoForSkills(repo, fetcher, options),
       this.transactions.runRecovered(() => this.importedIndex())
     ])
-    return found.map((skill) => ({
-      ...skill,
-      alreadyImported:
-        index.urls.has(skill.url) || index.directoryNames.has(normalizeSkillName(skill.name))
-    }))
+    return found.map((skill) => {
+      const matches = index.filter((entry) => entry.sourceKey === githubSourceKey(skill.url))
+      const installed = matches.length === 1 ? matches[0] : undefined
+      return {
+        ...skill,
+        alreadyImported:
+          installed !== undefined &&
+          parseGitHubSkillUrl(installed.url)?.ref === parseGitHubSkillUrl(skill.url)?.ref,
+        ...(installed ? { installedId: `imported-${installed.directoryName}` } : {})
+      }
+    })
   }
 
   private async findImportedDirectoryNameByUrl(url: string): Promise<string | undefined> {
-    for (const directoryName of await this.store.listDirectoryNames('imported')) {
-      const source = await this.transactions.readImportedSource(directoryName)
-      if (source?.url === url) return directoryName
+    const matches = (await this.importedIndex()).filter(
+      (entry) => entry.sourceKey === githubSourceKey(url)
+    )
+    if (matches.length > 1) {
+      throw new Error(
+        'Multiple installed Skills match this GitHub source. Resolve the duplicate imports before updating.'
+      )
     }
-    return undefined
+    return matches[0]?.directoryName
   }
 
   private async replaceableImportedId(name: string): Promise<string | undefined> {
@@ -392,6 +421,7 @@ export class SkillBundleImportOwner {
     reservedNames: readonly string[] = []
   ): Promise<ImportOutcome> {
     const files = root.files
+    assertOrdinarySkillFiles(files)
     const skillMd = files.find((file) => file.relativePath.toLowerCase() === 'skill.md')!
     const signature = signatureOf(files)
 
@@ -410,7 +440,12 @@ export class SkillBundleImportOwner {
 
     const existingDirectoryName = await this.findImportedDirectoryNameBySignature(signature)
     if (existingDirectoryName) {
-      return { status: 'unchanged', id: `imported-${existingDirectoryName}` }
+      if (await this.installedMatches(existingDirectoryName, files)) {
+        return { status: 'unchanged', id: `imported-${existingDirectoryName}` }
+      }
+      const existing = await this.transactions.readImportedSource(existingDirectoryName)
+      await this.writeImported(existingDirectoryName, files, existing?.url ?? '', signature)
+      return { status: 'updated', id: `imported-${existingDirectoryName}` }
     }
 
     const name = parseSkillDocument(skillMd.content.toString('utf8')).name?.trim()
@@ -430,15 +465,47 @@ export class SkillBundleImportOwner {
     return undefined
   }
 
-  private async importedIndex(): Promise<{ urls: Set<string>; directoryNames: Set<string> }> {
-    const urls = new Set<string>()
-    const directoryNames = new Set<string>()
+  private async importedIndex(): Promise<
+    Array<{ directoryName: string; url: string; sourceKey: string }>
+  > {
+    const entries: Array<{ directoryName: string; url: string; sourceKey: string }> = []
     for (const directoryName of await this.store.listDirectoryNames('imported')) {
-      directoryNames.add(directoryName)
       const source = await this.transactions.readImportedSource(directoryName)
-      if (source?.url) urls.add(source.url)
+      const sourceKey = source?.url ? githubSourceKey(source.url) : undefined
+      if (source?.url && sourceKey) entries.push({ directoryName, url: source.url, sourceKey })
     }
-    return { urls, directoryNames }
+    return entries
+  }
+
+  // Compare the actual normalized installation, not its historical source receipt. Inspection
+  // bounds reads and rejects symlinks/unsupported entries; a broken copy is repairable by reimport.
+  private async installedMatches(
+    directoryName: string,
+    files: readonly FetchedSkillFile[]
+  ): Promise<boolean> {
+    try {
+      const installed = await inspectSkillPackage(
+        this.store.skillDirectory('imported', directoryName)
+      )
+      if (installed.length !== files.length) return false
+      const byPath = new Map(installed.map((file) => [file.relativePath, file]))
+      for (const file of files) {
+        const target = byPath.get(file.relativePath)
+        if (!target) return false
+        const expected =
+          file.relativePath.toLowerCase() === 'skill.md'
+            ? canonicalImportedSkillDocument(file.content, directoryName)
+            : file.content
+        if (
+          target.size !== expected.length ||
+          !(await readFile(target.absolutePath)).equals(expected)
+        )
+          return false
+      }
+      return true
+    } catch {
+      return false
+    }
   }
 
   private async writeImported(
@@ -447,17 +514,17 @@ export class SkillBundleImportOwner {
     url: string,
     signature: string
   ): Promise<void> {
+    await this.store.assertOrdinaryReplacement('imported', directoryName)
     const dir = this.store.skillDirectory('imported', directoryName)
     const root = resolve(dir)
-    const manifestTarget = resolve(dir, SOURCE_MANIFEST)
     const seen = new Set<string>()
     for (const file of files) {
       const target = resolve(dir, file.relativePath)
       if (target === root || !target.startsWith(root + sep)) {
         throw new Error(`Refusing to write skill file outside its directory: ${file.relativePath}`)
       }
-      if (target === manifestTarget) {
-        throw new Error(`Skill import may not include the reserved file ${SOURCE_MANIFEST}.`)
+      if (isAppOwnedSkillRootFile(file.relativePath)) {
+        throw new Error(`Skill import may not include the reserved file ${file.relativePath}.`)
       }
       if (seen.has(target)) {
         throw new Error(`Duplicate file path in skill import: ${file.relativePath}`)

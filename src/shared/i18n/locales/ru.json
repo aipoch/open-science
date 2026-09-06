@@ -4537,6 +4537,16 @@
     "Clears memory in the selected language kernel. Other kernels are unaffected.": "Очищает память ядра выбранного языка. Другие ядра не затрагиваются.",
     "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "Изменения учётных данных сохранены, но обновить Коннекторы не удалось. Повторите попытку в разделе Настройки > Коннекторы.",
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "Один аргумент на строку. Пробелы и пустые строки сохраняются. Очистите поле, чтобы удалить все аргументы.",
-    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Сохранённые аргументы содержат внутренние переводы строк. При редактировании этого поля список заменяется: каждая строка становится отдельным аргументом."
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Сохранённые аргументы содержат внутренние переводы строк. При редактировании этого поля список заменяется: каждая строка становится отдельным аргументом.",
+    "Use a safe filename without path separators or reserved characters.": "Используйте безопасное имя файла без разделителей пути и зарезервированных символов.",
+    "Review Skill changes": "Проверить изменения навыка",
+    "This Skill changed while you were editing. Your draft is preserved.": "Этот навык был изменён во время редактирования. Ваш черновик сохранён.",
+    "Your draft": "Ваш черновик",
+    "Latest version": "Последняя версия",
+    "No reference files": "Нет справочных файлов",
+    "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "Загрузка последней версии удалит ваш черновик. Перезапись заменит редактируемое содержимое и удалит справочные файлы, которых нет в вашем черновике.",
+    "Keep editing": "Продолжить редактирование",
+    "Load latest version": "Загрузить последнюю версию",
+    "Overwrite with my draft": "Перезаписать моим черновиком"
   }
 }

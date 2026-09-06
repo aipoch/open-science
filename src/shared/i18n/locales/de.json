@@ -4252,6 +4252,16 @@
     "Clears memory in the selected language kernel. Other kernels are unaffected.": "Löscht den Speicher des Kernels der ausgewählten Sprache. Andere Kernel bleiben unverändert.",
     "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "Die Änderungen an den Zugangsdaten wurden gespeichert, aber die Konnektoren konnten nicht aktualisiert werden. Versuchen Sie es unter Einstellungen > Konnektoren erneut.",
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "Ein Argument pro Zeile. Leerzeichen und Leerzeilen bleiben erhalten. Leeren Sie das Feld, um alle Argumente zu entfernen.",
-    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Die gespeicherten Argumente enthalten interne Zeilenumbrüche. Beim Bearbeiten dieses Felds wird die Liste mit einem Argument pro Zeile ersetzt."
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Die gespeicherten Argumente enthalten interne Zeilenumbrüche. Beim Bearbeiten dieses Felds wird die Liste mit einem Argument pro Zeile ersetzt.",
+    "Use a safe filename without path separators or reserved characters.": "Verwenden Sie einen sicheren Dateinamen ohne Pfadtrennzeichen oder reservierte Zeichen.",
+    "Review Skill changes": "Änderungen an der Fähigkeit prüfen",
+    "This Skill changed while you were editing. Your draft is preserved.": "Diese Fähigkeit wurde während Ihrer Bearbeitung geändert. Ihr Entwurf bleibt erhalten.",
+    "Your draft": "Ihr Entwurf",
+    "Latest version": "Neueste Version",
+    "No reference files": "Keine Referenzdateien",
+    "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "Beim Laden der neuesten Version wird Ihr Entwurf verworfen. Beim Überschreiben werden die bearbeitbaren Inhalte ersetzt und Referenzdateien gelöscht, die in Ihrem Entwurf fehlen.",
+    "Keep editing": "Weiter bearbeiten",
+    "Load latest version": "Neueste Version laden",
+    "Overwrite with my draft": "Mit meinem Entwurf überschreiben"
   }
 }

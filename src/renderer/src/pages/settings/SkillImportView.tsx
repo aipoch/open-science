@@ -460,9 +460,9 @@ const SkillImportView = ({
                         {skill.path}
                       </span>
                     </span>
-                    {skill.alreadyImported ? (
+                    {skill.alreadyImported || skill.installedId ? (
                       <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                        {t('Imported')}
+                        {skill.alreadyImported ? t('Imported') : t('Update available')}
                       </span>
                     ) : null}
                   </button>
