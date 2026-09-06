@@ -4526,6 +4526,11 @@
     "Processing failed. Refresh and try again.": "处理失败，请刷新后重试。",
     "References changed after review. Reopen the merge dialog to compare the latest metadata.": "题录在审阅后发生变化，请重新打开合并弹窗以比较最新元数据。",
     "A collection with this name already exists at this level. Choose another name.": "此层级已存在同名合集，请使用其他名称。",
-    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "子合集的名称与顶层合集重名。请先重命名子合集，再删除此合集。"
+    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "子合集的名称与顶层合集重名。请先重命名子合集，再删除此合集。",
+    "Could not check the log file.": "无法检查日志文件。",
+    "The log folder could not be created.": "无法创建日志文件夹。",
+    "The log file could not be checked.": "无法检查日志文件。",
+    "The log backups could not be rotated.": "无法轮转日志备份。",
+    "The log record could not be appended.": "无法追加日志记录。"
   }
 }
