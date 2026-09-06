@@ -4883,9 +4883,12 @@
     "Automatic mirror selection · Custom CA bundle configured": "Selección automática de mirror · Paquete de CA personalizado configurado",
     "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Desactivar un dominio integrado elimina el acceso automático. Los nombres de host exactos de Dominios permitidos siguen estando permitidos.",
     "Could not load {{type}}.": "No se pudo cargar: {{type}}.",
-    "Keep draft": "Conservar borrador",
-    "This Tag changed while you were editing.": "Esta etiqueta cambió durante la edición.",
-    "Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.": "Su borrador se conserva. Vuelva a cargar los valores más recientes o conserve su borrador y guarde de nuevo para reemplazarlos.",
-    "Loading {{type}}…": "Cargando {{type}}…"
+    "Loading {{type}}…": "Cargando {{type}}…",
+    "Tag assignments are loaded, but these resource details are unavailable.": "Las asociaciones de etiquetas se han cargado, pero los detalles de estos recursos no están disponibles.",
+    "Replace your draft with the latest values.": "Reemplazar su borrador por los valores más recientes.",
+    "Your draft is still below. Choose how to handle the latest version before saving.": "Su borrador se conserva a continuación. Antes de guardar, elija cómo gestionar la última versión.",
+    "Continue editing draft": "Seguir editando el borrador",
+    "Tag version updated": "Versión de etiqueta actualizada",
+    "Not saved yet. Saving later will replace the latest version.": "Aún no se ha guardado. Al guardar más adelante se reemplazará la última versión."
   }
 }

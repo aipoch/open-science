@@ -323,7 +323,7 @@ export const LiteratureFullTextLookup = ({
               <p>{t('Searching for a matching full-text PDF…')}</p>
             </div>
           ) : failed ? (
-            <div role="alert" className="mb-3 rounded-lg border border-border bg-bg-000 p-4">
+            <div role="alert" className="mb-3">
               <ErrorNotice
                 icon={AlertCircle}
                 tone={error === 'runtime' ? 'teal' : 'amber'}

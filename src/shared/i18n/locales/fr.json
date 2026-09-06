@@ -4883,9 +4883,12 @@
     "Automatic mirror selection · Custom CA bundle configured": "Sélection automatique du miroir · Ensemble de certificats CA personnalisé configuré",
     "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Désactiver un domaine intégré supprime l’accès automatique. Les noms d’hôte exacts dans Domaines autorisés restent autorisés.",
     "Could not load {{type}}.": "Impossible de charger : {{type}}.",
-    "Keep draft": "Conserver le brouillon",
-    "This Tag changed while you were editing.": "Ce tag a été modifié pendant votre saisie.",
-    "Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.": "Votre brouillon est conservé. Rechargez les valeurs actuelles, ou conservez votre brouillon et enregistrez à nouveau pour les remplacer.",
-    "Loading {{type}}…": "Chargement : {{type}}…"
+    "Loading {{type}}…": "Chargement : {{type}}…",
+    "Tag assignments are loaded, but these resource details are unavailable.": "Les associations de tags sont chargées, mais les détails de ces ressources sont indisponibles.",
+    "Replace your draft with the latest values.": "Remplacer votre brouillon par les dernières valeurs.",
+    "Your draft is still below. Choose how to handle the latest version before saving.": "Votre brouillon est conservé ci-dessous. Avant de l’enregistrer, choisissez comment traiter la dernière version.",
+    "Continue editing draft": "Continuer à modifier le brouillon",
+    "Tag version updated": "Version du tag mise à jour",
+    "Not saved yet. Saving later will replace the latest version.": "Pas encore enregistré. Un enregistrement ultérieur remplacera la dernière version."
   }
 }

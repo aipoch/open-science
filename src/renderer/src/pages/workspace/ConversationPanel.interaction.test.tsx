@@ -769,7 +769,7 @@ describe('ConversationPanel composer errors', () => {
     const alert = container.querySelector('[role="alert"]')
     expect(alert?.textContent).toContain('Annotation payload is too large.')
     expect(alert?.querySelector('section')).not.toBeNull()
-    expect(alert?.querySelector('.bg-status-failure-surface')).not.toBeNull()
+    expect(alert?.querySelector('.text-status-failure-foreground')).not.toBeNull()
     expect(alert?.className).not.toContain('bg-red-50')
   })
 

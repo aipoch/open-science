@@ -4569,9 +4569,12 @@
     "Automatic mirror selection · Custom CA bundle configured": "ミラーを自動選択 · カスタム CA バンドル設定済み",
     "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "組み込みドメインを無効にすると、自動アクセスが解除されます。「許可されたドメイン」に登録した完全一致のホスト名は引き続き許可されます。",
     "Could not load {{type}}.": "{{type}}を読み込めませんでした。",
-    "Keep draft": "下書きを保持",
-    "This Tag changed while you were editing.": "編集中にこのタグが変更されました。",
-    "Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.": "下書きは保持されています。最新の値を再読み込みするか、下書きを保持して再度保存し、最新の値を置き換えてください。",
-    "Loading {{type}}…": "{{type}}を読み込み中…"
+    "Loading {{type}}…": "{{type}}を読み込み中…",
+    "Tag assignments are loaded, but these resource details are unavailable.": "タグの関連付けは読み込まれましたが、これらのリソースの詳細は表示できません。",
+    "Replace your draft with the latest values.": "下書きを最新の内容に置き換えます。",
+    "Your draft is still below. Choose how to handle the latest version before saving.": "下の下書きは保持されています。保存する前に、最新バージョンをどう扱うか選んでください。",
+    "Continue editing draft": "下書きの編集を続ける",
+    "Tag version updated": "タグのバージョンが更新されました",
+    "Not saved yet. Saving later will replace the latest version.": "まだ保存されていません。後で保存すると最新バージョンを上書きします。"
   }
 }

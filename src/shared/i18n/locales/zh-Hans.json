@@ -4569,9 +4569,12 @@
     "Automatic mirror selection · Custom CA bundle configured": "自动选择镜像 · 已配置自定义 CA 证书包",
     "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "关闭内置域名会取消自动访问权限。“允许的域名”中的精确主机名仍可访问。",
     "Could not load {{type}}.": "无法加载{{type}}。",
-    "Keep draft": "保留草稿",
-    "This Tag changed while you were editing.": "此标签在您编辑期间发生了更改。",
-    "Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.": "您的草稿已保留。请重新加载最新内容，或保留草稿并再次保存以替换最新内容。",
-    "Loading {{type}}…": "正在加载{{type}}…"
+    "Loading {{type}}…": "正在加载{{type}}…",
+    "Tag assignments are loaded, but these resource details are unavailable.": "标签关联已加载，但暂时无法显示这些资源的详细信息。",
+    "Replace your draft with the latest values.": "用最新内容替换当前草稿。",
+    "Your draft is still below. Choose how to handle the latest version before saving.": "你的草稿仍保留在下方。保存前，请确认如何处理最新版本。",
+    "Continue editing draft": "继续编辑草稿",
+    "Tag version updated": "标签版本已更新",
+    "Not saved yet. Saving later will replace the latest version.": "尚未保存。之后保存会覆盖最新版本。"
   }
 }

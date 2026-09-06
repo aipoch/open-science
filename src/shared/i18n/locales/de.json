@@ -4722,9 +4722,12 @@
     "Automatic mirror selection · Custom CA bundle configured": "Automatische Spiegelauswahl · Benutzerdefiniertes CA-Bündel konfiguriert",
     "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Das Deaktivieren einer integrierten Domain hebt den automatischen Zugriff auf. Exakte Hostnamen unter Erlaubte Domains bleiben erlaubt.",
     "Could not load {{type}}.": "{{type}} konnten nicht geladen werden.",
-    "Keep draft": "Entwurf behalten",
-    "This Tag changed while you were editing.": "Dieses Tag wurde während der Bearbeitung geändert.",
-    "Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.": "Ihr Entwurf bleibt erhalten. Laden Sie die aktuellen Werte neu oder behalten Sie Ihren Entwurf und speichern Sie erneut, um die aktuellen Werte zu ersetzen.",
-    "Loading {{type}}…": "{{type}} werden geladen…"
+    "Loading {{type}}…": "{{type}} werden geladen…",
+    "Tag assignments are loaded, but these resource details are unavailable.": "Die Tag-Zuordnungen wurden geladen, aber die Details dieser Ressourcen sind nicht verfügbar.",
+    "Replace your draft with the latest values.": "Ihren Entwurf durch die neuesten Werte ersetzen.",
+    "Your draft is still below. Choose how to handle the latest version before saving.": "Ihr Entwurf bleibt unten erhalten. Wählen Sie vor dem Speichern, wie Sie mit der neuesten Version umgehen möchten.",
+    "Continue editing draft": "Entwurf weiter bearbeiten",
+    "Tag version updated": "Tag-Version aktualisiert",
+    "Not saved yet. Saving later will replace the latest version.": "Noch nicht gespeichert. Späteres Speichern ersetzt die neueste Version."
   }
 }

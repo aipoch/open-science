@@ -111,13 +111,23 @@ describe('TagsPanel', () => {
       )
       expect(container.querySelector('#tag-form-name')).toBe(name)
       expect(name.value).toBe('Unsaved important draft')
-      expect(container.querySelector('[role="alert"]')?.textContent).toContain('This Tag changed')
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+        'Tag version updated'
+      )
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+        'Latest saved version'
+      )
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+        contentChanged ? 'Remote' : 'Research'
+      )
       await act(async () => container.querySelector<HTMLFormElement>('form')!.requestSubmit())
       expect(update).not.toHaveBeenCalled()
       const keep = Array.from(container.querySelectorAll('button')).find(
-        (button) => button.textContent === 'Keep draft'
+        (button) => button.textContent === 'Continue editing draft'
       )!
       act(() => keep.click())
+      expect(update).not.toHaveBeenCalled()
+      expect(name.value).toBe('Unsaved important draft')
       await act(async () => container.querySelector<HTMLFormElement>('form')!.requestSubmit())
       expect(update).toHaveBeenCalledWith({
         id: tag.id,
@@ -131,8 +141,13 @@ describe('TagsPanel', () => {
           tags: [{ ...tag, name: 'Latest', iconKey: 'star', colorKey: 'red', updatedAt: 4 }]
         })
       )
+      const latestSummary = container.querySelector('[role="alert"]')!
+      expect(latestSummary.textContent).toContain('Latest')
+      expect(latestSummary.textContent).toContain('Icon: Star')
+      expect(latestSummary.textContent).toContain('Color: Red')
+      expect(name.value).toBe('Unsaved important draft')
       const reload = Array.from(container.querySelectorAll('button')).find(
-        (button) => button.textContent === 'Reload'
+        (button) => button.textContent === 'Load latest version'
       )!
       act(() => reload.click())
       expect(name.value).toBe('Latest')

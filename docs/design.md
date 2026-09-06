@@ -995,11 +995,21 @@ action for dismiss or retry. Do not add a border, background, brand mark, or sta
 language rollback explanation available to screen readers.
 
 Use the shared `ErrorNotice` for error summaries. The default is a compact inline surface across
-Settings, workspace previews, conversations, and Literature: a small status icon, semantic tinted
-surface, 16px padding, 14px text, and smaller actions aligned beneath the copy. Omit the decorative
-flask, use the available content width, and avoid adding a second border or background in wrappers.
-Long error text and identifiers wrap; actions wrap as whole controls. Callers own alert semantics
-and translated copy. Preserve semantic tones, loading/disabled behavior, and visible keyboard focus.
+Settings, workspace previews, conversations, and Literature: a neutral `bg-card` surface with a
+`border-border` outline, a small semantically colored status icon, 16px padding, and 14px copy.
+Place a single recovery action at the trailing edge, wrapping below the copy in narrow containers.
+Keep inline actions low emphasis so they do not compete with the page's primary task. Omit the
+flask and avoid a second border or background in wrappers. All copy and identifiers wrap.
+
+Conflicts can include owner-provided content and two described choices below the summary. Tag
+editors show the latest saved name, icon, and color without replacing the draft. Continue editing
+only acknowledges that version; a separate Save submits the draft. Loading the latest version
+replaces the draft. Each action's consequence is connected with `aria-describedby`.
+
+Callers translate all copy. Inline technical codes use a native, initially closed diagnostic
+disclosure with a caller-provided label; recovery actions remain available outside it. When using
+`role`, ErrorNotice announces only its summary, leaving diagnostics outside the live region.
+Preserve semantic tones, loading/disabled behavior, and visible keyboard focus.
 
 Only app startup blockers (database startup and initial settings loading) opt into `fullPage`:
 center the decorative flask (`size-18`) above a bounded `max-w-md` column, with larger status icons,

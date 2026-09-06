@@ -94,3 +94,55 @@ describe.each([false, true])('ErrorNotice (fullPage: %s)', (fullPage) => {
     expect(onRetry).not.toHaveBeenCalled()
   })
 })
+
+describe('contextual notice content', () => {
+  afterEach(cleanup)
+
+  it('keeps diagnostics collapsed and outside the alert while recovery stays available', () => {
+    render(
+      <ErrorNotice
+        role="alert"
+        title="Version check failed"
+        errorCode="version_mismatch"
+        diagnosticsLabel="Diagnostics"
+        primaryButton={{ label: 'Retry', onClick: vi.fn() }}
+      />
+    )
+    const diagnostics = screen.getByText('Diagnostics').closest('details')!
+    expect(diagnostics).not.toBeNull()
+    expect(diagnostics.open).toBe(false)
+    expect(screen.getByText('version_mismatch').closest('[role="alert"]')).toBeNull()
+    expect(screen.getByRole('alert').textContent).toContain('Version check failed')
+    expect(screen.getByRole('button', { name: 'Retry' }).closest('details')).toBeNull()
+  })
+
+  it('associates each recovery choice with its consequence and renders owner content', () => {
+    render(
+      <ErrorNotice
+        title="Tag version updated"
+        primaryButton={{
+          label: 'Continue editing draft',
+          description: 'Save later to replace the latest version.',
+          onClick: vi.fn()
+        }}
+        secondaryButton={{
+          label: 'Load latest version',
+          description: 'Replace the current draft.',
+          onClick: vi.fn()
+        }}
+      >
+        <p>Latest saved version: Research</p>
+      </ErrorNotice>
+    )
+    expect(screen.getByText('Latest saved version: Research')).toBeTruthy()
+    for (const [name, description] of [
+      ['Continue editing draft', 'Save later to replace the latest version.'],
+      ['Load latest version', 'Replace the current draft.']
+    ]) {
+      const button = screen.getByRole('button', { name })
+      expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toBe(
+        description
+      )
+    }
+  })
+})

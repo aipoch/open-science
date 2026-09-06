@@ -5015,9 +5015,12 @@
     "Automatic mirror selection · Custom CA bundle configured": "Автоматический выбор зеркала · Настроен пользовательский пакет CA",
     "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Отключение встроенного домена отменяет автоматический доступ. Точные имена хостов в списке разрешённых доменов остаются разрешёнными.",
     "Could not load {{type}}.": "Не удалось загрузить: {{type}}.",
-    "Keep draft": "Оставить черновик",
-    "This Tag changed while you were editing.": "Этот тег изменился во время редактирования.",
-    "Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.": "Черновик сохранён. Загрузите актуальные значения или оставьте черновик и сохраните его ещё раз, чтобы заменить их.",
-    "Loading {{type}}…": "Загрузка: {{type}}…"
+    "Loading {{type}}…": "Загрузка: {{type}}…",
+    "Tag assignments are loaded, but these resource details are unavailable.": "Связи тегов загружены, но сведения об этих ресурсах недоступны.",
+    "Replace your draft with the latest values.": "Заменить черновик актуальными значениями.",
+    "Your draft is still below. Choose how to handle the latest version before saving.": "Ваш черновик сохранён ниже. Перед сохранением выберите, как поступить с последней версией.",
+    "Continue editing draft": "Продолжить редактирование",
+    "Tag version updated": "Версия тега обновлена",
+    "Not saved yet. Saving later will replace the latest version.": "Ещё не сохранено. При сохранении последняя версия будет заменена."
   }
 }

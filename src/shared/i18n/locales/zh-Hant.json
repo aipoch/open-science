@@ -4569,9 +4569,12 @@
     "Automatic mirror selection · Custom CA bundle configured": "自動選擇鏡像 · 已設定自訂 CA 憑證組合",
     "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "關閉內建網域會取消自動存取權限。「允許的網域」中的精確主機名稱仍可存取。",
     "Could not load {{type}}.": "無法載入{{type}}。",
-    "Keep draft": "保留草稿",
-    "This Tag changed while you were editing.": "此標籤在您編輯期間發生了變更。",
-    "Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.": "您的草稿已保留。請重新載入最新內容，或保留草稿並再次儲存以取代最新內容。",
-    "Loading {{type}}…": "正在載入{{type}}…"
+    "Loading {{type}}…": "正在載入{{type}}…",
+    "Tag assignments are loaded, but these resource details are unavailable.": "標籤關聯已載入，但暫時無法顯示這些資源的詳細資訊。",
+    "Replace your draft with the latest values.": "以最新內容取代目前的草稿。",
+    "Your draft is still below. Choose how to handle the latest version before saving.": "你的草稿仍保留在下方。儲存前，請確認如何處理最新版本。",
+    "Continue editing draft": "繼續編輯草稿",
+    "Tag version updated": "標籤版本已更新",
+    "Not saved yet. Saving later will replace the latest version.": "尚未儲存。之後儲存會覆寫最新版本。"
   }
 }

@@ -277,13 +277,14 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
 
       {latestJob.needs_attention ? (
         <div
-          role="alert"
           data-testid="job-integrity-diagnostic"
           className="flex justify-center border-b border-border p-5"
         >
           <ErrorNotice
             icon={ShieldAlert}
             tone="red"
+            role="alert"
+            diagnosticsLabel={t('Diagnostics')}
             title={t('Saved remote job data needs attention')}
             description={t(
               'This job remains visible, but automatic result analysis is paused because its saved state is incompatible.'

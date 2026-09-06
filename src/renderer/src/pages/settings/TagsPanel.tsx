@@ -158,6 +158,7 @@ const TagForm = ({
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string>()
   const conflicted = tag !== undefined && tag.updatedAt !== baseVersion
+  const LatestIcon = tag ? TAG_ICONS[tag.iconKey] : undefined
   const canSubmit = Boolean(draft.name.trim()) && !saving && !conflicted
 
   const save = async (): Promise<void> => {
@@ -194,12 +195,13 @@ const TagForm = ({
       {conflicted ? (
         <div role="alert">
           <ErrorNotice
-            title={t('This Tag changed while you were editing.')}
+            title={t('Tag version updated')}
             description={t(
-              'Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.'
+              'Your draft is still below. Choose how to handle the latest version before saving.'
             )}
             secondaryButton={{
-              label: t('Reload'),
+              label: t('Load latest version'),
+              description: t('Replace your draft with the latest values.'),
               onClick: () => {
                 setDraft({ name: tag.name, iconKey: tag.iconKey, colorKey: tag.colorKey })
                 setBaseVersion(tag.updatedAt)
@@ -208,14 +210,32 @@ const TagForm = ({
               disabled: saving
             }}
             primaryButton={{
-              label: t('Keep draft'),
+              label: t('Continue editing draft'),
+              description: t('Not saved yet. Saving later will replace the latest version.'),
               onClick: () => {
                 setBaseVersion(tag.updatedAt)
                 setFormError(undefined)
               },
               disabled: saving
             }}
-          />
+          >
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border pt-3 text-sm">
+              <span className="text-muted-foreground">{t('Latest saved version')}</span>
+              <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-foreground [overflow-wrap:anywhere]">
+                {LatestIcon ? (
+                  <LatestIcon
+                    className={cn('size-4 shrink-0 rounded-sm', TAG_COLORS[tag.colorKey])}
+                    aria-hidden="true"
+                  />
+                ) : null}
+                {tag.name}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {t('Icon')}: {iconLabel(t, tag.iconKey)} · {t('Color')}:{' '}
+                {colorLabel(t, tag.colorKey)}
+              </span>
+            </div>
+          </ErrorNotice>
         </div>
       ) : null}
       <label className="space-y-1.5 text-sm font-medium" htmlFor="tag-form-name">
@@ -918,6 +938,9 @@ const TagsList = ({
                   <div key={type} role="alert" className="mb-4">
                     <ErrorNotice
                       title={t('Could not load {{type}}.', { type: resourceTypeLabel(t, type) })}
+                      description={t(
+                        'Tag assignments are loaded, but these resource details are unavailable.'
+                      )}
                       primaryButton={{ label: t('Retry'), onClick: catalog.retry }}
                     />
                   </div>
