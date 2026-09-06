@@ -209,6 +209,7 @@ const REPL_EXECUTE_DOC = [
   "This is a CommonJS REPL: load Node modules with `require('node:fs')`, not dynamic `import()`.",
   'Use `await host.capabilities()` to feature-gate optional host namespaces; load the `self-awareness` Skill for its boolean contract and current capability map.',
   'Only this kernel can call temporary tool-less inference (`await host.llm(prompt)` or a bounded prompt batch), connectors (`await host.mcp(server, method, args)`), remote compute (`host.compute`; load its skill for the API), Specialist management (`host.agents`), and other optional namespaces reported by `host.capabilities()` and `host.help()`.',
+  'For remote execution, load the Remote Compute (SSH) Skill (`remote-compute-ssh`). For named environment setup or repair, load the Compute Environment Setup Skill (`compute-env-setup`) and prepare instructions for the user or host administrator to run.',
   HOST_SDK_DISCOVERY_GUIDANCE,
   'Globals persist and a trailing expression is returned. Return results directly when they are for Agent inspection. The default execution deadline covers the Host SDK maximum 30-minute bounded wait; an explicit timeoutMs still overrides it. To hand off large data from the REPL to Python/R, write it under process.env.OPEN_SCIENCE_HANDOFF_DIR; Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path. Use notebook_execute for analysis code.'
 ].join('\n')
