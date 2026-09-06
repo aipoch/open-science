@@ -138,12 +138,10 @@ describe('pickFastestMirror', () => {
     await expect(pickFastestMirror({ candidates: [ustc, official] })).resolves.toEqual(
       official.mirror
     )
+    // Verify trust acceptance without assuming it also wins a wall-clock latency race.
     await expect(
       pickFastestMirror({
-        candidates: [
-          { ...ustc, trustedDomains: [...ustc.trustedDomains, 'mirrors.nju.edu.cn'] },
-          official
-        ]
+        candidates: [{ ...ustc, trustedDomains: [...ustc.trustedDomains, 'mirrors.nju.edu.cn'] }]
       })
     ).resolves.toEqual(ustc.mirror)
     expect(vi.mocked(netFetchStandard).mock.calls.map(([url]) => String(url))).toEqual(
