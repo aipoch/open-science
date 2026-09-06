@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { TagRepository, cleanTagName, tagNameKey } from './repository'
+import { TagResourceCatalog } from './resource-catalog'
+import { TagService } from './service'
 
 describe('TagRepository', () => {
   let root: string
@@ -198,6 +200,38 @@ describe('TagRepository', () => {
       })
     ).resolves.toBe(1)
     expect((await repository.snapshot(1)).assignments).toEqual([])
+  })
+
+  it('preserves assignments through temporary identity conflicts and prunes actual deletion', async () => {
+    let skills = [{ id: 'analysis', available: true }]
+    const catalog = new TagResourceCatalog({
+      listSkills: async () => skills,
+      listConnectors: async () => ({ connectors: [], customServers: [] }),
+      listSpecialists: async () => [],
+      listLiteratureItems: async () => []
+    })
+    const service = new TagService(repository, catalog, { publish: () => undefined })
+    const assignment = {
+      tagId: 'tag-favorite',
+      resourceType: 'catalog.skill' as const,
+      resourceId: 'analysis',
+      assigned: true
+    }
+    await service.setAssignment(assignment)
+    skills = [
+      { id: 'analysis', available: false },
+      { id: 'analysis', available: false }
+    ]
+    await service.snapshot()
+    expect(await client.tagAssignment.count()).toBe(1)
+    await expect(service.setAssignment(assignment)).rejects.toThrow(
+      'Tag resource no longer exists.'
+    )
+    skills = [{ id: 'analysis', available: true }]
+    expect((await service.snapshot()).assignments).toHaveLength(1)
+    skills = []
+    expect((await service.snapshot()).assignments).toEqual([])
+    expect(await client.tagAssignment.count()).toBe(0)
   })
 
   it('removes assignments at the resource deletion boundary', async () => {

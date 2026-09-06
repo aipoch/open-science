@@ -913,10 +913,22 @@ colors communicate a successful or failed probe/migration result.
   also removes its assignments before the deleted ID can be reused. Skill, Connector, and Specialist
   file formats are unchanged, and no pin, bookmark, Group, import/export, or cloud-sync data is
   migrated.
+- Temporary catalog unavailability, including a Skill identity conflict, preserves existing Tag
+  assignments. Reconciliation uses all existing resource IDs; adding assignments still requires an
+  available resource. No catalog or assignment storage format changes are needed.
+- A Tag editor keeps its draft and submission version when a newer snapshot arrives. A conflict
+  blocks saving until the user reloads the latest values or explicitly keeps the draft for another
+  save. That save still checks the acknowledged version. Reordering retains its existing timestamp
+  semantics and can therefore require confirmation without discarding the draft.
+- Resource catalog loading is tracked independently by type. Failed catalogs show a retry action,
+  available resource rows remain visible, and Tag totals and type totals count known assignments
+  even when metadata is missing. An incomplete catalog is not presented as an empty Tag.
 - Resource rows and detail/editor surfaces share the same searchable assignment menu. Creating a Tag
   from that menu assigns it immediately with the default visual; the Tags manager can then change its
   icon or color. Assignment changes update optimistically and reload the authoritative snapshot after
-  a failure. The Tags browser keeps its selected Tag, resource filter, query, and scroll position when
+  a failure. Rollback preserves newer authoritative revisions and other pending assignments; order
+  rollback only runs while the failed operation still owns the current Tag array. The Tags browser
+  keeps its selected Tag, resource filter, query, and scroll position when
   Settings history opens a resource and returns.
 
 #### Specialist-scoped resources and Marketplace

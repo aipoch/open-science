@@ -32,6 +32,8 @@ beforeEach(() => {
   root = createRoot(container)
   useSettingsStore.setState({
     ...createInitialSettingsState(),
+    skillsLoaded: true,
+    connectorsLoaded: true,
     skills: [
       {
         id: 'analysis',
@@ -71,6 +73,161 @@ afterEach(() => {
 })
 
 describe('TagsPanel', () => {
+  it.each([false, true])(
+    'preserves an editing draft on external updates (content change: %s)',
+    async (contentChanged) => {
+      const tag = {
+        id: 'tag-research',
+        name: 'Research',
+        iconKey: 'book-open' as const,
+        colorKey: 'purple' as const,
+        createdAt: 2,
+        updatedAt: 2
+      }
+      const update = vi.fn().mockResolvedValue(undefined)
+      useTagStore.setState({ tags: [tag], update })
+      await act(async () => {
+        root.render(
+          <TagsPanel
+            view={{ kind: 'edit', tagId: tag.id }}
+            onNavigate={vi.fn()}
+            onOpenResource={vi.fn()}
+          />
+        )
+      })
+      const name = container.querySelector<HTMLInputElement>('#tag-form-name')!
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+          name,
+          'Unsaved important draft'
+        )
+        name.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      act(() =>
+        useTagStore.setState({
+          revision: 2,
+          tags: [{ ...tag, updatedAt: 3, ...(contentChanged ? { name: 'Remote' } : {}) }]
+        })
+      )
+      expect(container.querySelector('#tag-form-name')).toBe(name)
+      expect(name.value).toBe('Unsaved important draft')
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain('This Tag changed')
+      await act(async () => container.querySelector<HTMLFormElement>('form')!.requestSubmit())
+      expect(update).not.toHaveBeenCalled()
+      const keep = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Keep draft'
+      )!
+      act(() => keep.click())
+      await act(async () => container.querySelector<HTMLFormElement>('form')!.requestSubmit())
+      expect(update).toHaveBeenCalledWith({
+        id: tag.id,
+        iconKey: tag.iconKey,
+        colorKey: tag.colorKey,
+        expectedUpdatedAt: 3,
+        name: 'Unsaved important draft'
+      })
+      act(() =>
+        useTagStore.setState({
+          tags: [{ ...tag, name: 'Latest', iconKey: 'star', colorKey: 'red', updatedAt: 4 }]
+        })
+      )
+      const reload = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Reload'
+      )!
+      act(() => reload.click())
+      expect(name.value).toBe('Latest')
+      expect(container.querySelector('[aria-label="Star"][aria-pressed="true"]')).not.toBeNull()
+      expect(container.querySelector('[aria-label="Red"][aria-pressed="true"]')).not.toBeNull()
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+    }
+  )
+
+  it.each(['catalog.skill', 'catalog.connector', 'catalog.specialist'] as const)(
+    'shows pending and failed %s independently of loaded resources',
+    async (type) => {
+      let reject!: (error: Error) => void
+      const load = vi.fn(
+        () =>
+          new Promise<void>((_, fail) => {
+            reject = fail
+          })
+      )
+      if (type === 'catalog.skill')
+        useSettingsStore.setState({ skillsLoaded: false, loadSkills: load })
+      if (type === 'catalog.connector')
+        useSettingsStore.setState({ connectorsLoaded: false, loadConnectors: load })
+      if (type === 'catalog.specialist') useSpecialistStore.setState({ isLoaded: false, load })
+      useTagStore.setState((state) => ({
+        assignments: [
+          ...state.assignments,
+          {
+            tagId: 'tag-favorite',
+            resourceType: type,
+            resourceId: 'pending-resource',
+            createdAt: 2
+          }
+        ]
+      }))
+      await act(async () =>
+        root.render(
+          <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+        )
+      )
+      expect(container.querySelector('[role="status"]')).not.toBeNull()
+      expect(container.querySelector('[role="status"]')?.textContent).toContain('Loading')
+      expect(container.querySelector('[data-slot="tag-list-count"]')?.textContent).toBe('2')
+      expect(container.querySelector('[data-slot="tag-resource-row"]')?.textContent).toContain(
+        'Analysis'
+      )
+      await act(async () => reject(new Error('catalog failed')))
+      expect(container.querySelector('[role="alert"]')).not.toBeNull()
+      expect(container.querySelector('[data-slot="tag-resource-row"]')?.textContent).toContain(
+        'Analysis'
+      )
+      expect(container.textContent).not.toContain('No resources match this Tag.')
+    }
+  )
+
+  it('shows a catalog failure and preserves assignment counts until a successful retry', async () => {
+    const load = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('catalog unavailable'))
+      .mockImplementationOnce(async () => {
+        useSpecialistStore.setState({ isLoaded: true, loadError: undefined })
+      })
+    useSettingsStore.setState({ skillsLoaded: true, connectorsLoaded: true })
+    useSpecialistStore.setState({
+      items: [],
+      isLoaded: false,
+      loadError: 'catalog unavailable',
+      load
+    })
+    useTagStore.setState({
+      assignments: [
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'catalog.specialist',
+          resourceId: 'expert',
+          createdAt: 1
+        }
+      ]
+    })
+    await act(async () => {
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
+    })
+    expect(container.querySelector('[data-slot="tag-list-count"]')?.textContent).toBe('1')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Specialists')
+    expect(container.textContent).not.toContain('No resources match this Tag.')
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Retry'
+    )!
+    expect(retry).toBeDefined()
+    await act(async () => retry.click())
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
   it('includes tagged Literature references in Settings Tags', async () => {
     useTagStore.setState({
       assignments: [

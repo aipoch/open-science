@@ -4881,6 +4881,11 @@
     "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "Saisissez une URL de proxy complète, par exemple http://127.0.0.1:1086.",
     "Automatic mirror selection": "Sélection automatique du miroir",
     "Automatic mirror selection · Custom CA bundle configured": "Sélection automatique du miroir · Ensemble de certificats CA personnalisé configuré",
-    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Désactiver un domaine intégré supprime l’accès automatique. Les noms d’hôte exacts dans Domaines autorisés restent autorisés."
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Désactiver un domaine intégré supprime l’accès automatique. Les noms d’hôte exacts dans Domaines autorisés restent autorisés.",
+    "Could not load {{type}}.": "Impossible de charger : {{type}}.",
+    "Keep draft": "Conserver le brouillon",
+    "This Tag changed while you were editing.": "Ce tag a été modifié pendant votre saisie.",
+    "Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.": "Votre brouillon est conservé. Rechargez les valeurs actuelles, ou conservez votre brouillon et enregistrez à nouveau pour les remplacer.",
+    "Loading {{type}}…": "Chargement : {{type}}…"
   }
 }

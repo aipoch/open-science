@@ -20,6 +20,115 @@ beforeEach(() => {
 })
 
 describe('tag store', () => {
+  it.each([false, true])(
+    'rolls back only the failed relationship (same resource: %s)',
+    async (sameResource) => {
+      const reject: Array<(error: Error) => void> = []
+      setTagsApi({
+        snapshot: vi.fn().mockRejectedValue(new Error('read failed')),
+        setAssignment: vi.fn(
+          () =>
+            new Promise<TagSnapshot>((_, fail) => {
+              reject.push(fail)
+            })
+        )
+      })
+      useTagStore.setState({ ...favoriteSnapshot(1), status: 'ready' })
+      const reference = {
+        tagId: 'tag-favorite',
+        resourceType: 'catalog.skill' as const,
+        resourceId: 'analysis'
+      }
+      const first = useTagStore.getState().setAssignment({ ...reference, assigned: true })
+      const firstFailed = expect(first).rejects.toThrow('first failed')
+      const second = useTagStore.getState().setAssignment({
+        ...reference,
+        resourceId: sameResource ? 'analysis' : 'other',
+        assigned: true
+      })
+      const secondFailed = expect(second).rejects.toThrow('second failed')
+      reject[0]!(new Error('first failed'))
+      await firstFailed
+      expect(useTagStore.getState().assignments.map((item) => item.resourceId)).toEqual([
+        sameResource ? 'analysis' : 'other'
+      ])
+      reject[1]!(new Error('second failed'))
+      await secondFailed
+      expect(useTagStore.getState().assignments).toEqual([])
+    }
+  )
+  it('keeps a newer confirmed assignment when an older write and recovery read fail', async () => {
+    let rejectOlder!: (error: Error) => void
+    const pending = new Promise<TagSnapshot>((_, reject) => {
+      rejectOlder = reject
+    })
+    const confirmed = {
+      tagId: 'tag-favorite',
+      resourceType: 'catalog.skill' as const,
+      resourceId: 'confirmed',
+      createdAt: 2
+    }
+    setTagsApi({
+      snapshot: vi.fn().mockRejectedValue(new Error('read failed')),
+      setAssignment: vi
+        .fn()
+        .mockReturnValueOnce(pending)
+        .mockResolvedValueOnce({
+          ...favoriteSnapshot(2),
+          assignments: [confirmed]
+        })
+    })
+    useTagStore.setState({ ...favoriteSnapshot(1), status: 'ready' })
+    const older = useTagStore
+      .getState()
+      .setAssignment({ ...confirmed, resourceId: 'older', assigned: true })
+    const failed = expect(older).rejects.toThrow('write failed')
+    await useTagStore.getState().setAssignment({ ...confirmed, assigned: true })
+    rejectOlder(new Error('write failed'))
+    await failed
+    expect(useTagStore.getState()).toMatchObject({
+      revision: 2,
+      assignments: [confirmed],
+      status: 'error'
+    })
+  })
+
+  it('keeps a confirmed rename when an older reorder and recovery read fail', async () => {
+    let rejectReorder!: (error: Error) => void
+    const pending = new Promise<TagSnapshot>((_, reject) => {
+      rejectReorder = reject
+    })
+    const tag = {
+      id: 'research',
+      name: 'Research',
+      iconKey: 'tag' as const,
+      colorKey: 'blue' as const,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const confirmed = {
+      ...favoriteSnapshot(2),
+      tags: [...favoriteSnapshot().tags, { ...tag, name: 'Confirmed', updatedAt: 2 }]
+    }
+    setTagsApi({
+      snapshot: vi
+        .fn()
+        .mockResolvedValueOnce(confirmed)
+        .mockRejectedValueOnce(new Error('read failed')),
+      reorder: vi.fn().mockReturnValue(pending)
+    })
+    useTagStore.setState({
+      ...favoriteSnapshot(1),
+      tags: [...favoriteSnapshot().tags, tag],
+      status: 'ready'
+    })
+    const reorder = useTagStore.getState().reorder({ tagIds: [tag.id] })
+    const failed = expect(reorder).rejects.toThrow('write failed')
+    await useTagStore.getState().load()
+    rejectReorder(new Error('write failed'))
+    await failed
+    expect(useTagStore.getState()).toMatchObject({ ...confirmed, status: 'error' })
+  })
   it('preserves browser scroll when restoring the currently selected Tag', () => {
     useTagStore.setState({ browserSelectedId: 'tag-favorite', browserScrollTop: 240 })
 

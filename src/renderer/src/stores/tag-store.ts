@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { createOptimisticBooleanCoordinator } from './settings-optimistic-boolean'
 
 import type {
   CreateTagRequest,
@@ -47,15 +48,12 @@ export const createInitialTagState = (): TagSnapshot & {
   browserScrollTop: 0
 })
 let loadSequence = 0
+let assignmentRevision = -1
+let assignmentWrites = createOptimisticBooleanCoordinator()
 
 // A later optimistic backup may contain an earlier failed write. Follow those backups only
 // when the failing write still owns the projection; authority snapshots always take precedence.
 const failedTagProjections = new WeakMap<TagSnapshot['tags'], TagSnapshot['tags']>()
-const failedAssignmentProjections = new WeakMap<
-  TagSnapshot['assignments'],
-  TagSnapshot['assignments']
->()
-
 const rollbackProjection = <T>(failed: WeakMap<T[], T[]>, optimistic: T[], before: T[]): T[] => {
   failed.set(optimistic, before)
   let restored = before
@@ -161,15 +159,25 @@ export const useTagStore = create<TagStore>((set, get) => ({
   },
   setAssignment: async (request) => {
     const revision = get().revision
+    if (assignmentRevision !== revision) {
+      assignmentRevision = revision
+      assignmentWrites = createOptimisticBooleanCoordinator()
+    }
+    const writes = assignmentWrites
     const before = get().assignments
     const matches = (assignment: TagSnapshot['assignments'][number]): boolean =>
       assignment.tagId === request.tagId &&
       assignment.resourceType === request.resourceType &&
       assignment.resourceId === request.resourceId
+    const token = writes.begin(
+      JSON.stringify([request.tagId, request.resourceType, request.resourceId]),
+      before.some(matches),
+      request.assigned
+    )
     set({
       assignments: request.assigned
         ? before.some(matches)
-          ? [...before]
+          ? before
           : [
               ...before,
               {
@@ -181,15 +189,30 @@ export const useTagStore = create<TagStore>((set, get) => ({
             ]
         : before.filter((assignment) => !matches(assignment))
     })
-    const optimistic = get().assignments
     try {
       const snapshot = await window.api.tags.setAssignment(request)
+      writes.succeed(token, snapshot.assignments.some(matches))
       loadSequence += 1
       set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
     } catch (error) {
-      const restored = rollbackProjection(failedAssignmentProjections, optimistic, before)
-      if (get().revision === revision && get().assignments === optimistic)
-        set({ assignments: restored })
+      const assigned = writes.fail(token)
+      if (get().revision === revision) {
+        set((state) => ({
+          assignments: assigned
+            ? state.assignments.some(matches)
+              ? state.assignments
+              : [
+                  ...state.assignments,
+                  before.find(matches) ?? {
+                    tagId: request.tagId,
+                    resourceType: request.resourceType,
+                    resourceId: request.resourceId,
+                    createdAt: Date.now()
+                  }
+                ]
+            : state.assignments.filter((assignment) => !matches(assignment))
+        }))
+      }
       await get().load()
       throw error
     }

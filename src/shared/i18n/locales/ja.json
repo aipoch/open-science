@@ -4567,6 +4567,11 @@
     "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "完全なプロキシ URL を入力してください（例：http://127.0.0.1:1086）。",
     "Automatic mirror selection": "ミラーを自動選択",
     "Automatic mirror selection · Custom CA bundle configured": "ミラーを自動選択 · カスタム CA バンドル設定済み",
-    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "組み込みドメインを無効にすると、自動アクセスが解除されます。「許可されたドメイン」に登録した完全一致のホスト名は引き続き許可されます。"
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "組み込みドメインを無効にすると、自動アクセスが解除されます。「許可されたドメイン」に登録した完全一致のホスト名は引き続き許可されます。",
+    "Could not load {{type}}.": "{{type}}を読み込めませんでした。",
+    "Keep draft": "下書きを保持",
+    "This Tag changed while you were editing.": "編集中にこのタグが変更されました。",
+    "Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.": "下書きは保持されています。最新の値を再読み込みするか、下書きを保持して再度保存し、最新の値を置き換えてください。",
+    "Loading {{type}}…": "{{type}}を読み込み中…"
   }
 }

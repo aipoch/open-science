@@ -5013,6 +5013,11 @@
     "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "Введите полный URL прокси, например http://127.0.0.1:1086.",
     "Automatic mirror selection": "Автоматический выбор зеркала",
     "Automatic mirror selection · Custom CA bundle configured": "Автоматический выбор зеркала · Настроен пользовательский пакет CA",
-    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Отключение встроенного домена отменяет автоматический доступ. Точные имена хостов в списке разрешённых доменов остаются разрешёнными."
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Отключение встроенного домена отменяет автоматический доступ. Точные имена хостов в списке разрешённых доменов остаются разрешёнными.",
+    "Could not load {{type}}.": "Не удалось загрузить: {{type}}.",
+    "Keep draft": "Оставить черновик",
+    "This Tag changed while you were editing.": "Этот тег изменился во время редактирования.",
+    "Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.": "Черновик сохранён. Загрузите актуальные значения или оставьте черновик и сохраните его ещё раз, чтобы заменить их.",
+    "Loading {{type}}…": "Загрузка: {{type}}…"
   }
 }

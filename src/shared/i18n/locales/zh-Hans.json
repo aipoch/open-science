@@ -4567,6 +4567,11 @@
     "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "请输入完整的代理 URL，例如 http://127.0.0.1:1086。",
     "Automatic mirror selection": "自动选择镜像",
     "Automatic mirror selection · Custom CA bundle configured": "自动选择镜像 · 已配置自定义 CA 证书包",
-    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "关闭内置域名会取消自动访问权限。“允许的域名”中的精确主机名仍可访问。"
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "关闭内置域名会取消自动访问权限。“允许的域名”中的精确主机名仍可访问。",
+    "Could not load {{type}}.": "无法加载{{type}}。",
+    "Keep draft": "保留草稿",
+    "This Tag changed while you were editing.": "此标签在您编辑期间发生了更改。",
+    "Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.": "您的草稿已保留。请重新加载最新内容，或保留草稿并再次保存以替换最新内容。",
+    "Loading {{type}}…": "正在加载{{type}}…"
   }
 }

@@ -48,7 +48,8 @@ class TagService {
           this.events.publish('tags:changed', { revision: this.revision })
         }
       }
-      const resources = await this.resources.snapshot()
+      // Unavailable identities still exist; only assignment creation requires availability.
+      const resources = await this.resources.snapshot({ includeUnavailable: true })
       const pruned = await this.repository.pruneStaleAssignments(resources)
       if (pruned > 0) {
         this.revision += 1

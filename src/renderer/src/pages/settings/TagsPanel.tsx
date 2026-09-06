@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import {
   useEffect,
+  useCallback,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -40,6 +41,7 @@ import {
 import type { LiteratureItemView } from '../../../../shared/literature'
 import type { ArtifactLiteratureReference } from '../../../../shared/artifact-literature'
 import { Button } from '@/components/ui/button'
+import { ErrorNotice } from '@/components/error-notice'
 import {
   dialogBodyClassName,
   dialogCancelButtonClassName,
@@ -148,12 +150,15 @@ const TagForm = ({
   const { t } = useTranslation()
   const createTag = useTagStore((state) => state.create)
   const updateTag = useTagStore((state) => state.update)
+  const loadTags = useTagStore((state) => state.load)
+  const [baseVersion, setBaseVersion] = useState(tag?.updatedAt)
   const [draft, setDraft] = useState<TagDraft>(
     tag ? { name: tag.name, iconKey: tag.iconKey, colorKey: tag.colorKey } : EMPTY_DRAFT
   )
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string>()
-  const canSubmit = Boolean(draft.name.trim()) && !saving
+  const conflicted = tag !== undefined && tag.updatedAt !== baseVersion
+  const canSubmit = Boolean(draft.name.trim()) && !saving && !conflicted
 
   const save = async (): Promise<void> => {
     if (!canSubmit) return
@@ -161,13 +166,14 @@ const TagForm = ({
     setFormError(undefined)
     try {
       if (tag) {
-        await updateTag({ id: tag.id, expectedUpdatedAt: tag.updatedAt, ...draft })
+        await updateTag({ id: tag.id, expectedUpdatedAt: baseVersion!, ...draft })
         onSaved(tag.id)
       } else {
         onSaved(await createTag(draft))
       }
     } catch {
       setFormError(t('Could not save Tag.'))
+      if (tag) await loadTags()
     } finally {
       setSaving(false)
     }
@@ -185,6 +191,33 @@ const TagForm = ({
       <p className="text-sm text-muted-foreground">
         {t('Choose a name, icon, and color. Names are unique regardless of case.')}
       </p>
+      {conflicted ? (
+        <div role="alert">
+          <ErrorNotice
+            title={t('This Tag changed while you were editing.')}
+            description={t(
+              'Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.'
+            )}
+            secondaryButton={{
+              label: t('Reload'),
+              onClick: () => {
+                setDraft({ name: tag.name, iconKey: tag.iconKey, colorKey: tag.colorKey })
+                setBaseVersion(tag.updatedAt)
+                setFormError(undefined)
+              },
+              disabled: saving
+            }}
+            primaryButton={{
+              label: t('Keep draft'),
+              onClick: () => {
+                setBaseVersion(tag.updatedAt)
+                setFormError(undefined)
+              },
+              disabled: saving
+            }}
+          />
+        </div>
+      ) : null}
       <label className="space-y-1.5 text-sm font-medium" htmlFor="tag-form-name">
         <span>
           {t('Name')}
@@ -263,6 +296,36 @@ const TagForm = ({
   )
 }
 
+const useResourceCatalogLoad = (
+  load: (retry: boolean) => Promise<void>,
+  loaded: boolean,
+  loadError?: string
+): { status: 'loading' | 'error' | 'ready'; retry(): void } => {
+  const [attempt, setAttempt] = useState(0)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let active = true
+    void load(attempt > 0).then(
+      () => {
+        if (active) setFailed(false)
+      },
+      () => {
+        if (active) setFailed(true)
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [load, attempt])
+  return {
+    status: loadError || (failed && !loaded) ? 'error' : loaded ? 'ready' : 'loading',
+    retry: () => {
+      setFailed(false)
+      setAttempt((value) => value + 1)
+    }
+  }
+}
+
 const TagsList = ({
   onOpenResource,
   onSelectedTagChange,
@@ -290,6 +353,23 @@ const TagsList = ({
   const loadConnectors = useSettingsStore((state) => state.loadConnectors)
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadSpecialists = useSpecialistStore((state) => state.load)
+  const skillsLoaded = useSettingsStore((state) => state.skillsLoaded)
+  const connectorsLoaded = useSettingsStore((state) => state.connectorsLoaded)
+  const specialistsLoaded = useSpecialistStore((state) => state.isLoaded)
+  const specialistLoadError = useSpecialistStore((state) => state.loadError)
+  const refreshSpecialists = useCallback(
+    (force: boolean) => loadSpecialists({ force }),
+    [loadSpecialists]
+  )
+  const catalogLoads = {
+    'catalog.skill': useResourceCatalogLoad(loadSkills, skillsLoaded),
+    'catalog.connector': useResourceCatalogLoad(loadConnectors, connectorsLoaded),
+    'catalog.specialist': useResourceCatalogLoad(
+      refreshSpecialists,
+      specialistsLoaded,
+      specialistLoadError
+    )
+  }
   const selectedId = useTagStore((state) => state.browserSelectedId)
   const setSelectedId = useTagStore((state) => state.setBrowserSelectedId)
   const typeFilter = useTagStore((state) => state.browserTypeFilter)
@@ -336,8 +416,7 @@ const TagsList = ({
 
   useEffect(() => {
     if (status === 'idle') void loadTags()
-    void Promise.all([loadSkills(), loadConnectors(), loadSpecialists()])
-  }, [loadConnectors, loadSkills, loadSpecialists, loadTags, status])
+  }, [loadTags, status])
 
   useEffect(() => {
     let active = true
@@ -425,9 +504,7 @@ const TagsList = ({
 
   const counts = new Map(tags.map((tag) => [tag.id, 0]))
   for (const assignment of assignments) {
-    if (resourcesByKey.has(`${assignment.resourceType}:${assignment.resourceId}`)) {
-      counts.set(assignment.tagId, (counts.get(assignment.tagId) ?? 0) + 1)
-    }
+    counts.set(assignment.tagId, (counts.get(assignment.tagId) ?? 0) + 1)
   }
   const filteredResources = selectedAssignments
     .map((assignment) => resourcesByKey.get(`${assignment.resourceType}:${assignment.resourceId}`))
@@ -452,6 +529,10 @@ const TagsList = ({
       resources: filteredResources.filter((resource) => resource.resourceType === resourceType)
     }))
     .filter(({ resources }) => resources.length > 0)
+  const visibleCatalogTypes = resourceTypes.filter(
+    (type) => typeFilter === 'all' || typeFilter === type
+  )
+  const catalogsReady = visibleCatalogTypes.every((type) => catalogLoads[type].status === 'ready')
 
   const confirmDelete = async (): Promise<void> => {
     if (!deleting || deleteBusy) return
@@ -574,406 +655,418 @@ const TagsList = ({
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div data-slot="tags-panel" className="flex h-full min-h-0 flex-col px-3 py-3 md:px-4">
-        {error ? (
-          <p role="alert" className="mb-3 text-xs text-destructive">
-            {t('Tags could not be loaded.')}
-          </p>
-        ) : null}
-        <div
-          data-slot="tag-master-detail"
-          className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-lg border border-border md:grid-cols-[220px_minmax(0,1fr)]"
+    <div data-slot="tags-panel" className="flex h-full min-h-0 flex-col px-3 py-3 md:px-4">
+      {error ? (
+        <p role="alert" className="mb-3 text-xs text-destructive">
+          {t('Tags could not be loaded.')}
+        </p>
+      ) : null}
+      <div
+        data-slot="tag-master-detail"
+        className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-lg border border-border md:grid-cols-[220px_minmax(0,1fr)]"
+      >
+        <aside
+          className="min-h-0 overflow-y-auto border-b border-border bg-muted/20 p-2 md:border-r md:border-b-0"
+          aria-busy={reorderBusy || undefined}
         >
-          <aside
-            className="min-h-0 overflow-y-auto border-b border-border bg-muted/20 p-2 md:border-r md:border-b-0"
-            aria-busy={reorderBusy || undefined}
-          >
-            {reorderError ? (
-              <p role="alert" className="mb-2 px-2 text-xs text-destructive">
-                {reorderError}
-              </p>
-            ) : null}
-            <p className="sr-only" aria-live="polite" aria-atomic="true">
-              {reorderAnnouncement}
+          {reorderError ? (
+            <p role="alert" className="mb-2 px-2 text-xs text-destructive">
+              {reorderError}
             </p>
-            <ol className="space-y-1">
-              {tags.map((tag) => {
-                const customIndex = customTags.findIndex((candidate) => candidate.id === tag.id)
-                const dropBefore =
-                  tagDropTarget?.tagId === tag.id && tagDropTarget.edge === 'before'
-                const dropAfter = tagDropTarget?.tagId === tag.id && tagDropTarget.edge === 'after'
-                return (
-                  <li
-                    key={tag.id}
-                    data-reorderable-tag-id={'systemKey' in tag ? undefined : tag.id}
-                    className={cn(
-                      'relative flex min-w-0 items-center',
-                      draggedTagId === tag.id &&
-                        'rounded-md bg-muted/60 ring-1 ring-primary/30 ring-inset'
-                    )}
-                  >
-                    {dropBefore || dropAfter ? (
-                      <span
-                        aria-hidden="true"
-                        className={cn(
-                          'pointer-events-none absolute right-1 left-1 z-10 h-0.5 rounded-full bg-primary',
-                          dropBefore ? '-top-px' : '-bottom-px'
-                        )}
-                      />
-                    ) : null}
-                    {'systemKey' in tag ? (
-                      <span
-                        className="flex size-9 shrink-0 items-center justify-center text-muted-foreground/60 [@media(pointer:coarse)]:size-11"
-                        role="img"
-                        aria-label={t('System Tags stay first')}
-                        title={t('System Tags stay first')}
-                      >
-                        <LockKeyhole className="size-3.5" aria-hidden="true" />
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={reorderBusy}
-                        className="flex size-9 shrink-0 touch-none cursor-grab items-center justify-center rounded-md text-muted-foreground select-none hover:bg-muted hover:text-foreground active:cursor-grabbing focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:size-11"
-                        aria-label={t('Reorder {{tag}}', { tag: tag.name })}
-                        title={t('Drag or use arrow keys to reorder')}
-                        onPointerCancel={finishTagDrag}
-                        onPointerDown={(event) => {
-                          if (event.isPrimary === false || event.button !== 0 || reorderBusy) return
-                          event.currentTarget.setPointerCapture?.(event.pointerId)
-                          tagPointerDragRef.current = {
-                            pointerId: event.pointerId,
-                            tagId: tag.id,
-                            startY: event.clientY,
-                            active: false,
-                            dropZones: Array.from(
-                              event.currentTarget
-                                .closest('ol')
-                                ?.querySelectorAll<HTMLElement>('[data-reorderable-tag-id]') ?? []
-                            )
-                              .filter((row) => row.dataset.reorderableTagId !== tag.id)
-                              .flatMap((row) => {
-                                const tagId = row.dataset.reorderableTagId
-                                if (!tagId) return []
-                                const bounds = row.getBoundingClientRect()
-                                return [{ tagId, top: bounds.top, bottom: bounds.bottom }]
-                              })
-                          }
-                        }}
-                        onPointerMove={moveTagPointer}
-                        onPointerUp={endTagPointer}
-                        onKeyDown={(event) => {
-                          if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
-                          event.preventDefault()
-                          const target =
-                            customTags[customIndex + (event.key === 'ArrowUp' ? -1 : 1)]
-                          if (target) {
-                            void moveTag(
-                              tag.id,
-                              target.id,
-                              event.key === 'ArrowUp' ? 'before' : 'after'
-                            )
-                          }
-                        }}
-                      >
-                        <GripVertical className="size-4" aria-hidden="true" />
-                      </button>
-                    )}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="lg"
-                      data-slot="tag-list-row"
-                      aria-current={tag.id === currentSelectedId ? 'page' : undefined}
-                      onClick={() => {
-                        setSelectedId(tag.id)
-                        onSelectedTagChange?.(tag.id)
-                      }}
-                      className={cn(
-                        'min-w-0 flex-1 cursor-pointer justify-start gap-2 px-2 text-left font-normal hover:bg-muted',
-                        tag.id === currentSelectedId && 'bg-muted font-medium'
-                      )}
-                    >
-                      <TagBadge tag={tag} className="min-w-0" />
-                      <span
-                        data-slot="tag-list-count"
-                        className="ml-auto min-w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground"
-                      >
-                        {counts.get(tag.id) ?? 0}
-                      </span>
-                    </Button>
-                  </li>
-                )
-              })}
-              <li>
-                <button
-                  type="button"
-                  onClick={onCreate}
-                  className="flex h-9 w-full cursor-pointer items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground active:bg-muted/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 [@media(pointer:coarse)]:min-h-11"
-                >
-                  <Plus className="size-4 shrink-0" aria-hidden="true" />
-                  <span className="truncate">{t('New Tag')}</span>
-                </button>
-              </li>
-            </ol>
-          </aside>
-
-          <section
-            ref={resourceListRef}
-            className="min-h-0 min-w-0 overflow-y-auto bg-card p-4"
-            onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-          >
-            {selectedTag ? (
-              <>
-                <div
-                  data-slot="tag-detail-header"
-                  className="mb-4 flex min-h-7 flex-wrap items-center justify-between gap-3"
-                >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <TagBadge tag={selectedTag} />
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {t('{{count}} resources', {
-                        count: filteredResources.length,
-                        defaultValue_one: '{{count}} resource'
-                      })}
-                    </span>
-                  </div>
-                  {'systemKey' in selectedTag ? null : (
-                    <div
-                      data-slot="tag-detail-actions"
-                      className="flex shrink-0 items-center gap-1"
-                    >
-                      <SettingsIconAction
-                        label={t('Edit Tag')}
-                        icon={Pencil}
-                        onClick={() => onEdit(selectedTag)}
-                      />
-                      <SettingsIconAction
-                        label={t('Delete Tag')}
-                        icon={Trash2}
-                        danger
-                        onClick={() => {
-                          setDeleteError(undefined)
-                          setDeleting(selectedTag)
-                        }}
-                      />
-                    </div>
+          ) : null}
+          <p className="sr-only" aria-live="polite" aria-atomic="true">
+            {reorderAnnouncement}
+          </p>
+          <ol className="space-y-1">
+            {tags.map((tag) => {
+              const customIndex = customTags.findIndex((candidate) => candidate.id === tag.id)
+              const dropBefore = tagDropTarget?.tagId === tag.id && tagDropTarget.edge === 'before'
+              const dropAfter = tagDropTarget?.tagId === tag.id && tagDropTarget.edge === 'after'
+              return (
+                <li
+                  key={tag.id}
+                  data-reorderable-tag-id={'systemKey' in tag ? undefined : tag.id}
+                  className={cn(
+                    'relative flex min-w-0 items-center',
+                    draggedTagId === tag.id &&
+                      'rounded-md bg-muted/60 ring-1 ring-primary/30 ring-inset'
                   )}
-                </div>
-                <div className="mb-3 flex items-center gap-2">
-                  <Select
-                    value={typeFilter}
-                    onValueChange={(value) => setTypeFilter(value as typeof typeFilter)}
-                  >
-                    <SelectTrigger aria-label={t('Filter resources by type')} className="w-40">
-                      <span>{resourceTypeLabel(t, typeFilter)}</span>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">{t('All resources')}</SelectItem>
-                      <SelectItem value="catalog.skill">
-                        {t('Skills')} ({typeCounts.get('catalog.skill') ?? 0})
-                      </SelectItem>
-                      <SelectItem value="catalog.connector">
-                        {t('Connectors')} ({typeCounts.get('catalog.connector') ?? 0})
-                      </SelectItem>
-                      <SelectItem value="catalog.specialist">
-                        {t('Specialists')} ({typeCounts.get('catalog.specialist') ?? 0})
-                      </SelectItem>
-                      <SelectItem value="literature.item">
-                        {t('References')} ({typeCounts.get('literature.item') ?? 0})
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <div className="relative min-w-40 flex-1">
-                    <Search
-                      className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+                >
+                  {dropBefore || dropAfter ? (
+                    <span
                       aria-hidden="true"
+                      className={cn(
+                        'pointer-events-none absolute right-1 left-1 z-10 h-0.5 rounded-full bg-primary',
+                        dropBefore ? '-top-px' : '-bottom-px'
+                      )}
                     />
-                    <Input
-                      type="search"
-                      aria-label={t('Search tagged resources')}
-                      placeholder={t('Search resources…')}
-                      className="pl-8"
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                    />
-                  </div>
-                </div>
-                {assignmentError ? (
-                  <p role="alert" className="mb-3 text-xs text-destructive">
-                    {assignmentError}
-                  </p>
-                ) : null}
-                {filteredResources.length > 0 ? (
-                  <div data-slot="tag-resource-groups" className="divide-y divide-border">
-                    {resourceGroups.map(({ resourceType, resources: groupedResources }) => {
-                      const expanded = !collapsed[resourceType]
-                      const Icon =
-                        resourceType === 'catalog.skill'
-                          ? ScrollText
-                          : resourceType === 'catalog.connector'
-                            ? ConnectorsNavIcon
-                            : resourceType === 'literature.item'
-                              ? BookOpenText
-                              : Users
-                      return (
-                        <section key={resourceType} className="py-3 first:pt-0 last:pb-0">
-                          <button
-                            type="button"
-                            data-slot="tag-resource-group"
-                            aria-expanded={expanded}
-                            onClick={() =>
-                              setCollapsed((value) => ({
-                                ...value,
-                                [resourceType]: !value[resourceType]
-                              }))
-                            }
-                            className="flex w-full cursor-pointer items-center gap-1 text-left text-sm font-semibold text-foreground"
-                          >
-                            <Icon className="size-4 shrink-0 text-muted-foreground" />
-                            <span>
-                              {resourceTypeLabel(t, resourceType)} ({groupedResources.length})
-                            </span>
-                            <ChevronDown
-                              className={cn(
-                                'size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none',
-                                !expanded && '-rotate-90'
-                              )}
-                              aria-hidden="true"
-                            />
-                          </button>
-                          {expanded ? (
-                            <ul className="mt-1">
-                              {groupedResources.map((resource) => {
-                                const key = `${resource.resourceType}:${resource.resourceId}`
-                                return (
-                                  <li
-                                    key={key}
-                                    className="group -mx-2 flex items-center gap-1 rounded-lg px-2 hover:bg-muted/50 focus-within:bg-muted/50"
-                                  >
-                                    <button
-                                      type="button"
-                                      data-slot="tag-resource-row"
-                                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-3 text-left hover:text-primary"
-                                      onClick={() => {
-                                        if (resource.literatureReference) {
-                                          setSelectedLiteratureReference(
-                                            resource.literatureReference
-                                          )
-                                        } else {
-                                          onOpenResource(resource)
-                                        }
-                                      }}
-                                    >
-                                      <span className="min-w-0 flex-1">
-                                        <span className="block truncate text-sm">
-                                          {resource.title}
-                                        </span>
-                                        {resource.subtitle ? (
-                                          <span
-                                            data-slot="tag-resource-subtitle"
-                                            className="block truncate text-xs text-muted-foreground"
-                                          >
-                                            {resource.subtitle}
-                                          </span>
-                                        ) : null}
-                                      </span>
-                                    </button>
-                                    <SettingsIconAction
-                                      label={t('Remove {{resource}} from {{tag}}', {
-                                        resource: resource.accessibleTitle ?? resource.title,
-                                        tag: tagPresentation(selectedTag, t).name
-                                      })}
-                                      icon={X}
-                                      disabled={removingResourceKey === key}
-                                      className="pointer-events-auto shrink-0 opacity-100 transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
-                                      onClick={() => void removeResource(resource)}
-                                    />
-                                  </li>
-                                )
-                              })}
-                            </ul>
-                          ) : null}
-                        </section>
-                      )
-                    })}
-                  </div>
-                ) : (
-                  <p className="py-12 text-center text-sm text-muted-foreground">
-                    {t('No resources match this Tag.')}
-                  </p>
-                )}
-              </>
-            ) : (
-              <p className="py-12 text-center text-sm text-muted-foreground">
-                {status === 'loading'
-                  ? t('Loading Tags…')
-                  : t('Create a Tag to organize resources.')}
-              </p>
-            )}
-          </section>
-        </div>
-
-        <AlertDialog.Root
-          open={deleting !== undefined}
-          onOpenChange={(open) => !open && !deleteBusy && setDeleting(undefined)}
-        >
-          <AlertDialog.Portal>
-            <AlertDialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
-            <AlertDialog.Content
-              className={dialogPanelClassName('z-[60] w-[min(440px,calc(100vw-2rem))] p-0')}
-            >
-              <div className={dialogBodyClassName}>
-                <AlertDialog.Title className={dialogTitleClassName}>
-                  {t('Delete Tag?')}
-                </AlertDialog.Title>
-                <AlertDialog.Description className={cn(dialogDescriptionClassName, 'mt-2')}>
-                  {t(
-                    'The Tag will be removed from every resource. The resources themselves will not be deleted.'
+                  ) : null}
+                  {'systemKey' in tag ? (
+                    <span
+                      className="flex size-9 shrink-0 items-center justify-center text-muted-foreground/60 [@media(pointer:coarse)]:size-11"
+                      role="img"
+                      aria-label={t('System Tags stay first')}
+                      title={t('System Tags stay first')}
+                    >
+                      <LockKeyhole className="size-3.5" aria-hidden="true" />
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={reorderBusy}
+                      className="flex size-9 shrink-0 touch-none cursor-grab items-center justify-center rounded-md text-muted-foreground select-none hover:bg-muted hover:text-foreground active:cursor-grabbing focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:size-11"
+                      aria-label={t('Reorder {{tag}}', { tag: tag.name })}
+                      title={t('Drag or use arrow keys to reorder')}
+                      onPointerCancel={finishTagDrag}
+                      onPointerDown={(event) => {
+                        if (event.isPrimary === false || event.button !== 0 || reorderBusy) return
+                        event.currentTarget.setPointerCapture?.(event.pointerId)
+                        tagPointerDragRef.current = {
+                          pointerId: event.pointerId,
+                          tagId: tag.id,
+                          startY: event.clientY,
+                          active: false,
+                          dropZones: Array.from(
+                            event.currentTarget
+                              .closest('ol')
+                              ?.querySelectorAll<HTMLElement>('[data-reorderable-tag-id]') ?? []
+                          )
+                            .filter((row) => row.dataset.reorderableTagId !== tag.id)
+                            .flatMap((row) => {
+                              const tagId = row.dataset.reorderableTagId
+                              if (!tagId) return []
+                              const bounds = row.getBoundingClientRect()
+                              return [{ tagId, top: bounds.top, bottom: bounds.bottom }]
+                            })
+                        }
+                      }}
+                      onPointerMove={moveTagPointer}
+                      onPointerUp={endTagPointer}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+                        event.preventDefault()
+                        const target = customTags[customIndex + (event.key === 'ArrowUp' ? -1 : 1)]
+                        if (target) {
+                          void moveTag(
+                            tag.id,
+                            target.id,
+                            event.key === 'ArrowUp' ? 'before' : 'after'
+                          )
+                        }
+                      }}
+                    >
+                      <GripVertical className="size-4" aria-hidden="true" />
+                    </button>
                   )}
-                </AlertDialog.Description>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {t('Assignments to remove: {{count}}.', {
-                    count: deleting ? (counts.get(deleting.id) ?? 0) : 0,
-                    defaultValue_one: 'Assignment to remove: {{count}}.'
-                  })}
-                </p>
-                {deleteError ? (
-                  <p role="alert" className="mt-3 text-xs text-destructive">
-                    {deleteError}
-                  </p>
-                ) : null}
-              </div>
-              <div className={dialogFooterClassName}>
-                <AlertDialog.Cancel asChild>
                   <Button
                     type="button"
                     variant="ghost"
-                    className={dialogCancelButtonClassName}
-                    disabled={deleteBusy}
+                    size="lg"
+                    data-slot="tag-list-row"
+                    aria-current={tag.id === currentSelectedId ? 'page' : undefined}
+                    onClick={() => {
+                      setSelectedId(tag.id)
+                      onSelectedTagChange?.(tag.id)
+                    }}
+                    className={cn(
+                      'min-w-0 flex-1 cursor-pointer justify-start gap-2 px-2 text-left font-normal hover:bg-muted',
+                      tag.id === currentSelectedId && 'bg-muted font-medium'
+                    )}
                   >
-                    {t('Cancel')}
+                    <TagBadge tag={tag} className="min-w-0" />
+                    <span
+                      data-slot="tag-list-count"
+                      className="ml-auto min-w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground"
+                    >
+                      {counts.get(tag.id) ?? 0}
+                    </span>
                   </Button>
-                </AlertDialog.Cancel>
+                </li>
+              )
+            })}
+            <li>
+              <button
+                type="button"
+                onClick={onCreate}
+                className="flex h-9 w-full cursor-pointer items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground active:bg-muted/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 [@media(pointer:coarse)]:min-h-11"
+              >
+                <Plus className="size-4 shrink-0" aria-hidden="true" />
+                <span className="truncate">{t('New Tag')}</span>
+              </button>
+            </li>
+          </ol>
+        </aside>
+
+        <section
+          ref={resourceListRef}
+          className="min-h-0 min-w-0 overflow-y-auto bg-card p-4"
+          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        >
+          {selectedTag ? (
+            <>
+              <div
+                data-slot="tag-detail-header"
+                className="mb-4 flex min-h-7 flex-wrap items-center justify-between gap-3"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <TagBadge tag={selectedTag} />
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {t('{{count}} resources', {
+                      count: query.trim()
+                        ? filteredResources.length
+                        : selectedAssignments.filter(
+                            (assignment) =>
+                              typeFilter === 'all' || assignment.resourceType === typeFilter
+                          ).length,
+                      defaultValue_one: '{{count}} resource'
+                    })}
+                  </span>
+                </div>
+                {'systemKey' in selectedTag ? null : (
+                  <div data-slot="tag-detail-actions" className="flex shrink-0 items-center gap-1">
+                    <SettingsIconAction
+                      label={t('Edit Tag')}
+                      icon={Pencil}
+                      onClick={() => onEdit(selectedTag)}
+                    />
+                    <SettingsIconAction
+                      label={t('Delete Tag')}
+                      icon={Trash2}
+                      danger
+                      onClick={() => {
+                        setDeleteError(undefined)
+                        setDeleting(selectedTag)
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="mb-3 flex items-center gap-2">
+                <Select
+                  value={typeFilter}
+                  onValueChange={(value) => setTypeFilter(value as typeof typeFilter)}
+                >
+                  <SelectTrigger aria-label={t('Filter resources by type')} className="w-40">
+                    <span>{resourceTypeLabel(t, typeFilter)}</span>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t('All resources')}</SelectItem>
+                    <SelectItem value="catalog.skill">
+                      {t('Skills')} ({typeCounts.get('catalog.skill') ?? 0})
+                    </SelectItem>
+                    <SelectItem value="catalog.connector">
+                      {t('Connectors')} ({typeCounts.get('catalog.connector') ?? 0})
+                    </SelectItem>
+                    <SelectItem value="catalog.specialist">
+                      {t('Specialists')} ({typeCounts.get('catalog.specialist') ?? 0})
+                    </SelectItem>
+                    <SelectItem value="literature.item">
+                      {t('References')} ({typeCounts.get('literature.item') ?? 0})
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="relative min-w-40 flex-1">
+                  <Search
+                    className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    type="search"
+                    aria-label={t('Search tagged resources')}
+                    placeholder={t('Search resources…')}
+                    className="pl-8"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                  />
+                </div>
+              </div>
+              {assignmentError ? (
+                <p role="alert" className="mb-3 text-xs text-destructive">
+                  {assignmentError}
+                </p>
+              ) : null}
+              {visibleCatalogTypes.map((type) => {
+                const catalog = catalogLoads[type]
+                if (catalog.status === 'ready') return null
+                return catalog.status === 'error' ? (
+                  <div key={type} role="alert" className="mb-4">
+                    <ErrorNotice
+                      title={t('Could not load {{type}}.', { type: resourceTypeLabel(t, type) })}
+                      primaryButton={{ label: t('Retry'), onClick: catalog.retry }}
+                    />
+                  </div>
+                ) : (
+                  <p key={type} role="status" className="py-3 text-sm text-muted-foreground">
+                    {t('Loading {{type}}…', { type: resourceTypeLabel(t, type) })}
+                  </p>
+                )
+              })}
+              {filteredResources.length > 0 ? (
+                <div data-slot="tag-resource-groups" className="divide-y divide-border">
+                  {resourceGroups.map(({ resourceType, resources: groupedResources }) => {
+                    const expanded = !collapsed[resourceType]
+                    const Icon =
+                      resourceType === 'catalog.skill'
+                        ? ScrollText
+                        : resourceType === 'catalog.connector'
+                          ? ConnectorsNavIcon
+                          : resourceType === 'literature.item'
+                            ? BookOpenText
+                            : Users
+                    return (
+                      <section key={resourceType} className="py-3 first:pt-0 last:pb-0">
+                        <button
+                          type="button"
+                          data-slot="tag-resource-group"
+                          aria-expanded={expanded}
+                          onClick={() =>
+                            setCollapsed((value) => ({
+                              ...value,
+                              [resourceType]: !value[resourceType]
+                            }))
+                          }
+                          className="flex w-full cursor-pointer items-center gap-1 text-left text-sm font-semibold text-foreground"
+                        >
+                          <Icon className="size-4 shrink-0 text-muted-foreground" />
+                          <span>
+                            {resourceTypeLabel(t, resourceType)} ({groupedResources.length})
+                          </span>
+                          <ChevronDown
+                            className={cn(
+                              'size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none',
+                              !expanded && '-rotate-90'
+                            )}
+                            aria-hidden="true"
+                          />
+                        </button>
+                        {expanded ? (
+                          <ul className="mt-1">
+                            {groupedResources.map((resource) => {
+                              const key = `${resource.resourceType}:${resource.resourceId}`
+                              return (
+                                <li
+                                  key={key}
+                                  className="group -mx-2 flex items-center gap-1 rounded-lg px-2 hover:bg-muted/50 focus-within:bg-muted/50"
+                                >
+                                  <button
+                                    type="button"
+                                    data-slot="tag-resource-row"
+                                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-3 text-left hover:text-primary"
+                                    onClick={() => {
+                                      if (resource.literatureReference) {
+                                        setSelectedLiteratureReference(resource.literatureReference)
+                                      } else {
+                                        onOpenResource(resource)
+                                      }
+                                    }}
+                                  >
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-sm">
+                                        {resource.title}
+                                      </span>
+                                      {resource.subtitle ? (
+                                        <span
+                                          data-slot="tag-resource-subtitle"
+                                          className="block truncate text-xs text-muted-foreground"
+                                        >
+                                          {resource.subtitle}
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  </button>
+                                  <SettingsIconAction
+                                    label={t('Remove {{resource}} from {{tag}}', {
+                                      resource: resource.accessibleTitle ?? resource.title,
+                                      tag: tagPresentation(selectedTag, t).name
+                                    })}
+                                    icon={X}
+                                    disabled={removingResourceKey === key}
+                                    className="pointer-events-auto shrink-0 opacity-100 transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                    onClick={() => void removeResource(resource)}
+                                  />
+                                </li>
+                              )
+                            })}
+                          </ul>
+                        ) : null}
+                      </section>
+                    )
+                  })}
+                </div>
+              ) : catalogsReady ? (
+                <p className="py-12 text-center text-sm text-muted-foreground">
+                  {t('No resources match this Tag.')}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p className="py-12 text-center text-sm text-muted-foreground">
+              {status === 'loading' ? t('Loading Tags…') : t('Create a Tag to organize resources.')}
+            </p>
+          )}
+        </section>
+      </div>
+
+      <AlertDialog.Root
+        open={deleting !== undefined}
+        onOpenChange={(open) => !open && !deleteBusy && setDeleting(undefined)}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
+          <AlertDialog.Content
+            className={dialogPanelClassName('z-[60] w-[min(440px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Title className={dialogTitleClassName}>
+                {t('Delete Tag?')}
+              </AlertDialog.Title>
+              <AlertDialog.Description className={cn(dialogDescriptionClassName, 'mt-2')}>
+                {t(
+                  'The Tag will be removed from every resource. The resources themselves will not be deleted.'
+                )}
+              </AlertDialog.Description>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t('Assignments to remove: {{count}}.', {
+                  count: deleting ? (counts.get(deleting.id) ?? 0) : 0,
+                  defaultValue_one: 'Assignment to remove: {{count}}.'
+                })}
+              </p>
+              {deleteError ? (
+                <p role="alert" className="mt-3 text-xs text-destructive">
+                  {deleteError}
+                </p>
+              ) : null}
+            </div>
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
                 <Button
                   type="button"
-                  variant="destructive"
+                  variant="ghost"
+                  className={dialogCancelButtonClassName}
                   disabled={deleteBusy}
-                  onClick={() => void confirmDelete()}
                 >
-                  {deleteBusy ? t('Deleting…') : t('Delete Tag')}
+                  {t('Cancel')}
                 </Button>
-              </div>
-            </AlertDialog.Content>
-          </AlertDialog.Portal>
-        </AlertDialog.Root>
-        <ArtifactLiteratureDetailDialog
-          reference={selectedLiteratureReference}
-          onOpenChange={(open) => {
-            if (!open) setSelectedLiteratureReference(undefined)
-          }}
-        />
-      </div>
+              </AlertDialog.Cancel>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={deleteBusy}
+                onClick={() => void confirmDelete()}
+              >
+                {deleteBusy ? t('Deleting…') : t('Delete Tag')}
+              </Button>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+      <ArtifactLiteratureDetailDialog
+        reference={selectedLiteratureReference}
+        onOpenChange={(open) => {
+          if (!open) setSelectedLiteratureReference(undefined)
+        }}
+      />
+    </div>
     </TooltipProvider>
   )
 }
@@ -1014,7 +1107,7 @@ const TagsPanel = ({
   if (view.kind === 'edit' && editTag) {
     return (
       <TagForm
-        key={`${editTag.id}:${editTag.updatedAt}`}
+        key={editTag.id}
         tag={editTag}
         onCancel={() => onNavigate({ kind: 'list', tagId: editTag.id })}
         onSaved={(tagId) => onNavigate({ kind: 'list', tagId })}
