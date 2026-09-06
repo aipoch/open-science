@@ -410,12 +410,21 @@ class ConnectorSettingsModule {
     request: CreateDeviceCredentialRequest
   ): Promise<CreateDeviceCredentialResult> {
     if (!this.deviceCredentials) throw new Error('Device credentials are unavailable')
+    // Validate the other document before committing a secret. A later projection failure must
+    // still acknowledge the saved identity rather than invite a second create.
+    await this.repository.getSettings()
     const created = await this.deviceCredentials.create(request)
-    const snapshot = await this.listDeviceCredentials()
-    const createdCredential = snapshot.credentials.find(({ id }) => id === created.id)
-    if (!createdCredential)
-      throw new Error('Created credential is missing from the settings response')
-    return { ...snapshot, createdCredential }
+    const createdCredential = this.deviceCredentials.view(created)
+    try {
+      const snapshot = await this.listDeviceCredentials()
+      return {
+        ...snapshot,
+        createdCredential:
+          snapshot.credentials.find(({ id }) => id === created.id) ?? createdCredential
+      }
+    } catch {
+      return { createdCredential }
+    }
   }
 
   async updateDeviceCredential(

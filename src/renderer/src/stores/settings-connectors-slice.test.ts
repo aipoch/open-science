@@ -212,6 +212,165 @@ describe('settings Connectors slice', () => {
     expect(store.getState().deviceCredentials[0]?.status).toBe('disconnected')
   })
 
+  it('keeps a created credential when an older initial list response arrives last', async () => {
+    let settle!: (value: { credentials: DeviceCredentialView[] }) => void
+    vi.mocked(commands.listDeviceCredentials).mockReturnValueOnce(
+      new Promise((resolve) => {
+        settle = resolve
+      })
+    )
+    const loading = store.getState().loadDeviceCredentials()
+    const created = await store.getState().createDeviceCredential({
+      displayName: 'Created',
+      kind: 'token',
+      secret: 'fictional-secret'
+    })
+    vi.mocked(commands.listDeviceCredentials).mockResolvedValue({ credentials: [created] })
+    expect(store.getState().deviceCredentials).toEqual([created])
+    settle({ credentials: [] })
+    await loading
+    await store.getState().loadDeviceCredentials()
+    expect(store.getState().deviceCredentials).toEqual([created])
+    expect(store.getState().deviceCredentialsLoaded).toBe(true)
+  })
+
+  it('does not resurrect a deleted credential from a delayed update snapshot', async () => {
+    const initial = deviceCredential('removed')
+    const updated = { ...initial, displayName: 'Renamed' }
+    store.setState({ deviceCredentials: [initial], deviceCredentialsLoaded: true })
+    let settle!: (value: { credentials: DeviceCredentialView[] }) => void
+    vi.mocked(commands.updateDeviceCredential).mockReturnValueOnce(
+      new Promise((resolve) => {
+        settle = resolve
+      })
+    )
+    const updating = store
+      .getState()
+      .updateDeviceCredential({ id: initial.id, displayName: 'Renamed' })
+    await store.getState().removeDeviceCredential({ id: initial.id })
+    expect(store.getState().deviceCredentials).toEqual([])
+    settle({ credentials: [updated] })
+    await updating
+    await store.getState().loadDeviceCredentials()
+    expect(store.getState().deviceCredentials).toEqual([])
+  })
+
+  it('does not resurrect a deletion from an older failed-authentication refresh', async () => {
+    const initial = deviceCredential('removed')
+    store.setState({ deviceCredentials: [initial], deviceCredentialsLoaded: true })
+    const error = new Error('Authentication failed')
+    vi.mocked(commands.authenticateDeviceCredential).mockRejectedValueOnce(error)
+    let settle!: (value: { credentials: DeviceCredentialView[] }) => void
+    vi.mocked(commands.listDeviceCredentials).mockReturnValueOnce(
+      new Promise((resolve) => {
+        settle = resolve
+      })
+    )
+    const authenticating = store.getState().authenticateDeviceCredential({ id: initial.id })
+    const rejected = expect(authenticating).rejects.toBe(error)
+    await vi.waitFor(() => expect(commands.listDeviceCredentials).toHaveBeenCalledOnce())
+    await store.getState().removeDeviceCredential({ id: initial.id })
+    settle({ credentials: [initial] })
+    await rejected
+    expect(store.getState().deviceCredentials).toEqual([])
+  })
+
+  it('coalesces overlapping initial credential list reads', async () => {
+    let settle!: (value: { credentials: DeviceCredentialView[] }) => void
+    vi.mocked(commands.listDeviceCredentials).mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve
+      })
+    )
+    const first = store.getState().loadDeviceCredentials()
+    const second = store.getState().loadDeviceCredentials()
+    settle({ credentials: [] })
+    await Promise.all([first, second])
+    expect(commands.listDeviceCredentials).toHaveBeenCalledOnce()
+  })
+
+  it('acknowledges creation without replacing existing rows with an incomplete snapshot', async () => {
+    const previous = deviceCredential('previous')
+    const created = deviceCredential('created')
+    store.setState({ deviceCredentials: [previous], deviceCredentialsLoaded: true })
+    vi.mocked(commands.createDeviceCredential).mockResolvedValue({ createdCredential: created })
+    await expect(
+      store.getState().createDeviceCredential({
+        displayName: 'created',
+        kind: 'token',
+        secret: 'fictional'
+      })
+    ).resolves.toEqual(created)
+    expect(store.getState().deviceCredentials).toEqual([previous, created])
+    expect(store.getState().deviceCredentialsLoaded).toBe(false)
+    expect(store.getState().deviceCredentialsError).toBeTruthy()
+    vi.mocked(commands.listDeviceCredentials).mockResolvedValue({
+      credentials: [previous, created]
+    })
+    await store.getState().loadDeviceCredentials(true)
+    expect(store.getState().deviceCredentialsError).toBeUndefined()
+    expect(commands.createDeviceCredential).toHaveBeenCalledOnce()
+  })
+
+  it('retries after synchronous IPC lookup failure without poisoning the load cache', async () => {
+    vi.mocked(commands.listDeviceCredentials).mockImplementationOnce(() => {
+      throw new Error('IPC unavailable')
+    })
+    await expect(store.getState().loadDeviceCredentials()).rejects.toThrow('IPC unavailable')
+    await store.getState().loadDeviceCredentials()
+    expect(store.getState().deviceCredentialsLoaded).toBe(true)
+    expect(commands.listDeviceCredentials).toHaveBeenCalledTimes(2)
+  })
+
+  it('invalidates a pending read when a consumer mutation requests a fresh projection', async () => {
+    const initial = deviceCredential('shared')
+    const current = { ...initial, consumerCount: 1, consumerNames: ['Consumer'] }
+    vi.mocked(commands.addCustomServer).mockResolvedValue(snapshot([], [server('consumer')]))
+    store.setState({ deviceCredentials: [initial], deviceCredentialsLoaded: true })
+    let settle!: (value: { credentials: DeviceCredentialView[] }) => void
+    vi.mocked(commands.listDeviceCredentials)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          settle = resolve
+        })
+      )
+      .mockResolvedValue({ credentials: [current] })
+    const reading = store.getState().loadDeviceCredentials(true)
+    await vi.waitFor(() => expect(commands.listDeviceCredentials).toHaveBeenCalledOnce())
+    await store.getState().addCustomServer({
+      name: 'consumer',
+      displayName: 'Consumer',
+      transport: 'stdio',
+      command: 'unused'
+    })
+    settle({ credentials: [initial] })
+    await reading
+    expect(store.getState().deviceCredentials).toEqual([current])
+  })
+
+  it('rereads commit order after overlapping updates instead of trusting request order', async () => {
+    let settle!: (value: { credentials: DeviceCredentialView[] }) => void
+    const final = deviceCredential('shared', 'Last durable write')
+    vi.mocked(commands.updateDeviceCredential)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          settle = resolve
+        })
+      )
+      .mockResolvedValueOnce({ credentials: [deviceCredential('shared', 'Earlier durable write')] })
+    vi.mocked(commands.listDeviceCredentials).mockResolvedValue({ credentials: [final] })
+    const first = store
+      .getState()
+      .updateDeviceCredential({ id: 'shared', displayName: final.displayName })
+    await store
+      .getState()
+      .updateDeviceCredential({ id: 'shared', displayName: 'Earlier durable write' })
+    settle({ credentials: [final] })
+    await first
+    expect(commands.listDeviceCredentials).toHaveBeenCalledOnce()
+    expect(store.getState().deviceCredentials).toEqual([final])
+  })
+
   it('loads and replaces the device credential projection after mutations', async () => {
     const credential = deviceCredential('credential-1', 'Lab token')
     vi.mocked(commands.listDeviceCredentials).mockResolvedValue({ credentials: [credential] })

@@ -4988,6 +4988,12 @@
     "Loading app icons…": "Загрузка значков приложения…",
     "Could not load app icons.": "Не удалось загрузить значки приложения.",
     "No app icons are available.": "Нет доступных значков приложения.",
-    "Current icon: {{icon}}. Its preview is unavailable.": "Текущий значок: {{icon}}. Предпросмотр недоступен."
+    "Current icon: {{icon}}. Its preview is unavailable.": "Текущий значок: {{icon}}. Предпросмотр недоступен.",
+    "Replacement client secret": "Новый секрет клиента",
+    "Replace the client secret before signing in. Your Connector bindings will be kept.": "Замените секрет клиента перед входом. Привязки Коннекторов сохранятся.",
+    "The saved sign-in state could not be read. Sign in again to restore it.": "Не удалось прочитать сохранённое состояние входа. Войдите снова, чтобы восстановить его.",
+    "Credential saved. The list could not refresh.": "Учётные данные сохранены. Не удалось обновить список.",
+    "Could not load credentials.": "Не удалось загрузить учётные данные.",
+    "The credential list is unavailable. Try loading it again.": "Список учётных данных недоступен. Попробуйте загрузить его снова."
   }
 }

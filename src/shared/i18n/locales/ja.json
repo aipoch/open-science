@@ -4539,6 +4539,12 @@
     "Loading app icons…": "アプリアイコンを読み込み中…",
     "Could not load app icons.": "アプリアイコンを読み込めませんでした。",
     "No app icons are available.": "利用可能なアプリアイコンはありません。",
-    "Current icon: {{icon}}. Its preview is unavailable.": "現在のアイコン：{{icon}}。プレビューは利用できません。"
+    "Current icon: {{icon}}. Its preview is unavailable.": "現在のアイコン：{{icon}}。プレビューは利用できません。",
+    "Replacement client secret": "置き換えるクライアントシークレット",
+    "Replace the client secret before signing in. Your Connector bindings will be kept.": "サインインする前にクライアントシークレットを置き換えてください。コネクタとの関連付けは保持されます。",
+    "The saved sign-in state could not be read. Sign in again to restore it.": "保存されたサインイン状態を読み取れませんでした。再度サインインして復元してください。",
+    "Credential saved. The list could not refresh.": "認証情報を保存しました。リストを更新できませんでした。",
+    "Could not load credentials.": "認証情報を読み込めませんでした。",
+    "The credential list is unavailable. Try loading it again.": "認証情報のリストを利用できません。もう一度読み込んでください。"
   }
 }

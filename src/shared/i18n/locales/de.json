@@ -4693,6 +4693,12 @@
     "Loading app icons…": "App-Symbole werden geladen…",
     "Could not load app icons.": "Die App-Symbole konnten nicht geladen werden.",
     "No app icons are available.": "Es sind keine App-Symbole verfügbar.",
-    "Current icon: {{icon}}. Its preview is unavailable.": "Aktuelles Symbol: {{icon}}. Die Vorschau ist nicht verfügbar."
+    "Current icon: {{icon}}. Its preview is unavailable.": "Aktuelles Symbol: {{icon}}. Die Vorschau ist nicht verfügbar.",
+    "Replacement client secret": "Neues Client-Geheimnis",
+    "Replace the client secret before signing in. Your Connector bindings will be kept.": "Ersetzen Sie vor der Anmeldung das Client-Geheimnis. Die Zuordnungen Ihrer Konnektoren bleiben erhalten.",
+    "The saved sign-in state could not be read. Sign in again to restore it.": "Der gespeicherte Anmeldestatus konnte nicht gelesen werden. Melden Sie sich erneut an, um ihn wiederherzustellen.",
+    "Credential saved. The list could not refresh.": "Zugangsdaten gespeichert. Die Liste konnte nicht aktualisiert werden.",
+    "Could not load credentials.": "Zugangsdaten konnten nicht geladen werden.",
+    "The credential list is unavailable. Try loading it again.": "Die Liste der Zugangsdaten ist nicht verfügbar. Versuchen Sie, sie erneut zu laden."
   }
 }

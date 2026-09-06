@@ -9,6 +9,7 @@ import type {
   ConnectorView,
   CustomServerView,
   DeviceCredentialView,
+  DeviceCredentialsSnapshot,
   DeviceCredentialAuthenticationRequest,
   DisconnectCustomServerRequest,
   RemoveDeviceCredentialRequest,
@@ -50,11 +51,13 @@ export type SettingsConnectorsState = NormalizedSettingsConnectorsProjection & {
   connectorAuthNotice?: ConnectorAuthNotice
   deviceCredentials: DeviceCredentialView[]
   deviceCredentialsLoaded: boolean
+  deviceCredentialsLoading: boolean
+  deviceCredentialsError?: string
 }
 
 export type SettingsConnectorsActions = {
   loadConnectors: () => Promise<void>
-  loadDeviceCredentials: () => Promise<void>
+  loadDeviceCredentials: (force?: boolean) => Promise<void>
   createDeviceCredential: (request: CreateDeviceCredentialRequest) => Promise<DeviceCredentialView>
   updateDeviceCredential: (request: UpdateDeviceCredentialRequest) => Promise<void>
   removeDeviceCredential: (request: RemoveDeviceCredentialRequest) => Promise<void>
@@ -140,6 +143,8 @@ export const createInitialSettingsConnectorsState = (): SettingsConnectorsState 
   connectorAuthNotice: undefined,
   deviceCredentials: [],
   deviceCredentialsLoaded: false,
+  deviceCredentialsLoading: false,
+  deviceCredentialsError: undefined,
   ncbi: { hasApiKey: false },
   openAlex: { hasApiKey: false }
 })
@@ -251,13 +256,101 @@ export const createSettingsConnectorsSlice = ({
   ): Promise<void> => {
     await runMutation(() => reconcile(command))
   }
+  // All credential snapshots, including compensating and consumer reads, share this owner.
+  let credentialGeneration = 0
+  let credentialMutations = 0
+  let credentialRefreshPending = false
+  let credentialLoadRequest: Promise<void> | undefined
+  const applyCredentials = (credentials: DeviceCredentialView[]): void => {
+    setState({
+      deviceCredentials: credentials,
+      deviceCredentialsLoaded: true,
+      deviceCredentialsLoading: false,
+      deviceCredentialsError: undefined
+    })
+  }
+  const readCredentials = async (): Promise<DeviceCredentialsSnapshot> =>
+    getCommands().listDeviceCredentials()
+  const loadDeviceCredentials = async (force = false): Promise<void> => {
+    if (credentialMutations > 0) {
+      credentialRefreshPending = true
+      return
+    }
+    if (credentialLoadRequest && !force) return credentialLoadRequest
+    if (force) credentialGeneration += 1
+    if (!force && getState().deviceCredentialsLoaded) return
+    const generation = credentialGeneration
+    setState({ deviceCredentialsLoading: true, deviceCredentialsError: undefined })
+    const request = (async () => {
+      try {
+        const snapshot = await readCredentials()
+        if (generation === credentialGeneration) applyCredentials(snapshot.credentials)
+      } catch (error) {
+        if (generation === credentialGeneration) {
+          setState({
+            deviceCredentialsLoaded: false,
+            deviceCredentialsError: 'Could not load credentials.'
+          })
+          throw error
+        }
+      } finally {
+        if (generation === credentialGeneration) {
+          credentialLoadRequest = undefined
+          setState({ deviceCredentialsLoading: false })
+        }
+      }
+    })()
+    credentialLoadRequest = request
+    return request
+  }
   const refreshDeviceCredentialsIfLoaded = async (): Promise<void> => {
-    if (!getState().deviceCredentialsLoaded) return
+    if (
+      !getState().deviceCredentialsLoaded &&
+      getState().deviceCredentials.length === 0 &&
+      !getState().deviceCredentialsLoading
+    )
+      return
+    await loadDeviceCredentials(true).catch(() => undefined)
+  }
+  const mutateCredentials = async <
+    Result extends {
+      credentials?: DeviceCredentialView[]
+      createdCredential?: DeviceCredentialView
+    }
+  >(
+    command: () => Promise<Result>
+  ): Promise<Result> => {
+    const generation = ++credentialGeneration
+    credentialLoadRequest = undefined
+    credentialMutations += 1
+    if (credentialMutations > 1) credentialRefreshPending = true
     try {
-      const snapshot = await getCommands().listDeviceCredentials()
-      setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
-    } catch {
-      setState({ deviceCredentialsLoaded: false })
+      const result = await command()
+      if (generation === credentialGeneration) {
+        if (result.credentials) applyCredentials(result.credentials)
+        else
+          setState((state) => ({
+            deviceCredentialsLoaded: false,
+            deviceCredentialsLoading: false,
+            deviceCredentialsError: 'Could not load credentials.',
+            deviceCredentials:
+              result.createdCredential &&
+              !state.deviceCredentials.some(({ id }) => id === result.createdCredential!.id)
+                ? [...state.deviceCredentials, result.createdCredential]
+                : state.deviceCredentials
+          }))
+      }
+      return result
+    } catch (error) {
+      credentialRefreshPending = true
+      throw error
+    } finally {
+      credentialMutations -= 1
+      if (credentialMutations === 0 && credentialRefreshPending) {
+        credentialRefreshPending = false
+        // Request order is not commit order. Read again after overlapping writes have settled.
+        await loadDeviceCredentials(true).catch(() => undefined)
+      }
     }
   }
   let removeRuntimeChangedListener: (() => void) | undefined
@@ -265,52 +358,29 @@ export const createSettingsConnectorsSlice = ({
   const subscribeToRuntimeChanges = (): void => {
     removeRuntimeChangedListener ??= getCommands().onConnectorRuntimeChanged(() => {
       reconcileRuntimeChange()
+      void refreshDeviceCredentialsIfLoaded()
     })
   }
 
   return {
-    loadDeviceCredentials: async () => {
-      if (getState().deviceCredentialsLoaded) return
-      const snapshot = await getCommands().listDeviceCredentials()
-      setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
-    },
+    loadDeviceCredentials,
     createDeviceCredential: async (request) => {
-      const result = await getCommands().createDeviceCredential(request)
-      setState({ deviceCredentials: result.credentials, deviceCredentialsLoaded: true })
+      const result = await mutateCredentials(() => getCommands().createDeviceCredential(request))
       return result.createdCredential
     },
     updateDeviceCredential: async (request) => {
-      try {
-        const snapshot = await getCommands().updateDeviceCredential(request)
-        setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
-      } catch (error) {
-        await refreshDeviceCredentialsIfLoaded()
-        throw error
-      }
+      await mutateCredentials(() => getCommands().updateDeviceCredential(request))
     },
     removeDeviceCredential: async (request) => {
-      const snapshot = await getCommands().removeDeviceCredential(request)
-      setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
+      await mutateCredentials(() => getCommands().removeDeviceCredential(request))
     },
     authenticateDeviceCredential: async (request) => {
-      try {
-        const snapshot = await getCommands().authenticateDeviceCredential(request)
-        setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
-      } catch (error) {
-        await refreshDeviceCredentialsIfLoaded()
-        throw error
-      }
+      await mutateCredentials(() => getCommands().authenticateDeviceCredential(request))
     },
     cancelDeviceCredentialAuthentication: (request) =>
       getCommands().cancelDeviceCredentialAuthentication(request),
     disconnectDeviceCredential: async (request) => {
-      try {
-        const snapshot = await getCommands().disconnectDeviceCredential(request)
-        setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
-      } catch (error) {
-        await refreshDeviceCredentialsIfLoaded()
-        throw error
-      }
+      await mutateCredentials(() => getCommands().disconnectDeviceCredential(request))
     },
     loadConnectors: async () => {
       // Keep subscription and command lookup inside this async action so a missing Settings

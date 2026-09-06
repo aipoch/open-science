@@ -4539,6 +4539,12 @@
     "Loading app icons…": "正在加载应用图标…",
     "Could not load app icons.": "无法加载应用图标。",
     "No app icons are available.": "没有可用的应用图标。",
-    "Current icon: {{icon}}. Its preview is unavailable.": "当前图标：{{icon}}。其预览不可用。"
+    "Current icon: {{icon}}. Its preview is unavailable.": "当前图标：{{icon}}。其预览不可用。",
+    "Replacement client secret": "替换客户端秘密",
+    "Replace the client secret before signing in. Your Connector bindings will be kept.": "请先替换客户端秘密，再登录。连接器绑定将保留。",
+    "The saved sign-in state could not be read. Sign in again to restore it.": "无法读取已保存的登录状态。请重新登录以恢复。",
+    "Credential saved. The list could not refresh.": "凭据已保存，但列表刷新失败。",
+    "Could not load credentials.": "无法加载凭据。",
+    "The credential list is unavailable. Try loading it again.": "凭据列表暂不可用。请尝试重新加载。"
   }
 }

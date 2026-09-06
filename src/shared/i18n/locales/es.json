@@ -4855,6 +4855,12 @@
     "Loading app icons…": "Cargando iconos de la aplicación…",
     "Could not load app icons.": "No se pudieron cargar los iconos de la aplicación.",
     "No app icons are available.": "No hay iconos de la aplicación disponibles.",
-    "Current icon: {{icon}}. Its preview is unavailable.": "Icono actual: {{icon}}. Su vista previa no está disponible."
+    "Current icon: {{icon}}. Its preview is unavailable.": "Icono actual: {{icon}}. Su vista previa no está disponible.",
+    "Replacement client secret": "Nuevo secreto de cliente",
+    "Replace the client secret before signing in. Your Connector bindings will be kept.": "Reemplace el secreto de cliente antes de iniciar sesión. Se conservarán las vinculaciones de sus Conectores.",
+    "The saved sign-in state could not be read. Sign in again to restore it.": "No se pudo leer el estado de inicio de sesión guardado. Inicie sesión de nuevo para restaurarlo.",
+    "Credential saved. The list could not refresh.": "Credencial guardada. No se pudo actualizar la lista.",
+    "Could not load credentials.": "No se pudieron cargar las credenciales.",
+    "The credential list is unavailable. Try loading it again.": "La lista de credenciales no está disponible. Intente cargarla de nuevo."
   }
 }

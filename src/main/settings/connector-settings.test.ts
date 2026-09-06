@@ -203,7 +203,7 @@ describe('ConnectorSettingsModule', () => {
       kind: 'token',
       secret: 'shared-secret'
     })
-    const credential = credentials.credentials[0]!
+    const credential = credentials.createdCredential
 
     await addCustomServer({
       name: 'shared-static',
@@ -231,14 +231,14 @@ describe('ConnectorSettingsModule', () => {
         kind: 'api_key',
         secret: 'first-secret'
       })
-    ).credentials[0]!
+    ).createdCredential
     const second = (
       await service.createDeviceCredential({
         displayName: 'Second token',
         kind: 'api_key',
         secret: 'second-secret'
       })
-    ).credentials.find(({ displayName }) => displayName === 'Second token')!
+    ).createdCredential
     const added = await addCustomServer({
       name: 'rebind-static',
       transport: 'stdio',
@@ -307,7 +307,7 @@ describe('ConnectorSettingsModule', () => {
       kind: 'token',
       secret: 'shared-secret'
     })
-    const credential = credentials.credentials[0]!
+    const credential = credentials.createdCredential
     let releasePersist!: () => void
     let markPersistStarted!: () => void
     const persistStarted = new Promise<void>((resolve) => {
@@ -355,7 +355,7 @@ describe('ConnectorSettingsModule', () => {
         clientSecret: 'oauth-client-secret'
       }
     })
-    const credential = credentials.credentials[0]!
+    const credential = credentials.createdCredential
     await service.saveCustomServerOAuthState(`credential:${credential.id}`, {
       tokens: { access_token: 'initial-oauth-token', token_type: 'bearer' }
     })
@@ -446,7 +446,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'streamable_http',
         oauth: { scopes: ['read'] }
       })
-    ).credentials[0]!
+    ).createdCredential
     const added = await addCustomServer({
       name: 'existing-remote',
       transport: 'streamable_http',
@@ -488,7 +488,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'streamable_http',
         oauth: {}
       })
-    ).credentials[0]!
+    ).createdCredential
     const added = await addCustomServer({
       name: 'disconnected-remote',
       transport: 'streamable_http',
@@ -522,7 +522,7 @@ describe('ConnectorSettingsModule', () => {
           clientSecret: 'oauth-secret'
         }
       })
-    ).credentials[0]!
+    ).createdCredential
     await addCustomServer({
       name: 'unavailable-oauth-secret',
       transport: 'streamable_http',
@@ -552,7 +552,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'sse',
         oauth: {}
       })
-    ).credentials[0]!
+    ).createdCredential
 
     await expect(
       addCustomServer({
@@ -575,7 +575,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'streamable_http',
         oauth: {}
       })
-    ).credentials[0]!
+    ).createdCredential
     await credentialStore.saveOAuthState(credential.id, {
       tokens: { access_token: 'shared-token', token_type: 'bearer' }
     })
@@ -629,7 +629,7 @@ describe('ConnectorSettingsModule', () => {
           transport: 'streamable_http',
           oauth: {}
         })
-      ).credentials[0]!
+      ).createdCredential
       await credentialStore.saveOAuthState(credential.id, {
         tokens: { access_token: 'scoped-token', token_type: 'bearer' }
       })
@@ -674,7 +674,7 @@ describe('ConnectorSettingsModule', () => {
           redirectUri: 'http://127.0.0.1:8080/callback'
         }
       })
-    ).credentials[0]!
+    ).createdCredential
 
     await expect(
       addCustomServer({
@@ -701,7 +701,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'streamable_http',
         oauth: {}
       })
-    ).credentials[0]!
+    ).createdCredential
 
     await expect(
       addCustomServer({
@@ -724,7 +724,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'streamable_http',
         oauth: {}
       })
-    ).credentials[0]!
+    ).createdCredential
     const added = await addCustomServer({
       name: 'recover-missing-oauth',
       transport: 'streamable_http',
@@ -763,7 +763,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'streamable_http',
         oauth: {}
       })
-    ).credentials[0]!
+    ).createdCredential
     const added = await addCustomServer({
       name: 'missing-oauth',
       transport: 'streamable_http',
@@ -794,7 +794,7 @@ describe('ConnectorSettingsModule', () => {
         kind: 'token',
         secret: 'shared-secret'
       })
-    ).credentials[0]!
+    ).createdCredential
     await addCustomServer({
       name: 'unavailable-static',
       transport: 'streamable_http',
