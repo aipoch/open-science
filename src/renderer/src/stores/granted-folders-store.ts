@@ -27,6 +27,7 @@ export const createInitialGrantedFoldersState = (): GrantedFoldersStoreData => (
 
 export const useGrantedFoldersStore = create<GrantedFoldersStore>((set, get) => {
   let mutationRevision = 0
+  let refreshSequence = 0
 
   const apply = (roots: GrantedLocalRoot[]): GrantedLocalRoot[] => {
     set({ roots, loaded: true })
@@ -42,9 +43,12 @@ export const useGrantedFoldersStore = create<GrantedFoldersStore>((set, get) => 
     ...createInitialGrantedFoldersState(),
 
     refresh: async () => {
+      const sequence = ++refreshSequence
       const startedAtRevision = mutationRevision
       const roots = await window.api.localFs.listGrantedRoots()
-      return startedAtRevision === mutationRevision ? apply(roots) : get().roots
+      return sequence === refreshSequence && startedAtRevision === mutationRevision
+        ? apply(roots)
+        : get().roots
     },
 
     // Rejections carry a user-presentable message from main; callers surface them and the store
