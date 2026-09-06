@@ -266,12 +266,20 @@ class ProjectFilesQueryOwner {
   }
 
   async searchArtifacts(request: SearchArtifactsRequest): Promise<SearchArtifactsResult> {
-    requireIdentifier(request.primaryProjectId, 'primaryProjectId')
+    if (!Array.isArray(request.primaryProjectIds) || request.primaryProjectIds.length === 0) {
+      throw new Error('Project files primaryProjectIds must be a non-empty array.')
+    }
+    const primaryProjectIds = [...new Set(request.primaryProjectIds)]
+      .map((projectId) => {
+        requireIdentifier(projectId, 'primaryProjectId')
+        return projectId
+      })
+      .sort()
     if (!Array.isArray(request.otherProjectIds)) {
       throw new Error('Project files otherProjectIds must be an array.')
     }
     const otherProjectIds = [...new Set(request.otherProjectIds)]
-      .filter((projectId) => projectId !== request.primaryProjectId)
+      .filter((projectId) => !primaryProjectIds.includes(projectId))
       .map((projectId) => {
         requireIdentifier(projectId, 'otherProjectId')
         return projectId
@@ -288,12 +296,12 @@ class ProjectFilesQueryOwner {
         : { excludedSessionIds: request.excludedSessionIds })
     })
     const cursor = request.primaryCursor
-      ? decodeSearchArtifactCursor(request.primaryCursor, request.primaryProjectId, search)
+      ? decodeSearchArtifactCursor(request.primaryCursor, primaryProjectIds, search)
       : undefined
     const client = await this.getClient()
     const [primaryResult, otherRows] = await Promise.all([
       listAuthoritativeFiles(client, {
-        projectIds: [request.primaryProjectId],
+        projectIds: primaryProjectIds,
         source: 'artifact',
         search,
         cursor,
@@ -337,7 +345,7 @@ class ProjectFilesQueryOwner {
             ? encodeCursor({
                 version: 2,
                 kind: 'globalArtifacts',
-                primaryProjectId: request.primaryProjectId,
+                primaryProjectIds,
                 queryKey: search?.queryKey ?? '',
                 sortAtMs: lastPrimaryRow.sortAtMs.toString(),
                 seq: lastPrimaryRow.seq
@@ -345,7 +353,7 @@ class ProjectFilesQueryOwner {
             : undefined
       },
       other: otherRows.map(toItem),
-      isIndexComplete: [request.primaryProjectId, ...otherProjectIds].every((projectId) =>
+      isIndexComplete: [...primaryProjectIds, ...otherProjectIds].every((projectId) =>
         this.readIndexComplete(projectId)
       )
     }

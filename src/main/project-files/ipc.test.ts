@@ -90,7 +90,7 @@ describe('project files IPC handlers', () => {
       name: 'report.md'
     }
     const artifactSearchRequest = {
-      primaryProjectId: 'project-1',
+      primaryProjectIds: ['project-1'],
       otherProjectIds: ['project-2'],
       filenameContains: 'sin',
       primaryLimit: 8,
@@ -214,7 +214,7 @@ describe('project files IPC handlers', () => {
     })
     await handlers.listArtifactGroups({ projectId: 'project-1', limit: 10 })
     await handlers.searchArtifacts({
-      primaryProjectId: 'project-1',
+      primaryProjectIds: ['project-1', 'project-3'],
       otherProjectIds: ['project-2'],
       primaryLimit: 8,
       otherLimit: 0
@@ -239,7 +239,11 @@ describe('project files IPC handlers', () => {
     expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(2, ['project-1'])
     expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(3, ['project-1'])
     expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(4, ['project-1'])
-    expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(5, ['project-1', 'project-2'])
+    expect(recovery.waitForProjectOperations).toHaveBeenNthCalledWith(5, [
+      'project-1',
+      'project-3',
+      'project-2'
+    ])
     expect(recovery.recoverPendingDeletions).toHaveBeenCalledOnce()
   })
 })

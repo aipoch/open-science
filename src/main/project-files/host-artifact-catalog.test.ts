@@ -448,7 +448,7 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
     ])
 
     const search = await repository.searchArtifacts({
-      primaryProjectId: 'project-a',
+      primaryProjectIds: ['project-a'],
       otherProjectIds: [],
       filenameContains: 'catalog-',
       primaryLimit: 10,
@@ -506,7 +506,7 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
       })
       expect(files.items.map((item) => item.sourceFileId).sort()).toEqual(expected)
       const search = await repository.searchArtifacts({
-        primaryProjectId: 'project-a',
+        primaryProjectIds: ['project-a'],
         otherProjectIds: [],
         filenameContains: 'artifact-a',
         primaryLimit: 10,

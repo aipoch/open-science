@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { waitFor } from '@testing-library/react'
+import { fireEvent, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
@@ -226,6 +226,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   Reflect.deleteProperty(window.HTMLElement.prototype, 'scrollIntoView')
+  vi.useRealTimers()
   vi.restoreAllMocks()
   void i18next.changeLanguage('en')
   vi.unstubAllGlobals()
@@ -561,7 +562,7 @@ describe('GlobalSearchDialog', () => {
     expect(document.body.querySelector('[role="group"][aria-label="Sessions"]')).toBeNull()
     expect(
       document.body.querySelector('[role="option"][aria-selected="true"]')?.textContent
-    ).toContain('New session')
+    ).toBeUndefined()
 
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 170))
@@ -571,7 +572,7 @@ describe('GlobalSearchDialog', () => {
     expect(document.body.querySelector('[role="group"][aria-label="Sessions"]')).toBeNull()
     expect(
       document.body.querySelector('[role="option"][aria-selected="true"]')?.textContent
-    ).toContain('New session')
+    ).toBeUndefined()
 
     await act(async () => {
       resolveSearch(delayedResult)
@@ -1160,7 +1161,7 @@ describe('GlobalSearchDialog', () => {
     expect(footer?.textContent).not.toContain('mention')
     expect(footer?.querySelectorAll('kbd')).toHaveLength(3)
     expect(window.api.projectFiles.searchArtifacts).toHaveBeenCalledWith(
-      expect.objectContaining({ primaryProjectId: 'project-b', otherLimit: 5 })
+      expect.objectContaining({ primaryProjectIds: ['project-b'], otherLimit: 5 })
     )
 
     const valueSetter = Object.getOwnPropertyDescriptor(
@@ -1236,5 +1237,308 @@ describe('GlobalSearchDialog', () => {
     expect(window.api.projectFiles.searchArtifacts).toHaveBeenCalledWith(
       expect.objectContaining({ excludedSessionIds: ['session-a'] })
     )
+  })
+})
+
+describe('Global Search result accessibility', () => {
+  const emptyResult = {
+    primary: { items: [], totalCount: 0 },
+    other: [],
+    isIndexComplete: true
+  }
+  const options = (): HTMLElement[] => [
+    ...document.body.querySelectorAll<HTMLElement>('[role="option"]')
+  ]
+  const optionWithText = (text: string): HTMLElement => {
+    const row = options().find((option) => option.textContent?.includes(text))
+    expect(row, `Expected a selectable row containing "${text}"`).toBeDefined()
+    return row!
+  }
+  const mount = async (onOpenChange = vi.fn()): Promise<HTMLInputElement> => {
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
+    })
+    // Control only the debounce; Radix and React retain their normal microtask behavior.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')!
+    act(() => input.focus())
+    return input
+  }
+  const search = async (input: HTMLInputElement): Promise<void> => {
+    act(() => fireEvent.change(input, { target: { value: 'sin' } }))
+    await act(async () => vi.advanceTimersByTimeAsync(150))
+  }
+  const enter = (input: HTMLInputElement): void => {
+    act(() => fireEvent.keyDown(input, { key: 'Enter' }))
+  }
+
+  it('makes every matching artifact in another Project reachable from Home', async () => {
+    useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
+    window.localStorage.setItem('open-science:last-opened-project', 'project-a')
+    const files = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta'].map((name) => ({
+      ...artifact,
+      id: name,
+      sourceFileId: name,
+      sourceVersionId: `version-${name}`,
+      name: `sin-${name}.png`,
+      projectId: 'project-b',
+      sessionId: 'session-b'
+    }))
+    // Honor the paged collection and bounded recommendation contract.
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockImplementation(async (request) => {
+      const primaryIds = request.primaryProjectIds
+      const matching = primaryIds.includes('project-b') ? files : []
+      return {
+        ...emptyResult,
+        primary: { items: matching.slice(0, request.primaryLimit), totalCount: matching.length },
+        other: request.otherProjectIds.includes('project-b')
+          ? files.slice(0, request.otherLimit)
+          : []
+      }
+    })
+    const input = await mount()
+    await search(input)
+    const more = options().find((row) => row.textContent?.includes('show more'))
+    if (more) await act(async () => more.click())
+    expect.soft(options().filter((row) => row.textContent?.includes('sin-'))).toHaveLength(6)
+    expect.soft(document.body.textContent).toContain('sin-zeta.png')
+    expect(document.body.textContent).not.toContain('Some artifact results may be missing')
+  })
+
+  it.each(['workspace', 'home'] as const)(
+    'does not enter creation from %s when Enter arrives during the debounce',
+    async (view) => {
+      useNavigationStore.setState({
+        view,
+        activeProjectId: view === 'workspace' ? 'project-a' : undefined
+      })
+      const onOpenChange = vi.fn()
+      const input = await mount(onOpenChange)
+      act(() => fireEvent.change(input, { target: { value: 'sin' } }))
+      enter(input)
+      expect.soft(useSessionStore.getState().selectedSessionId).toBe('session-a')
+      expect.soft(useNavigationStore.getState().pendingProjectCreation).toBe(false)
+      expect.soft(onOpenChange).not.toHaveBeenCalledWith(false)
+      expect.soft(input.getAttribute('aria-activedescendant')).toBeNull()
+      expect.soft(options().some((row) => row.getAttribute('aria-selected') === 'true')).toBe(false)
+    }
+  )
+
+  it('does not enter creation while the artifact request is unresolved', async () => {
+    const onOpenChange = vi.fn()
+    const input = await mount(onOpenChange)
+    let resolveSearch!: (value: typeof emptyResult) => void
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSearch = resolve
+      })
+    )
+    await search(input)
+    enter(input)
+    expect.soft(useSessionStore.getState().selectedSessionId).toBe('session-a')
+    expect.soft(onOpenChange).not.toHaveBeenCalledWith(false)
+    await act(async () => resolveSearch(emptyResult))
+    enter(input)
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-a')
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it.each(['ArrowDown', 'ArrowUp', 'Home', 'End', 'hover', 'click'])(
+    'allows explicit command selection with %s while search is pending',
+    async (method) => {
+      const onOpenChange = vi.fn()
+      const input = await mount(onOpenChange)
+      act(() => fireEvent.change(input, { target: { value: 'sin' } }))
+      const command = optionWithText('New session')
+      if (method === 'click') act(() => command.click())
+      else {
+        act(() =>
+          method === 'hover'
+            ? fireEvent.mouseOver(command)
+            : fireEvent.keyDown(input, { key: method })
+        )
+        expect(command.getAttribute('aria-selected')).toBe('true')
+        expect(input.getAttribute('aria-activedescendant')).toBe(command.id)
+        enter(input)
+      }
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+      expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    }
+  )
+
+  it('keeps Enter inert when only Literature is still loading', async () => {
+    const onOpenChange = vi.fn()
+    const input = await mount(onOpenChange)
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue(emptyResult)
+    let resolveLiterature!: (value: { entries: [] }) => void
+    vi.mocked(window.api.literature.search).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveLiterature = resolve
+      })
+    )
+    await search(input)
+    enter(input)
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(input.getAttribute('aria-activedescendant')).toBeNull()
+    await act(async () => resolveLiterature({ entries: [] }))
+    enter(input)
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-a')
+  })
+
+  it('retries the hovered artifact failure while Literature is still pending', async () => {
+    const onOpenChange = vi.fn()
+    const input = await mount(onOpenChange)
+    let resolveLiterature!: (value: { entries: [] }) => void
+    vi.mocked(window.api.literature.search).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveLiterature = resolve
+      })
+    )
+    vi.mocked(window.api.projectFiles.searchArtifacts)
+      .mockRejectedValueOnce(new Error('Unavailable'))
+      .mockResolvedValue(emptyResult)
+    await search(input)
+    const retry = optionWithText('Could not load artifacts — retry')
+    act(() => fireEvent.mouseOver(retry))
+    await act(async () => fireEvent.keyDown(input, { key: 'Enter' }))
+    expect.soft(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect.soft(window.api.projectFiles.searchArtifacts).toHaveBeenCalledTimes(3)
+    await act(async () => resolveLiterature({ entries: [] }))
+  })
+
+  it('pages all Home artifact matches and announces their total', async () => {
+    useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
+    const files = [
+      'alpha',
+      'beta',
+      'gamma',
+      'delta',
+      'epsilon',
+      'zeta',
+      'eta',
+      'theta',
+      'iota'
+    ].map((name) => ({
+      ...artifact,
+      id: name,
+      name: `sin-${name}.png`,
+      projectId: 'project-b',
+      sessionId: 'session-b'
+    }))
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockImplementation(async (request) => {
+      const matching = request.primaryProjectIds.includes('project-b') ? files : []
+      const offset = request.primaryCursor ? Number(request.primaryCursor) : 0
+      const end = offset + request.primaryLimit
+      return {
+        ...emptyResult,
+        primary: {
+          items: matching.slice(offset, end),
+          totalCount: matching.length,
+          nextCursor: end < matching.length ? String(end) : undefined
+        }
+      }
+    })
+    const input = await mount()
+    await search(input)
+    expect(document.body.querySelector('[aria-live="polite"]')?.textContent).toBe('11 results')
+    expect(options().filter((row) => row.textContent?.includes('sin-'))).toHaveLength(8)
+    act(() => fireEvent.mouseOver(optionWithText('show more')))
+    await act(async () => fireEvent.keyDown(input, { key: 'Enter' }))
+    expect(options().filter((row) => row.textContent?.includes('sin-'))).toHaveLength(9)
+    expect(document.body.textContent).toContain('sin-iota.png')
+    expect(options().some((row) => row.textContent?.includes('show more'))).toBe(false)
+    expect(window.api.projectFiles.searchArtifacts).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        primaryProjectIds: ['project-a', 'project-b'],
+        otherProjectIds: [],
+        otherLimit: 0,
+        primaryCursor: '8'
+      })
+    )
+  })
+
+  it.each(['sessions', 'artifacts', 'retry'] as const)(
+    'activates the hovered %s control with Enter',
+    async (kind) => {
+      const onOpenChange = vi.fn()
+      const input = await mount(onOpenChange)
+      if (kind === 'sessions') {
+        useSessionStore.setState((state) => ({
+          sessions: Array.from({ length: 9 }, (_, index) => ({
+            ...state.sessions[0],
+            id: `matching-session-${index}`,
+            title: `sin match ${index}`
+          }))
+        }))
+        vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue(emptyResult)
+      } else if (kind === 'artifacts') {
+        vi.mocked(window.api.projectFiles.searchArtifacts)
+          .mockResolvedValueOnce({
+            ...emptyResult,
+            primary: { items: [artifact], totalCount: 2, nextCursor: 'next-artifact-page' }
+          })
+          .mockResolvedValue({
+            ...emptyResult,
+            primary: { items: [{ ...artifact, id: 'last', name: 'sin-last.png' }], totalCount: 2 }
+          })
+      } else {
+        vi.mocked(window.api.projectFiles.searchArtifacts)
+          .mockRejectedValueOnce(new Error('Artifact query unavailable'))
+          .mockResolvedValue(emptyResult)
+      }
+      await search(input)
+      const row = optionWithText(
+        kind === 'retry' ? 'Could not load artifacts — retry' : 'show more'
+      )
+      const callsBefore = vi.mocked(window.api.projectFiles.searchArtifacts).mock.calls.length
+      act(() => fireEvent.mouseOver(row))
+      expect.soft(row.getAttribute('aria-selected')).toBe('true')
+      expect.soft(input.getAttribute('aria-activedescendant')).toBe(row.id)
+      await act(async () => fireEvent.keyDown(input, { key: 'Enter' }))
+      expect.soft(onOpenChange).not.toHaveBeenCalledWith(false)
+      expect.soft(useSessionStore.getState().selectedSessionId).toBe('session-a')
+      if (kind === 'sessions') {
+        expect
+          .soft(document.body.querySelectorAll('[data-testid="global-search-session-icon"]'))
+          .toHaveLength(9)
+      } else {
+        expect.soft(window.api.projectFiles.searchArtifacts).toHaveBeenCalledTimes(callsBefore + 1)
+        if (kind === 'artifacts') expect.soft(document.body.textContent).toContain('sin-last.png')
+        else
+          expect.soft(document.body.textContent).not.toContain('Could not load artifacts — retry')
+      }
+    }
+  )
+
+  it('keeps recent Sessions available and offers retry after recent artifacts fail', async () => {
+    vi.mocked(window.api.projectFiles.searchArtifacts)
+      .mockRejectedValueOnce(new Error('Artifact query unavailable'))
+      .mockResolvedValue({ ...emptyResult, primary: { items: [artifact], totalCount: 1 } })
+    await mount()
+    expect(document.body.textContent).toContain('Recent sessions')
+    expect(document.body.textContent).toContain('Python 绘制 sin 函数图')
+    const retry = optionWithText('Could not load artifacts — retry')
+    await act(async () => retry.click())
+    expect(document.body.textContent).toContain('sin.png')
+    expect(document.body.textContent).not.toContain('Could not load artifacts — retry')
+  })
+
+  it('expands matching Sessions when show more is clicked directly', async () => {
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue(emptyResult)
+    useSessionStore.setState((state) => ({
+      sessions: Array.from({ length: 9 }, (_, index) => ({
+        ...state.sessions[0],
+        id: `matching-session-${index}`,
+        title: `sin match ${index}`
+      }))
+    }))
+    const input = await mount()
+    await search(input)
+    act(() => optionWithText('show more').click())
+    expect(
+      document.body.querySelectorAll('[data-testid="global-search-session-icon"]')
+    ).toHaveLength(9)
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-a')
   })
 })
