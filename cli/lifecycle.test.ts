@@ -17,6 +17,8 @@ import {
   isProcessAlive,
   openLaunchLog,
   parseCliArgs,
+  runCli,
+  reportCliError,
   statusCommand,
   stopCommand,
   terminateDaemon,
@@ -31,6 +33,7 @@ import {
   STATE_FILE,
   TOKEN_FILE
 } from './config-root.mjs'
+import { connectToOpenScience } from '../packages/open-science/index.mjs'
 
 // A running daemon's on-disk state, as findServiceState would return it.
 const RUNNING_STATE = { pid: 4242, port: 44100, configRoot: '/tmp/os-config' }
@@ -75,6 +78,8 @@ const makeDeps = (overrides: Partial<CommandDeps> = {}): CommandDeps => {
 afterEach(() => {
   process.exitCode = undefined
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   vi.mocked(homedir).mockReset()
 })
 
@@ -114,6 +119,7 @@ describe('C01 automatic service discovery', () => {
           return {
             ok: healthy,
             status: healthy ? 200 : 503,
+            json: async () => ({ data: { appName: 'Open Science' } }),
             arrayBuffer: async () => new ArrayBuffer(0)
           }
         })
@@ -123,6 +129,26 @@ describe('C01 automatic service discovery', () => {
       await rm(home, { recursive: true, force: true })
     }
   }
+
+  it.each(['dead', 'unhealthy'] as const)(
+    'connects the SDK past a %s candidate',
+    async (preferred) => {
+      await withCandidates(preferred, async ({ deps }) => {
+        const client = await connectToOpenScience({ fetch: deps.fetch })
+        expect(client.baseUrl).toBe('http://127.0.0.1:44102')
+      })
+    }
+  )
+
+  it('reuses the healthy production service on start past an unhealthy candidate', async () => {
+    await withCandidates('unhealthy', async ({ deps }) => {
+      vi.stubGlobal('fetch', deps.fetch)
+      vi.spyOn(process, 'kill').mockImplementation(() => true)
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+      await runCli(['start', '--no-open', '--app-path', join(tmpdir(), 'missing-open-science-app')])
+      expect(log).toHaveBeenCalledWith('Open Science is already running (PID 4242).')
+    })
+  })
 
   it.each(['dead', 'unhealthy'] as const)(
     'finds the healthy production service on both queries with a %s preferred PID',
@@ -203,6 +229,46 @@ describe('C01 automatic service discovery', () => {
       expect(deps.fetch.mock.calls.some(([url]) => url.includes(':44102/'))).toBe(false)
     })
   })
+
+  it.each(['OPEN_SCIENCE_CONFIG_ROOT', 'OPEN_SCIENCE_STORAGE_ROOT'])(
+    'keeps discovery bounded by %s',
+    async (name) => {
+      await withCandidates('unhealthy', async ({ deps, devRoot }) => {
+        vi.stubEnv(name, devRoot)
+        await statusCommand({ json: true }, deps)
+        expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({ running: false })
+        expect(deps.fetch.mock.calls.some(([url]) => url.includes(':44102/'))).toBe(false)
+        await expect(connectToOpenScience({ fetch: deps.fetch })).rejects.toThrow()
+        expect(deps.fetch.mock.calls.some(([url]) => url.includes(':44102/'))).toBe(false)
+      })
+    }
+  )
+
+  it('fails a bounded stop without deleting or signalling a live unhealthy candidate', async () => {
+    await withCandidates('unhealthy', async ({ deps, devRoot }) => {
+      await expect(stopCommand({ configRoot: devRoot }, deps)).rejects.toThrow(
+        'authenticated shutdown request was not accepted'
+      )
+      expect(deps.removeState).not.toHaveBeenCalled()
+      expect(deps.forceKill).not.toHaveBeenCalled()
+      expect(deps.fetch.mock.calls.some(([url]) => url.includes(':44102/'))).toBe(false)
+    })
+  })
+
+  it('does not continue SDK discovery after cancellation', async () => {
+    await withCandidates('unhealthy', async ({ deps }) => {
+      const controller = new AbortController()
+      const reason = new Error('cancel connection')
+      deps.fetch.mockImplementationOnce(async () => {
+        controller.abort(reason)
+        throw reason
+      })
+      await expect(
+        connectToOpenScience({ fetch: deps.fetch, signal: controller.signal })
+      ).rejects.toBe(reason)
+      expect(deps.fetch).toHaveBeenCalledTimes(1)
+    })
+  })
 })
 
 describe('C05 stop --json output', () => {
@@ -230,10 +296,34 @@ describe('C05 stop --json output', () => {
       await stopCommand(parseCliArgs(['stop', '--json']).options, deps)
       expect(deps.log).toHaveBeenCalledTimes(1)
       const stdout = deps.log.mock.calls.map((args) => args.join(' ')).join('\n')
-      expect(JSON.parse(stdout)).toBeTypeOf('object')
+      expect(JSON.parse(stdout)).toEqual({
+        result:
+          kind === 'already stopped'
+            ? 'already-stopped'
+            : kind === 'daemon'
+              ? 'daemon-stopped'
+              : 'web-service-stopped'
+      })
       expect(process.exitCode).toBeUndefined()
     }
   )
+
+  it('keeps rejected shutdown machine-readable and unsuccessful', async () => {
+    const deps = makeDeps({ fetch: vi.fn().mockResolvedValue({ ok: false, status: 401 }) })
+    const errorOutput = vi.fn()
+    const setExitCode = vi.fn()
+    await stopCommand({ json: true }, deps).catch((error) => {
+      reportCliError(error, ['stop', '--json'], { error: errorOutput, setExitCode })
+    })
+    expect(deps.log).not.toHaveBeenCalled()
+    expect(JSON.parse(errorOutput.mock.calls[0][0])).toMatchObject({
+      error: { code: 'command_failed' },
+      exitCode: 1
+    })
+    expect(setExitCode).toHaveBeenCalledWith(1)
+    expect(deps.removeState).not.toHaveBeenCalled()
+    expect(deps.forceKill).not.toHaveBeenCalled()
+  })
 })
 
 describe('terminateDaemon', () => {

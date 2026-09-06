@@ -172,7 +172,7 @@ describe('planCliLauncher', () => {
   })
 })
 
-pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
+describe('initial CLI installation failure recovery', () => {
   it.each(['first write', 'partial write', 'chmod'] as const)(
     'C02 recovers a failed initial %s so installation can be retried',
     async (failure) => {
@@ -190,7 +190,7 @@ pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
         if (failure === 'partial write') {
           write.mockImplementationOnce(async function (this: FileHandle) {
             const prefix = Buffer.from(plan.shim).subarray(0, 8)
-            return originalWrite.call(this, prefix, 0, prefix.length, 0)
+            return Reflect.apply(originalWrite, this, [prefix, 0, prefix.length, 0])
           })
         }
         write.mockRejectedValueOnce(error)
@@ -208,26 +208,31 @@ pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
     }
   )
 
-  it('C02 preserves a concurrent user replacement when initial writing fails', async () => {
-    const env = posixEnv()
-    const plan = planCliLauncher(env)
-    const probe = await open(join(home, 'file-handle-probe'), 'w')
-    const prototype = Object.getPrototypeOf(probe) as FileHandle
-    await probe.close()
-    const error = Object.assign(new Error('disk full'), { code: 'ENOSPC' })
-    const userContent = '#!/bin/sh\necho user-owned\n'
-    vi.spyOn(prototype, 'write').mockImplementationOnce(async () => {
-      const replacement = join(home, 'user-replacement')
-      await writeFile(replacement, userContent)
-      await rename(replacement, plan.target)
-      throw error
-    })
+  it.skipIf(process.platform === 'win32')(
+    'C02 preserves a concurrent user replacement when initial writing fails',
+    async () => {
+      const env = posixEnv()
+      const plan = planCliLauncher(env)
+      const probe = await open(join(home, 'file-handle-probe'), 'w')
+      const prototype = Object.getPrototypeOf(probe) as FileHandle
+      await probe.close()
+      const error = Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+      const userContent = '#!/bin/sh\necho user-owned\n'
+      vi.spyOn(prototype, 'write').mockImplementationOnce(async () => {
+        const replacement = join(home, 'user-replacement')
+        await writeFile(replacement, userContent)
+        await rename(replacement, plan.target)
+        throw error
+      })
 
-    await expect(installCliLauncher(env)).rejects.toBe(error)
-    await expect(readFile(plan.target, 'utf8')).resolves.toBe(userContent)
-    await expect(installCliLauncher(env)).rejects.toThrow(/not managed by Open Science/)
-  })
+      await expect(installCliLauncher(env)).rejects.toBe(error)
+      await expect(readFile(plan.target, 'utf8')).resolves.toBe(userContent)
+      await expect(installCliLauncher(env)).rejects.toThrow(/not managed by Open Science/)
+    }
+  )
+})
 
+pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
   it('writes an executable shim and reports a PATH hint when not on PATH', async () => {
     const status = await installCliLauncher(posixEnv())
     expect(status.installed).toBe(true)

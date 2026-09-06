@@ -61,6 +61,23 @@ command fails without signalling the PID recorded in `web-service.json`; a stale
 reused by an unrelated process. The state file is retained for diagnosis and can be replaced by a
 later `open-science start`.
 
+Automatic discovery tries the development config directory before the production directory, skipping
+dead or unhealthy candidates until it finds a healthy service. An explicit `--config-root`,
+`OPEN_SCIENCE_CONFIG_ROOT`, or `OPEN_SCIENCE_STORAGE_ROOT` limits discovery to that directory. Live
+unhealthy records are retained; failed authentication never authorizes signalling a recorded PID.
+
+`open-science stop --json` prints exactly one result object on success:
+
+| `result`              | Meaning                                                            |
+| --------------------- | ------------------------------------------------------------------ |
+| `already-stopped`     | No live service record was found.                                  |
+| `daemon-stopped`      | The authenticated standalone daemon exited.                        |
+| `web-service-stopped` | The attached web service stopped; the desktop app remains running. |
+
+Among lifecycle commands, `status`, `stop`, and `update` support `--json`. `start` and `url` reject
+it; run `start --no-open` followed by `status --json` for machine-readable startup status. Errors
+with `--json` are reported on stderr as a JSON error object with a nonzero exit code.
+
 ## Application updates
 
 Check, download, and apply an Open Science application update without opening the browser or desktop

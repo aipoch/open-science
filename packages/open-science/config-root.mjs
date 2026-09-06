@@ -54,7 +54,7 @@ export const findServiceState = async (options = {}) => {
   for (const configRoot of candidateConfigRoots(options)) {
     if (!(await exists(join(configRoot, STATE_FILE)))) continue
     const state = await readStateFromRoot(configRoot)
-    if (state) return state
+    if (state && (!options.accept || (await options.accept(state)))) return state
   }
   return undefined
 }

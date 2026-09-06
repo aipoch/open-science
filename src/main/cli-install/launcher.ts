@@ -153,8 +153,10 @@ const windowsShim = (env: CliLauncherEnv): string => {
     '@echo off',
     `rem ${MANAGED_LAUNCHER_HEADER_V1}`,
     'rem Edits are overwritten on reinstall.',
+    'setlocal EnableExtensions DisableDelayedExpansion',
     'set ELECTRON_RUN_AS_NODE=1',
     `${appPathLine}"${env.appExecPath}" "${env.cliEntryPath}" %*`,
+    'endlocal & exit /b %errorlevel%',
     ''
   ].join('\r\n')
 }
@@ -562,6 +564,8 @@ const replaceCliLauncher = async (
 
 const tryCreateCliLauncher = async (plan: CliLauncherPlan): Promise<boolean> => {
   let handle: FileHandle
+  let created: Stats | undefined
+  let closed = false
   try {
     handle = await open(
       plan.target,
@@ -574,14 +578,29 @@ const tryCreateCliLauncher = async (plan: CliLauncherPlan): Promise<boolean> => 
   }
 
   try {
+    created = await handle.stat()
     await writeCliLauncher(handle, plan)
-    const created = await handle.stat()
     if (!(await isOpenCliLauncherCurrent(plan.target, created))) {
       refuseUnmanagedCliLauncher(plan.target)
     }
     return true
+  } catch (error) {
+    // O_EXCL proves this attempt created the file; the identity check prevents cleanup from adopting
+    // a same-name user replacement. Retain the original error if inspection or cleanup also fails.
+    if (created) {
+      try {
+        if (process.platform === 'win32') {
+          await handle.close()
+          closed = true
+        }
+        if (await isOpenCliLauncherCurrent(plan.target, created)) await rm(plan.target)
+      } catch {
+        // Fail closed when ownership cannot be checked, without masking the installation failure.
+      }
+    }
+    throw error
   } finally {
-    await handle.close()
+    if (!closed) await handle.close()
   }
 }
 
