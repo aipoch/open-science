@@ -1183,6 +1183,30 @@ describe('ConnectorAddForm (edit)', () => {
     expect(updateCustomServer).toHaveBeenCalledWith(expect.objectContaining({ args }))
   })
 
+  it('clears a saved empty argument when Delete is pressed in the empty field', async () => {
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ updateCustomServer })
+    await act(async () =>
+      root.render(
+        <ConnectorAddForm
+          editServer={{ ...editServer, args: [''] }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    )
+    const field = document.body.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Arguments"]'
+    )!
+    expect(field.value).toBe('')
+    act(() => field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true })))
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )!
+    await act(async () => save.click())
+    expect(updateCustomServer).toHaveBeenCalledWith(expect.objectContaining({ args: [] }))
+  })
+
   it('omits unavailable argv when it has not been edited', async () => {
     const updateCustomServer = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({ updateCustomServer })

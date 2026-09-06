@@ -926,6 +926,15 @@ export function ConnectorAddForm({
                       rows={4}
                       className="resize-y font-mono text-[13px]"
                       onChange={(event) => setArgsDraft({ text: event.target.value, edited: true })}
+                      onKeyDown={(event) => {
+                        // Deleting a saved empty argument produces no input event.
+                        if (
+                          event.currentTarget.value === '' &&
+                          ['Backspace', 'Delete'].includes(event.key)
+                        ) {
+                          setArgsDraft({ text: '', edited: true })
+                        }
+                      }}
                     />
                     <p id="connector-args-help" className={helperClassName}>
                       {t(
