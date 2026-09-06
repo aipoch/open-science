@@ -1,113 +1,59 @@
 ---
 name: figure-composer
-description: 'Compose one publication-grade multi-panel figure. Start from a one-line claim plus immutable data Artifact Version references, or inspect an existing figure and draft its outline directly. Plan a 12-column panel outline, delegate one worker per panel, compose and inspect the result, then run at most three adversarial review rounds while regenerating only affected panels. For a standalone plot use `figure-style`; for whole-paper figure ordering use `paper-narrative`.'
+description: 'Compose one publication-grade multi-panel figure from a claim and immutable data Artifact Version references. Plan the outline, delegate self-contained panel workers, compose in a producer child, and run one bounded review with at most one targeted correction round.'
 license: Apache-2.0
 ---
 
-# Figure Composer — narrative → panels → compose → adversarial loop
+# Figure Composer
 
-`figure-composer` is the outer workflow for one multi-panel figure. Use the
-`figure-style` rules while planning and reviewing; every panel worker uses those
-rules independently. Run `paper-narrative` first when the paper-level figure
-sequence is still undecided.
+This is a thin Main/root orchestration Skill. It embeds the few planning rules
+Main needs; do not load `figure-style` in Main. Generated panel tasks contain
+their complete rendering contract and inject the registered helper directly.
 
-## Open Science Notebook call
-
-Every `notebook_execute` request whose `code` uses a function named in this skill
-includes this skill ID:
+Use this workflow only in Main/root. Delegated children cannot delegate again.
+After this `SKILL.md` is loaded, do not read it again in the same turn. Do not
+list the Skill directory or read `kernel.py` or `open-science.json`. Call the
+registered Python helpers directly through `notebook_execute`, for example:
 
 ```json
 { "kernelSkillIds": ["figure-composer"], "code": "print(figure_outline_schema())" }
 ```
 
-`kernelSkillIds` contains the skill ID; function calls belong in `code`. Call the
-named functions directly without an import or discovery step.
+## Inputs and outline
 
-## Inputs
+- `claim`: the one sentence the figure makes true.
+- `dataVersionIds`: finalized immutable Upload or Artifact Version IDs.
+- `width_mm`: venue width.
+- `rulesVersionId` (optional): a pre-existing finalized Version with extra rules.
+- `delegatePrefix`: a short unique prefix.
 
-- `claim`: the one sentence the figure makes true without surrounding prose.
-- `dataVersionIds`: immutable Upload or Artifact Version identities grounding
-  the panels.
-- `width_mm`: venue column width, commonly 85–89 mm single or 174–183 mm double.
-- `rulesVersionId`: immutable Artifact Version containing the design rules used
-  by the composite reviewer.
-- `delegatePrefix`: short branch-unique prefix for panel and reviewer child names.
+Main drafts a `panel_outline` matching `figure_outline_schema()`: 12 columns,
+one row per sub-claim, exact panel letters, roles, messages, geometry, and only
+supplied `data_vid` values. For the requested two-panel smoke figure, use exactly
+A and B and set `fixed_panel_set: true`; otherwise set it only when the user
+explicitly requires the exact panel set. `row` and `col` are zero-based indices;
+`row_heights_mm` contains positive physical millimeter heights (for example
+`[38.0]` for compact schematics), never weights or row numbers. Keep titles standalone, marks identifiable, narrative labels
+sparse, and panel slots reasonably filled. Do not call another model or load
+another Skill to plan the outline.
 
-Run this workflow only in the Main/root agent. Delegated children cannot call
-`host.delegate`, so the whole composer cannot itself be delegated.
+## Panel workers
 
-## Entry points
+For every panel, generate the exact task with
+`panel_task(outline, letter, fig_label)`. It is self-contained: panel children
+must not search for or read any `SKILL.md`. Pass it unchanged on the first
+render, with only that panel's finalized data Version IDs in `inputs`. Each panel
+task permits at most two `notebook_execute` calls: one render-and-check call and,
+only after a failed check, one targeted correction-and-check call. Panel workers
+do not call image-view tools; the independent reviewer owns visual QA.
 
-- **From a claim:** Main writes the outline in step 1 from the claim, data, and
-  `figure-style` rules.
-- **From an existing figure:** inspect it with `host.viewImage`, then have Main
-  draft and review the outline directly. Current `host.llm` calls do not accept
-  images, so do not add a second hidden inference step. Pixels cannot supply
-  Artifact Version identities; fill `data_vid` from the provided data.
-
-## 1. Narrative → panel outline
-
-Main produces a `panel_outline` matching `figure_outline_schema()`:
-
-```json
-{
-  "claim": "…",
-  "width_mm": 180,
-  "ncol": 12,
-  "row_heights_mm": [40, 60, 46, 52],
-  "panels": [
-    {
-      "letter": "a",
-      "role": "schematic",
-      "row": 0,
-      "col": 0,
-      "colspan": 12,
-      "chart_family": "schematic overview",
-      "message": "…",
-      "data_vid": null,
-      "ask": "…"
-    },
-    {
-      "letter": "b",
-      "role": "primary",
-      "row": 1,
-      "col": 0,
-      "colspan": 7,
-      "chart_family": "scatter + trend",
-      "message": "…",
-      "data_vid": "…",
-      "ask": "…"
-    }
-  ]
-}
-```
-
-Outline rules:
-
-- A is the context-free hook: schematic or hero, normally full width.
-- B carries the claim: it should make the sentence true on its own.
-- Remaining panels add evidence in descending importance.
-- Use one row per sub-claim, normally 5–10 panels, and a 12-column grid.
-- Every non-schematic `data_vid` must be one of the supplied immutable Version
-  identities. Do not invent or rewrite Version IDs.
-
-Review the outline before fan-out. Use the schema as a contract; Main does the
-reasoning and does not call `host.llm` to generate the outline again.
-
-## 2. Fan out panel workers
-
-Generate each task in Python with `panel_task(outline, letter, fig_label)`. The
-returned task contains the complete panel procedure. Pass it unchanged on the
-first render and supply the panel's data Version in `inputs`.
-
-Dispatch from `repl_execute`. `host.delegate` accepts at most four children per
-atomic call, so send ordered waves of no more than four. Each request uses this
-output schema:
+Dispatch ordered waves of at most four from `repl_execute` with `wait: false`.
+Providers that do not support reliable concurrent requests may use ordered waves
+of one. Require this output shape:
 
 ```javascript
-const panelOutputSchema = {
-  type: 'object',
-  additionalProperties: false,
+{
+  type: 'object', additionalProperties: false,
   required: ['panelVersionId', 'labelsUsed'],
   properties: {
     panelVersionId: { type: 'string', minLength: 1 },
@@ -116,96 +62,96 @@ const panelOutputSchema = {
 }
 ```
 
-Use `wait: false`, then collect the exact `{ frameId, attemptId }` receipt
-handles. Reject a non-completed/error child, missing or unsatisfied structured
-output, a missing or duplicate expected `panel_<letter>.png`, or a mismatch
-between its Artifact `versionId` and `structuredOutput.panelVersionId`. MIME
-metadata may be absent; the exact filename and Version identity are the binding
-checks. Return each wave's validated `{ letter, versionId }` values from the
-`repl_execute` call instead of relying on local `const` or `let` declarations to
-survive a later call.
+Collect the exact `{ frameId, attemptId }` receipts. Treat collection as a
+**Delegated Wait**, not an **Attempt Deadline**. Use
+`host.collect(..., { timeoutSeconds: 240, returnWhen: 'all' })` inside a
+`repl_execute` whose `timeoutMs` is at most `270000`. If an Attempt is still
+`running`, collect the same receipt again. A transport or REPL observation
+timeout does not stop a child and never authorizes `host.stopChild` or a
+replacement. Retry only after the pinned Attempt is terminal: it ended in an
+error/cancellation, or completed but its postcondition or Version/Artifact
+identity validation was explicitly rejected. A running Attempt is never
+retryable.
 
-Keep Version identities in outline order. Resolve bytes with
-`host.artifactPath(versionId)` only after collection; temporary paths are never
-the Agent-to-Agent contract. Child names remain occupied after settlement, so
-use a unique `delegatePrefix` and round number.
+Accept a panel only when all are true: completed status; satisfied structured
+output; exactly one expected `panel_<letter>.png`; its Artifact `versionId`
+equals `structuredOutput.panelVersionId`; and its Version is finalized. A
+placeholder, artifact ID, filename, path, or root pending Version is invalid.
+Return validated `{ letter, versionId }` values from the same REPL call rather
+than relying on local variables across calls.
 
-## 3. Compose and bind the producer Run
+Main/root never resolves panel bytes or calls `host.artifactPath`; it passes
+only validated Version IDs onward. The producer task below owns path resolution.
+Temporary paths are never an Agent-to-Agent contract. Child names stay occupied,
+so every retry uses a fresh name.
 
-Resolve the collected Version identities, place the paths in a small JSON
-handoff under `process.env.OPEN_SCIENCE_HANDOFF_DIR`, and read that manifest from
-the Python producer cell. On that same `notebook_execute` request, pass the
-ordered, de-duplicated panel identities as
-`artifactVersionInputs: panelVersions.map(({ versionId }) => versionId)`. This
-registers the delegated immutable panel Versions as the composition Run's
-provenance inputs; paths remain byte-access implementation details and must never
-replace Version identities in this field. Call `compose_figure`, verify the
-notebook result is completed, and keep the actual returned `runId`. Publish the
-final PNG with
-`write_artifact_file({ filename: "figure.png", producerRunId: composeResult.runId })`;
-never substitute a round number or locally invented Run identity. This binds the
-composite Artifact to the run that last wrote its bytes. Fail the workflow if
-any panel Version cannot be validated in the active Project; never silently
-compose with an unregistered provenance input.
+## Producer child
 
-## 3.5 Look before review
+Main's own newly written Artifact stays pending until its turn ends. Therefore,
+compose in one non-delegating producer child generated by
+`composition_task(outline, panelVersions, fig_label)`, passing ordered panel
+Version IDs in `inputs`. Require `{ compositeVersionId: string }`.
 
-Call `compose_crops` in Python and inspect every crop before formal review.
-`host.viewImage` never upscales and caps the output long edge at 1568 pixels;
-omit `maxSize` when native pixels are required.
+The generated producer task is self-contained and does not load the outer
+composer document or perform panel-level review. Inside that child only,
+`host.artifactPath` resolves panel Versions; `compose_figure` runs with
+`kernelSkillIds: ["figure-composer"]` and ordered `artifactVersionInputs`;
+`figure.png` is published with the exact notebook `runId`; and
+`host.submitOutput` returns the finalized composite Version.
 
-One `repl_execute` invocation can attach at most four images. Split five or more
-crops into ordered batches of no more than four, and let each invocation finish
-successfully before starting the next; a failed enclosing invocation discards
-every image staged by that invocation. For each `cropBatch`, use the current
-camelCase API:
+Accept the producer only when it completed, satisfied structured output,
+published exactly one `figure.png`, and that Artifact's `versionId` equals
+`compositeVersionId`. Never use a root pending Version or a local path fallback.
 
-```javascript
-if (cropBatch.length > 4) throw new Error('viewImage crop batch exceeds four images')
-for (const [letter, box] of cropBatch) {
-  await host.viewImage(
-    { versionId: compositeVersionId },
-    { crop: { unit: 'pixels', left: box[0], top: box[1], right: box[2], bottom: box[3] } }
-  )
-}
-return { inspectedPanels: cropBatch.map(([letter]) => letter) }
-```
+## Bounded inspection and formal review
 
-Check contrast, smallest marks, leader crossings, color identity, legend
-binding, seams, panel-letter overlap, gutter bleed, and resize artifacts. Fix an
-obvious defect before formal review.
+Main may inspect the full composite once. Crop only one specifically suspicious
+region; do not inspect every crop by default and do not start pixel-level QA.
 
-## 4. Adversarial review loop
+At least one formal reviewer Attempt is mandatory; never replace this step with
+Main self-review. Generate its self-contained task with
+`composite_review_task(compositeVersionId, outline, rulesVersionId or None, ...)`
+and schema with `review_schema()`. Pass the finalized composite, any previous
+composite, panel data Versions, and only a pre-existing rules Version in
+`inputs`. The reviewer never loads another Skill.
 
-Run at most three rounds with review floors 5 → 4 → 3. Generate the reviewer
-task with `composite_review_task(...)` and its `outputSchema` with
-`review_schema()`. Pass the task unchanged to one reviewer; include the
-composite, optional previous composite, `rulesVersionId`, and every non-null
-panel data Version in `inputs`. Collect the exact receipt and use only validated
-`structuredOutput` as the review object.
+Each reviewer may make at most two image-view calls total: one full-composite
+view and, only if necessary, one targeted crop. Per-panel zooms, strips, multiple
+crops, and pixel-sampling diagnostics are workflow violations. The fixed rubric
+covers layout/whitespace, titles, panel set, legibility/collisions, mark identity,
+color/legend binding, seams/letters, data fidelity, and regressions. There is no
+finding quota; zero findings is valid.
 
-After each result:
+Accept only `accept` or `minor_revision`, with no BLOCKER and at most two MAJOR
+findings. If real BLOCKER/MAJOR findings require correction:
 
-1. Accept when the verdict is `accept` or `minor_revision`, there are no
-   `BLOCKER`s, and there are at most two `MAJOR`s.
-2. Apply `outline_revisions` explicitly, then call
-   `apply_outline_revisions(outline, revisions)` to compute their panel scope.
-3. Call `group_fixes_by_panel(review)` and compute
-   `regen = affected | set(fixb)`.
-4. Regenerate only `regen`. Build each retry task as
-   `panel_task(outline, letter) + fixb.get(letter, "")` and add: “Do not
-   over-correct: preserve everything the previous version got right.” Include
-   the prior panel Version and its data Version in `inputs`.
-5. Keep every clean panel's exact Version identity. Compose a new revision only
-   after every regenerated panel passes the same identity checks.
+1. Apply outline revisions and compute affected panels with
+   `apply_outline_revisions` plus `group_fixes_by_panel`.
+2. Regenerate only affected panels. For each retry, actually call
+   `panel_task(outline, letter, fig_label)` and keep its returned base task
+   byte-for-byte unchanged; append only the targeted fixes and “Do not
+   over-correct: preserve everything the previous version got right.” Never
+   handwrite or shorten the generated task.
+3. Preserve clean panel Versions. Revalidate the exact filename, pixel geometry,
+   publication, structured output, and Version identity. A filename alias fails
+   validation, must not enter composition provenance, and requires a fresh-name
+   retry only after terminal settlement.
+4. Compose with a fresh producer, then run a second and final reviewer.
 
-Stop when accepted, or when `outline_revisions` is empty and new findings are
-only carve-out exceptions to the previous round; that is the over-labeling
-signal. Otherwise stop after round three.
+Never run a third reviewer. A two-panel, no-data smoke workflow that passes on
+the first review has exactly four child Attempts: two panels, one producer, one
+reviewer. A real correction path has at most eight.
+
+## Return
+
+Only after a reviewer accepts the current composite, verify producer provenance
+contains the latest validated panel Versions. Return that existing finalized
+child Artifact and include a user-visible Markdown link named `figure.png`.
+Do not create a duplicate root Artifact.
 
 ## Anti-patterns
 
-- Do not regenerate clean panels.
-- Do not manufacture findings merely to meet the review floor.
-- Verify review anchors on the composite, not only on isolated panels.
-- Remove labels that a reader with field context would find redundant.
+- Do not regenerate clean panels or manufacture findings.
+- Do not let children discover or reread Skills.
+- Do not pass artifact IDs, filenames, paths, or pending Versions as inputs.
+- Do not replace a running Attempt or reuse a settled child name.
