@@ -354,6 +354,8 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
       isDetectingClaude: true,
       environmentCheckError: undefined
     })
+    // Reserve ownership before probing so a retry started during the probe remains newer.
+    const isCurrentPreflight = beginPreflightRequest(set, get)
 
     try {
       const commands = getCommands()
@@ -361,10 +363,6 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
       const isCurrentEnvironment = (): boolean =>
         get().envCheckGeneration === generation &&
         environmentCheck.agentFrameworkId === get().agentFrameworkId
-      // An already superseded environment check must not invalidate a newer preflight request.
-      const isCurrentPreflight = isCurrentEnvironment()
-        ? beginPreflightRequest(set, get)
-        : () => false
       const recordPreflightOutcome = (preflightFailed: boolean): void => {
         if (isCurrentEnvironment() && isCurrentPreflight()) {
           patchRuntimeSetupState(set, { preflightFailed })
