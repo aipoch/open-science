@@ -229,6 +229,50 @@ describe('tag store', () => {
     expect(useTagStore.getState()).toMatchObject({ revision: 2, assignments: [] })
   })
 
+  it('keeps a newer committed assignment when an older mutation and recovery load fail', async () => {
+    const older = Promise.withResolvers<TagSnapshot>()
+    const committed: TagSnapshot = {
+      ...favoriteSnapshot(2),
+      assignments: [
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'catalog.skill',
+          resourceId: 'newer-skill',
+          createdAt: 2
+        }
+      ]
+    }
+    const snapshot = vi.fn().mockRejectedValue(new Error('offline'))
+    setTagsApi({
+      snapshot,
+      setAssignment: vi.fn().mockReturnValueOnce(older.promise).mockResolvedValueOnce(committed)
+    })
+    useTagStore.setState({ ...favoriteSnapshot(1), status: 'ready' })
+
+    const first = useTagStore.getState().setAssignment({
+      tagId: 'tag-favorite',
+      resourceType: 'catalog.skill',
+      resourceId: 'older-skill',
+      assigned: true
+    })
+    const rejected = expect(first).rejects.toThrow('older mutation failed')
+    await useTagStore.getState().setAssignment({
+      tagId: 'tag-favorite',
+      resourceType: 'catalog.skill',
+      resourceId: 'newer-skill',
+      assigned: true
+    })
+    expect(useTagStore.getState().assignments).toEqual(committed.assignments)
+    older.reject(new Error('older mutation failed'))
+    await rejected
+
+    expect(snapshot).toHaveBeenCalledOnce()
+    expect(useTagStore.getState()).toMatchObject({
+      revision: 2,
+      assignments: committed.assignments
+    })
+  })
+
   it('optimistically reorders custom Tags while keeping the system Tag first', async () => {
     const tags: TagSnapshot['tags'] = [
       ...favoriteSnapshot().tags,
@@ -269,6 +313,40 @@ describe('tag store', () => {
     expect(useTagStore.getState().revision).toBe(2)
   })
 
+  it('does not restore a deleted Tag when an older reorder and recovery load fail', async () => {
+    const older = Promise.withResolvers<TagSnapshot>()
+    const initial: TagSnapshot = {
+      ...favoriteSnapshot(1),
+      tags: [
+        ...favoriteSnapshot().tags,
+        {
+          id: 'tag-methods',
+          name: 'Methods',
+          iconKey: 'flask-conical',
+          colorKey: 'green',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    }
+    const committed = favoriteSnapshot(2)
+    setTagsApi({
+      snapshot: vi.fn().mockRejectedValue(new Error('offline')),
+      reorder: vi.fn().mockReturnValue(older.promise),
+      delete: vi.fn().mockResolvedValue(committed)
+    })
+    useTagStore.setState({ ...initial, status: 'ready' })
+
+    const first = useTagStore.getState().reorder({ tagIds: ['tag-methods'] })
+    const rejected = expect(first).rejects.toThrow('older reorder failed')
+    await useTagStore.getState().delete('tag-methods')
+    expect(useTagStore.getState().tags).toEqual(committed.tags)
+    older.reject(new Error('older reorder failed'))
+    await rejected
+
+    expect(useTagStore.getState()).toMatchObject({ revision: 2, tags: committed.tags })
+  })
+
   it('reloads the authoritative Tag order after a failed optimistic reorder', async () => {
     const authoritative = favoriteSnapshot(2)
     const snapshot = vi.fn().mockResolvedValue(authoritative)
@@ -296,4 +374,132 @@ describe('tag store', () => {
     expect(snapshot).toHaveBeenCalledOnce()
     expect(useTagStore.getState()).toMatchObject(authoritative)
   })
+  it.each(['older-first', 'newer-first'])(
+    'removes failed optimistic assignments when both writes and recovery fail (%s)',
+    async (order) => {
+      const older = Promise.withResolvers<TagSnapshot>()
+      const newer = Promise.withResolvers<TagSnapshot>()
+      setTagsApi({
+        snapshot: vi.fn().mockRejectedValue(new Error('offline')),
+        setAssignment: vi.fn().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
+      })
+      useTagStore.setState({ ...favoriteSnapshot(1), status: 'ready' })
+      const first = useTagStore.getState().setAssignment({
+        tagId: 'tag-favorite',
+        resourceType: 'catalog.skill',
+        resourceId: 'older',
+        assigned: true
+      })
+      const firstRejected = expect(first).rejects.toThrow('failed')
+      const second = useTagStore.getState().setAssignment({
+        tagId: 'tag-favorite',
+        resourceType: 'catalog.skill',
+        resourceId: 'newer',
+        assigned: true
+      })
+      const secondRejected = expect(second).rejects.toThrow('failed')
+      if (order === 'older-first') {
+        older.reject(new Error('failed'))
+        await firstRejected
+        const pendingIds = useTagStore.getState().assignments.map((a) => a.resourceId)
+        newer.reject(new Error('failed'))
+        await secondRejected
+        expect(pendingIds).toContain('newer')
+      } else {
+        newer.reject(new Error('failed'))
+        await secondRejected
+        expect(useTagStore.getState().assignments.map((a) => a.resourceId)).toEqual(['older'])
+        older.reject(new Error('failed'))
+        await firstRejected
+      }
+      expect(useTagStore.getState()).toMatchObject({
+        revision: 1,
+        assignments: [],
+        status: 'error'
+      })
+    }
+  )
+
+  it('keeps a snapshot delivered by a changed event when an older assignment fails', async () => {
+    const older = Promise.withResolvers<TagSnapshot>()
+    let listener: ((event: { revision: number }) => void) | undefined
+    const committed = {
+      ...favoriteSnapshot(2),
+      assignments: [
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'catalog.skill' as const,
+          resourceId: 'remote',
+          createdAt: 2
+        }
+      ]
+    }
+    setTagsApi({
+      snapshot: vi
+        .fn()
+        .mockResolvedValueOnce(committed)
+        .mockRejectedValueOnce(new Error('offline')),
+      setAssignment: vi.fn().mockReturnValue(older.promise),
+      onChanged: vi.fn((next) => {
+        listener = next
+        return () => undefined
+      })
+    })
+    useTagStore.setState({ ...favoriteSnapshot(1), status: 'ready' })
+    const stop = useTagStore.getState().listen()
+    const pending = useTagStore.getState().setAssignment({
+      tagId: 'tag-favorite',
+      resourceType: 'catalog.skill',
+      resourceId: 'older',
+      assigned: true
+    })
+    const rejected = expect(pending).rejects.toThrow('failed')
+    listener?.({ revision: 2 })
+    await vi.waitFor(() => expect(useTagStore.getState().revision).toBe(2))
+    older.reject(new Error('failed'))
+    await rejected
+    expect(useTagStore.getState().assignments).toEqual(committed.assignments)
+    stop()
+  })
+  it.each(['older-first', 'newer-first'])(
+    'restores the accepted order after overlapping reorders both fail (%s)',
+    async (order) => {
+      const older = Promise.withResolvers<TagSnapshot>()
+      const newer = Promise.withResolvers<TagSnapshot>()
+      const tags: TagSnapshot['tags'] = [
+        ...favoriteSnapshot().tags,
+        ...['a', 'b', 'c'].map((id) => ({
+          id,
+          name: id,
+          iconKey: 'tag' as const,
+          colorKey: 'blue' as const,
+          createdAt: 1,
+          updatedAt: 1
+        }))
+      ]
+      setTagsApi({
+        snapshot: vi.fn().mockRejectedValue(new Error('offline')),
+        reorder: vi.fn().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise)
+      })
+      useTagStore.setState({ ...favoriteSnapshot(1), tags, status: 'ready' })
+      const first = useTagStore.getState().reorder({ tagIds: ['b', 'a', 'c'] })
+      const firstRejected = expect(first).rejects.toThrow('failed')
+      const second = useTagStore.getState().reorder({ tagIds: ['c', 'b', 'a'] })
+      const secondRejected = expect(second).rejects.toThrow('failed')
+      if (order === 'older-first') {
+        older.reject(new Error('failed'))
+        await firstRejected
+        const pendingIds = useTagStore.getState().tags.map((tag) => tag.id)
+        newer.reject(new Error('failed'))
+        await secondRejected
+        expect(pendingIds).toEqual(['tag-favorite', 'c', 'b', 'a'])
+      } else {
+        newer.reject(new Error('failed'))
+        await secondRejected
+        older.reject(new Error('failed'))
+        await firstRejected
+      }
+      expect(useTagStore.getState().tags).toEqual(tags)
+    }
+  )
 })

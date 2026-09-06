@@ -48,6 +48,21 @@ export const createInitialTagState = (): TagSnapshot & {
 })
 let loadSequence = 0
 
+// A later optimistic backup may contain an earlier failed write. Follow those backups only
+// when the failing write still owns the projection; authority snapshots always take precedence.
+const failedTagProjections = new WeakMap<TagSnapshot['tags'], TagSnapshot['tags']>()
+const failedAssignmentProjections = new WeakMap<
+  TagSnapshot['assignments'],
+  TagSnapshot['assignments']
+>()
+
+const rollbackProjection = <T>(failed: WeakMap<T[], T[]>, optimistic: T[], before: T[]): T[] => {
+  failed.set(optimistic, before)
+  let restored = before
+  while (failed.has(restored)) restored = failed.get(restored)!
+  return restored
+}
+
 const stateFromSnapshot = (
   snapshot: TagSnapshot
 ): Pick<TagStore, keyof TagSnapshot | 'status'> => ({
@@ -120,6 +135,7 @@ export const useTagStore = create<TagStore>((set, get) => ({
     set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
   },
   reorder: async (request) => {
+    const revision = get().revision
     const before = get().tags
     const byId = new Map(before.map((tag) => [tag.id, tag]))
     set({
@@ -131,17 +147,20 @@ export const useTagStore = create<TagStore>((set, get) => ({
         })
       ]
     })
+    const optimistic = get().tags
     try {
       const snapshot = await window.api.tags.reorder(request)
       loadSequence += 1
       set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
     } catch (error) {
-      set({ tags: before })
+      const restored = rollbackProjection(failedTagProjections, optimistic, before)
+      if (get().revision === revision && get().tags === optimistic) set({ tags: restored })
       await get().load()
       throw error
     }
   },
   setAssignment: async (request) => {
+    const revision = get().revision
     const before = get().assignments
     const matches = (assignment: TagSnapshot['assignments'][number]): boolean =>
       assignment.tagId === request.tagId &&
@@ -150,7 +169,7 @@ export const useTagStore = create<TagStore>((set, get) => ({
     set({
       assignments: request.assigned
         ? before.some(matches)
-          ? before
+          ? [...before]
           : [
               ...before,
               {
@@ -162,12 +181,15 @@ export const useTagStore = create<TagStore>((set, get) => ({
             ]
         : before.filter((assignment) => !matches(assignment))
     })
+    const optimistic = get().assignments
     try {
       const snapshot = await window.api.tags.setAssignment(request)
       loadSequence += 1
       set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
     } catch (error) {
-      set({ assignments: before })
+      const restored = rollbackProjection(failedAssignmentProjections, optimistic, before)
+      if (get().revision === revision && get().assignments === optimistic)
+        set({ assignments: restored })
       await get().load()
       throw error
     }
