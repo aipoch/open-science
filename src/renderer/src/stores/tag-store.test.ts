@@ -467,10 +467,12 @@ describe('tag store', () => {
       resourceId: 'newer-skill',
       assigned: true
     })
-    expect(useTagStore.getState().assignments).toEqual(committed.assignments)
+    const pendingResourceIds = useTagStore.getState().assignments.map((item) => item.resourceId)
     older.reject(new Error('older mutation failed'))
     await rejected
 
+    // An unrelated success must keep the older request visible until it settles.
+    expect(pendingResourceIds).toEqual(['newer-skill', 'older-skill'])
     expect(snapshot).toHaveBeenCalledOnce()
     expect(useTagStore.getState()).toMatchObject({
       revision: 2,
